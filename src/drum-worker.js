@@ -34,7 +34,7 @@ self.onmessage = async (e) => {
         lastDrum.delete?.();
         lastDrum = null;
       }
-      const drum = buildDrum(msg.params, progress);
+      const drum = buildDrum(msg.part, msg.params, progress);
       lastDrum = drum;
 
       progress("meshing");

@@ -86,9 +86,11 @@ module boots under Node ESM, and writes STL from the mesh directly because
    in a Web Worker~~ — **done** (`npm run dev`; see Browser app below).
 3. ~~Performance~~ — **mostly done** (coarse display mesh + lazy STL; full drum
    ~18 s, default 4-turn ~2 s). Optional: batched cuts to trim the ~16 s cut.
-4. **Port the rest of `capstan_drum_generator.py`** — big drum, tensioners, end
-   stops, load socket, motor flange. Mostly straightforward Replicad now that
-   the grooves are proven.
+4. **Geometry port** — small + big drum cores **done** (groove / bore / stub /
+   flange; stripe grooves / bearing seats / bolt circle). Remaining: rope-lock
+   holes, tensioner pockets, end stops, load socket, motor counterbores.
+5. **Sectioned preset/advanced controls + part selector** — **done**
+   (`src/params.js` schema → `src/controls.js`).
 
 ## Browser app
 
@@ -96,13 +98,27 @@ module boots under Node ESM, and writes STL from the mesh directly because
 nvm use && npm run dev      # http://localhost:5173
 ```
 
-three.js viewer with auto-rotate, a param panel (turns / blank Ø / pitch /
-groove width), live **Generate**, and **Download STL**. Geometry runs in a Web
-Worker (`src/drum-worker.js`) so the UI stays responsive, and a spinner overlay
-shows the current phase (booting kernel · sweeping · cutting · meshing) fed by
-progress messages from the worker. OCCT boots once and each tweak re-cuts.
-Default is 4 turns for a quick first paint — crank Turns up for the full drum
-(slower; see Performance).
+three.js viewer with auto-rotate, a **part selector** (Small / Big / Both), and
+a **sectioned control panel** — Rope · Reduction · Motor mount · Small drum ·
+Big drum. Each section offers **presets** (the easy choice) and an expandable
+**Advanced** block with the full per-part controls (schema in `src/params.js`,
+rendered by `src/controls.js`). Hit **Generate** to build; **Download STL**
+exports a print-grade mesh on demand.
+
+Geometry runs in a Web Worker (`src/drum-worker.js`) so the UI stays responsive,
+and a spinner overlay shows the live phase (booting · sweeping · cutting ·
+meshing) fed by progress messages. OCCT boots once; each Generate re-cuts.
+Typical generate: small drum ~6 s, big drum ~9 s, both ~15 s.
+
+### What's ported
+
+- **Small drum:** helical rope groove · central shaft bore · 608ZZ support
+  stub · motor-mount flange + standoff + bolt holes.
+- **Big drum:** worm-gear stripe grooves (N left-handed helices) · center bore ·
+  6808 bearing seats (both faces) · link bolt circle.
+
+Not yet ported (intricate extras): rope-lock weave holes, tensioner pockets,
+travel end stops, the load-test socket, motor-flange counterbores, sector drums.
 
 ## Layout
 

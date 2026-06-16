@@ -30,8 +30,8 @@ setOC(OC);
 
 const { buildDrum } = await import("../src/drum.js");
 
-const turns = Number(process.env.TURNS ?? 10);
-console.log(`Kernel ready. Building drum (${turns} turns, fuzzy cut)…`);
+const part = process.env.PART ?? "small"; // small | big | both
+console.log(`Kernel ready. Building ${part} drum…`);
 
 try {
   const t0 = Date.now();
@@ -43,9 +43,9 @@ try {
   };
   // lap labels mark the START of each phase; the printed time is the duration
   // of the PREVIOUS phase. So "cutting groove" = sweep time, "cut" = cut time.
-  const drum = buildDrum({ turns }, lap);
-  lap("cut");
-  const tol = Number(process.env.MESH_TOL ?? 0.01);
+  const drum = buildDrum(part, {}, lap);
+  lap("built");
+  const tol = Number(process.env.MESH_TOL ?? 0.05);
   const mesh = drum.mesh({ tolerance: tol, angularTolerance: 0.3 });
   lap(`mesh@${tol}`);
   const tris = mesh.triangles.length / 3;
@@ -61,7 +61,7 @@ try {
     mesh.triangles
   );
 
-  console.log(`\n✅ FUZZY GROOVE CUT WORKS — ${turns} turns in ${secs}s`);
+  console.log(`\n✅ ${part.toUpperCase()} DRUM BUILT in ${secs}s`);
   console.log(`   meshed solid: ${tris} triangles`);
   console.log(`   wrote out/groove-test.stl`);
 

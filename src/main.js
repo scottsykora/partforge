@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { DEFAULTS } from "./params.js";
+import { buildControls } from "./controls.js";
 
 // --- three.js scene --------------------------------------------------------
 const app = document.getElementById("app");
@@ -132,30 +134,28 @@ worker.onmessage = ({ data }) => {
   }
 };
 
-function readParams() {
-  return {
-    turns: +document.getElementById("turns").value,
-    blankD: +document.getElementById("blankD").value,
-    pitch: +document.getElementById("pitch").value,
-    grooveW: +document.getElementById("grooveW").value,
-  };
-}
+// shared param state + sectioned controls
+const params = { ...DEFAULTS };
+let part = "small";
+
+buildControls(document.getElementById("controls"), params, () => {});
+
+const partSeg = document.getElementById("part");
+partSeg.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-part]");
+  if (!btn) return;
+  part = btn.dataset.part;
+  for (const b of partSeg.children) b.classList.toggle("on", b === btn);
+});
 
 function generate() {
   if (!kernelReady) return;
   genBtn.disabled = true;
   showBusy("generating");
-  worker.postMessage({ type: "generate", params: readParams() });
+  worker.postMessage({ type: "generate", part, params });
 }
 
 genBtn.addEventListener("click", generate);
-
-// live-update the slider value readouts
-for (const id of ["turns", "blankD", "pitch", "grooveW"]) {
-  const input = document.getElementById(id);
-  const out = document.getElementById(`${id}-v`);
-  input.addEventListener("input", () => (out.value = input.value));
-}
 
 dlBtn.addEventListener("click", () => {
   showBusy("exporting STL");
