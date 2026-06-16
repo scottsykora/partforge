@@ -24,7 +24,7 @@ export const DEFAULTS = {
   small_bore_depth: 7.0, // blind depth from the rotor face (stalk is 6 mm long;
   // 0 = auto: blind just below the rope-lock hole)
   small_match_big_h: true, // span the big-drum height so the coil covers travel
-  rope_lock_hole_d: 1.3, // mid-rope lock weave hole diameter (0 disables)
+  rope_lock_hole_d: 1.5, // mid-rope lock weave hole diameter (0 disables)
   top_stub_d: 8.0,
   top_stub_len: 7.5,
 
@@ -33,6 +33,8 @@ export const DEFAULTS = {
   motor_bolt_circle_d: 30.0, // EaglePower 8308 — measured 2026 (was 20)
   motor_bolt_count: 4,
   motor_bolt_d: 3.4,
+  motor_cbore_d: 6.0, // counterbore Ø so an M3 socket head sits flush
+  motor_cbore_depth: 3.0, // = M3 socket-head height
   motor_flange_t: 6.0,
   motor_flange_margin: 4.0,
   motor_standoff_h: 3.0,
@@ -91,6 +93,8 @@ export const SECTIONS = [
     advanced: [
       { key: "motor_bolt_circle_d", label: "Bolt circle diameter", unit: "mm", min: 10, max: 40, step: 1 },
       { key: "motor_bolt_count", label: "Bolt count", unit: "", min: 3, max: 8, step: 1 },
+      { key: "motor_cbore_d", label: "Counterbore diameter", unit: "mm", min: 0, max: 10, step: 0.5 },
+      { key: "motor_cbore_depth", label: "Counterbore depth", unit: "mm", min: 0, max: 6, step: 0.5 },
       { key: "motor_flange_t", label: "Flange thickness", unit: "mm", min: 3, max: 10, step: 0.5 },
       { key: "motor_flange_margin", label: "Flange margin", unit: "mm", min: 2, max: 8, step: 0.5 },
       { key: "motor_standoff_h", label: "Standoff", unit: "mm", min: 0, max: 8, step: 0.5 },

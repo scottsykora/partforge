@@ -61,9 +61,18 @@ function buildSmallDrum(p, d, onProgress) {
     const r = p.motor_bolt_circle_d / 2;
     for (let i = 0; i < p.motor_bolt_count; i++) {
       const a = (2 * Math.PI * i) / p.motor_bolt_count;
-      drum = drum.cut(
-        makeCylinder(p.motor_bolt_d / 2, p.motor_flange_t + 2, [r * Math.cos(a), r * Math.sin(a), -1])
-      );
+      const x = r * Math.cos(a);
+      const y = r * Math.sin(a);
+      // through clearance hole
+      drum = drum.cut(makeCylinder(p.motor_bolt_d / 2, p.motor_flange_t + 2, [x, y, -1]));
+      // counterbore from the flange top so the M3 socket head sits flush
+      if (p.motor_cbore_d > 0 && p.motor_cbore_depth > 0) {
+        drum = drum.cut(
+          makeCylinder(p.motor_cbore_d / 2, p.motor_cbore_depth + 1, [
+            x, y, p.motor_flange_t - p.motor_cbore_depth,
+          ])
+        );
+      }
     }
   }
 
