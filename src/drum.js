@@ -123,15 +123,15 @@ export function buildDrum(part = "small", params = {}, onProgress) {
   if (part === "small") return buildSmallDrum(p, d, onProgress);
   if (part === "big") return buildBigDrum(p, d, onProgress);
 
-  // both — two separate drums shown side by side along X (a compound, not a
-  // boolean union — they're disjoint).
+  // both — show the real meshing relationship: parallel axes at the gear
+  // centre distance (small_pitch_r + big_pitch_r, so the pitch circles touch),
+  // with the small drum dropped by its motor-mount stack so its groove body
+  // lines up with the big drum's groove band and the motor tucks underneath.
   onProgress?.("building small drum");
   const small = buildSmallDrum(p, d, onProgress);
   onProgress?.("building big drum");
   const big = buildBigDrum(p, d, onProgress);
-  const dx = d.smallBlankR + d.bigBlankR + 8;
-  return makeCompound([
-    small.translate([-dx / 2, 0, 0]),
-    big.translate([dx / 2, 0, 0]),
-  ]);
+  const baseH = p.motor_mount ? p.motor_flange_t + p.motor_standoff_h : 0;
+  const centerDist = d.smallPitchR + d.bigPitchR;
+  return makeCompound([small.translate([-centerDist, 0, -baseH]), big]);
 }

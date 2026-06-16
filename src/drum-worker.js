@@ -13,7 +13,7 @@ const ready = (async () => {
   postMessage({ type: "ready" });
 })();
 
-// Display mesh is coarse — plenty smooth for a Ø10 mm part on screen, and ~20×
+// Display mesh is coarse — plenty smooth for a 10 mm-diameter part on screen, ~20×
 // faster to compute/transfer than the print-grade tolerance. STL export uses
 // the fine tolerance on demand.
 const DISPLAY_MESH = { tolerance: 0.05, angularTolerance: 0.3 };
