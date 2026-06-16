@@ -1,0 +1,21 @@
+{
+  "name": "drum-machine",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Web-native parametric capstan drum generator (Replicad + three.js) — companion to Robot KB cad/capstan_drum_generator.py",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "groove-test": "node scripts/groove-test.mjs"
+  },
+  "dependencies": {
+    "replicad": "^0.23.1",
+    "replicad-opencascadejs": "^0.23.0",
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "vite": "^8.0.16"
+  }
+}
