@@ -20,7 +20,9 @@ export const DEFAULTS = {
   contact_wraps: 3.0,
 
   // small drum
-  small_bore_d: 5.1, // motor-shaft pocket (blind, stops below the lock hole)
+  small_bore_d: 3.2, // motor-stalk pocket Ø (EaglePower stalk Ø3 + clearance)
+  small_bore_depth: 7.0, // blind depth from the rotor face (stalk is 6 mm long;
+  // 0 = auto: blind just below the rope-lock hole)
   small_match_big_h: true, // span the big-drum height so the coil covers travel
   rope_lock_hole_d: 1.3, // mid-rope lock weave hole diameter (0 disables)
   top_stub_d: 8.0,
@@ -28,7 +30,7 @@ export const DEFAULTS = {
 
   // motor mount (bottom of small drum)
   motor_mount: true,
-  motor_bolt_circle_d: 20.0,
+  motor_bolt_circle_d: 30.0, // EaglePower 8308 — measured 2026 (was 20)
   motor_bolt_count: 4,
   motor_bolt_d: 3.4,
   motor_flange_t: 6.0,
@@ -83,7 +85,7 @@ export const SECTIONS = [
     id: "motor",
     title: "Motor mount",
     presets: {
-      "Eagle Power 8308 (20 mm bolt circle)": { motor_mount: true, motor_bolt_circle_d: 20, motor_bolt_count: 4 },
+      "Eagle Power 8308 (30 mm bolt circle)": { motor_mount: true, motor_bolt_circle_d: 30, motor_bolt_count: 4 },
       "None": { motor_mount: false },
     },
     advanced: [
@@ -98,11 +100,12 @@ export const SECTIONS = [
     id: "small",
     title: "Small drum",
     presets: {
-      "608ZZ stub + 5 mm shaft": { small_bore_d: 5.1, top_stub_d: 8.0, top_stub_len: 7.5 },
+      "608ZZ stub + EaglePower stalk": { small_bore_d: 3.2, small_bore_depth: 7, top_stub_d: 8.0, top_stub_len: 7.5 },
       "No stub / no bore": { small_bore_d: 0, top_stub_d: 0 },
     },
     advanced: [
-      { key: "small_bore_d", label: "Motor-shaft bore diameter", unit: "mm", min: 0, max: 10, step: 0.1 },
+      { key: "small_bore_d", label: "Motor-stalk bore diameter", unit: "mm", min: 0, max: 12, step: 0.1 },
+      { key: "small_bore_depth", label: "Bore depth (0=auto)", unit: "mm", min: 0, max: 30, step: 0.5 },
       { key: "rope_lock_hole_d", label: "Rope-lock hole diameter", unit: "mm", min: 0, max: 3, step: 0.1 },
       { key: "top_stub_d", label: "Bearing stub diameter", unit: "mm", min: 0, max: 12, step: 0.1 },
       { key: "top_stub_len", label: "Stub length", unit: "mm", min: 0, max: 12, step: 0.5 },

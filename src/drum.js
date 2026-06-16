@@ -86,10 +86,15 @@ function buildSmallDrum(p, d, onProgress) {
     }
   }
 
-  // motor-shaft bore — BLIND, opens at the rotor face, stops 1.5 mm below the
-  // lock hole (so the lock hole runs through solid material above it).
+  // motor-stalk bore — BLIND, opens at the rotor face. Use the explicit depth
+  // if set; otherwise auto-stop 1.5 mm below the lock hole.
   if (p.small_bore_d > 0) {
-    const boreTop = lockZ != null ? lockZ - lockR - 1.5 : baseH + bodyH + 1;
+    const boreTop =
+      p.small_bore_depth > 0
+        ? p.small_bore_depth
+        : lockZ != null
+        ? lockZ - lockR - 1.5
+        : baseH + bodyH + 1;
     drum = drum.cut(makeCylinder(p.small_bore_d / 2, boreTop + 1, [0, 0, -1]));
   }
 
