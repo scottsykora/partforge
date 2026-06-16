@@ -40,8 +40,9 @@ setOC(OC);
 
 // --- Parameters (small-drum spec) ------------------------------------------
 const blankR = 5.1; // blank radius (Ø10.2)
-const height = 14.0; // a 10-turn test band
 const axialPitch = 1.4; // mm per rev
+const turns = Number(process.env.TURNS ?? 10); // override: TURNS=2 npm run …
+const height = turns * axialPitch;
 const grooveCutR = 0.6; // circular cutter radius -> 1.2 wide x 0.6 deep
 const pathR = blankR; // cutter centre rides the blank surface
 
@@ -61,22 +62,24 @@ try {
   const blank = makeCylinder(blankR, height);
   console.log(`   [probe] blank: ${mcount(blank)}`);
 
-  // 2) helical spine at the blank surface
+  // 2) helical spine spanning the groove band.
+  //    Helix(θ)=(R cosθ, R sinθ, pitch·θ/2π); tangent at θ=0 = (0, R, pitch/2π).
+  const tangent = [0, pathR, axialPitch / (2 * Math.PI)];
   const spine = makeHelix(axialPitch, height, pathR);
 
-  // 3) groove-cutter profile: a circle at the helix start, oriented
-  //    perpendicular to the helix tangent there.
-  //    Helix(θ) = (R cosθ, R sinθ, pitch·θ/2π); tangent at θ=0 = (0, R, pitch/2π).
-  const tangent = [0, pathR, axialPitch / (2 * Math.PI)];
-  const profile = assembleWire([
-    makeCircle(grooveCutR, [pathR, 0, 0], tangent),
-  ]);
+  // 3) groove-cutter profile: a circle at the helix start, perpendicular to it.
+  const profile = assembleWire([makeCircle(grooveCutR, [pathR, 0, 0], tangent)]);
 
-  // 4) sweep the profile along the helix (Frenet keeps it perpendicular)
+  // 4) sweep -> helical groove tool
   const grooveTool = genericSweep(profile, spine, { frenet: true });
   console.log(`   [probe] grooveTool sweep: ${mcount(grooveTool)}`);
 
-  // 5) the operation under test: boolean-cut the helical groove
+  // 5) boolean-cut the groove.
+  //    KNOWN LIMIT: OCCT's default boolean returns an empty result for large
+  //    helical tools (fine up to a few turns, empty by ~10). Run a small TURNS
+  //    for a clean drum. Scaling to the full ~22-turn production drum is the
+  //    next task — fuzzy boolean via getOC(), or efficient batched cuts. A
+  //    naive sequential per-turn loop is correct but too slow in WASM.
   const drum = blank.cut(grooveTool);
   console.log(`   [probe] drum (blank - groove): ${mcount(drum)}`);
 
