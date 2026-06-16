@@ -82,28 +82,53 @@ const worker = new Worker(new URL("./drum-worker.js", import.meta.url), {
 const statusEl = document.getElementById("status");
 const genBtn = document.getElementById("generate");
 const dlBtn = document.getElementById("download");
-let lastSTL = null;
+const busyEl = document.getElementById("busy");
+const phaseEl = document.getElementById("phase");
 let kernelReady = false;
 
 function setStatus(msg, isErr = false) {
   statusEl.textContent = msg;
   statusEl.classList.toggle("err", isErr);
 }
+function showBusy(phase) {
+  phaseEl.textContent = `${phase}…`;
+  busyEl.classList.add("show");
+}
+function hideBusy() {
+  busyEl.classList.remove("show");
+}
+
+showBusy("booting kernel"); // visible from first paint until the first drum
 
 worker.onmessage = ({ data }) => {
-  if (data.type === "ready") {
-    kernelReady = true;
-    genBtn.disabled = false;
-    generate(); // first paint
-  } else if (data.type === "mesh") {
-    setGeometry(data);
-    lastSTL = data.stl || null;
-    dlBtn.disabled = !lastSTL;
-    setStatus(`${data.triangles.toLocaleString()} triangles · ${data.ms} ms`);
-    genBtn.disabled = false;
-  } else if (data.type === "error") {
-    setStatus(`generation failed: ${data.message}`, true);
-    genBtn.disabled = false;
+  switch (data.type) {
+    case "ready":
+      kernelReady = true;
+      generate(); // first paint
+      break;
+    case "progress":
+      showBusy(data.phase);
+      setStatus(`${data.phase}…`);
+      break;
+    case "mesh":
+      setGeometry(data);
+      hideBusy();
+      dlBtn.disabled = false;
+      genBtn.disabled = false;
+      setStatus(
+        `${data.triangles.toLocaleString()} triangles · ${(data.ms / 1000).toFixed(1)} s`
+      );
+      break;
+    case "stl":
+      hideBusy();
+      triggerDownload(data.stl);
+      setStatus("STL downloaded");
+      break;
+    case "error":
+      hideBusy();
+      genBtn.disabled = false;
+      setStatus(`failed: ${data.message}`, true);
+      break;
   }
 };
 
@@ -119,7 +144,7 @@ function readParams() {
 function generate() {
   if (!kernelReady) return;
   genBtn.disabled = true;
-  setStatus("generating…");
+  showBusy("generating");
   worker.postMessage({ type: "generate", params: readParams() });
 }
 
@@ -133,11 +158,15 @@ for (const id of ["turns", "blankD", "pitch", "grooveW"]) {
 }
 
 dlBtn.addEventListener("click", () => {
-  if (!lastSTL) return;
-  const url = URL.createObjectURL(new Blob([lastSTL], { type: "model/stl" }));
+  showBusy("exporting STL");
+  worker.postMessage({ type: "export-stl" });
+});
+
+function triggerDownload(arrayBuffer) {
+  const url = URL.createObjectURL(new Blob([arrayBuffer], { type: "model/stl" }));
   const a = document.createElement("a");
   a.href = url;
   a.download = "drum.stl";
   a.click();
   URL.revokeObjectURL(url);
-});
+}

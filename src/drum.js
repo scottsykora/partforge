@@ -19,7 +19,7 @@ export const DEFAULTS = {
   grooveW: 1.2, // groove width (mm) — cutter Ø; depth ≈ grooveW/2
 };
 
-export function buildDrum(params = {}) {
+export function buildDrum(params = {}, onProgress) {
   const { blankD, pitch, turns, grooveW } = { ...DEFAULTS, ...params };
   const blankR = blankD / 2;
   const height = turns * pitch;
@@ -29,11 +29,13 @@ export function buildDrum(params = {}) {
   const blank = makeCylinder(blankR, height);
 
   // Helix(θ) = (R cosθ, R sinθ, pitch·θ/2π); tangent at θ=0 = (0, R, pitch/2π).
+  onProgress?.("sweeping groove");
   const tangent = [0, pathR, pitch / (2 * Math.PI)];
   const spine = makeHelix(pitch, height, pathR);
   const profile = assembleWire([makeCircle(grooveCutR, [pathR, 0, 0], tangent)]);
   const grooveTool = genericSweep(profile, spine, { frenet: true });
 
   // Fuzzy boolean — the default-tolerance cut returns empty past a few turns.
+  onProgress?.("cutting groove");
   return fuzzyCut(blank, grooveTool);
 }

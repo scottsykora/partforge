@@ -36,6 +36,23 @@
       #status { margin-top: 10px; min-height: 16px; color: #8b94a0; font-size: 11px; }
       #status.err { color: #f8746c; }
       .hint { margin-top: 8px; color: #6b7480; font-size: 10px; }
+
+      #busy {
+        position: fixed; inset: 0; z-index: 20; pointer-events: none;
+        display: none; flex-direction: column; align-items: center;
+        justify-content: center; gap: 14px;
+      }
+      #busy.show { display: flex; }
+      #busy .ring {
+        width: 46px; height: 46px; border-radius: 50%;
+        border: 4px solid #2c333d; border-top-color: #3b82f6;
+        animation: spin 0.9s linear infinite;
+      }
+      #busy .phase {
+        color: #d6dbe2; font-size: 13px; letter-spacing: .2px;
+        text-shadow: 0 1px 6px rgba(0,0,0,.6);
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
@@ -67,6 +84,7 @@
       <p class="hint">Drag to orbit · scroll to zoom. More turns look better but
         generate slower (~1 min for a full 23-turn drum).</p>
     </div>
+    <div id="busy"><div class="ring"></div><div class="phase" id="phase">booting kernel…</div></div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

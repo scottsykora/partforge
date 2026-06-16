@@ -35,8 +35,19 @@ console.log(`Kernel ready. Building drum (${turns} turns, fuzzy cut)…`);
 
 try {
   const t0 = Date.now();
-  const drum = buildDrum({ turns });
-  const mesh = drum.mesh({ tolerance: 0.01, angularTolerance: 0.1 });
+  let last = t0;
+  const lap = (label) => {
+    const now = Date.now();
+    console.log(`   [${label}] ${((now - last) / 1000).toFixed(1)}s`);
+    last = now;
+  };
+  // lap labels mark the START of each phase; the printed time is the duration
+  // of the PREVIOUS phase. So "cutting groove" = sweep time, "cut" = cut time.
+  const drum = buildDrum({ turns }, lap);
+  lap("cut");
+  const tol = Number(process.env.MESH_TOL ?? 0.01);
+  const mesh = drum.mesh({ tolerance: tol, angularTolerance: 0.3 });
+  lap(`mesh@${tol}`);
   const tris = mesh.triangles.length / 3;
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
 

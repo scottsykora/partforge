@@ -56,11 +56,22 @@ geometry and makes the cut robust at any turn count. (Skipping `SimplifyResult`,
 a slow coplanar-face merge, was also needed — it isn't required for a correct
 mesh/STEP.)
 
-### Remaining: performance
+### Performance
 
-The fuzzy cut is correct but superlinear: ~13 s at 10 turns, ~55 s at 23. Fine
-for a single drum with a progress indicator, slow for live tweaking. Options to
-explore: batched cuts, a coarser sweep tessellation, parallel BOP, or caching.
+The original ~55 s for the full drum turned out to be dominated by **meshing**,
+not the boolean — at print-grade tolerance (0.01 mm) the mesh alone was ~31 s
+(219 k triangles). Phase breakdown at 23 turns: sweep 0.6 s · cut 16 s · mesh
+31 s.
+
+Fixes:
+- **Coarse display mesh** (0.05 mm — plenty smooth for a Ø10 mm part on screen):
+  meshing drops from ~31 s to ~1.6 s (≈29 k triangles).
+- **Lazy STL** — the fine print-grade mesh runs only on **Download STL**, not on
+  every generate.
+
+Result (per-generate, kernel already booted): **4 turns ≈ 2 s · 8 ≈ 5 s · full
+23-turn drum ≈ 18 s** (the fuzzy cut is now the ~16 s remainder at max turns).
+Further cut speedups (batched cuts) are a future option, no longer urgent.
 
 ### Headless-Node note
 
@@ -73,8 +84,8 @@ module boots under Node ESM, and writes STL from the mesh directly because
 1. ~~Scale the boolean cut to a full drum~~ — **done** (fuzzy boolean).
 2. ~~Vite browser app: three.js viewer + param controls + STL download, Replicad
    in a Web Worker~~ — **done** (`npm run dev`; see Browser app below).
-3. **Performance** — bring the full-drum cut down from ~55 s (batched cuts /
-   coarser tessellation / caching).
+3. ~~Performance~~ — **mostly done** (coarse display mesh + lazy STL; full drum
+   ~18 s, default 4-turn ~2 s). Optional: batched cuts to trim the ~16 s cut.
 4. **Port the rest of `capstan_drum_generator.py`** — big drum, tensioners, end
    stops, load socket, motor flange. Mostly straightforward Replicad now that
    the grooves are proven.
@@ -87,9 +98,11 @@ nvm use && npm run dev      # http://localhost:5173
 
 three.js viewer with auto-rotate, a param panel (turns / blank Ø / pitch /
 groove width), live **Generate**, and **Download STL**. Geometry runs in a Web
-Worker (`src/drum-worker.js`) so the UI stays responsive; OCCT boots once and
-each tweak re-cuts. Default is 4 turns for a quick first paint — crank Turns up
-for the full drum (slower; see Performance).
+Worker (`src/drum-worker.js`) so the UI stays responsive, and a spinner overlay
+shows the current phase (booting kernel · sweeping · cutting · meshing) fed by
+progress messages from the worker. OCCT boots once and each tweak re-cuts.
+Default is 4 turns for a quick first paint — crank Turns up for the full drum
+(slower; see Performance).
 
 ## Layout
 
