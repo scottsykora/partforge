@@ -116,11 +116,12 @@ Typical generate: small drum ~6 s, big drum ~9 s, both ~15 s.
   motor-shaft bore · 608ZZ support stub (root cone + tip chamfer) · motor-mount
   flange + standoff + bolt holes.
 - **Big drum:** worm-gear stripe grooves (N left-handed helices) · center bore ·
-  6808 bearing seats (both faces) · link bolt circle.
+  6808 bearing seats (both faces) · link bolt circle · **travel end stops** ·
+  **load-test socket (1/2" PVC)** · **sliding-block tensioner pockets** — toggle
+  each in the "Big-drum features" section (set its key to 0 to disable).
 - **Both:** drums placed at the real gear centre distance, motor tucked under.
 
-Not yet ported (intricate extras): tensioner pockets, travel end stops, the
-load-test socket, motor-flange counterbores, sector drums.
+Not yet ported: sector (<360°) drums and the rope-lock bend-relief channels.
 
 ## Layout
 

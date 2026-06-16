@@ -50,6 +50,21 @@ export const DEFAULTS = {
   big_bolt_circle_d: 64.0,
   big_bolt_count: 4,
   big_bolt_d: 3.2,
+
+  // big-drum features (set the primary key to 0 to disable that feature)
+  load_socket_pipe_od: 21.34, // 1/2" PVC load-test socket; 0 = off
+  load_socket_fit: 0.4,
+  load_socket_stop_r: 22.0,
+  load_socket_pin_d: 2.5,
+  end_stop_arc: 6.0, // current-spike homing stops; 0 = off
+  stop_root_depth: 2.0,
+  stop_tip_extra: 1.2,
+  tensioner_pocket_depth: 7.0, // sliding-block tensioner pockets; 0 = off
+  tensioner_pocket_l: 14.0,
+  tensioner_pocket_w: 10.0,
+  tensioner_screw_d: 3.0,
+  tensioner_head_d: 6.0,
+  tensioner_angle_deg: 20.0,
 };
 
 export const SECTIONS = [
@@ -132,6 +147,21 @@ export const SECTIONS = [
       { key: "big_stripe_count", label: "Groove count (0=auto)", unit: "", min: 0, max: 24, step: 1 },
     ],
   },
+  {
+    id: "features",
+    title: "Big-drum features",
+    presets: {
+      "Socket + stops + tensioners": { load_socket_pipe_od: 21.34, end_stop_arc: 6, tensioner_pocket_depth: 7 },
+      "Tensioners + stops (no socket)": { load_socket_pipe_od: 0, end_stop_arc: 6, tensioner_pocket_depth: 7 },
+      "None": { load_socket_pipe_od: 0, end_stop_arc: 0, tensioner_pocket_depth: 0 },
+    },
+    advanced: [
+      { key: "load_socket_pipe_od", label: "Load-socket pipe diameter (0=off)", unit: "mm", min: 0, max: 30, step: 0.1 },
+      { key: "end_stop_arc", label: "End-stop arc (0=off)", unit: "°", min: 0, max: 15, step: 1 },
+      { key: "tensioner_pocket_depth", label: "Tensioner pocket depth (0=off)", unit: "mm", min: 0, max: 12, step: 0.5 },
+      { key: "tensioner_angle_deg", label: "Tensioner tilt", unit: "°", min: 10, max: 35, step: 1 },
+    ],
+  },
 ];
 
 export function derive(p) {
@@ -162,6 +192,13 @@ export function derive(p) {
   const bigBodyH = bandBig + 2 * (p.big_edge_margin + axialPitch / 2);
   const bigGrooveZ0 = (bigBodyH - bandBig) / 2;
 
+  // anchors + groove-free wedge (where the load socket / tensioners live)
+  const a0 = (sector - arc) / 2;
+  const wedgeCenterDeg = (2 * a0 + arc) % 360;
+  const centerDist = smallPitchR + bigPitchR; // gear centre distance
+  const anchorA = { ang: a0 + arc, z: bigGrooveZ0 }; // bottom groove end
+  const anchorB = { ang: a0, z: bigGrooveZ0 + bandBig }; // top groove end
+
   // small drum body height: match the big drum (so the coil covers the full
   // groove travel), or just cover its own working band.
   const smallBodyH = p.small_match_big_h ? bigBodyH : bandSmallMin + 2 * axialPitch;
@@ -173,5 +210,6 @@ export function derive(p) {
     wrapsSmall, bandSmallMin,
     arc, stripes, stripeSpacing, stripeRise, bandBig, sector,
     bigBodyH, bigGrooveZ0,
+    a0, wedgeCenterDeg, centerDist, anchorA, anchorB,
   };
 }

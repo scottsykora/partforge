@@ -12,7 +12,9 @@ import {
   assembleWire,
   genericSweep,
   makeCompound,
+  makeBox,
   loft,
+  draw,
 } from "replicad";
 import { fuzzyCut } from "./fuzzy-cut.js";
 import { DEFAULTS, derive } from "./params.js";
@@ -35,6 +37,43 @@ function frustum(r1, r2, h, z0) {
   const w1 = assembleWire([makeCircle(r1, [0, 0, z0])]);
   const w2 = assembleWire([makeCircle(r2, [0, 0, z0 + h])]);
   return loft([w1, w2]);
+}
+
+// An annular sector (ring slice) rootR..tipR spanning arcDeg, height h at z0 —
+// a pie sketch extruded, minus the inner cylinder. (makeCylinder has no sector.)
+function annularSector(rootR, tipR, arcDeg, h, z0) {
+  const a = (arcDeg * Math.PI) / 180;
+  const pie = draw([0, 0])
+    .lineTo([tipR, 0])
+    .threePointsArcTo(
+      [tipR * Math.cos(a), tipR * Math.sin(a)],
+      [tipR * Math.cos(a / 2), tipR * Math.sin(a / 2)]
+    )
+    .lineTo([0, 0])
+    .close()
+    .sketchOnPlane("XY", z0)
+    .extrude(h);
+  return pie.cut(makeCylinder(rootR, h + 2, [0, 0, z0 - 1]));
+}
+
+// Cutting tools for one sliding-block jack-screw tensioner, built at angle 0
+// with the rope departing along +Y, tilted inward about the groove-end point.
+function tensionerTools(p, d, bodyH, grooveZ, top) {
+  const L = p.tensioner_pocket_l;
+  const W = p.tensioner_pocket_w;
+  const H = p.tensioner_pocket_depth;
+  const hd = p.tensioner_head_d;
+  const rp = d.bigPitchR;
+  const y0 = -0.5;
+  const y1 = 0.5 + L;
+  const zb = top ? bodyH - H : -1.0;
+  const tools = [
+    makeBox([rp - (W - 4), y0, zb], [rp + 4, y1, zb + H + 1]), // pocket
+    makeCylinder((p.tensioner_screw_d + 0.4) / 2, 4.5, [rp, y1 - 0.5, grooveZ], [0, 1, 0]), // screw bore
+    makeCylinder(hd / 2, 30, [rp, y1 + 3, grooveZ], [0, 1, 0]), // head access bore
+    makeBox([rp, y1 + 3, grooveZ - hd / 2], [rp + 15, y1 + 33, grooveZ + hd / 2]), // head clearance
+  ];
+  return tools.map((t) => t.rotate(p.tensioner_angle_deg, [rp, 0, 0], [0, 0, 1]));
 }
 
 function buildSmallDrum(p, d, onProgress) {
@@ -162,6 +201,53 @@ function buildBigDrum(p, d, onProgress) {
       );
     }
   }
+
+  // --- travel end stops (for current-spike homing) ---
+  let stopTipR = d.bigBlankR;
+  if (p.end_stop_arc > 0) {
+    onProgress?.("adding end stops");
+    const bandLo = p.tensioner_pocket_depth > 0 ? p.tensioner_pocket_depth + 1 : 0;
+    const rootR = d.bigBlankR - p.stop_root_depth;
+    stopTipR = Math.sqrt(d.centerDist ** 2 - d.smallBlankR ** 2) + p.stop_tip_extra;
+    const specs = [
+      { ang: d.a0 + d.arc, z0: bandLo, z1: bodyH }, // side A: above its pocket
+      { ang: d.a0 - p.end_stop_arc, z0: 0, z1: bodyH - bandLo }, // side B: below its pocket
+    ];
+    for (const s of specs) {
+      const stop = annularSector(rootR, stopTipR, p.end_stop_arc, s.z1 - s.z0, s.z0);
+      drum = drum.fuse(stop.rotate(s.ang, [0, 0, 0], [0, 0, 1]));
+    }
+  }
+
+  // --- load-test pipe socket (radial, wedge centre, mid-height) ---
+  if (p.load_socket_pipe_od > 0) {
+    const sr = (p.load_socket_pipe_od + p.load_socket_fit) / 2;
+    const freeLo = p.tensioner_pocket_depth > 0 ? p.tensioner_pocket_depth : 1;
+    const freeHi = bodyH - freeLo;
+    const zc = bodyH / 2;
+    if (zc - sr >= freeLo + 0.3 && zc + sr <= freeHi - 0.3) {
+      onProgress?.("cutting load socket");
+      const length = stopTipR - p.load_socket_stop_r + 2;
+      let sock = makeCylinder(sr, length, [p.load_socket_stop_r, 0, zc], [1, 0, 0]);
+      if (p.load_socket_pin_d > 0) {
+        const pinR = Math.min(38, d.bigBlankR - 6);
+        sock = sock.fuse(makeCylinder(p.load_socket_pin_d / 2, bodyH, [pinR, 0, zc], [0, 0, 1]));
+      }
+      drum = drum.cut(sock.rotate(d.wedgeCenterDeg, [0, 0, 0], [0, 0, 1]));
+    }
+  }
+
+  // --- sliding-block tensioner pockets at each rope anchor ---
+  if (p.tensioner_pocket_depth > 0) {
+    onProgress?.("cutting tensioner pockets");
+    for (const s of [{ a: d.anchorA, top: false }, { a: d.anchorB, top: true }]) {
+      for (let t of tensionerTools(p, d, bodyH, s.a.z, s.top)) {
+        if (s.top) t = t.mirror("XZ");
+        drum = drum.cut(t.rotate(s.a.ang, [0, 0, 0], [0, 0, 1]));
+      }
+    }
+  }
+
   return drum;
 }
 
