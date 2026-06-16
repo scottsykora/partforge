@@ -20,8 +20,9 @@ export const DEFAULTS = {
   contact_wraps: 3.0,
 
   // small drum
-  small_bore_d: 5.1,
+  small_bore_d: 5.1, // motor-shaft pocket (blind, stops below the lock hole)
   small_match_big_h: true, // span the big-drum height so the coil covers travel
+  rope_lock_hole_d: 1.3, // mid-rope lock weave hole diameter (0 disables)
   top_stub_d: 8.0,
   top_stub_len: 7.5,
 
@@ -101,7 +102,8 @@ export const SECTIONS = [
       "No stub / no bore": { small_bore_d: 0, top_stub_d: 0 },
     },
     advanced: [
-      { key: "small_bore_d", label: "Shaft bore diameter", unit: "mm", min: 0, max: 10, step: 0.1 },
+      { key: "small_bore_d", label: "Motor-shaft bore diameter", unit: "mm", min: 0, max: 10, step: 0.1 },
+      { key: "rope_lock_hole_d", label: "Rope-lock hole diameter", unit: "mm", min: 0, max: 3, step: 0.1 },
       { key: "top_stub_d", label: "Bearing stub diameter", unit: "mm", min: 0, max: 12, step: 0.1 },
       { key: "top_stub_len", label: "Stub length", unit: "mm", min: 0, max: 12, step: 0.5 },
     ],

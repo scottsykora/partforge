@@ -12,6 +12,7 @@ import {
   assembleWire,
   genericSweep,
   makeCompound,
+  loft,
 } from "replicad";
 import { fuzzyCut } from "./fuzzy-cut.js";
 import { DEFAULTS, derive } from "./params.js";
@@ -26,6 +27,14 @@ function grooveTool(pathR, axialPitch, turns, z0, grooveR, lefthand) {
   const tangent = [0, dir * pathR, axialPitch / (2 * Math.PI)];
   const profile = assembleWire([makeCircle(grooveR, [pathR, 0, z0], tangent)]);
   return genericSweep(profile, spine, { frenet: true });
+}
+
+// A truncated cone (frustum) from r1 at z0 to r2 at z0+h, via a loft of two
+// circles — replicad has no makeCone.
+function frustum(r1, r2, h, z0) {
+  const w1 = assembleWire([makeCircle(r1, [0, 0, z0])]);
+  const w2 = assembleWire([makeCircle(r2, [0, 0, z0 + h])]);
+  return loft([w1, w2]);
 }
 
 function buildSmallDrum(p, d, onProgress) {
@@ -58,18 +67,44 @@ function buildSmallDrum(p, d, onProgress) {
     }
   }
 
-  // 608ZZ support stub on top
-  if (p.top_stub_d > 0) {
-    drum = drum.fuse(
-      makeCylinder(p.top_stub_d / 2, p.top_stub_len, [0, 0, baseH + bodyH - 0.05])
-    );
+  // mid-rope lock: one tilted diametral weave hole near mid-height, entering
+  // the groove on one side and leaving it half a pitch higher on the other.
+  let lockZ = null;
+  const lockR = (p.rope_lock_hole_d ?? 0) / 2;
+  if (lockR > 0) {
+    const pitch = d.axialPitch;
+    const br = d.smallBlankR;
+    const t1 = Math.round((bodyH / 2 - pitch / 4 - margin) / pitch);
+    if (t1 >= 1) {
+      lockZ = baseH + margin + t1 * pitch;
+      const inX = br;
+      const dz = pitch / 2;
+      const len = Math.hypot(2 * br, dz);
+      const ax = [-2 * br / len, 0, dz / len]; // p_in -> p_out, normalized
+      const start = [inX - ax[0] * 2, 0, lockZ - ax[2] * 2];
+      drum = drum.cut(makeCylinder(lockR, len + 4, start, ax));
+    }
   }
 
-  // central shaft bore (through everything) — last so it clears all fused parts
+  // motor-shaft bore — BLIND, opens at the rotor face, stops 1.5 mm below the
+  // lock hole (so the lock hole runs through solid material above it).
   if (p.small_bore_d > 0) {
-    const totalH = baseH + bodyH + (p.top_stub_d > 0 ? p.top_stub_len : 0) + 2;
-    drum = drum.cut(makeCylinder(p.small_bore_d / 2, totalH, [0, 0, -1]));
+    const boreTop = lockZ != null ? lockZ - lockR - 1.5 : baseH + bodyH + 1;
+    drum = drum.cut(makeCylinder(p.small_bore_d / 2, boreTop + 1, [0, 0, -1]));
   }
+
+  // 608ZZ support stub on top: root cone (body -> stub) · cylinder · tip chamfer
+  if (p.top_stub_d > 0) {
+    const stubR = p.top_stub_d / 2;
+    const rootH = 1.2;
+    const ch = Math.min(0.8, stubR - 0.5);
+    const z = baseH + bodyH;
+    drum = drum.fuse(frustum(d.smallBlankR, stubR, rootH, z - 0.01));
+    const cylH = Math.max(0.1, p.top_stub_len - ch);
+    drum = drum.fuse(makeCylinder(stubR, cylH + 0.02, [0, 0, z + rootH - 0.01]));
+    drum = drum.fuse(frustum(stubR, stubR - ch, ch, z + rootH + cylH - 0.005));
+  }
+
   return drum;
 }
 

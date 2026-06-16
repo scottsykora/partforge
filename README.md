@@ -112,13 +112,15 @@ Typical generate: small drum ~6 s, big drum ~9 s, both ~15 s.
 
 ### What's ported
 
-- **Small drum:** helical rope groove · central shaft bore · 608ZZ support
-  stub · motor-mount flange + standoff + bolt holes.
+- **Small drum:** helical rope groove · mid-rope lock weave hole · **blind**
+  motor-shaft bore · 608ZZ support stub (root cone + tip chamfer) · motor-mount
+  flange + standoff + bolt holes.
 - **Big drum:** worm-gear stripe grooves (N left-handed helices) · center bore ·
   6808 bearing seats (both faces) · link bolt circle.
+- **Both:** drums placed at the real gear centre distance, motor tucked under.
 
-Not yet ported (intricate extras): rope-lock weave holes, tensioner pockets,
-travel end stops, the load-test socket, motor-flange counterbores, sector drums.
+Not yet ported (intricate extras): tensioner pockets, travel end stops, the
+load-test socket, motor-flange counterbores, sector drums.
 
 ## Layout
 
