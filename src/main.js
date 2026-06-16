@@ -84,6 +84,7 @@ const worker = new Worker(new URL("./drum-worker.js", import.meta.url), {
 const statusEl = document.getElementById("status");
 const genBtn = document.getElementById("generate");
 const dlBtn = document.getElementById("download");
+const dlStepBtn = document.getElementById("download-step");
 const busyEl = document.getElementById("busy");
 const phaseEl = document.getElementById("phase");
 let kernelReady = false;
@@ -116,6 +117,7 @@ worker.onmessage = ({ data }) => {
       setGeometry(data);
       hideBusy();
       dlBtn.disabled = false;
+      dlStepBtn.disabled = false;
       genBtn.disabled = false;
       setStatus(
         `${data.triangles.toLocaleString()} triangles · ${(data.ms / 1000).toFixed(1)} s`
@@ -123,8 +125,13 @@ worker.onmessage = ({ data }) => {
       break;
     case "stl":
       hideBusy();
-      triggerDownload(data.stl);
+      triggerDownload(data.stl, "drum.stl", "model/stl");
       setStatus("STL downloaded");
+      break;
+    case "step":
+      hideBusy();
+      triggerDownload(data.step, "drum.step", "application/step");
+      setStatus("STEP downloaded");
       break;
     case "error":
       hideBusy();
@@ -162,11 +169,16 @@ dlBtn.addEventListener("click", () => {
   worker.postMessage({ type: "export-stl" });
 });
 
-function triggerDownload(arrayBuffer) {
-  const url = URL.createObjectURL(new Blob([arrayBuffer], { type: "model/stl" }));
+dlStepBtn.addEventListener("click", () => {
+  showBusy("exporting STEP");
+  worker.postMessage({ type: "export-step" });
+});
+
+function triggerDownload(arrayBuffer, filename, mime) {
+  const url = URL.createObjectURL(new Blob([arrayBuffer], { type: mime }));
   const a = document.createElement("a");
   a.href = url;
-  a.download = "drum.stl";
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 }

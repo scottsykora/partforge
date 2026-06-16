@@ -4,7 +4,7 @@
 
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import wasmUrl from "replicad-opencascadejs/src/replicad_single.wasm?url";
-import { setOC } from "replicad";
+import { setOC, exportSTEP } from "replicad";
 import { buildDrum } from "./drum.js";
 
 const ready = (async () => {
@@ -64,6 +64,16 @@ self.onmessage = async (e) => {
       postMessage({ type: "stl", stl }, [stl]);
     } catch (err) {
       postMessage({ type: "error", message: "STL export failed: " + (err?.message || err) });
+    }
+  } else if (msg.type === "export-step") {
+    if (!lastDrum) return;
+    try {
+      progress("exporting STEP");
+      // STEP is exact BREP — no mesh tolerance involved.
+      const step = await exportSTEP([{ shape: lastDrum, name: "drum" }]).arrayBuffer();
+      postMessage({ type: "step", step }, [step]);
+    } catch (err) {
+      postMessage({ type: "error", message: "STEP export failed: " + (err?.message || err) });
     }
   }
 };
