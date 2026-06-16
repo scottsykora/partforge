@@ -38,24 +38,29 @@ Findings:
 |---|---|
 | `makeHelix` → `genericSweep` (helical groove tool) | ✅ valid solid at any scale (133k-tri at 10 turns) |
 | Single boolean cut, few turns | ✅ valid grooved drum (12,834 tris at 1 turn), exports STL + STEP |
-| Single boolean cut, ~10 turns | ⚠️ OCCT boolean returns **empty** — robustness limit |
-| Naive sequential per-turn cut loop | correct in principle but too slow in WASM |
+| Default-tolerance cut, ~10+ turns | ❌ OCCT boolean returns **empty** (near-tangent helix) |
+| **Fuzzy boolean cut** (`src/fuzzy-cut.js`) | ✅ **full drum cuts** — 10 turns 13 s, 23 turns 55 s |
 
-**Conclusion: feasible.** Replicad does the sweep + cut + export the browser
-tool needs. The one open engineering task is scaling the boolean to the full
-~22-turn production drum.
+**Conclusion: it works.** Replicad does the sweep + fuzzy cut + export the
+browser tool needs, including the full ~23-turn production small drum. Remaining
+work is performance, not feasibility.
 
-### Known issue + next step: boolean scaling
+### Solved: the boolean (fuzzy)
 
-OCCT's default boolean fails silently (empty result) on large helical tools.
-The Python/FreeCAD generator cuts the full groove fine, so OCCT *can* do it —
-the fix on the Replicad side is one of:
+OCCT's default boolean fails silently (empty result) on large near-tangent
+helical tools. `replicad`'s high-level `cut()` runs the one-shot
+`BRepAlgoAPI_Cut_3` constructor with zero fuzzy tolerance. `src/fuzzy-cut.js`
+drops to the raw kernel via `getOC()`, mirrors replicad's own cut, and adds
+**`SetFuzzyValue(1e-3)`** before `Build()` — which snaps near-coincident
+geometry and makes the cut robust at any turn count. (Skipping `SimplifyResult`,
+a slow coplanar-face merge, was also needed — it isn't required for a correct
+mesh/STEP.)
 
-1. **Fuzzy boolean** via the raw OCCT instance (`getOC()`) — `replicad`'s
-   high-level `cut()` exposes no tolerance knob; drop down to
-   `BRepAlgoAPI_Cut` + `SetFuzzyValue`. Most likely the right answer.
-2. **Batched cuts** (a few turns per boolean) — robust, but tune for speed.
-3. Investigate why FreeCAD's tool cuts cleanly (tool quality / tolerance).
+### Remaining: performance
+
+The fuzzy cut is correct but superlinear: ~13 s at 10 turns, ~55 s at 23. Fine
+for a single drum with a progress indicator, slow for live tweaking. Options to
+explore: batched cuts, a coarser sweep tessellation, parallel BOP, or caching.
 
 ### Headless-Node note
 
@@ -65,12 +70,26 @@ module boots under Node ESM, and writes STL from the mesh directly because
 
 ## Roadmap
 
-1. Scale the boolean cut to a full drum (fuzzy boolean).
-2. Vite browser app: three.js viewer + parameter controls (run Replicad in a
-   Web Worker so the UI stays responsive), STEP/STL download.
-3. Port the rest of `capstan_drum_generator.py` (big drum, tensioners, end
-   stops, load socket, motor flange) — most of it is straightforward Replicad;
-   the grooves were the risk and they're proven.
+1. ~~Scale the boolean cut to a full drum~~ — **done** (fuzzy boolean).
+2. ~~Vite browser app: three.js viewer + param controls + STL download, Replicad
+   in a Web Worker~~ — **done** (`npm run dev`; see Browser app below).
+3. **Performance** — bring the full-drum cut down from ~55 s (batched cuts /
+   coarser tessellation / caching).
+4. **Port the rest of `capstan_drum_generator.py`** — big drum, tensioners, end
+   stops, load socket, motor flange. Mostly straightforward Replicad now that
+   the grooves are proven.
+
+## Browser app
+
+```bash
+nvm use && npm run dev      # http://localhost:5173
+```
+
+three.js viewer with auto-rotate, a param panel (turns / blank Ø / pitch /
+groove width), live **Generate**, and **Download STL**. Geometry runs in a Web
+Worker (`src/drum-worker.js`) so the UI stays responsive; OCCT boots once and
+each tweak re-cuts. Default is 4 turns for a quick first paint — crank Turns up
+for the full drum (slower; see Performance).
 
 ## Layout
 

@@ -45,8 +45,8 @@
       <p class="sub">Capstan drum · Replicad + three.js</p>
 
       <div class="slider">
-        <div class="row"><label>Turns</label><output id="turns-v">1</output></div>
-        <input type="range" id="turns" min="1" max="8" step="1" value="1" />
+        <div class="row"><label>Turns</label><output id="turns-v">4</output></div>
+        <input type="range" id="turns" min="1" max="24" step="1" value="4" />
       </div>
       <div class="slider">
         <div class="row"><label>Blank Ø (mm)</label><output id="blankD-v">10.2</output></div>
@@ -64,8 +64,8 @@
       <button id="generate">Generate</button>
       <button id="download" class="ghost" disabled>Download STL</button>
       <div id="status">booting kernel…</div>
-      <p class="hint">Drag to orbit · scroll to zoom. Turns &gt; ~4 are slow
-        until the fuzzy-boolean fix.</p>
+      <p class="hint">Drag to orbit · scroll to zoom. More turns look better but
+        generate slower (~1 min for a full 23-turn drum).</p>
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -1,105 +1,47 @@
-// Headless de-risk prototype: can Replicad (OCCT-in-WASM) do the helical
-// groove sweep + boolean cut that the Python generator relies on?
+// Headless check of the drum geometry (the same buildDrum the browser worker
+// uses), exercising the fuzzy-boolean groove cut. Verifies the full multi-turn
+// drum meshes + exports.
 //
-// Mirrors the small-drum spec from cad/capstan_drum_generator.py:
-//   blank OD 10.2 mm, groove cut 1.2 wide x 0.6 deep, axial pitch 1.4 mm/rev.
-//
-// Run: npm run groove-test   (needs Node 20 — see .nvmrc)
+// Run:  npm run groove-test            (default 10 turns)
+//       TURNS=22 npm run groove-test   (full production drum)
 
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
 
-// --- Shim the CommonJS globals the Emscripten OCCT module expects ----------
-// replicad_single.js is ESM (`export default`) but its Node branch uses bare
-// `require`/`__dirname`. In pure ESM those are undefined, so provide them.
+// Shim the CommonJS globals the Emscripten OCCT module expects under ESM.
 const require = createRequire(import.meta.url);
 globalThis.require = globalThis.require ?? require;
-globalThis.__dirname = globalThis.__dirname ?? path.dirname(fileURLToPath(import.meta.url));
+globalThis.__dirname =
+  globalThis.__dirname ?? path.dirname(fileURLToPath(import.meta.url));
 
-// --- Boot the OpenCASCADE WASM kernel --------------------------------------
+// Boot the OpenCASCADE WASM kernel.
 const { default: initOpenCascade } = await import(
   "replicad-opencascadejs/src/replicad_single.js"
 );
-const wasmBinary = fs.readFileSync(
-  require.resolve("replicad-opencascadejs/src/replicad_single.wasm")
-);
-const OC = await initOpenCascade({ wasmBinary });
-
-const {
-  setOC,
-  makeCylinder,
-  makeCircle,
-  makeHelix,
-  assembleWire,
-  genericSweep,
-  exportSTEP,
-} = await import("replicad");
+const OC = await initOpenCascade({
+  wasmBinary: fs.readFileSync(
+    require.resolve("replicad-opencascadejs/src/replicad_single.wasm")
+  ),
+});
+const { setOC, exportSTEP } = await import("replicad");
 setOC(OC);
 
-// --- Parameters (small-drum spec) ------------------------------------------
-const blankR = 5.1; // blank radius (Ø10.2)
-const axialPitch = 1.4; // mm per rev
-const turns = Number(process.env.TURNS ?? 10); // override: TURNS=2 npm run …
-const height = turns * axialPitch;
-const grooveCutR = 0.6; // circular cutter radius -> 1.2 wide x 0.6 deep
-const pathR = blankR; // cutter centre rides the blank surface
+const { buildDrum } = await import("../src/drum.js");
 
-console.log("Booting OCCT + Replicad… kernel ready.");
+const turns = Number(process.env.TURNS ?? 10);
+console.log(`Kernel ready. Building drum (${turns} turns, fuzzy cut)…`);
 
 try {
-  const mcount = (s) => {
-    try {
-      const m = s.mesh({ tolerance: 0.01, angularTolerance: 0.1 });
-      return `${m.triangles.length / 3} tris`;
-    } catch (e) {
-      return `mesh-failed(${e.message || e})`;
-    }
-  };
-
-  // 1) drum blank
-  const blank = makeCylinder(blankR, height);
-  console.log(`   [probe] blank: ${mcount(blank)}`);
-
-  // 2) helical spine spanning the groove band.
-  //    Helix(θ)=(R cosθ, R sinθ, pitch·θ/2π); tangent at θ=0 = (0, R, pitch/2π).
-  const tangent = [0, pathR, axialPitch / (2 * Math.PI)];
-  const spine = makeHelix(axialPitch, height, pathR);
-
-  // 3) groove-cutter profile: a circle at the helix start, perpendicular to it.
-  const profile = assembleWire([makeCircle(grooveCutR, [pathR, 0, 0], tangent)]);
-
-  // 4) sweep -> helical groove tool
-  const grooveTool = genericSweep(profile, spine, { frenet: true });
-  console.log(`   [probe] grooveTool sweep: ${mcount(grooveTool)}`);
-
-  // 5) boolean-cut the groove.
-  //    KNOWN LIMIT: OCCT's default boolean returns an empty result for large
-  //    helical tools (fine up to a few turns, empty by ~10). Run a small TURNS
-  //    for a clean drum. Scaling to the full ~22-turn production drum is the
-  //    next task — fuzzy boolean via getOC(), or efficient batched cuts. A
-  //    naive sequential per-turn loop is correct but too slow in WASM.
-  const drum = blank.cut(grooveTool);
-  console.log(`   [probe] drum (blank - groove): ${mcount(drum)}`);
-
-  // 6) validate by meshing — this triangulates the BREP solid and throws on
-  //    an invalid result, so reaching here means the sweep+cut is sound.
+  const t0 = Date.now();
+  const drum = buildDrum({ turns });
   const mesh = drum.mesh({ tolerance: 0.01, angularTolerance: 0.1 });
-  const triCount = mesh.triangles.length / 3;
-  const vertCount = mesh.vertices.length / 3;
+  const tris = mesh.triangles.length / 3;
+  const secs = ((Date.now() - t0) / 1000).toFixed(1);
 
-  console.log("\n✅ HELIX SWEEP + BOOLEAN CUT WORKS");
-  console.log(
-    `   blank Ø${(blankR * 2).toFixed(1)} × ${height} mm, ${(
-      height / axialPitch
-    ).toFixed(1)} groove turns @ ${axialPitch} mm pitch`
-  );
-  console.log(`   meshed solid: ${triCount} triangles, ${vertCount} vertices`);
+  if (tris === 0) throw new Error("cut produced an empty solid (0 triangles)");
 
-  // 7) write outputs. blobSTL/exportSTEP route through OCCT's emscripten
-  //    virtual FS, which is flaky under headless Node (works in the bundler/
-  //    browser). For this CLI check we write the STL ourselves from the mesh.
   fs.mkdirSync(new URL("./out/", import.meta.url), { recursive: true });
   const outDir = fileURLToPath(new URL("./out/", import.meta.url));
   writeBinarySTL(
@@ -107,27 +49,27 @@ try {
     mesh.vertices,
     mesh.triangles
   );
-  console.log(`   wrote out/groove-test.stl (${triCount} facets)`);
+
+  console.log(`\n✅ FUZZY GROOVE CUT WORKS — ${turns} turns in ${secs}s`);
+  console.log(`   meshed solid: ${tris} triangles`);
+  console.log(`   wrote out/groove-test.stl`);
 
   try {
-    const stepBlob = exportSTEP([{ shape: drum, name: "groove_test" }]);
+    const stepBlob = exportSTEP([{ shape: drum, name: "drum" }]);
     fs.writeFileSync(
       path.join(outDir, "groove-test.step"),
       Buffer.from(await stepBlob.arrayBuffer())
     );
     console.log("   wrote out/groove-test.step");
   } catch (e) {
-    console.log(
-      `   (STEP export skipped under headless Node: ${e.message || e} — works in-browser)`
-    );
+    console.log(`   (STEP export skipped headless: ${e.message || e})`);
   }
 } catch (err) {
-  console.error("\n❌ FAILED:", err && err.message ? err.message : err);
+  console.error("\n❌ FAILED:", err?.message || err);
   process.exitCode = 1;
 }
 
-// --- Minimal binary STL writer from a replicad mesh ------------------------
-// vertices: flat [x,y,z, …]; triangles: flat vertex indices [i,j,k, …]
+// Minimal binary STL writer from a replicad mesh (vertices flat, triangles=idx).
 function writeBinarySTL(filePath, vertices, triangles) {
   const nTri = triangles.length / 3;
   const buf = Buffer.alloc(84 + nTri * 50);

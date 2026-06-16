@@ -10,6 +10,7 @@ import {
   assembleWire,
   genericSweep,
 } from "replicad";
+import { fuzzyCut } from "./fuzzy-cut.js";
 
 export const DEFAULTS = {
   blankD: 10.2, // blank outer diameter (mm)
@@ -33,5 +34,6 @@ export function buildDrum(params = {}) {
   const profile = assembleWire([makeCircle(grooveCutR, [pathR, 0, 0], tangent)]);
   const grooveTool = genericSweep(profile, spine, { frenet: true });
 
-  return blank.cut(grooveTool);
+  // Fuzzy boolean — the default-tolerance cut returns empty past a few turns.
+  return fuzzyCut(blank, grooveTool);
 }
