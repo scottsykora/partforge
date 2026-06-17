@@ -120,8 +120,9 @@ Typical generate: small drum ~6 s, big drum ~9 s, both ~15 s.
   **load-test socket (1/2" PVC)** · **sliding-block tensioner pockets** — toggle
   each in the "Big-drum features" section (set its key to 0 to disable).
 - **Tensioner block** (print 2): the sliding block with captured-nut hex trap,
-  jack-screw bore, and rope feed. Shown beside the big drum in Big/Both views and
-  exported as its own file (so a Big export becomes a zip: drum + block).
+  jack-screw bore, and rope feed. Shown **seated in pocket A** (screw bore
+  collinear with the pocket bore) in Big/Both views, but exported as a standalone
+  solid for printing (so a Big export becomes a zip: drum + block).
 - **Both:** drums placed at the real gear centre distance, motor tucked under.
 
 Not yet ported: sector (<360°) drums and the rope-lock bend-relief channels.

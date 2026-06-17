@@ -33,15 +33,19 @@ self.onmessage = async (e) => {
     const t0 = performance.now();
     try {
       if (lastParts) {
-        for (const part of lastParts) part.shape.delete?.();
+        for (const part of lastParts) {
+          part.shape.delete?.();
+          part.display?.delete?.();
+        }
         lastParts = null;
       }
       const parts = buildParts(msg.part, msg.params, progress);
       lastParts = parts;
 
       progress("meshing");
-      const shape =
-        parts.length === 1 ? parts[0].shape : makeCompound(parts.map((x) => x.shape));
+      // render the seated `display` geometry when a part has it, else `shape`
+      const display = parts.map((x) => x.display ?? x.shape);
+      const shape = display.length === 1 ? display[0] : makeCompound(display);
       const m = shape.mesh(DISPLAY_MESH);
       const positions = new Float32Array(m.vertices);
       const normals = new Float32Array(m.normals);

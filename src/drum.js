@@ -123,6 +123,25 @@ function buildTensionerBlock(p, d) {
   return blk;
 }
 
+// Seat a standalone block into tensioner pocket A for the assembly view. The
+// block's screw axis is placed at the pocket's local screw position (rp,*,
+// groove z) with the floor toward the pocket's deep end, then given the SAME
+// tilt + anchor rotation the pocket got — so the block bore is collinear with
+// the pocket bore (the screw runs straight through).
+function seatBlock(block, p, d) {
+  const rp = d.bigPitchR;
+  const sx = p.tensioner_pocket_w - 0.4 - 4.2; // block screw x (local)
+  const L = p.tensioner_pocket_l - 5;
+  const y0 = -0.5;
+  const y1 = 0.5 + p.tensioner_pocket_l;
+  const deepEnd = p.tensioner_pocket_depth; // side A pocket deep-end z (zb+H+1)
+  return block
+    .mirror("XY") // flip so the floor faces the pocket's deep end
+    .translate([rp - sx, (y0 + y1) / 2 - L / 2, deepEnd])
+    .rotate(p.tensioner_angle_deg, [rp, 0, 0], [0, 0, 1]) // same tilt as the pocket
+    .rotate(d.anchorA.ang, [0, 0, 0], [0, 0, 1]); // anchor A azimuth
+}
+
 function buildSmallDrum(p, d, onProgress) {
   const margin = d.axialPitch; // plain band above/below the groove
   const bodyH = d.smallBodyH;
@@ -323,25 +342,24 @@ export function buildParts(part = "small", params = {}, onProgress) {
     parts.push({ name: "big_drum", shape: big });
   }
 
-  // Tensioner block (print 2 per joint) — shown beside the big drum and exported
-  // as its own file, since it prints separately from the drum.
+  // Tensioner block (print 2 per joint): shown SEATED in pocket A so the screw
+  // path lines up, but exported as a standalone solid (at origin) for printing.
   if (part !== "small" && p.tensioner_pocket_depth > 0) {
     onProgress?.("building tensioner block");
-    const block = buildTensionerBlock(p, d).translate([
-      d.bigBlankR + 10,
-      -(p.tensioner_pocket_l - 5) / 2,
-      0,
-    ]);
-    parts.push({ name: "tensioner_block", shape: block });
+    const block = buildTensionerBlock(p, d);
+    parts.push({
+      name: "tensioner_block",
+      shape: block, // standalone, for export / slicing
+      display: seatBlock(block, p, d), // seated in pocket A, for the render
+    });
   }
 
   return parts;
 }
 
-// Display shape: a single solid, or a compound of the parts (meshes fine).
+// Display shape: a single solid, or a compound of the parts' display geometry
+// (meshes fine). Uses each part's seated `display` if present, else `shape`.
 export function buildDrum(part = "small", params = {}, onProgress) {
-  const parts = buildParts(part, params, onProgress);
-  return parts.length === 1
-    ? parts[0].shape
-    : makeCompound(parts.map((x) => x.shape));
+  const shapes = buildParts(part, params, onProgress).map((x) => x.display ?? x.shape);
+  return shapes.length === 1 ? shapes[0] : makeCompound(shapes);
 }
