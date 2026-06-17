@@ -30,9 +30,9 @@ export const DEFAULTS = {
 
   // motor mount (bottom of small drum)
   motor_mount: true,
-  motor_bolt_circle_d: 30.0, // EaglePower 8308 — measured 2026 (was 20)
+  motor_bolt_circle_d: 31.0, // EaglePower 8308 — measured 30, +1 for fit
   motor_bolt_count: 4,
-  motor_bolt_d: 3.4,
+  motor_bolt_d: 3.95, // M3 clearance, opened up after a test fit (was 3.4)
   motor_cbore_d: 6.0, // counterbore Ø so an M3 socket head sits flush
   motor_cbore_depth: 3.0, // = M3 socket-head height
   motor_flange_t: 6.0,
@@ -104,7 +104,7 @@ export const SECTIONS = [
     id: "motor",
     title: "Motor mount",
     presets: {
-      "Eagle Power 8308 (30 mm bolt circle)": { motor_mount: true, motor_bolt_circle_d: 30, motor_bolt_count: 4 },
+      "Eagle Power 8308 (31 mm bolt circle)": { motor_mount: true, motor_bolt_circle_d: 31, motor_bolt_count: 4, motor_bolt_d: 3.95 },
       "None": { motor_mount: false },
     },
     advanced: [
