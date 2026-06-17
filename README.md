@@ -5,138 +5,151 @@
 
 **▶ Open the app: https://scottsykora.github.io/Drum-Machine/**
 
-A web-native parametric capstan-drum generator — the goal is to tweak settings,
-tap **Generate**, and see the 3D-rendered drums in the browser, with STEP/STL
-export. It's the successor to the retired headless Python generator in the Robot
-KB repo (`cad/capstan_drum_generator.py`), which built the same geometry on
-OpenCASCADE via FreeCAD.
+Drum Machine is a free, browser-based tool for designing **capstan-drive drums** —
+the rope-and-pulley parts at the heart of a cable-driven robot joint. Pick your
+rope, reduction ratio, and motor, hit **Generate**, spin the 3D model around, and
+download print-ready **STL/STEP** files. No CAD software to install, no account,
+nothing to pay.
 
-## Why this stack
+It's aimed at one very practical goal: making it easy to print the parts for a
+**single capstan test joint** so you can try the technique on your bench before
+committing to a whole robot.
 
-The drums are real BREP solids (helical groove sweeps + boolean cuts), not
-meshes — so we need a CAD kernel, not just a 3D renderer. The browser-native
-way to run OpenCASCADE is **WebAssembly**:
+---
 
-- **[Replicad](https://replicad.xyz)** `0.23` — code-CAD on `opencascade.js`
-  (OCCT compiled to WASM). Sweeps, booleans, valid solids, STEP + STL export.
-- **[three.js](https://threejs.org)** `0.184` — render the meshed result.
-- **[Vite](https://vitejs.dev)** `8` — dev server / bundler for the eventual
-  static, no-backend web app.
-- **Node 20** (see `.nvmrc`) — the system default here is the EOL v16; run
-  `nvm use` in this folder. (You can't run the existing Python generator in the
-  browser — FreeCAD/OCCT isn't available in Pyodide — hence the JS/WASM port.)
+## What's a capstan drive?
 
-## Status — de-risk prototype (the hard part is proven)
+A capstan drive is a beautifully simple speed reducer: a thin **rope** wraps a
+few turns around a small **motor drum**, runs across to a large **output drum**,
+and is anchored at both ends. When the motor turns, the rope pulls the big drum
+around. The ratio of the two drum diameters *is* your gear reduction — no gear
+teeth anywhere.
 
-`scripts/groove-test.mjs` reproduces the make-or-break operation: a **helical
-groove swept and boolean-cut into a drum blank**, at the small-drum spec
-(Ø10.2 blank, 1.2 × 0.6 mm groove, 1.4 mm pitch).
+That simplicity buys a remarkable list of properties that are hard to get any
+other way, especially on a hobby budget:
 
-```
-npm run groove-test          # default 10 turns
-TURNS=1 npm run groove-test  # clean, fast — writes scripts/out/*.stl + *.step
-```
+- **Zero backlash** — the rope is always in tension, so there's no slop on
+  reversal. Great for precise, repeatable motion.
+- **High torque transparency / backdrivability** — you can feel forces *through*
+  the joint, which is exactly what you want for force control, teleoperation, and
+  safe human-robot contact.
+- **Low inertia & quiet** — no heavy gear trains; it runs nearly silently.
+- **Cheap and 3D-printable** — the drums print on a normal FDM printer; the
+  "gears" are literally rope.
 
-Findings:
+The catch is that good capstan drums are *fiddly geometry*: helical rope grooves
+at the right pitch and lead angle, a mid-rope anchor so the rope can't walk,
+bearing seats, motor mounts, end stops. Getting those right by hand in CAD is
+exactly the tedious part this tool automates.
 
-| Operation | Result |
-|---|---|
-| `makeHelix` → `genericSweep` (helical groove tool) | ✅ valid solid at any scale (133k-tri at 10 turns) |
-| Single boolean cut, few turns | ✅ valid grooved drum (12,834 tris at 1 turn), exports STL + STEP |
-| Default-tolerance cut, ~10+ turns | ❌ OCCT boolean returns **empty** (near-tangent helix) |
-| **Fuzzy boolean cut** (`src/fuzzy-cut.js`) | ✅ **full drum cuts** — 10 turns 13 s, 23 turns 55 s |
+## Why start with a test joint?
 
-**Conclusion: it works.** Replicad does the sweep + fuzzy cut + export the
-browser tool needs, including the full ~23-turn production small drum. Remaining
-work is performance, not feasibility.
+Before you design a 5-DOF arm around capstan drives, you want to answer a few
+questions with your own printer, rope, and motor:
 
-### Solved: the boolean (fuzzy)
+- Does my print + rope + groove actually hit the torque the math promises?
+- Is my construction technique sound (rope tension, anchoring, bearing fit)?
+- How does it *feel* — stiffness, backdrivability, end stops?
 
-OCCT's default boolean fails silently (empty result) on large near-tangent
-helical tools. `replicad`'s high-level `cut()` runs the one-shot
-`BRepAlgoAPI_Cut_3` constructor with zero fuzzy tolerance. `src/fuzzy-cut.js`
-drops to the raw kernel via `getOC()`, mirrors replicad's own cut, and adds
-**`SetFuzzyValue(1e-3)`** before `Build()` — which snaps near-coincident
-geometry and makes the cut robust at any turn count. (Skipping `SimplifyResult`,
-a slow coplanar-face merge, was also needed — it isn't required for a correct
-mesh/STEP.)
+A **test joint** is the cheapest way to learn all of that. Drum Machine lets you
+dial in your exact parameters, regenerate in seconds, and print a matched
+small-drum + big-drum + tensioner set — then build one joint, load-test it, and
+iterate. Change the rope diameter or reduction and you get a new, correct part
+set instantly, instead of re-deriving helix math in CAD.
 
-### Performance
+## Using the app
 
-The original ~55 s for the full drum turned out to be dominated by **meshing**,
-not the boolean — at print-grade tolerance (0.01 mm) the mesh alone was ~31 s
-(219 k triangles). Phase breakdown at 23 turns: sweep 0.6 s · cut 16 s · mesh
-31 s.
+1. Open **https://scottsykora.github.io/Drum-Machine/**.
+2. Choose a part: **Small drum**, **Big drum**, or **Both**.
+3. Start from the **presets** (the easy path), or expand **Advanced** for full
+   control over rope, reduction, motor mount, grooves, bearing seats, end stops,
+   and the load-test socket.
+4. Hit **Generate** to build the real 3D solid, then **Download STL** (print) or
+   **STEP** (edit in CAD).
 
-Fixes:
-- **Coarse display mesh** (0.05 mm — plenty smooth for a Ø10 mm part on screen):
-  meshing drops from ~31 s to ~1.6 s (≈29 k triangles).
-- **Lazy STL** — the fine print-grade mesh runs only on **Download STL**, not on
-  every generate.
+Everything runs locally in your browser — the geometry is computed with a real
+CAD kernel (OpenCASCADE, via WebAssembly), so the exports are true solids, not
+meshes.
 
-Result (per-generate, kernel already booted): **4 turns ≈ 2 s · 8 ≈ 5 s · full
-23-turn drum ≈ 18 s** (the fuzzy cut is now the ~16 s remainder at max turns).
-Further cut speedups (batched cuts) are a future option, no longer urgent.
+## Credit & inspiration — go support these makers
 
-### Headless-Node note
+This tool stands entirely on the shoulders of the people who made maker-scale
+capstan drives a thing. If you find Drum Machine useful, the best thing you can
+do is **go watch their work and support it directly.**
 
-`scripts/groove-test.mjs` shims `require`/`__dirname` so the Emscripten OCCT
-module boots under Node ESM, and writes STL from the mesh directly because
-`blobSTL` routes through OCCT's virtual FS (flaky headless, fine in-browser).
+### Aaed Musa — the reason any of us are doing this
 
-## Roadmap
+Aaed Musa has done more than anyone to bring capstan drives to hobbyist and
+professional roboticists, through his open-source designs and his (genuinely
+excellent) build videos. Start here:
 
-1. ~~Scale the boolean cut to a full drum~~ — **done** (fuzzy boolean).
-2. ~~Vite browser app: three.js viewer + param controls + STL download, Replicad
-   in a Web Worker~~ — **done** (`npm run dev`; see Browser app below).
-3. ~~Performance~~ — **mostly done** (coarse display mesh + lazy STL; full drum
-   ~18 s, default 4-turn ~2 s). Optional: batched cuts to trim the ~16 s cut.
-4. **Geometry port** — small + big drum cores **done** (groove / bore / stub /
-   flange; stripe grooves / bearing seats / bolt circle). Remaining: rope-lock
-   holes, tensioner pockets, end stops, load socket, motor counterbores.
-5. **Sectioned preset/advanced controls + part selector** — **done**
-   (`src/params.js` schema → `src/controls.js`).
+- 🎥 **CARA** — *[I Built a Robot Dog Using... Rope?](https://www.youtube.com/watch?v=8s9TjRz01fo)*
+- 🎥 **CARA 2.0** — *[I Built an Even Better Robot Dog](https://www.youtube.com/watch?v=GFLa1b1juUo)*
+- ▶️ YouTube: [@aaedmusa](https://youtube.com/@aaedmusa) · 📸 Instagram: [@aaedmusayt](https://www.instagram.com/aaedmusayt/) · 🌐 [aaedmusa.com](https://www.aaedmusa.com/projects)
+- 🧩 Open-source [Capstan-Drive](https://github.com/aaedmusa/Capstan-Drive) reference design
 
-## Browser app
+**Subscribe to his Patreon → https://patreon.com/aaedmusayt.** He shares full
+project files there, including an **[8:1 Capstan Drive Test Stand](https://www.patreon.com/posts/8-1-capstan-test-133816478)**
+and the **[CARA 2.0 build files](https://www.patreon.com/posts/cara-2-0-project-155326366)** —
+which are what the default parameters in this tool are modeled after. If this
+project saved you time, that Patreon is where the thanks should go.
+
+### Other cool capstan / cable-driven projects
+
+- **The 5439 Workshop** — 3D-printable rope-based actuators for a bipedal robot.
+  [YouTube](https://www.youtube.com/@The5439Workshop) ·
+  [Hackaday writeup](https://hackaday.com/2026/01/05/tying-up-loose-ends-on-a-rope-based-robot-actuator/)
+- **Stanley** — a capstan-based quadruped kit.
+  [Hackaday.io project](https://hackaday.io/project/176726-stanley-the-capstan-based-quadruped-kit) ·
+  [Hackaday writeup](https://hackaday.com/2021/08/07/capstan-drive-is-pulling-the-strings-on-this-dynamic-quadruped/)
+- **Barrett WAM** — the classic cable-driven research arm that proved how
+  transparent and backdrivable tendon/cable transmissions can be.
+
+---
+
+## Develop
+
+The app is a static, no-backend web app: a [Replicad](https://replicad.xyz)
+(OpenCASCADE-in-WebAssembly) CAD kernel running in a Web Worker, a
+[three.js](https://threejs.org) viewer, bundled with [Vite](https://vitejs.dev).
+Generation does a helical groove **sweep** plus a **fuzzy boolean cut**
+(`src/fuzzy-cut.js`) so the cut stays robust even on the full ~23-turn drum, then
+meshes a coarse preview (fine mesh runs only on STL download).
 
 ```bash
-nvm use && npm run dev      # http://localhost:5173
+nvm use            # Node 24 — pinned in .nvmrc (system default may be older)
+npm install
+npm run dev        # http://localhost:5173
+npm run build      # static site → dist/
 ```
 
-three.js viewer with auto-rotate, a **part selector** (Small / Big / Both), and
-a **sectioned control panel** — Rope · Reduction · Motor mount · Small drum ·
-Big drum. Each section offers **presets** (the easy choice) and an expandable
-**Advanced** block with the full per-part controls (schema in `src/params.js`,
-rendered by `src/controls.js`). Hit **Generate** to build; **Download STL**
-exports a print-grade mesh on demand.
+Pushing to `main` auto-deploys to the live site via GitHub Actions
+(`.github/workflows/deploy-pages.yml`).
 
-Geometry runs in a Web Worker (`src/drum-worker.js`) so the UI stays responsive,
-and a spinner overlay shows the live phase (booting · sweeping · cutting ·
-meshing) fed by progress messages. OCCT boots once; each Generate re-cuts.
-Typical generate: small drum ~6 s, big drum ~9 s, both ~15 s.
+| Path | What |
+|---|---|
+| `index.html`, `src/main.js` | app entry + viewer wiring |
+| `src/params.js` | parameter schema (presets + advanced controls) |
+| `src/controls.js` | builds the control panel from the schema |
+| `src/drum.js`, `src/drum-worker.js` | drum geometry; runs in a Web Worker |
+| `src/fuzzy-cut.js` | robust boolean cut via the raw OCCT kernel |
+| `scripts/groove-test.mjs` | headless helical-groove sanity check |
 
-### What's ported
+### What's modeled
 
-- **Small drum:** helical rope groove · mid-rope lock weave hole · **blind**
-  motor-shaft bore · 608ZZ support stub (root cone + tip chamfer) · motor-mount
-  flange + standoff + bolt holes.
-- **Big drum:** worm-gear stripe grooves (N left-handed helices) · center bore ·
-  6808 bearing seats (both faces) · link bolt circle · **travel end stops** ·
-  **load-test socket (1/2" PVC)** · **sliding-block tensioner pockets** — toggle
-  each in the "Big-drum features" section (set its key to 0 to disable).
-- **Tensioner block** (print 2): the sliding block with captured-nut hex trap,
-  jack-screw bore, and rope feed. Shown **seated in pocket A** (screw bore
-  collinear with the pocket bore) in Big/Both views, but exported as a standalone
-  solid for printing (so a Big export becomes a zip: drum + block).
-- **Both:** drums placed at the real gear centre distance, motor tucked under.
+- **Small drum:** helical rope groove · mid-rope lock weave hole · blind
+  motor-shaft bore · bearing support stub · motor-mount flange + bolt holes.
+- **Big drum:** worm-style stripe grooves · center bore · bearing seats (both
+  faces) · link bolt circle · travel end stops · load-test socket (1/2" PVC) ·
+  sliding-block tensioner pockets (each toggleable).
+- **Tensioner block:** captured-nut jack-screw block, exported alongside the drum.
+- **Both:** drums placed at the true center distance with the motor tucked under.
 
-Not yet ported: sector (<360°) drums and the rope-lock bend-relief channels.
+Not yet modeled: sector (<360°) drums and rope-lock bend-relief channels.
 
-## Layout
+## License & attribution
 
-```
-.nvmrc                  Node 20
-package.json            deps + scripts
-scripts/groove-test.mjs helical-groove de-risk prototype
-scripts/out/            generated STL/STEP (gitignored)
-```
+The capstan-drive concept and the reference geometry this tool is modeled on are
+the work of **[Aaed Musa](https://www.aaedmusa.com/)** (and the broader community
+above). This generator is an independent tool for producing printable parts;
+please support the original creators via the links above.
