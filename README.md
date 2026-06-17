@@ -1,9 +1,14 @@
 # Drum Machine
 
+[![Live app](https://img.shields.io/badge/live-Drum%20Machine-2ea44f?logo=github)](https://scottsykora.github.io/Drum-Machine/)
+[![Deploy to GitHub Pages](https://github.com/scottsykora/Drum-Machine/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/scottsykora/Drum-Machine/actions/workflows/deploy-pages.yml)
+
+**▶ Open the app: https://scottsykora.github.io/Drum-Machine/**
+
 A web-native parametric capstan-drum generator — the goal is to tweak settings,
 tap **Generate**, and see the 3D-rendered drums in the browser, with STEP/STL
-export. It's a companion to the headless Python generator in the Robot KB repo
-(`cad/capstan_drum_generator.py`), which builds the same geometry on
+export. It's the successor to the retired headless Python generator in the Robot
+KB repo (`cad/capstan_drum_generator.py`), which built the same geometry on
 OpenCASCADE via FreeCAD.
 
 ## Why this stack
