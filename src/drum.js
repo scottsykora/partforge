@@ -251,12 +251,17 @@ function buildBigDrum(p, d, onProgress) {
   return drum;
 }
 
-export function buildDrum(part = "small", params = {}, onProgress) {
+// Returns the drum(s) as a list of named parts: one entry for "small"/"big",
+// two for "both". Each part is a single solid, so each exports cleanly on its
+// own (a compound trips up the STEP/STL writers).
+export function buildParts(part = "small", params = {}, onProgress) {
   const p = { ...DEFAULTS, ...params };
   const d = derive(p);
 
-  if (part === "small") return buildSmallDrum(p, d, onProgress);
-  if (part === "big") return buildBigDrum(p, d, onProgress);
+  if (part === "small")
+    return [{ name: "small_drum", shape: buildSmallDrum(p, d, onProgress) }];
+  if (part === "big")
+    return [{ name: "big_drum", shape: buildBigDrum(p, d, onProgress) }];
 
   // both — show the real meshing relationship: parallel axes at the gear
   // centre distance (small_pitch_r + big_pitch_r, so the pitch circles touch),
@@ -268,5 +273,16 @@ export function buildDrum(part = "small", params = {}, onProgress) {
   const big = buildBigDrum(p, d, onProgress);
   const baseH = p.motor_mount ? p.motor_flange_t + p.motor_standoff_h : 0;
   const centerDist = d.smallPitchR + d.bigPitchR;
-  return makeCompound([small.translate([-centerDist, 0, -baseH]), big]);
+  return [
+    { name: "small_drum", shape: small.translate([-centerDist, 0, -baseH]) },
+    { name: "big_drum", shape: big },
+  ];
+}
+
+// Display shape: a single solid, or a compound of the parts (meshes fine).
+export function buildDrum(part = "small", params = {}, onProgress) {
+  const parts = buildParts(part, params, onProgress);
+  return parts.length === 1
+    ? parts[0].shape
+    : makeCompound(parts.map((x) => x.shape));
 }

@@ -123,15 +123,10 @@ worker.onmessage = ({ data }) => {
         `${data.triangles.toLocaleString()} triangles · ${(data.ms / 1000).toFixed(1)} s`
       );
       break;
-    case "stl":
+    case "download":
       hideBusy();
-      triggerDownload(data.stl, "drum.stl", "model/stl");
-      setStatus("STL downloaded");
-      break;
-    case "step":
-      hideBusy();
-      triggerDownload(data.step, "drum.step", "application/step");
-      setStatus("STEP downloaded");
+      triggerDownload(data.data, data.filename, data.mime);
+      setStatus(`${data.filename} downloaded`);
       break;
     case "error":
       hideBusy();

@@ -11,6 +11,7 @@
     "groove-test": "node scripts/groove-test.mjs"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "replicad": "^0.23.1",
     "replicad-opencascadejs": "^0.23.0",
     "three": "^0.184.0"
