@@ -76,6 +76,53 @@ function tensionerTools(p, d, bodyH, grooveZ, top) {
   return tools.map((t) => t.rotate(p.tensioner_angle_deg, [rp, 0, 0], [0, 0, 1]));
 }
 
+// Hexagonal prism (nut trap) — cross-section in the X–Z plane centred at
+// (cx, cz), running along Y from yLo for length nt. A vertex-up hexagon has its
+// flats facing ±X (the block side walls), so the captured nut can't spin.
+function hexPrism(cx, cz, r, yLo, nt) {
+  let pen = draw([0, r]); // first vertex at top
+  for (let i = 1; i < 6; i++) {
+    const a = Math.PI / 2 + (i * Math.PI) / 3;
+    pen = pen.lineTo([r * Math.cos(a), r * Math.sin(a)]);
+  }
+  return pen
+    .close()
+    .sketchOnPlane("XY")
+    .extrude(nt) // prism along +Z
+    .rotate(-90, [0, 0, 0], [1, 0, 0]) // stand it up along +Y
+    .translate([cx, yLo, cz]);
+}
+
+// The sliding block the rope ties to (print 2 per joint): box sized to the
+// pocket, with a jack-screw clearance bore, a captured-nut hex trap + slide-in
+// slot, and a snug rope feed hole with a knot pocket behind. Ported from
+// build_tensioner_block() in the FreeCAD generator.
+function buildTensionerBlock(p, d) {
+  const L = p.tensioner_pocket_l - 5.0; // leaves ~5 mm of tensioning travel
+  const W = p.tensioner_pocket_w - 0.4;
+  const H = p.tensioner_pocket_depth - 0.4;
+  const cz = p.tensioner_pocket_depth - d.bigGrooveZ0; // screw axis above floor
+  let blk = makeBox([0, 0, 0], [W, L, H]);
+
+  const sx = W - 4.2; // screw axis off-centre toward the outboard face
+  blk = blk.cut(makeCylinder((p.tensioner_screw_d + 0.4) / 2, L + 2, [sx, -1, cz], [0, 1, 0]));
+
+  // captured-nut hex trap + slide-in slot up to the open face
+  const af = p.tensioner_nut_af + 0.3;
+  const hexR = af / Math.sqrt(3);
+  const nt = p.tensioner_nut_t + 0.5;
+  const ny = L / 2;
+  blk = blk.cut(hexPrism(sx, cz, hexR, ny - nt / 2, nt));
+  blk = blk.cut(makeBox([sx - af / 2, ny - nt / 2, cz], [sx + af / 2, ny + nt / 2, H + 1]));
+
+  // rope feed hole (snug) + knot pocket behind
+  const rx = 2.3;
+  const rz = 2.4;
+  blk = blk.cut(makeCylinder(0.55 * p.rope_d, L + 2, [rx, -1, rz], [0, 1, 0]));
+  blk = blk.cut(makeCylinder(1.5 * p.rope_d, 2 * p.rope_d, [rx, L + 0.01, rz], [0, -1, 0]));
+  return blk;
+}
+
 function buildSmallDrum(p, d, onProgress) {
   const margin = d.axialPitch; // plain band above/below the groove
   const bodyH = d.smallBodyH;
@@ -258,25 +305,37 @@ export function buildParts(part = "small", params = {}, onProgress) {
   const p = { ...DEFAULTS, ...params };
   const d = derive(p);
 
-  if (part === "small")
-    return [{ name: "small_drum", shape: buildSmallDrum(p, d, onProgress) }];
-  if (part === "big")
-    return [{ name: "big_drum", shape: buildBigDrum(p, d, onProgress) }];
+  const parts = [];
+  if (part === "small") {
+    parts.push({ name: "small_drum", shape: buildSmallDrum(p, d, onProgress) });
+  } else if (part === "big") {
+    parts.push({ name: "big_drum", shape: buildBigDrum(p, d, onProgress) });
+  } else {
+    // both — real meshing relationship: parallel axes at the gear centre
+    // distance (pitch circles touch), the small drum dropped by its motor-mount
+    // stack so its groove body lines up with the big drum's band.
+    onProgress?.("building small drum");
+    const small = buildSmallDrum(p, d, onProgress);
+    onProgress?.("building big drum");
+    const big = buildBigDrum(p, d, onProgress);
+    const baseH = p.motor_mount ? p.motor_flange_t + p.motor_standoff_h : 0;
+    parts.push({ name: "small_drum", shape: small.translate([-d.centerDist, 0, -baseH]) });
+    parts.push({ name: "big_drum", shape: big });
+  }
 
-  // both — show the real meshing relationship: parallel axes at the gear
-  // centre distance (small_pitch_r + big_pitch_r, so the pitch circles touch),
-  // with the small drum dropped by its motor-mount stack so its groove body
-  // lines up with the big drum's groove band and the motor tucks underneath.
-  onProgress?.("building small drum");
-  const small = buildSmallDrum(p, d, onProgress);
-  onProgress?.("building big drum");
-  const big = buildBigDrum(p, d, onProgress);
-  const baseH = p.motor_mount ? p.motor_flange_t + p.motor_standoff_h : 0;
-  const centerDist = d.smallPitchR + d.bigPitchR;
-  return [
-    { name: "small_drum", shape: small.translate([-centerDist, 0, -baseH]) },
-    { name: "big_drum", shape: big },
-  ];
+  // Tensioner block (print 2 per joint) — shown beside the big drum and exported
+  // as its own file, since it prints separately from the drum.
+  if (part !== "small" && p.tensioner_pocket_depth > 0) {
+    onProgress?.("building tensioner block");
+    const block = buildTensionerBlock(p, d).translate([
+      d.bigBlankR + 10,
+      -(p.tensioner_pocket_l - 5) / 2,
+      0,
+    ]);
+    parts.push({ name: "tensioner_block", shape: block });
+  }
+
+  return parts;
 }
 
 // Display shape: a single solid, or a compound of the parts (meshes fine).

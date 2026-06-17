@@ -65,6 +65,8 @@ export const DEFAULTS = {
   tensioner_screw_d: 3.0,
   tensioner_head_d: 6.0,
   tensioner_angle_deg: 20.0,
+  tensioner_nut_af: 5.5, // captured nut across-flats
+  tensioner_nut_t: 2.4, // captured nut thickness
 };
 
 export const SECTIONS = [
