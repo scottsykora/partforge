@@ -24,7 +24,8 @@ scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x202024, 1.1));
 const key = new THREE.DirectionalLight(0xffffff, 1.4);
 key.position.set(8, 14, 10);
 scene.add(key);
-scene.add(new THREE.GridHelper(40, 20, 0x2c333d, 0x222831));
+// 1 cm grid (mm units): 200 mm wide, 20 divisions -> 10 mm squares.
+scene.add(new THREE.GridHelper(200, 20, 0x2c333d, 0x222831));
 
 const material = new THREE.MeshStandardMaterial({
   color: 0x9fb4cc,
