@@ -156,19 +156,37 @@ export const SECTIONS = [
   {
     id: "features",
     title: "Big-drum features",
-    presets: {
-      "Socket + stops + tensioners": { load_socket_pipe_od: 21.34, end_stop_arc: 6, tensioner_pocket_depth: 7 },
-      "Tensioners + stops (no socket)": { load_socket_pipe_od: 0, end_stop_arc: 6, tensioner_pocket_depth: 7 },
-      "None": { load_socket_pipe_od: 0, end_stop_arc: 0, tensioner_pocket_depth: 0 },
-    },
-    advanced: [
-      { key: "load_socket_pipe_od", label: "Load-socket pipe diameter (0=off)", unit: "mm", min: 0, max: 30, step: 0.1 },
-      { key: "end_stop_arc", label: "End-stop arc (0=off)", unit: "°", min: 0, max: 15, step: 1 },
-      { key: "tensioner_pocket_depth", label: "Tensioner pocket depth (0=off)", unit: "mm", min: 0, max: 12, step: 0.5 },
-      { key: "tensioner_angle_deg", label: "Tensioner tilt", unit: "°", min: 10, max: 35, step: 1 },
-      { key: "tensioner_screw_offset", label: "Screw axial offset", unit: "mm", min: 0, max: 4, step: 0.5 },
-      { key: "tensioner_pocket_l", label: "Pocket length", unit: "mm", min: 10, max: 26, step: 1 },
-      { key: "tensioner_travel", label: "Tensioner travel", unit: "mm", min: 3, max: 16, step: 0.5 },
+    // Each feature is a checkbox; `key` is its on/off param (0 = off), `on` is
+    // the value to set when enabled. Its `sliders` are revealed when checked.
+    features: [
+      {
+        label: "Load socket",
+        key: "load_socket_pipe_od",
+        on: 21.34,
+        sliders: [
+          { key: "load_socket_pipe_od", label: "Pipe diameter", unit: "mm", min: 10, max: 30, step: 0.1 },
+        ],
+      },
+      {
+        label: "End stops",
+        key: "end_stop_arc",
+        on: 6,
+        sliders: [
+          { key: "end_stop_arc", label: "Arc", unit: "°", min: 1, max: 15, step: 1 },
+        ],
+      },
+      {
+        label: "Tensioner pockets",
+        key: "tensioner_pocket_depth",
+        on: 7,
+        sliders: [
+          { key: "tensioner_pocket_depth", label: "Pocket depth", unit: "mm", min: 1, max: 12, step: 0.5 },
+          { key: "tensioner_angle_deg", label: "Tilt", unit: "°", min: 10, max: 35, step: 1 },
+          { key: "tensioner_screw_offset", label: "Screw axial offset", unit: "mm", min: 0, max: 4, step: 0.5 },
+          { key: "tensioner_pocket_l", label: "Pocket length", unit: "mm", min: 10, max: 26, step: 1 },
+          { key: "tensioner_travel", label: "Tensioner travel", unit: "mm", min: 3, max: 16, step: 0.5 },
+        ],
+      },
     ],
   },
 ];

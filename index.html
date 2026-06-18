@@ -32,13 +32,16 @@
         border: 1px solid #2c333d; border-radius: 8px; padding: 9px 10px;
         margin-bottom: 8px; background: #20262e;
       }
-      .sec-head { display: flex; align-items: center; justify-content: space-between;
-        gap: 8px; }
-      .sec-title { font-weight: 600; color: #e7ebf1; }
+      .sec-title { font-weight: 600; color: #e7ebf1; margin-bottom: 7px; }
       select.preset {
-        flex: 1; max-width: 150px; background: #161a20; color: #cdd4dd;
-        border: 1px solid #2c333d; border-radius: 6px; padding: 4px 6px; font-size: 11px;
+        width: 100%; background: #161a20; color: #cdd4dd;
+        border: 1px solid #2c333d; border-radius: 6px; padding: 5px 7px; font-size: 11px;
       }
+      .feat { display: flex; align-items: center; gap: 8px; margin: 6px 0;
+        color: #cdd4dd; cursor: pointer; }
+      .feat input { cursor: pointer; }
+      .feat-group { margin: 2px 0 8px; padding-left: 9px; border-left: 2px solid #2c333d; }
+      .feat-group.hidden { display: none; }
       .adv-toggle {
         margin-top: 8px; padding: 3px 0; width: 100%; border: 0; border-radius: 5px;
         background: transparent; color: #7d8794; cursor: pointer; font-size: 11px;
