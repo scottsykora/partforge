@@ -1,8 +1,9 @@
 // Builds the sectioned control panel from the SECTIONS schema.
 //
 // Most sections show a preset picker (below the title) plus an expandable
-// "Advanced" block of sliders. The "features" section instead shows a checkbox
-// per feature; ticking one enables it and reveals its sliders under Advanced.
+// "Advanced" block of sliders. The "features" section instead puts, under
+// Advanced, a checkbox per feature followed by its own controls — ticking one
+// enables it and reveals those controls right below it.
 // All controls mutate the shared `params` object and call onDirty() on change.
 
 import { SECTIONS } from "./params.js";
@@ -47,7 +48,7 @@ function makeSlider(def, params, onChange) {
   return { wrap, sync };
 }
 
-// A collapsible "Advanced ▾" block. Returns { adv, toggle, open() }.
+// A collapsible "Advanced ▾" block. Returns { adv, toggle }.
 function advancedBlock() {
   const adv = el("div", "adv hidden");
   const toggle = el("button", "adv-toggle", "Advanced ▾");
@@ -55,11 +56,7 @@ function advancedBlock() {
     const hidden = adv.classList.toggle("hidden");
     toggle.textContent = hidden ? "Advanced ▾" : "Advanced ▴";
   });
-  const open = () => {
-    adv.classList.remove("hidden");
-    toggle.textContent = "Advanced ▴";
-  };
-  return { adv, toggle, open };
+  return { adv, toggle };
 }
 
 export function buildControls(root, params, onDirty) {
@@ -109,18 +106,18 @@ function buildPresetSection(section, sec, params, onDirty) {
 }
 
 function buildFeatureSection(section, sec, params, onDirty) {
-  const { adv, toggle, open } = advancedBlock();
+  // Everything lives under Advanced: each feature is a checkbox followed by its
+  // own controls, which appear directly below it when the box is checked.
+  const { adv, toggle } = advancedBlock();
+  section.append(toggle, adv);
 
   for (const feat of sec.features) {
-    // checkbox (below the title), always visible — enables/disables the feature
     const checkRow = el("label", "feat");
     const box = document.createElement("input");
     box.type = "checkbox";
     box.checked = params[feat.key] > 0;
     checkRow.append(box, el("span", "", feat.label));
-    section.append(checkRow);
 
-    // this feature's sliders live under Advanced, shown only when it's on
     const group = el("div", "feat-group");
     const syncs = [];
     for (const def of feat.sliders) {
@@ -129,21 +126,19 @@ function buildFeatureSection(section, sec, params, onDirty) {
       syncs.push(s.sync);
     }
     group.classList.toggle("hidden", !box.checked);
-    adv.append(group);
 
     box.addEventListener("change", () => {
       if (box.checked) {
         if (!(params[feat.key] > 0)) params[feat.key] = feat.on; // enable
         syncs.forEach((s) => s());
         group.classList.remove("hidden");
-        open(); // reveal the freshly-enabled sliders
       } else {
         params[feat.key] = 0; // disable
         group.classList.add("hidden");
       }
       onDirty?.();
     });
-  }
 
-  section.append(toggle, adv);
+    adv.append(checkRow, group); // checkbox, then its controls right below
+  }
 }
