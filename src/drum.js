@@ -67,11 +67,15 @@ function tensionerTools(p, d, bodyH, grooveZ, top) {
   const y0 = -0.5;
   const y1 = 0.5 + L;
   const zb = top ? bodyH - H : -1.0;
+  // Screw axis sits offset from the rope-groove plane toward the nearer drum
+  // face, so the bolt bore + its access cutout clear the rope hole. The rope
+  // hole stays at grooveZ; only the screw moves.
+  const sz = grooveZ + (top ? p.tensioner_screw_offset : -p.tensioner_screw_offset);
   const tools = [
     makeBox([rp - (W - 4), y0, zb], [rp + 4, y1, zb + H + 1]), // pocket
-    makeCylinder((p.tensioner_screw_d + 0.4) / 2, 4.5, [rp, y1 - 0.5, grooveZ], [0, 1, 0]), // screw bore
-    makeCylinder(hd / 2, 30, [rp, y1 + 3, grooveZ], [0, 1, 0]), // head access bore
-    makeBox([rp, y1 + 3, grooveZ - hd / 2], [rp + 15, y1 + 33, grooveZ + hd / 2]), // head clearance
+    makeCylinder((p.tensioner_screw_d + 0.4) / 2, 4.5, [rp, y1 - 0.5, sz], [0, 1, 0]), // screw bore
+    makeCylinder(hd / 2, 30, [rp, y1 + 3, sz], [0, 1, 0]), // head access bore
+    makeBox([rp, y1 + 3, sz - hd / 2], [rp + 15, y1 + 33, sz + hd / 2]), // head clearance
   ];
   return tools.map((t) => t.rotate(p.tensioner_angle_deg, [rp, 0, 0], [0, 0, 1]));
 }
@@ -101,7 +105,10 @@ function buildTensionerBlock(p, d) {
   const L = p.tensioner_pocket_l - 5.0; // leaves ~5 mm of tensioning travel
   const W = p.tensioner_pocket_w - 0.4;
   const H = p.tensioner_pocket_depth - 0.4;
-  const cz = p.tensioner_pocket_depth - d.bigGrooveZ0; // screw axis above floor
+  // screw axis above floor, shifted toward the open face by the same offset the
+  // pocket's screw bore got, so block + pocket bores stay collinear and the
+  // bolt hole clears the rope feed/knot hole below it
+  const cz = p.tensioner_pocket_depth - d.bigGrooveZ0 + p.tensioner_screw_offset;
   let blk = makeBox([0, 0, 0], [W, L, H]);
 
   const sx = W - 4.2; // screw axis off-centre toward the outboard face

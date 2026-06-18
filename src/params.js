@@ -67,6 +67,9 @@ export const DEFAULTS = {
   tensioner_angle_deg: 20.0,
   tensioner_nut_af: 5.5, // captured nut across-flats
   tensioner_nut_t: 2.4, // captured nut thickness
+  tensioner_screw_offset: 2.0, // axial shift of the jack-screw bore + its access
+  // cutout away from the rope plane, toward the nearer drum face, so the bolt
+  // hole clears the rope feed/knot hole (the rope hole stays at the groove)
 };
 
 export const SECTIONS = [
@@ -162,6 +165,7 @@ export const SECTIONS = [
       { key: "end_stop_arc", label: "End-stop arc (0=off)", unit: "°", min: 0, max: 15, step: 1 },
       { key: "tensioner_pocket_depth", label: "Tensioner pocket depth (0=off)", unit: "mm", min: 0, max: 12, step: 0.5 },
       { key: "tensioner_angle_deg", label: "Tensioner tilt", unit: "°", min: 10, max: 35, step: 1 },
+      { key: "tensioner_screw_offset", label: "Screw axial offset", unit: "mm", min: 0, max: 4, step: 0.5 },
     ],
   },
 ];
