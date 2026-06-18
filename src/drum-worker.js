@@ -16,9 +16,11 @@ const ready = (async () => {
   postMessage({ type: "ready" });
 })();
 
-// Display mesh is coarse — plenty smooth on screen and ~20× faster than the
-// print-grade tolerance, which is used only on export.
-const DISPLAY_MESH = { tolerance: 0.05, angularTolerance: 0.3 };
+// Display mesh is coarse — plenty smooth on screen, and the fine print-grade
+// tolerance is used only on export. angularTolerance 0.4 (vs 0.3) meshes ~40%
+// faster (~110k vs 164k tris on the big drum) — imperceptible on screen. Linear
+// tolerance stays fine (0.05) so groove edges read crisply.
+const DISPLAY_MESH = { tolerance: 0.05, angularTolerance: 0.4 };
 const PRINT_MESH = { tolerance: 0.01, angularTolerance: 0.1 };
 
 let lastParts = null; // [{ name, shape }]

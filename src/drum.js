@@ -290,10 +290,11 @@ function buildBigDrum(p, d, onProgress) {
       { ang: d.a0 + d.arc, z0: bandLo, z1: bodyH }, // side A: above its pocket
       { ang: d.a0 - p.end_stop_arc, z0: 0, z1: bodyH - bandLo }, // side B: below its pocket
     ];
-    for (const s of specs) {
-      const stop = annularSector(rootR, stopTipR, p.end_stop_arc, s.z1 - s.z0, s.z0);
-      drum = drum.fuse(stop.rotate(s.ang, [0, 0, 0], [0, 0, 1]));
-    }
+    // the two stops are disjoint, so add them both in a single fuse
+    const stops = specs.map((s) =>
+      annularSector(rootR, stopTipR, p.end_stop_arc, s.z1 - s.z0, s.z0).rotate(s.ang, [0, 0, 0], [0, 0, 1])
+    );
+    drum = drum.fuse(makeCompound(stops));
   }
 
   // --- load-test pipe socket (radial, wedge centre, mid-height) ---
@@ -317,12 +318,17 @@ function buildBigDrum(p, d, onProgress) {
   // --- sliding-block tensioner pockets at each rope anchor ---
   if (p.tensioner_pocket_depth > 0) {
     onProgress?.("cutting tensioner pockets");
+    const anchorTools = [];
     for (const s of [{ a: d.anchorA, top: false }, { a: d.anchorB, top: true }]) {
-      for (let t of tensionerTools(p, d, bodyH, s.a.z, s.top)) {
-        if (s.top) t = t.mirror("XZ");
-        drum = drum.cut(t.rotate(s.a.ang, [0, 0, 0], [0, 0, 1]));
-      }
+      let tools = tensionerTools(p, d, bodyH, s.a.z, s.top);
+      if (s.top) tools = tools.map((t) => t.mirror("XZ"));
+      tools = tools.map((t) => t.rotate(s.a.ang, [0, 0, 0], [0, 0, 1]));
+      // union one anchor's overlapping tools (pocket + bores + clearance) into a
+      // single solid; the two anchors are disjoint, so all of it comes out in one
+      // boolean instead of eight sequential cuts against the grooved drum
+      anchorTools.push(tools.reduce((acc, t) => acc.fuse(t)));
     }
+    drum = drum.cut(makeCompound(anchorTools));
   }
 
   return drum;
