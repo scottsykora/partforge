@@ -66,6 +66,28 @@
       #status.err { color: #f8746c; }
       .hint { margin-top: 8px; color: #6b7480; font-size: 10px; }
 
+      /* part tabs, floated top-centre over the viewport */
+      #topbar {
+        position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+        z-index: 15;
+      }
+      #topbar .seg {
+        margin: 0; padding: 4px; background: #1f242c; border: 1px solid #2c333d;
+        border-radius: 9px; box-shadow: 0 6px 24px rgba(0,0,0,.35);
+      }
+      #topbar .seg button { min-width: 70px; padding: 7px 10px; }
+
+      /* centre "Generate" prompt, shown when the current tab has no mesh yet */
+      #center-generate {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        z-index: 16; display: none; padding: 14px 30px; border: 0; border-radius: 10px;
+        background: #3b82f6; color: #fff; font-weight: 600; font-size: 15px;
+        cursor: pointer; box-shadow: 0 8px 28px rgba(0,0,0,.45);
+      }
+      #center-generate.show { display: block; }
+      #center-generate:hover { background: #4b8ef7; }
+      #center-generate:disabled { opacity: .5; cursor: default; }
+
       #busy {
         position: fixed; inset: 0; z-index: 20; pointer-events: none;
         display: none; flex-direction: column; align-items: center;
@@ -83,15 +105,20 @@
   </head>
   <body>
     <div id="app"></div>
+
+    <div id="topbar">
+      <div class="seg" id="part">
+        <button data-part="small">Small</button>
+        <button data-part="big">Big</button>
+        <button data-part="both" class="on">Both</button>
+      </div>
+    </div>
+
+    <button id="center-generate">Generate</button>
+
     <div id="panel">
       <h1>Drum Machine</h1>
       <p class="sub">Capstan drum · Replicad + three.js</p>
-
-      <div class="seg" id="part">
-        <button data-part="small" class="on">Small</button>
-        <button data-part="big">Big</button>
-        <button data-part="both">Both</button>
-      </div>
 
       <div id="controls"></div>
 

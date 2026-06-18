@@ -24,8 +24,32 @@ const DISPLAY_MESH = { tolerance: 0.1, angularTolerance: 0.5 };
 const PRINT_MESH = { tolerance: 0.01, angularTolerance: 0.1 };
 
 let lastParts = null; // [{ name, shape }]
+let lastKey = null; // `${part}:${JSON.stringify(params)}` the built parts are for
 
 const progress = (phase) => postMessage({ type: "progress", phase });
+
+function disposeLast() {
+  if (lastParts) {
+    for (const part of lastParts) {
+      part.shape.delete?.();
+      part.display?.delete?.();
+    }
+  }
+  lastParts = null;
+  lastKey = null;
+}
+
+// Build the parts for part+params, reusing the last build when unchanged — so an
+// export right after a generate doesn't rebuild, and exporting a tab the main
+// thread already has cached just rebuilds that one part on demand.
+function ensureBuilt(part, params, prog) {
+  const key = part + ":" + JSON.stringify(params);
+  if (lastParts && lastKey === key) return lastParts;
+  disposeLast();
+  lastParts = buildParts(part, params, prog);
+  lastKey = key;
+  return lastParts;
+}
 
 self.onmessage = async (e) => {
   await ready;
@@ -34,15 +58,7 @@ self.onmessage = async (e) => {
   if (msg.type === "generate") {
     const t0 = performance.now();
     try {
-      if (lastParts) {
-        for (const part of lastParts) {
-          part.shape.delete?.();
-          part.display?.delete?.();
-        }
-        lastParts = null;
-      }
-      const parts = buildParts(msg.part, msg.params, progress);
-      lastParts = parts;
+      const parts = ensureBuilt(msg.part, msg.params, progress);
 
       progress("meshing");
       // render the seated `display` geometry when a part has it, else `shape`
@@ -55,6 +71,7 @@ self.onmessage = async (e) => {
       postMessage(
         {
           type: "mesh",
+          part: msg.part,
           positions,
           normals,
           indices,
@@ -67,27 +84,31 @@ self.onmessage = async (e) => {
       postMessage({ type: "error", message: String(err?.message || err) });
     }
   } else if (msg.type === "export-stl") {
-    await exportParts("stl", "model/stl", (shape) => shape.blobSTL(PRINT_MESH).arrayBuffer());
+    await exportParts("stl", "model/stl", (shape) => shape.blobSTL(PRINT_MESH).arrayBuffer(), msg.part, msg.params);
   } else if (msg.type === "export-step") {
-    await exportParts("step", "application/step", (shape, name) =>
-      exportSTEP([{ shape, name }]).arrayBuffer()
+    await exportParts(
+      "step", "application/step",
+      (shape, name) => exportSTEP([{ shape, name }]).arrayBuffer(),
+      msg.part, msg.params
     );
   }
 };
 
-// Export every part: one file if there's a single part, else a zip of named
-// per-part files. `toBuffer(shape, name)` returns an ArrayBuffer for that part.
-async function exportParts(ext, mime, toBuffer) {
-  if (!lastParts) return;
+// Export the part: one file if it's a single solid, else a zip of named per-part
+// files. Rebuilds the requested part first if it isn't the one currently built
+// (e.g. exporting a tab the main thread had cached). `toBuffer(shape, name)`
+// returns an ArrayBuffer for that part.
+async function exportParts(ext, mime, toBuffer, part, params) {
   try {
+    const parts = ensureBuilt(part, params, progress);
     progress(`exporting ${ext.toUpperCase()}`);
-    if (lastParts.length === 1) {
-      const data = await toBuffer(lastParts[0].shape, lastParts[0].name);
-      postMessage({ type: "download", data, filename: `${lastParts[0].name}.${ext}`, mime });
+    if (parts.length === 1) {
+      const data = await toBuffer(parts[0].shape, parts[0].name);
+      postMessage({ type: "download", data, filename: `${parts[0].name}.${ext}`, mime });
     } else {
       const entries = {};
-      for (const part of lastParts) {
-        entries[`${part.name}.${ext}`] = new Uint8Array(await toBuffer(part.shape, part.name));
+      for (const p of parts) {
+        entries[`${p.name}.${ext}`] = new Uint8Array(await toBuffer(p.shape, p.name));
       }
       const zip = zipSync(entries, { level: 0 }); // store (these don't compress well)
       postMessage({ type: "download", data: zip, filename: "drums.zip", mime: "application/zip" });
