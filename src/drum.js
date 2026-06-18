@@ -102,8 +102,9 @@ function hexPrism(cx, cz, r, yLo, nt) {
 // slot, and a snug rope feed hole with a knot pocket behind. Ported from
 // build_tensioner_block() in the FreeCAD generator.
 function buildTensionerBlock(p, d) {
-  const L = p.tensioner_pocket_l - 5.0; // leaves ~5 mm of tensioning travel
-  const W = p.tensioner_pocket_w - 0.4;
+  const L = Math.max(4, p.tensioner_pocket_l - p.tensioner_travel); // sliding travel in the pocket
+  const fit = 0.3; // total width clearance — block sits snug against the two pocket walls
+  const W = p.tensioner_pocket_w - fit;
   const H = p.tensioner_pocket_depth - 0.4;
   // screw axis above floor, shifted toward the open face by the same offset the
   // pocket's screw bore got, so block + pocket bores stay collinear and the
@@ -111,7 +112,10 @@ function buildTensionerBlock(p, d) {
   const cz = p.tensioner_pocket_depth - d.bigGrooveZ0 + p.tensioner_screw_offset;
   let blk = makeBox([0, 0, 0], [W, L, H]);
 
-  const sx = W - 4.2; // screw axis off-centre toward the outboard face
+  // screw at the pocket's rp axis with the block centred between the two walls:
+  // the pocket sits 4 mm outboard of rp, so the screw is (pocket_w − 4) from the
+  // inboard face, less half the side clearance.
+  const sx = p.tensioner_pocket_w - 4 - fit / 2;
   blk = blk.cut(makeCylinder((p.tensioner_screw_d + 0.4) / 2, L + 2, [sx, -1, cz], [0, 1, 0]));
 
   // captured-nut hex trap + slide-in slot up to the open face
@@ -137,8 +141,8 @@ function buildTensionerBlock(p, d) {
 // the pocket bore (the screw runs straight through).
 function seatBlock(block, p, d) {
   const rp = d.bigPitchR;
-  const sx = p.tensioner_pocket_w - 0.4 - 4.2; // block screw x (local)
-  const L = p.tensioner_pocket_l - 5;
+  const sx = p.tensioner_pocket_w - 4 - 0.15; // matches the centred block screw x (fit/2 = 0.15)
+  const L = Math.max(4, p.tensioner_pocket_l - p.tensioner_travel);
   const y0 = -0.5;
   const y1 = 0.5 + p.tensioner_pocket_l;
   const deepEnd = p.tensioner_pocket_depth; // side A pocket deep-end z (zb+H+1)

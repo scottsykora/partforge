@@ -60,8 +60,9 @@ export const DEFAULTS = {
   stop_root_depth: 2.0,
   stop_tip_extra: 1.2,
   tensioner_pocket_depth: 7.0, // sliding-block tensioner pockets; 0 = off
-  tensioner_pocket_l: 14.0,
+  tensioner_pocket_l: 18.0,
   tensioner_pocket_w: 10.0,
+  tensioner_travel: 8.0, // block is this much shorter than the pocket (slide range)
   tensioner_screw_d: 3.0,
   tensioner_head_d: 6.0,
   tensioner_angle_deg: 20.0,
@@ -166,6 +167,8 @@ export const SECTIONS = [
       { key: "tensioner_pocket_depth", label: "Tensioner pocket depth (0=off)", unit: "mm", min: 0, max: 12, step: 0.5 },
       { key: "tensioner_angle_deg", label: "Tensioner tilt", unit: "°", min: 10, max: 35, step: 1 },
       { key: "tensioner_screw_offset", label: "Screw axial offset", unit: "mm", min: 0, max: 4, step: 0.5 },
+      { key: "tensioner_pocket_l", label: "Pocket length", unit: "mm", min: 10, max: 26, step: 1 },
+      { key: "tensioner_travel", label: "Tensioner travel", unit: "mm", min: 3, max: 16, step: 0.5 },
     ],
   },
 ];
