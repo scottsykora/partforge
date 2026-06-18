@@ -6,9 +6,9 @@
 
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import wasmUrl from "replicad-opencascadejs/src/replicad_single.wasm?url";
-import { setOC, exportSTEP, makeCompound } from "replicad";
+import { setOC, exportSTEP } from "replicad";
 import { zipSync } from "fflate";
-import { buildParts } from "./drum.js";
+import { buildParts, buildSubPart } from "./drum.js";
 
 const ready = (async () => {
   const OC = await opencascade({ locateFile: () => wasmUrl });
@@ -56,29 +56,26 @@ self.onmessage = async (e) => {
   const msg = e.data;
 
   if (msg.type === "generate") {
+    // Build + mesh each requested sub-part ("small" | "big" | "block")
+    // independently, so the main thread can cache them and compose any view.
     const t0 = performance.now();
     try {
-      const parts = ensureBuilt(msg.part, msg.params, progress);
-
-      progress("meshing");
-      // render the seated `display` geometry when a part has it, else `shape`
-      const display = parts.map((x) => x.display ?? x.shape);
-      const shape = display.length === 1 ? display[0] : makeCompound(display);
-      const m = shape.mesh(DISPLAY_MESH);
-      const positions = new Float32Array(m.vertices);
-      const normals = new Float32Array(m.normals);
-      const indices = new Uint32Array(m.triangles);
+      const meshes = [];
+      const transfer = [];
+      for (const name of msg.subparts) {
+        progress(`building ${name} drum`);
+        const shape = buildSubPart(name, msg.params, progress);
+        const m = shape.mesh(DISPLAY_MESH);
+        const positions = new Float32Array(m.vertices);
+        const normals = new Float32Array(m.normals);
+        const indices = new Uint32Array(m.triangles);
+        shape.delete?.(); // display only needs the mesh; free the OCCT solid
+        meshes.push({ name, positions, normals, indices, triangles: indices.length / 3 });
+        transfer.push(positions.buffer, normals.buffer, indices.buffer);
+      }
       postMessage(
-        {
-          type: "mesh",
-          part: msg.part,
-          positions,
-          normals,
-          indices,
-          triangles: indices.length / 3,
-          ms: Math.round(performance.now() - t0),
-        },
-        [positions.buffer, normals.buffer, indices.buffer]
+        { type: "meshes", meshes, ms: Math.round(performance.now() - t0) },
+        transfer
       );
     } catch (err) {
       postMessage({ type: "error", message: String(err?.message || err) });

@@ -374,6 +374,26 @@ export function buildParts(part = "small", params = {}, onProgress) {
   return parts;
 }
 
+// Build ONE display sub-part in the shared "both" assembly frame, so views can
+// be composed from independently-cached meshes:
+//   small  — small drum, dropped + offset to its meshing position
+//   big    — big drum at the origin
+//   block  — tensioner block seated in pocket A on the big drum
+// The small/big single-part views are just this frame with the camera framed to
+// the visible piece(s). (Exports still go through buildParts, which positions
+// each part as a standalone solid for slicing.)
+export function buildSubPart(name, params = {}, onProgress) {
+  const p = { ...DEFAULTS, ...params };
+  const d = derive(p);
+  if (name === "small") {
+    const baseH = p.motor_mount ? p.motor_flange_t + p.motor_standoff_h : 0;
+    return buildSmallDrum(p, d, onProgress).translate([-d.centerDist, 0, -baseH]);
+  }
+  if (name === "big") return buildBigDrum(p, d, onProgress);
+  if (name === "block") return seatBlock(buildTensionerBlock(p, d), p, d);
+  throw new Error(`unknown sub-part: ${name}`);
+}
+
 // Display shape: a single solid, or a compound of the parts' display geometry
 // (meshes fine). Uses each part's seated `display` if present, else `shape`.
 export function buildDrum(part = "small", params = {}, onProgress) {

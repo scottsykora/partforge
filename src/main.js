@@ -33,14 +33,28 @@ const material = new THREE.MeshStandardMaterial({
   roughness: 0.55,
   flatShading: false,
 });
-// One persistent mesh whose geometry we swap. Generated geometries are cached
-// per tab (see meshCache) so switching tabs is instant and never re-meshes.
-const drumMesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
-drumMesh.rotation.x = -Math.PI / 2; // drum axis -> vertical
-drumMesh.visible = false;
-scene.add(drumMesh);
+// Sub-parts (small drum / big drum / block) are meshed independently in a shared
+// frame and cached, so any view is composed from cached pieces. `pivot` orients
+// the drum axis vertical; `partsGroup` is recentred per view so the visible
+// assembly sits at the origin.
+const pivot = new THREE.Group();
+pivot.rotation.x = -Math.PI / 2; // drum axis -> vertical
+scene.add(pivot);
+const partsGroup = new THREE.Group();
+pivot.add(partsGroup);
 
-// Build a centred BufferGeometry from a worker mesh payload.
+const subMesh = {
+  small: new THREE.Mesh(new THREE.BufferGeometry(), material),
+  big: new THREE.Mesh(new THREE.BufferGeometry(), material),
+  block: new THREE.Mesh(new THREE.BufferGeometry(), material),
+};
+for (const m of Object.values(subMesh)) {
+  m.visible = false;
+  partsGroup.add(m);
+}
+
+// BufferGeometry from a worker mesh payload — kept in its shared-frame coords
+// (NOT recentred) so the pieces assemble in the right relative positions.
 function buildGeometry({ positions, normals, indices, triangles }) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
@@ -48,22 +62,30 @@ function buildGeometry({ positions, normals, indices, triangles }) {
   geo.setIndex(new THREE.BufferAttribute(indices, 1));
   if (!normals?.length) geo.computeVertexNormals();
   geo.computeBoundingBox();
-  const c = new THREE.Vector3();
-  geo.boundingBox.getCenter(c);
-  geo.translate(-c.x, -c.y, -c.z); // centre on the origin
   geo.userData.triangles = triangles ?? indices.length / 3;
   return geo;
 }
 
-// Show a cached geometry and frame the camera to it.
-function showGeometry(geo) {
-  drumMesh.geometry = geo; // cached geometries are reused, not disposed here
-  drumMesh.visible = true;
-  const size = new THREE.Vector3();
-  geo.boundingBox.getSize(size);
+// Show exactly the named sub-parts (from the cache), recentre the assembly on
+// the origin, and frame the camera to it.
+const _box = new THREE.Box3();
+function showAssembly(names) {
+  for (const [name, mesh] of Object.entries(subMesh)) {
+    const on = names.includes(name);
+    if (on) mesh.geometry = subCache[name]; // cached geometries reused, not disposed
+    mesh.visible = on;
+  }
+  _box.makeEmpty();
+  for (const name of names) _box.union(subCache[name].boundingBox);
+  const center = _box.getCenter(new THREE.Vector3());
+  partsGroup.position.copy(center).multiplyScalar(-1); // centre assembly on the pivot
+  const size = _box.getSize(new THREE.Vector3());
   const r = Math.max(size.x, size.y, size.z) || 12;
   camera.position.setLength(r * 2.6 + 6);
   controls.target.set(0, 0, 0);
+}
+function hideAssembly() {
+  for (const m of Object.values(subMesh)) m.visible = false;
 }
 
 function resize() {
@@ -106,33 +128,44 @@ function hideBusy() {
   busyEl.classList.remove("show");
 }
 
-// --- part state + per-tab mesh cache ---------------------------------------
+// --- per-sub-part mesh cache + view composition ----------------------------
 const params = { ...DEFAULTS };
-let part = "both"; // default tab
+let part = "both"; // active tab (view)
 let generating = false;
-const meshCache = { small: null, big: null, both: null }; // centred geometry per tab
+const subCache = { small: null, big: null, block: null }; // geometry per sub-part
 const PART_LABEL = { small: "Small", big: "Big", both: "Both" };
 
-// Geometry depends on params, so any edit makes every cached mesh stale.
+// Which sub-parts a view shows (the block only exists when pockets are enabled).
+function viewParts(view) {
+  const hasBlock = params.tensioner_pocket_depth > 0;
+  if (view === "small") return ["small"];
+  if (view === "big") return hasBlock ? ["big", "block"] : ["big"];
+  return hasBlock ? ["small", "big", "block"] : ["small", "big"];
+}
+const missingParts = () => viewParts(part).filter((n) => !subCache[n]);
+
+// Geometry depends on params, so any edit makes every cached sub-part stale.
 function invalidateCaches() {
-  for (const k in meshCache) {
-    if (meshCache[k]) meshCache[k].dispose();
-    meshCache[k] = null;
+  for (const k in subCache) {
+    if (subCache[k]) subCache[k].dispose();
+    subCache[k] = null;
   }
 }
 
-// Reflect the current tab: show its cached mesh instantly, or prompt to Generate.
+// Reflect the active view: assemble it from cached sub-parts, or (if any are
+// missing) clear the view and prompt to generate just the missing ones.
 function refreshView() {
-  const geo = meshCache[part];
-  if (geo) {
-    showGeometry(geo);
+  if (missingParts().length === 0) {
+    const needed = viewParts(part);
+    showAssembly(needed);
     centerGenBtn.classList.remove("show");
-    genBtn.disabled = true; // already shown — nothing to regenerate
+    genBtn.disabled = true; // already shown — nothing to generate
     dlBtn.disabled = false;
     dlStepBtn.disabled = false;
-    setStatus(`${geo.userData.triangles.toLocaleString()} triangles`);
+    const tris = needed.reduce((s, n) => s + subCache[n].userData.triangles, 0);
+    setStatus(`${tris.toLocaleString()} triangles`);
   } else {
-    drumMesh.visible = false; // remove any mesh that isn't this tab's
+    hideAssembly();
     dlBtn.disabled = true;
     dlStepBtn.disabled = true;
     if (kernelReady && !generating) {
@@ -157,14 +190,16 @@ worker.onmessage = ({ data }) => {
       showBusy(data.phase);
       setStatus(`${data.phase}…`);
       break;
-    case "mesh":
+    case "meshes": {
       generating = false;
-      genBtn.disabled = false;
-      meshCache[data.part] = buildGeometry(data); // cache for instant tab switches
+      for (const m of data.meshes) subCache[m.name] = buildGeometry(m); // cache each
       hideBusy();
-      setStatus(`${data.triangles.toLocaleString()} triangles · ${(data.ms / 1000).toFixed(1)} s`);
-      refreshView(); // shows it if it's the active tab, else the active tab's prompt
+      refreshView(); // assemble the active view (now complete) or its prompt
+      if (missingParts().length === 0 && data.ms) {
+        setStatus(`${statusEl.textContent} · ${(data.ms / 1000).toFixed(1)} s`);
+      }
       break;
+    }
     case "download":
       hideBusy();
       triggerDownload(data.data, data.filename, data.mime);
@@ -173,7 +208,6 @@ worker.onmessage = ({ data }) => {
     case "error":
       generating = false;
       hideBusy();
-      genBtn.disabled = false;
       setStatus(`failed: ${data.message}`, true);
       refreshView();
       break;
@@ -183,8 +217,8 @@ worker.onmessage = ({ data }) => {
 buildControls(document.getElementById("controls"), params, onParamChange);
 
 function onParamChange() {
-  invalidateCaches(); // edits invalidate every tab's mesh
-  refreshView(); // current tab now needs (re)generation
+  invalidateCaches(); // edits invalidate every sub-part mesh
+  refreshView(); // active view now needs (re)generation
 }
 
 const partSeg = document.getElementById("part");
@@ -193,16 +227,18 @@ partSeg.addEventListener("click", (e) => {
   if (!btn) return;
   part = btn.dataset.part;
   for (const b of partSeg.children) b.classList.toggle("on", b === btn);
-  refreshView(); // instant if cached, else prompts Generate
+  refreshView(); // instant if every sub-part is cached, else prompts Generate
 });
 
 function generate() {
-  if (!kernelReady || generating || meshCache[part]) return;
+  if (!kernelReady || generating) return;
+  const missing = missingParts();
+  if (missing.length === 0) return; // already have every sub-part for this view
   generating = true;
   genBtn.disabled = true;
   centerGenBtn.classList.remove("show");
   showBusy("generating");
-  worker.postMessage({ type: "generate", part, params });
+  worker.postMessage({ type: "generate", subparts: missing, params });
 }
 
 genBtn.addEventListener("click", generate);
