@@ -242,21 +242,19 @@ function buildBigDrum(p, d, onProgress) {
   const bodyH = d.bigBodyH;
   let drum = makeCylinder(d.bigBlankR, bodyH);
 
-  const pathR = d.bigBlankR - d.grooveDepth + d.grooveR;
-  const a0 = (d.sector - d.arc) / 2;
+  // Stop-tip radius is a pure number (used by both the socket length below and
+  // the end-stop tabs later); compute it up front.
+  const stopTipR =
+    p.end_stop_arc > 0
+      ? Math.sqrt(d.centerDist ** 2 - d.smallBlankR ** 2) + p.stop_tip_extra
+      : d.bigBlankR;
 
-  // Group the (disjoint) stripe tools into a compound — far cheaper than a
-  // boolean fuse — then cut them all in one fuzzy boolean.
-  onProgress?.("building groove field");
-  const tools = [];
-  for (let k = 0; k < d.stripes; k++) {
-    let t = grooveTool(pathR, d.axialPitchBig, d.arc / 360, d.bigGrooveZ0 + k * d.stripeSpacing, d.grooveR, true);
-    t = t.rotate(a0 + d.arc, [0, 0, 0], [0, 0, 1]);
-    tools.push(t);
-  }
-  onProgress?.("cutting big-drum grooves");
-  drum = fuzzyCut(drum, makeCompound(tools));
-
+  // --- interior / wedge features FIRST, on the plain blank ---------------------
+  // These are all disjoint from the groove band, and a boolean against a plain
+  // cylinder is ~30x cheaper than against the grooved solid — so cut them before
+  // the grooves. (End stops + tensioner pockets sit at the band edges, so they
+  // stay after the groove cut.)
+  onProgress?.("boring + mounting");
   // center bore
   if (p.big_center_bore_d > 0) {
     drum = drum.cut(makeCylinder(p.big_center_bore_d / 2, bodyH + 2, [0, 0, -1]));
@@ -278,14 +276,41 @@ function buildBigDrum(p, d, onProgress) {
       );
     }
   }
+  // load-test pipe socket (radial, in the groove-free wedge, mid-height)
+  if (p.load_socket_pipe_od > 0) {
+    const sr = (p.load_socket_pipe_od + p.load_socket_fit) / 2;
+    const freeLo = p.tensioner_pocket_depth > 0 ? p.tensioner_pocket_depth : 1;
+    const freeHi = bodyH - freeLo;
+    const zc = bodyH / 2;
+    if (zc - sr >= freeLo + 0.3 && zc + sr <= freeHi - 0.3) {
+      const length = stopTipR - p.load_socket_stop_r + 2;
+      let sock = makeCylinder(sr, length, [p.load_socket_stop_r, 0, zc], [1, 0, 0]);
+      if (p.load_socket_pin_d > 0) {
+        const pinR = Math.min(38, d.bigBlankR - 6);
+        sock = sock.fuse(makeCylinder(p.load_socket_pin_d / 2, bodyH, [pinR, 0, zc], [0, 0, 1]));
+      }
+      drum = drum.cut(sock.rotate(d.wedgeCenterDeg, [0, 0, 0], [0, 0, 1]));
+    }
+  }
 
-  // --- travel end stops (for current-spike homing) ---
-  let stopTipR = d.bigBlankR;
+  // --- groove field (the expensive cut; now done once, after the cheap cuts) ---
+  const pathR = d.bigBlankR - d.grooveDepth + d.grooveR;
+  const a0 = (d.sector - d.arc) / 2;
+  onProgress?.("building groove field");
+  const grooveTools = [];
+  for (let k = 0; k < d.stripes; k++) {
+    let t = grooveTool(pathR, d.axialPitchBig, d.arc / 360, d.bigGrooveZ0 + k * d.stripeSpacing, d.grooveR, true);
+    t = t.rotate(a0 + d.arc, [0, 0, 0], [0, 0, 1]);
+    grooveTools.push(t);
+  }
+  onProgress?.("cutting big-drum grooves");
+  drum = fuzzyCut(drum, makeCompound(grooveTools));
+
+  // --- travel end stops (for current-spike homing) — at the band edges ---
   if (p.end_stop_arc > 0) {
     onProgress?.("adding end stops");
     const bandLo = p.tensioner_pocket_depth > 0 ? p.tensioner_pocket_depth + 1 : 0;
     const rootR = d.bigBlankR - p.stop_root_depth;
-    stopTipR = Math.sqrt(d.centerDist ** 2 - d.smallBlankR ** 2) + p.stop_tip_extra;
     const specs = [
       { ang: d.a0 + d.arc, z0: bandLo, z1: bodyH }, // side A: above its pocket
       { ang: d.a0 - p.end_stop_arc, z0: 0, z1: bodyH - bandLo }, // side B: below its pocket
@@ -295,24 +320,6 @@ function buildBigDrum(p, d, onProgress) {
       annularSector(rootR, stopTipR, p.end_stop_arc, s.z1 - s.z0, s.z0).rotate(s.ang, [0, 0, 0], [0, 0, 1])
     );
     drum = drum.fuse(makeCompound(stops));
-  }
-
-  // --- load-test pipe socket (radial, wedge centre, mid-height) ---
-  if (p.load_socket_pipe_od > 0) {
-    const sr = (p.load_socket_pipe_od + p.load_socket_fit) / 2;
-    const freeLo = p.tensioner_pocket_depth > 0 ? p.tensioner_pocket_depth : 1;
-    const freeHi = bodyH - freeLo;
-    const zc = bodyH / 2;
-    if (zc - sr >= freeLo + 0.3 && zc + sr <= freeHi - 0.3) {
-      onProgress?.("cutting load socket");
-      const length = stopTipR - p.load_socket_stop_r + 2;
-      let sock = makeCylinder(sr, length, [p.load_socket_stop_r, 0, zc], [1, 0, 0]);
-      if (p.load_socket_pin_d > 0) {
-        const pinR = Math.min(38, d.bigBlankR - 6);
-        sock = sock.fuse(makeCylinder(p.load_socket_pin_d / 2, bodyH, [pinR, 0, zc], [0, 0, 1]));
-      }
-      drum = drum.cut(sock.rotate(d.wedgeCenterDeg, [0, 0, 0], [0, 0, 1]));
-    }
   }
 
   // --- sliding-block tensioner pockets at each rope anchor ---
