@@ -44,5 +44,7 @@ export function helixTube(wasm, opts) {
 
   const mesh = new wasm.Mesh({ numProp: 3, vertProperties: Float32Array.from(V), triVerts: Uint32Array.from(Tr) });
   mesh.merge();
-  return wasm.Manifold.ofMesh(mesh);
+  const out = wasm.Manifold.ofMesh(mesh);
+  mesh.delete?.(); // input mesh is consumed by ofMesh; free it (caller tracks `out`)
+  return out;
 }

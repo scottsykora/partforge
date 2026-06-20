@@ -13,10 +13,12 @@ export async function handle(kernel, msg, post) {
   try {
     if (msg.type === "generate") {
       const t0 = Date.now();
-      const meshes = msg.subparts.map((name) => {
+      const meshes = [];
+      for (const name of msg.subparts) {
         const m = buildSubPart(kernel, name, msg.params).toMesh({ quality: "preview" });
-        return { name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles };
-      });
+        meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles });
+        kernel.cleanup?.(); // free this sub-part's WASM objects before building the next
+      }
       post({ type: "meshes", meshes, ms: Date.now() - t0 });
     } else if (msg.type === "export-stl") {
       const parts = buildParts(kernel, msg.part, msg.params);
@@ -30,5 +32,7 @@ export async function handle(kernel, msg, post) {
     }
   } catch (err) {
     post({ type: "error", message: String(err?.message || err) });
+  } finally {
+    kernel.cleanup?.(); // free remaining WASM objects (exports, or anything left on error)
   }
 }

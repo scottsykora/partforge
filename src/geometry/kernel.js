@@ -18,6 +18,7 @@
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only
+ * @property {() => void} [cleanup]   free per-job WASM objects (Manifold backend); call after each job
  */
 
 // CCW polygon points for a circular-sector "pie" from the origin, radius tipR.
