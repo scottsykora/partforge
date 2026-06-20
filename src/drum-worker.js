@@ -6,22 +6,18 @@
 
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import wasmUrl from "replicad-opencascadejs/src/replicad_single.wasm?url";
-import { setOC, exportSTEP } from "replicad";
+import * as replicad from "replicad";
 import { zipSync } from "fflate";
+import { createOcctKernel } from "./geometry/occt-backend.js";
 import { buildParts, buildSubPart } from "./drum.js";
 
+let kernel;
 const ready = (async () => {
   const OC = await opencascade({ locateFile: () => wasmUrl });
-  setOC(OC);
+  replicad.setOC(OC);
+  kernel = createOcctKernel(replicad);
   postMessage({ type: "ready" });
 })();
-
-// Display mesh is coarse — plenty smooth on screen, and the fine print-grade
-// tolerance is used only on export. tol 0.1 / ang 0.5 meshes the big drum in
-// ~0.8s (~59k tris) vs ~2.7s at the original 0.05/0.3, with no meaningful
-// difference on screen for parts this size.
-const DISPLAY_MESH = { tolerance: 0.1, angularTolerance: 0.5 };
-const PRINT_MESH = { tolerance: 0.01, angularTolerance: 0.1 };
 
 let lastParts = null; // [{ name, shape }]
 let lastKey = null; // `${part}:${JSON.stringify(params)}` the built parts are for
@@ -29,12 +25,9 @@ let lastKey = null; // `${part}:${JSON.stringify(params)}` the built parts are f
 const progress = (phase) => postMessage({ type: "progress", phase });
 
 function disposeLast() {
-  if (lastParts) {
-    for (const part of lastParts) {
-      part.shape.delete?.();
-      part.display?.delete?.();
-    }
-  }
+  // Kernel-wrapped solids don't expose .delete() — just drop the references
+  // and let GC handle it. OCCT's underlying C++ objects are finalized when
+  // replicad's own GC runs, which it does automatically.
   lastParts = null;
   lastKey = null;
 }
@@ -46,7 +39,7 @@ function ensureBuilt(part, params, prog) {
   const key = part + ":" + JSON.stringify(params);
   if (lastParts && lastKey === key) return lastParts;
   disposeLast();
-  lastParts = buildParts(part, params, prog);
+  lastParts = buildParts(kernel, part, params, prog);
   lastKey = key;
   return lastParts;
 }
@@ -64,14 +57,10 @@ self.onmessage = async (e) => {
       const transfer = [];
       for (const name of msg.subparts) {
         progress(`building ${name} drum`);
-        const shape = buildSubPart(name, msg.params, progress);
-        const m = shape.mesh(DISPLAY_MESH);
-        const positions = new Float32Array(m.vertices);
-        const normals = new Float32Array(m.normals);
-        const indices = new Uint32Array(m.triangles);
-        shape.delete?.(); // display only needs the mesh; free the OCCT solid
-        meshes.push({ name, positions, normals, indices, triangles: indices.length / 3 });
-        transfer.push(positions.buffer, normals.buffer, indices.buffer);
+        const solid = buildSubPart(kernel, name, msg.params, progress);
+        const m = solid.toMesh({ quality: "preview" });
+        meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles });
+        transfer.push(m.positions.buffer, m.normals.buffer, m.indices.buffer);
       }
       postMessage(
         { type: "meshes", meshes, ms: Math.round(performance.now() - t0) },
@@ -81,11 +70,15 @@ self.onmessage = async (e) => {
       postMessage({ type: "error", message: String(err?.message || err) });
     }
   } else if (msg.type === "export-stl") {
-    await exportParts("stl", "model/stl", (shape) => shape.blobSTL(PRINT_MESH).arrayBuffer(), msg.part, msg.params);
+    await exportParts(
+      "stl", "model/stl",
+      (solid) => solid.toSTL({ quality: "print" }),
+      msg.part, msg.params
+    );
   } else if (msg.type === "export-step") {
     await exportParts(
       "step", "application/step",
-      (shape, name) => exportSTEP([{ shape, name }]).arrayBuffer(),
+      null, // signals STEP multi-part export below
       msg.part, msg.params
     );
   }
@@ -93,22 +86,34 @@ self.onmessage = async (e) => {
 
 // Export the part: one file if it's a single solid, else a zip of named per-part
 // files. Rebuilds the requested part first if it isn't the one currently built
-// (e.g. exporting a tab the main thread had cached). `toBuffer(shape, name)`
-// returns an ArrayBuffer for that part.
+// (e.g. exporting a tab the main thread had cached).
 async function exportParts(ext, mime, toBuffer, part, params) {
   try {
     const parts = ensureBuilt(part, params, progress);
     progress(`exporting ${ext.toUpperCase()}`);
     if (parts.length === 1) {
-      const data = await toBuffer(parts[0].shape, parts[0].name);
+      let data;
+      if (toBuffer) {
+        data = await toBuffer(parts[0].shape);
+      } else {
+        // STEP: use kernel.toSTEP for single part too (keeps one code path)
+        data = await kernel.toSTEP([{ name: parts[0].name, solid: parts[0].shape }]);
+      }
       postMessage({ type: "download", data, filename: `${parts[0].name}.${ext}`, mime });
     } else {
-      const entries = {};
-      for (const p of parts) {
-        entries[`${p.name}.${ext}`] = new Uint8Array(await toBuffer(p.shape, p.name));
+      if (toBuffer) {
+        // STL: one file per part, zipped
+        const entries = {};
+        for (const p of parts) {
+          entries[`${p.name}.${ext}`] = new Uint8Array(await toBuffer(p.shape));
+        }
+        const zip = zipSync(entries, { level: 0 });
+        postMessage({ type: "download", data: zip, filename: "drums.zip", mime: "application/zip" });
+      } else {
+        // STEP: multi-body export via kernel.toSTEP
+        const data = await kernel.toSTEP(parts.map((p) => ({ name: p.name, solid: p.shape })));
+        postMessage({ type: "download", data, filename: "drums.step", mime });
       }
-      const zip = zipSync(entries, { level: 0 }); // store (these don't compress well)
-      postMessage({ type: "download", data: zip, filename: "drums.zip", mime: "application/zip" });
     }
   } catch (err) {
     postMessage({ type: "error", message: `${ext.toUpperCase()} export failed: ` + (err?.message || err) });
