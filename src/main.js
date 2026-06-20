@@ -67,18 +67,19 @@ const CREASE_ANGLE = Math.PI / 6; // 30°
 function buildGeometry({ positions, normals, indices, triangles }) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  if (indices?.length) geo.setIndex(new THREE.BufferAttribute(indices, 1)); // Manifold is non-indexed
+  const triCount = triangles ?? (indices ? indices.length : positions.length / 3) / 3;
   if (normals?.length) {
-    // kernel-computed normals (Manifold) from exact topology — crisp at seams
+    // kernel-computed normals (Manifold) — smooth within a surface, hard at cut seams
     geo.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
     geo.computeBoundingBox();
-    geo.userData.triangles = triangles ?? indices.length / 3;
+    geo.userData.triangles = triCount;
     return geo;
   }
-  // fallback (no kernel normals): crease from the triangle soup
+  // fallback (no kernel normals, e.g. OCCT): crease from the triangle soup
   const creased = toCreasedNormals(geo, CREASE_ANGLE);
   creased.computeBoundingBox();
-  creased.userData.triangles = triangles ?? indices.length / 3;
+  creased.userData.triangles = triCount;
   return creased;
 }
 

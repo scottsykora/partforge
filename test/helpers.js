@@ -1,8 +1,11 @@
-// test/helpers.js — shared test utilities (mesh volume + bbox from a flat mesh)
+// test/helpers.js — shared test utilities (mesh volume + bbox from a flat mesh).
+// `indices` is optional: when omitted the positions are treated as a flat,
+// non-indexed triangle soup (3 vertices per triangle).
 export function meshVolume(positions, indices) {
+  const n = indices ? indices.length : positions.length / 3;
   let V = 0;
-  for (let i = 0; i < indices.length; i += 3) {
-    const a = indices[i] * 3, b = indices[i + 1] * 3, c = indices[i + 2] * 3;
+  for (let i = 0; i < n; i += 3) {
+    const a = (indices ? indices[i] : i) * 3, b = (indices ? indices[i + 1] : i + 1) * 3, c = (indices ? indices[i + 2] : i + 2) * 3;
     V += (positions[a] * (positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1])
         - positions[a + 1] * (positions[b] * positions[c + 2] - positions[b + 2] * positions[c])
         + positions[a + 2] * (positions[b] * positions[c + 1] - positions[b + 1] * positions[c])) / 6;

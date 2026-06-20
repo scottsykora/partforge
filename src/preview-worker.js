@@ -19,7 +19,10 @@ self.onmessage = async (e) => {
   await handle(kernel, e.data, (m) => {
     if (m.type === "meshes") {
       const transfer = [];
-      for (const x of m.meshes) transfer.push(x.positions.buffer, x.normals.buffer, x.indices.buffer);
+      for (const x of m.meshes) {
+        transfer.push(x.positions.buffer, x.normals.buffer);
+        if (x.indices) transfer.push(x.indices.buffer); // Manifold meshes are non-indexed
+      }
       postMessage(m, transfer);
     } else if (m.type === "download-parts") {
       postMessage(m, m.parts.map((p) => (ArrayBuffer.isView(p.data) ? p.data.buffer : p.data)));
