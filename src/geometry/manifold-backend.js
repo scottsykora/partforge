@@ -1,8 +1,8 @@
 import { helixTube } from "./helix-tube.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
-const SEGS = { preview: 64, print: 220 };       // circular segments
-const TUBE = { preview: { stationsPerTurn: 24, ringSegs: 16 }, print: { stationsPerTurn: 64, ringSegs: 24 } };
+const SEGS = { preview: 96, print: 220 };       // circular segments
+const TUBE = { preview: { stationsPerTurn: 32, ringSegs: 20 }, print: { stationsPerTurn: 64, ringSegs: 24 } };
 
 export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const { Manifold, CrossSection } = wasm;

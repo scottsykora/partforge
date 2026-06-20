@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { zipSync } from "fflate";
 import { DEFAULTS } from "./params.js";
 import { buildControls } from "./controls.js";
@@ -55,14 +56,20 @@ for (const m of Object.values(subMesh)) {
   partsGroup.add(m);
 }
 
+// Smooth shading within CREASE_ANGLE of a shared edge, hard edge past it — so the
+// round body and helical groove read smooth while bore rims, drum faces, and
+// groove walls stay crisp. Lower = more hard edges; raise toward Math.PI/3 for
+// softer. (Worker normals are ignored; we recompute per the crease threshold.)
+const CREASE_ANGLE = Math.PI / 6; // 30°
+
 // BufferGeometry from a worker mesh payload — kept in its shared-frame coords
 // (NOT recentred) so the pieces assemble in the right relative positions.
-function buildGeometry({ positions, normals, indices, triangles }) {
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  if (normals?.length) geo.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-  geo.setIndex(new THREE.BufferAttribute(indices, 1));
-  if (!normals?.length) geo.computeVertexNormals();
+function buildGeometry({ positions, indices, triangles }) {
+  const indexed = new THREE.BufferGeometry();
+  indexed.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  indexed.setIndex(new THREE.BufferAttribute(indices, 1));
+  // toCreasedNormals returns a new (de-indexed) geometry with angle-creased normals
+  const geo = toCreasedNormals(indexed, CREASE_ANGLE);
   geo.computeBoundingBox();
   geo.userData.triangles = triangles ?? indices.length / 3;
   return geo;
