@@ -18,7 +18,7 @@ export function createOcctKernel(replicad) {
       const m = shape.mesh(MESH[quality]);
       return {
         positions: Float32Array.from(m.vertices),
-        normals: m.normals ? Float32Array.from(m.normals) : new Float32Array(0),
+        normals: new Float32Array(0), // let the main thread crease (matches prior look)
         indices: Uint32Array.from(m.triangles),
         triangles: m.triangles.length / 3,
       };

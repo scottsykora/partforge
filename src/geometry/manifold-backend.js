@@ -3,6 +3,7 @@ import { helixTube } from "./helix-tube.js";
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 const SEGS = { preview: 116, print: 220 };       // circular segments
 const TUBE = { preview: { stationsPerTurn: 38, ringSegs: 24 }, print: { stationsPerTurn: 64, ringSegs: 24 } };
+const SHARP_ANGLE = 40; // deg — edges sharper than this shade hard; gentler are smooth
 
 export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const { Manifold, CrossSection } = wasm;
@@ -17,19 +18,29 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const unionRaw = (ms) => ms.reduce((a, b) => T(a.add(b))); // track each reduce step
 
   // Copy the mesh out into JS-owned arrays so it survives cleanup(); free the
-  // transient mesh handle.
+  // transient mesh handle. For display, compute normals from the EXACT CSG
+  // topology (Manifold.calculateNormals) rather than re-welding triangle soup on
+  // the main thread — that re-weld smears shading at fine boolean seams.
   function meshOut(m, asStl) {
-    const g = m.getMesh();
-    const result = asStl
-      ? stlFromMesh(g)
-      : {
-          positions: g.numProp === 3 ? Float32Array.from(g.vertProperties) : Float32Array.from(stridePos(g)),
-          normals: new Float32Array(0), // main thread computes creased normals
-          indices: Uint32Array.from(g.triVerts),
-          triangles: g.triVerts.length / 3,
-        };
+    if (asStl) {
+      const g = m.getMesh();
+      const r = stlFromMesh(g);
+      g.delete?.();
+      return r;
+    }
+    const withN = T(m.calculateNormals(0, SHARP_ANGLE)); // normals into the first extra slot = channels 3-5 (numProp 6)
+    const g = withN.getMesh();
+    const np = g.numProp, vp = g.vertProperties, nv = (vp.length / np) | 0;
+    const positions = new Float32Array(nv * 3);
+    const normals = new Float32Array(nv * 3);
+    for (let i = 0; i < nv; i++) {
+      positions[i * 3] = vp[i * np]; positions[i * 3 + 1] = vp[i * np + 1]; positions[i * 3 + 2] = vp[i * np + 2];
+      normals[i * 3] = vp[i * np + 3]; normals[i * 3 + 1] = vp[i * np + 4]; normals[i * 3 + 2] = vp[i * np + 5];
+    }
+    const indices = Uint32Array.from(g.triVerts);
+    const triangles = g.triVerts.length / 3;
     g.delete?.();
-    return result;
+    return { positions, normals, indices, triangles };
   }
 
   const wrap = (m) => ({
@@ -65,13 +76,6 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // once its meshes/buffers have been copied out (meshOut already did).
     cleanup: () => { for (const o of tracked) o.delete?.(); tracked.length = 0; },
   };
-}
-
-function stridePos(g) {
-  const out = [];
-  for (let v = 0; v < g.vertProperties.length; v += g.numProp)
-    out.push(g.vertProperties[v], g.vertProperties[v + 1], g.vertProperties[v + 2]);
-  return out;
 }
 
 function stlFromMesh(g) {
