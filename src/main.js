@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { zipSync } from "fflate";
 import { DEFAULTS } from "./params.js";
 import { buildControls } from "./controls.js";
+import { viewParts } from "./geometry-jobs.js";
 
 // --- three.js scene --------------------------------------------------------
 const app = document.getElementById("app");
@@ -102,10 +104,15 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
 });
 
-// --- worker (OpenCASCADE geometry) -----------------------------------------
-const worker = new Worker(new URL("./drum-worker.js", import.meta.url), {
-  type: "module",
-});
+// --- workers (geometry) ----------------------------------------------------
+// Dev toggle: ?backend=occt routes preview generate through the OCCT worker.
+const useOcctPreview = new URLSearchParams(location.search).get("backend") === "occt";
+
+const previewWorker = new Worker(new URL("./preview-worker.js", import.meta.url), { type: "module" });
+const exportWorker = new Worker(new URL("./export-worker.js", import.meta.url), { type: "module" });
+
+// preview defaults to Manifold; ?backend=occt routes preview generate to the OCCT worker
+const genWorker = useOcctPreview ? exportWorker : previewWorker;
 
 const statusEl = document.getElementById("status");
 const genBtn = document.getElementById("generate");
@@ -135,14 +142,7 @@ let generating = false;
 const subCache = { small: null, big: null, block: null }; // geometry per sub-part
 const PART_LABEL = { small: "Small", big: "Big", both: "Both" };
 
-// Which sub-parts a view shows (the block only exists when pockets are enabled).
-function viewParts(view) {
-  const hasBlock = params.tensioner_pocket_depth > 0;
-  if (view === "small") return ["small"];
-  if (view === "big") return hasBlock ? ["big", "block"] : ["big"];
-  return hasBlock ? ["small", "big", "block"] : ["small", "big"];
-}
-const missingParts = () => viewParts(part).filter((n) => !subCache[n]);
+const missingParts = () => viewParts(part, params).filter((n) => !subCache[n]);
 
 // Geometry depends on params, so any edit makes every cached sub-part stale.
 function invalidateCaches() {
@@ -156,7 +156,7 @@ function invalidateCaches() {
 // missing) clear the view and prompt to generate just the missing ones.
 function refreshView() {
   if (missingParts().length === 0) {
-    const needed = viewParts(part);
+    const needed = viewParts(part, params);
     showAssembly(needed);
     centerGenBtn.classList.remove("show");
     genBtn.disabled = true; // already shown — nothing to generate
@@ -178,7 +178,25 @@ function refreshView() {
 
 showBusy("booting kernel"); // visible from first paint until the kernel is ready
 
-worker.onmessage = ({ data }) => {
+// --- download helpers -------------------------------------------------------
+function triggerDownload(arrayBuffer, filename, mime) {
+  const url = URL.createObjectURL(new Blob([arrayBuffer], { type: mime }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function onDownloadParts({ parts, ext, mime }) {
+  if (parts.length === 1) return triggerDownload(parts[0].data, `${parts[0].name}.${ext}`, mime);
+  const entries = {};
+  for (const p of parts) entries[`${p.name}.${ext}`] = new Uint8Array(p.data);
+  triggerDownload(zipSync(entries, { level: 0 }), "drums.zip", "application/zip");
+}
+
+// --- shared message handler -------------------------------------------------
+function onWorkerMessage({ data }) {
   switch (data.type) {
     case "ready":
       kernelReady = true;
@@ -200,6 +218,11 @@ worker.onmessage = ({ data }) => {
       }
       break;
     }
+    case "download-parts":
+      hideBusy();
+      onDownloadParts(data);
+      setStatus(`${data.parts.length} part(s) downloaded`);
+      break;
     case "download":
       hideBusy();
       triggerDownload(data.data, data.filename, data.mime);
@@ -212,7 +235,10 @@ worker.onmessage = ({ data }) => {
       refreshView();
       break;
   }
-};
+}
+
+previewWorker.onmessage = onWorkerMessage;
+exportWorker.onmessage = onWorkerMessage;
 
 buildControls(document.getElementById("controls"), params, onParamChange);
 
@@ -238,7 +264,7 @@ function generate() {
   genBtn.disabled = true;
   centerGenBtn.classList.remove("show");
   showBusy("generating");
-  worker.postMessage({ type: "generate", subparts: missing, params });
+  genWorker.postMessage({ type: "generate", subparts: missing, params });
 }
 
 genBtn.addEventListener("click", generate);
@@ -246,19 +272,10 @@ centerGenBtn.addEventListener("click", generate);
 
 dlBtn.addEventListener("click", () => {
   showBusy("exporting STL");
-  worker.postMessage({ type: "export-stl", part, params });
+  previewWorker.postMessage({ type: "export-stl", part, params });
 });
 
 dlStepBtn.addEventListener("click", () => {
   showBusy("exporting STEP");
-  worker.postMessage({ type: "export-step", part, params });
+  exportWorker.postMessage({ type: "export-step", part, params });
 });
-
-function triggerDownload(arrayBuffer, filename, mime) {
-  const url = URL.createObjectURL(new Blob([arrayBuffer], { type: mime }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
