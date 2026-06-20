@@ -4,7 +4,7 @@
 //
 // Public API:
 //   buildSubPart(kernel, name, params)  → Solid   name ∈ "small"|"big"|"block"
-//   buildParts(kernel, part, params)    → {name, solid}[]
+//   buildParts(kernel, part, params)    → {name, shape}[]
 
 import { piePolygon, hexPolygon } from "./geometry/kernel.js";
 import { DEFAULTS, derive } from "./params.js";
