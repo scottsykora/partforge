@@ -28,7 +28,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         triangles: g.triVerts.length / 3,
       };
     },
-    toSTL: () => stlFromMesh(m.getMesh()),
+    toSTL: ({ quality } = {}) => Promise.resolve(stlFromMesh(m.getMesh())),
   });
 
   return {

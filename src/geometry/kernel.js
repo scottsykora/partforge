@@ -9,7 +9,7 @@
  * @property {(deg: number, center: number[], axis: number[]) => Solid} rotate
  * @property {(plane: "XY"|"XZ"|"YZ") => Solid} mirror
  * @property {(opts?: {quality?: "preview"|"print"}) => {positions:Float32Array, normals:Float32Array, indices:Uint32Array, triangles:number}} toMesh
- * @property {(opts?: {quality?: "preview"|"print"}) => ArrayBuffer} toSTL
+ * @property {(opts?: {quality?: "preview"|"print"}) => Promise<ArrayBuffer>} toSTL
  *
  * @typedef {Object} GeometryKernel
  * @property {(rBottom:number, rTop:number, h:number, opts?:{center?:boolean}) => Solid} cylinder
@@ -17,7 +17,7 @@
  * @property {(points2D:number[][], h:number) => Solid} prism   extrude polygon from z=0
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union
- * @property {(named:{name:string,solid:Solid}[]) => ArrayBuffer} toSTEP   OCCT only
+ * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only
  */
 
 // CCW polygon points for a circular-sector "pie" from the origin, radius tipR.
