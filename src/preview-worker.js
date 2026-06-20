@@ -22,7 +22,7 @@ self.onmessage = async (e) => {
       for (const x of m.meshes) transfer.push(x.positions.buffer, x.normals.buffer, x.indices.buffer);
       postMessage(m, transfer);
     } else if (m.type === "download-parts") {
-      postMessage(m, m.parts.map((p) => p.data));
+      postMessage(m, m.parts.map((p) => (ArrayBuffer.isView(p.data) ? p.data.buffer : p.data)));
     } else {
       postMessage(m);
     }

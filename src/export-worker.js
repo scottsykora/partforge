@@ -26,7 +26,7 @@ async function occtKernel() {
 }
 
 self.onmessage = async (e) => {
-  postMessage({ type: "progress", phase: "loading exact kernel" });
+  if (!kernel) postMessage({ type: "progress", phase: "loading exact kernel" });
   const k = await occtKernel();
   await handle(k, e.data, (m) => postMessage(m, m.type === "download" ? [m.data] : []));
 };
