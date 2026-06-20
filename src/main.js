@@ -122,8 +122,6 @@ const exportWorker = new Worker(new URL("./export-worker.js", import.meta.url), 
 const genWorker = useOcctPreview ? exportWorker : previewWorker;
 
 const statusEl = document.getElementById("status");
-const genBtn = document.getElementById("generate");
-const centerGenBtn = document.getElementById("center-generate");
 const dlBtn = document.getElementById("download");
 const dlStepBtn = document.getElementById("download-step");
 const busyEl = document.getElementById("busy");
@@ -142,44 +140,39 @@ function hideBusy() {
   busyEl.classList.remove("show");
 }
 
-// --- per-sub-part mesh cache + view composition ----------------------------
+// --- per-sub-part mesh cache + auto-regenerating view composition -----------
 const params = { ...DEFAULTS };
 let part = "both"; // active tab (view)
 let generating = false;
+let paramsVersion = 0; // bumped on every settings edit
+let genVersion = -1; // the params version the in-flight generate is building
+let genTimer = null; // debounce timer for auto-regenerate
 const subCache = { small: null, big: null, block: null }; // geometry per sub-part
-const PART_LABEL = { small: "Small", big: "Big", both: "Both" };
+const cacheVersion = { small: -1, big: -1, block: -1 }; // params version each was built at
 
-const missingParts = () => viewParts(part, params).filter((n) => !subCache[n]);
+// A cached sub-part is current only if it was built at the latest params version.
+const isCurrent = (n) => subCache[n] && cacheVersion[n] === paramsVersion;
+const missingParts = () => viewParts(part, params).filter((n) => !isCurrent(n));
 
-// Geometry depends on params, so any edit makes every cached sub-part stale.
-function invalidateCaches() {
-  for (const k in subCache) {
-    if (subCache[k]) subCache[k].dispose();
-    subCache[k] = null;
-  }
-}
-
-// Reflect the active view: assemble it from cached sub-parts, or (if any are
-// missing) clear the view and prompt to generate just the missing ones.
+// Reflect the active view. If every needed part is current, show it and enable
+// export. If they're stale (a regenerate is in flight), keep showing the old
+// mesh so the view doesn't flicker. If nothing's been built yet, show nothing.
 function refreshView() {
-  if (missingParts().length === 0) {
-    const needed = viewParts(part, params);
+  const needed = viewParts(part, params);
+  if (needed.every(isCurrent)) {
     showAssembly(needed);
-    centerGenBtn.classList.remove("show");
-    genBtn.disabled = true; // already shown — nothing to generate
     dlBtn.disabled = false;
     dlStepBtn.disabled = false;
     const tris = needed.reduce((s, n) => s + subCache[n].userData.triangles, 0);
     setStatus(`${tris.toLocaleString()} triangles`);
+  } else if (needed.every((n) => subCache[n])) {
+    showAssembly(needed); // stale but present — keep it visible during regenerate
+    dlBtn.disabled = true;
+    dlStepBtn.disabled = true;
   } else {
     hideAssembly();
     dlBtn.disabled = true;
     dlStepBtn.disabled = true;
-    if (kernelReady && !generating) {
-      genBtn.disabled = false;
-      centerGenBtn.textContent = `Generate ${PART_LABEL[part]}`;
-      centerGenBtn.classList.add("show");
-    }
   }
 }
 
@@ -207,9 +200,7 @@ function onWorkerMessage({ data }) {
   switch (data.type) {
     case "ready":
       kernelReady = true;
-      hideBusy();
-      setStatus("ready — adjust settings, then Generate");
-      refreshView(); // nothing generated yet → shows the centre Generate prompt
+      maybeGenerate(); // auto-build the default view (keeps the busy spinner up)
       break;
     case "progress":
       showBusy(data.phase);
@@ -217,12 +208,18 @@ function onWorkerMessage({ data }) {
       break;
     case "meshes": {
       generating = false;
-      for (const m of data.meshes) subCache[m.name] = buildGeometry(m); // cache each
+      if (genVersion !== paramsVersion) { maybeGenerate(); break; } // changed mid-build → redo
+      for (const m of data.meshes) {
+        if (subCache[m.name]) subCache[m.name].dispose();
+        subCache[m.name] = buildGeometry(m);
+        cacheVersion[m.name] = genVersion;
+      }
       hideBusy();
-      refreshView(); // assemble the active view (now complete) or its prompt
-      if (missingParts().length === 0 && data.ms) {
+      refreshView();
+      if (data.ms && missingParts().length === 0) {
         setStatus(`${statusEl.textContent} · ${(data.ms / 1000).toFixed(1)} s`);
       }
+      maybeGenerate(); // active view may still need parts (tab switched during build)
       break;
     }
     case "download-parts":
@@ -250,8 +247,26 @@ exportWorker.onmessage = onWorkerMessage;
 buildControls(document.getElementById("controls"), params, onParamChange);
 
 function onParamChange() {
-  invalidateCaches(); // edits invalidate every sub-part mesh
-  refreshView(); // active view now needs (re)generation
+  paramsVersion++; // every edit invalidates the caches (by version)
+  refreshView(); // keep showing the now-stale mesh (no flicker); disable export
+  scheduleGenerate(); // debounced auto-regenerate
+}
+
+// Debounce auto-regeneration so dragging a slider doesn't queue a build per pixel.
+function scheduleGenerate() {
+  clearTimeout(genTimer);
+  genTimer = setTimeout(maybeGenerate, 180);
+}
+
+// Build whatever the active view is missing — automatic, no Generate button.
+function maybeGenerate() {
+  if (!kernelReady || generating) return; // retried when the current build finishes
+  const missing = missingParts();
+  if (missing.length === 0) return;
+  generating = true;
+  genVersion = paramsVersion;
+  showBusy("generating");
+  genWorker.postMessage({ type: "generate", subparts: missing, params });
 }
 
 const partSeg = document.getElementById("part");
@@ -260,22 +275,9 @@ partSeg.addEventListener("click", (e) => {
   if (!btn) return;
   part = btn.dataset.part;
   for (const b of partSeg.children) b.classList.toggle("on", b === btn);
-  refreshView(); // instant if every sub-part is cached, else prompts Generate
+  refreshView(); // instant if the view's parts are cached + current
+  maybeGenerate(); // else auto-build the missing pieces
 });
-
-function generate() {
-  if (!kernelReady || generating) return;
-  const missing = missingParts();
-  if (missing.length === 0) return; // already have every sub-part for this view
-  generating = true;
-  genBtn.disabled = true;
-  centerGenBtn.classList.remove("show");
-  showBusy("generating");
-  genWorker.postMessage({ type: "generate", subparts: missing, params });
-}
-
-genBtn.addEventListener("click", generate);
-centerGenBtn.addEventListener("click", generate);
 
 dlBtn.addEventListener("click", () => {
   showBusy("exporting STL");
