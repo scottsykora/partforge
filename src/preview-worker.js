@@ -6,9 +6,11 @@ import Module from "manifold-3d";
 import { createManifoldKernel } from "./geometry/manifold-backend.js";
 import { handle } from "./geometry-jobs.js";
 
-let kernel = null;
+let wasm = null;
+let kernel = null;        // preview-quality: fast meshes for the interactive view
+let exportKernel = null;  // print-quality: high-res STL export (built on first use)
 const ready = (async () => {
-  const wasm = await Module();
+  wasm = await Module();
   wasm.setup();
   kernel = createManifoldKernel(wasm, { quality: "preview" });
   postMessage({ type: "ready" });
@@ -16,7 +18,13 @@ const ready = (async () => {
 
 self.onmessage = async (e) => {
   await ready;
-  await handle(kernel, e.data, (m) => {
+  // STL is a print mesh — build it at the high-res 'print' tessellation, not the
+  // coarse preview the live view uses. (Manifold bakes segment counts in at
+  // primitive creation, so this needs its own kernel; the result is cached.)
+  const k = e.data.type === "export-stl"
+    ? (exportKernel ??= createManifoldKernel(wasm, { quality: "print" }))
+    : kernel;
+  await handle(k, e.data, (m) => {
     if (m.type === "meshes") {
       const transfer = [];
       for (const x of m.meshes) {
