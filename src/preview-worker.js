@@ -22,6 +22,7 @@ self.onmessage = async (e) => {
       for (const x of m.meshes) {
         transfer.push(x.positions.buffer, x.normals.buffer);
         if (x.indices) transfer.push(x.indices.buffer); // Manifold meshes are non-indexed
+        if (x.edges) transfer.push(x.edges.buffer);
       }
       postMessage(m, transfer);
     } else if (m.type === "download-parts") {

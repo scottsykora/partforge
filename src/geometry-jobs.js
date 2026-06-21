@@ -16,7 +16,7 @@ export async function handle(kernel, msg, post) {
       const meshes = [];
       for (const name of msg.subparts) {
         const m = buildSubPart(kernel, name, msg.params).toMesh({ quality: "preview" });
-        meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles });
+        meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges });
         kernel.cleanup?.(); // free this sub-part's WASM objects before building the next
       }
       post({ type: "meshes", meshes, ms: Date.now() - t0 });

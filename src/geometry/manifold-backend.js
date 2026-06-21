@@ -4,6 +4,8 @@ const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 const SEGS = { preview: 116, print: 220 };       // circular segments
 const TUBE = { preview: { stationsPerTurn: 38, ringSegs: 24 }, print: { stationsPerTurn: 64, ringSegs: 24 } };
 const SHARP_ANGLE = 35; // deg — same-surface edges sharper than this shade hard (cut seams are always hard)
+const COPLANAR_COS = Math.cos((5 * Math.PI) / 180); // edge lines: skip cut seams that bend less than 5° (coplanar)
+const MIN_EDGE2 = 0.01 * 0.01; // edge lines: drop sub-0.01mm segments (degenerate boolean slivers, not real features)
 
 export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const { Manifold, CrossSection } = wasm;
@@ -121,7 +123,32 @@ function creasedNormals(g, sharpCos) {
       normals[o] = nx / L; normals[o + 1] = ny / L; normals[o + 2] = nz / L;
     }
   }
-  return { positions, normals, triangles: nTri }; // non-indexed (no `indices`)
+
+  // Feature edge segments for CAD-style edge lines: draw a line where the surface
+  // actually BENDS — a sharp same-surface edge (dihedral past sharpCos), or a cut
+  // seam (different original surface) that bends more than COPLANAR_COS. Coplanar
+  // faces — even across a cut seam — get no line, and curved-surface facets are skipped.
+  const edges = [];
+  const seenEdge = new Map(); // edge key → first incident triangle
+  for (let t = 0; t < nTri; t++)
+    for (let e = 0; e < 3; e++) {
+      const i = remap[tris[t * 3 + e]], j = remap[tris[t * 3 + ((e + 1) % 3)]];
+      if (i === j) continue;
+      const key = i < j ? i * nVert + j : j * nVert + i;
+      const prev = seenEdge.get(key);
+      if (prev === undefined) { seenEdge.set(key, t); continue; }
+      seenEdge.delete(key);
+      const dot = fn[prev * 3] * fn[t * 3] + fn[prev * 3 + 1] * fn[t * 3 + 1] + fn[prev * 3 + 2] * fn[t * 3 + 2];
+      const hard = dot < sharpCos || (triOID[prev] !== triOID[t] && dot < COPLANAR_COS);
+      if (hard) {
+        const ai = i * np, bj = j * np;
+        const dx = vp[ai] - vp[bj], dy = vp[ai + 1] - vp[bj + 1], dz = vp[ai + 2] - vp[bj + 2];
+        if (dx * dx + dy * dy + dz * dz >= MIN_EDGE2) // skip degenerate sliver segments (noise)
+          edges.push(vp[ai], vp[ai + 1], vp[ai + 2], vp[bj], vp[bj + 1], vp[bj + 2]);
+      }
+    }
+
+  return { positions, normals, triangles: nTri, edges: Float32Array.from(edges) }; // mesh non-indexed
 }
 
 function stlFromMesh(g) {
