@@ -24,6 +24,20 @@ test("repeated generates with per-job cleanup never post an error (no leak/doubl
   }
 });
 
+test("export-step posts a progress message for each feature build stage", async () => {
+  // The OCCT geometry build is the slow part of a STEP export (~20 s). The worker
+  // must surface per-feature progress so the UI doesn't look frozen on one label.
+  // (Manifold can't write STEP, so toSTEP throws after the build — but the build,
+  // and therefore the progress stream, runs first.)
+  const posted = [];
+  await handle(k, { type: "export-step", part: "both", params: {} }, (m) => posted.push(m));
+  const phases = posted.filter((p) => p.type === "progress").map((p) => p.phase);
+  // at least the big-drum groove field + the final STEP-write stage
+  expect(phases).toContain("cutting big-drum grooves");
+  expect(phases.length).toBeGreaterThanOrEqual(3);
+  expect(phases[phases.length - 1]).toBe("writing STEP file");
+});
+
 test("viewParts includes block only when tensioner pockets are on", () => {
   expect(viewParts("both", { tensioner_pocket_depth: 7 })).toEqual(["small", "big", "block"]);
   expect(viewParts("both", { tensioner_pocket_depth: 0 })).toEqual(["small", "big"]);
