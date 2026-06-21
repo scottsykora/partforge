@@ -354,15 +354,13 @@ export function buildParts(kernel, part = "small", params = {}, onProgress) {
     parts.push({ name: "big_drum", shape: big });
   }
 
-  // Tensioner block (print 2 per joint): shown SEATED in pocket A
+  // Tensioner block (print 2 per joint), standalone for export / slicing.
+  // (The seated-in-pocket render is built separately via buildSubPart("block");
+  // we must NOT seat it here — seatBlock() transforms consume the shape on the
+  // OCCT backend, which would free the very block we're exporting.)
   if (part !== "small" && p.tensioner_pocket_depth > 0) {
     onProgress?.("building tensioner block");
-    const block = buildTensionerBlock(kernel, p, d);
-    parts.push({
-      name: "tensioner_block",
-      shape: block, // standalone, for export / slicing
-      display: seatBlock(kernel, block, p, d), // seated in pocket A, for the render
-    });
+    parts.push({ name: "tensioner_block", shape: buildTensionerBlock(kernel, p, d) });
   }
 
   return parts;
