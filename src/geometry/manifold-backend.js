@@ -1,8 +1,10 @@
 import { helixTube } from "./helix-tube.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
-const SEGS = { preview: 116, print: 220 };       // circular segments
-const TUBE = { preview: { stationsPerTurn: 38, ringSegs: 24 }, print: { stationsPerTurn: 64, ringSegs: 24 } };
+// 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
+// by the export path — Manifold meshing is cheap, so we tessellate generously).
+const SEGS = { preview: 116, print: 480 };       // circular segments
+const TUBE = { preview: { stationsPerTurn: 38, ringSegs: 24 }, print: { stationsPerTurn: 160, ringSegs: 40 } };
 const SHARP_ANGLE = 35; // deg — same-surface edges sharper than this shade hard (cut seams are always hard)
 const COPLANAR_COS = Math.cos((5 * Math.PI) / 180); // edge lines: skip cut seams that bend less than 5° (coplanar)
 const MIN_EDGE2 = 0.01 * 0.01; // edge lines: drop sub-0.01mm segments (degenerate boolean slivers, not real features)
@@ -156,8 +158,16 @@ function stlFromMesh(g) {
   const ab = new ArrayBuffer(84 + n * 50); const dv = new DataView(ab); dv.setUint32(80, n, true);
   let o = 84; const P = (i) => [vp[i*np], vp[i*np+1], vp[i*np+2]];
   for (let i = 0; i < n; i++) {
-    for (let k = 0; k < 3; k++) { dv.setFloat32(o, 0, true); o += 4; } // normal (slicers recompute)
-    for (const idx of [tris[i*3], tris[i*3+1], tris[i*3+2]]) { const p = P(idx); for (const x of p) { dv.setFloat32(o, x, true); o += 4; } }
+    const a = P(tris[i*3]), b = P(tris[i*3+1]), c = P(tris[i*3+2]);
+    // Per-facet flat normal from the winding (Manifold is CCW → outward). Slicers
+    // recompute this, but viewers that light from the stored normal (macOS
+    // Preview/Quick Look) render the mesh unlit if it's left as zero.
+    const ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+    const vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+    const nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+    const L = Math.hypot(nx, ny, nz) || 1;
+    dv.setFloat32(o, nx/L, true); dv.setFloat32(o+4, ny/L, true); dv.setFloat32(o+8, nz/L, true); o += 12;
+    for (const p of [a, b, c]) for (const x of p) { dv.setFloat32(o, x, true); o += 4; }
     dv.setUint16(o, 0, true); o += 2;
   }
   return ab;

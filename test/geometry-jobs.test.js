@@ -3,8 +3,8 @@ import Module from "manifold-3d";
 import { createManifoldKernel } from "../src/geometry/manifold-backend.js";
 import { handle, viewParts } from "../src/geometry-jobs.js";
 
-let k;
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+let k, wasm;
+beforeAll(async () => { wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
 
 test("generate posts one mesh per requested sub-part", async () => {
   const posted = [];
@@ -36,6 +36,23 @@ test("export-step posts a progress message for each feature build stage", async 
   expect(phases).toContain("cutting big-drum grooves");
   expect(phases.length).toBeGreaterThanOrEqual(3);
   expect(phases[phases.length - 1]).toBe("writing STEP file");
+});
+
+test("export-stl meshes at print resolution — far denser than the live preview", async () => {
+  // STL is a print mesh, so it must use the high-res 'print' tessellation, not the
+  // coarse 'preview' segment counts the interactive view uses. (Manifold bakes
+  // segment counts in at primitive creation, so the export must build with a
+  // print-quality kernel — toSTL can't re-mesh after the fact.)
+  const stlTris = (buf) => new DataView(buf).getUint32(80, true); // binary STL: tri count at byte 80
+  const exportTris = async (kernel) => {
+    let stl;
+    await handle(kernel, { type: "export-stl", part: "small", params: {} },
+      (m) => { if (m.type === "download-parts") stl = m.parts[0].data; });
+    return stlTris(stl);
+  };
+  const preview = await exportTris(k);
+  const print = await exportTris(createManifoldKernel(wasm, { quality: "print" }));
+  expect(print).toBeGreaterThan(preview * 2.5);
 });
 
 test("viewParts includes block only when tensioner pockets are on", () => {
