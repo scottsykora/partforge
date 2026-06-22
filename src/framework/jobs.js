@@ -1,3 +1,5 @@
+import { meshTo3MF } from "./geometry/threemf.js";
+
 // Names of the sub-parts a view shows: declared in the view and enabled for these
 // params. Order follows Object.keys(part.parts) (definition order).
 export function viewSubParts(part, view, params) {
@@ -54,6 +56,14 @@ export async function handle(kernel, part, msg, post) {
       onProgress("writing STEP file");
       const data = await kernel.toSTEP(solids);
       post({ type: "download", data, filename: `${msg.view}.step`, mime: "application/step" });
+    } else if (msg.type === "export-3mf") {
+      const meshes = viewSubParts(part, msg.view, p).map((name) => {
+        onProgress(`building ${label(name)}`);
+        const { positions, indices } = buildPosed(name, "export", msg.view, onProgress).toIndexedMesh();
+        return { name: exportName(name), positions, indices };
+      });
+      onProgress("writing 3MF file");
+      post({ type: "download", data: meshTo3MF(meshes), filename: `${msg.view}.3mf`, mime: "model/3mf" });
     }
   } catch (err) {
     post({ type: "error", message: String(err?.message || err) });

@@ -14,7 +14,14 @@ export function createViewer(container, part) {
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  if (part.meta?.background != null) scene.background = new THREE.Color(part.meta.background);
+
+  // Light/dark scene palettes (the page chrome is themed separately, via CSS on the
+  // host page). A part can override the dark background through meta.background.
+  const THEME = {
+    dark:  { bg: part.meta?.background ?? 0x15181d, grid: [0x2c333d, 0x222831], line: 0x1c232d },
+    light: { bg: 0xe9edf2, grid: [0xc4ccd6, 0xd6dce4], line: 0x33414f },
+  };
+  scene.background = new THREE.Color(THEME.dark.bg);
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
   camera.position.set(18, 12, 18);
@@ -30,7 +37,8 @@ export function createViewer(container, part) {
   key.position.set(8, 14, 10);
   scene.add(key);
   // 1 cm grid (mm units): 200 mm wide, 20 divisions -> 10 mm squares.
-  scene.add(new THREE.GridHelper(200, 20, 0x2c333d, 0x222831));
+  let grid = new THREE.GridHelper(200, 20, THEME.dark.grid[0], THEME.dark.grid[1]);
+  scene.add(grid);
 
   // --- material + part groups -----------------------------------------------
   const material = new THREE.MeshStandardMaterial({
@@ -117,9 +125,23 @@ export function createViewer(container, part) {
   // --- show / hide assembly -------------------------------------------------
   const _box = new THREE.Box3();
 
-  // Show exactly the named sub-parts (from the cache), recentre the assembly on
-  // the origin, and frame the camera to it.
-  function showAssembly(visibleNames) {
+  // Recentre the assembly on the pivot and frame the camera to the named parts.
+  function frameTo(visibleNames) {
+    _box.makeEmpty();
+    for (const name of visibleNames) if (subCache[name]) _box.union(subCache[name].boundingBox);
+    if (_box.isEmpty()) return;
+    const center = _box.getCenter(new THREE.Vector3());
+    partsGroup.position.copy(center).multiplyScalar(-1); // centre assembly on the pivot
+    const size = _box.getSize(new THREE.Vector3());
+    const r = Math.max(size.x, size.y, size.z) || 12;
+    camera.position.setLength(r * 2.6 + 6);
+    controls.target.set(0, 0, 0);
+  }
+
+  // Show exactly the named sub-parts (from the cache). When `frame` is set, also
+  // frame the camera to them — done only on the initial show and on view (tab)
+  // changes, NOT on regeneration, so a user's zoom/orbit survives editing params.
+  function showAssembly(visibleNames, { frame = false } = {}) {
     for (const [name, mesh] of Object.entries(subMesh)) {
       const on = visibleNames.includes(name);
       if (on) {
@@ -129,14 +151,24 @@ export function createViewer(container, part) {
       mesh.visible = on;
       subLines[name].visible = on;
     }
-    _box.makeEmpty();
-    for (const name of visibleNames) _box.union(subCache[name].boundingBox);
-    const center = _box.getCenter(new THREE.Vector3());
-    partsGroup.position.copy(center).multiplyScalar(-1); // centre assembly on the pivot
-    const size = _box.getSize(new THREE.Vector3());
-    const r = Math.max(size.x, size.y, size.z) || 12;
-    camera.position.setLength(r * 2.6 + 6);
-    controls.target.set(0, 0, 0);
+    if (frame) frameTo(visibleNames);
+  }
+
+  // Re-frame whatever is currently visible (the reframe button).
+  function frame() {
+    frameTo(names.filter((n) => subMesh[n].visible && subCache[n]));
+  }
+
+  function setAutoRotate(on) { controls.autoRotate = on; }
+
+  // Swap the scene background, grid, and edge-line colors for the given theme.
+  function setTheme(mode) {
+    const t = THEME[mode] ?? THEME.dark;
+    scene.background = new THREE.Color(t.bg);
+    scene.remove(grid);
+    grid = new THREE.GridHelper(200, 20, t.grid[0], t.grid[1]);
+    scene.add(grid);
+    lineMaterial.color.set(t.line);
   }
 
   function hideAssembly() {
@@ -168,5 +200,5 @@ export function createViewer(container, part) {
     container.removeChild(renderer.domElement);
   }
 
-  return { showAssembly, hideAssembly, setSubGeometry, resize, dispose, _subCache: subCache };
+  return { showAssembly, hideAssembly, setSubGeometry, resize, dispose, frame, setAutoRotate, setTheme, _subCache: subCache };
 }

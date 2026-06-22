@@ -61,7 +61,8 @@ export function runWorker(part) {
     let kernel;
     if (backend === "manifold") {
       await booting;
-      kernel = e.data.type === "export-stl" ? manifold.print : manifold.preview;
+      const printJob = e.data.type === "export-stl" || e.data.type === "export-3mf"; // high-res mesh exports
+      kernel = printJob ? manifold.print : manifold.preview;
     } else {
       if (!occt) {
         postMessage({ type: "progress", phase: "loading exact kernel" }); // feedback during cold boot

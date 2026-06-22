@@ -1,5 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import Module from "manifold-3d";
+import { unzipSync, strFromU8 } from "fflate";
 import { createManifoldKernel } from "../../src/framework/geometry/manifold-backend.js";
 import { handle } from "../../src/framework/jobs.js";
 import demo from "../fixtures/demo-part.js";
@@ -21,6 +22,16 @@ test("export-stl builds the view's enabled sub-parts and names them via export.n
   const dl = posted.find((m) => m.type === "download-parts");
   expect(dl.parts.map((p) => p.name)).toEqual(["base", "lid"]);
   expect(dl.parts[0].data.byteLength).toBeGreaterThan(0);
+});
+
+test("export-3mf posts one combined 3MF download with an object per enabled sub-part", async () => {
+  const posted = [];
+  await handle(k, demo, { type: "export-3mf", view: "all", params: { with_lid: 1 } }, (m) => posted.push(m));
+  const dl = posted.find((m) => m.type === "download");
+  expect(dl.filename).toBe("all.3mf");
+  expect(dl.mime).toBe("model/3mf");
+  const model = strFromU8(unzipSync(new Uint8Array(dl.data))["3D/3dmodel.model"]);
+  expect((model.match(/<object /g) || []).length).toBe(2); // base + lid
 });
 
 test("export-step emits a final 'writing STEP file' progress before the (unsupported) write", async () => {
