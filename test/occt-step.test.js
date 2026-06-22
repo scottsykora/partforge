@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "./occt-kernel.js";
-import { buildParts } from "../src/drum.js";
+import { buildParts } from "../src/parts/drum/bodies.js";
 
 // Covers the OCCT backend's export path — its whole reason for existing.
 // toSTEP / toSTL are async (Promise<ArrayBuffer>); a real export must produce bytes.

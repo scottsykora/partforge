@@ -6,7 +6,7 @@
 // enables it and reveals those controls right below it.
 // All controls mutate the shared `params` object and call onDirty() on change.
 
-import { SECTIONS } from "./params.js";
+import { SECTIONS } from "./parts/drum/params.js";
 
 const fmt = (v, unit) => {
   const n = Math.round(v * 100) / 100;

@@ -5,7 +5,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { zipSync } from "fflate";
-import { DEFAULTS } from "./params.js";
+import { DEFAULTS } from "./parts/drum/params.js";
 import { buildControls } from "./controls.js";
 import { viewParts } from "./geometry-jobs.js";
 

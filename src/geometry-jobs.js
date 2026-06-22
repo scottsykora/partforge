@@ -1,4 +1,4 @@
-import { buildSubPart, buildParts } from "./drum.js";
+import { buildSubPart, buildParts } from "./parts/drum/bodies.js";
 
 // view → sub-parts (block only exists when tensioner pockets are enabled)
 export function viewParts(view, params) {

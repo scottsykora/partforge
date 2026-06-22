@@ -6,7 +6,7 @@
 //   buildSubPart(kernel, name, params)  → Solid   name ∈ "small"|"big"|"block"
 //   buildParts(kernel, part, params)    → {name, shape}[]
 
-import { piePolygon, hexPolygon } from "./framework/geometry/polygon.js";
+import { piePolygon, hexPolygon } from "../../framework/geometry/polygon.js";
 import { DEFAULTS, derive } from "./params.js";
 
 // A helical groove cutter: a circle profile swept along a helix.
@@ -70,7 +70,7 @@ function tensionerTools(kernel, p, d, bodyH, grooveZ, top) {
 }
 
 // The sliding block the rope ties to (print 2 per joint).
-function buildTensionerBlock(kernel, p, d) {
+export function buildTensionerBlock(kernel, p, d) {
   const L = Math.max(4, p.tensioner_pocket_l - p.tensioner_travel);
   const fit = 0.3;
   const W = p.tensioner_pocket_w - fit;
@@ -113,7 +113,7 @@ function buildTensionerBlock(kernel, p, d) {
 }
 
 // Seat a standalone block into tensioner pocket A for the assembly view.
-function seatBlock(kernel, block, p, d) {
+export function seatBlock(block, p, d) {
   const rp = d.bigPitchR;
   const sx = p.tensioner_pocket_w - 4 - 0.15;
   const L = Math.max(4, p.tensioner_pocket_l - p.tensioner_travel);
@@ -127,7 +127,7 @@ function seatBlock(kernel, block, p, d) {
     .rotate(d.anchorA.ang, [0, 0, 0], [0, 0, 1]);
 }
 
-function buildSmallDrum(kernel, p, d, onProgress) {
+export function buildSmallDrum(kernel, p, d, onProgress) {
   const margin = d.axialPitch;
   const bodyH = d.smallBodyH;
   const baseH = p.motor_mount ? p.motor_flange_t + p.motor_standoff_h : 0;
@@ -221,7 +221,7 @@ function buildSmallDrum(kernel, p, d, onProgress) {
   return drum;
 }
 
-function buildBigDrum(kernel, p, d, onProgress) {
+export function buildBigDrum(kernel, p, d, onProgress) {
   const bodyH = d.bigBodyH;
   let drum = kernel.cylinder(d.bigBlankR, d.bigBlankR, bodyH);
 
@@ -379,6 +379,6 @@ export function buildSubPart(kernel, name, params = {}, onProgress) {
     return buildSmallDrum(kernel, p, d, onProgress).translate([-d.centerDist, 0, -baseH]);
   }
   if (name === "big") return buildBigDrum(kernel, p, d, onProgress);
-  if (name === "block") return seatBlock(kernel, buildTensionerBlock(kernel, p, d), p, d);
+  if (name === "block") return seatBlock(buildTensionerBlock(kernel, p, d), p, d);
   throw new Error(`unknown sub-part: ${name}`);
 }

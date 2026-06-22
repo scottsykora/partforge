@@ -4,7 +4,7 @@ import { bootOcctKernel } from "./occt-kernel.js";
 let k, buildSubPart;
 beforeAll(async () => {
   k = await bootOcctKernel();
-  ({ buildSubPart } = await import("../src/drum.js"));
+  ({ buildSubPart } = await import("../src/parts/drum/bodies.js"));
 }, 120_000);
 
 test("small drum builds via the OCCT kernel and meshes", () => {
