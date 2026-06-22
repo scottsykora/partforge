@@ -1,11 +1,21 @@
 {
-  "name": "drum-machine",
-  "private": true,
-  "version": "0.0.0",
-  "description": "Web-native parametric capstan drum generator (Replicad + three.js) — successor to the retired Robot KB FreeCAD cad/ generator",
+  "name": "partforge",
+  "version": "0.1.0",
+  "description": "Turn a declarative part definition into a parametric-CAD web app (three.js + Manifold/Replicad). Requires a Vite-based consumer.",
   "type": "module",
+  "license": "MIT",
   "engines": {
     "node": ">=24"
+  },
+  "files": [
+    "src",
+    "docs/AUTHORING-PARTS.md",
+    "README.md"
+  ],
+  "exports": {
+    ".": "./src/index.js",
+    "./worker": "./src/framework/worker.js",
+    "./testing": "./src/testing.js"
   },
   "scripts": {
     "dev": "vite",
