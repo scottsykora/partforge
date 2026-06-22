@@ -1,155 +1,12 @@
-import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
-import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
-import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
-import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { zipSync } from "fflate";
 import { DEFAULTS } from "./parts/drum/params.js";
 import { buildControls } from "./controls.js";
 import { viewParts } from "./geometry-jobs.js";
+import { createViewer } from "./framework/viewer.js";
+import drumPart from "./parts/drum.js";
 
-// --- three.js scene --------------------------------------------------------
-const app = document.getElementById("app");
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-app.appendChild(renderer.domElement);
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x15181d);
-
-const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-camera.position.set(18, 12, 18);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.autoRotate = true;
-controls.autoRotateSpeed = 1.6;
-
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x202024, 1.1));
-const key = new THREE.DirectionalLight(0xffffff, 1.4);
-key.position.set(8, 14, 10);
-scene.add(key);
-// 1 cm grid (mm units): 200 mm wide, 20 divisions -> 10 mm squares.
-scene.add(new THREE.GridHelper(200, 20, 0x2c333d, 0x222831));
-
-const material = new THREE.MeshStandardMaterial({
-  color: 0x9fb4cc,
-  metalness: 0.25,
-  roughness: 0.55,
-  flatShading: false,
-  polygonOffset: true, // push the surface back so edge lines sit cleanly on top
-  polygonOffsetFactor: 1,
-  polygonOffsetUnits: 1,
-});
-// Sub-parts (small drum / big drum / block) are meshed independently in a shared
-// frame and cached, so any view is composed from cached pieces. `pivot` orients
-// the drum axis vertical; `partsGroup` is recentred per view so the visible
-// assembly sits at the origin.
-const pivot = new THREE.Group();
-pivot.rotation.x = -Math.PI / 2; // drum axis -> vertical
-scene.add(pivot);
-const partsGroup = new THREE.Group();
-pivot.add(partsGroup);
-
-const subMesh = {
-  small: new THREE.Mesh(new THREE.BufferGeometry(), material),
-  big: new THREE.Mesh(new THREE.BufferGeometry(), material),
-  block: new THREE.Mesh(new THREE.BufferGeometry(), material),
-};
-for (const m of Object.values(subMesh)) {
-  m.visible = false;
-  partsGroup.add(m);
-}
-
-// CAD-style feature edge lines (anti-aliased "fat" lines), one per sub-part.
-const EDGE_ANGLE = 35; // deg — OCCT fallback threshold (Manifold supplies seam-aware edges)
-const lineMaterial = new LineMaterial({ color: 0x1c232d, linewidth: 1.0 }); // ~10% lighter, 1 px
-lineMaterial.resolution.set(innerWidth, innerHeight);
-const subLines = {
-  small: new LineSegments2(new LineSegmentsGeometry(), lineMaterial),
-  big: new LineSegments2(new LineSegmentsGeometry(), lineMaterial),
-  block: new LineSegments2(new LineSegmentsGeometry(), lineMaterial),
-};
-for (const l of Object.values(subLines)) {
-  l.visible = false;
-  partsGroup.add(l);
-}
-
-// Smooth shading within CREASE_ANGLE of a shared edge, hard edge past it — so the
-// round body and helical groove read smooth while bore rims, drum faces, and
-// groove walls stay crisp. Lower = more hard edges; raise toward Math.PI/3 for
-// softer. (Worker normals are ignored; we recompute per the crease threshold.)
-const CREASE_ANGLE = Math.PI / 6; // 30°
-
-// BufferGeometry from a worker mesh payload — kept in its shared-frame coords
-// (NOT recentred) so the pieces assemble in the right relative positions.
-function buildGeometry({ positions, normals, indices, triangles, edges }) {
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  if (indices?.length) geo.setIndex(new THREE.BufferAttribute(indices, 1)); // Manifold is non-indexed
-  const triCount = triangles ?? (indices ? indices.length : positions.length / 3) / 3;
-  let out;
-  if (normals?.length) {
-    // kernel-computed normals (Manifold) — smooth within a surface, hard at cut seams
-    geo.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-    geo.computeBoundingBox();
-    out = geo;
-  } else {
-    // fallback (no kernel normals, e.g. OCCT): crease from the triangle soup
-    out = toCreasedNormals(geo, CREASE_ANGLE);
-    out.computeBoundingBox();
-  }
-  out.userData.triangles = triCount;
-  // feature edge lines: Manifold supplies seam-aware segments; else derive by angle
-  const lg = new LineSegmentsGeometry();
-  if (edges?.length) lg.setPositions(edges);
-  else lg.fromEdgesGeometry(new THREE.EdgesGeometry(out, EDGE_ANGLE));
-  out.userData.edges = lg;
-  return out;
-}
-
-// Show exactly the named sub-parts (from the cache), recentre the assembly on
-// the origin, and frame the camera to it.
-const _box = new THREE.Box3();
-function showAssembly(names) {
-  for (const [name, mesh] of Object.entries(subMesh)) {
-    const on = names.includes(name);
-    if (on) {
-      mesh.geometry = subCache[name]; // cached geometries reused, not disposed
-      subLines[name].geometry = subCache[name].userData.edges;
-    }
-    mesh.visible = on;
-    subLines[name].visible = on;
-  }
-  _box.makeEmpty();
-  for (const name of names) _box.union(subCache[name].boundingBox);
-  const center = _box.getCenter(new THREE.Vector3());
-  partsGroup.position.copy(center).multiplyScalar(-1); // centre assembly on the pivot
-  const size = _box.getSize(new THREE.Vector3());
-  const r = Math.max(size.x, size.y, size.z) || 12;
-  camera.position.setLength(r * 2.6 + 6);
-  controls.target.set(0, 0, 0);
-}
-function hideAssembly() {
-  for (const m of Object.values(subMesh)) m.visible = false;
-  for (const l of Object.values(subLines)) l.visible = false;
-}
-
-function resize() {
-  const w = innerWidth, h = innerHeight;
-  renderer.setSize(w, h);
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-  lineMaterial.resolution.set(w, h); // fat lines need the viewport size for px width
-}
-addEventListener("resize", resize);
-resize();
-
-renderer.setAnimationLoop(() => {
-  controls.update();
-  renderer.render(scene, camera);
-});
+// --- three.js viewer -------------------------------------------------------
+const viewer = createViewer(document.getElementById("app"), drumPart);
 
 // --- workers (geometry) ----------------------------------------------------
 // Dev toggle: ?backend=occt routes preview generate through the OCCT worker.
@@ -190,11 +47,10 @@ let generating = false;
 let paramsVersion = 0; // bumped on every settings edit
 let genVersion = -1; // the params version the in-flight generate is building
 let genTimer = null; // debounce timer for auto-regenerate
-const subCache = { small: null, big: null, block: null }; // geometry per sub-part
 const cacheVersion = { small: -1, big: -1, block: -1 }; // params version each was built at
 
 // A cached sub-part is current only if it was built at the latest params version.
-const isCurrent = (n) => subCache[n] && cacheVersion[n] === paramsVersion;
+const isCurrent = (n) => viewer._subCache[n] && cacheVersion[n] === paramsVersion;
 const missingParts = () => viewParts(part, params).filter((n) => !isCurrent(n));
 
 // Reflect the active view. If every needed part is current, show it and enable
@@ -203,17 +59,17 @@ const missingParts = () => viewParts(part, params).filter((n) => !isCurrent(n));
 function refreshView() {
   const needed = viewParts(part, params);
   if (needed.every(isCurrent)) {
-    showAssembly(needed);
+    viewer.showAssembly(needed);
     dlBtn.disabled = false;
     dlStepBtn.disabled = false;
-    const tris = needed.reduce((s, n) => s + subCache[n].userData.triangles, 0);
+    const tris = needed.reduce((s, n) => s + viewer._subCache[n].userData.triangles, 0);
     setStatus(`${tris.toLocaleString()} triangles`);
-  } else if (needed.every((n) => subCache[n])) {
-    showAssembly(needed); // stale but present — keep it visible during regenerate
+  } else if (needed.every((n) => viewer._subCache[n])) {
+    viewer.showAssembly(needed); // stale but present — keep it visible during regenerate
     dlBtn.disabled = true;
     dlStepBtn.disabled = true;
   } else {
-    hideAssembly();
+    viewer.hideAssembly();
     dlBtn.disabled = true;
     dlStepBtn.disabled = true;
   }
@@ -253,8 +109,8 @@ function onWorkerMessage({ data }) {
       generating = false;
       if (genVersion !== paramsVersion) { maybeGenerate(); break; } // changed mid-build → redo
       for (const m of data.meshes) {
-        if (subCache[m.name]) { subCache[m.name].userData.edges?.dispose(); subCache[m.name].dispose(); }
-        subCache[m.name] = buildGeometry(m);
+        if (viewer._subCache[m.name]) { viewer._subCache[m.name].userData.edges?.dispose(); viewer._subCache[m.name].dispose(); }
+        viewer.setSubGeometry(m.name, m);
         cacheVersion[m.name] = genVersion;
       }
       hideBusy();
