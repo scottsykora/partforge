@@ -1,3 +1,4 @@
+import "./app.css"; // shared chrome styles — every part-app gets them via mount
 import { zipSync } from "fflate";
 import { createViewer } from "./viewer.js";
 import { buildControls } from "./controls.js";

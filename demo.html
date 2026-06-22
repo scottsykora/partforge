@@ -3,16 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Drum Machine — capstan drum generator</title>
+    <title>Spacer — demo part</title>
+    <!-- Dev-only example app for the demo part (parts/demo.js). `npm run dev`, then
+         open /demo.html. Structural markup only — the chrome CSS comes from the
+         framework (mount imports framework/app.css). See docs/AUTHORING-PARTS.md. -->
   </head>
   <body>
     <div id="app"></div>
 
     <div id="topbar">
       <div class="seg" id="part">
-        <button data-part="small">Small</button>
-        <button data-part="big">Big</button>
-        <button data-part="both" class="on">Both</button>
+        <button data-part="spacer" class="on">Spacer</button>
       </div>
     </div>
 
@@ -23,8 +24,8 @@
     </div>
 
     <div id="panel">
-      <h1>Drum Machine</h1>
-      <p class="sub">Capstan drum · Replicad + three.js</p>
+      <h1>Spacer</h1>
+      <p class="sub">Demo part · framework example</p>
 
       <div id="controls"></div>
 
@@ -37,11 +38,10 @@
         </div>
       </div>
       <div id="status">booting kernel…</div>
-      <p class="hint">Drag to orbit · scroll to zoom. Each section has presets;
-        open <b>Advanced</b> for the full controls. Big drum + Both take longer.</p>
+      <p class="hint">Drag to orbit · scroll to zoom. A minimal one-part example.</p>
     </div>
 
     <div id="busy"><div class="ring"></div><div class="phase" id="phase">booting kernel…</div></div>
-    <script type="module" src="/src/app.js"></script>
+    <script type="module" src="/src/app-demo.js"></script>
   </body>
 </html>
