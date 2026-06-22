@@ -15,6 +15,7 @@
   "exports": {
     ".": "./src/index.js",
     "./worker": "./src/framework/worker.js",
+    "./geometry": "./src/framework/geometry/polygon.js",
     "./testing": "./src/testing.js"
   },
   "scripts": {

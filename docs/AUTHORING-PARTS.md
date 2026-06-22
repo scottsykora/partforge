@@ -91,9 +91,10 @@ handles. The same code runs on **Manifold** (fast meshes — preview + STL + 3MF
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove) |
 | `k.union(solids[])` | boolean union |
 
-2-D polygon helpers for `prism`: from a part at `src/parts/<part>.js`,
-`import { piePolygon, hexPolygon } from "../framework/geometry/polygon.js"` (add a `../`
-per extra folder — `parts/drum/` uses `../../framework/…`).
+2-D polygon helpers for `prism`: `import { piePolygon, hexPolygon } from "partforge/geometry"`.
+**Import geometry helpers from `partforge/geometry`, never from `partforge`** — the main
+entry pulls in the DOM viewer/controls, and your build functions run in a Web Worker
+(importing the main entry there throws `document is not defined`).
 
 **`Solid` — combine / transform / export:**
 
