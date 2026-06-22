@@ -6,10 +6,15 @@
 // enables it and reveals those controls right below it.
 // All controls mutate the shared `params` object and call onDirty() on change.
 
-const fmt = (v, unit) => {
-  const n = Math.round(v * 100) / 100;
-  return unit ? `${n} ${unit}`.trim() : `${n}`;
-};
+// Short numeric string without float noise (4 dp max) for the value box.
+const numStr = (v) => String(Math.round(v * 1e4) / 1e4);
+
+// Parse a typed value → clamped to [min, max], or null if not a finite number.
+export function clampToRange(raw, min, max) {
+  const v = parseFloat(raw);
+  if (!Number.isFinite(v)) return null;
+  return Math.min(max, Math.max(min, v));
+}
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -18,30 +23,63 @@ function el(tag, className, text) {
   return node;
 }
 
-// One slider bound to params[def.key]. Returns { wrap, sync } — sync() refreshes
-// the input + readout from params (after a preset or checkbox changes the value).
+// One parameter control bound to params[def.key]. `def.control`:
+//   "slider" (default) — range slider + an editable number box (drag OR type)
+//   "number"           — number box only (no slider)
+// The box accepts exact values (finer than `step`); typed values clamp to
+// [min, max] on commit (blur/Enter). Returns { wrap, sync }.
 function makeSlider(def, params, onChange) {
+  const numeric = def.control === "number";
   const wrap = el("div", "slider");
   const row = el("div", "row");
   row.append(el("label", "", def.label));
-  const out = document.createElement("output");
-  out.textContent = fmt(params[def.key], def.unit);
-  row.append(out);
-  const input = document.createElement("input");
-  input.type = "range";
-  input.min = def.min;
-  input.max = def.max;
-  input.step = def.step;
-  input.value = params[def.key];
-  input.addEventListener("input", () => {
-    params[def.key] = +input.value;
-    out.textContent = fmt(+input.value, def.unit);
+
+  // editable value box (+ optional unit suffix)
+  const val = el("div", "val");
+  const box = document.createElement("input");
+  box.type = "number";
+  box.className = "num";
+  box.min = def.min; box.max = def.max; box.step = def.step;
+  box.value = numStr(params[def.key]);
+  val.append(box);
+  if (def.unit) val.append(el("span", "unit", def.unit));
+  row.append(val);
+  wrap.append(row);
+
+  let slider = null;
+  if (!numeric) {
+    slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = def.min; slider.max = def.max; slider.step = def.step;
+    slider.value = params[def.key];
+    slider.addEventListener("input", () => {
+      params[def.key] = +slider.value;
+      box.value = numStr(+slider.value);
+      onChange?.();
+    });
+    wrap.append(slider);
+  }
+
+  // live preview while typing (unclamped); clamp + reformat on commit (blur/Enter)
+  box.addEventListener("input", () => {
+    const v = parseFloat(box.value);
+    if (!Number.isFinite(v)) return;
+    params[def.key] = v;
+    if (slider) slider.value = v;
     onChange?.();
   });
-  wrap.append(row, input);
+  box.addEventListener("change", () => {
+    const v = clampToRange(box.value, def.min, def.max);
+    if (v == null) { box.value = numStr(params[def.key]); return; } // revert invalid input
+    params[def.key] = v;
+    box.value = numStr(v);
+    if (slider) slider.value = v;
+    onChange?.();
+  });
+
   const sync = () => {
-    input.value = params[def.key];
-    out.textContent = fmt(params[def.key], def.unit);
+    box.value = numStr(params[def.key]);
+    if (slider) slider.value = params[def.key];
   };
   return { wrap, sync };
 }

@@ -66,8 +66,16 @@ select.preset {
 .row { display: flex; justify-content: space-between; align-items: center;
   margin: 0 0 3px; gap: 8px; }
 .row label { color: var(--muted-2); }
-.row output { color: var(--text-strong); font-variant-numeric: tabular-nums; min-width: 48px;
-  text-align: right; }
+.row .val { display: flex; align-items: baseline; gap: 4px; flex: none; }
+.row .num {
+  width: 52px; text-align: right; font: inherit; font-variant-numeric: tabular-nums;
+  background: var(--input-bg); color: var(--text-strong);
+  border: 1px solid var(--border); border-radius: 5px; padding: 2px 5px;
+}
+.row .num:focus { outline: none; border-color: var(--accent); }
+.row .num::-webkit-outer-spin-button, .row .num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.row .num { -moz-appearance: textfield; }
+.row .unit { color: var(--muted); font-size: 11px; }
 input[type="range"] { width: 100%; }
 
 button.action {
