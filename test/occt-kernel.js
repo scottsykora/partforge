@@ -4,7 +4,7 @@ import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
-import { createOcctKernel } from "../src/geometry/occt-backend.js";
+import { createOcctKernel } from "../src/framework/geometry/occt-backend.js";
 
 export async function bootOcctKernel() {
   const require = createRequire(import.meta.url);

@@ -6,7 +6,7 @@
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import wasmUrl from "replicad-opencascadejs/src/replicad_single.wasm?url";
 import * as replicad from "replicad";
-import { createOcctKernel } from "./geometry/occt-backend.js";
+import { createOcctKernel } from "./framework/geometry/occt-backend.js";
 import { handle } from "./geometry-jobs.js";
 
 let kernel = null;

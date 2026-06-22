@@ -1,7 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import Module from "manifold-3d";
 import occtVolumes from "./fixtures/occt-volumes.json";
-import { createManifoldKernel } from "../src/geometry/manifold-backend.js";
+import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
 import { buildSubPart } from "../src/drum.js";
 import { meshVolume, bboxSize } from "./helpers.js";
 

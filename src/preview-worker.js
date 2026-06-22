@@ -3,7 +3,7 @@
 // export-step — that goes to the export-worker.
 
 import Module from "manifold-3d";
-import { createManifoldKernel } from "./geometry/manifold-backend.js";
+import { createManifoldKernel } from "./framework/geometry/manifold-backend.js";
 import { handle } from "./geometry-jobs.js";
 
 let wasm = null;

@@ -6,7 +6,7 @@
 //   buildSubPart(kernel, name, params)  → Solid   name ∈ "small"|"big"|"block"
 //   buildParts(kernel, part, params)    → {name, shape}[]
 
-import { piePolygon, hexPolygon } from "./geometry/kernel.js";
+import { piePolygon, hexPolygon } from "./framework/geometry/polygon.js";
 import { DEFAULTS, derive } from "./params.js";
 
 // A helical groove cutter: a circle profile swept along a helix.
