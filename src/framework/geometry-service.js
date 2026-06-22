@@ -14,6 +14,7 @@ export function createGeometryService({ createWorker, onMessage, occtPreview = f
   return {
     generate: (msg) => genWorker.postMessage(msg),
     exportStl: (msg) => preview.postMessage(msg),
+    export3mf: (msg) => preview.postMessage(msg), // mesh export → Manifold worker
     exportStep: (msg) => exporter.postMessage(msg),
   };
 }

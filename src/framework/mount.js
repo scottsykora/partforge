@@ -21,10 +21,14 @@ export function mount(part, { createWorker, container = document.getElementById(
   const statusEl = document.getElementById("status");
   const dlBtn = document.getElementById("download");
   const dlStepBtn = document.getElementById("download-step");
+  const dl3mfBtn = document.getElementById("download-3mf");
   const busyEl = document.getElementById("busy");
   const phaseEl = document.getElementById("phase");
   const partSeg = document.getElementById("part");
   let kernelReady = false;
+
+  const exportBtns = [dlBtn, dlStepBtn, dl3mfBtn].filter(Boolean);
+  const setExportEnabled = (on) => exportBtns.forEach((b) => { b.disabled = !on; });
 
   const setStatus = (msg, isErr = false) => { statusEl.textContent = msg; statusEl.classList.toggle("err", isErr); };
   const showBusy = (phase) => { phaseEl.textContent = `${phase}…`; busyEl.classList.add("show"); };
@@ -62,18 +66,15 @@ export function mount(part, { createWorker, container = document.getElementById(
     const needed = viewSubParts(part, view, params);
     if (needed.every(isCurrent)) {
       showView(needed);
-      dlBtn.disabled = false;
-      dlStepBtn.disabled = false;
+      setExportEnabled(true);
       const tris = needed.reduce((s, n) => s + viewer._subCache[n].userData.triangles, 0);
       setStatus(`${tris.toLocaleString()} triangles`);
     } else if (needed.every((n) => viewer._subCache[n])) {
       showView(needed); // stale but present — keep it visible during regenerate
-      dlBtn.disabled = true;
-      dlStepBtn.disabled = true;
+      setExportEnabled(false);
     } else {
       viewer.hideAssembly();
-      dlBtn.disabled = true;
-      dlStepBtn.disabled = true;
+      setExportEnabled(false);
     }
   }
 
@@ -186,6 +187,11 @@ export function mount(part, { createWorker, container = document.getElementById(
   dlStepBtn.addEventListener("click", () => {
     showBusy("exporting STEP");
     service.exportStep({ type: "export-step", view, params });
+  });
+
+  dl3mfBtn?.addEventListener("click", () => {
+    showBusy("exporting 3MF");
+    service.export3mf({ type: "export-3mf", view, params });
   });
 
   // --- viewer controls (optional host-page buttons: #pause / #reframe / #theme) --

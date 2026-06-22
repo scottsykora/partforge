@@ -78,6 +78,17 @@
       }
       button.ghost { background: var(--border); color: var(--text-2); font-weight: 500; }
       button.action:disabled { opacity: .5; cursor: default; }
+
+      .dl { margin-top: 12px; }
+      .dl-head { font-weight: 600; color: var(--text-strong); margin-bottom: 6px; }
+      .dl-row { display: flex; gap: 6px; }
+      .dl-row button {
+        flex: 1; padding: 8px 0; border: 1px solid var(--border); border-radius: 7px;
+        background: var(--surface-2); color: var(--text-2); font-weight: 600;
+        font-size: 12px; cursor: pointer;
+      }
+      .dl-row button:hover:not(:disabled) { border-color: var(--accent); color: var(--text-strong); }
+      .dl-row button:disabled { opacity: .45; cursor: default; }
       #status { margin-top: 10px; min-height: 16px; color: var(--status); font-size: 11px; }
       #status.err { color: var(--err); }
       .hint { margin-top: 8px; color: var(--hint); font-size: 10px; }
@@ -147,8 +158,14 @@
 
       <div id="controls"></div>
 
-      <button id="download" class="action ghost" disabled>Download STL</button>
-      <button id="download-step" class="action ghost" disabled>Download STEP</button>
+      <div class="dl">
+        <div class="dl-head">Download</div>
+        <div class="dl-row">
+          <button id="download-step" disabled>STEP</button>
+          <button id="download" disabled>STL</button>
+          <button id="download-3mf" disabled>3MF</button>
+        </div>
+      </div>
       <div id="status">booting kernel…</div>
       <p class="hint">Drag to orbit · scroll to zoom. Each section has presets;
         open <b>Advanced</b> for the full controls. Big drum + Both take longer.</p>

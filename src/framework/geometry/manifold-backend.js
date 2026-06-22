@@ -30,6 +30,23 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return r;
   }
 
+  // Raw indexed mesh (positions x,y,z per vertex + triangle indices) for 3MF.
+  function indexedMeshOut(m) {
+    const g = m.getMesh();
+    const np = g.numProp, vp = g.vertProperties;
+    const nVert = (vp.length / np) | 0;
+    let positions;
+    if (np === 3) {
+      positions = Float32Array.from(vp);
+    } else {
+      positions = new Float32Array(nVert * 3);
+      for (let i = 0; i < nVert; i++) { positions[i * 3] = vp[i * np]; positions[i * 3 + 1] = vp[i * np + 1]; positions[i * 3 + 2] = vp[i * np + 2]; }
+    }
+    const indices = Uint32Array.from(g.triVerts);
+    g.delete?.();
+    return { positions, indices };
+  }
+
   const wrap = (m) => ({
     _m: m,
     cut: (t) => wrap(T(m.subtract(t._m))),
@@ -44,6 +61,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane]))),
     toMesh: () => meshOut(m, false),
     toSTL: () => Promise.resolve(meshOut(m, true)),
+    toIndexedMesh: () => indexedMeshOut(m),
   });
 
   return {
