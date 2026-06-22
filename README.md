@@ -37,6 +37,10 @@ runWorker(part);
 Test your parts headlessly with `partforge/testing`
 (`createManifoldKernel`, `handle`, `assemblyOverlaps`, `bootOcctKernel`, `meshVolume`, `bboxSize`).
 
+**Smoke-test that an app actually boots** (real Chromium, real worker/WASM): `npm run check`
+(or `node scripts/check-app.mjs <entry>.html`) — it loads the app and verifies the kernel
+boots with no errors. Needs Playwright: `npm i -D playwright && npx playwright install chromium`.
+
 ## Authoring guide
 
 **[docs/AUTHORING-PARTS.md](docs/AUTHORING-PARTS.md)** is the full guide — the part
