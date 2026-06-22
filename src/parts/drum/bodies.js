@@ -259,29 +259,8 @@ export function buildBigDrum(kernel, p, d, onProgress) {
       );
     }
   }
-  // load-test pipe socket (radial, in the groove-free wedge, mid-height)
-  if (p.load_socket_pipe_od > 0) {
-    const sr = (p.load_socket_pipe_od + p.load_socket_fit) / 2;
-    const freeLo = p.tensioner_pocket_depth > 0 ? p.tensioner_pocket_depth : 1;
-    const freeHi = bodyH - freeLo;
-    const zc = bodyH / 2;
-    if (zc - sr >= freeLo + 0.3 && zc + sr <= freeHi - 0.3) {
-      const length = stopTipR - p.load_socket_stop_r + 2;
-      // socket cylinder along +X
-      let sock = kernel.cylinder(sr, sr, length)
-        .rotate(90, [0, 0, 0], [0, 1, 0])
-        .translate([p.load_socket_stop_r, 0, zc]);
-      if (p.load_socket_pin_d > 0) {
-        const pinR = Math.min(38, d.bigBlankR - 6);
-        sock = kernel.union([
-          sock,
-          kernel.cylinder(p.load_socket_pin_d / 2, p.load_socket_pin_d / 2, bodyH)
-            .translate([pinR, 0, zc]),
-        ]);
-      }
-      drum = drum.cut(sock.rotate(d.wedgeCenterDeg, [0, 0, 0], [0, 0, 1]));
-    }
-  }
+  // (the load-test socket is cut LAST — see end of function — so it bores through
+  // the end stops instead of being blocked by them)
 
   // --- groove field (the expensive cut; done once, after cheap cuts) ---
   const pathR = d.bigBlankR - d.grooveDepth + d.grooveR;
@@ -328,6 +307,33 @@ export function buildBigDrum(kernel, p, d, onProgress) {
       anchorTools.push(tools.reduce((acc, t) => kernel.union([acc, t])));
     }
     drum = drum.cutAll(anchorTools);
+  }
+
+  // --- load-test pipe socket (radial, in the groove-free wedge, mid-height) ---
+  // Cut LAST so it bores through the end stops; cut earlier, the end-stop material
+  // (added after) would fill the bore back in and block it.
+  if (p.load_socket_pipe_od > 0) {
+    onProgress?.("cutting load socket");
+    const sr = (p.load_socket_pipe_od + p.load_socket_fit) / 2;
+    const freeLo = p.tensioner_pocket_depth > 0 ? p.tensioner_pocket_depth : 1;
+    const freeHi = bodyH - freeLo;
+    const zc = bodyH / 2;
+    if (zc - sr >= freeLo + 0.3 && zc + sr <= freeHi - 0.3) {
+      const length = stopTipR - p.load_socket_stop_r + 2;
+      // socket cylinder along +X
+      let sock = kernel.cylinder(sr, sr, length)
+        .rotate(90, [0, 0, 0], [0, 1, 0])
+        .translate([p.load_socket_stop_r, 0, zc]);
+      if (p.load_socket_pin_d > 0) {
+        const pinR = Math.min(38, d.bigBlankR - 6);
+        sock = kernel.union([
+          sock,
+          kernel.cylinder(p.load_socket_pin_d / 2, p.load_socket_pin_d / 2, bodyH)
+            .translate([pinR, 0, zc]),
+        ]);
+      }
+      drum = drum.cut(sock.rotate(d.wedgeCenterDeg, [0, 0, 0], [0, 0, 1]));
+    }
   }
 
   return drum;
