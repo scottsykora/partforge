@@ -5,11 +5,14 @@
  * @typedef {Object} Solid  An opaque handle to a backend solid.
  * @property {(tool: Solid) => Solid} cut
  * @property {(tools: Solid[]) => Solid} cutAll      batch subtract (backend-optimized)
+ * @property {(other: Solid) => Solid} intersect     boolean intersection (Manifold)
  * @property {(v: number[]) => Solid} translate
  * @property {(deg: number, center: number[], axis: number[]) => Solid} rotate
  * @property {(plane: "XY"|"XZ"|"YZ") => Solid} mirror
+ * @property {() => number} volume                   solid volume in mm³ (Manifold; used by collision tests)
  * @property {(opts?: {quality?: "preview"|"print"}) => {positions:Float32Array, normals:Float32Array, indices:Uint32Array, triangles:number}} toMesh
  * @property {(opts?: {quality?: "preview"|"print"}) => Promise<ArrayBuffer>} toSTL
+ * @property {() => {positions:Float32Array, indices:Uint32Array}} toIndexedMesh   indexed mesh, for 3MF (Manifold)
  *
  * @typedef {Object} GeometryKernel
  * @property {(rBottom:number, rTop:number, h:number, opts?:{center?:boolean}) => Solid} cylinder

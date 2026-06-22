@@ -109,12 +109,16 @@ project saved you time, that Patreon is where the thanks should go.
 
 ## Develop
 
-The app is a static, no-backend web app: a [Replicad](https://replicad.xyz)
-(OpenCASCADE-in-WebAssembly) CAD kernel running in a Web Worker, a
-[three.js](https://threejs.org) viewer, bundled with [Vite](https://vitejs.dev).
-Generation does a helical groove **sweep** plus a **fuzzy boolean cut**
-(`src/fuzzy-cut.js`) so the cut stays robust even on the full ~23-turn drum, then
-meshes a coarse preview (fine mesh runs only on STL download).
+The app is a static, no-backend web app built with [Vite](https://vitejs.dev). It's
+structured as a reusable **framework** (`src/framework/`) that renders any declarative
+**part** (`src/parts/`) — the drum is just one part. Two geometry backends run in Web
+Workers: [Manifold](https://github.com/elalish/manifold) for fast preview meshes and
+STL/3MF, and [Replicad](https://replicad.xyz) (OpenCASCADE-in-WebAssembly) for exact
+STEP export. A [three.js](https://threejs.org) viewer renders the preview.
+
+**Adding a new part or assembly?** See **[docs/AUTHORING-PARTS.md](docs/AUTHORING-PARTS.md)** —
+the full authoring guide (contract, kernel API, app wiring, testing). The minimal
+example part is `src/parts/demo.js`, runnable in dev at `/demo.html`.
 
 ```bash
 nvm use            # Node 24 — pinned in .nvmrc (system default may be older)
@@ -128,12 +132,14 @@ Pushing to `main` auto-deploys to the live site via GitHub Actions
 
 | Path | What |
 |---|---|
-| `index.html`, `src/main.js` | app entry + viewer wiring |
-| `src/params.js` | parameter schema (presets + advanced controls) |
-| `src/controls.js` | builds the control panel from the schema |
-| `src/drum.js`, `src/drum-worker.js` | drum geometry; runs in a Web Worker |
-| `src/fuzzy-cut.js` | robust boolean cut via the raw OCCT kernel |
-| `scripts/groove-test.mjs` | headless helical-groove sanity check |
+| `index.html`, `src/app.js`, `src/part-worker.js` | drum app entry + its worker |
+| `src/framework/mount.js` | wires viewer + controls + workers + export from a part |
+| `src/framework/{viewer,controls,jobs,geometry-service,worker}.js` | reusable app pieces |
+| `src/framework/geometry/` | kernel contract + Manifold/OCCT backends + fuzzy-cut + 3MF |
+| `src/framework/assembly.js` | `assemblyOverlaps` — collision check for part tests |
+| `src/parts/drum.js`, `src/parts/drum/` | the drum `PartDefinition` + its geometry/params |
+| `src/parts/demo.js`, `demo.html` | minimal example part (runnable in dev) |
+| `docs/AUTHORING-PARTS.md` | how to write a new part |
 
 ### What's modeled
 
@@ -143,7 +149,8 @@ Pushing to `main` auto-deploys to the live site via GitHub Actions
   faces) · link bolt circle · travel end stops · load-test socket (1/2" PVC) ·
   sliding-block tensioner pockets (each toggleable).
 - **Tensioner block:** captured-nut jack-screw block, exported alongside the drum.
-- **Both:** drums placed at the true center distance with the motor tucked under.
+- **Both:** drums placed at the gear center distance (0.1 mm clearance so they don't
+  touch) with the motor tucked under.
 
 Not yet modeled: sector (<360°) drums and rope-lock bend-relief channels.
 
