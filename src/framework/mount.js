@@ -36,6 +36,7 @@ export function mount(part, { createWorker, container = document.getElementById(
   // The initial view is whichever tab the page marks active (else the first tab).
   const params = { ...part.defaults };
   let view = partSeg.querySelector("button.on")?.dataset.part ?? partSeg.querySelector("button")?.dataset.part;
+  let framedView = null; // the view the camera was last framed to (null until first show)
   let generating = false;
   let paramsVersion = 0; // bumped on every settings edit
   let genVersion = -1;   // the params version the in-flight generate is building
@@ -49,16 +50,24 @@ export function mount(part, { createWorker, container = document.getElementById(
   // Reflect the active view. If every needed part is current, show it and enable
   // export. If stale (a regenerate is in flight), keep the old mesh visible so the
   // view doesn't flicker. If nothing's built yet, show nothing.
+  // Show the assembly, framing the camera only the first time we show a given view
+  // (initial load / tab switch) — never on a regenerate, so zoom/orbit are kept.
+  function showView(needed) {
+    const frame = view !== framedView;
+    viewer.showAssembly(needed, { frame });
+    if (frame) framedView = view;
+  }
+
   function refreshView() {
     const needed = viewSubParts(part, view, params);
     if (needed.every(isCurrent)) {
-      viewer.showAssembly(needed);
+      showView(needed);
       dlBtn.disabled = false;
       dlStepBtn.disabled = false;
       const tris = needed.reduce((s, n) => s + viewer._subCache[n].userData.triangles, 0);
       setStatus(`${tris.toLocaleString()} triangles`);
     } else if (needed.every((n) => viewer._subCache[n])) {
-      viewer.showAssembly(needed); // stale but present — keep it visible during regenerate
+      showView(needed); // stale but present — keep it visible during regenerate
       dlBtn.disabled = true;
       dlStepBtn.disabled = true;
     } else {
@@ -178,4 +187,34 @@ export function mount(part, { createWorker, container = document.getElementById(
     showBusy("exporting STEP");
     service.exportStep({ type: "export-step", view, params });
   });
+
+  // --- viewer controls (optional host-page buttons: #pause / #reframe / #theme) --
+  const pauseBtn = document.getElementById("pause");
+  const reframeBtn = document.getElementById("reframe");
+  const themeBtn = document.getElementById("theme");
+
+  // Theme: toggle the page chrome (CSS vars keyed off <html data-theme>) and the
+  // scene together; remember the choice across reloads.
+  let theme = localStorage.getItem("theme") || "dark";
+  function applyTheme(mode) {
+    theme = mode;
+    document.documentElement.dataset.theme = mode;
+    viewer.setTheme(mode);
+    themeBtn?.classList.toggle("on", mode === "light");
+    localStorage.setItem("theme", mode);
+  }
+  applyTheme(theme);
+  themeBtn?.addEventListener("click", () => applyTheme(theme === "light" ? "dark" : "light"));
+
+  // Pause/resume the idle auto-rotation.
+  let rotating = true;
+  pauseBtn?.addEventListener("click", () => {
+    rotating = !rotating;
+    viewer.setAutoRotate(rotating);
+    pauseBtn.textContent = rotating ? "⏸" : "▶";
+    pauseBtn.title = rotating ? "Pause rotation" : "Resume rotation";
+  });
+
+  // Re-fit the camera to the current view.
+  reframeBtn?.addEventListener("click", () => viewer.frame());
 }

@@ -5,69 +5,82 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Drum Machine — capstan drum generator</title>
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: dark;
+        --bg: #15181d; --surface: #1f242c; --surface-2: #20262e; --border: #2c333d;
+        --text: #d6dbe2; --text-strong: #e7ebf1; --text-2: #cdd4dd;
+        --muted: #7d8794; --muted-2: #aab2bd; --status: #8b94a0; --hint: #6b7480;
+        --accent: #3b82f6; --on-accent: #fff; --input-bg: #161a20; --err: #f8746c;
+      }
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --bg: #eef1f5; --surface: #ffffff; --surface-2: #f4f6f9; --border: #d4dae2;
+        --text: #2b333d; --text-strong: #1a2129; --text-2: #3a434e;
+        --muted: #6b7480; --muted-2: #59636f; --status: #6b7480; --hint: #8a93a0;
+        --accent: #3b82f6; --on-accent: #fff; --input-bg: #ffffff; --err: #d8453d;
+      }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; overflow: hidden;
         font: 13px/1.4 -apple-system, system-ui, sans-serif; }
-      #app { position: fixed; inset: 0; background: #15181d; }
+      #app { position: fixed; inset: 0; background: var(--bg); }
       canvas { display: block; }
 
       #panel {
         position: fixed; top: 12px; left: 12px; width: 252px;
         max-height: calc(100vh - 24px); overflow-y: auto; z-index: 10;
-        background: #1f242c; border: 1px solid #2c333d; border-radius: 10px;
-        padding: 14px; color: #d6dbe2; box-shadow: 0 6px 24px rgba(0,0,0,.35);
+        background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+        padding: 14px; color: var(--text); box-shadow: 0 6px 24px rgba(0,0,0,.35);
       }
       #panel h1 { font-size: 14px; margin: 0 0 2px; }
-      #panel .sub { color: #7d8794; font-size: 11px; margin: 0 0 12px; }
+      #panel .sub { color: var(--muted); font-size: 11px; margin: 0 0 12px; }
 
       .seg { display: flex; gap: 4px; margin-bottom: 12px; }
       .seg button {
-        flex: 1; padding: 7px 0; border: 1px solid #2c333d; border-radius: 7px;
-        background: #20262e; color: #aab2bd; cursor: pointer; font-size: 12px;
+        flex: 1; padding: 7px 0; border: 1px solid var(--border); border-radius: 7px;
+        background: var(--surface-2); color: var(--muted-2); cursor: pointer; font-size: 12px;
       }
-      .seg button.on { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+      .seg button.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 
       .section {
-        border: 1px solid #2c333d; border-radius: 8px; padding: 9px 10px;
-        margin-bottom: 8px; background: #20262e;
+        border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px;
+        margin-bottom: 8px; background: var(--surface-2);
       }
-      .sec-title { font-weight: 600; color: #e7ebf1; margin-bottom: 7px; }
+      .sec-title { font-weight: 600; color: var(--text-strong); margin-bottom: 7px; }
       select.preset {
-        width: 100%; background: #161a20; color: #cdd4dd;
-        border: 1px solid #2c333d; border-radius: 6px; padding: 5px 7px; font-size: 11px;
+        width: 100%; background: var(--input-bg); color: var(--text-2);
+        border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; font-size: 11px;
       }
       .feat { display: flex; align-items: center; gap: 8px; margin: 6px 0;
-        color: #cdd4dd; cursor: pointer; }
+        color: var(--text-2); cursor: pointer; }
       .feat input { cursor: pointer; }
-      .feat-group { margin: 2px 0 8px; padding-left: 9px; border-left: 2px solid #2c333d; }
+      .feat-group { margin: 2px 0 8px; padding-left: 9px; border-left: 2px solid var(--border); }
       .feat-group.hidden { display: none; }
       .adv-toggle {
         margin-top: 8px; padding: 3px 0; width: 100%; border: 0; border-radius: 5px;
-        background: transparent; color: #7d8794; cursor: pointer; font-size: 11px;
+        background: transparent; color: var(--muted); cursor: pointer; font-size: 11px;
         text-align: left;
       }
-      .adv-toggle:hover { color: #aab2bd; }
+      .adv-toggle:hover { color: var(--muted-2); }
       .adv.hidden { display: none; }
       .adv { margin-top: 4px; }
 
       .slider { margin: 7px 0; }
       .row { display: flex; justify-content: space-between; align-items: center;
         margin: 0 0 3px; gap: 8px; }
-      .row label { color: #aab2bd; }
-      .row output { color: #fff; font-variant-numeric: tabular-nums; min-width: 48px;
+      .row label { color: var(--muted-2); }
+      .row output { color: var(--text-strong); font-variant-numeric: tabular-nums; min-width: 48px;
         text-align: right; }
       input[type="range"] { width: 100%; }
 
       button.action {
         width: 100%; margin-top: 8px; padding: 9px; border: 0; border-radius: 7px;
-        background: #3b82f6; color: #fff; font-weight: 600; cursor: pointer;
+        background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer;
       }
-      button.ghost { background: #2c333d; color: #cdd4dd; font-weight: 500; }
+      button.ghost { background: var(--border); color: var(--text-2); font-weight: 500; }
       button.action:disabled { opacity: .5; cursor: default; }
-      #status { margin-top: 10px; min-height: 16px; color: #8b94a0; font-size: 11px; }
-      #status.err { color: #f8746c; }
-      .hint { margin-top: 8px; color: #6b7480; font-size: 10px; }
+      #status { margin-top: 10px; min-height: 16px; color: var(--status); font-size: 11px; }
+      #status.err { color: var(--err); }
+      .hint { margin-top: 8px; color: var(--hint); font-size: 10px; }
 
       /* part tabs, floated top-centre over the viewport */
       #topbar {
@@ -75,10 +88,26 @@
         z-index: 15;
       }
       #topbar .seg {
-        margin: 0; padding: 4px; background: #1f242c; border: 1px solid #2c333d;
+        margin: 0; padding: 4px; background: var(--surface); border: 1px solid var(--border);
         border-radius: 9px; box-shadow: 0 6px 24px rgba(0,0,0,.35);
       }
       #topbar .seg button { min-width: 70px; padding: 7px 10px; }
+
+      /* viewer controls, top-right */
+      #viewbar {
+        position: fixed; top: 12px; right: 12px; z-index: 15;
+        display: flex; gap: 4px; padding: 4px;
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 9px; box-shadow: 0 6px 24px rgba(0,0,0,.35);
+      }
+      #viewbar button {
+        width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 7px;
+        background: var(--surface-2); color: var(--muted-2); cursor: pointer;
+        font-size: 15px; line-height: 1;
+        display: flex; align-items: center; justify-content: center;
+      }
+      #viewbar button:hover { color: var(--text); }
+      #viewbar button.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 
       #busy {
         position: fixed; inset: 0; z-index: 20; pointer-events: none;
@@ -88,10 +117,10 @@
       #busy.show { display: flex; }
       #busy .ring {
         width: 46px; height: 46px; border-radius: 50%;
-        border: 4px solid #2c333d; border-top-color: #3b82f6;
+        border: 4px solid var(--border); border-top-color: var(--accent);
         animation: spin 0.9s linear infinite;
       }
-      #busy .phase { color: #d6dbe2; font-size: 13px; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+      #busy .phase { color: var(--text); font-size: 13px; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
       @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
@@ -104,6 +133,12 @@
         <button data-part="big">Big</button>
         <button data-part="both" class="on">Both</button>
       </div>
+    </div>
+
+    <div id="viewbar">
+      <button id="pause" title="Pause rotation">⏸</button>
+      <button id="reframe" title="Reframe">⛶</button>
+      <button id="theme" title="Toggle light/dark">◐</button>
     </div>
 
     <div id="panel">
