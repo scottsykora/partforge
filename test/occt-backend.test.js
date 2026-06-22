@@ -1,5 +1,5 @@
 import { beforeAll, expect, test } from "vitest";
-import { bootOcctKernel } from "./occt-kernel.js";
+import { bootOcctKernel } from "../src/testing/occt.js";
 
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); });

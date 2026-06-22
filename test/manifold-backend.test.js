@@ -1,7 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import Module from "manifold-3d";
 import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
-import { bboxSize } from "./helpers.js";
+import { bboxSize } from "../src/testing/mesh.js";
 
 let k;
 beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
