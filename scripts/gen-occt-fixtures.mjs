@@ -10,7 +10,7 @@ const __dir = path.dirname(__filename);
 // Boot OCCT via the shared helper (must NOT import manifold-3d here)
 const { bootOcctKernel } = await import("../test/occt-kernel.js");
 const { meshVolume, bboxSize } = await import("../test/helpers.js");
-const { buildSubPart } = await import("../src/drum.js");
+const { buildSubPart } = await import("../src/parts/drum/bodies.js");
 
 const k = await bootOcctKernel();
 const out = {};
