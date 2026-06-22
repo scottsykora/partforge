@@ -155,8 +155,11 @@ renderer.setAnimationLoop(() => {
 // Dev toggle: ?backend=occt routes preview generate through the OCCT worker.
 const useOcctPreview = new URLSearchParams(location.search).get("backend") === "occt";
 
-const previewWorker = new Worker(new URL("./preview-worker.js", import.meta.url), { type: "module" });
-const exportWorker = new Worker(new URL("./export-worker.js", import.meta.url), { type: "module" });
+// One worker entry, spawned twice and tagged by name; each loads only its backend.
+// NB: the `new URL(...)` must stay inline in `new Worker(...)` or Vite won't bundle
+// the worker (and its backend chunks) — a hoisted variable defeats its analysis.
+const previewWorker = new Worker(new URL("./part-worker.js", import.meta.url), { type: "module", name: "manifold" });
+const exportWorker = new Worker(new URL("./part-worker.js", import.meta.url), { type: "module", name: "occt" });
 
 // preview defaults to Manifold; ?backend=occt routes preview generate to the OCCT worker
 const genWorker = useOcctPreview ? exportWorker : previewWorker;
@@ -306,7 +309,7 @@ function maybeGenerate() {
   generating = true;
   genVersion = paramsVersion;
   showBusy("generating");
-  genWorker.postMessage({ type: "generate", subparts: missing, params });
+  genWorker.postMessage({ type: "generate", subparts: missing, view: part, params });
 }
 
 const partSeg = document.getElementById("part");
@@ -321,10 +324,10 @@ partSeg.addEventListener("click", (e) => {
 
 dlBtn.addEventListener("click", () => {
   showBusy("exporting STL");
-  previewWorker.postMessage({ type: "export-stl", part, params });
+  previewWorker.postMessage({ type: "export-stl", view: part, params });
 });
 
 dlStepBtn.addEventListener("click", () => {
   showBusy("exporting STEP");
-  exportWorker.postMessage({ type: "export-step", part, params });
+  exportWorker.postMessage({ type: "export-step", view: part, params });
 });
