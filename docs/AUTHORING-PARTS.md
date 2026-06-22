@@ -127,10 +127,15 @@ binds each control to a key in `defaults`. Two section kinds:
   presets: { M3: { od: 8, bore: 3.4, h: 10 }, M5: { od: 12, bore: 5.4, h: 16 } }, // name → param overrides
   advanced: [                                  // sliders revealed under "Advanced"
     { key: "od",   label: "Outer diameter", unit: "mm", min: 4, max: 40, step: 0.5 },
-    { key: "bore", label: "Bore",           unit: "mm", min: 1, max: 30, step: 0.1 },
+    { key: "bore", label: "Bore",           unit: "mm", min: 1, max: 30, step: 0.1, control: "number" },
   ],
 }
 ```
+
+Each slider/feature control shows an **editable number box** beside it — drag the
+slider or type an exact value (finer than `step` is allowed; typed values clamp to
+`[min, max]`). Optional `control` per parameter: omit it (or `"slider"`) for a slider
++ box; `"number"` for a box only (no slider — handy for precise or wide-range values).
 
 **Feature-toggle section** (checkbox enables a feature + reveals its sliders; `0` = off):
 

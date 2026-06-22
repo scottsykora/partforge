@@ -10,7 +10,7 @@ export default {
       presets: { M3: { od: 8, bore: 3.4, h: 10 }, M5: { od: 12, bore: 5.4, h: 16 } },
       advanced: [
         { key: "od", label: "Outer diameter", unit: "mm", min: 4, max: 40, step: 0.5 },
-        { key: "bore", label: "Bore", unit: "mm", min: 1, max: 30, step: 0.1 },
+        { key: "bore", label: "Bore", unit: "mm", min: 1, max: 30, step: 0.1, control: "number" },
         { key: "h", label: "Height", unit: "mm", min: 2, max: 60, step: 1 },
       ],
     },
