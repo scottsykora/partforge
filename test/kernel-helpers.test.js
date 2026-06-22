@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { piePolygon, hexPolygon } from "../src/geometry/kernel.js";
+import { piePolygon, hexPolygon } from "../src/framework/geometry/polygon.js";
 
 test("hexPolygon returns 6 points on radius r", () => {
   const pts = hexPolygon(3);

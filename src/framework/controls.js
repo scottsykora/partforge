@@ -1,12 +1,10 @@
-// Builds the sectioned control panel from the SECTIONS schema.
+// Builds the sectioned control panel from a part's `parameters` schema.
 //
 // Most sections show a preset picker (below the title) plus an expandable
 // "Advanced" block of sliders. The "features" section instead puts, under
 // Advanced, a checkbox per feature followed by its own controls — ticking one
 // enables it and reveals those controls right below it.
 // All controls mutate the shared `params` object and call onDirty() on change.
-
-import { SECTIONS } from "./params.js";
 
 const fmt = (v, unit) => {
   const n = Math.round(v * 100) / 100;
@@ -59,8 +57,8 @@ function advancedBlock() {
   return { adv, toggle };
 }
 
-export function buildControls(root, params, onDirty) {
-  for (const sec of SECTIONS) {
+export function buildControls(root, parameters, params, onDirty) {
+  for (const sec of parameters) {
     const section = el("div", "section");
     section.append(el("div", "sec-title", sec.title));
     if (sec.features) buildFeatureSection(section, sec, params, onDirty);

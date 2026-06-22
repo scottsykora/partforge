@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import Module from "manifold-3d";
-import { helixTube } from "../src/geometry/helix-tube.js";
+import { helixTube } from "../src/framework/geometry/helix-tube.js";
 
 let wasm;
 beforeAll(async () => { wasm = await Module(); wasm.setup(); });

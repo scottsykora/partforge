@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/geometry/manifold-backend.js";
+import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
 import { bboxSize } from "./helpers.js";
 
 let k;
