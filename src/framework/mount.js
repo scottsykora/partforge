@@ -31,6 +31,9 @@ export function mount(part, { createWorker, container = document.getElementById(
   const hideBusy = () => busyEl.classList.remove("show");
 
   // --- per-sub-part mesh cache + auto-regenerating view composition ----------
+  // The host page owns the view-tab markup (#part buttons, data-part = view name);
+  // `part.views` documents the available views and their labels for that page.
+  // The initial view is whichever tab the page marks active (else the first tab).
   const params = { ...part.defaults };
   let view = partSeg.querySelector("button.on")?.dataset.part ?? partSeg.querySelector("button")?.dataset.part;
   let generating = false;

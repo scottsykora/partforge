@@ -44,10 +44,11 @@ export function createViewer(container, part) {
   });
 
   // Sub-parts are meshed independently in a shared frame and cached, so any view
-  // is composed from cached pieces. `pivot` orients the drum axis vertical;
-  // `partsGroup` is recentred per view so the visible assembly sits at the origin.
+  // is composed from cached pieces. `pivot` stands the part's Z axis up (parts are
+  // modelled Z-up; this faces the camera); `partsGroup` is recentred per view so
+  // the visible assembly sits at the origin.
   const pivot = new THREE.Group();
-  pivot.rotation.x = -Math.PI / 2; // drum axis -> vertical
+  pivot.rotation.x = -Math.PI / 2; // model Z (CAD up) -> vertical
   scene.add(pivot);
   const partsGroup = new THREE.Group();
   pivot.add(partsGroup);
