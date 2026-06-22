@@ -51,6 +51,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     _m: m,
     cut: (t) => wrap(T(m.subtract(t._m))),
     cutAll: (tools) => wrap(T(m.subtract(unionRaw(tools.map((t) => t._m))))),
+    intersect: (t) => wrap(T(m.intersect(t._m))),
+    volume: () => m.volume(),
     translate: (v) => wrap(T(m.translate(v))),
     rotate: (deg, center, axis) => {
       const euler = [axis[0] * deg, axis[1] * deg, axis[2] * deg];

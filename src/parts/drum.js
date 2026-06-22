@@ -3,6 +3,10 @@ import { buildSmallDrum, buildBigDrum, buildTensionerBlock, seatBlock } from "./
 
 // motor base offset, mirrors bodies.js
 const baseH = (p) => (p.motor_mount ? p.motor_flange_t + p.motor_standoff_h : 0);
+// extra gap beyond the gear centre distance so the drums sit close but don't touch.
+// At the exact centre distance the blanks overlap 0.2 mm, so 0.5 leaves a ~0.3 mm
+// gap (blanks barely clear). mm.
+const ASSEMBLY_GAP = 0.5;
 
 export default {
   meta: { title: "Capstan Drum", units: "mm", background: 0x15181d },
@@ -18,7 +22,7 @@ export default {
       // display: always seated in the shared assembly frame (view-independent so
       // the mesh caches across views). export: assembled only in the "both" view.
       place: (solid, { view, purpose, p, d }) => {
-        const off = [-d.centerDist, 0, -baseH(p)];
+        const off = [-(d.centerDist + ASSEMBLY_GAP), 0, -baseH(p)];
         if (purpose === "display") return solid.translate(off);
         return view === "both" ? solid.translate(off) : solid;
       },
