@@ -165,7 +165,7 @@ your part, so it can't be injected at runtime — hence the per-part entries.
 
 ```js
 import part from "./parts/<part>.js";
-import { mount } from "./framework/index.js";
+import { mount } from "partforge";
 mount(part, {
   // NB: the `new Worker(new URL(...))` MUST stay inline here or Vite won't bundle the worker.
   createWorker: (name) => new Worker(new URL("./<part>-worker.js", import.meta.url), { type: "module", name }),
@@ -176,12 +176,12 @@ mount(part, {
 
 ```js
 import part from "./parts/<part>.js";
-import { runWorker } from "./framework/worker.js";
+import { runWorker } from "partforge/worker";
 runWorker(part);
 ```
 
-`<part>.html` — structural markup only (no CSS; `mount` imports `framework/app.css`).
-`mount` looks up these element IDs:
+`<part>.html` — structural markup only (no CSS; `mount` pulls in partforge's
+stylesheet). `mount` looks up these element IDs:
 
 | ID | Purpose |
 |---|---|
@@ -199,6 +199,20 @@ heading, and the `<script src>`. Two workers are spawned from your one worker en
 > Production deploy builds `index.html` only. Extra `*.html` files are **dev-only**
 > (Vite serves any root HTML in `npm run dev`). To also ship one, add it to
 > `build.rollupOptions.input` in `vite.config.js`.
+
+### Developing against a local (linked) partforge
+
+A normal `npm install partforge` needs no extra config. But if you `npm link` a local
+partforge checkout (to co-develop the framework), it lives **outside your project root**,
+so Vite refuses to serve its files — including the Manifold/OCCT WASM, which fails with a
+403 and the kernel never boots. Allow-list it in your `vite.config.js`:
+
+```js
+server: { fs: { allow: ["./", "../partforge"] } } // path to your linked checkout
+```
+
+(Geometry/asset imports are already worker-safe; this is purely Vite's dev-server file
+access. It's harmless to leave in when partforge is a normal install.)
 
 ---
 
