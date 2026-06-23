@@ -44,3 +44,13 @@ test("an out-of-range chamfer is skipped, not fatal — the shape survives", () 
   const v = k.box([0, 0, 0], [10, 10, 10]).chamfer(50).volume();
   expect(v).toBeCloseTo(1000, 0);
 });
+
+test("chamfer auto-clamps to half the shortest edge it touches (incl. fillet arcs)", () => {
+  // After a vertical fillet the bottom corners are short arcs; a huge requested
+  // chamfer is auto-clamped below the breaking point and APPLIED (not skipped, not
+  // mangled) instead of consuming the bottom face.
+  const filleted = k.box([0, 0, 0], [40, 30, 16]).fillet(3, { dir: "Z" }).volume();
+  const chamfered = k.box([0, 0, 0], [40, 30, 16]).fillet(3, { dir: "Z" }).chamfer(10, { inPlane: "XY", at: 0 }).volume();
+  expect(chamfered).toBeGreaterThan(0);       // not vanished
+  expect(chamfered).toBeLessThan(filleted);   // a (clamped) chamfer was actually applied
+});

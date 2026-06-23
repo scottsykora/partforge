@@ -6,7 +6,24 @@ const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tole
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
-          makeCompound, loft, draw, exportSTEP, measureVolume } = replicad;
+          makeCompound, loft, draw, exportSTEP, measureVolume, EdgeFinder } = replicad;
+
+  // A chamfer can't be wider than the edges it's applied to: once it exceeds half the
+  // shortest of them (a short side, or a fillet's bottom arc) it over-runs and breaks
+  // the geometry. Measure the actual edges the selector matches and clamp to half the
+  // shortest — geometry-driven, so it works on any solid, not just boxes.
+  const clampChamfer = (shape, finderFn, distance) => {
+    if (!(distance > 0)) return distance;
+    const probe = shape.clone();
+    const edges = (finderFn ? finderFn(new EdgeFinder()) : new EdgeFinder()).find(probe);
+    const lengths = edges.map((e) => e.length);
+    edges.forEach((e) => e.delete?.());
+    probe.delete?.();
+    if (!lengths.length) return distance;
+    const max = Math.min(...lengths) / 2;
+    if (distance > max) console.info(`partforge: chamfer ${distance} clamped to ${max.toFixed(2)} (half the shortest edge it touches)`);
+    return Math.min(distance, max);
+  };
 
   // Native fillet/chamfer can throw or yield an empty solid for out-of-range radii
   // or awkward edge interactions — and OCCT's failures aren't monotonic in the
@@ -45,7 +62,11 @@ export function createOcctKernel(replicad) {
     },
     toSTL: ({ quality = "print" } = {}) => shape.blobSTL(MESH[quality]).arrayBuffer(),
     fillet: (radius, selector) => wrap(safeOp(shape, (sh) => sh.fillet(radius, toEdgeFinder(selector)), `fillet(${radius})`)),
-    chamfer: (distance, selector) => wrap(safeOp(shape, (sh) => sh.chamfer(distance, toEdgeFinder(selector)), `chamfer(${distance})`)),
+    chamfer: (distance, selector) => {
+      const finderFn = toEdgeFinder(selector);
+      const d = clampChamfer(shape, finderFn, distance);
+      return wrap(safeOp(shape, (sh) => sh.chamfer(d, finderFn), `chamfer(${distance})`));
+    },
     volume: () => measureVolume(shape),
     toIndexedMesh: () => {
       const m = shape.mesh(MESH.preview);

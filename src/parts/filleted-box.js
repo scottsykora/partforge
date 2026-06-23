@@ -33,12 +33,10 @@ export default {
         const topFillet = Math.min(p.top, half - vFillet - 0.5, p.h / 2 - 0.5);
         if (topFillet > 0) s = s.fillet(topFillet, { inPlane: "XY", at: p.h });  // top rim — curves all the way around
         // Base chamfer AFTER the fillets, so it cuts a clean curve across the rounded
-        // corners. Because it then runs onto the vertical fillets' bottom arcs, its
-        // real geometric limit is the FILLET RADIUS — past that OCCT mangles the
-        // bottom face. (With no vertical fillet the limit is the box half.) Clamp to it.
-        const maxChamfer = (vFillet > 0 ? vFillet : half) - 0.5;
-        const chamfer = Math.min(p.chamfer, maxChamfer, p.h - 0.5);
-        if (chamfer > 0) s = s.chamfer(chamfer, { inPlane: "XY", at: 0 });       // base edges
+        // corners. No manual limit needed: the backend auto-clamps a chamfer to half
+        // the shortest edge it touches (here the fillets' bottom arcs), so it stops at
+        // its valid maximum instead of mangling the bottom face.
+        if (p.chamfer > 0) s = s.chamfer(p.chamfer, { inPlane: "XY", at: 0 });    // base edges
         if (p.bore > 0) s = s.cut(k.cylinder(p.bore / 2, p.bore / 2, p.h + 2).translate([p.w / 2, p.d / 2, -1]));
         return s;
       },
