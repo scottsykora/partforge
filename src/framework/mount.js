@@ -4,6 +4,7 @@ import { createViewer } from "./viewer.js";
 import { buildControls } from "./controls.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts } from "./jobs.js";
+import { detectBackend } from "./geometry/probe.js";
 
 // Mount a full parametric-part app from a PartDefinition: 3-D viewer + control
 // panel + the two geometry workers + the auto-regenerating view/cache loop +
@@ -16,8 +17,10 @@ export function mount(part, { createWorker, container = document.getElementById(
   const names = Object.keys(part.parts);
   const viewer = createViewer(container, part);
 
-  // ?backend=occt routes preview generate through the OCCT worker (dev toggle).
-  const occtPreview = new URLSearchParams(location.search).get("backend") === "occt";
+  // ?backend=occt|manifold forces the backend; otherwise it's detected per part.
+  let forcedBackend = new URLSearchParams(location.search).get("backend");
+  if (forcedBackend !== "occt" && forcedBackend !== "manifold") forcedBackend = null;
+  const backendFor = () => forcedBackend ?? detectBackend(part, params);
 
   const statusEl = document.getElementById("status");
   const dlBtn = document.getElementById("download");
@@ -135,6 +138,11 @@ export function mount(part, { createWorker, container = document.getElementById(
         triggerDownload(data.data, data.filename, data.mime);
         setStatus(`${data.filename} downloaded`);
         break;
+      case "needs-occt":
+        forcedBackend = "occt"; // probe missed; this part needs OCCT — stick to it
+        generating = false;
+        maybeGenerate();
+        break;
       case "error":
         generating = false;
         hideBusy();
@@ -144,7 +152,7 @@ export function mount(part, { createWorker, container = document.getElementById(
     }
   }
 
-  const service = createGeometryService({ createWorker, onMessage: onWorkerMessage, occtPreview });
+  const service = createGeometryService({ createWorker, onMessage: onWorkerMessage });
 
   buildControls(controls, part.parameters, params, onParamChange);
 
@@ -168,7 +176,7 @@ export function mount(part, { createWorker, container = document.getElementById(
     generating = true;
     genVersion = paramsVersion;
     showBusy("generating");
-    service.generate({ type: "generate", subparts: missing, view, params });
+    service.generate({ type: "generate", subparts: missing, view, params }, backendFor());
   }
 
   partSeg.addEventListener("click", (e) => {
@@ -182,7 +190,7 @@ export function mount(part, { createWorker, container = document.getElementById(
 
   dlBtn.addEventListener("click", () => {
     showBusy("exporting STL");
-    service.exportStl({ type: "export-stl", view, params });
+    service.exportStl({ type: "export-stl", view, params }, backendFor());
   });
 
   dlStepBtn.addEventListener("click", () => {
@@ -192,7 +200,7 @@ export function mount(part, { createWorker, container = document.getElementById(
 
   dl3mfBtn?.addEventListener("click", () => {
     showBusy("exporting 3MF");
-    service.export3mf({ type: "export-3mf", view, params });
+    service.export3mf({ type: "export-3mf", view, params }, backendFor());
   });
 
   // --- viewer controls (optional host-page buttons: #pause / #reframe / #theme) --

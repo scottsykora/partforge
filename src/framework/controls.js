@@ -106,24 +106,27 @@ export function buildControls(root, parameters, params, onDirty) {
 }
 
 function buildPresetSection(section, sec, params, onDirty) {
-  // preset picker, below the title, full width
-  const preset = document.createElement("select");
-  preset.className = "preset";
-  const presetNames = Object.keys(sec.presets);
-  for (const name of [...presetNames, "Custom"]) {
-    const o = document.createElement("option");
-    o.value = name;
-    o.textContent = name;
-    preset.append(o);
+  // preset picker, below the title, full width (omitted when the section has no presets)
+  let preset = null;
+  const presetNames = sec.presets ? Object.keys(sec.presets) : [];
+  if (presetNames.length) {
+    preset = document.createElement("select");
+    preset.className = "preset";
+    for (const name of [...presetNames, "Custom"]) {
+      const o = document.createElement("option");
+      o.value = name;
+      o.textContent = name;
+      preset.append(o);
+    }
+    preset.value = presetNames[0];
+    section.append(preset);
   }
-  preset.value = presetNames[0];
-  section.append(preset);
 
   const { adv, toggle } = advancedBlock();
   const syncs = {};
   for (const def of sec.advanced) {
     const s = makeSlider(def, params, () => {
-      preset.value = "Custom";
+      if (preset) preset.value = "Custom";
       onDirty?.();
     });
     adv.append(s.wrap);
@@ -132,13 +135,15 @@ function buildPresetSection(section, sec, params, onDirty) {
   section.append(toggle, adv);
 
   // applying a preset overwrites its keys and refreshes this section's sliders
-  preset.addEventListener("change", () => {
-    const bundle = sec.presets[preset.value];
-    if (!bundle) return; // "Custom"
-    Object.assign(params, bundle);
-    for (const key in syncs) if (key in params) syncs[key]();
-    onDirty?.();
-  });
+  if (preset) {
+    preset.addEventListener("change", () => {
+      const bundle = sec.presets[preset.value];
+      if (!bundle) return; // "Custom"
+      Object.assign(params, bundle);
+      for (const key in syncs) if (key in params) syncs[key]();
+      onDirty?.();
+    });
+  }
 }
 
 function buildFeatureSection(section, sec, params, onDirty) {
