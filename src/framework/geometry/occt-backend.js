@@ -1,11 +1,12 @@
 // OCCT backend via replicad. Same GeometryKernel shape as the Manifold backend,
 // and the only backend with toSTEP(). This is where today's drum.js kernel calls
 // (makeCylinder, makeHelix+genericSweep, draw/extrude, cut/fuse) now live.
+import { toEdgeFinder } from "./edge-selector.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
-          makeCompound, loft, draw, exportSTEP } = replicad;
+          makeCompound, loft, draw, exportSTEP, measureVolume } = replicad;
 
   const wrap = (shape) => ({
     _s: shape,
@@ -24,6 +25,13 @@ export function createOcctKernel(replicad) {
       };
     },
     toSTL: ({ quality = "print" } = {}) => shape.blobSTL(MESH[quality]).arrayBuffer(),
+    fillet: (radius, selector) => wrap(shape.fillet(radius, toEdgeFinder(selector))),
+    chamfer: (distance, selector) => wrap(shape.chamfer(distance, toEdgeFinder(selector))),
+    volume: () => measureVolume(shape),
+    toIndexedMesh: () => {
+      const m = shape.mesh(MESH.preview);
+      return { positions: Float32Array.from(m.vertices), indices: Uint32Array.from(m.triangles) };
+    },
   });
 
   // cylinder OR frustum (loft of two circles) when rb !== rt
