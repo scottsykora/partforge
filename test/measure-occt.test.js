@@ -15,6 +15,10 @@ test("measure works on an OCCT part: volume present, topology null, no crash", (
   expect(s.volume).toBeCloseTo(1000, 0);
   expect(s.bbox[0]).toBeCloseTo(10, 1);
   expect(s.triangleCount).toBeGreaterThan(0);
+  // surfaceArea must be a real number from the INDEXED OCCT mesh (a 10mm cube = 600mm²),
+  // not NaN — meshArea must honor mesh.indices, not assume a non-indexed soup.
+  expect(Number.isFinite(s.surfaceArea)).toBe(true);
+  expect(s.surfaceArea).toBeCloseTo(600, 0);
   expect(s.watertight).toBeNull();
   expect(s.holes).toBeNull();
   expect(r.overlaps).toEqual([]);

@@ -23,7 +23,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       name,
       bbox: size(b),
       volume: solid.volume(),
-      surfaceArea: meshArea(mesh.positions),
+      surfaceArea: meshArea(mesh.positions, mesh.indices),
       triangleCount: mesh.triangles,
       watertight: typeof solid.isEmpty === "function" ? !solid.isEmpty() : null,
       holes: typeof solid.genus === "function" ? solid.genus() : null,
