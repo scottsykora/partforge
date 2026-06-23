@@ -13,7 +13,7 @@ export default {
         { key: "h", label: "Height", unit: "mm", min: 5, max: 40, step: 1 },
         { key: "fillet", label: "Edge fillet", unit: "mm", min: 0, max: 10, step: 0.5 },
         { key: "top", label: "Top fillet", unit: "mm", min: 0, max: 5, step: 0.5 },
-        { key: "chamfer", label: "Base chamfer", unit: "mm", min: 0, max: 5, step: 0.5 },
+        { key: "chamfer", label: "Base chamfer", unit: "mm", min: 0, max: 10, step: 0.5 },
         { key: "bore", label: "Bore", unit: "mm", min: 0, max: 24, step: 0.5 },
       ],
     },
