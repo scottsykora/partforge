@@ -59,3 +59,13 @@ test("Solid.rotate swaps X/Y extents for a 90° Z-axis rotation", () => {
   expect(ry).toBeCloseTo(2, 1);
   expect(rz).toBeCloseTo(30, 1);
 });
+
+test("genus is 0 for a solid box and 1 for a through-bored tube", () => {
+  expect(k.box([0, 0, 0], [10, 10, 10]).genus()).toBe(0);
+  const tube = k.cylinder(10, 10, 20).cut(k.cylinder(4, 4, 30).translate([0, 0, -5]));
+  expect(tube.genus()).toBe(1);
+});
+
+test("isEmpty is false for a real solid", () => {
+  expect(k.box([0, 0, 0], [1, 1, 1]).isEmpty()).toBe(false);
+});

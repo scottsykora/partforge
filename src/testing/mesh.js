@@ -19,3 +19,26 @@ export function bboxSize(positions) {
   }
   return [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
 }
+
+// Axis-aligned bounds of a flat position array (x,y,z per vertex).
+export function bounds(positions) {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < positions.length; i += 3) for (let a = 0; a < 3; a++) {
+    const v = positions[i + a];
+    if (v < min[a]) min[a] = v;
+    if (v > max[a]) max[a] = v;
+  }
+  return { min, max };
+}
+
+// Surface area (mm²) of a non-indexed triangle soup (9 floats per triangle).
+export function meshArea(positions) {
+  let area = 0;
+  for (let i = 0; i < positions.length; i += 9) {
+    const ux = positions[i + 3] - positions[i],     uy = positions[i + 4] - positions[i + 1], uz = positions[i + 5] - positions[i + 2];
+    const vx = positions[i + 6] - positions[i],     vy = positions[i + 7] - positions[i + 1], vz = positions[i + 8] - positions[i + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    area += Math.hypot(nx, ny, nz) / 2;
+  }
+  return area;
+}

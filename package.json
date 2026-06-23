@@ -9,6 +9,7 @@
   },
   "files": [
     "src",
+    "bin",
     "docs/AUTHORING-PARTS.md",
     "README.md"
   ],
@@ -17,6 +18,9 @@
     "./worker": "./src/framework/worker.js",
     "./geometry": "./src/framework/geometry/polygon.js",
     "./testing": "./src/testing.js"
+  },
+  "bin": {
+    "partforge": "./bin/cli.js"
   },
   "scripts": {
     "dev": "vite",
@@ -29,6 +33,7 @@
   "dependencies": {
     "fflate": "^0.8.3",
     "manifold-3d": "^3.5.1",
+    "pngjs": "^7.0.0",
     "replicad": "^0.23.1",
     "replicad-opencascadejs": "^0.23.0",
     "three": "^0.184.0"
