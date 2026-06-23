@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { meshVolume, bboxSize } from "../src/testing/mesh.js";
+import { meshVolume, bboxSize, bounds, meshArea } from "../src/testing/mesh.js";
 
 // Unit cube: 8 vertices, 12 triangles (outward normals)
 const positions = [0,0,0, 1,0,0, 1,1,0, 0,1,0, 0,0,1, 1,0,1, 1,1,1, 0,1,1];
@@ -14,4 +14,15 @@ test("bboxSize of a unit cube is [1,1,1]", () => {
   expect(w).toBeCloseTo(1, 10);
   expect(h).toBeCloseTo(1, 10);
   expect(d).toBeCloseTo(1, 10);
+});
+
+test("bounds of the unit cube is min [0,0,0] max [1,1,1]", () => {
+  const b = bounds(positions);
+  expect(b.min).toEqual([0, 0, 0]);
+  expect(b.max).toEqual([1, 1, 1]);
+});
+
+test("meshArea of a unit right triangle is 0.5", () => {
+  // one triangle, non-indexed: 9 floats
+  expect(meshArea([0, 0, 0, 1, 0, 0, 0, 1, 0])).toBeCloseTo(0.5, 10);
 });
