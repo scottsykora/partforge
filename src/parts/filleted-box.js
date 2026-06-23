@@ -25,20 +25,20 @@ export default {
       views: ["box"],
       build: (k, p) => {
         let s = k.box([0, 0, 0], [p.w, p.d, p.h]);
-        // Ordering matters for robustness:
-        //  1. Chamfer the base on the RAW box first — straight edges. (Filleting the
-        //     verticals first would force the chamfer onto curved fillet arcs, which
-        //     OCCT handles poorly and breaks the bottom face.)
-        //  2. Then fillet the vertical edges, then the top rim.
-        //  3. Cut the bore LAST (booleans on a cleanly-rounded solid are fine).
-        // Each radius is clamped to the geometry so it can't consume a whole face.
         const half = Math.min(p.w, p.d) / 2;
-        const chamfer = Math.min(p.chamfer, half - 0.5, p.h - 0.5);
-        if (chamfer > 0) s = s.chamfer(chamfer, { inPlane: "XY", at: 0 });      // base edges (keeps the bottom face)
+        // Round the vertical edges, then the top rim — each clamped to the box so a
+        // radius can't exceed the available material.
         const vFillet = Math.min(p.fillet, half - 0.5, p.h - 0.5);
         if (vFillet > 0) s = s.fillet(vFillet, { dir: "Z" });                   // 4 vertical edges
         const topFillet = Math.min(p.top, half - vFillet - 0.5, p.h / 2 - 0.5);
         if (topFillet > 0) s = s.fillet(topFillet, { inPlane: "XY", at: p.h });  // top rim — curves all the way around
+        // Base chamfer AFTER the fillets, so it cuts a clean curve across the rounded
+        // corners. Because it then runs onto the vertical fillets' bottom arcs, its
+        // real geometric limit is the FILLET RADIUS — past that OCCT mangles the
+        // bottom face. (With no vertical fillet the limit is the box half.) Clamp to it.
+        const maxChamfer = (vFillet > 0 ? vFillet : half) - 0.5;
+        const chamfer = Math.min(p.chamfer, maxChamfer, p.h - 0.5);
+        if (chamfer > 0) s = s.chamfer(chamfer, { inPlane: "XY", at: 0 });       // base edges
         if (p.bore > 0) s = s.cut(k.cylinder(p.bore / 2, p.bore / 2, p.h + 2).translate([p.w / 2, p.d / 2, -1]));
         return s;
       },
