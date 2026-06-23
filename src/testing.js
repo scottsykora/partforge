@@ -8,3 +8,4 @@ export { bootOcctKernel } from "./testing/occt.js";
 export { meshVolume, bboxSize } from "./testing/mesh.js";
 export { buildView } from "./testing/build.js";
 export { measure } from "./testing/measure.js";
+export { renderViews } from "./testing/render.js";
