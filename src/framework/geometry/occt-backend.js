@@ -8,6 +8,25 @@ export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
           makeCompound, loft, draw, exportSTEP, measureVolume } = replicad;
 
+  // Native fillet/chamfer can throw or yield an empty solid for out-of-range radii
+  // or awkward edge interactions — and OCCT's failures aren't monotonic in the
+  // radius (e.g. a radius that equals an adjacent fillet's can fail while larger
+  // ones succeed). Rather than letting the whole part vanish, attempt the op on a
+  // clone and fall back to the original shape (feature skipped) on a throw or empty
+  // result, with a console warning so it's discoverable.
+  const safeOp = (shape, op, label) => {
+    const backup = shape.clone();
+    try {
+      const result = op(shape);
+      if (measureVolume(result) > 0) { backup.delete?.(); return result; }
+      result.delete?.();
+      console.warn(`partforge: ${label} produced an empty solid — feature skipped (radius out of range?)`);
+    } catch (e) {
+      console.warn(`partforge: ${label} failed (${e?.message || e}) — feature skipped`);
+    }
+    return backup;
+  };
+
   const wrap = (shape) => ({
     _s: shape,
     cut: (t) => wrap(shape.cut(t._s)),
@@ -25,8 +44,8 @@ export function createOcctKernel(replicad) {
       };
     },
     toSTL: ({ quality = "print" } = {}) => shape.blobSTL(MESH[quality]).arrayBuffer(),
-    fillet: (radius, selector) => wrap(shape.fillet(radius, toEdgeFinder(selector))),
-    chamfer: (distance, selector) => wrap(shape.chamfer(distance, toEdgeFinder(selector))),
+    fillet: (radius, selector) => wrap(safeOp(shape, (sh) => sh.fillet(radius, toEdgeFinder(selector)), `fillet(${radius})`)),
+    chamfer: (distance, selector) => wrap(safeOp(shape, (sh) => sh.chamfer(distance, toEdgeFinder(selector)), `chamfer(${distance})`)),
     volume: () => measureVolume(shape),
     toIndexedMesh: () => {
       const m = shape.mesh(MESH.preview);

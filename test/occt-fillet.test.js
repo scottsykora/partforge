@@ -32,3 +32,15 @@ test("toIndexedMesh returns positions and indices", () => {
   expect(m.positions.length).toBeGreaterThan(0);
   expect(m.indices.length).toBeGreaterThan(0);
 });
+
+test("an out-of-range fillet is skipped, not fatal — the shape survives", () => {
+  // radius far larger than the box → OCCT fails/empties; safeOp keeps the original
+  // box instead of letting the part vanish.
+  const v = k.box([0, 0, 0], [10, 10, 10]).fillet(50).volume();
+  expect(v).toBeCloseTo(1000, 0); // unchanged box volume — fillet skipped, not vanished
+});
+
+test("an out-of-range chamfer is skipped, not fatal — the shape survives", () => {
+  const v = k.box([0, 0, 0], [10, 10, 10]).chamfer(50).volume();
+  expect(v).toBeCloseTo(1000, 0);
+});
