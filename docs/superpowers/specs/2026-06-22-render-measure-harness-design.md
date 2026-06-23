@@ -85,7 +85,7 @@ buildView(kernel, part, view, params)
 ### File layout (in `partforge`)
 
 - `src/testing/build.js` — `buildView` (the shared core).
-- `src/testing/measure.js` — `measure(part, view, params?)`.
+- `src/testing/measure.js` — `measure(kernel, part, view, params?)`.
 - `src/testing/render.js` — `renderViews(part, view, { views, out, edges })`.
 - `bin/cli.js` — the `partforge` CLI (subcommand dispatch + arg parsing + part loading).
 - Manifold backend (`src/framework/geometry/manifold-backend.js`) gains three read methods
@@ -96,7 +96,8 @@ buildView(kernel, part, view, params)
 
 ## Component: measure
 
-`measure(part, view = firstView, params = {})` builds the view via `buildView` and returns:
+`measure(kernel, part, view = firstView, params = {})` builds the view via `buildView`
+(kernel-first, matching `assemblyOverlaps`; the caller boots one Manifold kernel) and returns:
 
 ```js
 {
