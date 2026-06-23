@@ -25,13 +25,21 @@ export default {
       views: ["box"],
       build: (k, p) => {
         let s = k.box([0, 0, 0], [p.w, p.d, p.h]);
-        // Booleans before fillets/chamfers: cut the bore first so the rounding ops
-        // act on the final outer form (OCCT booleans on a heavily-rounded solid are
-        // fragile). Out-of-range radii are skipped by the backend, not fatal.
+        // Ordering matters for robustness:
+        //  1. Chamfer the base on the RAW box first — straight edges. (Filleting the
+        //     verticals first would force the chamfer onto curved fillet arcs, which
+        //     OCCT handles poorly and breaks the bottom face.)
+        //  2. Then fillet the vertical edges, then the top rim.
+        //  3. Cut the bore LAST (booleans on a cleanly-rounded solid are fine).
+        // Each radius is clamped to the geometry so it can't consume a whole face.
+        const half = Math.min(p.w, p.d) / 2;
+        const chamfer = Math.min(p.chamfer, half - 0.5, p.h - 0.5);
+        if (chamfer > 0) s = s.chamfer(chamfer, { inPlane: "XY", at: 0 });      // base edges (keeps the bottom face)
+        const vFillet = Math.min(p.fillet, half - 0.5, p.h - 0.5);
+        if (vFillet > 0) s = s.fillet(vFillet, { dir: "Z" });                   // 4 vertical edges
+        const topFillet = Math.min(p.top, half - vFillet - 0.5, p.h / 2 - 0.5);
+        if (topFillet > 0) s = s.fillet(topFillet, { inPlane: "XY", at: p.h });  // top rim — curves all the way around
         if (p.bore > 0) s = s.cut(k.cylinder(p.bore / 2, p.bore / 2, p.h + 2).translate([p.w / 2, p.d / 2, -1]));
-        if (p.fillet > 0) s = s.fillet(p.fillet, { dir: "Z" });          // 4 vertical edges
-        if (p.top > 0) s = s.fillet(p.top, { inPlane: "XY", at: p.h });   // top rim — curves all the way around
-        if (p.chamfer > 0) s = s.chamfer(p.chamfer, { inPlane: "XY", at: 0 }); // base edges
         return s;
       },
     },
