@@ -1,12 +1,18 @@
 name: Publish
-# Publishes to npm when a v* tag is pushed (e.g. `git tag v0.1.1 && git push --tags`).
-# Requires an NPM_TOKEN repo secret (a classic Automation or granular read+write token).
+# Publishes to npm via OIDC Trusted Publishing (no stored token) when a v* tag is
+# pushed, e.g. `git tag v0.1.1 && git push --tags`.
+#
+# One-time setup on npmjs.com: package `partforge` → Settings → Trusted Publisher →
+# GitHub Actions → org/user `scottsykora`, repo `partforge`, workflow `publish.yml`.
 on:
   push:
     tags: ["v*"]
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC: authenticate to npm without a stored token
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -16,5 +22,3 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
