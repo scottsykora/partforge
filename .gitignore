@@ -4,3 +4,6 @@ dist/
 .DS_Store
 # generated prototype output
 scripts/out/
+
+# never commit npm auth tokens
+.npmrc
