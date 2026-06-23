@@ -4,9 +4,9 @@
 
 **Goal:** Ship two pure-Node CLI tools in the `partforge` package — `partforge measure` and `partforge render` — so a part author (human or LLM) can verify a part headlessly: report geometric facts and produce canonical-angle PNGs.
 
-**Architecture:** A shared `buildView` core builds a view's sub-parts in Node with the Manifold kernel and returns live solids + copied-out meshes. `measure` reads facts off those (bbox, volume, area, triangles, watertight, holes) plus the existing overlap check. `render` draws the meshes with three.js on a headless-gl context and writes PNGs. A single `partforge` bin dispatches both subcommands; the functions are also exported from `partforge/testing`.
+**Architecture:** A shared `buildView` core builds a view's sub-parts in Node with the Manifold kernel and returns live solids + copied-out meshes. `measure` reads facts off those (bbox, volume, area, triangles, watertight, holes) plus the existing overlap check. `render` rasterizes the meshes with a small pure-JS software rasterizer (z-buffer + Lambert shading + depth-tested edge lines) and writes PNGs. A single `partforge` bin dispatches both subcommands; the functions are also exported from `partforge/testing`.
 
-**Tech Stack:** Node 24, Manifold (`manifold-3d`), three.js, headless-gl (`gl`), `pngjs`, Vitest.
+**Tech Stack:** Node 24, Manifold (`manifold-3d`), a small pure-JS software rasterizer, `pngjs`, Vitest.
 
 ## Global Constraints
 
@@ -25,76 +25,39 @@
 
 ---
 
-### Task 1: headless-gl spike gate (BLOCKING — do this first)
+### Task 1: add the `pngjs` dependency
 
-`gl` is a native module that has historically lagged on new Node / Apple Silicon, and the target is Node 24 / macOS. Before building any render code, prove `gl` + `pngjs` install and produce real pixels on this machine. This task is a throwaway spike; only the dependency additions are committed.
-
-**If the spike fails (gl will not build/run): STOP and escalate to the human.** The documented fallback is a pure-JS software rasterizer behind the same `render.js` interface (Task 5) — do not start that without confirming the decision.
+> **Plan note (2026-06-22):** the original Task 1 was a headless-gl spike gate. `gl`
+> does not compile on Node 24 / Apple Silicon (no prebuilt; its bundled ANGLE source
+> fails to build), so the real-WebGL-in-Node path was abandoned. Per the spec's
+> documented fallback, `render` (Task 5) is now a **pure-JS software rasterizer** — no
+> native module. The only render dependency is `pngjs` (pure JS), added here.
 
 **Files:**
-- Create (throwaway, deleted before commit): `scripts/spike-gl.mjs`
-- Modify: `package.json` (add `gl`, `pngjs` to `dependencies`)
+- Modify: `package.json` (add `pngjs` to `dependencies`)
 
-- [ ] **Step 1: Install the native deps**
+- [ ] **Step 1: Install the dependency on Node 24**
 
-Run: `nvm use && npm install gl pngjs`
-Expected: installs without a build error. If `gl` fails to compile on Node 24 / macOS, STOP (see escalation note above).
+Run: `nvm use && node -v` (confirm `v24.x`), then `npm install pngjs`
+Expected: `node -v` prints v24; `npm install` succeeds (pngjs is pure JS — no build step).
 
-- [ ] **Step 2: Write the spike script**
+- [ ] **Step 2: Sanity-check pngjs encodes a PNG**
 
-Create `scripts/spike-gl.mjs`:
-
-```js
-// THROWAWAY spike: prove headless-gl builds and draws real pixels on this machine.
-import createGL from "gl";
-import { PNG } from "pngjs";
-import { writeFileSync } from "node:fs";
-
-const W = 64, H = 64;
-const gl = createGL(W, H, { preserveDrawingBuffer: true });
-if (!gl) { console.error("FAIL: gl context is null — headless-gl did not initialize"); process.exit(1); }
-
-gl.clearColor(0.1, 0.1, 0.1, 1); gl.clear(gl.COLOR_BUFFER_BIT);
-const vs = gl.createShader(gl.VERTEX_SHADER);
-gl.shaderSource(vs, "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }"); gl.compileShader(vs);
-const fs = gl.createShader(gl.FRAGMENT_SHADER);
-gl.shaderSource(fs, "void main(){ gl_FragColor = vec4(0.6, 0.7, 0.8, 1.0); }"); gl.compileShader(fs);
-const prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog); gl.useProgram(prog);
-const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.7, -0.7, 0.7, -0.7, 0, 0.7]), gl.STATIC_DRAW);
-const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-gl.drawArrays(gl.TRIANGLES, 0, 3);
-
-const px = new Uint8Array(W * H * 4);
-gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
-const png = new PNG({ width: W, height: H }); png.data = Buffer.from(px);
-writeFileSync("spike-gl.png", PNG.sync.write(png));
-
-let hit = 0;
-for (let i = 0; i < px.length; i += 4) if (px[i] > 120 && px[i + 2] > 180) hit++;
-console.log(hit > 50 ? `OK: headless-gl rendered (${hit} triangle pixels), wrote spike-gl.png` : "FAIL: no triangle pixels drawn");
-process.exit(hit > 50 ? 0 : 1);
+Run:
+```bash
+node -e "import('pngjs').then(({PNG})=>{const p=new PNG({width:2,height:2});p.data.fill(255);const b=PNG.sync.write(p);console.log(b.length>0 && b[1]===0x50 && b[2]===0x4e ? 'OK: pngjs wrote a valid PNG' : 'FAIL');})"
 ```
+Expected: prints `OK: pngjs wrote a valid PNG` (bytes 1–2 are the `PN` of the PNG signature).
 
-- [ ] **Step 3: Run the spike**
-
-Run: `node scripts/spike-gl.mjs`
-Expected: prints `OK: headless-gl rendered (… triangle pixels) …` and exits 0. If it prints FAIL or throws, STOP and escalate.
-
-- [ ] **Step 4: Clean up the throwaway artifacts**
-
-Run: `rm scripts/spike-gl.mjs spike-gl.png`
-Expected: only the `package.json` / `package-lock.json` dependency changes remain.
-
-- [ ] **Step 5: Commit the dependency additions**
+- [ ] **Step 3: Commit the dependency addition**
 
 ```bash
 git add package.json package-lock.json
 git commit -F - <<'EOF'
-build: add gl + pngjs deps for headless rendering
+build: add pngjs dependency for headless PNG rendering
 
-Verified headless-gl builds and renders real pixels on Node 24 / macOS via a
-throwaway spike (not committed).
+The headless-gl path was dropped (gl will not compile on Node 24 / Apple
+Silicon); render uses a pure-JS software rasterizer, which needs only pngjs.
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_013JtsJt4EMJbxekzq84XDT1
@@ -463,7 +426,7 @@ EOF
 
 ### Task 5: `render`
 
-Draw a view's meshes with three.js on a headless-gl context and write canonical-angle PNGs. The native deps (`gl`, `pngjs`) are **lazy-imported inside** the function so that importing `partforge/testing` for `measure` alone never loads the native module.
+Rasterize a view's meshes with a small pure-JS software rasterizer (z-buffer + Lambert shading + depth-tested edge lines) and write canonical-angle PNGs. No native module, no browser — the only dependency is `pngjs`, **lazy-imported inside** the function so that importing `partforge/testing` for `measure` alone never loads it.
 
 **Files:**
 - Create: `src/testing/render.js`
@@ -471,10 +434,10 @@ Draw a view's meshes with three.js on a headless-gl context and write canonical-
 - Test: `test/render.test.js`
 
 **Interfaces:**
-- Consumes: `buildView` (Task 2); `three`; lazy `gl`, `pngjs`.
+- Consumes: `buildView` (Task 2); `bounds` (Task 3); lazy `pngjs`.
 - Produces: `async renderViews(kernel, part, view = firstView, { views = ["iso","front","top"], out = "render", size = [800,600], edges = true, params = {} }) → string[]` (written file paths). Filenames: `<out>/<part-slug>-<view>-<angle>.png`.
 
-> The model is Z-up (parts are modelled Z-up; the in-app viewer rotates them upright). Keep Z-up here and set `camera.up` per angle. Material/lighting mirror `src/framework/viewer.js` (HemisphereLight `0xbfd4ff`/`0x202024` @1.1, DirectionalLight `0xffffff` @1.4 at (8,14,10), `MeshStandardMaterial` color `0x9fb4cc` metalness 0.25 roughness 0.55). If `MeshStandardMaterial` renders blank under headless-gl's WebGL1 context (the Step-2 "part actually rendered" assertion will catch it), switch to `MeshPhongMaterial` with the same color — do not weaken the test.
+> The model is Z-up; each view is taken from an `ANGLES` direction in model space — the rasterizer builds its own orthographic camera basis per angle, so no Z-up re-orientation is needed. Shading is matte Lambert from the mesh's per-vertex creased normals (world-space), base colour `0x9fb4cc`, against background `0x15181d`; edge segments from `mesh.edges` draw in `0x1c232d`, depth-tested so occluded edges stay hidden. This is a deliberately simple look — enough to read shape, holes, and proportions, which is render's whole job.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -525,11 +488,11 @@ Create `src/testing/render.js`:
 ```js
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import * as THREE from "three";
 import { buildView } from "./build.js";
+import { bounds } from "./mesh.js";
 
-// Canonical camera angles. Model is Z-up; `dir` is the camera offset direction
-// from the part centre, `up` the camera up vector for that angle.
+// Canonical view directions in MODEL space (Z-up). `dir` is the direction from
+// the part centre toward the camera; `up` is the camera up vector.
 const ANGLES = {
   iso:   { dir: [1, 1, 1],  up: [0, 0, 1] },
   front: { dir: [0, -1, 0], up: [0, 0, 1] },
@@ -537,57 +500,37 @@ const ANGLES = {
 };
 
 const slug = (s) => String(s).toLowerCase().replace(/\s+/g, "-");
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 
-// Render canonical-angle PNGs of one view of a part. Pure Node: builds meshes
-// with the given Manifold kernel, draws them with three.js on a headless-gl
-// context, writes one PNG per angle. Returns the written file paths. The native
-// deps (gl, pngjs) are lazy-imported so importing this module's barrel for
-// measure alone never loads them.
+// Render canonical-angle PNGs of one view of a part with a pure-JS software
+// rasterizer (orthographic, z-buffered, Lambert-shaded, with depth-tested edge
+// overlays). No native module, no browser. Returns the written file paths.
+// pngjs is lazy-imported so importing the testing barrel for measure never loads it.
 export async function renderViews(kernel, part, view = Object.keys(part.views)[0], {
   views = ["iso", "front", "top"], out = "render", size = [800, 600], edges = true, params = {},
 } = {}) {
-  const createGL = (await import("gl")).default;
   const { PNG } = await import("pngjs");
   const [W, H] = size;
-  const built = buildView(kernel, part, view, params);
+  const meshes = buildView(kernel, part, view, params).map((b) => b.mesh); // copied out
 
-  // --- scene (lighting/material mirror src/framework/viewer.js) -------------
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(part.meta?.background ?? 0x15181d);
-  scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x202024, 1.1));
-  const keyLight = new THREE.DirectionalLight(0xffffff, 1.4);
-  keyLight.position.set(8, 14, 10);
-  scene.add(keyLight);
-
-  const material = new THREE.MeshStandardMaterial({ color: 0x9fb4cc, metalness: 0.25, roughness: 0.55 });
-  const group = new THREE.Group();
-  for (const { mesh } of built) {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
-    geo.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
-    group.add(new THREE.Mesh(geo, material));
-    if (edges && mesh.edges?.length) {
-      const eg = new THREE.BufferGeometry();
-      eg.setAttribute("position", new THREE.BufferAttribute(mesh.edges, 3));
-      group.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x1c232d })));
-    }
+  // scene bounds over all sub-parts (positions are JS-owned; safe after cleanup)
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const m of meshes) {
+    const b = bounds(m.positions);
+    for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], b.min[i]); hi[i] = Math.max(hi[i], b.max[i]); }
   }
-  scene.add(group);
-  kernel.cleanup?.(); // meshes are copied into BufferAttributes; free the WASM solids
+  kernel.cleanup?.();
 
-  // --- framing -------------------------------------------------------------
-  const box = new THREE.Box3().setFromObject(group);
-  const center = box.getCenter(new THREE.Vector3());
-  const span = box.getSize(new THREE.Vector3());
-  const r = Math.max(span.x, span.y, span.z) || 10;
-  const half = r * 0.62;             // ortho half-extent with a small margin
-  const aspect = W / H;
+  const center = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  const radius = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 || 5;
 
-  // --- headless-gl renderer ------------------------------------------------
-  const gl = createGL(W, H, { preserveDrawingBuffer: true });
-  const canvas = { width: W, height: H, addEventListener() {}, removeEventListener() {}, getContext: () => gl, style: {} };
-  const renderer = new THREE.WebGLRenderer({ context: gl, canvas, antialias: false });
-  renderer.setSize(W, H, false);
+  const bg = [0x15, 0x18, 0x1d], base = [0x9f, 0xb4, 0xcc], edgeColor = [0x1c, 0x23, 0x2d];
+  const light = norm([0.4, 0.5, 0.8]); // world-space key direction (toward the light)
+  const ambient = 0.35, diffuse = 0.75;
+  const bias = radius * 0.02;           // edge depth bias so visible edges win ties
 
   mkdirSync(out, { recursive: true });
   const name = slug(part.meta?.title ?? view);
@@ -596,26 +539,95 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
   for (const angle of views) {
     const a = ANGLES[angle];
     if (!a) throw new Error(`unknown angle "${angle}" (use: ${Object.keys(ANGLES).join(", ")})`);
-    const camera = new THREE.OrthographicCamera(-half * aspect, half * aspect, half, -half, 0.1, r * 100);
-    camera.up.set(...a.up);
-    camera.position.copy(center).add(new THREE.Vector3(...a.dir).normalize().multiplyScalar(r * 4));
-    camera.lookAt(center);
-    renderer.render(scene, camera);
+    // orthographic camera basis: zc toward camera, xc right, yc up
+    const zc = norm(a.dir), xc = norm(cross(a.up, zc)), yc = cross(zc, xc);
+    const ppu = Math.min(W, H) / (2 * radius * 1.25); // pixels per mm (uniform; margin)
+    const project = (p) => {
+      const r = sub(p, center);
+      return [W / 2 + dot(r, xc) * ppu, H / 2 - dot(r, yc) * ppu, dot(r, zc)]; // [sx, sy, depth]
+    };
 
-    const pixels = new Uint8Array(W * H * 4);
-    gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    const color = new Uint8Array(W * H * 3);
+    for (let i = 0; i < W * H; i++) { color[i * 3] = bg[0]; color[i * 3 + 1] = bg[1]; color[i * 3 + 2] = bg[2]; }
+    const zbuf = new Float32Array(W * H).fill(-Infinity); // larger depth = nearer camera
+
+    for (const m of meshes) {
+      const P = m.positions, N = m.normals;
+      for (let t = 0; t < P.length / 9; t++) {
+        const o = t * 9;
+        const sp = [[P[o], P[o + 1], P[o + 2]], [P[o + 3], P[o + 4], P[o + 5]], [P[o + 6], P[o + 7], P[o + 8]]].map(project);
+        const inten = [0, 1, 2].map((k) => {
+          const d = Math.max(0, N[o + k * 3] * light[0] + N[o + k * 3 + 1] * light[1] + N[o + k * 3 + 2] * light[2]);
+          return Math.min(1, ambient + diffuse * d);
+        });
+        rasterTri(sp, inten, base, color, zbuf, W, H);
+      }
+    }
+
+    if (edges) {
+      for (const m of meshes) {
+        const E = m.edges;
+        if (!E?.length) continue;
+        for (let i = 0; i < E.length; i += 6)
+          drawLine(project([E[i], E[i + 1], E[i + 2]]), project([E[i + 3], E[i + 4], E[i + 5]]), edgeColor, color, zbuf, W, H, bias);
+      }
+    }
+
     const png = new PNG({ width: W, height: H });
-    for (let y = 0; y < H; y++) {           // gl origin is bottom-left; PNG is top-left
-      const srcRow = (H - 1 - y) * W * 4;
-      png.data.set(pixels.subarray(srcRow, srcRow + W * 4), y * W * 4);
+    for (let i = 0; i < W * H; i++) {
+      png.data[i * 4] = color[i * 3]; png.data[i * 4 + 1] = color[i * 3 + 1]; png.data[i * 4 + 2] = color[i * 3 + 2]; png.data[i * 4 + 3] = 255;
     }
     const file = join(out, `${name}-${view}-${angle}.png`);
     writeFileSync(file, PNG.sync.write(png));
     written.push(file);
   }
-
-  renderer.dispose();
   return written;
+}
+
+// signed area of the 2-D edge from a to b evaluated at p (for barycentric coords)
+const edgeFn = (a, b, p) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+
+// Fill one projected triangle, z-buffered, with Gouraud-interpolated Lambert shading.
+function rasterTri(sp, inten, base, color, zbuf, W, H) {
+  const [a, b, c] = sp;
+  const area = edgeFn(a, b, c);
+  if (Math.abs(area) < 1e-9) return;
+  const minX = Math.max(0, Math.floor(Math.min(a[0], b[0], c[0])));
+  const maxX = Math.min(W - 1, Math.ceil(Math.max(a[0], b[0], c[0])));
+  const minY = Math.max(0, Math.floor(Math.min(a[1], b[1], c[1])));
+  const maxY = Math.min(H - 1, Math.ceil(Math.max(a[1], b[1], c[1])));
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const p = [x + 0.5, y + 0.5];
+      const w0 = edgeFn(b, c, p), w1 = edgeFn(c, a, p), w2 = edgeFn(a, b, p);
+      // inside if all the same sign (handle either winding from the projection)
+      if (!((w0 >= 0 && w1 >= 0 && w2 >= 0) || (w0 <= 0 && w1 <= 0 && w2 <= 0))) continue;
+      const l0 = w0 / area, l1 = w1 / area, l2 = w2 / area;
+      const depth = l0 * a[2] + l1 * b[2] + l2 * c[2];
+      const idx = y * W + x;
+      if (depth <= zbuf[idx]) continue;
+      zbuf[idx] = depth;
+      const I = l0 * inten[0] + l1 * inten[1] + l2 * inten[2];
+      color[idx * 3] = Math.min(255, base[0] * I);
+      color[idx * 3 + 1] = Math.min(255, base[1] * I);
+      color[idx * 3 + 2] = Math.min(255, base[2] * I);
+    }
+  }
+}
+
+// Depth-tested line for edge overlays: drawn only where it isn't behind the
+// surface (within `bias`), so the silhouette and feature edges read as crisp lines.
+function drawLine(p0, p1, col, color, zbuf, W, H, bias) {
+  const steps = Math.max(1, Math.ceil(Math.max(Math.abs(p1[0] - p0[0]), Math.abs(p1[1] - p0[1]))));
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const x = Math.round(p0[0] + (p1[0] - p0[0]) * t), y = Math.round(p0[1] + (p1[1] - p0[1]) * t);
+    if (x < 0 || x >= W || y < 0 || y >= H) continue;
+    const depth = p0[2] + (p1[2] - p0[2]) * t;
+    const idx = y * W + x;
+    if (depth + bias < zbuf[idx]) continue; // occluded
+    color[idx * 3] = col[0]; color[idx * 3 + 1] = col[1]; color[idx * 3 + 2] = col[2];
+  }
 }
 ```
 
@@ -630,14 +642,14 @@ export { renderViews } from "./testing/render.js";
 - [ ] **Step 5: Run it and watch it pass**
 
 Run: `npx vitest run test/render.test.js`
-Expected: PASS — two non-blank 320×240 PNGs. (If blank, apply the `MeshPhongMaterial` fallback noted above and re-run.)
+Expected: PASS — two non-blank 320×240 PNGs.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/testing/render.js src/testing.js test/render.test.js
 git commit -F - <<'EOF'
-feat(testing): renderViews — canonical-angle PNGs via three.js + headless-gl
+feat(testing): renderViews — canonical-angle PNGs via a pure-JS software rasterizer
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_013JtsJt4EMJbxekzq84XDT1

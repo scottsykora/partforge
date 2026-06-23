@@ -28,10 +28,13 @@ separate, future item) will lean on. That skill is out of scope here.
 1. **Invocation:** CLI commands are the primary interface (`npx partforge measure …`,
    `npx partforge render …`); the `measure` function is *also* exported for use in vitest.
 2. **Render path:** Node offscreen (no browser / dev server / HTML entry).
-3. **Render engine:** real WebGL via the `gl` (headless-gl) native module + three.js.
-   Risk: `gl` is native and has historically lagged on new Node / Apple Silicon, and the
-   target machine is Node 24 / macOS. Mitigated by a spike gate (below) with a documented
-   pure-JS-rasterizer fallback.
+3. **Render engine:** ~~real WebGL via the `gl` (headless-gl) native module + three.js~~,
+   mitigated by a spike gate with a documented pure-JS-rasterizer fallback.
+   **Superseded (2026-06-22):** the spike gate failed — `gl` does not compile on Node 24 /
+   Apple Silicon (no prebuilt; bundled ANGLE source fails to build). Adopted the documented
+   fallback: a **pure-JS software rasterizer** (orthographic z-buffer + Lambert shading +
+   depth-tested edge overlays), no native module and no browser. Only `pngjs` is needed.
+   The `renderViews` interface, CLI, exports, and tests are unchanged by this swap.
 4. **Measure scope (v1):** whole-solid facts (bbox, volume, surface area, triangle count,
    watertight, holes/genus) per sub-part and per view, plus the existing assembly overlap
    check. Named-feature metrology (e.g. "bore = 5 mm") and full printability linting are
