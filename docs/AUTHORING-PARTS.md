@@ -287,6 +287,47 @@ The `measure` function is also exported for vitest (boot a Manifold kernel as in
 
 ---
 
+## Fillet & chamfer (automatic OCCT backend)
+
+Two backends build your part: **Manifold** (fast meshes — preview, STL, 3MF) and
+**OCCT/replicad** (exact B-rep — STEP). Most parts run on Manifold. But Manifold has no
+fillet, so if your `build` calls a **CAD-only op** the framework automatically routes the
+whole part to OCCT — no declaration needed:
+
+| Op | Meaning |
+|---|---|
+| `s.fillet(radius, selector?)` | round edges (curve-following, exact) |
+| `s.chamfer(distance, selector?)` | bevel edges |
+
+`selector` chooses which edges (omit it for **all** edges):
+
+- `{ dir: "X"｜"Y"｜"Z" }` — edges running along an axis (e.g. `{dir:"Z"}` = the vertical edges)
+- `{ inPlane: "XY"｜"XZ"｜"YZ", at }` — edges lying in a plane (e.g. base edges: `{inPlane:"XY", at:0}`)
+- `{ near: [x,y,z] }` — edges passing through a point
+- a raw `(edgeFinder) => edgeFinder` replicad finder, for anything fancier
+
+```js
+let s = k.box([0,0,0],[40,30,16]);
+s = s.fillet(3, { dir: "Z" });            // round the 4 vertical edges
+s = s.chamfer(1, { inPlane: "XY", at: 0 }); // bevel the base
+```
+
+See `src/parts/filleted-box.js` for the worked example.
+
+**Automatic backend selection.** Before building, the framework runs a geometry-free *probe*
+of your `build` to see whether it uses a CAD-only op, and routes accordingly — Manifold for
+everything else (so sweep-heavy parts like the drum stay fast). Force it with
+`meta.backend: "occt" | "manifold"` if you ever need to. Because an OCCT part is built
+entirely on OCCT, its fillets are exact in the STEP **and** present in the printed STL.
+
+> Trade-off: OCCT is much slower on heavy swept geometry (helical grooves), so don't reach for
+> `fillet`/`chamfer` on a sweep-heavy part — design those edges in, or keep the part on Manifold.
+
+> `partforge measure` reports `watertight`/`holes` as `n/a` for OCCT parts (Manifold-only
+> topology); `render` works on both.
+
+---
+
 ## Conventions & gotchas
 
 - **replicad (OCCT) transforms consume their input.** `s.translate/.rotate/.mirror/.cut`
