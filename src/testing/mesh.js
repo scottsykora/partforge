@@ -31,12 +31,16 @@ export function bounds(positions) {
   return { min, max };
 }
 
-// Surface area (mm²) of a non-indexed triangle soup (9 floats per triangle).
-export function meshArea(positions) {
+// Surface area (mm²) of a triangle mesh. `indices` is optional: when omitted the
+// positions are a non-indexed soup (3 consecutive verts per triangle, Manifold);
+// when given, positions is a vertex array indexed by triangle (OCCT/replicad).
+export function meshArea(positions, indices) {
   let area = 0;
-  for (let i = 0; i < positions.length; i += 9) {
-    const ux = positions[i + 3] - positions[i],     uy = positions[i + 4] - positions[i + 1], uz = positions[i + 5] - positions[i + 2];
-    const vx = positions[i + 6] - positions[i],     vy = positions[i + 7] - positions[i + 1], vz = positions[i + 8] - positions[i + 2];
+  const n = indices ? indices.length : positions.length / 3;
+  for (let i = 0; i < n; i += 3) {
+    const a = (indices ? indices[i] : i) * 3, b = (indices ? indices[i + 1] : i + 1) * 3, c = (indices ? indices[i + 2] : i + 2) * 3;
+    const ux = positions[b] - positions[a], uy = positions[b + 1] - positions[a + 1], uz = positions[b + 2] - positions[a + 2];
+    const vx = positions[c] - positions[a], vy = positions[c + 1] - positions[a + 1], vz = positions[c + 2] - positions[a + 2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     area += Math.hypot(nx, ny, nz) / 2;
   }

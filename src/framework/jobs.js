@@ -66,7 +66,8 @@ export async function handle(kernel, part, msg, post) {
       post({ type: "download", data: meshTo3MF(meshes), filename: `${msg.view}.3mf`, mime: "model/3mf" });
     }
   } catch (err) {
-    post({ type: "error", message: String(err?.message || err) });
+    if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt" });
+    else post({ type: "error", message: String(err?.message || err) });
   } finally {
     kernel.cleanup?.();
   }

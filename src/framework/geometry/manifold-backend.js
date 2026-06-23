@@ -1,4 +1,5 @@
 import { helixTube } from "./helix-tube.js";
+import { KernelCapabilityError } from "./errors.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
@@ -66,6 +67,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     toMesh: () => meshOut(m, false),
     toSTL: () => Promise.resolve(meshOut(m, true)),
     toIndexedMesh: () => indexedMeshOut(m),
+    fillet: () => { throw new KernelCapabilityError("fillet requires the OCCT backend"); },
+    chamfer: () => { throw new KernelCapabilityError("chamfer requires the OCCT backend"); },
   });
 
   return {

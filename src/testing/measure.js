@@ -23,16 +23,17 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       name,
       bbox: size(b),
       volume: solid.volume(),
-      surfaceArea: meshArea(mesh.positions),
+      surfaceArea: meshArea(mesh.positions, mesh.indices),
       triangleCount: mesh.triangles,
-      watertight: !solid.isEmpty(),
-      holes: solid.genus(),
+      watertight: typeof solid.isEmpty === "function" ? !solid.isEmpty() : null,
+      holes: typeof solid.genus === "function" ? solid.genus() : null,
     };
   });
 
   // Rebuilds with the same kernel and cleans up at its end — every solid fact
   // above is already read, so this is safe.
-  const overlaps = assemblyOverlaps(kernel, part, view, params);
+  const canIntersect = built.length > 0 && typeof built[0].solid.intersect === "function";
+  const overlaps = canIntersect ? assemblyOverlaps(kernel, part, view, params) : [];
   kernel.cleanup?.();
 
   const aggregate = {
@@ -47,6 +48,6 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     subparts,
     aggregate,
     overlaps,
-    ok: subparts.every((s) => s.watertight) && overlaps.length === 0,
+    ok: subparts.every((s) => s.watertight !== false) && overlaps.length === 0,
   };
 }

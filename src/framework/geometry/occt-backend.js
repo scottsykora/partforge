@@ -1,11 +1,48 @@
 // OCCT backend via replicad. Same GeometryKernel shape as the Manifold backend,
 // and the only backend with toSTEP(). This is where today's drum.js kernel calls
 // (makeCylinder, makeHelix+genericSweep, draw/extrude, cut/fuse) now live.
+import { toEdgeFinder } from "./edge-selector.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
-          makeCompound, loft, draw, exportSTEP } = replicad;
+          makeCompound, loft, draw, exportSTEP, measureVolume, EdgeFinder } = replicad;
+
+  // A chamfer can't be wider than the edges it's applied to: once it exceeds half the
+  // shortest of them (a short side, or a fillet's bottom arc) it over-runs and breaks
+  // the geometry. Measure the actual edges the selector matches and clamp to half the
+  // shortest — geometry-driven, so it works on any solid, not just boxes.
+  const clampChamfer = (shape, finderFn, distance) => {
+    if (!(distance > 0)) return distance;
+    const probe = shape.clone();
+    const edges = (finderFn ? finderFn(new EdgeFinder()) : new EdgeFinder()).find(probe);
+    const lengths = edges.map((e) => e.length);
+    edges.forEach((e) => e.delete?.());
+    probe.delete?.();
+    if (!lengths.length) return distance;
+    const max = Math.min(...lengths) / 2;
+    if (distance > max) console.info(`partforge: chamfer ${distance} clamped to ${max.toFixed(2)} (half the shortest edge it touches)`);
+    return Math.min(distance, max);
+  };
+
+  // Native fillet/chamfer can throw or yield an empty solid for out-of-range radii
+  // or awkward edge interactions — and OCCT's failures aren't monotonic in the
+  // radius (e.g. a radius that equals an adjacent fillet's can fail while larger
+  // ones succeed). Rather than letting the whole part vanish, attempt the op on a
+  // clone and fall back to the original shape (feature skipped) on a throw or empty
+  // result, with a console warning so it's discoverable.
+  const safeOp = (shape, op, label) => {
+    const backup = shape.clone();
+    try {
+      const result = op(shape);
+      if (measureVolume(result) > 0) { backup.delete?.(); return result; }
+      result.delete?.();
+      console.warn(`partforge: ${label} produced an empty solid — feature skipped (radius out of range?)`);
+    } catch (e) {
+      console.warn(`partforge: ${label} failed (${e?.message || e}) — feature skipped`);
+    }
+    return backup;
+  };
 
   const wrap = (shape) => ({
     _s: shape,
@@ -24,6 +61,17 @@ export function createOcctKernel(replicad) {
       };
     },
     toSTL: ({ quality = "print" } = {}) => shape.blobSTL(MESH[quality]).arrayBuffer(),
+    fillet: (radius, selector) => wrap(safeOp(shape, (sh) => sh.fillet(radius, toEdgeFinder(selector)), `fillet(${radius})`)),
+    chamfer: (distance, selector) => {
+      const finderFn = toEdgeFinder(selector);
+      const d = clampChamfer(shape, finderFn, distance);
+      return wrap(safeOp(shape, (sh) => sh.chamfer(d, finderFn), `chamfer(${distance})`));
+    },
+    volume: () => measureVolume(shape),
+    toIndexedMesh: () => {
+      const m = shape.mesh(MESH.preview);
+      return { positions: Float32Array.from(m.vertices), indices: Uint32Array.from(m.triangles) };
+    },
   });
 
   // cylinder OR frustum (loft of two circles) when rb !== rt

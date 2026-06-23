@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Filleted Box — native fillet/chamfer (OCCT)</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="topbar">
+      <div class="seg" id="part"><button data-part="box" class="on">Box</button></div>
+    </div>
+    <div id="viewbar">
+      <button id="pause" title="Pause rotation">⏸</button>
+      <button id="reframe" title="Reframe">⛶</button>
+      <button id="theme" title="Toggle light/dark">◐</button>
+    </div>
+    <div id="panel">
+      <h1>Filleted Box</h1>
+      <p class="sub">Native fillet/chamfer · auto-routes to OCCT</p>
+      <div id="controls"></div>
+      <div class="dl">
+        <div class="dl-head">Download</div>
+        <div class="dl-row">
+          <button id="download-step" disabled>STEP</button>
+          <button id="download" disabled>STL</button>
+          <button id="download-3mf" disabled>3MF</button>
+        </div>
+      </div>
+      <div id="status">booting kernel…</div>
+      <p class="hint">Drag to orbit · scroll to zoom.</p>
+    </div>
+    <div id="busy"><div class="ring"></div><div class="phase" id="phase">booting kernel…</div></div>
+    <script type="module" src="/src/app-filleted-box.js"></script>
+  </body>
+</html>

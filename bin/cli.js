@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 import { writeFileSync } from "node:fs";
 import Module from "manifold-3d";
 import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { detectBackend } from "../src/framework/geometry/probe.js";
+import { bootOcctKernel } from "../src/testing/occt.js";
 import { measure } from "../src/testing/measure.js";
 import { renderViews } from "../src/testing/render.js";
 
@@ -29,8 +31,13 @@ const mod = await import(pathToFileURL(resolve(process.cwd(), partPath)))
 const part = mod.default;
 if (!part?.parts || !part?.views) die(`"${partPath}" has no default-exported PartDefinition`);
 
-const wasm = await Module(); wasm.setup();
-const kernel = createManifoldKernel(wasm, { quality: "preview" });
+let kernel;
+if (detectBackend(part) === "occt") {
+  kernel = await bootOcctKernel();
+} else {
+  const wasm = await Module(); wasm.setup();
+  kernel = createManifoldKernel(wasm, { quality: "preview" });
+}
 
 try {
   if (cmd === "measure") {
@@ -54,9 +61,11 @@ try {
 function printMeasure(r) {
   console.log(`${r.part} / ${r.view}`);
   for (const s of r.subparts) {
+    const wt = s.watertight === null ? "watertight n/a" : (s.watertight ? "watertight ✓" : "NOT watertight ✗");
+    const holes = s.holes === null ? "holes n/a" : `holes ${s.holes}`;
     console.log(`  ${s.name}  bbox ${s.bbox.map((n) => n.toFixed(1)).join("×")}  ` +
       `vol ${(s.volume / 1000).toFixed(2)}cm³  area ${(s.surfaceArea / 100).toFixed(1)}cm²  ` +
-      `tris ${s.triangleCount}  ${s.watertight ? "watertight ✓" : "NOT watertight ✗"}  holes ${s.holes}`);
+      `tris ${s.triangleCount}  ${wt}  ${holes}`);
   }
   const a = r.aggregate;
   console.log(`  ── view  bbox ${a.bbox.map((n) => n.toFixed(1)).join("×")}  vol ${(a.volume / 1000).toFixed(2)}cm³  tris ${a.triangleCount}`);

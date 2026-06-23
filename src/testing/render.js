@@ -64,14 +64,30 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
     const zbuf = new Float32Array(W * H).fill(-Infinity); // larger depth = nearer camera
 
     for (const m of meshes) {
-      const P = m.positions, N = m.normals;
-      for (let t = 0; t < P.length / 9; t++) {
-        const o = t * 9;
-        const sp = [[P[o], P[o + 1], P[o + 2]], [P[o + 3], P[o + 4], P[o + 5]], [P[o + 6], P[o + 7], P[o + 8]]].map(project);
-        const inten = [0, 1, 2].map((k) => {
-          const d = Math.max(0, N[o + k * 3] * light[0] + N[o + k * 3 + 1] * light[1] + N[o + k * 3 + 2] * light[2]);
-          return Math.min(1, ambient + diffuse * d);
-        });
+      const P = m.positions, N = m.normals, ind = m.indices;
+      // Manifold meshes are a non-indexed soup (3 consecutive verts/triangle) with
+      // per-vertex normals; OCCT meshes are indexed and carry no normals.
+      const triCount = ind?.length ? ind.length / 3 : P.length / 9;
+      for (let t = 0; t < triCount; t++) {
+        const ai = ind?.length ? ind[t * 3] * 3 : t * 9;
+        const bi = ind?.length ? ind[t * 3 + 1] * 3 : t * 9 + 3;
+        const ci = ind?.length ? ind[t * 3 + 2] * 3 : t * 9 + 6;
+        const va = [P[ai], P[ai + 1], P[ai + 2]], vb = [P[bi], P[bi + 1], P[bi + 2]], vc = [P[ci], P[ci + 1], P[ci + 2]];
+        const sp = [va, vb, vc].map(project);
+        let inten;
+        if (N?.length) {
+          // per-vertex normals (same layout/offset as positions)
+          inten = [ai, bi, ci].map((o) =>
+            Math.min(1, ambient + diffuse * Math.max(0, N[o] * light[0] + N[o + 1] * light[1] + N[o + 2] * light[2])));
+        } else {
+          // no normals → flat face normal, two-sided so it lights regardless of winding
+          const ux = vb[0] - va[0], uy = vb[1] - va[1], uz = vb[2] - va[2];
+          const wx = vc[0] - va[0], wy = vc[1] - va[1], wz = vc[2] - va[2];
+          const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+          const L = Math.hypot(nx, ny, nz) || 1;
+          const I0 = Math.min(1, ambient + diffuse * Math.abs((nx * light[0] + ny * light[1] + nz * light[2]) / L));
+          inten = [I0, I0, I0];
+        }
         rasterTri(sp, inten, base, color, zbuf, W, H);
       }
     }
