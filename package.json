@@ -9,6 +9,7 @@
   },
   "files": [
     "src",
+    "bin",
     "docs/AUTHORING-PARTS.md",
     "README.md"
   ],
@@ -17,6 +18,9 @@
     "./worker": "./src/framework/worker.js",
     "./geometry": "./src/framework/geometry/polygon.js",
     "./testing": "./src/testing.js"
+  },
+  "bin": {
+    "partforge": "./bin/cli.js"
   },
   "scripts": {
     "dev": "vite",
