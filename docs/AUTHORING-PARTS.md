@@ -254,6 +254,39 @@ own files (vitest isolates files). For Manifold↔OCCT volume parity, see `test/
 
 ---
 
+## Verifying a part headlessly (render + measure)
+
+Once the package is installed you get two CLI commands that build your part in
+pure Node (no dev server, no browser) so you — or an LLM authoring the part — can
+check it without opening the app:
+
+    npx partforge measure src/parts/<part>.js [view]      # geometric facts
+    npx partforge render  src/parts/<part>.js [view]       # canonical-angle PNGs
+
+`measure` prints a report and writes `measure-<part>-<view>.json`: per sub-part
+and per view it reports bounding box, volume, surface area, triangle count,
+whether the solid is watertight, and the number of through-holes (genus), plus an
+assembly overlap check. It exits non-zero if any sub-part isn't watertight or any
+parts interpenetrate — so it doubles as a CI/agent gate. (Manifold output is
+manifold by construction, so `watertight` is mainly a build-sanity check for
+empty/degenerate results; `holes` is the informative topology number.)
+
+`render` writes one PNG per angle (`iso`, `front`, `top` by default; choose with
+`--views iso,front`, output dir with `--out`) to `render/`. The view defaults to
+the part's first declared view.
+
+The `measure` function is also exported for vitest (boot a Manifold kernel as in
+"Testing a part", then `measure(kernel, part, "<view>")`):
+
+    import { measure } from "partforge/testing";
+    test("part is sound", () => {
+      const r = measure(kernel, part, "<view>");
+      expect(r.ok).toBe(true);
+      expect(r.subparts[0].holes).toBe(1);   // e.g. expects one bore
+    });
+
+---
+
 ## Conventions & gotchas
 
 - **replicad (OCCT) transforms consume their input.** `s.translate/.rotate/.mirror/.cut`
