@@ -12,12 +12,13 @@ export default {
         { key: "d", label: "Depth", unit: "mm", min: 10, max: 80, step: 1 },
         { key: "h", label: "Height", unit: "mm", min: 5, max: 40, step: 1 },
         { key: "fillet", label: "Edge fillet", unit: "mm", min: 0, max: 10, step: 0.5 },
+        { key: "top", label: "Top fillet", unit: "mm", min: 0, max: 5, step: 0.5 },
         { key: "chamfer", label: "Base chamfer", unit: "mm", min: 0, max: 5, step: 0.5 },
         { key: "bore", label: "Bore", unit: "mm", min: 0, max: 24, step: 0.5 },
       ],
     },
   ],
-  defaults: { w: 40, d: 30, h: 16, fillet: 3, chamfer: 0, bore: 8 },
+  defaults: { w: 40, d: 30, h: 16, fillet: 3, top: 2, chamfer: 0, bore: 8 },
   parts: {
     body: {
       label: "Body",
@@ -25,6 +26,7 @@ export default {
       build: (k, p) => {
         let s = k.box([0, 0, 0], [p.w, p.d, p.h]);
         if (p.fillet > 0) s = s.fillet(p.fillet, { dir: "Z" });          // 4 vertical edges
+        if (p.top > 0) s = s.fillet(p.top, { inPlane: "XY", at: p.h });   // top rim — curves all the way around
         if (p.chamfer > 0) s = s.chamfer(p.chamfer, { inPlane: "XY", at: 0 }); // base edges
         if (p.bore > 0) s = s.cut(k.cylinder(p.bore / 2, p.bore / 2, p.h + 2).translate([p.w / 2, p.d / 2, -1]));
         return s;
