@@ -61,8 +61,20 @@ export function createViewer(container, part) {
   const partsGroup = new THREE.Group();
   pivot.add(partsGroup);
 
+  // Per-sub-part material: parts share the default material unless they declare
+  // `display: { color?, opacity? }` (e.g. a reference/ghost part shown in a
+  // distinct colour and/or semi-transparent so it reads as "not a printed part").
+  function materialFor(name) {
+    const disp = part.parts[name].display;
+    if (!disp || (disp.color == null && disp.opacity == null)) return material;
+    const m = material.clone();
+    if (disp.color != null) m.color = new THREE.Color(disp.color);
+    if (disp.opacity != null && disp.opacity < 1) { m.transparent = true; m.opacity = disp.opacity; m.depthWrite = false; }
+    return m;
+  }
+
   const subMesh = Object.fromEntries(
-    names.map((n) => [n, new THREE.Mesh(new THREE.BufferGeometry(), material)])
+    names.map((n) => [n, new THREE.Mesh(new THREE.BufferGeometry(), materialFor(n))])
   );
   for (const m of Object.values(subMesh)) {
     m.visible = false;
