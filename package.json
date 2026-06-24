@@ -1,9 +1,12 @@
 {
   "name": "partforge",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Turn a declarative part definition into a parametric-CAD web app (three.js + Manifold/Replicad). Requires a Vite-based consumer.",
   "type": "module",
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/scottsykora/partforge.git" },
+  "homepage": "https://github.com/scottsykora/partforge#readme",
+  "bugs": "https://github.com/scottsykora/partforge/issues",
   "engines": {
     "node": ">=24"
   },
