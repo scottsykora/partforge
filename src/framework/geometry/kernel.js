@@ -7,6 +7,7 @@
  * @property {(tools: Solid[]) => Solid} cutAll      batch subtract (backend-optimized)
  * @property {(other: Solid) => Solid} intersect     boolean intersection (Manifold)
  * @property {() => Solid} clone   independent copy (replicad consumes solids on transform)
+ * @property {() => {min:number[],max:number[],center:number[],size:number[]}} boundingBox   axis-aligned bounds (query)
  * @property {(v: number[]) => Solid} translate
  * @property {(deg: number, center: number[], axis: number[]) => Solid} rotate
  * @property {(plane: "XY"|"XZ"|"YZ") => Solid} mirror

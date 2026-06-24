@@ -81,6 +81,14 @@ export function createOcctKernel(replicad) {
     cut: (t) => wrap(shape.cut(t._s)),
     cutAll: (tools) => wrap(shape.cut(makeCompound(tools.map((t) => t._s)))),
     clone: () => wrap(shape.clone()),
+    boundingBox: () => {
+      const bb = shape.boundingBox;        // replicad BoundingBox: .bounds [[min],[max]], .center
+      const [min, max] = bb.bounds;
+      return {
+        min: [...min], max: [...max], center: [...bb.center],
+        size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
+      };
+    },
     translate: (v) => wrap(shape.translate(v)),
     rotate: (deg, center, axis) => wrap(shape.rotate(deg, center, axis)),
     mirror: (plane) => wrap(shape.mirror(plane)),

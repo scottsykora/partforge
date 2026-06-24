@@ -15,3 +15,13 @@ test("clone() lets the original survive a consuming transform", () => {
   expect(a.volume()).toBeCloseTo(1000, 0);        // original still usable
   expect(moved.volume()).toBeCloseTo(1000, 0);
 });
+
+test("boundingBox reports size/center of a box (query does not consume)", () => {
+  const b = k.box([0, 0, 0], [10, 20, 30]);
+  const bb = b.boundingBox();
+  expect(bb.size[0]).toBeCloseTo(10, 3);
+  expect(bb.size[1]).toBeCloseTo(20, 3);
+  expect(bb.size[2]).toBeCloseTo(30, 3);
+  expect(bb.center[0]).toBeCloseTo(5, 3);
+  expect(b.volume()).toBeCloseTo(6000, 0); // still usable after the query
+});

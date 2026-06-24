@@ -54,6 +54,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     cutAll: (tools) => wrap(T(m.subtract(unionRaw(tools.map((t) => t._m))))),
     intersect: (t) => wrap(T(m.intersect(t._m))),
     clone: () => wrap(m),
+    boundingBox: () => {
+      const b = m.boundingBox();           // { min: Vec3, max: Vec3 }
+      const min = [...b.min], max = [...b.max];
+      return {
+        min, max,
+        center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2],
+        size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
+      };
+    },
     volume: () => m.volume(),
     genus: () => m.genus(),
     isEmpty: () => m.isEmpty(),

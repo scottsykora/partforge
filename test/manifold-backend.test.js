@@ -76,3 +76,13 @@ test("clone() yields an independent usable solid", () => {
   expect(a.volume()).toBeCloseTo(1000, 0);
   expect(b.volume()).toBeCloseTo(1000, 0);
 });
+
+test("boundingBox reports min/max/center/size of a box", () => {
+  const bb = k.box([0, 0, 0], [10, 20, 30]).boundingBox();
+  expect(bb.min).toEqual([0, 0, 0]);
+  expect(bb.max[0]).toBeCloseTo(10, 6);
+  expect(bb.max[1]).toBeCloseTo(20, 6);
+  expect(bb.max[2]).toBeCloseTo(30, 6);
+  expect(bb.center).toEqual([5, 10, 15]);
+  expect(bb.size).toEqual([10, 20, 30]);
+});

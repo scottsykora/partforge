@@ -11,6 +11,7 @@ export function createProbeKernel() {
     cutAll() { note("cutAll"); return proxy; },
     intersect() { note("intersect"); return proxy; },
     clone() { note("clone"); return proxy; },
+    boundingBox() { note("boundingBox"); return { min: [0, 0, 0], max: [1, 1, 1], center: [0.5, 0.5, 0.5], size: [1, 1, 1] }; },
     translate() { note("translate"); return proxy; },
     rotate() { note("rotate"); return proxy; },
     mirror() { note("mirror"); return proxy; },
