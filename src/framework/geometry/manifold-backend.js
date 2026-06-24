@@ -53,6 +53,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     cut: (t) => wrap(T(m.subtract(t._m))),
     cutAll: (tools) => wrap(T(m.subtract(unionRaw(tools.map((t) => t._m))))),
     intersect: (t) => wrap(T(m.intersect(t._m))),
+    clone: () => wrap(m),
     volume: () => m.volume(),
     genus: () => m.genus(),
     isEmpty: () => m.isEmpty(),

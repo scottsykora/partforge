@@ -10,6 +10,7 @@ export function createProbeKernel() {
     cut() { note("cut"); return proxy; },
     cutAll() { note("cutAll"); return proxy; },
     intersect() { note("intersect"); return proxy; },
+    clone() { note("clone"); return proxy; },
     translate() { note("translate"); return proxy; },
     rotate() { note("rotate"); return proxy; },
     mirror() { note("mirror"); return proxy; },

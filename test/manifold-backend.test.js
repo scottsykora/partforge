@@ -69,3 +69,10 @@ test("genus is 0 for a solid box and 1 for a through-bored tube", () => {
 test("isEmpty is false for a real solid", () => {
   expect(k.box([0, 0, 0], [1, 1, 1]).isEmpty()).toBe(false);
 });
+
+test("clone() yields an independent usable solid", () => {
+  const a = k.box([0, 0, 0], [10, 10, 10]);
+  const b = a.clone().translate([20, 0, 0]);
+  expect(a.volume()).toBeCloseTo(1000, 0);
+  expect(b.volume()).toBeCloseTo(1000, 0);
+});

@@ -80,6 +80,7 @@ export function createOcctKernel(replicad) {
     _s: shape,
     cut: (t) => wrap(shape.cut(t._s)),
     cutAll: (tools) => wrap(shape.cut(makeCompound(tools.map((t) => t._s)))),
+    clone: () => wrap(shape.clone()),
     translate: (v) => wrap(shape.translate(v)),
     rotate: (deg, center, axis) => wrap(shape.rotate(deg, center, axis)),
     mirror: (plane) => wrap(shape.mirror(plane)),
