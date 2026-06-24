@@ -1,6 +1,7 @@
 import "./app.css"; // shared chrome styles — every part-app gets them via mount
 import { zipSync } from "fflate";
 import { createViewer } from "./viewer.js";
+import { loadRotating, saveRotating, loadCamera, saveCamera, loadView, saveView } from "./view-state.js";
 import { buildControls } from "./controls.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts } from "./jobs.js";
@@ -43,8 +44,13 @@ export function mount(part, { createWorker, container = document.getElementById(
   // `part.views` documents the available views and their labels for that page.
   // The initial view is whichever tab the page marks active (else the first tab).
   const params = { ...part.defaults };
-  let view = partSeg.querySelector("button.on")?.dataset.part ?? partSeg.querySelector("button")?.dataset.part;
+  const defaultView = partSeg.querySelector("button.on")?.dataset.part ?? partSeg.querySelector("button")?.dataset.part;
+  const savedView = loadView();
+  const savedBtn = savedView ? [...partSeg.querySelectorAll("button[data-part]")].find((b) => b.dataset.part === savedView) : null;
+  let view = savedBtn ? savedView : defaultView;
+  if (savedBtn) for (const b of partSeg.children) b.classList.toggle("on", b === savedBtn);
   let framedView = null; // the view the camera was last framed to (null until first show)
+  let cameraRestored = false; // saved camera applied once, on the first frame after load
   let generating = false;
   let paramsVersion = 0; // bumped on every settings edit
   let genVersion = -1;   // the params version the in-flight generate is building
@@ -63,7 +69,14 @@ export function mount(part, { createWorker, container = document.getElementById(
   function showView(needed) {
     const frame = view !== framedView;
     viewer.showAssembly(needed, { frame });
-    if (frame) framedView = view;
+    if (frame) {
+      framedView = view;
+      if (!cameraRestored) {
+        const cam = loadCamera();
+        if (cam) viewer.setCameraState(cam);
+        cameraRestored = true;
+      }
+    }
   }
 
   function refreshView() {
@@ -183,6 +196,7 @@ export function mount(part, { createWorker, container = document.getElementById(
     const btn = e.target.closest("button[data-part]");
     if (!btn) return;
     view = btn.dataset.part;
+    saveView(view);
     for (const b of partSeg.children) b.classList.toggle("on", b === btn);
     refreshView();  // instant if the view's parts are cached + current
     maybeGenerate(); // else auto-build the missing pieces
@@ -222,14 +236,25 @@ export function mount(part, { createWorker, container = document.getElementById(
   themeBtn?.addEventListener("click", () => applyTheme(theme === "light" ? "dark" : "light"));
 
   // Pause/resume the idle auto-rotation.
-  let rotating = true;
+  let rotating = loadRotating();
+  viewer.setAutoRotate(rotating);
+  if (pauseBtn) {
+    pauseBtn.textContent = rotating ? "⏸" : "▶";
+    pauseBtn.title = rotating ? "Pause rotation" : "Resume rotation";
+  }
   pauseBtn?.addEventListener("click", () => {
     rotating = !rotating;
     viewer.setAutoRotate(rotating);
     pauseBtn.textContent = rotating ? "⏸" : "▶";
     pauseBtn.title = rotating ? "Pause rotation" : "Resume rotation";
+    saveRotating(rotating);
   });
 
   // Re-fit the camera to the current view.
   reframeBtn?.addEventListener("click", () => viewer.frame());
+
+  // Persist the camera when the user finishes an orbit/zoom, and right before a
+  // reload (captures the latest pose, including auto-rotation drift).
+  viewer.onCameraEnd(() => saveCamera(viewer.getCameraState()));
+  window.addEventListener("pagehide", () => saveCamera(viewer.getCameraState()));
 }

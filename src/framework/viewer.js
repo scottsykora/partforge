@@ -205,6 +205,20 @@ export function createViewer(container, part) {
     renderer.render(scene, camera);
   });
 
+  // --- camera state (read/write for persistence; mount.js owns storage) -------
+  function getCameraState() {
+    return {
+      pos: [camera.position.x, camera.position.y, camera.position.z],
+      target: [controls.target.x, controls.target.y, controls.target.z],
+    };
+  }
+  function setCameraState({ pos, target }) {
+    camera.position.set(pos[0], pos[1], pos[2]);
+    controls.target.set(target[0], target[1], target[2]);
+    controls.update();
+  }
+  function onCameraEnd(cb) { controls.addEventListener("end", cb); }
+
   // --- dispose --------------------------------------------------------------
   function dispose() {
     renderer.setAnimationLoop(null);
@@ -212,5 +226,5 @@ export function createViewer(container, part) {
     container.removeChild(renderer.domElement);
   }
 
-  return { showAssembly, hideAssembly, setSubGeometry, resize, dispose, frame, setAutoRotate, setTheme, _subCache: subCache };
+  return { showAssembly, hideAssembly, setSubGeometry, resize, dispose, frame, setAutoRotate, setTheme, getCameraState, setCameraState, onCameraEnd, _subCache: subCache };
 }
