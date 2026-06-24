@@ -159,3 +159,8 @@ button.action:disabled { opacity: .5; cursor: default; }
 .popover a { color: var(--accent); }
 .popover p:first-child { margin-top: 0; }
 .popover p:last-child { margin-bottom: 0; }
+
+/* relevance: controls/sections that don't affect the on-screen parts */
+.irrelevant { opacity: 0.45; }
+.irrelevant:hover { opacity: 0.7; }
+.section-hidden { display: none; }

@@ -11,6 +11,22 @@ import { renderMarkdown } from "./markdown.js";
 // Short numeric string without float noise (4 dp max) for the value box.
 const numStr = (v) => String(Math.round(v * 1e4) / 1e4);
 
+// --- relevance (dim controls / hide sections that don't affect on-screen parts) ---
+// `relevant` is a Set of param keys, or any non-Set value (e.g. RELEVANT_ALL) → show all.
+function applyRelevance(relevant, controls, sections) {
+  const showAll = !(relevant instanceof Set);
+  for (const { key, el: node } of controls) {
+    const irrelevant = !showAll && !relevant.has(key);
+    node.classList.toggle("irrelevant", irrelevant);
+    if (irrelevant) node.title = "Doesn't affect the parts in the current view";
+    else node.removeAttribute("title");
+  }
+  for (const { el: node, keys } of sections) {
+    const anyRelevant = showAll || [...keys].some((k) => relevant.has(k));
+    node.classList.toggle("section-hidden", !anyRelevant);
+  }
+}
+
 // --- visibility (hidden controls/sections) --------------------------------
 export const visibleAdvanced = (sec) => (sec.advanced ?? []).filter((d) => !d.hidden);
 export const visibleFeatures = (sec) => (sec.features ?? []).filter((f) => !f.hidden);
@@ -162,19 +178,25 @@ function advancedBlock() {
 }
 
 export function buildControls(root, parameters, params, onDirty) {
+  const controls = []; // { key, el } per control element
+  const sections = []; // { el, keys:Set } per rendered section
   for (const sec of parameters) {
     if (!sectionRenders(sec)) continue;
     const section = el("div", "section");
     const title = el("div", "sec-title", sec.title);
     attachInfo(title, sec.description);
     section.append(title);
-    if (sec.features) buildFeatureSection(section, sec, params, onDirty);
-    else buildPresetSection(section, sec, params, onDirty);
+    const keys = new Set();
+    const register = (key, node) => { controls.push({ key, el: node }); keys.add(key); };
+    if (sec.features) buildFeatureSection(section, sec, params, onDirty, register);
+    else buildPresetSection(section, sec, params, onDirty, register);
     root.append(section);
+    sections.push({ el: section, keys });
   }
+  return { applyRelevance: (relevant) => applyRelevance(relevant, controls, sections) };
 }
 
-function buildPresetSection(section, sec, params, onDirty) {
+function buildPresetSection(section, sec, params, onDirty, register) {
   // preset picker, below the title, full width (omitted when the section has no presets)
   let preset = null;
   const presetNames = sec.presets ? Object.keys(sec.presets) : [];
@@ -197,6 +219,7 @@ function buildPresetSection(section, sec, params, onDirty) {
       const s = makeSlider(def, params, () => { if (preset) preset.value = "Custom"; onDirty?.(); });
       adv.append(s.wrap);
       syncs[def.key] = s.sync;
+      register(def.key, s.wrap);
     }
     section.append(toggle, adv);
   }
@@ -213,7 +236,7 @@ function buildPresetSection(section, sec, params, onDirty) {
   }
 }
 
-function buildFeatureSection(section, sec, params, onDirty) {
+function buildFeatureSection(section, sec, params, onDirty, register) {
   // Everything lives under Advanced: each feature is a checkbox followed by its
   // own controls, which appear directly below it when the box is checked.
   const { adv, toggle } = advancedBlock();
@@ -227,6 +250,7 @@ function buildFeatureSection(section, sec, params, onDirty) {
     const featLabel = el("span", "", feat.label);
     attachInfo(featLabel, feat.description);
     checkRow.append(box, featLabel);
+    register(feat.key, checkRow);
 
     const group = el("div", "feat-group");
     const syncs = [];
@@ -234,6 +258,7 @@ function buildFeatureSection(section, sec, params, onDirty) {
       const s = makeSlider(def, params, onDirty);
       group.append(s.wrap);
       syncs.push(s.sync);
+      register(def.key, s.wrap);
     }
     group.classList.toggle("hidden", !box.checked);
 

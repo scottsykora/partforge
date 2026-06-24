@@ -102,3 +102,58 @@ test("opening a second glyph swaps content and closes the first", () => {
   expect(g1.getAttribute("aria-expanded")).toBe("false");
   expect(g2.getAttribute("aria-expanded")).toBe("true");
 });
+
+import { RELEVANT_ALL } from "../../src/framework/param-deps.js";
+
+function buildPanel(parameters, params) {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const panel = buildControls(root, parameters, params, () => {});
+  return { root, panel };
+}
+const wrapByLabel = (root, t) =>
+  [...root.querySelectorAll(".slider")].find((w) => w.querySelector("label")?.textContent === t);
+const sectionByTitle = (root, t) =>
+  [...root.querySelectorAll(".section")].find((s) => s.querySelector(".sec-title")?.textContent === t);
+
+const twoSections = [
+  { id: "body", title: "Body", advanced: [
+    { key: "od", label: "OD", min: 1, max: 10, step: 1 },
+    { key: "h", label: "H", min: 1, max: 10, step: 1 },
+  ] },
+  { id: "bore", title: "Bore", advanced: [{ key: "bore", label: "Bore", min: 1, max: 5, step: 1 }] },
+];
+
+test("buildControls returns an applyRelevance method", () => {
+  const { panel } = buildPanel(twoSections, { od: 5, h: 5, bore: 2 });
+  expect(typeof panel.applyRelevance).toBe("function");
+});
+
+test("applyRelevance dims out-of-set controls and hides all-irrelevant sections", () => {
+  const { root, panel } = buildPanel(twoSections, { od: 5, h: 5, bore: 2 });
+  panel.applyRelevance(new Set(["od"]));
+  expect(wrapByLabel(root, "OD").classList.contains("irrelevant")).toBe(false);
+  expect(wrapByLabel(root, "H").classList.contains("irrelevant")).toBe(true);
+  expect(wrapByLabel(root, "H").getAttribute("title")).toMatch(/current view/i);
+  // Bore section's only control is out of the set → section hidden
+  expect(sectionByTitle(root, "Bore").classList.contains("section-hidden")).toBe(true);
+  expect(sectionByTitle(root, "Body").classList.contains("section-hidden")).toBe(false);
+});
+
+test("re-applying a different set un-dims / re-shows", () => {
+  const { root, panel } = buildPanel(twoSections, { od: 5, h: 5, bore: 2 });
+  panel.applyRelevance(new Set(["od"]));
+  panel.applyRelevance(new Set(["h", "bore"]));
+  expect(wrapByLabel(root, "OD").classList.contains("irrelevant")).toBe(true);
+  expect(wrapByLabel(root, "H").classList.contains("irrelevant")).toBe(false);
+  expect(sectionByTitle(root, "Bore").classList.contains("section-hidden")).toBe(false);
+});
+
+test("applyRelevance(RELEVANT_ALL) clears all dimming and shows all sections", () => {
+  const { root, panel } = buildPanel(twoSections, { od: 5, h: 5, bore: 2 });
+  panel.applyRelevance(new Set([]));                 // everything irrelevant
+  expect(sectionByTitle(root, "Body").classList.contains("section-hidden")).toBe(true);
+  panel.applyRelevance(RELEVANT_ALL);
+  expect(sectionByTitle(root, "Body").classList.contains("section-hidden")).toBe(false);
+  expect(wrapByLabel(root, "OD").classList.contains("irrelevant")).toBe(false);
+});
