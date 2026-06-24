@@ -40,9 +40,15 @@ export function mount(part, { createWorker, container = document.getElementById(
   const hideBusy = () => busyEl.classList.remove("show");
 
   // --- per-sub-part mesh cache + auto-regenerating view composition ----------
-  // The host page owns the view-tab markup (#part buttons, data-part = view name);
-  // `part.views` documents the available views and their labels for that page.
-  // The initial view is whichever tab the page marks active (else the first tab).
+  // The view-tab buttons are generated from `part.views` (the single source of truth):
+  // each entry becomes a <button data-part=view>label</button> inside #part, with the
+  // first view marked active by default. (A saved view, below, overrides the default.)
+  if (partSeg && part.views) {
+    partSeg.innerHTML = Object.entries(part.views)
+      .map(([key, v], i) => `<button data-part="${key}"${i === 0 ? ' class="on"' : ""}>${v?.label ?? key}</button>`)
+      .join("");
+  }
+  // The initial view is whichever tab is marked active (else the first tab).
   const params = { ...part.defaults };
   const defaultView = partSeg.querySelector("button.on")?.dataset.part ?? partSeg.querySelector("button")?.dataset.part;
   const savedView = loadView();
