@@ -58,7 +58,7 @@ Documented in `src/framework/geometry/kernel.js` (the `@typedef` contract).
 |---|---|---|
 | `s.clone()` | both | independent copy of the solid |
 | `s.boundingBox()` | both | `{ min:[x,y,z], max:[x,y,z], center:[x,y,z], size:[x,y,z] }` — query only, no geometry change |
-| `s.shell(thickness, openFaces?)` | **OCCT-routed** | hollow inward (wall = `thickness`, outer dimensions preserved); `openFaces` selector opens face(s); omit for a closed void |
+| `s.shell(thickness, openFaces)` | **OCCT-routed** | hollow inward (wall = `thickness`, outer dimensions preserved); `openFaces` selector chooses which face(s) to open. **`openFaces` is required** — replicad's `shell` removes faces and exposes no clean 3D solid-offset, so a fully-closed hollow void is **deferred** (out of scope for this batch). |
 
 **`boundingBox` return shape:** returns all four of `min`/`max`/`center`/`size`.
 `center` and `size` are derived from `min`/`max` but returned pre-computed because the
@@ -73,6 +73,12 @@ OCCT backend already clones internally (`safeOp`, `validChamfer`).
 **`shell` capability routing:** `shell` joins `fillet`/`chamfer` as an OCCT-only op. The
 Manifold backend's `shell` throws `KernelCapabilityError("shell requires the OCCT
 backend")`; the probe (Section 5) detects the call and routes the whole part to OCCT.
+
+**`shell` open-face requirement (refined during planning):** replicad's `shell` is the
+open-shell (`MakeThickSolidByJoin`) variety — it requires at least one face to remove and
+exposes no clean 3D solid-offset. So `openFaces` is **required**, and a fully-closed
+hollow void is **deferred** (not part of this batch). Calling `shell` without `openFaces`
+throws a clear error.
 
 ---
 
