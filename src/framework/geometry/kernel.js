@@ -21,7 +21,7 @@
  * @property {(rBottom:number, rTop:number, h:number, opts?:{center?:boolean}) => Solid} cylinder
  * @property {(r:number) => Solid} sphere   sphere centred at the origin
  * @property {(min:number[], max:number[]) => Solid} box
- * @property {(points2D:number[][], h:number) => Solid} prism   extrude polygon from z=0
+ * @property {(points2D:number[][], h:number, opts?:{twist?:number,scaleTop?:number}) => Solid} prism   extrude polygon from z=0 (optional twist° + uniform top taper)
  * @property {(points2D:number[][], opts?:{degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union

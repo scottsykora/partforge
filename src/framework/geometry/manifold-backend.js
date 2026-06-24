@@ -89,9 +89,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
       return wrap(T(cube.translate(min)));
     },
-    prism: (pts, h) => {
+    prism: (pts, h, { twist = 0, scaleTop = 1 } = {}) => {
+      if (scaleTop < 0) throw new Error("prism: scaleTop must be ≥ 0");
       const cs = T(CrossSection.ofPolygons([pts]));
-      return wrap(T(cs.extrude(h)));
+      if (twist === 0 && scaleTop === 1) return wrap(T(cs.extrude(h)));
+      // divisions ∝ twist so the twist meshes smoothly (1 when untwisted)
+      const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
+      return wrap(T(cs.extrude(h, nDiv, twist, scaleTop)));
     },
     helixSweptTube: (o) => wrap(T(helixTube(wasm, { ...o, ...tube }))),
     revolve: (pts, { degrees = 360 } = {}) => {

@@ -127,10 +127,16 @@ export function createOcctKernel(replicad) {
   };
 
   // extrude a 2-D polygon from z=0
-  const prism = (pts, h) => {
+  const prism = (pts, h, { twist = 0, scaleTop = 1 } = {}) => {
+    if (scaleTop < 0) throw new Error("prism: scaleTop must be ≥ 0");
     let pen = draw(pts[0]);
     for (let i = 1; i < pts.length; i++) pen = pen.lineTo(pts[i]);
-    return wrap(pen.close().sketchOnPlane("XY").extrude(h));
+    const sketch = pen.close().sketchOnPlane("XY");
+    if (twist === 0 && scaleTop === 1) return wrap(sketch.extrude(h));
+    const cfg = {};
+    if (twist !== 0) cfg.twistAngle = twist;
+    if (scaleTop !== 1) cfg.extrusionProfile = { profile: "linear", endFactor: scaleTop };
+    return wrap(sketch.extrude(h, cfg));
   };
 
   // revolve a lathe profile [[r,z],…] around the Z axis (degrees defaults to 360)

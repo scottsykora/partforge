@@ -39,3 +39,18 @@ test("revolve of a rectangular profile equals a cylinder volume", () => {
 test("revolve rejects a negative radius", () => {
   expect(() => k.revolve([[-1, 0], [10, 0], [10, 20]])).toThrow(/radius must be/);
 });
+
+const SQ = [[-5, -5], [5, -5], [5, 5], [-5, 5]];
+
+test("prism scaleTop<1 tapers — less volume than straight", () => {
+  const straight = k.prism(SQ, 10).volume();
+  const taper = k.prism(SQ, 10, { scaleTop: 0.5 }).volume();
+  expect(taper).toBeLessThan(straight);
+  expect(taper).toBeGreaterThan(0);
+});
+
+test("prism twist meshes to a positive-volume solid", () => {
+  const tw = k.prism(SQ, 20, { twist: 90 });
+  expect(tw.toMesh().triangles).toBeGreaterThan(0);
+  expect(tw.volume()).toBeGreaterThan(0);
+});

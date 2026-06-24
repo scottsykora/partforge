@@ -120,3 +120,29 @@ test("revolve(circleProfile) yields a torus near the Pappus volume", () => {
   expect(v).toBeLessThan(exact);          // faceted ⇒ inscribed ⇒ slightly under
   expect(v).toBeGreaterThan(exact * 0.9); // but close
 });
+
+const SQ = [[-5, -5], [5, -5], [5, 5], [-5, 5]];
+
+test("prism scaleTop<1 tapers — less volume than a straight extrude", () => {
+  const straight = k.prism(SQ, 10).volume();
+  const taper = k.prism(SQ, 10, { scaleTop: 0.5 }).volume();
+  expect(taper).toBeLessThan(straight);
+  expect(taper).toBeGreaterThan(0);
+});
+
+test("prism scaleTop:0 converges to a point (positive-volume cone)", () => {
+  const cone = k.prism(SQ, 10, { scaleTop: 0 });
+  expect(cone.volume()).toBeGreaterThan(0);
+  expect(cone.toMesh().triangles).toBeGreaterThan(0);
+});
+
+test("prism twist keeps positive volume and full height", () => {
+  const tw = k.prism(SQ, 20, { twist: 90 });
+  expect(tw.volume()).toBeGreaterThan(0);
+  const [, , ht] = bboxSize(tw.toMesh().positions);
+  expect(ht).toBeCloseTo(20, 0);
+});
+
+test("prism rejects negative scaleTop", () => {
+  expect(() => k.prism(SQ, 10, { scaleTop: -1 })).toThrow(/scaleTop/);
+});
