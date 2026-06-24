@@ -96,3 +96,31 @@ export function ringSectorPolygon(innerR, outerR, arcDeg, segs = 32) {
   for (let i = steps; i >= 0; i--) { const t = (a * i) / steps; pts.push([innerR * Math.cos(t), innerR * Math.sin(t)]); }
   return pts;
 }
+
+const PATTERN_AXIS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
+
+// `count` copies of `solid` translated by i*step ([dx,dy,dz]) for i in 0..count-1.
+// Returns a Solid[] — feed to k.union(...) (features) or s.cutAll(...) (holes).
+export function linearPattern(solid, count, step) {
+  const out = [];
+  for (let i = 0; i < count; i++)
+    out.push(solid.clone().translate([step[0] * i, step[1] * i, step[2] * i]));
+  return out;
+}
+
+// `count` copies spaced angle/count degrees apart around `axis` through `center`.
+// rotateCopies:true re-orients each copy to face along the circle; false places it
+// at the orbital position with its original orientation (for radially symmetric tools).
+export function circularPattern(solid, count, { center = [0, 0, 0], axis = "Z", angle = 360, rotateCopies = true } = {}) {
+  const ax = Array.isArray(axis) ? axis : PATTERN_AXIS[axis];
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const deg = (angle / count) * i;
+    const placed = solid.clone().rotate(deg, center, ax);
+    if (rotateCopies) { out.push(placed); continue; }
+    // cancel the orientation change by counter-rotating about the copy's own centre
+    const c = placed.boundingBox().center;
+    out.push(placed.rotate(-deg, c, ax));
+  }
+  return out;
+}
