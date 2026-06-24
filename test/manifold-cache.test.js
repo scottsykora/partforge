@@ -49,7 +49,9 @@ test("a cached-resume mesh equals a cold-built mesh", async () => {
       barrel: (boreR) => {
         let s = kk.union([kk.cylinder(4, 4, 10), kk.cylinder(8, 8, 2)]);
         const mesh = s.cut(kk.cylinder(boreR, boreR, 14).translate([0, 0, -2])).toMesh();
-        return { vol: meshVolume(mesh.positions), bbox: bboxSize(mesh.positions) };
+        const vol = meshVolume(mesh.positions), bbox = bboxSize(mesh.positions);
+        kk.cleanup();
+        return { vol, bbox };
       },
     };
   }

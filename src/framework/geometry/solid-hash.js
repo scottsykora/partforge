@@ -12,6 +12,8 @@ function canon(x) {
   return String(x);
 }
 
+// FNV-1a folded to 32-bit space (collision risk acceptable: retained only for one
+// sub-part's build graph ~3–15 nodes, rebuilt each round, no accumulation).
 function fnv(s) {
   let hsh = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { hsh ^= s.charCodeAt(i); hsh = Math.imul(hsh, 0x01000193); }
