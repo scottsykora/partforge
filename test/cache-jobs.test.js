@@ -25,3 +25,28 @@ test("an identical re-generate recomputes nothing", async () => {
   await gen({ od: 8, h: 10, flange_d: 16, bore: 3.4 });
   expect(k.cacheStats().misses).toBe(0);
 });
+
+test("a build that throws mid-way still closes the cache bracket — the kernel is reusable, not stuck", async () => {
+  // Inline part: builds a cached boundary op (cut), then throws when p.boom is set.
+  const flaky = {
+    defaults: { boom: false },
+    views: { v: { label: "V" } },
+    parts: { a: { views: ["v"], build: (k, p) => {
+      const s = k.cylinder(5, 5, 10).cut(k.cylinder(2, 2, 12).translate([0, 0, -1]));
+      if (p.boom) throw new Error("boom");
+      return s;
+    } } },
+  };
+  const run = (params) => { const post = vi.fn(); return handle(k, flaky, { type: "generate", subparts: ["a"], view: "v", params }, post).then(() => post); };
+
+  const post1 = await run({ boom: true });   // throws mid-build
+  expect(post1.mock.calls.some(([m]) => m.type === "error")).toBe(true);
+
+  k.resetCacheStats();
+  const post2 = await run({ boom: false });  // must still work — bracket was closed in finally
+  const meshesMsg = post2.mock.calls.map(([m]) => m).find((m) => m.type === "meshes");
+  expect(meshesMsg).toBeTruthy();
+  expect(meshesMsg.meshes[0].triangles).toBeGreaterThan(0);
+  // The failed build committed the cut solid before throwing; a clean build reuses it.
+  expect(k.cacheStats().hits).toBeGreaterThan(0);
+});

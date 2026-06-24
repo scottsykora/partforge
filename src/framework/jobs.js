@@ -45,10 +45,13 @@ export async function handle(kernel, part, msg, post) {
       const meshes = [];
       for (const name of msg.subparts) {
         kernel.beginSubPart?.(name); // open the per-sub-part cache round
-        const m = buildPosed(name, "display", msg.view).toMesh({ quality: "preview" });
-        kernel.endSubPart?.();       // commit/evict before cleanup frees the transients
-        meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges });
-        kernel.cleanup?.();
+        try {
+          const m = buildPosed(name, "display", msg.view).toMesh({ quality: "preview" });
+          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges });
+        } finally {
+          kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
+          kernel.cleanup?.();    // free this round's transients (cached/pinned solids survive)
+        }
       }
       post({ type: "meshes", meshes, ms: Date.now() - t0 });
     } else if (msg.type === "export-stl") {
