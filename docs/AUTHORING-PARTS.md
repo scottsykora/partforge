@@ -222,7 +222,7 @@ Give every section and control a `description`. Keep each one short and make it 
 - a **sensible range** (and what's typical),
 - **when it matters** (what it interacts with).
 
-Use Markdown links or images for diagrams and deeper reference. These are the tooltips
+Use Markdown links or images for diagrams and deeper reference. These are the popovers
 end users rely on — treat writing them as part of authoring the control, not an
 afterthought.
 
