@@ -44,7 +44,9 @@ export async function handle(kernel, part, msg, post) {
       const t0 = Date.now();
       const meshes = [];
       for (const name of msg.subparts) {
+        kernel.beginSubPart?.(name); // open the per-sub-part cache round
         const m = buildPosed(name, "display", msg.view).toMesh({ quality: "preview" });
+        kernel.endSubPart?.();       // commit/evict before cleanup frees the transients
         meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges });
         kernel.cleanup?.();
       }
