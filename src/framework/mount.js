@@ -3,6 +3,7 @@ import { zipSync } from "fflate";
 import { createViewer } from "./viewer.js";
 import { loadRotating, saveRotating, loadCamera, saveCamera, loadView, saveView } from "./view-state.js";
 import { buildControls } from "./controls.js";
+import { relevantParamKeys } from "./param-deps.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts } from "./jobs.js";
 import { detectBackend } from "./geometry/probe.js";
@@ -173,11 +174,14 @@ export function mount(part, { createWorker, container = document.getElementById(
 
   const service = createGeometryService({ createWorker, onMessage: onWorkerMessage });
 
-  buildControls(controls, part.parameters, params, onParamChange);
+  const panel = buildControls(controls, part.parameters, params, onParamChange);
+  const updateRelevance = () => panel.applyRelevance(relevantParamKeys(part, view, params));
+  updateRelevance(); // initial view
 
   function onParamChange() {
     paramsVersion++; // every edit invalidates the caches (by version)
     refreshView();   // keep showing the now-stale mesh (no flicker); disable export
+    updateRelevance();
     scheduleGenerate();
   }
 
@@ -205,6 +209,7 @@ export function mount(part, { createWorker, container = document.getElementById(
     saveView(view);
     for (const b of partSeg.children) b.classList.toggle("on", b === btn);
     refreshView();  // instant if the view's parts are cached + current
+    updateRelevance();
     maybeGenerate(); // else auto-build the missing pieces
   });
 
