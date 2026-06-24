@@ -42,18 +42,20 @@ export async function handle(kernel, part, msg, post) {
   try {
     if (msg.type === "generate") {
       const t0 = Date.now();
+      const useCache = msg.cache !== false; // ?debug toggle can disable caching (cache:false)
       const meshes = [];
+      kernel.resetCacheStats?.(); // count hits/misses for just this job
       for (const name of msg.subparts) {
-        kernel.beginSubPart?.(name); // open the per-sub-part cache round
+        if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
         try {
           const m = buildPosed(name, "display", msg.view).toMesh({ quality: "preview" });
           meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges });
         } finally {
-          kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
-          kernel.cleanup?.();    // free this round's transients (cached/pinned solids survive)
+          if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
+          kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)
         }
       }
-      post({ type: "meshes", meshes, ms: Date.now() - t0 });
+      post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.() });
     } else if (msg.type === "export-stl") {
       const out = [];
       for (const name of exportSubParts(part, msg.view, p)) {
