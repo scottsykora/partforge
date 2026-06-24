@@ -9,6 +9,16 @@
 // Short numeric string without float noise (4 dp max) for the value box.
 const numStr = (v) => String(Math.round(v * 1e4) / 1e4);
 
+// --- visibility (hidden controls/sections) --------------------------------
+export const visibleAdvanced = (sec) => (sec.advanced ?? []).filter((d) => !d.hidden);
+export const visibleFeatures = (sec) => (sec.features ?? []).filter((f) => !f.hidden);
+export function sectionRenders(sec) {
+  if (sec.hidden) return false;
+  if (sec.features) return visibleFeatures(sec).length > 0;
+  const hasPresets = sec.presets && Object.keys(sec.presets).length > 0;
+  return !!hasPresets || visibleAdvanced(sec).length > 0;
+}
+
 // Parse a typed value → clamped to [min, max], or null if not a finite number.
 export function clampToRange(raw, min, max) {
   const v = parseFloat(raw);
@@ -97,6 +107,7 @@ function advancedBlock() {
 
 export function buildControls(root, parameters, params, onDirty) {
   for (const sec of parameters) {
+    if (!sectionRenders(sec)) continue;
     const section = el("div", "section");
     section.append(el("div", "sec-title", sec.title));
     if (sec.features) buildFeatureSection(section, sec, params, onDirty);
@@ -114,25 +125,23 @@ function buildPresetSection(section, sec, params, onDirty) {
     preset.className = "preset";
     for (const name of [...presetNames, "Custom"]) {
       const o = document.createElement("option");
-      o.value = name;
-      o.textContent = name;
-      preset.append(o);
+      o.value = name; o.textContent = name; preset.append(o);
     }
     preset.value = presetNames[0];
     section.append(preset);
   }
 
-  const { adv, toggle } = advancedBlock();
+  const advanced = visibleAdvanced(sec);
   const syncs = {};
-  for (const def of sec.advanced) {
-    const s = makeSlider(def, params, () => {
-      if (preset) preset.value = "Custom";
-      onDirty?.();
-    });
-    adv.append(s.wrap);
-    syncs[def.key] = s.sync;
+  if (advanced.length) {
+    const { adv, toggle } = advancedBlock();
+    for (const def of advanced) {
+      const s = makeSlider(def, params, () => { if (preset) preset.value = "Custom"; onDirty?.(); });
+      adv.append(s.wrap);
+      syncs[def.key] = s.sync;
+    }
+    section.append(toggle, adv);
   }
-  section.append(toggle, adv);
 
   // applying a preset overwrites its keys and refreshes this section's sliders
   if (preset) {
@@ -152,7 +161,7 @@ function buildFeatureSection(section, sec, params, onDirty) {
   const { adv, toggle } = advancedBlock();
   section.append(toggle, adv);
 
-  for (const feat of sec.features) {
+  for (const feat of visibleFeatures(sec)) {
     const checkRow = el("label", "feat");
     const box = document.createElement("input");
     box.type = "checkbox";
@@ -161,7 +170,7 @@ function buildFeatureSection(section, sec, params, onDirty) {
 
     const group = el("div", "feat-group");
     const syncs = [];
-    for (const def of feat.sliders) {
+    for (const def of feat.sliders.filter((d) => !d.hidden)) {
       const s = makeSlider(def, params, onDirty);
       group.append(s.wrap);
       syncs.push(s.sync);
