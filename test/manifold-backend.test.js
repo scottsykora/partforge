@@ -86,3 +86,9 @@ test("boundingBox reports min/max/center/size of a box", () => {
   expect(bb.center).toEqual([5, 10, 15]);
   expect(bb.size).toEqual([10, 20, 30]);
 });
+
+test("sphere volume is ~4/3 pi r^3", () => {
+  const r = 10;
+  const v = k.sphere(r).volume();
+  expect(v).toBeCloseTo((4 / 3) * Math.PI * r ** 3, -2); // within ~50mm³ (faceting at 116 segs gives ~7mm³ error)
+});

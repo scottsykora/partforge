@@ -24,6 +24,7 @@ export function createProbeKernel() {
   };
   const kernel = {
     cylinder() { note("cylinder"); return proxy; },
+    sphere() { note("sphere"); return proxy; },
     box() { note("box"); return proxy; },
     prism() { note("prism"); return proxy; },
     helixSweptTube() { note("helixSweptTube"); return proxy; },

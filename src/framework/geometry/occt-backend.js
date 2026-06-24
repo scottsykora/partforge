@@ -6,7 +6,7 @@ const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tole
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
-          makeCompound, loft, draw, exportSTEP, measureVolume } = replicad;
+          makeCompound, loft, draw, exportSTEP, measureVolume, makeSphere } = replicad;
 
   // Is a shape a closed solid? A broken chamfer (one that over-ran and consumed a face)
   // meshes to an OPEN surface; a valid one is closed. OCCT meshes each face separately,
@@ -138,6 +138,7 @@ export function createOcctKernel(replicad) {
 
   return {
     cylinder, box: (min, max) => wrap(makeBox(min, max)), prism, helixSweptTube,
+    sphere: (r) => wrap(makeSphere(r)),
     union: (solids) => wrap(solids.map((s) => s._s).reduce((a, b) => a.fuse(b))),
     toSTEP: (named) => exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._s }))).arrayBuffer(),
   };

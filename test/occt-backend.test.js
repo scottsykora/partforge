@@ -25,3 +25,8 @@ test("boundingBox reports size/center of a box (query does not consume)", () => 
   expect(bb.center[0]).toBeCloseTo(5, 3);
   expect(b.volume()).toBeCloseTo(6000, 0); // still usable after the query
 });
+
+test("sphere volume is ~4/3 pi r^3", () => {
+  const r = 10;
+  expect(k.sphere(r).volume()).toBeCloseTo((4 / 3) * Math.PI * r ** 3, -1);
+});

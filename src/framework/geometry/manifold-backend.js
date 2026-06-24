@@ -83,6 +83,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
 
   return {
     cylinder: (rb, rt, h, { center = false } = {}) => wrap(T(Manifold.cylinder(h, rb, rt, segs, center))),
+    sphere: (r) => wrap(T(Manifold.sphere(r, segs))),
     box: (min, max) => {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
       return wrap(T(cube.translate(min)));
