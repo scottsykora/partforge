@@ -118,6 +118,18 @@ entry pulls in the DOM viewer/controls, and your build functions run in a Web Wo
 You normally only call the *make/combine/transform* ops; the framework handles
 `toMesh`/`toSTL`/`toIndexedMesh`/`toSTEP`. Units are millimetres.
 
+### Caching & determinism
+
+The preview kernel memoizes geometry by content hash, so editing a parameter only
+re-runs the operations that parameter actually affects. For this to be sound, a
+`build` must be a **pure function of `(k, p, d)`** — no `Math.random`, no clock, no
+module-level mutable state. An impure build will silently return stale geometry.
+
+Cache granularity follows the operations you call. Booleans and heavy primitives are
+cached; cheap transforms are recomputed. To make a multi-step shape into a single
+cache node, use (or add) a **compound op** like `k.boredCylinder({ od, h, bore })` —
+it hashes from its own arguments and never exposes its internals to the cache.
+
 ---
 
 ## Parameters: the control-panel schema

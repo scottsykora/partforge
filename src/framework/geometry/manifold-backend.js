@@ -103,6 +103,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   return {
     cylinder: (rb, rt, h2, { center = false } = {}) =>
       wrap(T(Manifold.cylinder(h2, rb, rt, segs, center)), h("cylinder", rb, rt, h2, center, segs)),
+    // Compound op: hashed ATOMICALLY from its own args, so it is a single cache
+    // node — its internal cylinders/cut are never retained. The template for
+    // future compounds: build internals with T(), return the final tracked solid.
+    boredCylinder: ({ od, h: height, bore }) => cached(h("boredCylinder", od, height, bore, segs), () => {
+      const body = T(Manifold.cylinder(height, od / 2, od / 2, segs, false));
+      const tool0 = T(Manifold.cylinder(height + 4, bore / 2, bore / 2, segs, false));
+      const tool = T(tool0.translate([0, 0, -2])); // raw ops: track each result
+      return T(body.subtract(tool));
+    }),
     sphere: (r) => wrap(T(Manifold.sphere(r, segs)), h("sphere", r, segs)),
     box: (min, max) => {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
