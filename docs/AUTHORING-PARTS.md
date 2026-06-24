@@ -50,6 +50,7 @@ export default {
       place?: (solid, { view, purpose, p, d }) => Solid,   // optional reposition; default identity
       views,                               // string[] — which views show this sub-part
       enabled?: (p) => boolean,            // optional — gate a conditional sub-part
+      display?: { color?, opacity? },      // optional viewer-only override (0xRRGGBB / 0..1) — e.g. a reference/ghost part
       export?: { name },                   // filename/object name on export; defaults to the key
     },
   },
@@ -88,6 +89,8 @@ handles. The same code runs on **Manifold** (fast meshes — preview + STL + 3MF
 | `k.cylinder(rBottom, rTop, h, { center? })` | cylinder/cone along +Z (frustum if radii differ) |
 | `k.box(min, max)` | axis-aligned box from `[x,y,z]` min/max |
 | `k.prism(points2D, h)` | extrude a 2-D polygon (CCW `[[x,y],…]`) from z=0 |
+| `k.sphere(r)` | sphere centred at the origin |
+| `k.revolve(points2D, { degrees })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove) |
 | `k.union(solids[])` | boolean union |
 
@@ -105,6 +108,8 @@ entry pulls in the DOM viewer/controls, and your build functions run in a Web Wo
 | `s.translate([x,y,z])` | move |
 | `s.rotate(deg, center, axis)` | rotate `deg` about `axis` through `center` |
 | `s.mirror("XY"\|"XZ"\|"YZ")` | mirror across a plane |
+| `s.clone()` | independent copy (replicad consumes solids on transform) |
+| `s.boundingBox()` | `{ min, max, center, size }` axis-aligned bounds (query) |
 | `s.volume()` | volume in mm³ (Manifold) |
 | `s.toMesh({ quality })` / `s.toSTL({ quality })` / `s.toIndexedMesh()` | meshes / STL / indexed mesh (3MF) — the framework calls these |
 | `k.toSTEP(named[])` | STEP bytes (OCCT only) — the framework calls this |
@@ -153,6 +158,26 @@ slider or type an exact value (finer than `step` is allowed; typed values clamp 
 
 Every `key` used must exist in `defaults`. (The drum's schema is exported as `SECTIONS`
 in `src/parts/drum/params.js` if you want a large reference.)
+
+---
+
+## Profiles & patterns
+
+Pure helpers from `partforge/geometry` (no backend dependency):
+
+**2-D profiles** (CCW point arrays for `k.prism` / `k.revolve`):
+`roundedRectPolygon(w,h,r)`, `regularPolygon(n,r,{flat})`, `ellipsePolygon(rx,ry)`,
+`slotPolygon(length,r)` (overall length = `length + 2r`), `starPolygon(points,outerR,innerR)`,
+`ringSectorPolygon(innerR,outerR,arcDeg)` (**arcDeg < 360** — a full ring is a contour-with-hole;
+cut an inner cylinder from an outer one instead).
+
+**Patterns** (return `Solid[]` — feed to `k.union(...)` for features or `s.cutAll(...)` for holes):
+`linearPattern(solid, count, [dx,dy,dz])`, `circularPattern(solid, count, { center, axis, angle, rotateCopies })`.
+
+```js
+const hole = k.cylinder(2, 2, 20).translate([20, 0, 0]);
+body = body.cutAll(circularPattern(hole, 8, { axis: "Z" }));   // 8 bolt holes on a 40mm circle
+```
 
 ---
 
@@ -298,6 +323,7 @@ whole part to OCCT — no declaration needed:
 |---|---|
 | `s.fillet(radius, selector?)` | round edges (curve-following, exact) |
 | `s.chamfer(distance, selector?)` | bevel edges |
+| `s.shell(thickness, openFaces)` | hollow inward, wall = `thickness`; `openFaces` selector (`{inPlane,at}`/`{dir}`/`{near}`) chooses which face(s) to open. Closed (no-open-face) hollows are not supported. |
 
 `selector` chooses which edges (omit it for **all** edges):
 
