@@ -3,7 +3,7 @@ import { zipSync } from "fflate";
 import { createViewer } from "./viewer.js";
 import { loadRotating, saveRotating, loadCamera, saveCamera, loadView, saveView } from "./view-state.js";
 import { buildControls } from "./controls.js";
-import { relevantParamKeys } from "./param-deps.js";
+import { relevantParamKeys, subPartReadKeys, relevanceHash, RELEVANT_ALL } from "./param-deps.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts } from "./jobs.js";
 import { detectBackend } from "./geometry/probe.js";
@@ -62,10 +62,26 @@ export function mount(part, { createWorker, container = document.getElementById(
   let paramsVersion = 0; // bumped on every settings edit
   let genVersion = -1;   // the params version the in-flight generate is building
   let genTimer = null;   // debounce timer for auto-regenerate
-  const cacheVersion = Object.fromEntries(names.map((n) => [n, -1])); // params version each was built at
+  const cacheHash = {}; // n -> relevance hash each sub-part's cached mesh was built at
 
-  // A cached sub-part is current only if it was built at the latest params version.
-  const isCurrent = (n) => viewer._subCache[n] && cacheVersion[n] === paramsVersion;
+  // Memoize the per-sub-part read-key map per (paramsVersion, view): subPartReadKeys
+  // runs probe builds, so we compute it once per change, not per sub-part.
+  let _readsKey = null, _readsMap = null;
+  const readsFor = () => {
+    const key = `${paramsVersion}|${view}`;
+    if (_readsKey !== key) { _readsKey = key; _readsMap = subPartReadKeys(part, view, params); }
+    return _readsMap;
+  };
+  // The relevance hash for one sub-part at the current params (RELEVANT_ALL → hash
+  // over ALL params, so any edit invalidates it — the safe fallback).
+  const hashFor = (n) => {
+    const reads = readsFor();
+    const keys = reads === RELEVANT_ALL ? Object.keys(params) : [...(reads.get(n) ?? Object.keys(params))];
+    return relevanceHash(keys, params);
+  };
+
+  // A cached sub-part is current only if its relevance hash is unchanged.
+  const isCurrent = (n) => !!viewer._subCache[n] && cacheHash[n] === hashFor(n);
   const missingParts = () => viewSubParts(part, view, params).filter((n) => !isCurrent(n));
 
   // Reflect the active view. If every needed part is current, show it and enable
@@ -138,7 +154,7 @@ export function mount(part, { createWorker, container = document.getElementById(
         for (const m of data.meshes) {
           if (viewer._subCache[m.name]) { viewer._subCache[m.name].userData.edges?.dispose(); viewer._subCache[m.name].dispose(); }
           viewer.setSubGeometry(m.name, m);
-          cacheVersion[m.name] = genVersion;
+          cacheHash[m.name] = hashFor(m.name);
         }
         hideBusy();
         refreshView();
