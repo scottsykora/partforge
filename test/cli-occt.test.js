@@ -4,15 +4,20 @@ import { rmSync, existsSync } from "node:fs";
 
 const run = (args) => execFileSync("node", ["bin/cli.js", ...args], { encoding: "utf8" });
 
+// Render into a per-file output dir, not the shared default `render/`. Two CLI test
+// files both rendering to (and rmSync-ing) `render/` race under vitest's parallel
+// file execution — one file's afterAll deletes it mid-render in the other.
+const OUT = "test/.cli-occt-render";
+
 afterAll(() => {
-  rmSync("render", { recursive: true, force: true });
+  rmSync(OUT, { recursive: true, force: true });
   rmSync("measure-filleted-box-box.json", { force: true });
 });
 
 test("render auto-selects OCCT for a filleted part and writes a PNG", () => {
-  const out = run(["render", "src/parts/filleted-box.js", "box", "--views", "iso"]);
-  expect(out).toMatch(/wrote render\/filleted-box-box-iso\.png/);
-  expect(existsSync("render/filleted-box-box-iso.png")).toBe(true);
+  const out = run(["render", "src/parts/filleted-box.js", "box", "--views", "iso", "--out", OUT]);
+  expect(out).toMatch(/wrote test\/\.cli-occt-render\/filleted-box-box-iso\.png/);
+  expect(existsSync(`${OUT}/filleted-box-box-iso.png`)).toBe(true);
 });
 
 test("measure runs on the OCCT part and prints n/a topology", () => {
