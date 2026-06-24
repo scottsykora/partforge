@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   roundedRectPolygon, regularPolygon, ellipsePolygon,
-  slotPolygon, starPolygon, ringSectorPolygon,
+  slotPolygon, starPolygon, ringSectorPolygon, circleProfile,
 } from "../src/framework/geometry/polygon.js";
 
 const signedArea = (p) => {
@@ -61,4 +61,24 @@ test("starPolygon alternates outer and inner radius over 2*points vertices", () 
 
 test("ringSectorPolygon rejects a full 360 ring", () => {
   expect(() => ringSectorPolygon(5, 10, 360)).toThrow(/< 360/);
+});
+
+test("circleProfile: CCW, segs points, all at radius r about center", () => {
+  const c = circleProfile(5, [10, 0], 32);
+  expect(c.length).toBe(32);
+  expect(signedArea(c)).toBeGreaterThan(0);
+  for (const [x, y] of c) expect(Math.hypot(x - 10, y - 0)).toBeCloseTo(5, 6);
+});
+
+test("circleProfile spans 2r centered on `center`", () => {
+  const b = bbox(circleProfile(5, [10, 0]));
+  expect(b.w).toBeCloseTo(10, 6);
+  expect(b.h).toBeCloseTo(10, 6);
+});
+
+test("circleProfile defaults center to origin and rejects r <= 0", () => {
+  const c = circleProfile(3);
+  for (const [x, y] of c) expect(Math.hypot(x, y)).toBeCloseTo(3, 6);
+  expect(() => circleProfile(0)).toThrow(/r must be/);
+  expect(() => circleProfile(-1)).toThrow(/r must be/);
 });

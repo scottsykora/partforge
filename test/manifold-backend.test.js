@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from "vitest";
 import Module from "manifold-3d";
 import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
 import { bboxSize } from "../src/testing/mesh.js";
+import { circleProfile } from "../src/framework/geometry/polygon.js";
 
 let k;
 beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
@@ -110,4 +111,12 @@ test("a half revolve is about half the volume", () => {
 
 test("revolve rejects a negative radius", () => {
   expect(() => k.revolve([[-1, 0], [10, 0], [10, 20]])).toThrow(/radius must be/);
+});
+
+test("revolve(circleProfile) yields a torus near the Pappus volume", () => {
+  const majorR = 10, minorR = 2;
+  const exact = 2 * Math.PI ** 2 * majorR * minorR ** 2; // Pappus: ~789.6 mm³
+  const v = k.revolve(circleProfile(minorR, [majorR, 0])).volume();
+  expect(v).toBeLessThan(exact);          // faceted ⇒ inscribed ⇒ slightly under
+  expect(v).toBeGreaterThan(exact * 0.9); // but close
 });

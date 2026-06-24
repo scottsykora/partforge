@@ -124,3 +124,17 @@ export function circularPattern(solid, count, { center = [0, 0, 0], axis = "Z", 
   }
   return out;
 }
+
+// CCW circle of radius r centered at [cx, cy]. A shared 2-D profile primitive:
+// compose with the kernel's profile ops — e.g. revolve(circleProfile(minorR,
+// [majorR, 0])) is a torus, prism(circleProfile(r), h) a cylinder.
+export function circleProfile(r, center = [0, 0], segs = 48) {
+  if (!(r > 0)) throw new Error("circleProfile: r must be > 0");
+  const [cx, cy] = center;
+  const pts = [];
+  for (let i = 0; i < segs; i++) {
+    const a = (2 * Math.PI * i) / segs;
+    pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  return pts;
+}
