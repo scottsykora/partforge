@@ -88,7 +88,7 @@ handles. The same code runs on **Manifold** (fast meshes — preview + STL + 3MF
 |---|---|
 | `k.cylinder(rBottom, rTop, h, { center? })` | cylinder/cone along +Z (frustum if radii differ) |
 | `k.box(min, max)` | axis-aligned box from `[x,y,z]` min/max |
-| `k.prism(points2D, h)` | extrude a 2-D polygon (CCW `[[x,y],…]`) from z=0 |
+| `k.prism(points2D, h, { twist?, scaleTop? })` | extrude a 2-D polygon from z=0; optional `twist` (degrees over the height) and `scaleTop` (uniform top taper: 1 straight, <1 taper in, 0 → point/cone) |
 | `k.sphere(r)` | sphere centred at the origin |
 | `k.revolve(points2D, { degrees })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove) |
@@ -108,6 +108,7 @@ entry pulls in the DOM viewer/controls, and your build functions run in a Web Wo
 | `s.translate([x,y,z])` | move |
 | `s.rotate(deg, center, axis)` | rotate `deg` about `axis` through `center` |
 | `s.mirror("XY"\|"XZ"\|"YZ")` | mirror across a plane |
+| `s.scale(factor, center?)` | uniform scale (single factor) about `center` (default origin) — scaling an off-origin part about the origin also moves it; pass a center (e.g. `s.boundingBox().center`) to resize in place |
 | `s.clone()` | independent copy (replicad consumes solids on transform) |
 | `s.boundingBox()` | `{ min, max, center, size }` axis-aligned bounds (query) |
 | `s.volume()` | volume in mm³ (Manifold) |
@@ -250,6 +251,10 @@ Pure helpers from `partforge/geometry` (no backend dependency):
 `slotPolygon(length,r)` (overall length = `length + 2r`), `starPolygon(points,outerR,innerR)`,
 `ringSectorPolygon(innerR,outerR,arcDeg)` (**arcDeg < 360** — a full ring is a contour-with-hole;
 cut an inner cylinder from an outer one instead).
+`circleProfile(r, center?)` — a circle of radius `r` centered at `[cx,cy]` (default origin).
+Compose it for round solids: `k.prism(circleProfile(r), h)` is a cylinder, and
+**a torus is `k.revolve(circleProfile(minorR, [majorR, 0]))`** (with `majorR > minorR`) —
+partforge has no `torus` primitive because it's just a revolved circle.
 
 **Patterns** (return `Solid[]` — feed to `k.union(...)` for features or `s.cutAll(...)` for holes):
 `linearPattern(solid, count, [dx,dy,dz])`, `circularPattern(solid, count, { center, axis, angle, rotateCopies })`.
