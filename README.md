@@ -45,7 +45,9 @@ boots with no errors. Needs Playwright: `npm i -D playwright && npx playwright i
 
 **[docs/AUTHORING-PARTS.md](docs/AUTHORING-PARTS.md)** is the full guide — the part
 contract, the geometry kernel API, the parameter schema, app wiring, testing, and
-gotchas. `src/parts/demo.js` is a minimal worked example; run `npm run dev` and open
+gotchas. See **Designing the control panel** in that guide for how to write descriptions,
+hide internal params, and keep the interface simple while staying deeply adjustable.
+`src/parts/demo.js` is a minimal worked example; run `npm run dev` and open
 `/demo.html` to see it live.
 
 ## License

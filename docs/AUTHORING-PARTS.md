@@ -156,8 +156,88 @@ slider or type an exact value (finer than `step` is allowed; typed values clamp 
 }
 ```
 
-Every `key` used must exist in `defaults`. (The drum's schema is exported as `SECTIONS`
-in `src/parts/drum/params.js` if you want a large reference.)
+Every `key` used must exist in `defaults`. `src/parts/demo.js` is the worked example for
+everything below.
+
+**Control metadata (optional — on any control def, feature, or section):**
+
+- `description` — a CommonMark string shown in a click-open **ⓘ** popover beside the
+  label. Supports **bold/italic**, lists, `code`, links, and images (for diagrams);
+  links open in a new tab and the rendered HTML is sanitized. Write one for every
+  control — see "A description for every control" below.
+- `hidden: true` — omits the control/feature/section from the panel. Its `key` must still
+  exist in `defaults` and still drives the geometry: use it for internal constants the
+  end user shouldn't edit (it is *no UI*, not *no parameter*). A section left with no
+  presets and no visible controls doesn't render at all.
+
+```js
+advanced: [
+  { key: "od", label: "Outer diameter", unit: "mm", min: 4, max: 40, step: 0.5,
+    description: "Barrel OD. Keep it larger than the bore so a wall remains. See the [guide](https://example.com)." },
+  { key: "wall_seg", min: 8, max: 256, step: 1, hidden: true,   // internal constant; no UI, still in defaults
+    description: "Facet count — fixed by the design." },
+],
+```
+
+---
+
+## Designing the control panel
+
+A good part exposes a **simple** interface — a handful of controls most users will
+touch — while still giving deep, correct adjustability underneath. `src/parts/demo.js`
+is the worked example for the patterns below.
+
+### Procedural & parametric parts
+
+Drive many features from a few controls, so tweaking one control reshapes the part
+coherently:
+
+- **`derive(p) => d`** computes shared/dependent values once per build; sub-part `build`
+  functions read `d`. Put the "design intent" math here — clearances, ratios, wall
+  thicknesses — so a single input feeds everything downstream. In the demo, `derive`
+  turns the nominal `bore` into `boreR` (with a fixed print clearance) and `h` into the
+  cut-tool height `cutH`; `build(k, p, d)` reads those.
+- **Reuse a param `key`** across sub-parts/features so one slider moves all of them.
+- **`enabled(p)`** gates a whole sub-part on a toggle param (the part appears/disappears
+  with the control).
+
+### Progressive disclosure (simple, but deep)
+
+Tier the controls so the default view is uncluttered:
+
+1. **Presets** for the common cases — the first thing most users pick.
+2. A **few primary sliders** for the dimensions users change most.
+3. **`Advanced`** (the collapsible block) for the rest.
+4. **`hidden`** for internal constants the end user shouldn't edit.
+
+Aim for a panel with a few visible controls that still exposes the full design when
+someone opens Advanced.
+
+### A description for every control
+
+Give every section and control a `description`. Keep each one short and make it cover:
+
+- **what** the control does,
+- its **units**,
+- a **sensible range** (and what's typical),
+- **when it matters** (what it interacts with).
+
+Use Markdown links or images for diagrams and deeper reference. These are the tooltips
+end users rely on — treat writing them as part of authoring the control, not an
+afterthought.
+
+### The relevance-aware panel
+
+The panel updates itself to match what's on screen: a **section is hidden** when none of
+its controls affect the active view's visible parts, and a **control is dimmed** (but
+still usable) when it doesn't currently affect them — recomputed as the view and the
+parameters change. You don't wire this up; it's automatic. To get the most from it:
+
+- Group controls into **sections by the sub-parts they affect**, so whole sections drop
+  away in views that don't use them.
+- Scope a parameter to the **views/sub-parts that read it** — a control read by no
+  on-screen part shows dimmed, which is a useful signal that it's vestigial or
+  misplaced.
 
 ---
 
