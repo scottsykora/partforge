@@ -15,7 +15,7 @@ test("clampToRange returns null for non-numeric input", () => {
   expect(clampToRange("abc", 0, 40)).toBeNull();
 });
 
-import { buildControls, visibleAdvanced, visibleFeatures, sectionRenders } from "../../src/framework/controls.js";
+import { buildControls, visibleAdvanced, visibleFeatures, visibleToggles, sectionRenders } from "../../src/framework/controls.js";
 
 const presetSec = (over = {}) => ({ id: "body", title: "Body",
   advanced: [
@@ -39,6 +39,34 @@ test("sectionRenders: hidden section never renders; empty section doesn't; prese
   expect(sectionRenders({ title: "P", presets: { A: {} }, advanced: [] })).toBe(true); // presets only
   expect(sectionRenders(featureSec())).toBe(true);
   expect(sectionRenders({ title: "F", features: [{ label: "h", key: "h", on: 1, hidden: true, sliders: [] }] })).toBe(false);
+});
+
+test("visibleToggles drops hidden; a toggles-only section still renders", () => {
+  const sec = { id: "m", title: "Motor", toggles: [
+    { key: "show", label: "Show", on: 1 },
+    { key: "h", label: "Hidden", on: 1, hidden: true },
+  ] };
+  expect(visibleToggles(sec).map((t) => t.key)).toEqual(["show"]);
+  expect(sectionRenders(sec)).toBe(true);
+  expect(sectionRenders({ title: "X", toggles: [{ key: "h", label: "H", hidden: true }] })).toBe(false);
+});
+
+test("buildControls renders a preset-section toggle that updates params + fires onDirty", () => {
+  const root = document.createElement("div");
+  let dirty = 0;
+  const params = { od: 5, show_motor: 0 };
+  const sec = { id: "motor", title: "Motor", presets: { A: {} },
+    advanced: [{ key: "od", label: "OD", min: 0, max: 10, step: 1 }],
+    toggles: [{ key: "show_motor", label: "Show motor", on: 1, description: "preview" }] };
+  buildControls(root, [sec], params, () => dirty++);
+  const box = root.querySelector('input[type="checkbox"]');
+  expect(box).toBeTruthy();
+  expect(box.checked).toBe(false);          // reflects params.show_motor = 0
+  box.checked = true; box.dispatchEvent(new Event("change"));
+  expect(params.show_motor).toBe(1);
+  expect(dirty).toBe(1);
+  box.checked = false; box.dispatchEvent(new Event("change"));
+  expect(params.show_motor).toBe(0);
 });
 
 test("buildControls omits hidden advanced control from the DOM", () => {

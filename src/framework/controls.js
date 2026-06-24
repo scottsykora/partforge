@@ -30,11 +30,14 @@ function applyRelevance(relevant, controls, sections) {
 // --- visibility (hidden controls/sections) --------------------------------
 export const visibleAdvanced = (sec) => (sec.advanced ?? []).filter((d) => !d.hidden);
 export const visibleFeatures = (sec) => (sec.features ?? []).filter((f) => !f.hidden);
+// Standalone toggle checkboxes a preset section can show (outside the Advanced fold),
+// e.g. preview switches. Each: { key, label, on?, description?, hidden? }.
+export const visibleToggles = (sec) => (sec.toggles ?? []).filter((t) => !t.hidden);
 export function sectionRenders(sec) {
   if (sec.hidden) return false;
   if (sec.features) return visibleFeatures(sec).length > 0;
   const hasPresets = sec.presets && Object.keys(sec.presets).length > 0;
-  return !!hasPresets || visibleAdvanced(sec).length > 0;
+  return !!hasPresets || visibleAdvanced(sec).length > 0 || visibleToggles(sec).length > 0;
 }
 
 // Parse a typed value → clamped to [min, max], or null if not a finite number.
@@ -209,6 +212,21 @@ function buildPresetSection(section, sec, params, onDirty, register) {
     }
     preset.value = presetNames[0];
     section.append(preset);
+  }
+
+  // standalone toggle checkboxes (e.g. preview switches), shown below the preset and
+  // outside the Advanced fold so they stay visible. Independent of the preset selector.
+  for (const t of visibleToggles(sec)) {
+    const row = el("label", "feat");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = params[t.key] > 0;
+    const lbl = el("span", "", t.label);
+    attachInfo(lbl, t.description);
+    row.append(box, lbl);
+    box.addEventListener("change", () => { params[t.key] = box.checked ? (t.on ?? 1) : 0; onDirty?.(); });
+    register(t.key, row);
+    section.append(row);
   }
 
   const advanced = visibleAdvanced(sec);
