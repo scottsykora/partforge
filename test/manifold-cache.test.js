@@ -1,0 +1,62 @@
+// test/manifold-cache.test.js
+import { beforeAll, beforeEach, expect, test } from "vitest";
+import Module from "manifold-3d";
+import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { meshVolume, bboxSize } from "../src/testing/mesh.js";
+
+let k;
+beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeEach(() => k.resetCacheStats());
+
+// Two-boundary build: a flanged barrel (union) bored through (cut). `bore` feeds
+// only the cut, so changing it must HIT the union and MISS only the cut.
+const barrel = (od, h, flangeD, flangeH, boreR) => {
+  let s = k.union([k.cylinder(od / 2, od / 2, h), k.cylinder(flangeD / 2, flangeD / 2, flangeH)]);
+  return s.cut(k.cylinder(boreR, boreR, h + 4).translate([0, 0, -2]));
+};
+
+test("an identical rebuild is all hits, zero new misses", () => {
+  k.beginSubPart("x"); barrel(8, 10, 16, 2, 1.7).toMesh(); k.endSubPart(); k.cleanup();
+  const first = k.cacheStats().misses;
+  expect(first).toBeGreaterThan(0); // union + cut were computed cold
+
+  k.resetCacheStats();
+  k.beginSubPart("x"); barrel(8, 10, 16, 2, 1.7).toMesh(); k.endSubPart(); k.cleanup();
+  expect(k.cacheStats().misses).toBe(0);  // nothing recomputed
+  expect(k.cacheStats().hits).toBeGreaterThan(0);
+});
+
+test("changing a late-stage param resumes — union hits, only the cut misses", () => {
+  k.beginSubPart("y"); barrel(8, 10, 16, 2, 1.7).toMesh(); k.endSubPart(); k.cleanup();
+  k.resetCacheStats();
+  k.beginSubPart("y"); barrel(8, 10, 16, 2, 2.1).toMesh(); k.endSubPart(); k.cleanup(); // bore changed only
+  expect(k.cacheStats()).toEqual({ hits: 1, misses: 1 }); // union hit, cut miss
+});
+
+test("a cached-resume mesh equals a cold-built mesh", async () => {
+  k.beginSubPart("z"); barrel(8, 10, 16, 2, 1.7).toMesh(); k.endSubPart(); k.cleanup();
+  k.beginSubPart("z"); const resumed = barrel(8, 10, 16, 2, 2.1).toMesh(); k.endSubPart(); k.cleanup();
+
+  // Cold reference on a fresh kernel (no cache history).
+  const m2 = await freshKernel().then((kk) => { const r = kk.barrel(2.1); return r; });
+  expect(meshVolume(resumed.positions)).toBeCloseTo(m2.vol, 1);
+  bboxSize(resumed.positions).forEach((s, i) => expect(s).toBeCloseTo(m2.bbox[i], 2));
+
+  async function freshKernel() {
+    const wasm = await Module(); wasm.setup();
+    const kk = createManifoldKernel(wasm, { quality: "preview" });
+    return {
+      barrel: (boreR) => {
+        let s = kk.union([kk.cylinder(4, 4, 10), kk.cylinder(8, 8, 2)]);
+        const mesh = s.cut(kk.cylinder(boreR, boreR, 14).translate([0, 0, -2])).toMesh();
+        return { vol: meshVolume(mesh.positions), bbox: bboxSize(mesh.positions) };
+      },
+    };
+  }
+});
+
+test("determinism guard: building the same thing twice yields the same final hash", () => {
+  const a = barrel(8, 10, 16, 2, 1.7)._hash;
+  const b = barrel(8, 10, 16, 2, 1.7)._hash;
+  expect(a).toBe(b);
+});

@@ -3,6 +3,7 @@
 
 /**
  * @typedef {Object} Solid  An opaque handle to a backend solid.
+ * @property {string} _hash   content hash (Manifold backend only; drives the worker solid cache)
  * @property {(tool: Solid) => Solid} cut
  * @property {(tools: Solid[]) => Solid} cutAll      batch subtract (backend-optimized)
  * @property {(other: Solid) => Solid} intersect     boolean intersection (Manifold)
