@@ -1,0 +1,20 @@
+name: CI
+# Runs the unit suite and the headless smoke check on every PR and on pushes to
+# main. The smoke check (npm run check) starts a dev server and boots the demo app
+# in real Chromium, catching worker/WASM/wiring failures that unit tests miss.
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test
+      - run: npx playwright install --with-deps chromium # browser for the smoke check
+      - run: npm run check
