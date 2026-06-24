@@ -1,7 +1,7 @@
 // Geometry-free backend detection. A probe kernel records every op a part's
 // build() invokes (returning chainable no-op proxies, dummy values for queries);
 // if an OCCT-only op was used, the part needs the OCCT backend.
-export const OCCT_ONLY = new Set(["fillet", "chamfer"]);
+export const OCCT_ONLY = new Set(["fillet", "chamfer", "shell"]);
 
 export function createProbeKernel() {
   const used = new Set();
@@ -17,6 +17,7 @@ export function createProbeKernel() {
     mirror() { note("mirror"); return proxy; },
     fillet() { note("fillet"); return proxy; },
     chamfer() { note("chamfer"); return proxy; },
+    shell() { note("shell"); return proxy; },
     volume() { note("volume"); return 1; },
     toMesh() { note("toMesh"); return { positions: new Float32Array(9), normals: new Float32Array(9), triangles: 1, edges: new Float32Array(0) }; },
     toSTL() { note("toSTL"); return new ArrayBuffer(0); },

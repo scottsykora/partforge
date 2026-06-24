@@ -16,3 +16,8 @@ test("a conditional fillet is detected only when its param enables it", () => {
   expect(detectBackend(conditional)).toBe("manifold");
   expect(detectBackend(conditional, { round: 1 })).toBe("occt");
 });
+
+test("a part using shell routes to occt", () => {
+  const shelled = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box([0, 0, 0], [10, 10, 10]).shell(1, { dir: "Z" }) } } };
+  expect(detectBackend(shelled)).toBe("occt");
+});

@@ -2,6 +2,7 @@
 // and the only backend with toSTEP(). This is where today's drum.js kernel calls
 // (makeCylinder, makeHelix+genericSweep, draw/extrude, cut/fuse) now live.
 import { toEdgeFinder } from "./edge-selector.js";
+import { toFaceFinder } from "./face-selector.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 export function createOcctKernel(replicad) {
@@ -104,6 +105,11 @@ export function createOcctKernel(replicad) {
     toSTL: ({ quality = "print" } = {}) => shape.blobSTL(MESH[quality]).arrayBuffer(),
     fillet: (radius, selector) => wrap(safeOp(shape, (sh) => sh.fillet(radius, toEdgeFinder(selector)), `fillet(${radius})`)),
     chamfer: (distance, selector) => wrap(validChamfer(shape, toEdgeFinder(selector), distance)),
+    shell: (thickness, openFaces) => {
+      if (openFaces == null) throw new Error("shell: openFaces is required (a fully closed hollow is not supported)");
+      // replicad shells inward with a positive thickness in this version, keeping outer dimensions.
+      return wrap(safeOp(shape, (sh) => sh.shell(thickness, toFaceFinder(openFaces)), `shell(${thickness})`));
+    },
     volume: () => measureVolume(shape),
     toIndexedMesh: () => {
       const m = shape.mesh(MESH.preview);

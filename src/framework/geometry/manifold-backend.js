@@ -79,6 +79,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     toIndexedMesh: () => indexedMeshOut(m),
     fillet: () => { throw new KernelCapabilityError("fillet requires the OCCT backend"); },
     chamfer: () => { throw new KernelCapabilityError("chamfer requires the OCCT backend"); },
+    shell: () => { throw new KernelCapabilityError("shell requires the OCCT backend"); },
   });
 
   return {

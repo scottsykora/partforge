@@ -8,6 +8,7 @@
  * @property {(other: Solid) => Solid} intersect     boolean intersection (Manifold)
  * @property {() => Solid} clone   independent copy (replicad consumes solids on transform)
  * @property {() => {min:number[],max:number[],center:number[],size:number[]}} boundingBox   axis-aligned bounds (query)
+ * @property {(thickness:number, openFaces:object) => Solid} shell   hollow inward (OCCT only); openFaces selector required
  * @property {(v: number[]) => Solid} translate
  * @property {(deg: number, center: number[], axis: number[]) => Solid} rotate
  * @property {(plane: "XY"|"XZ"|"YZ") => Solid} mirror
