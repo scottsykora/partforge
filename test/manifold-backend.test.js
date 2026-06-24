@@ -146,3 +146,19 @@ test("prism twist keeps positive volume and full height", () => {
 test("prism rejects negative scaleTop", () => {
   expect(() => k.prism(SQ, 10, { scaleTop: -1 })).toThrow(/scaleTop/);
 });
+
+test("scale(2) multiplies volume ~8x (uniform 3D)", () => {
+  const v1 = k.box([0, 0, 0], [2, 3, 4]).volume();
+  const v2 = k.box([0, 0, 0], [2, 3, 4]).scale(2).volume();
+  expect(v2).toBeCloseTo(v1 * 8, 1);
+});
+
+test("scale about the part's own center leaves the bbox center fixed", () => {
+  const c = k.box([10, 10, 10], [14, 16, 18]).boundingBox().center; // off-origin
+  const c2 = k.box([10, 10, 10], [14, 16, 18]).scale(2, c).boundingBox().center;
+  for (let i = 0; i < 3; i++) expect(c2[i]).toBeCloseTo(c[i], 3);
+});
+
+test("scale rejects factor <= 0", () => {
+  expect(() => k.box([0, 0, 0], [1, 1, 1]).scale(0)).toThrow(/factor must be/);
+});

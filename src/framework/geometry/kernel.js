@@ -12,6 +12,7 @@
  * @property {(v: number[]) => Solid} translate
  * @property {(deg: number, center: number[], axis: number[]) => Solid} rotate
  * @property {(plane: "XY"|"XZ"|"YZ") => Solid} mirror
+ * @property {(factor:number, center?:number[]) => Solid} scale   uniform scale about center (default origin)
  * @property {() => number} volume                   solid volume in mm³ (Manifold; used by collision tests)
  * @property {(opts?: {quality?: "preview"|"print"}) => {positions:Float32Array, normals:Float32Array, indices:Uint32Array, triangles:number}} toMesh
  * @property {(opts?: {quality?: "preview"|"print"}) => Promise<ArrayBuffer>} toSTL

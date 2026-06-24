@@ -93,6 +93,10 @@ export function createOcctKernel(replicad) {
     translate: (v) => wrap(shape.translate(v)),
     rotate: (deg, center, axis) => wrap(shape.rotate(deg, center, axis)),
     mirror: (plane) => wrap(shape.mirror(plane)),
+    scale: (factor, center = [0, 0, 0]) => {
+      if (!(factor > 0)) throw new Error("scale: factor must be > 0");
+      return wrap(shape.scale(factor, center));
+    },
     toMesh: ({ quality = "preview" } = {}) => {
       const m = shape.mesh(MESH[quality]);
       return {

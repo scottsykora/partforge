@@ -15,6 +15,7 @@ export function createProbeKernel() {
     translate() { note("translate"); return proxy; },
     rotate() { note("rotate"); return proxy; },
     mirror() { note("mirror"); return proxy; },
+    scale() { note("scale"); return proxy; },
     fillet() { note("fillet"); return proxy; },
     chamfer() { note("chamfer"); return proxy; },
     shell() { note("shell"); return proxy; },

@@ -74,6 +74,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       return wrap(T(b.translate(center)));
     },
     mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane]))),
+    scale: (factor, center = [0, 0, 0]) => {
+      if (!(factor > 0)) throw new Error("scale: factor must be > 0");
+      const a = T(m.translate([-center[0], -center[1], -center[2]]));
+      const b = T(a.scale([factor, factor, factor]));
+      return wrap(T(b.translate(center)));
+    },
     toMesh: () => meshOut(m, false),
     toSTL: () => Promise.resolve(meshOut(m, true)),
     toIndexedMesh: () => indexedMeshOut(m),

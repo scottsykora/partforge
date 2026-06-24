@@ -54,3 +54,13 @@ test("prism twist meshes to a positive-volume solid", () => {
   expect(tw.toMesh().triangles).toBeGreaterThan(0);
   expect(tw.volume()).toBeGreaterThan(0);
 });
+
+test("scale(2) multiplies volume ~8x", () => {
+  const v1 = k.box([0, 0, 0], [2, 3, 4]).volume();
+  const v2 = k.box([0, 0, 0], [2, 3, 4]).scale(2).volume();
+  expect(v2).toBeCloseTo(v1 * 8, 0);
+});
+
+test("scale rejects factor <= 0", () => {
+  expect(() => k.box([0, 0, 0], [1, 1, 1]).scale(0)).toThrow(/factor must be/);
+});
