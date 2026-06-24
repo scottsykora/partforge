@@ -127,6 +127,15 @@ export function createOcctKernel(replicad) {
     return wrap(pen.close().sketchOnPlane("XY").extrude(h));
   };
 
+  // revolve a lathe profile [[r,z],…] around the Z axis (degrees defaults to 360)
+  const revolve = (pts, { degrees = 360 } = {}) => {
+    for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
+    let pen = draw(pts[0]);
+    for (let i = 1; i < pts.length; i++) pen = pen.lineTo(pts[i]);
+    const sketch = pen.close().sketchOnPlane("XZ");
+    return wrap(sketch.revolve([0, 0, 1], { angle: degrees }));
+  };
+
   // circle profile swept along a helix (frenet)
   const helixSweptTube = ({ pathR, profileR, pitch, turns, z0, lefthand }) => {
     const spine = makeHelix(pitch, pitch * turns, pathR, [0, 0, z0], [0, 0, 1], lefthand);
@@ -137,7 +146,7 @@ export function createOcctKernel(replicad) {
   };
 
   return {
-    cylinder, box: (min, max) => wrap(makeBox(min, max)), prism, helixSweptTube,
+    cylinder, box: (min, max) => wrap(makeBox(min, max)), prism, revolve, helixSweptTube,
     sphere: (r) => wrap(makeSphere(r)),
     union: (solids) => wrap(solids.map((s) => s._s).reduce((a, b) => a.fuse(b))),
     toSTEP: (named) => exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._s }))).arrayBuffer(),

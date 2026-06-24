@@ -92,3 +92,22 @@ test("sphere volume is ~4/3 pi r^3", () => {
   const v = k.sphere(r).volume();
   expect(v).toBeCloseTo((4 / 3) * Math.PI * r ** 3, -2); // within ~50mm³ (faceting at 116 segs gives ~7mm³ error)
 });
+
+test("revolve of a rectangular profile equals a cylinder volume", () => {
+  // profile r in [0,10], z in [0,20] → solid cylinder r=10 h=20
+  const rect = [[0, 0], [10, 0], [10, 20], [0, 20]];
+  const v = k.revolve(rect).volume();
+  expect(v).toBeCloseTo(Math.PI * 10 ** 2 * 20, -2); // within ~100mm³ (faceting)
+});
+
+test("a half revolve is about half the volume", () => {
+  const rect = [[0, 0], [10, 0], [10, 20], [0, 20]];
+  const full = k.revolve(rect).volume();
+  const half = k.revolve(rect, { degrees: 180 }).volume();
+  expect(half).toBeLessThan(full * 0.6);
+  expect(half).toBeGreaterThan(full * 0.4);
+});
+
+test("revolve rejects a negative radius", () => {
+  expect(() => k.revolve([[-1, 0], [10, 0], [10, 20]])).toThrow(/radius must be/);
+});

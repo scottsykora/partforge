@@ -93,6 +93,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       return wrap(T(cs.extrude(h)));
     },
     helixSweptTube: (o) => wrap(T(helixTube(wasm, { ...o, ...tube }))),
+    revolve: (pts, { degrees = 360 } = {}) => {
+      for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
+      return wrap(T(Manifold.revolve([pts], segs, degrees)));
+    },
     union: (solids) => wrap(unionRaw(solids.map((s) => s._m))), // unionRaw already tracks its result
     toSTEP: () => { throw new Error("STEP export not supported by the Manifold backend"); },
     // Free every WASM object created since the last cleanup. Call after each job

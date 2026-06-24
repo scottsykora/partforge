@@ -27,6 +27,7 @@ export function createProbeKernel() {
     sphere() { note("sphere"); return proxy; },
     box() { note("box"); return proxy; },
     prism() { note("prism"); return proxy; },
+    revolve() { note("revolve"); return proxy; },
     helixSweptTube() { note("helixSweptTube"); return proxy; },
     union() { note("union"); return proxy; },
     toSTEP() { note("toSTEP"); return Promise.resolve(new ArrayBuffer(0)); },

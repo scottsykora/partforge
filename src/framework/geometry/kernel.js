@@ -21,6 +21,7 @@
  * @property {(r:number) => Solid} sphere   sphere centred at the origin
  * @property {(min:number[], max:number[]) => Solid} box
  * @property {(points2D:number[][], h:number) => Solid} prism   extrude polygon from z=0
+ * @property {(points2D:number[][], opts?:{degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only

@@ -30,3 +30,12 @@ test("sphere volume is ~4/3 pi r^3", () => {
   const r = 10;
   expect(k.sphere(r).volume()).toBeCloseTo((4 / 3) * Math.PI * r ** 3, -1);
 });
+
+test("revolve of a rectangular profile equals a cylinder volume", () => {
+  const rect = [[0, 0], [10, 0], [10, 20], [0, 20]];
+  expect(k.revolve(rect).volume()).toBeCloseTo(Math.PI * 10 ** 2 * 20, -2);
+});
+
+test("revolve rejects a negative radius", () => {
+  expect(() => k.revolve([[-1, 0], [10, 0], [10, 20]])).toThrow(/radius must be/);
+});
