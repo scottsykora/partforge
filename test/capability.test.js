@@ -23,6 +23,7 @@ test("handle() posts needs-occt when a build uses an OCCT-only op on Manifold", 
 });
 
 test("Manifold shell throws KernelCapabilityError with code NEEDS_OCCT", () => {
+  expect.assertions(2);
   try { k.box([0, 0, 0], [10, 10, 10]).shell(1, { dir: "Z" }); }
   catch (e) { expect(e).toBeInstanceOf(KernelCapabilityError); expect(e.code).toBe("NEEDS_OCCT"); }
 });
