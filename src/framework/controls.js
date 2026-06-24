@@ -6,6 +6,8 @@
 // enables it and reveals those controls right below it.
 // All controls mutate the shared `params` object and call onDirty() on change.
 
+import { renderMarkdown } from "./markdown.js";
+
 // Short numeric string without float noise (4 dp max) for the value box.
 const numStr = (v) => String(Math.round(v * 1e4) / 1e4);
 
@@ -26,6 +28,58 @@ export function clampToRange(raw, min, max) {
   return Math.min(max, Math.max(min, v));
 }
 
+// --- info glyph + shared popover ------------------------------------------
+// One popover element, reused across glyphs (only one open at a time). Global
+// dismiss listeners are registered once at module load.
+let popover = null;
+function ensurePopover() {
+  if (!popover || !popover.isConnected) {
+    popover = document.createElement("div");
+    popover.className = "popover";
+    popover.hidden = true;
+    document.body.append(popover);
+  }
+  return popover;
+}
+function closePopover() {
+  if (popover && !popover.hidden) {
+    popover.hidden = true;
+    if (popover._owner) { popover._owner.setAttribute("aria-expanded", "false"); popover._owner = null; }
+  }
+}
+if (typeof document !== "undefined") {
+  document.addEventListener("click", (e) => {
+    if (popover && !popover.hidden && !popover.contains(e.target) && !e.target.closest?.(".info")) closePopover();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePopover(); });
+}
+
+// Append a focusable ⓘ glyph to `container` that toggles the shared popover with
+// `description` (Markdown). No-op when description is empty.
+function attachInfo(container, description) {
+  if (typeof description !== "string" || !description.trim()) return;
+  const glyph = document.createElement("button");
+  glyph.type = "button";
+  glyph.className = "info";
+  glyph.textContent = "ⓘ";
+  glyph.setAttribute("aria-label", "More info");
+  glyph.setAttribute("aria-expanded", "false");
+  glyph.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const pop = ensurePopover();
+    if (pop._owner === glyph) { closePopover(); return; } // toggle off
+    closePopover();
+    pop.innerHTML = renderMarkdown(description);
+    pop.hidden = false;
+    pop._owner = glyph;
+    glyph.setAttribute("aria-expanded", "true");
+    const r = glyph.getBoundingClientRect();
+    pop.style.top = `${r.bottom + 6}px`;
+    pop.style.left = `${Math.max(8, r.left - 8)}px`;
+  });
+  container.append(glyph);
+}
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -42,7 +96,9 @@ function makeSlider(def, params, onChange) {
   const numeric = def.control === "number";
   const wrap = el("div", "slider");
   const row = el("div", "row");
-  row.append(el("label", "", def.label));
+  const label = el("label", "", def.label);
+  attachInfo(label, def.description);
+  row.append(label);
 
   // editable value box (+ optional unit suffix)
   const val = el("div", "val");
@@ -109,7 +165,9 @@ export function buildControls(root, parameters, params, onDirty) {
   for (const sec of parameters) {
     if (!sectionRenders(sec)) continue;
     const section = el("div", "section");
-    section.append(el("div", "sec-title", sec.title));
+    const title = el("div", "sec-title", sec.title);
+    attachInfo(title, sec.description);
+    section.append(title);
     if (sec.features) buildFeatureSection(section, sec, params, onDirty);
     else buildPresetSection(section, sec, params, onDirty);
     root.append(section);
@@ -166,7 +224,9 @@ function buildFeatureSection(section, sec, params, onDirty) {
     const box = document.createElement("input");
     box.type = "checkbox";
     box.checked = params[feat.key] > 0;
-    checkRow.append(box, el("span", "", feat.label));
+    const featLabel = el("span", "", feat.label);
+    attachInfo(featLabel, feat.description);
+    checkRow.append(box, featLabel);
 
     const group = el("div", "feat-group");
     const syncs = [];
