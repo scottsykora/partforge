@@ -52,6 +52,7 @@ export function createPickRequestClient({ serverUrl = "http://127.0.0.1:4518", v
     picker.setActive(false);
   });
   es.onerror = () => { text.textContent = "⚠ agent pick-server not reachable"; banner.style.display = "block"; };
+  es.onopen = () => { if (!active) banner.style.display = "none"; };
 
   return {
     detach: () => { es.close(); picker.detach(); banner.remove(); },

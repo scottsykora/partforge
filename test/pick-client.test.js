@@ -12,6 +12,8 @@ class MockES {
   constructor(url) { this.url = url; this.listeners = {}; MockES.last = this; }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
   emit(type, data) { for (const fn of this.listeners[type] || []) fn({ data: JSON.stringify(data) }); }
+  emitOpen() { if (this.onopen) this.onopen({}); }
+  emitError() { if (this.onerror) this.onerror({}); }
   close() { this.closed = true; }
 }
 
@@ -55,4 +57,27 @@ test("a cleared event hides the banner", () => {
   MockES.last.emit("prompt", { id: "x", index: 0, total: 1, prompt: "click A" });
   MockES.last.emit("cleared", {});
   expect(document.querySelector("#pf-pick-banner").style.display).toBe("none");
+});
+
+test("SSE open event clears the error banner when no prompt is active", () => {
+  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  const banner = document.querySelector("#pf-pick-banner");
+  // onerror shows the banner
+  MockES.last.emitError();
+  expect(banner.style.display).toBe("block");
+  // onopen (reconnect) with no active prompt should hide it
+  MockES.last.emitOpen();
+  expect(banner.style.display).toBe("none");
+});
+
+test("SSE open event does not hide the banner while a prompt is active", () => {
+  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  const banner = document.querySelector("#pf-pick-banner");
+  // Arm a prompt, then simulate error then reconnect
+  MockES.last.emit("prompt", { id: "x", index: 0, total: 1, prompt: "click A" });
+  MockES.last.emitError();
+  expect(banner.style.display).toBe("block");
+  MockES.last.emitOpen();
+  // prompt still active — banner must stay visible
+  expect(banner.style.display).toBe("block");
 });

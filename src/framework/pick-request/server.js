@@ -10,7 +10,12 @@ const json = (res, code, obj, origin) => {
   res.end(JSON.stringify(obj));
 };
 const readBody = (req) => new Promise((resolve_) => {
-  let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => resolve_(b ? JSON.parse(b) : {}));
+  let b = "";
+  req.on("data", (c) => (b += c));
+  req.on("end", () => {
+    if (!b) { resolve_({}); return; }
+    try { resolve_(JSON.parse(b)); } catch { resolve_({ _parseError: true }); }
+  });
 });
 
 export function createPickServer({ port = 4518, timeoutMs = 120000 } = {}) {
@@ -46,8 +51,9 @@ export function createPickServer({ port = 4518, timeoutMs = 120000 } = {}) {
 
     if (req.method === "POST" && url === "/request") {
       if (batch) return json(res, 409, { status: "busy" }, origin);
-      const { prompts } = await readBody(req);
-      batch = createBatch(prompts || []);
+      const body = await readBody(req);
+      if (body._parseError) return json(res, 400, { error: "invalid JSON" }, origin);
+      batch = createBatch(body.prompts || []);
       pending = { res, timer: setTimeout(() => { timeout(batch); finish(); }, timeoutMs) };
       sse("prompt", view(batch));
       return; // held open until finish()
@@ -64,7 +70,9 @@ export function createPickServer({ port = 4518, timeoutMs = 120000 } = {}) {
       return;
     }
     if (req.method === "POST" && url === "/resolve") {
-      const { id, index, selection } = await readBody(req);
+      const body = await readBody(req);
+      if (body._parseError) return json(res, 400, { error: "invalid JSON" }, origin);
+      const { id, index, selection } = body;
       if (batch && id === batch.id) {
         resolve(batch, index, selection);
         if (view(batch).status === "collecting") sse("prompt", view(batch));
@@ -73,7 +81,9 @@ export function createPickServer({ port = 4518, timeoutMs = 120000 } = {}) {
       return json(res, 200, { ok: true }, origin);
     }
     if (req.method === "POST" && url === "/cancel") {
-      const { id } = await readBody(req);
+      const body = await readBody(req);
+      if (body._parseError) return json(res, 400, { error: "invalid JSON" }, origin);
+      const { id } = body;
       if (batch && id === batch.id) { cancel(batch); finish(); }
       return json(res, 200, { ok: true }, origin);
     }

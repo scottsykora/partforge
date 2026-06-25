@@ -78,6 +78,22 @@ test("server timeout returns status timeout with partial picks", async () => {
   expect(out.picks).toEqual([]);
 });
 
+test("malformed JSON body returns 400 and server stays alive", async () => {
+  srv = createPickServer({ port: 0 });
+  const { port } = await srv.start();
+  // Send a malformed body — should get 400, not a crash
+  const bad = await fetch(`http://127.0.0.1:${port}/resolve`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: "{",
+  });
+  expect(bad.status).toBe(400);
+  expect((await bad.json()).error).toBe("invalid JSON");
+  // Server must still handle a subsequent valid request
+  const ok = await fetch(`http://127.0.0.1:${port}/events`);
+  expect(ok.ok).toBe(true);
+  ok.body.cancel();
+});
+
 test("formatPickResult prints a summary line per pick plus JSON", () => {
   const r = {
     status: "done",
