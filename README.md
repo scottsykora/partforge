@@ -50,6 +50,11 @@ hide internal params, and keep the interface simple while staying deeply adjusta
 `src/parts/demo.js` is a minimal worked example; run `npm run dev` and open
 `/demo.html` to see it live.
 
+- **Agent clarification (`request-a-pick`):** an external tool can ask the user to click
+  geometry and get the `Selection` back — serve with `?pickserver`, drive with
+  `partforge pick-serve` + `partforge pick "<prompt>" …`. See
+  `skills/partforge/SKILL.md` and the authoring guide.
+
 ## License
 
 MIT

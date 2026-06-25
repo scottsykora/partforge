@@ -467,3 +467,21 @@ entirely on OCCT, its fillets are exact in the STEP **and** present in the print
   `place(..., { purpose: "export" })` may depend on `view`.
 - Keep geometry backend-agnostic (kernel calls only) so it works in both backends; only
   STEP requires OCCT.
+
+---
+
+## Interactive clarification: request-a-pick
+
+An external tool (e.g. an AI agent editing your part) can ask the *user* to click
+geometry and receive the `Selection` back, closing the loop in the other direction
+from `?pick`.
+
+- Serve your app with **`?pickserver`** (or `?pickserver=http://host:port`) to enable
+  it. While idle nothing changes; when the local pick-server requests a click, a banner
+  appears ("🤖 Claude needs you to click …") and the picker arms for one click.
+- The agent side runs `partforge pick-serve` once, then `partforge pick "<prompt>" …`
+  for one or more clicks (collected in order, returned together). The CLI blocks until
+  the user clicks, then prints the `Selection`(s) as JSON.
+
+See the bundled skill `skills/partforge/SKILL.md` for the agent workflow. This is plain
+click-routing — no LLM logic lives in partforge.

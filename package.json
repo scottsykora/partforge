@@ -16,6 +16,7 @@
   "files": [
     "src",
     "bin",
+    "skills/partforge/SKILL.md",
     "docs/AUTHORING-PARTS.md",
     "README.md"
   ],
