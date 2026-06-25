@@ -8,6 +8,7 @@ import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts } from "./jobs.js";
 import { detectBackend } from "./geometry/probe.js";
 import { createDebugOverlay } from "./debug-overlay.js";
+import { attachPicker, formatSelection } from "./selection/index.js";
 
 // Mount a full parametric-part app from a PartDefinition: 3-D viewer + control
 // panel + the two geometry workers + the auto-regenerating view/cache loop +
@@ -33,6 +34,48 @@ export function mount(part, { createWorker, container = document.getElementById(
   const dbg = debug
     ? createDebugOverlay({ initialCachingOn: cachingOn, onToggle: (on) => { cachingOn = on; forceRegen(); } })
     : null;
+
+  // ?pick enables click-to-select: a toggle button + a transient toast. Off by
+  // default — no button, no listener, no behavior change. Deleting this block and
+  // the selection/ dir reverts the app exactly.
+  if (qs.has("pick")) {
+    const btn = document.createElement("button");
+    btn.id = "pf-pick";
+    btn.textContent = "Pick";
+    btn.title = "Click a surface to copy a selection token";
+    Object.assign(btn.style, {
+      position: "fixed", left: "12px", bottom: "12px", zIndex: 9999,
+      font: "12px system-ui, sans-serif", padding: "6px 10px", cursor: "pointer",
+    });
+    document.body.appendChild(btn);
+
+    const toast = document.createElement("div");
+    Object.assign(toast.style, {
+      position: "fixed", left: "12px", bottom: "48px", zIndex: 9999, maxWidth: "60ch",
+      font: "12px ui-monospace, monospace", padding: "6px 10px", borderRadius: "4px",
+      background: "rgba(20,24,29,0.92)", color: "#d8e0ea", display: "none",
+      whiteSpace: "pre-wrap", wordBreak: "break-word",
+    });
+    document.body.appendChild(toast);
+
+    const picker = attachPicker(viewer, {
+      part,
+      getContext: () => ({ view, params, derived: part.derive ? part.derive({ ...part.defaults, ...params }) : {} }),
+      onPick: (selection) => {
+        const token = formatSelection(selection, { style: "token" });
+        navigator.clipboard?.writeText(token);
+        toast.textContent = `copied: ${token}`;
+        toast.style.display = "block";
+        setTimeout(() => { toast.style.display = "none"; }, 4000);
+      },
+    });
+
+    btn.addEventListener("click", () => {
+      const on = !btn.classList.toggle("on");
+      picker.setActive(!on);
+      btn.style.outline = btn.classList.contains("on") ? "2px solid #ffcc33" : "";
+    });
+  }
 
   const statusEl = document.getElementById("status");
   const dlBtn = document.getElementById("download");
