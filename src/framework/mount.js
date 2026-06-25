@@ -9,6 +9,7 @@ import { viewSubParts } from "./jobs.js";
 import { detectBackend } from "./geometry/probe.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { attachPicker, formatSelection } from "./selection/index.js";
+import { createPickRequestClient } from "./pick-request/index.js";
 
 // Mount a full parametric-part app from a PartDefinition: 3-D viewer + control
 // panel + the two geometry workers + the auto-regenerating view/cache loop +
@@ -107,6 +108,18 @@ export function mount(part, { createWorker, container = document.getElementById(
       const isActive = btn.classList.toggle("on");
       picker.setActive(isActive);
       btn.style.outline = isActive ? "2px solid #ffcc33" : "";
+    });
+  } else if (qs.has("pickserver")) {
+    // Agent-driven mode: arm the picker only when the local pick-server asks for a
+    // click. Mutually exclusive with the clipboard ?pick toggle (else-if), so only one
+    // click listener is ever live. `?pickserver` or `?pickserver=http://host:port`.
+    const serverUrl = typeof qs.get("pickserver") === "string" && qs.get("pickserver")
+      ? qs.get("pickserver") : "http://127.0.0.1:4518";
+    createPickRequestClient({
+      serverUrl,
+      viewer,
+      part,
+      getContext: () => ({ view, params, derived: part.derive ? part.derive({ ...part.defaults, ...params }) : {} }),
     });
   }
 
