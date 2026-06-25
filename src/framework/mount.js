@@ -35,6 +35,39 @@ export function mount(part, { createWorker, container = document.getElementById(
     ? createDebugOverlay({ initialCachingOn: cachingOn, onToggle: (on) => { cachingOn = on; forceRegen(); } })
     : null;
 
+  const statusEl = document.getElementById("status");
+  const dlBtn = document.getElementById("download");
+  const dlStepBtn = document.getElementById("download-step");
+  const dl3mfBtn = document.getElementById("download-3mf");
+  const busyEl = document.getElementById("busy");
+  const phaseEl = document.getElementById("phase");
+  const partSeg = document.getElementById("part");
+  let kernelReady = false;
+
+  const exportBtns = [dlBtn, dlStepBtn, dl3mfBtn].filter(Boolean);
+  const setExportEnabled = (on) => exportBtns.forEach((b) => { b.disabled = !on; });
+
+  const setStatus = (msg, isErr = false) => { statusEl.textContent = msg; statusEl.classList.toggle("err", isErr); };
+  const showBusy = (phase) => { phaseEl.textContent = `${phase}…`; busyEl.classList.add("show"); };
+  const hideBusy = () => busyEl.classList.remove("show");
+
+  // --- per-sub-part mesh cache + auto-regenerating view composition ----------
+  // The view-tab buttons are generated from `part.views` (the single source of truth):
+  // each entry becomes a <button data-part=view>label</button> inside #part, with the
+  // first view marked active by default. (A saved view, below, overrides the default.)
+  if (partSeg && part.views) {
+    partSeg.innerHTML = Object.entries(part.views)
+      .map(([key, v], i) => `<button data-part="${key}"${i === 0 ? ' class="on"' : ""}>${v?.label ?? key}</button>`)
+      .join("");
+  }
+  // The initial view is whichever tab is marked active (else the first tab).
+  const params = { ...part.defaults };
+  const defaultView = partSeg.querySelector("button.on")?.dataset.part ?? partSeg.querySelector("button")?.dataset.part;
+  const savedView = loadView();
+  const savedBtn = savedView ? [...partSeg.querySelectorAll("button[data-part]")].find((b) => b.dataset.part === savedView) : null;
+  let view = savedBtn ? savedView : defaultView;
+  if (savedBtn) for (const b of partSeg.children) b.classList.toggle("on", b === savedBtn);
+
   // ?pick enables click-to-select: a toggle button + a transient toast. Off by
   // default — no button, no listener, no behavior change. Deleting this block and
   // the selection/ dir reverts the app exactly.
@@ -71,44 +104,12 @@ export function mount(part, { createWorker, container = document.getElementById(
     });
 
     btn.addEventListener("click", () => {
-      const on = !btn.classList.toggle("on");
-      picker.setActive(!on);
-      btn.style.outline = btn.classList.contains("on") ? "2px solid #ffcc33" : "";
+      const isActive = btn.classList.toggle("on");
+      picker.setActive(isActive);
+      btn.style.outline = isActive ? "2px solid #ffcc33" : "";
     });
   }
 
-  const statusEl = document.getElementById("status");
-  const dlBtn = document.getElementById("download");
-  const dlStepBtn = document.getElementById("download-step");
-  const dl3mfBtn = document.getElementById("download-3mf");
-  const busyEl = document.getElementById("busy");
-  const phaseEl = document.getElementById("phase");
-  const partSeg = document.getElementById("part");
-  let kernelReady = false;
-
-  const exportBtns = [dlBtn, dlStepBtn, dl3mfBtn].filter(Boolean);
-  const setExportEnabled = (on) => exportBtns.forEach((b) => { b.disabled = !on; });
-
-  const setStatus = (msg, isErr = false) => { statusEl.textContent = msg; statusEl.classList.toggle("err", isErr); };
-  const showBusy = (phase) => { phaseEl.textContent = `${phase}…`; busyEl.classList.add("show"); };
-  const hideBusy = () => busyEl.classList.remove("show");
-
-  // --- per-sub-part mesh cache + auto-regenerating view composition ----------
-  // The view-tab buttons are generated from `part.views` (the single source of truth):
-  // each entry becomes a <button data-part=view>label</button> inside #part, with the
-  // first view marked active by default. (A saved view, below, overrides the default.)
-  if (partSeg && part.views) {
-    partSeg.innerHTML = Object.entries(part.views)
-      .map(([key, v], i) => `<button data-part="${key}"${i === 0 ? ' class="on"' : ""}>${v?.label ?? key}</button>`)
-      .join("");
-  }
-  // The initial view is whichever tab is marked active (else the first tab).
-  const params = { ...part.defaults };
-  const defaultView = partSeg.querySelector("button.on")?.dataset.part ?? partSeg.querySelector("button")?.dataset.part;
-  const savedView = loadView();
-  const savedBtn = savedView ? [...partSeg.querySelectorAll("button[data-part]")].find((b) => b.dataset.part === savedView) : null;
-  let view = savedBtn ? savedView : defaultView;
-  if (savedBtn) for (const b of partSeg.children) b.classList.toggle("on", b === savedBtn);
   let framedView = null; // the view the camera was last framed to (null until first show)
   let cameraRestored = false; // saved camera applied once, on the first frame after load
   let generating = false;

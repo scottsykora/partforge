@@ -9,6 +9,8 @@ const part = {
   parts: { one: { views: ["v"], build: (k, p) => k.cylinder(p.a, p.a, p.a) } },
 };
 
+afterEach(() => { document.body.innerHTML = ""; });
+
 test("worldToSubPartLocal inverts the pivot rotation + recentring", () => {
   // Replicate the viewer's hierarchy: pivot (rot x=-90°) → partsGroup (offset) → mesh.
   const pivot = new THREE.Group();
@@ -28,8 +30,6 @@ test("worldToSubPartLocal inverts the pivot rotation + recentring", () => {
   expect(back[1]).toBeCloseTo(0, 5);
   expect(back[2]).toBeCloseTo(3, 5);
 });
-
-afterEach(() => { document.body.innerHTML = ""; });
 
 test("attachPicker raycasts a click and delivers a resolved selection", () => {
   // Camera at +Z looking at origin; a unit box at origin fills the centre of the view.
@@ -77,5 +77,31 @@ test("clicks do nothing when the picker is inactive", () => {
   });
   domElement.dispatchEvent(new MouseEvent("click", { clientX: 10, clientY: 10, bubbles: true }));
   expect(onPick).not.toHaveBeenCalled();
+  picker.detach();
+});
+
+test("active picker with a ray that misses all meshes calls neither onPick nor flashPoint", () => {
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+  camera.position.set(0, 0, 10);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+
+  const domElement = document.createElement("div");
+  domElement.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  document.body.appendChild(domElement);
+
+  const flashPoint = vi.fn();
+  const onPick = vi.fn();
+  // Empty _subMeshes: no geometry to hit regardless of where the ray points.
+  const picker = attachPicker({ camera, domElement, _subMeshes: {}, flashPoint }, {
+    part, getContext: () => ({ view: "v", params: { a: 1 }, derived: {} }), onPick,
+  });
+  picker.setActive(true);
+
+  // Click dead-centre — ray fires but there are no meshes to intersect.
+  domElement.dispatchEvent(new MouseEvent("click", { clientX: 100, clientY: 100, bubbles: true }));
+
+  expect(onPick).not.toHaveBeenCalled();
+  expect(flashPoint).not.toHaveBeenCalled();
   picker.detach();
 });

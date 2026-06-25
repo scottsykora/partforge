@@ -119,7 +119,7 @@ click → pick.js raycast → hit{ subPart, pointLocal, normalLocal, faceId? }
   `@spacer · cyl-face r=1.7 axis=+Z · pt(0,0,5.2) n(+X) · {bore:3.4,h:10}`).
 - **`"json"`** — the full `Selection` object, for the embedded tool-call transport.
 - **`"prompt"`** — one natural-language sentence an LLM ingests well, e.g.
-  "On sub-part **spacer**, the user pointed near local point (0, 0, 5.2), normal +X,
+  "On sub-part **spacer**, the user pointed at local point (0, 0, 5.2), normal +X,
   with params {bore: 3.4, h: 10}."
 
 No `parseToken` in v1 (YAGNI) — the LLM reads tokens; nothing round-trips them back.
