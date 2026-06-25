@@ -76,7 +76,8 @@ export function createViewer(container, part) {
   const subMesh = Object.fromEntries(
     names.map((n) => [n, new THREE.Mesh(new THREE.BufferGeometry(), materialFor(n))])
   );
-  for (const m of Object.values(subMesh)) {
+  for (const [n, m] of Object.entries(subMesh)) {
+    m.name = n;
     m.visible = false;
     partsGroup.add(m);
   }
@@ -226,5 +227,17 @@ export function createViewer(container, part) {
     container.removeChild(renderer.domElement);
   }
 
-  return { showAssembly, hideAssembly, setSubGeometry, resize, dispose, frame, setAutoRotate, setTheme, getCameraState, setCameraState, onCameraEnd, _subCache: subCache };
+  // Transient marker at a world-space point — visual confirmation of a pick.
+  function flashPoint(world) {
+    const dot = new THREE.Mesh(
+      new THREE.SphereGeometry(1.2, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0xffcc33, depthTest: false })
+    );
+    dot.renderOrder = 999;
+    dot.position.set(world[0], world[1], world[2]);
+    scene.add(dot);
+    setTimeout(() => { scene.remove(dot); dot.geometry.dispose(); dot.material.dispose(); }, 1200);
+  }
+
+  return { showAssembly, hideAssembly, setSubGeometry, resize, dispose, frame, setAutoRotate, setTheme, getCameraState, setCameraState, onCameraEnd, _subCache: subCache, camera, domElement: renderer.domElement, _subMeshes: subMesh, flashPoint };
 }
