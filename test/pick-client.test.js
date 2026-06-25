@@ -81,3 +81,22 @@ test("SSE open event does not hide the banner while a prompt is active", () => {
   // prompt still active — banner must stay visible
   expect(banner.style.display).toBe("block");
 });
+
+// Fix #4: failed /resolve POST surfaces error in banner rather than unhandled rejection
+test("a failing /resolve fetch shows error in the banner and does not throw", async () => {
+  globalThis.fetch = vi.fn((url) => {
+    if (url.includes("/resolve")) return Promise.reject(new Error("network error"));
+    return Promise.resolve({ ok: true, json: () => ({}) });
+  });
+  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  MockES.last.emit("prompt", { id: "x", index: 0, total: 1, prompt: "click A" });
+  const banner = document.querySelector("#pf-pick-banner");
+
+  // Drive a pick — the /resolve fetch will reject
+  captured.onPick({ subPart: "spacer" });
+  // Allow microtasks to settle
+  await Promise.resolve();
+
+  expect(banner.style.display).toBe("block");
+  expect(banner.textContent).toContain("couldn't reach pick-server");
+});

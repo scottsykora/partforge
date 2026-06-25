@@ -1,5 +1,6 @@
 // test/pick-server.test.js
 import { afterEach, expect, test } from "vitest";
+import { createServer } from "node:http";
 import { createPickServer, requestPicks, formatPickResult } from "../src/framework/pick-request/server.js";
 
 let srv;
@@ -103,4 +104,65 @@ test("formatPickResult prints a summary line per pick plus JSON", () => {
   expect(s).toContain("click A");
   expect(s).toContain("spacer");
   expect(s).toContain('"status": "done"'); // raw JSON included
+});
+
+// Fix #1: formatPickResult with missing picks (e.g. 409 busy response)
+test("formatPickResult does not throw and shows busy when picks is undefined", () => {
+  let s;
+  expect(() => { s = formatPickResult({ status: "busy" }); }).not.toThrow();
+  expect(s).toContain("busy");
+});
+
+// Fix #2: requestPicks rejects with friendly message on non-JSON response
+test("requestPicks rejects with pick-server message on non-JSON response", async () => {
+  const stub = createServer((_req, res) => { res.writeHead(200); res.end("not json"); });
+  await new Promise((r) => stub.listen(0, "127.0.0.1", r));
+  const { port } = stub.address();
+  try {
+    await expect(requestPicks({ port, host: "127.0.0.1", prompts: ["x"] })).rejects.toThrow("pick-server");
+  } finally {
+    await new Promise((r) => stub.close(r));
+  }
+});
+
+// Fix #3: empty prompts returns 400 and does not wedge the batch slot
+test("POST /request with empty prompts array returns 400 and slot is not wedged", async () => {
+  srv = createPickServer({ port: 0 });
+  const { port } = await srv.start();
+
+  const bad = await fetch(`http://127.0.0.1:${port}/request`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompts: [] }),
+  });
+  expect(bad.status).toBe(400);
+  expect((await bad.json()).error).toContain("non-empty");
+
+  // Slot should not be wedged — a valid follow-up request should work
+  const validDone = requestPicks({ port, prompts: ["click A"] });
+  const p0 = await nextEvent(port, "prompt");
+  await fetch(`http://127.0.0.1:${port}/resolve`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: p0.id, index: 0, selection: { subPart: "ok" } }),
+  });
+  const out = await validDone;
+  expect(out.status).toBe("done");
+});
+
+test("POST /request with non-array prompts returns 400", async () => {
+  srv = createPickServer({ port: 0 });
+  const { port } = await srv.start();
+  const bad = await fetch(`http://127.0.0.1:${port}/request`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompts: "click A" }),
+  });
+  expect(bad.status).toBe(400);
+  expect((await bad.json()).error).toContain("non-empty");
+});
+
+// Fix #5: formatPickResult with malformed selection (missing point/normal/params)
+test("formatPickResult does not throw and includes subPart for malformed selection", () => {
+  const r = { status: "done", picks: [{ prompt: "p", selection: { subPart: "spacer" } }] };
+  let s;
+  expect(() => { s = formatPickResult(r); }).not.toThrow();
+  expect(s).toContain("spacer");
 });

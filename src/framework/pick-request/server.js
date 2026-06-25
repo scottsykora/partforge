@@ -53,7 +53,10 @@ export function createPickServer({ port = 4518, timeoutMs = 120000 } = {}) {
       if (batch) return json(res, 409, { status: "busy" }, origin);
       const body = await readBody(req);
       if (body._parseError) return json(res, 400, { error: "invalid JSON" }, origin);
-      batch = createBatch(body.prompts || []);
+      if (!Array.isArray(body.prompts) || body.prompts.length === 0) {
+        return json(res, 400, { error: "prompts must be a non-empty array" }, origin);
+      }
+      batch = createBatch(body.prompts);
       pending = { res, timer: setTimeout(() => { timeout(batch); finish(); }, timeoutMs) };
       sse("prompt", view(batch));
       return; // held open until finish()
@@ -116,7 +119,17 @@ export function requestPicks({ port = 4518, host = "127.0.0.1", prompts }) {
     const payload = JSON.stringify({ prompts });
     const req = httpRequest(
       { host, port, path: "/request", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } },
-      (res) => { let b = ""; res.on("data", (c) => (b += c)); res.on("end", () => resolve_(JSON.parse(b))); },
+      (res) => {
+        let b = "";
+        res.on("data", (c) => (b += c));
+        res.on("end", () => {
+          try {
+            resolve_(JSON.parse(b));
+          } catch {
+            reject(new Error(`unexpected response from pick-server on ${host}:${port} (is the app open and \`partforge pick-serve\` running?)`));
+          }
+        });
+      },
     );
     req.on("error", (e) => reject(new Error(`could not reach pick-server on ${host}:${port} (is the app open and \`partforge pick-serve\` running?) — ${e.message}`)));
     req.end(payload);
@@ -125,9 +138,20 @@ export function requestPicks({ port = 4518, host = "127.0.0.1", prompts }) {
 
 // Human-readable CLI output: one summary line per pick, then the raw JSON to parse.
 export function formatPickResult({ status, picks }) {
-  const lines = [`status: ${status} (${picks.length} pick${picks.length === 1 ? "" : "s"})`];
-  for (const { prompt, selection } of picks) {
-    lines.push(`• "${prompt}" → ${formatSelection(selection, { style: "prompt" })}`);
+  const safePicks = Array.isArray(picks) ? picks : [];
+  const lines = [`status: ${status} (${safePicks.length} pick${safePicks.length === 1 ? "" : "s"})`];
+  for (const { prompt, selection } of safePicks) {
+    let summary;
+    try {
+      if (selection && selection.point && selection.normal && selection.params) {
+        summary = formatSelection(selection, { style: "prompt" });
+      } else {
+        summary = selection?.subPart ?? JSON.stringify(selection);
+      }
+    } catch {
+      summary = JSON.stringify(selection);
+    }
+    lines.push(`• "${prompt}" → ${summary}`);
   }
   lines.push("", JSON.stringify({ status, picks }, null, 2));
   return lines.join("\n");

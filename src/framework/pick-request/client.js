@@ -20,6 +20,8 @@ export function createPickRequestClient({ serverUrl = "http://127.0.0.1:4518", v
   banner.append(text, cancel);
   document.body.appendChild(banner);
 
+  const showError = (msg) => { text.textContent = msg; banner.style.display = "block"; };
+
   const picker = attachPicker(viewer, {
     part, getContext,
     onPick: (selection) => {
@@ -27,7 +29,7 @@ export function createPickRequestClient({ serverUrl = "http://127.0.0.1:4518", v
       fetch(`${serverUrl}/resolve`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: active.id, index: active.index, selection }),
-      });
+      }).catch(() => showError("⚠ couldn't reach pick-server — click not sent"));
     },
   });
 
@@ -35,7 +37,7 @@ export function createPickRequestClient({ serverUrl = "http://127.0.0.1:4518", v
     if (active) fetch(`${serverUrl}/cancel`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ id: active.id }),
-    });
+    }).catch(() => showError("⚠ couldn't reach pick-server — click not sent"));
   });
 
   const es = new globalThis.EventSource(`${serverUrl}/events`);
