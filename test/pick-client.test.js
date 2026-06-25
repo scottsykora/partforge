@@ -42,10 +42,10 @@ test("a pick POSTs /resolve with the active id+index and the selection", async (
   );
 });
 
-test("the cancel button POSTs /cancel for the active id", () => {
+test("the close (×) button POSTs /cancel for the active id", () => {
   client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
   MockES.last.emit("prompt", { id: "x", index: 0, total: 1, prompt: "click A" });
-  document.querySelector("#pf-pick-cancel").click();
+  document.querySelector("#pf-pick-close").click();
   expect(fetch).toHaveBeenCalledWith(
     "http://127.0.0.1:4518/cancel",
     expect.objectContaining({ method: "POST", body: JSON.stringify({ id: "x" }) }),

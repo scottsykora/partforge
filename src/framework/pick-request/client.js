@@ -1,5 +1,7 @@
 // Browser side of request-a-pick: subscribe to the pick-server, show a prompt banner,
-// arm the existing picker on demand, and POST each click back. Self-created DOM.
+// arm the existing picker on demand, and POST each click back. Self-created DOM; the
+// look (position, theme colours, slide-in animation) lives in app.css (#pf-pick-banner),
+// so it follows the app's light/dark theme. Visibility is toggled via display.
 import { attachPicker } from "../selection/pick.js";
 
 export function createPickRequestClient({ serverUrl = "http://127.0.0.1:4518", viewer, part, getContext }) {
@@ -7,54 +9,65 @@ export function createPickRequestClient({ serverUrl = "http://127.0.0.1:4518", v
 
   const banner = document.createElement("div");
   banner.id = "pf-pick-banner";
-  Object.assign(banner.style, {
-    position: "fixed", left: "12px", bottom: "12px", zIndex: 9999, maxWidth: "60ch",
-    font: "13px system-ui, sans-serif", padding: "8px 12px", borderRadius: "6px",
-    background: "rgba(20,24,29,0.94)", color: "#e7edf5", display: "none",
-  });
+  banner.style.display = "none";
+
   const text = document.createElement("span");
-  const cancel = document.createElement("button");
-  cancel.id = "pf-pick-cancel";
-  cancel.textContent = "Can't find it / cancel";
-  Object.assign(cancel.style, { marginLeft: "10px", font: "12px system-ui", cursor: "pointer" });
-  banner.append(text, cancel);
+  text.className = "pf-pick-text";
+
+  const close = document.createElement("button");
+  close.id = "pf-pick-close";
+  close.type = "button";
+  close.textContent = "×";
+  close.setAttribute("aria-label", "Dismiss");
+
+  banner.append(text, close);
   document.body.appendChild(banner);
 
-  const showError = (msg) => { text.textContent = msg; banner.style.display = "block"; };
+  const show = () => { banner.style.display = "block"; };
+  const hide = () => { banner.style.display = "none"; };
+  const showError = (msg) => { text.textContent = msg; show(); };
+
+  // Render the current prompt, emphasising the instruction. The prompt text comes from
+  // the agent, so it goes through textContent (never innerHTML) to stay injection-safe.
+  const showPrompt = (v) => {
+    text.textContent = `🤖 Claude needs you to click (${v.index + 1} of ${v.total}): `;
+    const strong = document.createElement("strong");
+    strong.className = "pf-pick-prompt";
+    strong.textContent = v.prompt;
+    text.append(strong);
+    show();
+  };
+
+  const post = (path, body) =>
+    fetch(`${serverUrl}${path}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    }).catch(() => showError("⚠ couldn't reach pick-server — click not sent"));
 
   const picker = attachPicker(viewer, {
     part, getContext,
     onPick: (selection) => {
       if (!active) return;
-      fetch(`${serverUrl}/resolve`, {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: active.id, index: active.index, selection }),
-      }).catch(() => showError("⚠ couldn't reach pick-server — click not sent"));
+      post("/resolve", { id: active.id, index: active.index, selection });
     },
   });
 
-  cancel.addEventListener("click", () => {
-    if (active) fetch(`${serverUrl}/cancel`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: active.id }),
-    }).catch(() => showError("⚠ couldn't reach pick-server — click not sent"));
-  });
+  // The × dismisses the request (cancels the active batch on the server).
+  close.addEventListener("click", () => { if (active) post("/cancel", { id: active.id }); });
 
   const es = new globalThis.EventSource(`${serverUrl}/events`);
   es.addEventListener("prompt", (e) => {
     const v = JSON.parse(e.data);
     active = { id: v.id, index: v.index };
-    text.textContent = `🤖 Claude needs you to click (${v.index + 1} of ${v.total}): ${v.prompt}`;
-    banner.style.display = "block";
+    showPrompt(v);
     picker.setActive(true);
   });
   es.addEventListener("cleared", () => {
     active = null;
-    banner.style.display = "none";
+    hide();
     picker.setActive(false);
   });
-  es.onerror = () => { text.textContent = "⚠ agent pick-server not reachable"; banner.style.display = "block"; };
-  es.onopen = () => { if (!active) banner.style.display = "none"; };
+  es.onerror = () => { showError("⚠ agent pick-server not reachable"); };
+  es.onopen = () => { if (!active) hide(); };
 
   return {
     detach: () => { es.close(); picker.detach(); banner.remove(); },

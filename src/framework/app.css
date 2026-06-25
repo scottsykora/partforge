@@ -164,3 +164,30 @@ button.action:disabled { opacity: .5; cursor: default; }
 .irrelevant { opacity: 0.45; }
 .irrelevant:hover { opacity: 0.7; }
 .section-hidden { display: none; }
+
+/* request-a-pick: agent prompt banner, floated top-centre just below the part tabs.
+   Slides/fades in each time it's shown; themed via the shared palette. */
+#pf-pick-banner {
+  position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+  z-index: 30; max-width: min(56ch, calc(100vw - 24px));
+  padding: 9px 34px 9px 13px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 9px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35);
+  font-size: 12px; line-height: 1.45;
+  animation: pf-pick-in .18s ease;
+}
+#pf-pick-banner .pf-pick-prompt { color: var(--text-strong); font-weight: 600; }
+#pf-pick-close {
+  position: absolute; top: 6px; right: 6px; appearance: none;
+  width: 20px; height: 20px; padding: 0;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface-2); color: var(--muted);
+  cursor: pointer; font-size: 13px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+#pf-pick-close:hover { color: var(--text-strong); border-color: var(--accent); }
+@keyframes pf-pick-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
