@@ -6,7 +6,7 @@ export function createDebugOverlay({ initialCachingOn = true, onToggle } = {}) {
   const box = document.createElement("div");
   box.id = "pf-debug";
   Object.assign(box.style, {
-    position: "fixed", bottom: "12px", left: "12px", zIndex: "9999",
+    position: "fixed", bottom: "12px", right: "12px", zIndex: "9999",
     font: "12px ui-monospace, monospace", background: "rgba(0,0,0,0.7)",
     color: "#e6e6e6", padding: "8px 10px", borderRadius: "6px",
     lineHeight: "1.5", whiteSpace: "pre",
