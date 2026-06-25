@@ -8,54 +8,76 @@ import { detectBackend } from "../src/framework/geometry/probe.js";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { measure } from "../src/testing/measure.js";
 import { renderViews } from "../src/testing/render.js";
+import { createPickServer, requestPicks, formatPickResult } from "../src/framework/pick-request/server.js";
 
 const die = (msg) => { console.error(msg); process.exit(1); };
 const slug = (s) => String(s).toLowerCase().replace(/\s+/g, "-");
 
-const [, , cmd, partPath, ...rest] = process.argv;
+const [, , cmd, ...args] = process.argv;
 const flags = {};
 const positional = [];
-for (let i = 0; i < rest.length; i++) {
-  if (rest[i].startsWith("--")) {
-    const key = rest[i].slice(2);
-    flags[key] = rest[i + 1] && !rest[i + 1].startsWith("--") ? rest[++i] : true;
-  } else positional.push(rest[i]);
-}
-const view = positional[0];
-
-if (!["measure", "render"].includes(cmd)) die("usage: partforge <measure|render> <part-module> [view] [flags]");
-if (!partPath) die(`usage: partforge ${cmd} <part-module> [view]`);
-
-const mod = await import(pathToFileURL(resolve(process.cwd(), partPath)))
-  .catch((e) => die(`cannot load part "${partPath}": ${e.message}`));
-const part = mod.default;
-if (!part?.parts || !part?.views) die(`"${partPath}" has no default-exported PartDefinition`);
-
-let kernel;
-if (detectBackend(part) === "occt") {
-  kernel = await bootOcctKernel();
-} else {
-  const wasm = await Module(); wasm.setup();
-  kernel = createManifoldKernel(wasm, { quality: "preview" });
+for (let i = 0; i < args.length; i++) {
+  if (args[i].startsWith("--")) {
+    const key = args[i].slice(2);
+    flags[key] = args[i + 1] && !args[i + 1].startsWith("--") ? args[++i] : true;
+  } else positional.push(args[i]);
 }
 
-try {
-  if (cmd === "measure") {
-    const report = measure(kernel, part, view);
-    printMeasure(report);
-    const file = `measure-${slug(report.part)}-${report.view}.json`;
-    writeFileSync(file, JSON.stringify(report, null, 2));
-    console.log(`\nwrote ${file}`);
-    if (flags.json) console.log(JSON.stringify(report, null, 2));
-    process.exit(report.ok ? 0 : 1);
+const USAGE = "usage: partforge <measure|render|pick-serve|pick> …";
+
+// --- pick-serve / pick: no part module, no kernel boot --------------------------
+if (cmd === "pick-serve") {
+  const port = Number(flags.port) || 4518;
+  const timeoutMs = (Number(flags.timeout) || 120) * 1000;
+  const { port: bound } = await createPickServer({ port, timeoutMs }).start();
+  console.log(`partforge pick-server listening on http://127.0.0.1:${bound}`);
+  // keep the process alive serving requests
+} else if (cmd === "pick") {
+  if (positional.length === 0) die('usage: partforge pick "<prompt>" ["<prompt>" …] [--port N]');
+  const port = Number(flags.port) || 4518;
+  const out = await requestPicks({ port, prompts: positional }).catch((e) => die(e.message));
+  console.log(formatPickResult(out));
+  process.exit(out.status === "done" ? 0 : 1);
+} else if (!["measure", "render"].includes(cmd)) {
+  die(USAGE);
+}
+
+const partPath = positional[0];
+const view = positional[1];
+if (["measure", "render"].includes(cmd) && !partPath) die(`usage: partforge ${cmd} <part-module> [view]`);
+
+if (["measure", "render"].includes(cmd)) {
+  const mod = await import(pathToFileURL(resolve(process.cwd(), partPath)))
+    .catch((e) => die(`cannot load part "${partPath}": ${e.message}`));
+  const part = mod.default;
+  if (!part?.parts || !part?.views) die(`"${partPath}" has no default-exported PartDefinition`);
+
+  let kernel;
+  if (detectBackend(part) === "occt") {
+    kernel = await bootOcctKernel();
   } else {
-    const views = typeof flags.views === "string" ? flags.views.split(",") : undefined;
-    const files = await renderViews(kernel, part, view, { views, out: flags.out || "render" });
-    for (const f of files) console.log(`wrote ${f}`);
-    process.exit(0);
+    const wasm = await Module(); wasm.setup();
+    kernel = createManifoldKernel(wasm, { quality: "preview" });
   }
-} catch (e) {
-  die(`${cmd} failed: ${e.message || e}`);
+
+  try {
+    if (cmd === "measure") {
+      const report = measure(kernel, part, view);
+      printMeasure(report);
+      const file = `measure-${slug(report.part)}-${report.view}.json`;
+      writeFileSync(file, JSON.stringify(report, null, 2));
+      console.log(`\nwrote ${file}`);
+      if (flags.json) console.log(JSON.stringify(report, null, 2));
+      process.exit(report.ok ? 0 : 1);
+    } else {
+      const views = typeof flags.views === "string" ? flags.views.split(",") : undefined;
+      const files = await renderViews(kernel, part, view, { views, out: flags.out || "render" });
+      for (const f of files) console.log(`wrote ${f}`);
+      process.exit(0);
+    }
+  } catch (e) {
+    die(`${cmd} failed: ${e.message || e}`);
+  }
 }
 
 function printMeasure(r) {
