@@ -1,5 +1,7 @@
 import { helixTube } from "./helix-tube.js";
 import { KernelCapabilityError } from "./errors.js";
+import { h } from "./solid-hash.js";
+import { createSolidCache } from "./solid-cache.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
@@ -21,6 +23,14 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const tracked = [];
   const T = (obj) => { tracked.push(obj); return obj; };
   const unionRaw = (ms) => ms.reduce((a, b) => T(a.add(b))); // track each reduce step
+
+  const cache = createSolidCache();
+  // Boundary ops route through cache.lookup; on a miss `make` runs the WASM op,
+  // tracks the result, and returns the triple the cache needs to pin/dispose it.
+  const cached = (hash, computeM) => cache.lookup(hash, () => {
+    const m = computeM();                 // already T()-tracked by the op
+    return { value: wrap(m, hash), pin: m, dispose: () => m.delete?.() };
+  });
 
   // Copy the mesh out into JS-owned arrays (so it survives cleanup) and free the
   // transient mesh handle.
@@ -48,12 +58,14 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return { positions, indices };
   }
 
-  const wrap = (m) => ({
+  const wrap = (m, hash) => ({
     _m: m,
-    cut: (t) => wrap(T(m.subtract(t._m))),
-    cutAll: (tools) => wrap(T(m.subtract(unionRaw(tools.map((t) => t._m))))),
-    intersect: (t) => wrap(T(m.intersect(t._m))),
-    clone: () => wrap(m),
+    _hash: hash,
+    cut: (t) => cached(h("cut", hash, t._hash), () => T(m.subtract(t._m))),
+    cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)),
+      () => T(m.subtract(unionRaw(tools.map((t) => t._m))))),
+    intersect: (t) => cached(h("intersect", hash, t._hash), () => T(m.intersect(t._m))),
+    clone: () => wrap(m, hash),
     boundingBox: () => {
       const b = m.boundingBox();           // { min: Vec3, max: Vec3 }
       const min = [...b.min], max = [...b.max];
@@ -66,19 +78,19 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     volume: () => m.volume(),
     genus: () => m.genus(),
     isEmpty: () => m.isEmpty(),
-    translate: (v) => wrap(T(m.translate(v))),
+    translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v)),
     rotate: (deg, center, axis) => {
       const euler = [axis[0] * deg, axis[1] * deg, axis[2] * deg];
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = T(a.rotate(euler));
-      return wrap(T(b.translate(center)));
+      return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis));
     },
-    mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane]))),
+    mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)),
     scale: (factor, center = [0, 0, 0]) => {
       if (!(factor > 0)) throw new Error("scale: factor must be > 0");
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = T(a.scale([factor, factor, factor]));
-      return wrap(T(b.translate(center)));
+      return wrap(T(b.translate(center)), h("scale", hash, factor, center));
     },
     toMesh: () => meshOut(m, false),
     toSTL: () => Promise.resolve(meshOut(m, true)),
@@ -89,30 +101,45 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   });
 
   return {
-    cylinder: (rb, rt, h, { center = false } = {}) => wrap(T(Manifold.cylinder(h, rb, rt, segs, center))),
-    sphere: (r) => wrap(T(Manifold.sphere(r, segs))),
+    cylinder: (rb, rt, h2, { center = false } = {}) =>
+      wrap(T(Manifold.cylinder(h2, rb, rt, segs, center)), h("cylinder", rb, rt, h2, center, segs)),
+    // Compound op: hashed ATOMICALLY from its own args, so it is a single cache
+    // node — its internal cylinders/cut are never retained. The template for
+    // future compounds: build internals with T(), return the final tracked solid.
+    boredCylinder: ({ od, h: height, bore }) => cached(h("boredCylinder", od, height, bore, segs), () => {
+      const body = T(Manifold.cylinder(height, od / 2, od / 2, segs, false));
+      const tool0 = T(Manifold.cylinder(height + 4, bore / 2, bore / 2, segs, false));
+      const tool = T(tool0.translate([0, 0, -2])); // raw ops: track each result
+      return T(body.subtract(tool));
+    }),
+    sphere: (r) => wrap(T(Manifold.sphere(r, segs)), h("sphere", r, segs)),
     box: (min, max) => {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
-      return wrap(T(cube.translate(min)));
+      return wrap(T(cube.translate(min)), h("box", min, max));
     },
-    prism: (pts, h, { twist = 0, scaleTop = 1 } = {}) => {
-      if (scaleTop < 0) throw new Error("prism: scaleTop must be ≥ 0");
-      const cs = T(CrossSection.ofPolygons([pts]));
-      if (twist === 0 && scaleTop === 1) return wrap(T(cs.extrude(h)));
-      // divisions ∝ twist so the twist meshes smoothly (1 when untwisted)
-      const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
-      return wrap(T(cs.extrude(h, nDiv, twist, scaleTop)));
-    },
-    helixSweptTube: (o) => wrap(T(helixTube(wasm, { ...o, ...tube }))),
-    revolve: (pts, { degrees = 360 } = {}) => {
-      for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
-      return wrap(T(Manifold.revolve([pts], segs, degrees)));
-    },
-    union: (solids) => wrap(unionRaw(solids.map((s) => s._m))), // unionRaw already tracks its result
+    prism: (pts, height, { twist = 0, scaleTop = 1 } = {}) =>
+      cached(h("prism", pts, height, twist, scaleTop, segs), () => {
+        if (scaleTop < 0) throw new Error("prism: scaleTop must be ≥ 0");
+        const cs = T(CrossSection.ofPolygons([pts]));
+        if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
+        const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
+        return T(cs.extrude(height, nDiv, twist, scaleTop));
+      }),
+    helixSweptTube: (o) => cached(h("helixSweptTube", o, tube), () => T(helixTube(wasm, { ...o, ...tube }))),
+    revolve: (pts, { degrees = 360 } = {}) =>
+      cached(h("revolve", pts, degrees, segs), () => {
+        for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
+        return T(Manifold.revolve([pts], segs, degrees));
+      }),
+    union: (solids) => cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
     toSTEP: () => { throw new Error("STEP export not supported by the Manifold backend"); },
-    // Free every WASM object created since the last cleanup. Call after each job
-    // once its meshes/buffers have been copied out (meshOut already did).
-    cleanup: () => { for (const o of tracked) o.delete?.(); tracked.length = 0; },
+    beginSubPart: (name) => cache.begin(name),
+    endSubPart: () => cache.end(),
+    cacheStats: () => cache.stats(),
+    resetCacheStats: () => cache.resetStats(),
+    // Free every WASM object created since the last cleanup EXCEPT solids the cache
+    // still pins (they must survive for the next build to resume from them).
+    cleanup: () => { for (const o of tracked) if (!cache.isPinned(o)) o.delete?.(); tracked.length = 0; },
   };
 }
 

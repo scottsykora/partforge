@@ -1,7 +1,7 @@
 # Geometry caching — design
 
 **Date:** 2026-06-24
-**Status:** Approved (design); pending implementation plan
+**Status:** Approved (design); implementation plan exists at `docs/superpowers/plans/2026-06-24-geometry-cache.md`; feature implemented on the `geometry-cache` branch
 
 ## Motivation
 

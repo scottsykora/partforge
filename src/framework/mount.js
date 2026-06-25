@@ -3,10 +3,11 @@ import { zipSync } from "fflate";
 import { createViewer } from "./viewer.js";
 import { loadRotating, saveRotating, loadCamera, saveCamera, loadView, saveView } from "./view-state.js";
 import { buildControls } from "./controls.js";
-import { relevantParamKeys } from "./param-deps.js";
+import { relevantParamKeys, subPartReadKeys, relevanceHash, RELEVANT_ALL } from "./param-deps.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts } from "./jobs.js";
 import { detectBackend } from "./geometry/probe.js";
+import { createDebugOverlay } from "./debug-overlay.js";
 
 // Mount a full parametric-part app from a PartDefinition: 3-D viewer + control
 // panel + the two geometry workers + the auto-regenerating view/cache loop +
@@ -23,6 +24,15 @@ export function mount(part, { createWorker, container = document.getElementById(
   let forcedBackend = new URLSearchParams(location.search).get("backend");
   if (forcedBackend !== "occt" && forcedBackend !== "manifold") forcedBackend = null;
   const backendFor = () => forcedBackend ?? detectBackend(part, params);
+
+  // ?debug shows the cache debug overlay; ?debug&nocache starts with caching off.
+  const qs = new URLSearchParams(location.search);
+  const debug = qs.has("debug");
+  let cachingOn = !(debug && qs.has("nocache"));
+  let lastGen = { skipped: 0, rebuilt: 0 }; // Layer-1 counts for the most recent generate
+  const dbg = debug
+    ? createDebugOverlay({ initialCachingOn: cachingOn, onToggle: (on) => { cachingOn = on; forceRegen(); } })
+    : null;
 
   const statusEl = document.getElementById("status");
   const dlBtn = document.getElementById("download");
@@ -62,10 +72,27 @@ export function mount(part, { createWorker, container = document.getElementById(
   let paramsVersion = 0; // bumped on every settings edit
   let genVersion = -1;   // the params version the in-flight generate is building
   let genTimer = null;   // debounce timer for auto-regenerate
-  const cacheVersion = Object.fromEntries(names.map((n) => [n, -1])); // params version each was built at
+  const cacheHash = {}; // n -> relevance hash each sub-part's cached mesh was built at
 
-  // A cached sub-part is current only if it was built at the latest params version.
-  const isCurrent = (n) => viewer._subCache[n] && cacheVersion[n] === paramsVersion;
+  // Memoize the per-sub-part read-key map per (paramsVersion, view): subPartReadKeys
+  // runs probe builds, so we compute it once per change, not per sub-part.
+  let _readsKey = null, _readsMap = null;
+  const readsFor = () => {
+    const key = `${paramsVersion}|${view}`;
+    if (_readsKey !== key) { _readsKey = key; _readsMap = subPartReadKeys(part, view, params); }
+    return _readsMap;
+  };
+  // The relevance hash for one sub-part at the current params (RELEVANT_ALL → hash
+  // over ALL params, so any edit invalidates it — the safe fallback).
+  const hashFor = (n) => {
+    if (!cachingOn) return `v${paramsVersion}`; // caching off: any edit invalidates every sub-part (Layer 1 off)
+    const reads = readsFor();
+    const keys = reads === RELEVANT_ALL ? Object.keys(params) : [...(reads.get(n) ?? Object.keys(params))];
+    return relevanceHash(keys, params);
+  };
+
+  // A cached sub-part is current only if its relevance hash is unchanged.
+  const isCurrent = (n) => !!viewer._subCache[n] && cacheHash[n] === hashFor(n);
   const missingParts = () => viewSubParts(part, view, params).filter((n) => !isCurrent(n));
 
   // Reflect the active view. If every needed part is current, show it and enable
@@ -138,13 +165,14 @@ export function mount(part, { createWorker, container = document.getElementById(
         for (const m of data.meshes) {
           if (viewer._subCache[m.name]) { viewer._subCache[m.name].userData.edges?.dispose(); viewer._subCache[m.name].dispose(); }
           viewer.setSubGeometry(m.name, m);
-          cacheVersion[m.name] = genVersion;
+          cacheHash[m.name] = hashFor(m.name);
         }
         hideBusy();
         refreshView();
         if (data.ms && missingParts().length === 0) {
           setStatus(`${statusEl.textContent} · ${(data.ms / 1000).toFixed(1)} s`);
         }
+        dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt });
         maybeGenerate(); // active view may still need parts (tab switched during build)
         break;
       }
@@ -194,12 +222,22 @@ export function mount(part, { createWorker, container = document.getElementById(
   // Build whatever the active view is missing — automatic, no Generate button.
   function maybeGenerate() {
     if (!kernelReady || generating) return; // retried when the current build finishes
-    const missing = missingParts();
+    const needed = viewSubParts(part, view, params);
+    const missing = needed.filter((n) => !isCurrent(n));
     if (missing.length === 0) return;
     generating = true;
     genVersion = paramsVersion;
+    lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length }; // for the overlay
     showBusy("generating");
-    service.generate({ type: "generate", subparts: missing, view, params }, backendFor());
+    service.generate({ type: "generate", subparts: missing, view, params, cache: cachingOn }, backendFor());
+  }
+
+  // Re-run the active view under the current caching setting, so toggling the
+  // ?debug switch updates the readout for the same design without a param change.
+  function forceRegen() {
+    for (const n of viewSubParts(part, view, params)) delete cacheHash[n];
+    refreshView();
+    maybeGenerate();
   }
 
   partSeg.addEventListener("click", (e) => {

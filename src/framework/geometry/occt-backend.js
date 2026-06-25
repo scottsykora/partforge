@@ -162,7 +162,10 @@ export function createOcctKernel(replicad) {
   };
 
   return {
-    cylinder, box: (min, max) => wrap(makeBox(min, max)), prism, revolve, helixSweptTube,
+    cylinder,
+    boredCylinder: ({ od, h, bore }) =>
+      cylinder(od / 2, od / 2, h).cut(cylinder(bore / 2, bore / 2, h + 4).translate([0, 0, -2])),
+    box: (min, max) => wrap(makeBox(min, max)), prism, revolve, helixSweptTube,
     sphere: (r) => wrap(makeSphere(r)),
     union: (solids) => wrap(solids.map((s) => s._s).reduce((a, b) => a.fuse(b))),
     toSTEP: (named) => exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._s }))).arrayBuffer(),

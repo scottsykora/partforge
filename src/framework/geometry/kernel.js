@@ -3,6 +3,7 @@
 
 /**
  * @typedef {Object} Solid  An opaque handle to a backend solid.
+ * @property {string} _hash   content hash (Manifold backend only; drives the worker solid cache)
  * @property {(tool: Solid) => Solid} cut
  * @property {(tools: Solid[]) => Solid} cutAll      batch subtract (backend-optimized)
  * @property {(other: Solid) => Solid} intersect     boolean intersection (Manifold)
@@ -20,6 +21,7 @@
  *
  * @typedef {Object} GeometryKernel
  * @property {(rBottom:number, rTop:number, h:number, opts?:{center?:boolean}) => Solid} cylinder
+ * @property {(o:{od:number,h:number,bore:number}) => Solid} boredCylinder   compound: bored-through cylinder (one cache node)
  * @property {(r:number) => Solid} sphere   sphere centred at the origin
  * @property {(min:number[], max:number[]) => Solid} box
  * @property {(points2D:number[][], h:number, opts?:{twist?:number,scaleTop?:number}) => Solid} prism   extrude polygon from z=0 (optional twist° + uniform top taper)
