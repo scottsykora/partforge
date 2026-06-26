@@ -100,3 +100,18 @@ test("a failing /resolve fetch shows error in the banner and does not throw", as
   expect(banner.style.display).toBe("block");
   expect(banner.textContent).toContain("couldn't reach pick-server");
 });
+
+// Dev aid: the test-prompt button previews the banner locally, no server round-trip.
+test("the test-prompt button shows the banner locally without hitting the server", () => {
+  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  const banner = document.querySelector("#pf-pick-banner");
+  expect(banner.style.display).toBe("none");
+
+  document.querySelector("#pf-pick-test").click();
+  expect(banner.style.display).toBe("block");
+  expect(banner.textContent).toContain("test prompt");
+  expect(fetch).not.toHaveBeenCalled(); // purely local preview
+
+  document.querySelector("#pf-pick-test").click(); // toggle off
+  expect(banner.style.display).toBe("none");
+});

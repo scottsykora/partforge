@@ -165,18 +165,26 @@ button.action:disabled { opacity: .5; cursor: default; }
 .irrelevant:hover { opacity: 0.7; }
 .section-hidden { display: none; }
 
-/* request-a-pick: agent prompt banner, floated top-centre just below the part tabs.
-   Slides/fades in each time it's shown; themed via the shared palette. */
+/* request-a-pick: agent prompt banner, floated top-centre well below the part tabs,
+   laid out like a chat message (avatar + text). Slides/fades in when shown; themed. */
 #pf-pick-banner {
-  position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+  position: fixed; top: 78px; left: 50%; transform: translateX(-50%);
   z-index: 30; max-width: min(56ch, calc(100vw - 24px));
-  padding: 9px 34px 9px 13px;
+  padding: 10px 36px 10px 12px;
   background: var(--surface); color: var(--text);
-  border: 1px solid var(--border); border-radius: 9px;
+  border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 6px 24px rgba(0,0,0,.35);
   font-size: 12px; line-height: 1.45;
   animation: pf-pick-in .18s ease;
 }
+#pf-pick-banner .pf-pick-row { display: flex; align-items: center; gap: 10px; }
+#pf-pick-banner .pf-pick-avatar {
+  flex: none; width: 30px; height: 30px; border-radius: 50%; font-size: 17px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+#pf-pick-banner .pf-pick-msg { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+#pf-pick-banner .pf-pick-label { color: var(--muted); font-size: 11px; }
 #pf-pick-banner .pf-pick-prompt { color: var(--text-strong); font-weight: 600; }
 #pf-pick-close {
   position: absolute; top: 6px; right: 6px; appearance: none;
@@ -191,3 +199,12 @@ button.action:disabled { opacity: .5; cursor: default; }
   from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+/* dev aid (request-a-pick mode): preview the prompt banner without an agent */
+#pf-pick-test {
+  position: fixed; left: 12px; bottom: 12px; z-index: 30; appearance: none;
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--muted-2); cursor: pointer;
+  font: 12px/1 -apple-system, system-ui, sans-serif;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35);
+}
+#pf-pick-test:hover { color: var(--text); border-color: var(--accent); }
