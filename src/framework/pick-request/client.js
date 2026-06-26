@@ -1,100 +1,65 @@
-// Browser side of request-a-pick: subscribe to the pick-server, show a prompt banner,
-// arm the existing picker on demand, and POST each click back. Self-created DOM; the
-// look (position, theme colours, slide-in animation) lives in app.css (#pf-pick-banner),
-// so it follows the app's light/dark theme. Visibility is toggled via display.
-import { attachPicker } from "../selection/pick.js";
+// Browser side of request-a-pick: drives the shared prompt banner from two sources —
+// an agent asking for clicks over SSE, and a click-to-copy button in the viewbar.
+// Created only under ?pickserver (see mount.js), so both are present exactly when the
+// user is working with an agent.
+import { createPromptBanner } from "./prompt-banner.js";
+import { formatSelection } from "../selection/format.js";
 
 export function createPickRequestClient({ serverUrl = "http://127.0.0.1:4518", viewer, part, getContext }) {
-  let active = null; // { id, index } of the prompt we're waiting on
-
-  // --- prompt banner: chat-style (avatar + message) ---------------------------
-  const banner = document.createElement("div");
-  banner.id = "pf-pick-banner";
-  banner.style.display = "none";
-
-  const row = document.createElement("div");
-  row.className = "pf-pick-row";
-  const avatar = document.createElement("div");
-  avatar.className = "pf-pick-avatar";
-  avatar.textContent = "🤖";
-  const msg = document.createElement("div");
-  msg.className = "pf-pick-msg";
-  const label = document.createElement("div");
-  label.className = "pf-pick-label";
-  const prompt = document.createElement("div");
-  prompt.className = "pf-pick-prompt";
-  msg.append(label, prompt);
-  row.append(avatar, msg);
-
-  const close = document.createElement("button");
-  close.id = "pf-pick-close";
-  close.type = "button";
-  close.textContent = "×";
-  close.setAttribute("aria-label", "Dismiss");
-
-  banner.append(row, close);
-  document.body.appendChild(banner);
-
-  const show = () => { banner.style.display = "block"; };
-  const hide = () => { banner.style.display = "none"; };
-  const showError = (text) => { label.textContent = ""; prompt.textContent = text; show(); };
-
-  // Render a prompt as a chat message. The prompt text comes from the agent, so it goes
-  // through textContent (never innerHTML) to stay injection-safe.
-  const showPrompt = (v) => {
-    label.textContent = v.total > 1 ? `Your agent asks: (${v.index + 1} of ${v.total})` : "Your agent asks:";
-    prompt.textContent = v.prompt;
-    show();
-  };
+  let active = null; // { id, index } of the agent prompt we're waiting on
+  const banner = createPromptBanner({ viewer, part, getContext });
 
   const postJson = (path, body) =>
     fetch(`${serverUrl}${path}`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-    }).catch(() => showError("⚠ couldn't reach pick-server — click not sent"));
+    }).catch(() => banner.message("⚠ couldn't reach pick-server — click not sent"));
 
-  const picker = attachPicker(viewer, {
-    part, getContext,
-    onPick: (selection) => {
-      if (!active) return;
-      postJson("/resolve", { id: active.id, index: active.index, selection });
-    },
-  });
-
-  // The × dismisses the request (cancels the active batch on the server) and hides the
-  // banner immediately for responsiveness.
-  close.addEventListener("click", () => {
-    if (active) postJson("/cancel", { id: active.id });
-    hide();
-  });
-
-  // --- dev test button: preview the banner locally, no agent round-trip -------
-  const test = document.createElement("button");
-  test.id = "pf-pick-test";
-  test.type = "button";
-  test.textContent = "🤖 test prompt";
-  test.title = "Preview the agent prompt banner (local, no agent)";
-  test.addEventListener("click", () => {
-    if (banner.style.display !== "none") { hide(); return; } // toggle off (and re-arm the animation)
-    showPrompt({ index: 0, total: 1, prompt: "Click a face — this is a test prompt" });
-  });
-  document.body.appendChild(test);
-
+  // --- agent prompts over SSE -------------------------------------------------
   const es = new globalThis.EventSource(`${serverUrl}/events`);
   es.addEventListener("prompt", (e) => {
     const v = JSON.parse(e.data);
     active = { id: v.id, index: v.index };
-    showPrompt(v);
-    picker.setActive(true);
+    banner.request({
+      avatar: "🤖",
+      label: v.total > 1 ? `Your agent asks: (${v.index + 1} of ${v.total})` : "Your agent asks:",
+      text: v.prompt,
+      onResolve: (selection) => postJson("/resolve", { id: active.id, index: active.index, selection }),
+      onDismiss: () => { if (active) postJson("/cancel", { id: active.id }); },
+    });
   });
-  es.addEventListener("cleared", () => {
-    active = null;
-    hide();
-    picker.setActive(false);
-  });
-  es.onerror = () => { showError("⚠ agent pick-server not reachable"); };
-  es.onopen = () => { if (!active) hide(); };
+  es.addEventListener("cleared", () => { active = null; banner.dismiss(); });
+  es.onerror = () => { banner.message("⚠ agent pick-server not reachable"); };
+  es.onopen = () => { if (!active) banner.dismiss(); };
+
+  // --- click-to-copy button, prepended into the viewbar (left of the play btn) -
+  // Copies the SAME description an agent receives for a click, so the two paths match.
+  const viewbar = document.getElementById("viewbar");
+  let copyBtn = null;
+  if (viewbar) {
+    copyBtn = document.createElement("button");
+    copyBtn.id = "copy";
+    copyBtn.type = "button";
+    // Flat single-colour copy glyph (inherits the viewbar button's currentColor).
+    copyBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4V9A1.5 1.5 0 0 0 4 10.5H5.5"/></svg>';
+    copyBtn.title = "Click a detail to copy its agent description";
+    copyBtn.setAttribute("aria-label", "Copy a detail's agent description");
+    copyBtn.addEventListener("click", () => {
+      if (banner.isOpen()) { banner.dismiss(); return; } // toggle off
+      banner.request({
+        avatar: "📋",
+        label: "Copy to clipboard",
+        text: "Click on a detail to copy its agent description to the clipboard.",
+        onResolve: (selection) => {
+          navigator.clipboard?.writeText(formatSelection(selection, { style: "prompt" }));
+          banner.message("✓ Copied to clipboard");
+          setTimeout(() => banner.dismiss(), 1000);
+        },
+      });
+    });
+    viewbar.prepend(copyBtn);
+  }
 
   return {
-    detach: () => { es.close(); picker.detach(); banner.remove(); test.remove(); },
+    detach: () => { es.close(); banner.detach(); copyBtn?.remove(); },
   };
 }

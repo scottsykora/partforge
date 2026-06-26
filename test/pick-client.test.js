@@ -101,17 +101,29 @@ test("a failing /resolve fetch shows error in the banner and does not throw", as
   expect(banner.textContent).toContain("couldn't reach pick-server");
 });
 
-// Dev aid: the test-prompt button previews the banner locally, no server round-trip.
-test("the test-prompt button shows the banner locally without hitting the server", () => {
+// Click-to-copy button (viewbar): copies the same description an agent gets, locally.
+test("the copy button copies the agent description and confirms, without the server", () => {
+  const viewbar = document.createElement("div");
+  viewbar.id = "viewbar";
+  document.body.appendChild(viewbar);
+  const writeText = vi.fn();
+  Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText }, configurable: true });
+
   client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  const copy = document.querySelector("#copy");
+  expect(copy).toBeTruthy();
+
+  copy.click();
   const banner = document.querySelector("#pf-pick-banner");
-  expect(banner.style.display).toBe("none");
-
-  document.querySelector("#pf-pick-test").click();
   expect(banner.style.display).toBe("block");
-  expect(banner.textContent).toContain("test prompt");
-  expect(fetch).not.toHaveBeenCalled(); // purely local preview
+  expect(banner.textContent).toContain("copy its agent description");
 
-  document.querySelector("#pf-pick-test").click(); // toggle off
-  expect(banner.style.display).toBe("none");
+  // Simulate the click on a part (attachPicker is stubbed; captured.onPick is the banner's).
+  const selection = { subPart: "spacer", point: [0, 0, 5.2], normal: [1, 0, 0], params: { bore: 3.4 } };
+  captured.onPick(selection);
+
+  expect(writeText).toHaveBeenCalledTimes(1);
+  expect(writeText.mock.calls[0][0]).toContain("spacer"); // the formatted agent description
+  expect(banner.textContent).toContain("Copied");
+  expect(fetch).not.toHaveBeenCalled(); // copy is purely local
 });
