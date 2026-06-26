@@ -36,8 +36,10 @@ export function createViewer(container, part) {
   const key = new THREE.DirectionalLight(0xffffff, 1.4);
   key.position.set(8, 14, 10);
   scene.add(key);
-  // 1 cm grid (mm units): 200 mm wide, 20 divisions -> 10 mm squares.
-  let grid = new THREE.GridHelper(200, 20, THEME.dark.grid[0], THEME.dark.grid[1]);
+  // 1 cm grid (mm units): 300 mm wide, 30 divisions -> 10 mm (1 cm) squares.
+  const GRID_SIZE = 300, GRID_DIVS = 30;
+  let floorY = 0; // world Y of the grid plane; set to the part's bbox bottom in frameTo
+  let grid = new THREE.GridHelper(GRID_SIZE, GRID_DIVS, THEME.dark.grid[0], THEME.dark.grid[1]);
   scene.add(grid);
 
   // --- material + part groups -----------------------------------------------
@@ -146,6 +148,10 @@ export function createViewer(container, part) {
     const center = _box.getCenter(new THREE.Vector3());
     partsGroup.position.copy(center).multiplyScalar(-1); // centre assembly on the pivot
     const size = _box.getSize(new THREE.Vector3());
+    // Drop the grid to the bottom of the bounding box (model Z -> world Y), so it reads
+    // as a floor the part sits on rather than a plane through its middle.
+    floorY = -size.z / 2;
+    grid.position.y = floorY;
     const r = Math.max(size.x, size.y, size.z) || 12;
     camera.position.setLength(r * 2.6 + 6);
     controls.target.set(0, 0, 0);
@@ -179,7 +185,8 @@ export function createViewer(container, part) {
     const t = THEME[mode] ?? THEME.dark;
     scene.background = new THREE.Color(t.bg);
     scene.remove(grid);
-    grid = new THREE.GridHelper(200, 20, t.grid[0], t.grid[1]);
+    grid = new THREE.GridHelper(GRID_SIZE, GRID_DIVS, t.grid[0], t.grid[1]);
+    grid.position.y = floorY; // keep the floor at the bbox bottom across theme swaps
     scene.add(grid);
     lineMaterial.color.set(t.line);
   }
