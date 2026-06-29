@@ -72,3 +72,14 @@ test("a feature built with the vocabulary equals the raw-primitive build", () =>
   viaRaw = viaRaw.cut(k.cylinder(1.5, 1.5, 12).translate([15, 15, -1]));
   sameGeom(viaVocab, viaRaw);
 });
+
+test('along("+Z") returns a fresh handle with identity geometry', () => {
+  const s = k.box([0, 0, 0], [2, 4, 6]);
+  const r = s.along("+Z");
+  expect(r).not.toBe(s);
+  sameGeom(r, k.box([0, 0, 0], [2, 4, 6]));
+});
+
+test("sugar methods are shared across solids (no per-solid closures)", () => {
+  expect(k.box([0,0,0],[1,1,1]).rotateX).toBe(k.box([0,0,0],[2,2,2]).rotateX);
+});
