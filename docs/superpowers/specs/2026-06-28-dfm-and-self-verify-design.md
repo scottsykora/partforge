@@ -2,8 +2,8 @@
 
 **Date:** 2026-06-28
 **Status:** Approved (design). Verify engine + DSL slice implemented + merged (2026-06-28).
-Min-wall slice in progress: voxel/SDF spiked and rejected — building ray/shot on a reusable
-triangle BVH instead (2026-06-28).
+Min-wall slice implemented (2026-06-28): ray/shot on a reusable triangle BVH (voxel/SDF
+spiked and rejected). Reusable `closestPoint` ready for a future clearance/min-feature slice.
 **Repo:** `partforge` (sibling to `Drum Machine/`)
 **Builds on:** the `measure` / `render` harness (2026-06-22) — this is the
 printability-linting follow-on that harness explicitly left out of scope.
