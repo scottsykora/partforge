@@ -1,7 +1,7 @@
 # DFM checks + co-located self-verification for partforge — design
 
 **Date:** 2026-06-28
-**Status:** Approved (design); pending implementation plan
+**Status:** Approved (design). Verify engine + DSL slice implemented (2026-06-28); voxel/SDF core + min-wall computation pending (next plan).
 **Repo:** `partforge` (sibling to `Drum Machine/`)
 **Builds on:** the `measure` / `render` harness (2026-06-22) — this is the
 printability-linting follow-on that harness explicitly left out of scope.
