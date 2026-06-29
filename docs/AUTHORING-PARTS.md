@@ -409,6 +409,63 @@ The `measure` function is also exported for vitest (boot a Manifold kernel as in
 
 ---
 
+## Self-verification (the `verify` block)
+
+A part can declare how it should be checked, co-located with its schema, so
+`partforge measure` (and vitest) can prove it is both **printable** and **correct**.
+Add an optional top-level `verify` block:
+
+```js
+verify: {
+  process: "fdm-pla",            // a DFM profile: fdm-pla | fdm-petg | resin, or an
+                                  // inline { bed:[x,y,z], minWall, clearance } object
+  cases: ["defaults", "M3"],     // optional; default = defaults + every preset
+  expect: {                      // design intent, by sub-part name (+ "_view")
+    spacer: { holes: 1, bbox: "<=[60,60,60]", volume: "0.4..0.6cm3" },
+    _view:  { overlaps: 0 },
+  },
+}
+```
+
+**What the profile gives you:** a hard **bed-fit** gate (the view bbox must fit `bed`)
+and a **min-wall** warning. **What `expect` gives you:** per-sub-part assertions on the
+facts `measure` already reports — `holes` (through-bores / genus), `volume`,
+`surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`; and `_view` assertions
+`bbox`, `volume`, `overlaps`.
+
+**Assertion DSL:** a bare number means equality (`holes: 1`); `">=n"`, `"<=n"`, `">n"`,
+`"<n"`, or a range `"a..b"`; an optional unit suffix `mm`/`cm`/`mm3`/`cm3`; and for
+`bbox`, a componentwise vector `"<=[x,y,z]"` / `">=[x,y,z]"` where `*` skips an axis.
+The parser is strict — a malformed assertion fails loudly.
+
+**Gates vs. warnings:** exact facts are **gates** (a failure sets a non-zero exit code);
+`minWall` is always a **warning** (reported, never fails) — and is **not yet computed**
+(it reports "pending SDF" until the voxel/SDF measurement lands). `holes`/`watertight`
+are Manifold-only, so those assertions **skip** on OCCT parts rather than fail.
+
+**Running it:**
+
+```bash
+npx partforge measure src/parts/<part>.js          # auto-runs verify if a block exists
+npx partforge measure src/parts/<part>.js --process resin   # force/override a profile
+npx partforge measure src/parts/<part>.js --no-verify       # facts only
+```
+
+…and in vitest:
+
+```js
+import { verify } from "partforge/testing";
+test("part is printable and correct", () => {
+  expect(verify(kernel, part).ok).toBe(true);
+});
+```
+
+Checks run across the **default config plus every preset** (or your `cases` list); a
+preset that changes only parameters no on-screen sub-part reads is deduplicated, so
+coverage is cheap.
+
+---
+
 ## Fillet & chamfer (automatic OCCT backend)
 
 Two backends build your part: **Manifold** (fast meshes — preview, STL, 3MF) and

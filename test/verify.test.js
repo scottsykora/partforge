@@ -3,6 +3,7 @@ import { evaluateCase } from "../src/testing/verify.js";
 import { resolveProfile } from "../src/testing/dfm-profiles.js";
 import { measure as measureReal } from "../src/testing/measure.js";
 import { verify as verifyFromEntry } from "../src/testing.js";
+import demo from "../src/parts/demo.js";
 
 test("verify is exported from the partforge/testing entry", () => {
   expect(typeof verifyFromEntry).toBe("function");
@@ -85,4 +86,11 @@ test("dedup: cases with the same param-deps signature reuse one measure call", (
   const v = verify(k, part, { measureFn });
   expect(v.cases).toHaveLength(3);
   expect(calls).toBe(2);
+});
+
+test("the demo part ships a passing verify block", () => {
+  const v = verify(k, demo);
+  expect(v.ok).toBe(true);
+  expect(v.cases.map((c) => c.name)).toEqual(["defaults", "M3", "M5"]);
+  expect(v.warnings.some((w) => w.metric === "minWall")).toBe(true);
 });
