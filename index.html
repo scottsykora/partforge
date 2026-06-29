@@ -3,58 +3,267 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>partforge — one script → a parametric-CAD app</title>
-    <meta name="description" content="Live example parts built with partforge: a 3-D viewer, control panel, and STL/STEP/3MF export from one declarative part definition." />
+    <title>partforge — one part definition → a whole CAD app</title>
+    <meta name="description" content="partforge turns one declarative part definition into a full parametric-CAD web app. Three live example parts you can open, adjust, and export." />
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        --paper: #f6f7f4;
+        --paper-2: #fdfdfb;
+        --ink: #15181d;        /* the demos' background, reused as drafting ink */
+        --graphite: #5b636e;
+        --rule: #d3d7da;
+        --rule-soft: #e7eae6;
+        --blue: #1f5bd6;
+        --blue-wash: #eaf0fc;
+        --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+        --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
       * { box-sizing: border-box; }
-      body { margin: 0; font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-             background: #15181d; color: #e7e9ee; -webkit-font-smoothing: antialiased; }
-      .wrap { max-width: 860px; margin: 0 auto; padding: 64px 24px 96px; }
-      h1 { font-size: 2.4rem; margin: 0 0 .3em; letter-spacing: -0.02em; }
-      .lede { font-size: 1.15rem; color: #aab1bd; margin: 0 0 2.5em; max-width: 62ch; }
-      .lede strong { color: #e7e9ee; }
-      .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
-      a.card { display: block; padding: 22px; border: 1px solid #2a2f38; border-radius: 12px;
-               background: #1a1e24; color: inherit; text-decoration: none;
-               transition: border-color .15s ease, transform .15s ease; }
-      a.card:hover { border-color: #4c8bf5; transform: translateY(-2px); }
-      a.card.feature { border-color: #34507e; }
-      .card h2 { margin: 0 0 .35em; font-size: 1.15rem; }
-      .card p { margin: 0; color: #9aa2af; font-size: .95rem; }
-      .tag { display: inline-block; font-size: .7rem; text-transform: uppercase; letter-spacing: .08em;
-             color: #4c8bf5; margin-bottom: .6em; }
-      footer { margin-top: 3em; color: #6b7280; font-size: .85rem; }
-      footer a { color: #8aa0c0; }
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0;
+        background: var(--paper);
+        background-image:
+          linear-gradient(var(--rule-soft) 1px, transparent 1px),
+          linear-gradient(90deg, var(--rule-soft) 1px, transparent 1px);
+        background-size: 28px 28px;
+        background-position: -1px -1px;
+        color: var(--ink);
+        font-family: var(--sans);
+        font-size: 16px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: inherit; }
+      .sheet { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+      /* ── title block ───────────────────────────────────────── */
+      .titleblock {
+        display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; justify-content: space-between;
+        padding: 18px 0 14px; border-bottom: 1px solid var(--ink);
+      }
+      .wordmark { font-family: var(--mono); font-weight: 700; font-size: 1.05rem; letter-spacing: -0.02em; }
+      .wordmark b { color: var(--blue); }
+      .meta { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.04em; color: var(--graphite); text-transform: uppercase; }
+      .meta span { white-space: nowrap; }
+
+      /* ── hero ──────────────────────────────────────────────── */
+      .hero { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 40px; align-items: center;
+              padding: 64px 0 52px; border-bottom: 1px solid var(--rule); }
+      .eyebrow { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--blue); margin: 0 0 18px; }
+      .eyebrow::before { content: "◇ "; opacity: 0.7; }
+      h1 { font-family: var(--mono); font-weight: 600; font-size: clamp(2.1rem, 4.6vw, 3.4rem); line-height: 1.04; letter-spacing: -0.03em; margin: 0 0 22px; text-wrap: balance; }
+      h1 .arrow { color: var(--blue); }
+      .lede { font-size: 1.06rem; color: #2a2f37; margin: 0 0 22px; max-width: 46ch; }
+      .lede b { color: var(--ink); font-weight: 600; }
+      .heronote { font-family: var(--mono); font-size: 0.74rem; color: var(--graphite); letter-spacing: 0.02em; }
+      .heronote .blink { color: var(--blue); }
+
+      /* drawing (generated from the real planter model) */
+      .drawing { width: 100%; height: auto; display: block; }
+      .drawing .edge { fill: none; stroke: var(--ink); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+      .drawing .edge.rim { stroke-width: 1.9; }
+      .drawing .edge.inner { stroke-width: 1; }
+      .drawing .dim { stroke: var(--graphite); stroke-width: 1; }
+      .drawing .dim-hot { stroke: var(--blue); stroke-width: 1.2; }
+      .drawing .ext { stroke: var(--graphite); stroke-width: 0.75; opacity: 0.55; stroke-dasharray: 3 3; }
+      .drawing text { font-family: var(--mono); fill: var(--graphite); font-size: 13px; }
+      .drawing text.hot { fill: var(--blue); }
+      .drawing text.tag { fill: var(--ink); font-size: 12px; }
+
+      /* ── parameters strip ──────────────────────────────────── */
+      .params { display: flex; flex-wrap: wrap; align-items: center; gap: 0; border-bottom: 1px solid var(--rule); }
+      .params .label { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--graphite); padding: 16px 22px 16px 0; }
+      .param { font-family: var(--mono); font-size: 0.86rem; padding: 16px 22px; border-left: 1px solid var(--rule); }
+      .param .k { color: var(--graphite); }
+      .param .v { color: var(--ink); font-weight: 600; }
+      .param .v em { color: var(--blue); font-style: normal; }
+
+      /* ── examples ──────────────────────────────────────────── */
+      .examples { padding: 44px 0 10px; }
+      .sectlabel { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--graphite); margin: 0 0 20px; display: flex; align-items: center; gap: 14px; }
+      .sectlabel::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+      .grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 18px; }
+
+      .card { position: relative; display: flex; flex-direction: column; min-height: 230px; background: var(--paper-2); border: 1px solid var(--ink); text-decoration: none; transition: transform 0.18s ease, box-shadow 0.18s ease; }
+      .card:hover { transform: translateY(-3px); box-shadow: 6px 6px 0 var(--blue-wash); }
+      .card:focus-visible { outline: 2.5px solid var(--blue); outline-offset: 3px; }
+      .card .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 18px 0; }
+      .card .glyph { color: var(--ink); flex: none; }
+      .card.feature .glyph { color: var(--blue); }
+      .card .tag { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--graphite); }
+      .card.feature .tag { color: var(--blue); }
+      .card h2 { font-family: var(--mono); font-weight: 600; font-size: 1.18rem; letter-spacing: -0.01em; margin: 14px 18px 6px; }
+      .card p { margin: 0 18px 16px; color: #3a414a; font-size: 0.92rem; line-height: 1.5; }
+      .card .spc { flex: 1; }
+      .card .block { border-top: 1px solid var(--rule); display: flex; justify-content: space-between; align-items: center; padding: 11px 18px; font-family: var(--mono); font-size: 0.7rem; color: var(--graphite); }
+      .card .block .open { color: var(--blue); font-weight: 600; }
+      .card .block .open::after { content: " →"; }
+
+      /* ── footer ────────────────────────────────────────────── */
+      footer { margin-top: 40px; border-top: 1px solid var(--ink); padding: 18px 0 56px; display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: space-between; font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.03em; color: var(--graphite); }
+      footer a { color: var(--blue); text-decoration: none; }
+      footer a:hover { text-decoration: underline; }
+
+      /* ── load reveal (one orchestrated moment) ─────────────── */
+      @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+      .reveal { opacity: 0; animation: rise 0.6s ease forwards; }
+      .d1 { animation-delay: 0.05s; } .d2 { animation-delay: 0.16s; } .d3 { animation-delay: 0.27s; } .d4 { animation-delay: 0.38s; }
+      .drawing .dimgroup { opacity: 0; animation: rise 0.7s ease 0.95s forwards; } /* measurements settle in after the part */
+      @media (prefers-reduced-motion: reduce) {
+        .reveal, .drawing .dimgroup { animation: none; opacity: 1; transform: none; }
+      }
+
+      /* ── responsive ────────────────────────────────────────── */
+      @media (max-width: 860px) {
+        .hero { grid-template-columns: 1fr; gap: 36px; padding: 44px 0 40px; }
+        .drawing-wrap { max-width: 360px; margin: 0 auto; }
+        .grid { grid-template-columns: 1fr; }
+        .params .label { padding-bottom: 4px; }
+        .param:first-of-type { border-left: 0; padding-left: 0; }
+      }
+      @media (max-width: 520px) {
+        .param { padding: 12px 16px; }
+        .param:nth-child(2) { padding-left: 0; border-left: 0; }
+      }
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <h1>partforge</h1>
-      <p class="lede">Write one declarative <strong>part definition</strong> — geometry build
-        functions plus a parameter schema — and partforge renders a full parametric-CAD web app:
-        a 3-D viewer, a control panel, geometry workers, and STL / STEP / 3MF export. The pages
-        below are live example parts. Drag to orbit, tweak the controls, download a printable file.</p>
-      <div class="grid">
-        <a class="card feature" href="planter.html">
-          <span class="tag">Featured</span>
-          <h2>🪴 Faceted Planter</h2>
-          <p>Facets, twist, taper, and an optional drainage hole — every control has an obvious
-             reason to change it before printing. Thin the wall and watch the DFM warning fire.</p>
-        </a>
-        <a class="card" href="demo.html">
-          <h2>Spacer</h2>
-          <p>The minimal worked example: a parametric standoff with screw-size presets, an
-             optional base flange, and a clearance bore.</p>
-        </a>
-        <a class="card" href="filleted-box.html">
-          <h2>Filleted Box</h2>
-          <p>Native fillet and chamfer that auto-route to the OCCT backend for exact STEP export.</p>
-        </a>
-      </div>
+    <div class="sheet">
+      <header class="titleblock">
+        <div class="wordmark">part<b>forge</b></div>
+        <div class="meta"><span>v0.6.0</span> · <span>MIT</span> · <span>three.js + Manifold / Replicad</span></div>
+      </header>
+
+      <section class="hero">
+        <div>
+          <p class="eyebrow reveal d1">Parametric CAD framework</p>
+          <h1 class="reveal d2">One part definition <span class="arrow">→</span><br />a whole CAD app.</h1>
+          <p class="lede reveal d3">You write one declarative <b>part definition</b> — geometry build
+            functions plus a parameter schema. partforge renders the rest: a 3-D viewer, a live control
+            panel, geometry workers, and <b>STL / STEP / 3MF</b> export.</p>
+          <p class="heronote reveal d4">The drawings below are live — open one, drag a slider,
+            <span class="blink">download a printable file.</span></p>
+        </div>
+
+        <div class="drawing-wrap reveal d3">
+          <!-- signature: the planter drawn from its real model geometry (planter.js defaults),
+               projected in a slight top-down front view with dimensions from the same projection -->
+          <svg class="drawing" viewBox="0 0 360 360" role="img"
+               aria-label="Dimensioned elevation of the faceted planter, generated from the real model — outer diameter 70 mm, height 90 mm, wall 1.6 mm, 6 facets, 30 degree twist.">
+            <g class="edges">
+              <polyline class="edge" points="216.2,257.1 219.1,244.8 221.9,232.6 224.8,220.3 227.7,208.1 230.6,196.0 233.4,183.9 236.3,171.9 239.1,159.9 241.9,147.9 244.7,136.0 247.4,124.2 250.0,112.3 252.7,100.6 255.2,88.9" style="opacity:0.46"/>
+              <polyline class="edge" points="252.4,278.6 253.3,267.0 254.2,255.5 255.0,244.0 255.6,232.5 256.2,221.0 256.6,209.6 256.9,198.2 257.1,186.8 257.1,175.4 257.0,164.0 256.8,152.6 256.4,141.3 255.9,129.9 255.2,118.6" style="opacity:0.70"/>
+              <polyline class="edge" points="216.2,300.0 214.3,288.3 212.3,276.5 210.2,264.8 207.9,253.0 205.6,241.1 203.2,229.3 200.6,217.4 197.9,205.5 195.2,193.6 192.3,181.6 189.4,169.6 186.3,157.6 183.2,145.5 180.0,133.4" style="opacity:0.87"/>
+              <polyline class="edge" points="143.8,300.0 140.9,287.3 138.1,274.6 135.2,261.9 132.3,249.1 129.4,236.2 126.6,223.3 123.7,210.4 120.9,197.4 118.1,184.4 115.3,171.3 112.6,158.2 110.0,145.0 107.3,131.8 104.8,118.6" style="opacity:0.80"/>
+              <polyline class="edge" points="107.6,278.6 106.7,265.1 105.8,251.7 105.0,238.2 104.4,224.7 103.8,211.2 103.4,197.6 103.1,184.1 102.9,170.5 102.9,156.9 103.0,143.3 103.2,129.7 103.6,116.1 104.1,102.5 104.8,88.9" style="opacity:0.57"/>
+              <polyline class="edge" points="143.8,257.1 145.7,243.9 147.7,230.6 149.8,217.4 152.1,204.2 154.4,191.1 156.8,177.9 159.4,164.8 162.1,151.8 164.8,138.7 167.7,125.7 170.6,112.7 173.7,99.8 176.8,86.9 180.0,74.0" style="opacity:0.40"/>
+              <line class="edge" x1="216.2" y1="257.1" x2="252.4" y2="278.6" style="opacity:0.44"/>
+              <line class="edge" x1="252.4" y1="278.6" x2="216.2" y2="300.0" style="opacity:0.63"/>
+              <line class="edge" x1="216.2" y1="300.0" x2="143.8" y2="300.0" style="opacity:0.72"/>
+              <line class="edge" x1="143.8" y1="300.0" x2="107.6" y2="278.6" style="opacity:0.63"/>
+              <line class="edge" x1="107.6" y1="278.6" x2="143.8" y2="257.1" style="opacity:0.44"/>
+              <line class="edge" x1="143.8" y1="257.1" x2="216.2" y2="257.1" style="opacity:0.34"/>
+              <line class="edge rim" x1="255.2" y1="88.9" x2="255.2" y2="118.6" style="opacity:0.73"/>
+              <line class="edge rim" x1="255.2" y1="118.6" x2="180.0" y2="133.4" style="opacity:0.94"/>
+              <line class="edge rim" x1="180.0" y1="133.4" x2="104.8" y2="118.6" style="opacity:0.94"/>
+              <line class="edge rim" x1="104.8" y1="118.6" x2="104.8" y2="88.9" style="opacity:0.73"/>
+              <line class="edge rim" x1="104.8" y1="88.9" x2="180.0" y2="74.0" style="opacity:0.53"/>
+              <line class="edge rim" x1="180.0" y1="74.0" x2="255.2" y2="88.9" style="opacity:0.53"/>
+              <line class="edge inner" x1="251.9" y1="89.5" x2="251.9" y2="117.9" style="opacity:0.73"/>
+              <line class="edge inner" x1="251.9" y1="117.9" x2="180.0" y2="132.1" style="opacity:0.93"/>
+              <line class="edge inner" x1="180.0" y1="132.1" x2="108.1" y2="117.9" style="opacity:0.93"/>
+              <line class="edge inner" x1="108.1" y1="117.9" x2="108.1" y2="89.5" style="opacity:0.73"/>
+              <line class="edge inner" x1="108.1" y1="89.5" x2="180.0" y2="75.3" style="opacity:0.54"/>
+              <line class="edge inner" x1="180.0" y1="75.3" x2="251.9" y2="89.5" style="opacity:0.54"/>
+            </g>
+            <g class="dimgroup">
+              <line class="ext" x1="104.8" y1="70" x2="104.8" y2="42.0"/>
+              <line class="ext" x1="255.2" y1="70" x2="255.2" y2="42.0"/>
+              <line class="dim-hot" x1="104.8" y1="48.0" x2="255.2" y2="48.0" marker-start="url(#b)" marker-end="url(#b)"/>
+              <text class="hot" x="180.0" y="40.0" text-anchor="middle">⌀ 70 mm</text>
+            </g>
+            <g class="dimgroup">
+              <line class="ext" x1="104.8" y1="74.0" x2="58" y2="74.0"/>
+              <line class="ext" x1="107.6" y1="300.0" x2="58" y2="300.0"/>
+              <line class="dim" x1="58" y1="74.0" x2="58" y2="300.0" marker-start="url(#a)" marker-end="url(#a)"/>
+              <text x="52" y="187.0" transform="rotate(-90 52 187.0)" text-anchor="middle">90 mm</text>
+            </g>
+            <g class="dimgroup">
+              <line class="dim" x1="255.2" y1="88.9" x2="346" y2="70.9" marker-start="url(#a)"/>
+              <text x="344" y="67.9" text-anchor="end">wall 1.6</text>
+            </g>
+            <g class="dimgroup"><text class="tag" x="180" y="330" text-anchor="middle">n = 6 facets · twist 30°</text></g>
+            <defs>
+              <marker id="a" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto"><path d="M1 1 L8 4.5 L1 8" fill="none" stroke="#5b636e" stroke-width="1"/></marker>
+              <marker id="b" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto"><path d="M1 1 L8 4.5 L1 8" fill="none" stroke="#1f5bd6" stroke-width="1.1"/></marker>
+            </defs>
+          </svg>
+        </div>
+      </section>
+
+      <section class="params" aria-label="Planter default parameters">
+        <span class="label">Planter · defaults</span>
+        <span class="param"><span class="k">facets </span><span class="v">6</span></span>
+        <span class="param"><span class="k">height </span><span class="v">90<span style="color:var(--graphite)">mm</span></span></span>
+        <span class="param"><span class="k">taper </span><span class="v">1.2</span></span>
+        <span class="param"><span class="k">wall </span><span class="v"><em>1.6</em><span style="color:var(--graphite)">mm</span></span></span>
+        <span class="param"><span class="k">twist </span><span class="v">30<span style="color:var(--graphite)">°</span></span></span>
+      </section>
+
+      <section class="examples">
+        <p class="sectlabel">Live example parts</p>
+        <div class="grid">
+          <a class="card feature" href="planter.html">
+            <div class="top">
+              <span class="tag">Featured</span>
+              <svg class="glyph" width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+                <polygon points="17,3 30,10.5 30,23.5 17,31 4,23.5 4,10.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                <polygon points="17,9 24,13 24,21 17,25 10,21 10,13" fill="none" stroke="currentColor" stroke-width="1" opacity="0.5"/>
+              </svg>
+            </div>
+            <h2>Faceted Planter</h2>
+            <p>Facets, taper, twist, and a drainage hole — every control has an obvious reason to touch
+               it before printing. Thin the wall and watch the DFM warning fire.</p>
+            <div class="spc"></div>
+            <div class="block"><span>mm · Manifold · STL / 3MF</span><span class="open">open</span></div>
+          </a>
+
+          <a class="card" href="demo.html">
+            <div class="top">
+              <span class="tag">Standoff</span>
+              <svg class="glyph" width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+                <rect x="12" y="4" width="10" height="26" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                <line x1="17" y1="4" x2="17" y2="30" stroke="currentColor" stroke-width="1" opacity="0.5"/>
+              </svg>
+            </div>
+            <h2>Spacer</h2>
+            <p>The minimal worked example: a parametric standoff with screw-size presets, an optional
+               base flange, and a clearance bore.</p>
+            <div class="spc"></div>
+            <div class="block"><span>mm · Manifold · STL / 3MF</span><span class="open">open</span></div>
+          </a>
+
+          <a class="card" href="filleted-box.html">
+            <div class="top">
+              <span class="tag">Native CAD</span>
+              <svg class="glyph" width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+                <rect x="5" y="9" width="24" height="18" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                <circle cx="17" cy="18" r="3.5" fill="none" stroke="currentColor" stroke-width="1" opacity="0.6"/>
+              </svg>
+            </div>
+            <h2>Filleted Box</h2>
+            <p>Native fillet and chamfer that auto-route to the OCCT backend — the one that exports
+               exact STEP for downstream CAD.</p>
+            <div class="spc"></div>
+            <div class="block"><span>mm · OCCT · STL / STEP / 3MF</span><span class="open">open</span></div>
+          </a>
+        </div>
+      </section>
+
       <footer>
-        Built with <a href="https://github.com/scottsykora/partforge">partforge</a> ·
-        three.js + Manifold / Replicad.
+        <span>Every part above is one script.</span>
+        <span><a href="https://github.com/scottsykora/partforge">github.com/scottsykora/partforge</a></span>
       </footer>
     </div>
   </body>
