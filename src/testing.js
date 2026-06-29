@@ -10,3 +10,5 @@ export { buildView } from "./testing/build.js";
 export { measure } from "./testing/measure.js";
 export { renderViews } from "./testing/render.js";
 export { verify } from "./testing/verify.js";
+export { buildBVH } from "./testing/bvh.js";
+export { minWall } from "./testing/min-wall.js";
