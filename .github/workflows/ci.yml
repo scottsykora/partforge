@@ -17,4 +17,6 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npx playwright install --with-deps chromium # browser for the smoke check
-      - run: npm run check
+      - run: node scripts/check-app.mjs demo.html
+      - run: node scripts/check-app.mjs planter.html
+      - run: node scripts/check-app.mjs filleted-box.html
