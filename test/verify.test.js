@@ -24,12 +24,12 @@ test("passes exact gates from profile + expect", () => {
   expect(byKey(checks, "view", "bbox").status).toBe("pass");       // from profile.bed
 });
 
-test("min-wall is a warn (pending SDF), never a fail", () => {
+test("min-wall with no reading is a warn (unavailable), never a fail", () => {
   const checks = evaluateCase(facts, { profile: resolveProfile("fdm-pla"), expect: {} });
   const w = byKey(checks, "subpart", "minWall");
   expect(w.kind).toBe("warn");
   expect(w.status).toBe("warn");
-  expect(w.message).toMatch(/pending SDF/);
+  expect(w.message).toMatch(/unavailable/);
 });
 
 test("a violated exact gate is a fail", () => {
@@ -63,11 +63,13 @@ const tube = (od, h) => ({
   views: { v: { label: "V" } },
 });
 
-test("verify passes a sound part and reports a min-wall warning", () => {
+test("verify passes a sound part and reports a real min-wall measurement", () => {
   const part = { ...tube(12, 10), verify: { process: "fdm-pla", expect: { tube: { holes: 1 }, _view: { overlaps: 0 } } } };
   const v = verify(k, part);
   expect(v.ok).toBe(true);
-  expect(v.warnings.some((w) => w.metric === "minWall")).toBe(true);
+  const mw = v.cases[0].checks.find((c) => c.metric === "minWall");
+  expect(mw.actual).toBeGreaterThan(1.2);   // healthy wall (~4 mm)
+  expect(mw.status).toBe("pass");
 });
 
 test("verify fails a violated gate", () => {
@@ -92,5 +94,7 @@ test("the demo part ships a passing verify block", () => {
   const v = verify(k, demo);
   expect(v.ok).toBe(true);
   expect(v.cases.map((c) => c.name)).toEqual(["defaults", "M3", "M5"]);
-  expect(v.warnings.some((w) => w.metric === "minWall")).toBe(true);
+  const mw = v.cases[0].checks.find((c) => c.metric === "minWall");
+  expect(mw.actual).toBeGreaterThan(1.2);   // spacer wall ~2.2 mm
+  expect(mw.status).toBe("pass");
 });
