@@ -72,3 +72,27 @@ test("a feature built with the vocabulary equals the raw-primitive build", () =>
   viaRaw = viaRaw.cut(k.cylinder(1.5, 1.5, 12).translate([15, 15, -1]));
   sameGeom(viaVocab, viaRaw);
 });
+
+test('along("+Z") returns a fresh handle with identity geometry', () => {
+  const s = k.box([0, 0, 0], [2, 4, 6]);
+  const r = s.along("+Z");
+  expect(r).not.toBe(s);
+  sameGeom(r, k.box([0, 0, 0], [2, 4, 6]));
+});
+
+test("sugar methods are shared across solids (no per-solid closures)", () => {
+  expect(k.box([0,0,0],[1,1,1]).rotateX).toBe(k.box([0,0,0],[2,2,2]).rotateX);
+});
+
+test("rotateAbout does a TRUE axis-angle rotation for a non-basis axis (matches analytic ground truth)", () => {
+  const r = k.box([0, 0, 0], [2, 4, 6]).rotateAbout({ axis: [1, 1, 0], deg: 90 });
+  const b = r.boundingBox();
+  expect(b.min[0]).toBeCloseTo(0, 3);      expect(b.max[0]).toBeCloseTo(7.2426, 3);
+  expect(b.min[1]).toBeCloseTo(-4.2426, 3); expect(b.max[1]).toBeCloseTo(3, 3);
+  expect(b.min[2]).toBeCloseTo(-1.4142, 3); expect(b.max[2]).toBeCloseTo(2.8284, 3);
+});
+
+test("basis-axis rotateAbout is unchanged (still equals the euler path)", () => {
+  sameGeom(k.box([0,0,0],[2,4,6]).rotateAbout({ axis: "Z", deg: 30 }),
+           k.box([0,0,0],[2,4,6]).rotate(30, [0,0,0], [0,0,1]));
+});
