@@ -138,7 +138,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         const cs = T(CrossSection.ofPolygons([pts]));
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
         const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
-        return T(cs.extrude(height, nDiv, twist, scaleTop));
+        // Manifold's extrude scaleTop is a Vec2 — a scalar is NOT broadcast (it scales
+        // X and drives Y to 0, squishing the top to a line). Broadcast for a uniform taper.
+        return T(cs.extrude(height, nDiv, twist, [scaleTop, scaleTop]));
       }),
     helixSweptTube: (o) => cached(h("helixSweptTube", o, tube), () => T(helixTube(wasm, { ...o, ...tube }))),
     revolve: (pts, { degrees = 360 } = {}) =>
