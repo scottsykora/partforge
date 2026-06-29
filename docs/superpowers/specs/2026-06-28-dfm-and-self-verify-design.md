@@ -1,7 +1,9 @@
 # DFM checks + co-located self-verification for partforge — design
 
 **Date:** 2026-06-28
-**Status:** Approved (design). Verify engine + DSL slice implemented (2026-06-28); voxel/SDF core + min-wall computation pending (next plan).
+**Status:** Approved (design). Verify engine + DSL slice implemented + merged (2026-06-28).
+Min-wall slice implemented (2026-06-28): ray/shot on a reusable triangle BVH (voxel/SDF
+spiked and rejected). Reusable `closestPoint` ready for a future clearance/min-feature slice.
 **Repo:** `partforge` (sibling to `Drum Machine/`)
 **Builds on:** the `measure` / `render` harness (2026-06-22) — this is the
 printability-linting follow-on that harness explicitly left out of scope.
@@ -52,10 +54,11 @@ The agent/CI verify loop is the consumer: edit the declarative part → run
    unrecognized form (no silent skips).
 7. **Case checking is sub-part-aware:** reuse the `param-deps` analyzer so a preset only
    rebuilds/re-checks the sub-parts whose relevant params actually change vs. defaults.
-8. **Min-wall method:** spike a **voxel/SDF** approach as a **modular, reusable core**
-   (not ray/shot), because a queryable signed distance field is reusable for clearance,
-   min-feature, and offset checks. Gated by an accuracy/perf evaluation with a documented
-   **ray/shot fallback**.
+8. **Min-wall method:** originally chose to spike a **voxel/SDF** core for reusability.
+   **The spike (2026-06-28) rejected SDF** (inaccurate, resolution-fragile on thin walls,
+   ~500× slower) and triggered the documented fallback: **ray/shot on a reusable triangle
+   BVH** — accurate, fast, and the BVH (closest-point + raycast) is the reusable primitive
+   for future clearance/min-feature. See "Min-wall thickness" below.
 
 ## The `verify` schema (co-located declaration)
 
@@ -188,57 +191,70 @@ Three independently-testable internals:
   **or** any verify hard gate fails. `--no-verify` opts out; `--json` (exists) includes
   everything.
 
-## Min-wall thickness: modular SDF core + first consumer
+## Min-wall thickness: ray/shot on a reusable triangle BVH
 
-### `sdf.js` (new, reusable) — the spike's durable asset
+### Spike outcome (2026-06-28) — voxel/SDF rejected, ray/shot adopted
+
+The voxel/SDF approach from decision 8 was prototyped and measured against a ray/shot
+baseline on known fixtures. **SDF failed the go/no-go gate** and the documented fallback
+was triggered:
+
+| fixture (true wall) | SDF @0.4 mm | SDF @0.25 mm | ray/shot |
+|---|---|---|---|
+| tube (1.0) | 0.88 | 0.93 (14.4 s) | **1.00 (27 ms)** |
+| solid block (5.0) | 4.80 | 5.00 | **5.00 (<1 ms)** |
+| plate (1.2) | 0.80 (−33%) | 1.00 (−17%) | **1.20 (<1 ms)** |
+| thin tube (0.6) | **10.0 (catastrophic)** | 0.57 | **0.60 (20 ms)** |
+
+SDF (1) systematically under-reports (medial-distance quantization), (2) is
+resolution-fragile and **catastrophically wrong when a wall is thinner than ~1.5
+voxels** — exactly the case min-wall most needs to catch — and (3) is ~500× slower
+(brute-force, scaling badly with triangle count). Ray/shot was **exact on every fixture
+and fast**. The reusability rationale for SDF also doesn't hold up: the reusable spatial
+primitive that serves min-wall *and* future clearance/min-feature is a **triangle BVH**
+(closest-point + raycast), not a voxel grid.
+
+### `bvh.js` (new, reusable) — the durable spatial primitive
 
 ```
-buildSDF(mesh, { voxelSize | resolution, sign? }) → {
-  dims:[nx,ny,nz], origin, voxelSize,
-  data: Float32Array,        // signed distance per voxel (− outside / + inside)
-  sample(x,y,z) → number,    // trilinear query at an arbitrary point
+buildBVH(mesh) → {
+  raycast(origin, dir, { tMin?, tMax?, skipTri? }) → { t, tri } | null,  // nearest hit
+  closestPoint(p) → { point, dist, tri },                                 // for future use
 }
 ```
 
-- **Distance:** unsigned distance to the nearest triangle, computed in a narrow band
-  around the surface and propagated inward (fast-sweeping). The spike may start
-  brute-force-per-voxel and optimize once correctness is pinned.
-- **Sign:** Manifold meshes are watertight, so inside/outside is cheap (ray-parity).
-  `sign` is pluggable so a winding-number variant can drop in for dirty meshes later.
-- **Resolution policy:** `voxelSize` defaults to ≈ `profile.minWall / 3` (a thin wall
-  spans ~3 voxels), with a hard voxel-count cap and a clear "resolution too fine for
-  bbox" warning instead of an OOM. Narrow-band storage keeps memory bounded.
-- Operates on the **mesh `measure` already extracts** (positions/indices) — no new kernel
-  dependency; works for both Manifold and OCCT parts (both produce a mesh).
+- An **AABB tree over the mesh triangles** (median split), with a slab ray–AABB test
+  and pruned traversal. Built once per sub-part mesh.
+- Operates on the **non-indexed triangle soup `measure`/`toMesh` already produces**
+  (9 floats per triangle) — no new kernel dependency; works for Manifold and OCCT meshes.
+- `raycast` returns the nearest forward hit; `closestPoint` is included now because it is
+  the query a future **clearance/gap** and **min-feature** check needs (query one
+  sub-part's BVH with another's surface points → min distance). This is the reusability
+  the slice is paying for, via a structure that is also fast.
 
-### Min-wall as the first SDF consumer
+### `min-wall.js` (new) — first BVH consumer
 
-From the interior distance field, thickness at a medial-axis (ridge) point ≈
-`2 × distance`. Take the minimum over ridge points classified as a **sheet** (a wall)
-rather than a **curve/point** (an edge or spike) — that classification is what stops
-bores and corners from reading as thin walls. Returns `{ value, location }`, or `null`
-when no reliable reading exists (a failed measurement must never masquerade as a thin
-wall). Always a **warn**.
+Sample each surface triangle's centroid; cast a ray **inward** (reverse of the triangle's
+outward normal, nudged off the surface) and take the nearest hit via `raycast` (skipping
+the source triangle). That hit distance is the local material thickness; the minimum over
+all samples is the reported `minWall`, with the `[x,y,z]` of the thin spot.
 
-**Documented limitations:** holes/bores read thin near their rims; very tight concave
-corners can under-report. Acceptable for a warning whose job is "look here," and the
-reason it does not gate `ok`.
+- **Honesty guards:** skip near-grazing samples (ray ≈ parallel to a face) and degenerate
+  triangles; ignore hits beyond a sane max (a ray exiting into open air is not a wall);
+  return `{ value, location }`, or **`null`** when no reliable reading exists (a failed
+  measurement must never masquerade as a thin wall).
+- **Always a warn.** Even though the spike shows ray/shot is exact on fixtures, this slice
+  keeps `minWall` a warning (never gates `ok`), per the original decision. Promotion to a
+  hard gate is a deliberate follow-up after validation on real curved parts.
+- **Documented limitations:** holes/bores can read thin near their rims; centroid
+  sampling can miss a thin spot that falls between sampled triangles on a coarse mesh.
+  Acceptable for a warning whose job is "look here."
 
-### Reusable later (designed-for, not v1)
+### Reusable later (designed-for, not this slice)
 
-Same SDF core, future consumers: **clearance/gap** between two sub-parts (query A's SDF
-at B's surface → min positive distance = real gap; this revives the deferred clearance
-gate cheaply), **min feature size**, **shell/offset validation**, a faster `overlaps`
-proxy.
-
-### Spike gate (go / no-go)
-
-v1 delivers the SDF core + min-wall-via-SDF behind an explicit **evaluation**: accuracy
-on known fixtures (a ~1 mm-wall tube → ~1.0, a solid block → large, the drum) and
-wall-clock vs a quick ray/shot baseline. If accurate and not pathologically slow, it
-ships. If it underperforms, fall back to ray/shot for min-wall and **keep the SDF core**
-for clearance/feature use. Either way min-wall is a warn, so the spike can't block a
-release.
+Same BVH, future consumers: **clearance/gap** between two sub-parts (query A's BVH
+`closestPoint` at B's surface vertices → min distance = real gap; revives the deferred
+clearance gate), **min feature size**, **shell/offset validation**.
 
 ## Testing
 
@@ -248,15 +264,15 @@ release.
 - **Unit — profiles:** resolution by name, inline object, and inline-overrides-named.
 - **Unit — case expander:** the param-deps dedup — assert sub-parts unaffected by a
   preset reuse the defaults result and affected ones recompute.
-- **SDF core:** sampled distance accuracy on analytic shapes (cube center, sphere)
-  within tolerance.
-- **Min-wall fixtures:** ~1 mm-wall tube → ~1.0, solid block → large, degenerate →
+- **BVH core:** `raycast` finds the nearest forward triangle hit; `closestPoint` returns
+  the nearest surface point — both checked against hand-computed expectations on simple
+  geometry, and against a brute-force reference on a real mesh.
+- **Min-wall fixtures (from the spike):** ~1 mm-wall tube → ~1.0, 1.2 mm plate → ~1.2,
+  0.6 mm thin tube → ~0.6, solid block → its thin dimension; degenerate/unreliable →
   `null`.
-- **`verify()` integration:** `demo.js` with a good block → `ok:true`; a deliberately
-  violating block (e.g. `holes: 2`) → `ok:false` naming the right failure.
-- **CLI:** exit 0 on a clean part, 1 on a violating one.
-- **Spike artifact:** a small eval (test or script) reporting SDF min-wall accuracy +
-  timing vs a ray/shot baseline on the fixtures — the go/no-go evidence.
+- **`verify()` integration:** min-wall now reports a real number (not "pending"); a
+  too-thin-wall part produces a min-wall **warning** (never a failure).
+- **CLI:** a min-wall warning prints `⚠` and does not change the exit code.
 
 ## Docs
 

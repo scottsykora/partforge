@@ -48,9 +48,8 @@ test("measure defaults to the first declared view", () => {
   expect(measure(k, boxPart).view).toBe("v");
 });
 
-test("each subpart carries a minWall field (null until the SDF plan implements it)", () => {
-  const r = measure(k, boxPart, "v");
-  expect(r.subparts[0]).toHaveProperty("minWall", null);
-  // opts arg is accepted; 4-arg behaviour is unchanged
-  expect(measure(k, boxPart, "v", {}, { minWall: true }).subparts[0].minWall).toBe(null);
+test("minWall is null unless opts.minWall is set, then it is the measured thickness", () => {
+  expect(measure(k, boxPart, "v").subparts[0].minWall).toBe(null);                 // off by default
+  const w = measure(k, boxPart, "v", {}, { minWall: true }).subparts[0].minWall;   // boxPart is 10x20x5
+  expect(w).toBeCloseTo(5, 1);                                                      // thinnest dimension
 });

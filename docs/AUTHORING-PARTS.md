@@ -439,9 +439,10 @@ facts `measure` already reports — `holes` (through-bores / genus), `volume`,
 The parser is strict — a malformed assertion fails loudly.
 
 **Gates vs. warnings:** exact facts are **gates** (a failure sets a non-zero exit code);
-`minWall` is always a **warning** (reported, never fails) — and is **not yet computed**
-(it reports "pending SDF" until the voxel/SDF measurement lands). `holes`/`watertight`
-are Manifold-only, so those assertions **skip** on OCCT parts rather than fail.
+`minWall` is computed (a ray/shot wall-thickness measurement) and reported as a
+**warning** — it flags walls below the profile's minimum but never fails the build.
+`holes`/`watertight` are Manifold-only, so those assertions **skip** on OCCT parts
+rather than fail.
 
 **Running it:**
 

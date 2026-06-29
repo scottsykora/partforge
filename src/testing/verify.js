@@ -28,7 +28,7 @@ function check(scope, subpart, metric, expr, registry, factsObj) {
   const base = { scope, subpart, metric, kind: reg.kind, expr: String(expr) };
   if (actual === null || actual === undefined) {
     if (reg.manifoldOnly) return { ...base, actual, status: "skip", pass: null, message: "n/a (OCCT backend)" };
-    if (metric === "minWall") return { ...base, actual, status: "warn", pass: null, message: "min wall not yet measured (pending SDF)" };
+    if (metric === "minWall") return { ...base, actual, status: "warn", pass: null, message: "min wall unavailable" };
     return { ...base, actual, status: "skip", pass: null, message: "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
@@ -60,7 +60,8 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const profileSpec = process ?? part.verify?.process;
   const profile = profileSpec ? resolveProfile(profileSpec) : null;
   const expect = part.verify?.expect ?? {};
-  const needMinWall = profile?.minWall != null || JSON.stringify(expect).includes("minWall");
+  const expectMentionsMinWall = Object.values(expect).some((o) => o && typeof o === "object" && "minWall" in o);
+  const needMinWall = profile?.minWall != null || expectMentionsMinWall;
 
   const cases = expandCases(part);
   const readKeys = subPartReadKeys(part, view, part.defaults);
