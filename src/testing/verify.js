@@ -1,4 +1,8 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
+import { measure as defaultMeasure } from "./measure.js";
+import { resolveProfile } from "./dfm-profiles.js";
+import { expandCases } from "./cases.js";
+import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../framework/param-deps.js";
 
 // Metric registry: name → how to pull the value out of facts, and whether a failure
 // is a hard gate or a warning. `manifoldOnly` facts are null on OCCT parts.
@@ -49,4 +53,36 @@ export function evaluateCase(facts, { profile, expect }) {
     for (const [metric, expr] of Object.entries(merged)) checks.push(check("subpart", s.name, metric, expr, SUBPART_METRICS, s));
   }
   return checks;
+}
+
+export function verify(kernel, part, { process, view, measureFn = defaultMeasure } = {}) {
+  view = view ?? Object.keys(part.views)[0];
+  const profileSpec = process ?? part.verify?.process;
+  const profile = profileSpec ? resolveProfile(profileSpec) : null;
+  const expect = part.verify?.expect ?? {};
+  const needMinWall = profile?.minWall != null || JSON.stringify(expect).includes("minWall");
+
+  const cases = expandCases(part);
+  const readKeys = subPartReadKeys(part, view, part.defaults);
+  const signature = (params) =>
+    readKeys === RELEVANT_ALL
+      ? JSON.stringify(params)
+      : [...readKeys.entries()].map(([name, keys]) => `${name}:${relevanceHash([...keys], params)}`).join("|");
+
+  const memo = new Map();
+  const measureCase = (params) => {
+    const key = signature(params);
+    if (!memo.has(key)) memo.set(key, measureFn(kernel, part, view, params, { minWall: needMinWall }));
+    return memo.get(key);
+  };
+
+  const caseResults = cases.map(({ name, params }) => ({ name, params, checks: evaluateCase(measureCase(params), { profile, expect }) }));
+  const all = caseResults.flatMap((c) => c.checks.map((ch) => ({ case: c.name, ...ch })));
+  return {
+    ok: !all.some((c) => c.status === "fail"),
+    view,
+    cases: caseResults,
+    failures: all.filter((c) => c.status === "fail"),
+    warnings: all.filter((c) => c.status === "warn"),
+  };
 }

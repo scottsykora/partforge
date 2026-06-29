@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { evaluateCase } from "../src/testing/verify.js";
 import { resolveProfile } from "../src/testing/dfm-profiles.js";
+import { measure as measureReal } from "../src/testing/measure.js";
 
 const facts = {
   subparts: [{ name: "spacer", holes: 1, volume: 500, surfaceArea: 300, triangleCount: 200, bbox: [8, 8, 10], watertight: true, minWall: null }],
@@ -38,4 +39,45 @@ test("Manifold-only facts skip on OCCT (null actual)", () => {
 
 test("throws on an unknown metric", () => {
   expect(() => evaluateCase(facts, { profile: null, expect: { spacer: { wormholes: 1 } } })).toThrow();
+});
+
+import { beforeAll } from "vitest";
+import Module from "manifold-3d";
+import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { verify } from "../src/testing/verify.js";
+
+let k;
+beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+
+const tube = (od, h) => ({
+  meta: { title: "Tube", units: "mm" },
+  defaults: { od, h, label: "a" },
+  parameters: [{ id: "b", presets: { Big: { od: 20, h: 30 }, Relabel: { label: "z" } } }],
+  parts: { tube: { views: ["v"], build: (kk, p) => kk.cylinder(p.od / 2, p.od / 2, p.h).cut(kk.cylinder(2, 2, p.h + 4).translate([0, 0, -2])) } },
+  views: { v: { label: "V" } },
+});
+
+test("verify passes a sound part and reports a min-wall warning", () => {
+  const part = { ...tube(12, 10), verify: { process: "fdm-pla", expect: { tube: { holes: 1 }, _view: { overlaps: 0 } } } };
+  const v = verify(k, part);
+  expect(v.ok).toBe(true);
+  expect(v.warnings.some((w) => w.metric === "minWall")).toBe(true);
+});
+
+test("verify fails a violated gate", () => {
+  const part = { ...tube(12, 10), verify: { expect: { tube: { holes: 2 } } } };
+  const v = verify(k, part);
+  expect(v.ok).toBe(false);
+  expect(v.failures).toHaveLength(3);   // defaults + 2 presets
+});
+
+test("dedup: cases with the same param-deps signature reuse one measure call", () => {
+  // "Relabel" preset changes only `label`, which the build never reads → same
+  // signature as defaults; "Big" changes od/h → distinct. 3 cases, 2 measures.
+  const part = { ...tube(12, 10), verify: { process: "fdm-pla", cases: ["defaults", "Relabel", "Big"] } };
+  let calls = 0;
+  const measureFn = (...args) => { calls++; return measureReal(...args); };
+  const v = verify(k, part, { measureFn });
+  expect(v.cases).toHaveLength(3);
+  expect(calls).toBe(2);
 });
