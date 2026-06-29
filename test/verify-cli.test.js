@@ -7,13 +7,20 @@ const run = (args) => execFileSync("node", ["bin/cli.js", ...args], { encoding: 
 afterAll(() => {
   rmSync("measure-spacer-spacer.json", { force: true });
   rmSync("measure-bad-v.json", { force: true });
+  rmSync("measure-thin-v.json", { force: true });
 });
 
 test("measure --process runs verify, prints checks, exits 0 for a sound part", () => {
   const out = run(["measure", "src/parts/demo.js", "--process", "fdm-pla"]);
   expect(out).toMatch(/verify/);
-  expect(out).toMatch(/⚠/);            // min-wall warning
   expect(out).toMatch(/all gates passed/);
+});
+
+test("a too-thin wall prints a ⚠ warning but still exits 0", () => {
+  const out = run(["measure", "test/fixtures/thin-wall-part.js"]);
+  expect(out).toMatch(/⚠/);
+  expect(out).toMatch(/minWall/);
+  expect(out).toMatch(/warning/);
 });
 
 test("measure exits 1 when a verify gate fails", () => {
