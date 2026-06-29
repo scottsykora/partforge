@@ -7,6 +7,7 @@ import { createManifoldKernel } from "../src/framework/geometry/manifold-backend
 import { detectBackend } from "../src/framework/geometry/probe.js";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { measure } from "../src/testing/measure.js";
+import { verify } from "../src/testing/verify.js";
 import { renderViews } from "../src/testing/render.js";
 import { createPickServer, requestPicks, formatPickResult } from "../src/framework/pick-request/server.js";
 
@@ -64,11 +65,19 @@ if (["measure", "render"].includes(cmd)) {
     if (cmd === "measure") {
       const report = measure(kernel, part, view);
       printMeasure(report);
+      let vok = true;
+      const processFlag = typeof flags.process === "string" ? flags.process : undefined;
+      if ((part.verify || processFlag) && !flags["no-verify"]) {
+        const v = verify(kernel, part, { process: processFlag, view });
+        printVerify(v);
+        report.verify = v;
+        vok = v.ok;
+      }
       const file = `measure-${slug(report.part)}-${report.view}.json`;
       writeFileSync(file, JSON.stringify(report, null, 2));
       console.log(`\nwrote ${file}`);
       if (flags.json) console.log(JSON.stringify(report, null, 2));
-      process.exit(report.ok ? 0 : 1);
+      process.exit(report.ok && vok ? 0 : 1);
     } else {
       const views = typeof flags.views === "string" ? flags.views.split(",") : undefined;
       const files = await renderViews(kernel, part, view, { views, out: flags.out || "render" });
@@ -92,4 +101,17 @@ function printMeasure(r) {
   const a = r.aggregate;
   console.log(`  ── view  bbox ${a.bbox.map((n) => n.toFixed(1)).join("×")}  vol ${(a.volume / 1000).toFixed(2)}cm³  tris ${a.triangleCount}`);
   console.log(`  overlaps: ${r.overlaps.length ? r.overlaps.map((o) => `${o.a}×${o.b} (${o.volume.toFixed(1)}mm³)`).join(", ") : "none"}`);
+}
+
+function printVerify(v) {
+  console.log(`\nverify:`);
+  for (const c of v.cases) {
+    console.log(`  ${c.name}`);
+    for (const ch of c.checks) {
+      const icon = ch.status === "pass" ? "✓" : ch.status === "fail" ? "✗" : ch.status === "warn" ? "⚠" : "·";
+      console.log(`    ${icon} ${ch.subpart ?? "_view"} ${ch.metric} ${ch.expr}  (${ch.message})`);
+    }
+  }
+  const f = v.failures.length, w = v.warnings.length;
+  console.log(`  result: ${f ? `${f} gate failure(s)` : "all gates passed"}${w ? `, ${w} warning(s)` : ""}`);
 }
