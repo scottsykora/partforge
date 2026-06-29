@@ -3,12 +3,13 @@
 // voxel/SDF approach on both accuracy and speed). For each surface triangle, cast a ray
 // inward (reverse of its outward normal) from the centroid; the nearest hit is the local
 // material thickness. The minimum across samples is the reported min wall.
-import { buildBVH } from "./bvh.js";
+// Works with both Manifold non-indexed meshes and OCCT indexed meshes (via meshTriangles).
+import { buildBVH, meshTriangles } from "./bvh.js";
 
 export function minWall(mesh, { maxThickness } = {}) {
   const pos = mesh.positions;
-  const n = pos.length / 9;
-  if (n === 0) return null;
+  const tris = meshTriangles(mesh);
+  if (tris.length === 0) return null;
 
   // bbox diagonal as the default cap (a ray exiting into open air gets no hit anyway).
   if (maxThickness == null) {
@@ -19,11 +20,8 @@ export function minWall(mesh, { maxThickness } = {}) {
 
   const bvh = buildBVH(mesh);
   let best = Infinity, loc = null;
-  for (let t = 0; t < n; t++) {
-    const o = t * 9;
-    const v0 = [pos[o], pos[o + 1], pos[o + 2]];
-    const v1 = [pos[o + 3], pos[o + 4], pos[o + 5]];
-    const v2 = [pos[o + 6], pos[o + 7], pos[o + 8]];
+  for (let t = 0; t < tris.length; t++) {
+    const [v0, v1, v2] = tris[t];
     const e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
     const e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
     let nx = e1[1] * e2[2] - e1[2] * e2[1], ny = e1[2] * e2[0] - e1[0] * e2[2], nz = e1[0] * e2[1] - e1[1] * e2[0];

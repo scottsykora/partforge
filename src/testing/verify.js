@@ -60,7 +60,8 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const profileSpec = process ?? part.verify?.process;
   const profile = profileSpec ? resolveProfile(profileSpec) : null;
   const expect = part.verify?.expect ?? {};
-  const needMinWall = profile?.minWall != null || JSON.stringify(expect).includes("minWall");
+  const expectMentionsMinWall = Object.values(expect).some((o) => o && typeof o === "object" && "minWall" in o);
+  const needMinWall = profile?.minWall != null || expectMentionsMinWall;
 
   const cases = expandCases(part);
   const readKeys = subPartReadKeys(part, view, part.defaults);

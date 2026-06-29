@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { buildBVH } from "../src/testing/bvh.js";
+import { buildBVH, meshTriangles } from "../src/testing/bvh.js";
 
 // a unit-ish box [0,0,0]..[10,20,5] as a non-indexed triangle soup (12 tris)
 function boxMesh(sx, sy, sz) {
@@ -60,7 +60,60 @@ test("closestPoint matches a brute-force reference on the box", () => {
   for (const p of pts) expect(bvh.closestPoint(p).dist).toBeCloseTo(brute(p), 4);
 });
 
-// reference closest-point-on-triangle (Ericson) for the brute-force check
+// ── INDEXED mesh tests ─────────────────────────────────────────────────────────────────────
+
+// Hand-written INDEXED box: 8 unique verts (24 floats), 12 tris (36 ints)
+function indexedBoxMesh(sx, sy, sz) {
+  const positions = [
+    0, 0, 0,   sx, 0, 0,   sx, sy, 0,   0, sy, 0,
+    0, 0, sz,  sx, 0, sz,  sx, sy, sz,  0, sy, sz,
+  ];
+  const indices = new Uint32Array([
+    0,2,1, 0,3,2,
+    4,5,6, 4,6,7,
+    0,1,5, 0,5,4,
+    1,2,6, 1,6,5,
+    2,3,7, 2,7,6,
+    3,0,4, 3,4,7,
+  ]);
+  return { positions, indices };
+}
+
+test("meshTriangles handles non-indexed soup (9-float / triangle)", () => {
+  const mesh = boxMesh(10, 20, 5);
+  const tris = meshTriangles(mesh);
+  expect(tris).toHaveLength(12);
+  // first triangle's first vertex should be [0,0,0]
+  expect(tris[0][0]).toEqual([0, 0, 0]);
+});
+
+test("meshTriangles handles indexed mesh (8 unique verts, 12 tris)", () => {
+  const mesh = indexedBoxMesh(10, 20, 5);
+  const tris = meshTriangles(mesh);
+  expect(tris).toHaveLength(12);
+  // every triangle should produce 3 distinct coordinate triples
+  for (const [v0, v1, v2] of tris) {
+    expect(v0).toHaveLength(3);
+    expect(v1).toHaveLength(3);
+    expect(v2).toHaveLength(3);
+  }
+});
+
+test("INDEXED mesh — raycast hits the near face", () => {
+  const bvh = buildBVH(indexedBoxMesh(10, 20, 5));
+  const hit = bvh.raycast([5, 10, -3], [0, 0, 1]);
+  expect(hit).not.toBeNull();
+  expect(hit.t).toBeCloseTo(3, 5); // z=0 face is 3 away
+});
+
+test("INDEXED mesh — closestPoint above top face returns correct distance", () => {
+  const bvh = buildBVH(indexedBoxMesh(10, 20, 5));
+  const r = bvh.closestPoint([5, 10, 9]); // 4 above the z=5 top face
+  expect(r.dist).toBeCloseTo(4, 5);
+  expect(r.point[2]).toBeCloseTo(5, 5);
+});
+
+// ── reference closest-point-on-triangle (Ericson) for the brute-force check ────────────────
 function distSqPointTriRef(P, A, B, C) {
   const sub = (p, q) => [p[0]-q[0], p[1]-q[1], p[2]-q[2]];
   const dot = (p, q) => p[0]*q[0] + p[1]*q[1] + p[2]*q[2];
