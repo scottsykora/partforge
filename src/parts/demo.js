@@ -55,4 +55,14 @@ export default {
     },
   },
   views: { spacer: { label: "Spacer" } },
+  // Self-verification (see docs/AUTHORING-PARTS.md "Self-verification"): opt into the
+  // FDM-PLA process profile (bed-fit gate + min-wall warning) and pin the design intent
+  // — one through-bore, fits comfortably on the bed, no interpenetration.
+  verify: {
+    process: "fdm-pla",
+    expect: {
+      spacer: { holes: 1, bbox: "<=[60,60,60]" },
+      _view: { overlaps: 0 },
+    },
+  },
 };

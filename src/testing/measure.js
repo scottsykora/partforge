@@ -13,7 +13,7 @@ const unionBounds = (list) => list.reduce(
 // the assembly overlap check. All solid facts are read BEFORE assemblyOverlaps,
 // which frees the shared kernel's objects at its end.
 //   → { part, view, subparts[], aggregate, overlaps[], ok }
-export function measure(kernel, part, view = Object.keys(part.views)[0], params = {}) {
+export function measure(kernel, part, view = Object.keys(part.views)[0], params = {}, opts = {}) {
   const built = buildView(kernel, part, view, params);
   const subBounds = [];
   const subparts = built.map(({ name, solid, mesh }) => {
@@ -27,6 +27,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       triangleCount: mesh.triangles,
       watertight: typeof solid.isEmpty === "function" ? !solid.isEmpty() : null,
       holes: typeof solid.genus === "function" ? solid.genus() : null,
+      // Computed by the voxel/SDF core in a later plan; reserved here so verify()
+      // can consume it. opts.minWall is the enable seam (no-op until then).
+      minWall: null,
     };
   });
 
