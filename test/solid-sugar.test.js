@@ -48,3 +48,14 @@ test("along throws on an unknown direction", () => {
 test("at equals translate", () => {
   sameGeom(addSugar(box()).at([3, -2, 7]), box().translate([3, -2, 7]));
 });
+
+test("kernel solids come pre-sugared (manifold) and along works end to end", () => {
+  const s = k.box([0, 0, 0], [2, 4, 6]);
+  expect(typeof s.along).toBe("function");
+  sameGeom(s.along("+Y"), k.box([0, 0, 0], [2, 4, 6]).rotate(-90, [0, 0, 0], [1, 0, 0]));
+});
+
+test("sugar survives chaining (every returned solid is sugared)", () => {
+  const s = k.box([0, 0, 0], [2, 4, 6]).rotateZ(10).at([1, 2, 3]);
+  expect(typeof s.rotateX).toBe("function");
+});

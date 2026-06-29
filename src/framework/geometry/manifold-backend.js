@@ -2,6 +2,7 @@ import { helixTube } from "./helix-tube.js";
 import { KernelCapabilityError } from "./errors.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
+import { addSugar } from "./solid-sugar.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
@@ -58,7 +59,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return { positions, indices };
   }
 
-  const wrap = (m, hash) => ({
+  const wrap = (m, hash) => addSugar({
     _m: m,
     _hash: hash,
     cut: (t) => cached(h("cut", hash, t._hash), () => T(m.subtract(t._m))),
