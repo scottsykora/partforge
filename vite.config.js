@@ -1,11 +1,13 @@
 import { defineConfig } from "vite";
 
-// partforge dev harness: `npm run dev` serves /demo.html (the example part), and
-// `npm run build` builds it as a sanity check. The published package is plain ESM
-// source — this config is only for developing/testing the framework itself.
+// partforge dev harness + showcase build. `npm run dev` serves the example pages at
+// root; `npm run build` emits the landing gallery + all three demo pages for GitHub
+// Pages under the repo subpath (/partforge/). The published package is plain ESM
+// source — this config is only for developing/testing the framework and the showcase.
 // Replicad ships OpenCASCADE as a large WASM module; keep Vite from pre-bundling it,
 // and build workers as ES modules so they can import replicad.
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  base: command === "build" ? "/partforge/" : "/",
   optimizeDeps: {
     exclude: ["replicad", "replicad-opencascadejs"],
   },
@@ -13,6 +15,13 @@ export default defineConfig({
     format: "es",
   },
   build: {
-    rollupOptions: { input: "demo.html" },
+    rollupOptions: {
+      input: {
+        index: "index.html",
+        spacer: "demo.html",
+        filletedBox: "filleted-box.html",
+        planter: "planter.html",
+      },
+    },
   },
-});
+}));

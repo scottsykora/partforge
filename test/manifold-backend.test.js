@@ -130,6 +130,20 @@ test("prism scaleTop<1 tapers — less volume than a straight extrude", () => {
   expect(taper).toBeGreaterThan(0);
 });
 
+test("prism scaleTop tapers uniformly — top shrinks equally in X and Y, not squished to a line", () => {
+  // Regression: Manifold's extrude scaleTop is a Vec2; a scalar must be broadcast to
+  // [s, s] or the top collapses in Y (X scales, Y → 0). Volume can't catch it (a wedge
+  // loses volume too), so assert the top cross-section is a uniformly-scaled square.
+  const pos = k.prism(SQ, 10, { scaleTop: 0.5 }).toMesh().positions;
+  const xs = [], ys = [];
+  for (let i = 0; i < pos.length; i += 3)
+    if (Math.abs(pos[i + 2] - 10) < 0.5) { xs.push(pos[i]); ys.push(pos[i + 1]); }
+  const span = (a) => Math.max(...a) - Math.min(...a);
+  const xSpan = span(xs), ySpan = span(ys);
+  expect(xSpan).toBeCloseTo(5, 1);     // 10-wide base × scaleTop 0.5
+  expect(ySpan).toBeCloseTo(xSpan, 1); // uniform — was 0 before the broadcast fix
+});
+
 test("prism scaleTop:0 converges to a point (positive-volume cone)", () => {
   const cone = k.prism(SQ, 10, { scaleTop: 0 });
   expect(cone.volume()).toBeGreaterThan(0);

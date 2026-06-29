@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Faceted Planter — demo part</title>
+    <!-- Dev-only example app for the planter part (parts/planter.js). `npm run dev`,
+         then open /planter.html. Structural markup only — the chrome CSS comes from the
+         framework (mount imports framework/app.css). See docs/AUTHORING-PARTS.md. -->
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="topbar">
+      <div class="seg" id="part">
+        <button data-part="planter" class="on">Planter</button>
+      </div>
+    </div>
+
+    <div id="viewbar">
+      <button id="pause" title="Pause rotation">⏸</button>
+      <button id="reframe" title="Reframe">⛶</button>
+      <button id="theme" title="Toggle light/dark">◐</button>
+    </div>
+
+    <div id="panel">
+      <h1>Faceted Planter</h1>
+      <p class="sub">Demo part · framework example</p>
+
+      <div id="controls"></div>
+
+      <div class="dl">
+        <div class="dl-head">Download</div>
+        <div class="dl-row">
+          <button id="download-step" disabled>STEP</button>
+          <button id="download" disabled>STL</button>
+          <button id="download-3mf" disabled>3MF</button>
+        </div>
+      </div>
+      <div id="status">booting kernel…</div>
+      <p class="hint">Drag to orbit · scroll to zoom. Try a preset, then dial Wall below 1.2 mm.</p>
+    </div>
+
+    <div id="busy"><div class="ring"></div><div class="phase" id="phase">booting kernel…</div></div>
+    <script type="module" src="/src/app-planter.js"></script>
+  </body>
+</html>
