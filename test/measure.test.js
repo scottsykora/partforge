@@ -47,3 +47,10 @@ test("measure aggregate volume equals the single sub-part volume", () => {
 test("measure defaults to the first declared view", () => {
   expect(measure(k, boxPart).view).toBe("v");
 });
+
+test("each subpart carries a minWall field (null until the SDF plan implements it)", () => {
+  const r = measure(k, boxPart, "v");
+  expect(r.subparts[0]).toHaveProperty("minWall", null);
+  // opts arg is accepted; 4-arg behaviour is unchanged
+  expect(measure(k, boxPart, "v", {}, { minWall: true }).subparts[0].minWall).toBe(null);
+});
