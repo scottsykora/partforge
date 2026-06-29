@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>partforge — one script → a parametric-CAD app</title>
+    <meta name="description" content="Live example parts built with partforge: a 3-D viewer, control panel, and STL/STEP/3MF export from one declarative part definition." />
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+             background: #15181d; color: #e7e9ee; -webkit-font-smoothing: antialiased; }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 64px 24px 96px; }
+      h1 { font-size: 2.4rem; margin: 0 0 .3em; letter-spacing: -0.02em; }
+      .lede { font-size: 1.15rem; color: #aab1bd; margin: 0 0 2.5em; max-width: 62ch; }
+      .lede strong { color: #e7e9ee; }
+      .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+      a.card { display: block; padding: 22px; border: 1px solid #2a2f38; border-radius: 12px;
+               background: #1a1e24; color: inherit; text-decoration: none;
+               transition: border-color .15s ease, transform .15s ease; }
+      a.card:hover { border-color: #4c8bf5; transform: translateY(-2px); }
+      a.card.feature { border-color: #34507e; }
+      .card h2 { margin: 0 0 .35em; font-size: 1.15rem; }
+      .card p { margin: 0; color: #9aa2af; font-size: .95rem; }
+      .tag { display: inline-block; font-size: .7rem; text-transform: uppercase; letter-spacing: .08em;
+             color: #4c8bf5; margin-bottom: .6em; }
+      footer { margin-top: 3em; color: #6b7280; font-size: .85rem; }
+      footer a { color: #8aa0c0; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>partforge</h1>
+      <p class="lede">Write one declarative <strong>part definition</strong> — geometry build
+        functions plus a parameter schema — and partforge renders a full parametric-CAD web app:
+        a 3-D viewer, a control panel, geometry workers, and STL / STEP / 3MF export. The pages
+        below are live example parts. Drag to orbit, tweak the controls, download a printable file.</p>
+      <div class="grid">
+        <a class="card feature" href="planter.html">
+          <span class="tag">Featured</span>
+          <h2>🪴 Faceted Planter</h2>
+          <p>Facets, twist, taper, and an optional drainage hole — every control has an obvious
+             reason to change it before printing. Thin the wall and watch the DFM warning fire.</p>
+        </a>
+        <a class="card" href="demo.html">
+          <h2>Spacer</h2>
+          <p>The minimal worked example: a parametric standoff with screw-size presets, an
+             optional base flange, and a clearance bore.</p>
+        </a>
+        <a class="card" href="filleted-box.html">
+          <h2>Filleted Box</h2>
+          <p>Native fillet and chamfer that auto-route to the OCCT backend for exact STEP export.</p>
+        </a>
+      </div>
+      <footer>
+        Built with <a href="https://github.com/scottsykora/partforge">partforge</a> ·
+        three.js + Manifold / Replicad.
+      </footer>
+    </div>
+  </body>
+</html>
