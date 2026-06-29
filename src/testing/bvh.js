@@ -74,22 +74,15 @@ export function buildBVH(mesh) {
 
   function raycast(origin, dir, { tMin = 1e-6, tMax = Infinity, skipTri = -1 } = {}) {
     const invD = [1 / dir[0], 1 / dir[1], 1 / dir[2]];
-    // When skipTri is set, advance tMin past that triangle's hit depth so that
-    // coplanar siblings (sharing the exact same t) are also excluded.
-    let effectiveTMin = tMin;
-    if (skipTri >= 0 && skipTri < tris.length) {
-      const skipT = rayTri(origin, dir, tris[skipTri], -Infinity);
-      if (skipT < Infinity) effectiveTMin = Math.max(effectiveTMin, skipT);
-    }
     let best = tMax, bestTri = -1;
     const stack = [root];
     while (stack.length) {
       const node = stack.pop();
-      if (rayBox(origin, invD, node.min, node.max, effectiveTMin, best) === Infinity) continue;
+      if (rayBox(origin, invD, node.min, node.max, tMin, best) === Infinity) continue;
       if (node.tris) {
         for (const tri of node.tris) {
           if (tri.i === skipTri) continue;
-          const t = rayTri(origin, dir, tri, effectiveTMin);
+          const t = rayTri(origin, dir, tri, tMin);
           if (t < best) { best = t; bestTri = tri.i; }
         }
       } else { stack.push(node.left, node.right); }

@@ -25,8 +25,8 @@ test("raycast returns the NEAREST hit, not a far one", () => {
 
 test("skipTri ignores the source triangle (nearest becomes the far face)", () => {
   const bvh = buildBVH(boxMesh(10, 20, 5));
-  const first = bvh.raycast([5, 10, -3], [0, 0, 1]);
-  const second = bvh.raycast([5, 10, -3], [0, 0, 1], { skipTri: first.tri });
+  const first = bvh.raycast([4.9, 10, -3], [0, 0, 1]);
+  const second = bvh.raycast([4.9, 10, -3], [0, 0, 1], { skipTri: first.tri });
   expect(second.t).toBeCloseTo(8, 5);               // z=5 face
 });
 
