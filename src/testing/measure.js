@@ -1,6 +1,7 @@
 import { buildView } from "./build.js";
 import { assemblyOverlaps } from "../framework/assembly.js";
 import { bounds, meshArea } from "./mesh.js";
+import { minWall } from "./min-wall.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -27,9 +28,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       triangleCount: mesh.triangles,
       watertight: typeof solid.isEmpty === "function" ? !solid.isEmpty() : null,
       holes: typeof solid.genus === "function" ? solid.genus() : null,
-      // Computed by the voxel/SDF core in a later plan; reserved here so verify()
-      // can consume it. opts.minWall is the enable seam (no-op until then).
-      minWall: null,
+      minWall: opts.minWall ? (minWall(mesh)?.value ?? null) : null,
     };
   });
 
