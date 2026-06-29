@@ -72,6 +72,7 @@ export default {
     // Offset the inner polygon inward by `wall` along the FACE normals, not the radius:
     // for a regular n-gon an edge offset of `wall` shrinks the circumradius by
     // wall / cos(π/n). This keeps the perpendicular wall = `wall` on every flat.
+    // clamp only matters if wall is set past the slider bounds via the API
     const Rin = Math.max(Rout - p.wall / Math.cos(Math.PI / p.facets), 1);
     return {
       outerPts: ngon(Rout, p.facets),
@@ -111,8 +112,8 @@ export default {
   verify: {
     process: "fdm-pla",
     expect: {
-      planter: { holes: 1, bbox: "<=[220,220,250]" },
-      _view: { overlaps: 0 },
+      planter: { holes: 1 /* drain=8 at defaults → 1 hole; adjust if running verify with a non-default drain */, bbox: "<=[220,220,250]" },
+      _view: { overlaps: 0 } /* _view = whole-model composite (not a named part) */,
     },
   },
 };
