@@ -47,8 +47,11 @@ boots with no errors. Needs Playwright: `npm i -D playwright && npx playwright i
 contract, the geometry kernel API, the parameter schema, app wiring, testing, and
 gotchas. See **Designing the control panel** in that guide for how to write descriptions,
 hide internal params, and keep the interface simple while staying deeply adjustable.
-`src/parts/demo.js` is a minimal worked example; run `npm run dev` and open
-`/demo.html` to see it live.
+`src/parts/demo.js` is a minimal worked example.
+
+**Live showcase:** https://scottsykora.github.io/partforge/ — the landing gallery links
+three live example apps (Faceted Planter, Spacer, Filleted Box), auto-deployed from `main`.
+Locally, `npm run dev` then open `/demo.html`, `/planter.html`, or `/filleted-box.html`.
 
 - **Agent clarification (`request-a-pick`):** an external tool can ask the user to click
   geometry and get the `Selection` back — serve with `?pickserver`, drive with
