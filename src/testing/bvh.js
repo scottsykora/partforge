@@ -50,6 +50,39 @@ function rayBox(o, invD, min, max, tMin, best) {
   return t0;
 }
 
+// nearest point on triangle to P (Ericson), returns { point, d2 }
+function closestOnTri(P, tri) {
+  const A = tri.v0, B = tri.v1, C = tri.v2;
+  const sub = (p, q) => [p[0]-q[0], p[1]-q[1], p[2]-q[2]];
+  const dot = (p, q) => p[0]*q[0] + p[1]*q[1] + p[2]*q[2];
+  const add = (p, q) => [p[0]+q[0], p[1]+q[1], p[2]+q[2]];
+  const mul = (p, s) => [p[0]*s, p[1]*s, p[2]*s];
+  const ab = sub(B,A), ac = sub(C,A), ap = sub(P,A);
+  const d1 = dot(ab,ap), d2 = dot(ac,ap);
+  let Q;
+  if (d1<=0&&d2<=0) Q = A;
+  else { const bp = sub(P,B), d3 = dot(ab,bp), d4 = dot(ac,bp);
+    if (d3>=0&&d4<=d3) Q = B;
+    else { const vc = d1*d4 - d3*d2;
+      if (vc<=0&&d1>=0&&d3<=0) Q = add(A, mul(ab, d1/(d1-d3)));
+      else { const cp = sub(P,C), d5 = dot(ab,cp), d6 = dot(ac,cp);
+        if (d6>=0&&d5<=d6) Q = C;
+        else { const vb = d5*d2 - d1*d6;
+          if (vb<=0&&d2>=0&&d6<=0) Q = add(A, mul(ac, d2/(d2-d6)));
+          else { const va = d3*d6 - d5*d4;
+            if (va<=0&&(d4-d3)>=0&&(d5-d6)>=0) Q = add(B, mul(sub(C,B), (d4-d3)/((d4-d3)+(d5-d6))));
+            else { const denom = 1/(va+vb+vc); Q = add(add(A, mul(ab, vb*denom)), mul(ac, vc*denom)); } } } } } }
+  const pq = sub(P, Q);
+  return { point: Q, d2: dot(pq, pq) };
+}
+
+// squared distance from point to an AABB (0 inside)
+function distSqBox(p, min, max) {
+  let s = 0;
+  for (let a = 0; a < 3; a++) { const v = p[a] < min[a] ? min[a] - p[a] : p[a] > max[a] ? p[a] - max[a] : 0; s += v * v; }
+  return s;
+}
+
 // Möller–Trumbore; returns t>tMin or Infinity
 function rayTri(o, d, tri, tMin) {
   const e1 = [tri.v1[0] - tri.v0[0], tri.v1[1] - tri.v0[1], tri.v1[2] - tri.v0[2]];
@@ -90,5 +123,22 @@ export function buildBVH(mesh) {
     return bestTri === -1 ? null : { t: best, tri: bestTri };
   }
 
-  return { raycast };
+  function closestPoint(p) {
+    let best2 = Infinity, bestPt = null, bestTri = -1;
+    const stack = [root];
+    while (stack.length) {
+      const node = stack.pop();
+      if (distSqBox(p, node.min, node.max) > best2) continue;
+      if (node.tris) {
+        for (const tri of node.tris) { const r = closestOnTri(p, tri); if (r.d2 < best2) { best2 = r.d2; bestPt = r.point; bestTri = tri.i; } }
+      } else {
+        // visit the nearer child first for better pruning
+        const dl = distSqBox(p, node.left.min, node.left.max), dr = distSqBox(p, node.right.min, node.right.max);
+        if (dl < dr) { stack.push(node.right, node.left); } else { stack.push(node.left, node.right); }
+      }
+    }
+    return { point: bestPt, dist: Math.sqrt(best2), tri: bestTri };
+  }
+
+  return { raycast, closestPoint };
 }
