@@ -13,6 +13,18 @@ const SHARP_ANGLE = 35; // deg — same-surface edges sharper than this shade ha
 const COPLANAR_COS = Math.cos((5 * Math.PI) / 180); // edge lines: skip cut seams that bend less than 5° (coplanar)
 const MIN_EDGE2 = 0.01 * 0.01; // edge lines: drop sub-0.01mm segments (degenerate boolean slivers, not real features)
 
+// true axis-angle rotation as a column-major 4x4 (manifold Mat4), translation 0
+function axisAngleMat4(axis, deg) {
+  const len = Math.hypot(axis[0], axis[1], axis[2]) || 1;
+  const x = axis[0] / len, y = axis[1] / len, z = axis[2] / len;
+  const t = (deg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t), C = 1 - c;
+  const R00 = c + x*x*C,   R01 = x*y*C - z*s, R02 = x*z*C + y*s;
+  const R10 = y*x*C + z*s, R11 = c + y*y*C,   R12 = y*z*C - x*s;
+  const R20 = z*x*C - y*s, R21 = z*y*C + x*s, R22 = c + z*z*C;
+  // column-major: columns are images of the basis vectors; 4th column = translation (0)
+  return [R00, R10, R20, 0,  R01, R11, R21, 0,  R02, R12, R22, 0,  0, 0, 0, 1];
+}
+
 export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const { Manifold, CrossSection } = wasm;
   const segs = SEGS[quality], tube = TUBE[quality];
@@ -81,9 +93,11 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     isEmpty: () => m.isEmpty(),
     translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v)),
     rotate: (deg, center, axis) => {
-      const euler = [axis[0] * deg, axis[1] * deg, axis[2] * deg];
+      const nz = (axis[0] !== 0) + (axis[1] !== 0) + (axis[2] !== 0);
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
-      const b = T(a.rotate(euler));
+      const b = nz <= 1
+        ? T(a.rotate([axis[0] * deg, axis[1] * deg, axis[2] * deg]))   // basis axis — euler is exact; unchanged
+        : T(a.transform(axisAngleMat4(axis, deg)));                    // general axis-angle
       return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis));
     },
     mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)),
