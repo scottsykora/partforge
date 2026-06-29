@@ -3,6 +3,7 @@
 // (makeCylinder, makeHelix+genericSweep, draw/extrude, cut/fuse) now live.
 import { toEdgeFinder } from "./edge-selector.js";
 import { toFaceFinder } from "./face-selector.js";
+import { addSugar } from "./solid-sugar.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 export function createOcctKernel(replicad) {
@@ -77,7 +78,7 @@ export function createOcctKernel(replicad) {
     return backup;
   };
 
-  const wrap = (shape) => ({
+  const wrap = (shape) => addSugar({
     _s: shape,
     cut: (t) => wrap(shape.cut(t._s)),
     cutAll: (tools) => wrap(shape.cut(makeCompound(tools.map((t) => t._s)))),

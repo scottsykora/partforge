@@ -106,7 +106,11 @@ entry pulls in the DOM viewer/controls, and your build functions run in a Web Wo
 | `s.cut(tool)` / `s.cutAll(tools[])` | boolean subtract (one / batch) |
 | `s.intersect(other)` | boolean intersection (Manifold; used by collision tests) |
 | `s.translate([x,y,z])` | move |
-| `s.rotate(deg, center, axis)` | rotate `deg` about `axis` through `center` |
+| `s.rotate(deg, center, axis)` | **internal primitive** — prefer `rotateX/Y/Z` / `rotateAbout` |
+| `s.rotateX(deg)` / `s.rotateY(deg)` / `s.rotateZ(deg)` | rotate about a world axis through the origin |
+| `s.rotateAbout({ axis, deg, through? })` | general rotation: `axis` = `"X"｜"Y"｜"Z"` or `[x,y,z]`; `through` = centre (default origin) |
+| `s.along(dir)` | orient the canonical **+Z** build axis to point along `dir` (`"+X"｜"-X"｜"+Y"｜"-Y"｜"+Z"｜"-Z"`) |
+| `s.at([x,y,z])` | place an origin-built solid at a point (readable alias of `translate`) |
 | `s.mirror("XY"\|"XZ"\|"YZ")` | mirror across a plane |
 | `s.scale(factor, center?)` | uniform scale (single factor) about `center` (default origin) — scaling an off-origin part about the origin also moves it; pass a center (e.g. `s.boundingBox().center`) to resize in place |
 | `s.clone()` | independent copy (replicad consumes solids on transform) |
@@ -117,6 +121,41 @@ entry pulls in the DOM viewer/controls, and your build functions run in a Web Wo
 
 You normally only call the *make/combine/transform* ops; the framework handles
 `toMesh`/`toSTL`/`toIndexedMesh`/`toSTEP`. Units are millimetres.
+
+### Build-step style: orient → place, and batch features
+
+Write build steps so intent is legible — an LLM (and a human) should not have to decode
+magic vectors. Three habits:
+
+- **Orient then place.** Build a primitive along its canonical **+Z** axis, point it with
+  `along(dir)`, then position it with `at([x,y,z])`:
+
+  ```js
+  // ✗ cryptic: which axis? what centre?
+  k.cylinder(r, r, L).rotate(-90, [0, 0, 0], [1, 0, 0]).translate([rp, y1, sz])
+  // ✓ legible
+  k.cylinder(r, r, L).along("+Y").at([rp, y1, sz])
+  ```
+
+- **Rotate about a point with `rotateAbout`** when the axis isn't through the origin
+  (use `rotateX/Y/Z` for the common origin cases):
+
+  ```js
+  // ✗  .rotate(angle, [rp, 0, 0], [0, 0, 1])
+  // ✓
+  tool.rotateAbout({ axis: "Z", deg: angle, through: [rp, 0, 0] })
+  ```
+
+- **Batch features** instead of reassigning through a cut-chain:
+
+  ```js
+  // ✗  body = body.cut(a); body = body.cut(b); body = body.cut(c);
+  // ✓
+  body.cutAll([a, b, c])          // and k.union([base, f1, f2]) for additive batches
+  ```
+
+The bare `rotate(deg, center, axis)` remains available as the low-level primitive for
+anything `rotateX/Y/Z`/`rotateAbout` can't express, but prefer the vocabulary above.
 
 ### Caching & determinism
 

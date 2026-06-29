@@ -11,7 +11,13 @@
  * @property {() => {min:number[],max:number[],center:number[],size:number[]}} boundingBox   axis-aligned bounds (query)
  * @property {(thickness:number, openFaces:object) => Solid} shell   hollow inward (OCCT only); openFaces selector required
  * @property {(v: number[]) => Solid} translate
- * @property {(deg: number, center: number[], axis: number[]) => Solid} rotate
+ * @property {(deg: number, center: number[], axis: number[]) => Solid} rotate   internal primitive — prefer rotateX/Y/Z / rotateAbout
+ * @property {(deg: number) => Solid} rotateX   rotate about world X through the origin
+ * @property {(deg: number) => Solid} rotateY   rotate about world Y through the origin
+ * @property {(deg: number) => Solid} rotateZ   rotate about world Z through the origin
+ * @property {(o:{axis:"X"|"Y"|"Z"|number[], deg:number, through?:number[]}) => Solid} rotateAbout   general rotation (legible)
+ * @property {(dir:"+X"|"-X"|"+Y"|"-Y"|"+Z"|"-Z") => Solid} along   orient the canonical +Z build axis along dir
+ * @property {(v:number[]) => Solid} at   place an origin-built solid at point v (alias of translate)
  * @property {(plane: "XY"|"XZ"|"YZ") => Solid} mirror
  * @property {(factor:number, center?:number[]) => Solid} scale   uniform scale about center (default origin)
  * @property {() => number} volume                   solid volume in mm³ (Manifold; used by collision tests)
