@@ -59,3 +59,16 @@ test("sugar survives chaining (every returned solid is sugared)", () => {
   const s = k.box([0, 0, 0], [2, 4, 6]).rotateZ(10).at([1, 2, 3]);
   expect(typeof s.rotateX).toBe("function");
 });
+
+test("a feature built with the vocabulary equals the raw-primitive build", () => {
+  const viaVocab = k.box([0, 0, 0], [20, 20, 10]).cutAll([
+    k.cylinder(2, 2, 30).along("+Y").at([10, -5, 5]),   // cross bore along Y
+    k.cylinder(1.5, 1.5, 12).at([5, 5, -1]),            // vertical hole
+    k.cylinder(1.5, 1.5, 12).at([15, 15, -1]),
+  ]);
+  let viaRaw = k.box([0, 0, 0], [20, 20, 10]);
+  viaRaw = viaRaw.cut(k.cylinder(2, 2, 30).rotate(-90, [0, 0, 0], [1, 0, 0]).translate([10, -5, 5]));
+  viaRaw = viaRaw.cut(k.cylinder(1.5, 1.5, 12).translate([5, 5, -1]));
+  viaRaw = viaRaw.cut(k.cylinder(1.5, 1.5, 12).translate([15, 15, -1]));
+  sameGeom(viaVocab, viaRaw);
+});
