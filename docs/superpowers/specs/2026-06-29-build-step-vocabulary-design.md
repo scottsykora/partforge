@@ -1,7 +1,9 @@
 # Self-describing build-step vocabulary for partforge parts — design
 
 **Date:** 2026-06-29
-**Status:** Approved (design); pending implementation plan
+**Status:** Approved (design). Vocabulary implemented in partforge (2026-06-29):
+rotateX/Y/Z, rotateAbout, along, at via a shared addSugar over both backends; example
+parts migrated to `at`. Drum migration is a separate Drum-Machine change.
 **Repo:** `partforge` (the framework); the drum migration lands separately in `Drum-Machine`
 
 ## Goal
