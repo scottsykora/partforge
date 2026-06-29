@@ -40,3 +40,40 @@ export function parseAssertion(expr) {
   }
   throw new Error(`assertion: unrecognized form: "${expr}"`);
 }
+
+const EPS = 1e-6;
+const approxEq = (a, b) => Math.abs(a - b) <= EPS + EPS * Math.abs(b);
+const fmtVec = (v) => "[" + v.map((x) => (x === null ? "*" : x)).join(",") + "]";
+
+export function evaluateAssertion(parsed, actual) {
+  switch (parsed.op) {
+    case "eq": {
+      const pass = typeof parsed.value === "boolean" ? actual === parsed.value : approxEq(actual, parsed.value);
+      return { pass, message: `${actual} ${pass ? "==" : "!="} ${parsed.value}` };
+    }
+    case "gte": return mk(actual >= parsed.value - EPS, actual, ">=", parsed.value);
+    case "lte": return mk(actual <= parsed.value + EPS, actual, "<=", parsed.value);
+    case "gt": return mk(actual > parsed.value, actual, ">", parsed.value);
+    case "lt": return mk(actual < parsed.value, actual, "<", parsed.value);
+    case "range": {
+      const pass = actual >= parsed.min - EPS && actual <= parsed.max + EPS;
+      return { pass, message: `${actual} ${pass ? "in" : "out of"} ${parsed.min}..${parsed.max}` };
+    }
+    case "vle":
+    case "vge": {
+      const ge = parsed.op === "vge";
+      let pass = true;
+      for (let i = 0; i < 3; i++) {
+        const lim = parsed.vec[i];
+        if (lim === null) continue;
+        if (ge ? actual[i] < lim - EPS : actual[i] > lim + EPS) pass = false;
+      }
+      return { pass, message: `${fmtVec(actual)} ${ge ? ">=" : "<="} ${fmtVec(parsed.vec)}` };
+    }
+    default: throw new Error(`assertion: unknown op "${parsed.op}"`);
+  }
+}
+
+function mk(pass, actual, opStr, value) {
+  return { pass, message: `${actual} ${pass ? opStr : "not " + opStr} ${value}` };
+}

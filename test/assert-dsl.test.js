@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { parseAssertion } from "../src/testing/assert-dsl.js";
+import { parseAssertion, evaluateAssertion } from "../src/testing/assert-dsl.js";
 
 test("parses numbers and booleans as equality", () => {
   expect(parseAssertion(1)).toEqual({ op: "eq", value: 1 });
@@ -30,4 +30,31 @@ test("throws on unrecognized forms (strict)", () => {
   expect(() => parseAssertion("<=[1,2]")).toThrow();
   expect(() => parseAssertion("5kg")).toThrow();
   expect(() => parseAssertion({})).toThrow();
+});
+
+// append to test/assert-dsl.test.js
+const ev = (expr, actual) => evaluateAssertion(parseAssertion(expr), actual).pass;
+
+test("evaluates scalar equality and comparators", () => {
+  expect(ev(1, 1)).toBe(true);
+  expect(ev(1, 2)).toBe(false);
+  expect(ev(true, true)).toBe(true);
+  expect(ev(true, false)).toBe(false);
+  expect(ev(">=1.5", 1.5)).toBe(true);   // boundary
+  expect(ev(">=1.5", 1.4)).toBe(false);
+  expect(ev("<=2", 3)).toBe(false);
+  expect(ev(">0", 0)).toBe(false);
+});
+
+test("evaluates ranges with unit normalization", () => {
+  expect(ev("0.4..0.6cm3", 500)).toBe(true);   // 500 mm³ in [400,600]
+  expect(ev("0.4..0.6cm3", 700)).toBe(false);
+  expect(ev("0.4..0.6cm3", 400)).toBe(true);   // boundary
+});
+
+test("evaluates vector bounds componentwise, * skips", () => {
+  expect(ev("<=[12,12,16]", [8, 8, 10])).toBe(true);
+  expect(ev("<=[12,12,16]", [13, 8, 10])).toBe(false);
+  expect(ev(">=[10,*,14]", [12, 5, 20])).toBe(true);   // axis 1 skipped
+  expect(ev(">=[10,*,14]", [9, 5, 20])).toBe(false);
 });
