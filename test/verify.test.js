@@ -2,6 +2,11 @@ import { expect, test } from "vitest";
 import { evaluateCase } from "../src/testing/verify.js";
 import { resolveProfile } from "../src/testing/dfm-profiles.js";
 import { measure as measureReal } from "../src/testing/measure.js";
+import { verify as verifyFromEntry } from "../src/testing.js";
+
+test("verify is exported from the partforge/testing entry", () => {
+  expect(typeof verifyFromEntry).toBe("function");
+});
 
 const facts = {
   subparts: [{ name: "spacer", holes: 1, volume: 500, surfaceArea: 300, triangleCount: 200, bbox: [8, 8, 10], watertight: true, minWall: null }],
