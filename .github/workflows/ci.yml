@@ -17,6 +17,9 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npx playwright install --with-deps chromium # browser for the smoke check
-      - run: node scripts/check-app.mjs demo.html
-      - run: node scripts/check-app.mjs planter.html
-      - run: node scripts/check-app.mjs filleted-box.html
+      # Distinct ports per check: each run spawns `vite --strictPort`, and the prior
+      # run's vite can still hold its port when the next starts (the npx-wrapper kill
+      # orphans the vite child on the Linux runner), so a shared port fails the 2nd run.
+      - run: CHECK_PORT=5179 node scripts/check-app.mjs demo.html
+      - run: CHECK_PORT=5180 node scripts/check-app.mjs planter.html
+      - run: CHECK_PORT=5181 node scripts/check-app.mjs filleted-box.html

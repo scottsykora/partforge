@@ -6,13 +6,18 @@
 //   node scripts/check-app.mjs [entry.html] [--keep]
 //   (entry defaults to demo.html)
 //
+// Set CHECK_PORT to run on a port other than 5179. Sequential checks MUST use distinct
+// ports: each run spawns `vite --strictPort` and the prior run's vite can still hold its
+// port when the next starts (notably on Linux CI, where killing the `npx` wrapper can
+// orphan the vite child), so a shared port makes the second run fail to bind.
+//
 // Requires Playwright + a browser: `npm i -D playwright && npx playwright install chromium`.
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const entry = process.argv.find((a, i) => i >= 2 && !a.startsWith("--")) || "demo.html";
-const PORT = 5179;
+const PORT = Number(process.env.CHECK_PORT) || 5179;
 const url = `http://localhost:${PORT}/${entry}`;
 
 const vite = spawn("npx", ["vite", "--port", String(PORT), "--strictPort"], { stdio: ["ignore", "pipe", "pipe"] });
