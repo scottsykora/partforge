@@ -1,5 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
+import { assemblyOverlaps } from "../src/framework/assembly.js";
+import planterPart from "../src/parts/planter.js";
 
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); });
@@ -7,6 +9,45 @@ beforeAll(async () => { k = await bootOcctKernel(); });
 test("cylinder minus a bore meshes to a solid", () => {
   const drum = k.cylinder(10, 10, 20).cut(k.cylinder(4, 4, 30).translate([0, 0, -5]));
   expect(drum.toMesh({ quality: "preview" }).triangles).toBeGreaterThan(0);
+});
+
+test("intersect keeps only the overlapping volume of two solids", () => {
+  // STEP export always builds on OCCT, so OCCT must implement every boolean a part may
+  // use — including intersect (e.g. the planter clips its cavity with .intersect(box)).
+  const a = k.box([0, 0, 0], [10, 10, 10]);
+  const b = k.box([5, 5, 5], [15, 15, 15]);
+  expect(a.intersect(b).volume()).toBeCloseTo(125, 0); // the 5×5×5 overlap
+});
+
+test("intersect of disjoint solids is empty (volume 0) without throwing", () => {
+  // assemblyOverlaps depends on this on OCCT: a non-overlapping pair must yield 0, not throw.
+  const a = k.box([0, 0, 0], [10, 10, 10]);
+  const b = k.box([50, 50, 50], [60, 60, 60]); // far apart
+  expect(a.intersect(b).volume()).toBeCloseTo(0, 5);
+});
+
+test("assemblyOverlaps runs on OCCT — clean for disjoint parts, flags a real overlap", () => {
+  // Adding intersect to OCCT flips measure.js's canIntersect gate, so this overlap path now
+  // runs on the OCCT kernel for the first time. Guard that it behaves: no throw on disjoint.
+  const mk = (bx) => ({ defaults: {}, views: { v: {} }, parts: {
+    a: { views: ["v"], build: (kk) => kk.box([0, 0, 0], [10, 10, 10]) },
+    b: { views: ["v"], build: (kk) => kk.box([bx, 0, 0], [bx + 10, 10, 10]) },
+  } });
+  expect(assemblyOverlaps(k, mk(20), "v", {})).toEqual([]);   // disjoint → no overlaps
+  const hit = assemblyOverlaps(k, mk(5), "v", {});            // 5-unit overlap on X
+  expect(hit).toHaveLength(1);
+  expect(hit[0].volume).toBeCloseTo(500, 0);                  // 5×10×10
+});
+
+test("a Manifold-routed part (planter) exports STEP via OCCT — every part gets all 3 formats", async () => {
+  // Mirrors the export-step path in jobs.js: build the part fresh on OCCT, then toSTEP.
+  // Regression: the planter uses .intersect(), which OCCT lacked, so STEP silently failed.
+  const p = { ...planterPart.defaults };
+  const d = planterPart.derive(p);
+  const solid = planterPart.parts.planter.build(k, p, d);
+  const step = await k.toSTEP([{ name: "planter", solid }]);
+  expect(step.byteLength).toBeGreaterThan(1000);
+  expect(new TextDecoder().decode(step.slice(0, 13))).toBe("ISO-10303-21;"); // STEP header
 });
 
 test("clone() lets the original survive a consuming transform", () => {

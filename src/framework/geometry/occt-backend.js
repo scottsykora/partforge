@@ -82,6 +82,7 @@ export function createOcctKernel(replicad) {
     _s: shape,
     cut: (t) => wrap(shape.cut(t._s)),
     cutAll: (tools) => wrap(shape.cut(makeCompound(tools.map((t) => t._s)))),
+    intersect: (t) => wrap(shape.intersect(t._s)),
     clone: () => wrap(shape.clone()),
     boundingBox: () => {
       const bb = shape.boundingBox;        // replicad BoundingBox: .bounds [[min],[max]], .center
