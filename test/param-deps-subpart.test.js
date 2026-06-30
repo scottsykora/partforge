@@ -1,6 +1,6 @@
 // test/param-deps-subpart.test.js
 import { expect, test } from "vitest";
-import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../src/framework/param-deps.js";
+import { subPartReadKeys, relevantParamKeys, relevanceHash, RELEVANT_ALL } from "../src/framework/param-deps.js";
 
 const view = { v: { label: "V" } };
 const part = {
@@ -15,6 +15,26 @@ test("each sub-part's read set contains only the params it reads", () => {
   const map = subPartReadKeys(part, "v", part.defaults);
   expect([...map.get("one")]).toEqual(["a"]);
   expect([...map.get("two")]).toEqual(["b"]);
+});
+
+// Regression: the probe kernel must implement the full solid build-step vocabulary
+// (at / along / rotateX|Y|Z / rotateAbout). If it doesn't, a build using any of them
+// throws inside relevantParamKeys, which silently falls back to RELEVANT_ALL — so the
+// panel stops dimming/hiding controls. Every real part uses .at(), so this guards them.
+const vocab = {
+  defaults: { a: 1, b: 2 }, views: view,
+  parts: {
+    p: { views: ["v"], build: (k, p) =>
+      k.cylinder(p.a, p.a, p.a)
+        .at([0, 0, 0]).along("+Z").rotateX(0).rotateY(0).rotateZ(0).rotateAbout({ axis: "Z", deg: p.a }) },
+  },
+};
+
+test("relevance analysis handles the build-step vocabulary instead of falling back to RELEVANT_ALL", () => {
+  const r = relevantParamKeys(vocab, "v", vocab.defaults);
+  expect(r).not.toBe(RELEVANT_ALL);   // probe must not throw on at/along/rotate*
+  expect([...r]).toContain("a");      // read by cylinder + rotateAbout
+  expect([...r]).not.toContain("b");  // never read → stays irrelevant (the whole point)
 });
 
 test("relevanceHash is stable for equal values and differs when a value changes", () => {
