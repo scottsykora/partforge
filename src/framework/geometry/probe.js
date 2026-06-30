@@ -6,42 +6,40 @@ export const OCCT_ONLY = new Set(["fillet", "chamfer", "shell"]);
 export function createProbeKernel() {
   const used = new Set();
   const note = (name) => used.add(name);
-  const proxy = {
-    cut() { note("cut"); return proxy; },
-    cutAll() { note("cutAll"); return proxy; },
-    intersect() { note("intersect"); return proxy; },
-    clone() { note("clone"); return proxy; },
-    boundingBox() { note("boundingBox"); return { min: [0, 0, 0], max: [1, 1, 1], center: [0.5, 0.5, 0.5], size: [1, 1, 1] }; },
-    translate() { note("translate"); return proxy; },
-    rotate() { note("rotate"); return proxy; },
-    rotateX() { note("rotateX"); return proxy; },
-    rotateY() { note("rotateY"); return proxy; },
-    rotateZ() { note("rotateZ"); return proxy; },
-    rotateAbout() { note("rotateAbout"); return proxy; },
-    along() { note("along"); return proxy; },
-    at() { note("at"); return proxy; },
-    mirror() { note("mirror"); return proxy; },
-    scale() { note("scale"); return proxy; },
-    fillet() { note("fillet"); return proxy; },
-    chamfer() { note("chamfer"); return proxy; },
-    shell() { note("shell"); return proxy; },
-    volume() { note("volume"); return 1; },
-    toMesh() { note("toMesh"); return { positions: new Float32Array(9), normals: new Float32Array(9), triangles: 1, edges: new Float32Array(0) }; },
-    toSTL() { note("toSTL"); return new ArrayBuffer(0); },
-    toIndexedMesh() { note("toIndexedMesh"); return { positions: new Float32Array(9), indices: new Uint32Array(3) }; },
+
+  // Catch-all proxies: any method records its name and returns the chainable solid
+  // proxy, EXCEPT the queries below, which return realistic dummy values the build may
+  // read. Using a Proxy (rather than a hand-listed allowlist) means new kernel/solid
+  // methods never have to be mirrored here — the probe can't drift out of sync with the
+  // real backends. (That drift previously broke the panel's relevance dimming/hiding when
+  // the build-step vocabulary was added but not taught to the probe.)
+  const solidQueries = {
+    boundingBox: () => ({ min: [0, 0, 0], max: [1, 1, 1], center: [0.5, 0.5, 0.5], size: [1, 1, 1] }),
+    volume: () => 1,
+    toMesh: () => ({ positions: new Float32Array(9), normals: new Float32Array(9), triangles: 1, edges: new Float32Array(0) }),
+    toSTL: () => new ArrayBuffer(0),
+    toIndexedMesh: () => ({ positions: new Float32Array(9), indices: new Uint32Array(3) }),
   };
-  const kernel = {
-    cylinder() { note("cylinder"); return proxy; },
-    boredCylinder() { note("boredCylinder"); return proxy; },
-    sphere() { note("sphere"); return proxy; },
-    box() { note("box"); return proxy; },
-    prism() { note("prism"); return proxy; },
-    revolve() { note("revolve"); return proxy; },
-    helixSweptTube() { note("helixSweptTube"); return proxy; },
-    union() { note("union"); return proxy; },
-    toSTEP() { note("toSTEP"); return Promise.resolve(new ArrayBuffer(0)); },
-    cleanup() {},
+  const kernelQueries = {
+    toSTEP: () => Promise.resolve(new ArrayBuffer(0)),
+    cleanup: () => {},
   };
+
+  // `ignore` keeps the proxy from masquerading as a thenable/internal handle: symbols,
+  // `then` (so it's never await-unwrapped), and `_`-prefixed internals resolve to
+  // undefined rather than a chainable op.
+  const ignore = (key) => typeof key !== "string" || key === "then" || key[0] === "_";
+
+  const opProxy = (queries) => new Proxy({}, {
+    get(_t, key) {
+      if (ignore(key)) return undefined;
+      if (key in queries) return queries[key];
+      return (..._args) => { note(key); return proxy; };
+    },
+  });
+
+  const proxy = opProxy(solidQueries);   // a solid handle: every op chains back to itself
+  const kernel = opProxy(kernelQueries); // factory ops (cylinder/box/prism/…) return a solid
   return { kernel, used };
 }
 
