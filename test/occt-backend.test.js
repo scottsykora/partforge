@@ -1,5 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
+import { assemblyOverlaps } from "../src/framework/assembly.js";
 import planterPart from "../src/parts/planter.js";
 
 let k;
@@ -16,6 +17,26 @@ test("intersect keeps only the overlapping volume of two solids", () => {
   const a = k.box([0, 0, 0], [10, 10, 10]);
   const b = k.box([5, 5, 5], [15, 15, 15]);
   expect(a.intersect(b).volume()).toBeCloseTo(125, 0); // the 5×5×5 overlap
+});
+
+test("intersect of disjoint solids is empty (volume 0) without throwing", () => {
+  // assemblyOverlaps depends on this on OCCT: a non-overlapping pair must yield 0, not throw.
+  const a = k.box([0, 0, 0], [10, 10, 10]);
+  const b = k.box([50, 50, 50], [60, 60, 60]); // far apart
+  expect(a.intersect(b).volume()).toBeCloseTo(0, 5);
+});
+
+test("assemblyOverlaps runs on OCCT — clean for disjoint parts, flags a real overlap", () => {
+  // Adding intersect to OCCT flips measure.js's canIntersect gate, so this overlap path now
+  // runs on the OCCT kernel for the first time. Guard that it behaves: no throw on disjoint.
+  const mk = (bx) => ({ defaults: {}, views: { v: {} }, parts: {
+    a: { views: ["v"], build: (kk) => kk.box([0, 0, 0], [10, 10, 10]) },
+    b: { views: ["v"], build: (kk) => kk.box([bx, 0, 0], [bx + 10, 10, 10]) },
+  } });
+  expect(assemblyOverlaps(k, mk(20), "v", {})).toEqual([]);   // disjoint → no overlaps
+  const hit = assemblyOverlaps(k, mk(5), "v", {});            // 5-unit overlap on X
+  expect(hit).toHaveLength(1);
+  expect(hit[0].volume).toBeCloseTo(500, 0);                  // 5×10×10
 });
 
 test("a Manifold-routed part (planter) exports STEP via OCCT — every part gets all 3 formats", async () => {

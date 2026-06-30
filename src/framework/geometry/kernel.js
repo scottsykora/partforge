@@ -20,7 +20,7 @@
  * @property {(v:number[]) => Solid} at   place an origin-built solid at point v (alias of translate)
  * @property {(plane: "XY"|"XZ"|"YZ") => Solid} mirror
  * @property {(factor:number, center?:number[]) => Solid} scale   uniform scale about center (default origin)
- * @property {() => number} volume                   solid volume in mm³ (Manifold; used by collision tests)
+ * @property {() => number} volume                   solid volume in mm³ (both backends; used by collision/overlap tests)
  * @property {(opts?: {quality?: "preview"|"print"}) => {positions:Float32Array, normals:Float32Array, indices:Uint32Array, triangles:number}} toMesh
  * @property {(opts?: {quality?: "preview"|"print"}) => Promise<ArrayBuffer>} toSTL
  * @property {() => {positions:Float32Array, indices:Uint32Array}} toIndexedMesh   indexed mesh, for 3MF (Manifold)
