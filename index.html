@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>partforge — one part definition → a whole CAD app</title>
-    <meta name="description" content="partforge turns one declarative part definition into a full parametric-CAD web app. Three live example parts you can open, adjust, and export." />
+    <title>partforge — describe a part, get a forge</title>
+    <meta name="description" content="AI-built parametric CAD. Describe a part and get a forge — a self-contained web app anyone can adjust, share, and 3D print. Open the live example forges." />
     <style>
       :root {
         --paper: #f6f7f4;
@@ -100,6 +100,19 @@
       .card .block .open { color: var(--blue); font-weight: 600; }
       .card .block .open::after { content: " →"; }
 
+      /* "take it further" — full-width link rows (real-world forge + make-your-own) */
+      .links { display: flex; flex-direction: column; gap: 10px; }
+      .linkrow { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+        padding: 13px 16px; background: var(--paper-2); border: 1px solid var(--ink);
+        text-decoration: none; color: inherit; transition: border-color .15s ease, transform .15s ease; }
+      .linkrow:hover { border-color: var(--blue); transform: translateY(-2px); }
+      .linkrow:focus-visible { outline: 2.5px solid var(--blue); outline-offset: 3px; }
+      .linkrow p { margin: 0; font-size: 0.92rem; color: #3a414a; line-height: 1.5; }
+      .linkrow p .tag { display: block; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--blue); margin-bottom: 4px; }
+      .linkrow p strong { color: var(--ink); }
+      .linkrow .open { flex: none; font-family: var(--mono); font-size: 0.72rem; font-weight: 600; color: var(--blue); }
+      .linkrow .open::after { content: " →"; }
+
       /* ── footer ────────────────────────────────────────────── */
       footer { margin-top: 40px; border-top: 1px solid var(--ink); padding: 18px 0 56px; display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: space-between; font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.03em; color: var(--graphite); }
       footer a { color: var(--blue); text-decoration: none; }
@@ -132,18 +145,19 @@
     <div class="sheet">
       <header class="titleblock">
         <div class="wordmark">part<b>forge</b></div>
-        <div class="meta"><span>v0.6.0</span> · <span>MIT</span> · <span>three.js + Manifold / Replicad</span></div>
+        <div class="meta"><span>v0.6.1</span> · <span>MIT</span> · <span>three.js + Manifold / Replicad</span></div>
       </header>
 
       <section class="hero">
         <div>
-          <p class="eyebrow reveal d1">Parametric CAD framework</p>
-          <h1 class="reveal d2">One part definition <span class="arrow">→</span><br />a whole CAD app.</h1>
-          <p class="lede reveal d3">You write one declarative <b>part definition</b> — geometry build
-            functions plus a parameter schema. partforge renders the rest: a 3-D viewer, a live control
-            panel, geometry workers, and <b>STL / STEP / 3MF</b> export.</p>
-          <p class="heronote reveal d4">The drawings below are live — open one, drag a slider,
-            <span class="blink">download a printable file.</span></p>
+          <p class="eyebrow reveal d1">AI-built parametric CAD</p>
+          <h1 class="reveal d2">Describe a part <span class="arrow">→</span><br />a forge.</h1>
+          <p class="lede reveal d3">Tell an AI what you want to make and refine it in plain language.
+            Instead of a one-off 3-D file you get a <b>forge</b> — a self-contained web app for that
+            part, with just the controls that matter. Share it, and anyone can dial in their own
+            version and export something to print.</p>
+          <p class="heronote reveal d4">The forges below are live — open one, change a parameter,
+            <span class="blink">download a part to print.</span></p>
         </div>
 
         <div class="drawing-wrap reveal d3">
@@ -212,7 +226,7 @@
       </section>
 
       <section class="examples">
-        <p class="sectlabel">Live example parts</p>
+        <p class="sectlabel">Example forges</p>
         <div class="grid">
           <a class="card feature" href="planter.html">
             <div class="top">
@@ -223,8 +237,8 @@
               </svg>
             </div>
             <h2>Faceted Planter</h2>
-            <p>Facets, taper, twist, and a drainage hole — every control has an obvious reason to touch
-               it before printing. Thin the wall and watch the DFM warning fire.</p>
+            <p>A planter, cup, or vase. Set the facets, taper, twist, and wall, toggle a drainage hole,
+               then export a part to print — thin the wall and the forge flags that it won't print cleanly.</p>
             <div class="spc"></div>
             <div class="block"><span>mm · Manifold · STL / 3MF</span><span class="open">open</span></div>
           </a>
@@ -238,8 +252,8 @@
               </svg>
             </div>
             <h2>Spacer</h2>
-            <p>The minimal worked example: a parametric standoff with screw-size presets, an optional
-               base flange, and a clearance bore.</p>
+            <p>A parametric standoff: pick a screw-size preset, add a base flange, set the clearance
+               bore. The simplest forge to crack open if you want to see how one is built.</p>
             <div class="spc"></div>
             <div class="block"><span>mm · Manifold · STL / 3MF</span><span class="open">open</span></div>
           </a>
@@ -253,16 +267,30 @@
               </svg>
             </div>
             <h2>Filleted Box</h2>
-            <p>Native fillet and chamfer that auto-route to the OCCT backend — the one that exports
-               exact STEP for downstream CAD.</p>
+            <p>Native fillet and chamfer, routed to the exact-geometry (OCCT) backend — the one this
+               forge uses to export STEP for downstream CAD.</p>
             <div class="spc"></div>
             <div class="block"><span>mm · OCCT · STL / STEP / 3MF</span><span class="open">open</span></div>
           </a>
         </div>
       </section>
 
+      <section class="examples">
+        <p class="sectlabel">Take it further</p>
+        <div class="links">
+          <a class="linkrow" href="https://scottsykora.github.io/Drum-Machine/">
+            <p><span class="tag">In the wild</span>The <strong>Drum Machine</strong> — a parametric capstan drum, built as a forge for a real robotics project. Configure it, then export a part to print.</p>
+            <span class="open">open</span>
+          </a>
+          <a class="linkrow" href="https://github.com/scottsykora/partforge">
+            <p><span class="tag">Make your own</span><strong>Point an AI at the repo.</strong> Ask Claude or ChatGPT's desktop app to forge you a part and hand it this link — a few turns of plain-language back-and-forth and the forge is yours.</p>
+            <span class="open">github</span>
+          </a>
+        </div>
+      </section>
+
       <footer>
-        <span>Every part above is one script.</span>
+        <span>Open source — built to be forked, shared, and printed.</span>
         <span><a href="https://github.com/scottsykora/partforge">github.com/scottsykora/partforge</a></span>
       </footer>
     </div>
