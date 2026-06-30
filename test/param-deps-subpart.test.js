@@ -37,6 +37,20 @@ test("relevance analysis handles the build-step vocabulary instead of falling ba
   expect([...r]).not.toContain("b");  // never read → stays irrelevant (the whole point)
 });
 
+test("relevance analysis survives an unknown/future solid op — the probe is drift-proof", () => {
+  // Hardening: the probe must not throw when a build calls a kernel/solid method it hasn't
+  // been told about (the exact drift that broke relevance when the build-step vocabulary
+  // landed). A made-up op should be tolerated, not collapse the analysis to RELEVANT_ALL.
+  const future = {
+    defaults: { a: 1 }, views: view,
+    parts: { p: { views: ["v"], build: (k, p) =>
+      k.cylinder(p.a, p.a, p.a).someFutureOp(p.a).at([0, 0, 0]) } },
+  };
+  const r = relevantParamKeys(future, "v", future.defaults);
+  expect(r).not.toBe(RELEVANT_ALL);
+  expect([...r]).toContain("a");
+});
+
 test("relevanceHash is stable for equal values and differs when a value changes", () => {
   expect(relevanceHash(["a"], { a: 1, b: 2 })).toBe(relevanceHash(["a"], { a: 1, b: 9 }));
   expect(relevanceHash(["a"], { a: 1 })).not.toBe(relevanceHash(["a"], { a: 2 }));
