@@ -6,7 +6,7 @@
  * @property {string} _hash   content hash (Manifold backend only; drives the worker solid cache)
  * @property {(tool: Solid) => Solid} cut
  * @property {(tools: Solid[]) => Solid} cutAll      batch subtract (backend-optimized)
- * @property {(other: Solid) => Solid} intersect     boolean intersection (Manifold)
+ * @property {(other: Solid) => Solid} intersect     boolean intersection (both backends)
  * @property {() => Solid} clone   independent copy (replicad consumes solids on transform)
  * @property {() => {min:number[],max:number[],center:number[],size:number[]}} boundingBox   axis-aligned bounds (query)
  * @property {(thickness:number, openFaces:object) => Solid} shell   hollow inward (OCCT only); openFaces selector required

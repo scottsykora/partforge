@@ -1,5 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
+import planterPart from "../src/parts/planter.js";
 
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); });
@@ -7,6 +8,25 @@ beforeAll(async () => { k = await bootOcctKernel(); });
 test("cylinder minus a bore meshes to a solid", () => {
   const drum = k.cylinder(10, 10, 20).cut(k.cylinder(4, 4, 30).translate([0, 0, -5]));
   expect(drum.toMesh({ quality: "preview" }).triangles).toBeGreaterThan(0);
+});
+
+test("intersect keeps only the overlapping volume of two solids", () => {
+  // STEP export always builds on OCCT, so OCCT must implement every boolean a part may
+  // use — including intersect (e.g. the planter clips its cavity with .intersect(box)).
+  const a = k.box([0, 0, 0], [10, 10, 10]);
+  const b = k.box([5, 5, 5], [15, 15, 15]);
+  expect(a.intersect(b).volume()).toBeCloseTo(125, 0); // the 5×5×5 overlap
+});
+
+test("a Manifold-routed part (planter) exports STEP via OCCT — every part gets all 3 formats", async () => {
+  // Mirrors the export-step path in jobs.js: build the part fresh on OCCT, then toSTEP.
+  // Regression: the planter uses .intersect(), which OCCT lacked, so STEP silently failed.
+  const p = { ...planterPart.defaults };
+  const d = planterPart.derive(p);
+  const solid = planterPart.parts.planter.build(k, p, d);
+  const step = await k.toSTEP([{ name: "planter", solid }]);
+  expect(step.byteLength).toBeGreaterThan(1000);
+  expect(new TextDecoder().decode(step.slice(0, 13))).toBe("ISO-10303-21;"); // STEP header
 });
 
 test("clone() lets the original survive a consuming transform", () => {
