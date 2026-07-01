@@ -1,15 +1,8 @@
 import { helixTube } from "./helix-tube.js";
-import { KernelCapabilityError } from "./errors.js";
-import { OCCT_ONLY_OPS } from "./kernel.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
 import { addSugar } from "./solid-sugar.js";
-
-// One throwing stub per OCCT-only op, generated from the contract's single list —
-// so a new OCCT-only op gets its NEEDS_OCCT reroute (and probe routing) for free.
-const occtOnlyStubs = Object.fromEntries(OCCT_ONLY_OPS.map((op) => [
-  op, () => { throw new KernelCapabilityError(`${op} requires the OCCT backend`); },
-]));
+import { finishKernel } from "./kernel-front.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
@@ -87,13 +80,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     intersect: (t) => cached(h("intersect", hash, t._hash), () => T(m.intersect(t._m))),
     clone: () => wrap(m, hash),
     boundingBox: () => {
-      const b = m.boundingBox();           // { min: Vec3, max: Vec3 }
-      const min = [...b.min], max = [...b.max];
-      return {
-        min, max,
-        center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2],
-        size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
-      };
+      const b = m.boundingBox();           // { min: Vec3, max: Vec3 } — addSugar derives center/size
+      return { min: [...b.min], max: [...b.max] };
     },
     volume: () => m.volume(),
     genus: () => m.genus(),
@@ -108,8 +96,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis));
     },
     mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)),
-    scale: (factor, center = [0, 0, 0]) => {
-      if (!(factor > 0)) throw new Error("scale: factor must be > 0");
+    scale: (factor, center) => { // factor validated (and center defaulted) by addSugar
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = T(a.scale([factor, factor, factor]));
       return wrap(T(b.translate(center)), h("scale", hash, factor, center));
@@ -117,10 +104,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     toMesh: () => meshOut(m, false),
     toSTL: () => Promise.resolve(meshOut(m, true)),
     toIndexedMesh: () => indexedMeshOut(m),
-    ...occtOnlyStubs,
   });
 
-  return {
+  return finishKernel({
     cylinder: (rb, rt, h2, { center = false } = {}) =>
       wrap(T(Manifold.cylinder(h2, rb, rt, segs, center)), h("cylinder", rb, rt, h2, center, segs)),
     // Compound op: hashed ATOMICALLY from its own args, so it is a single cache
@@ -139,7 +125,6 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     prism: (pts, height, { twist = 0, scaleTop = 1 } = {}) =>
       cached(h("prism", pts, height, twist, scaleTop, segs), () => {
-        if (scaleTop < 0) throw new Error("prism: scaleTop must be ≥ 0");
         const cs = T(CrossSection.ofPolygons([pts]));
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
         const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
@@ -149,12 +134,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       }),
     helixSweptTube: (o) => cached(h("helixSweptTube", o, tube), () => T(helixTube(wasm, { ...o, ...tube }))),
     revolve: (pts, { degrees = 360 } = {}) =>
-      cached(h("revolve", pts, degrees, segs), () => {
-        for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
-        return T(Manifold.revolve([pts], segs, degrees));
-      }),
+      cached(h("revolve", pts, degrees, segs), () => T(Manifold.revolve([pts], segs, degrees))),
     union: (solids) => cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
-    toSTEP: () => { throw new KernelCapabilityError("toSTEP requires the OCCT backend"); },
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
     cacheStats: () => cache.stats(),
@@ -162,7 +143,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // Free every WASM object created since the last cleanup EXCEPT solids the cache
     // still pins (they must survive for the next build to resume from them).
     cleanup: () => { for (const o of tracked) if (!cache.isPinned(o)) o.delete?.(); tracked.length = 0; },
-  };
+  });
 }
 
 // Build a non-indexed mesh with normals that are smooth within a single original
