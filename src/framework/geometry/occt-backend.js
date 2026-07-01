@@ -4,6 +4,7 @@
 import { toEdgeFinder } from "./edge-selector.js";
 import { toFaceFinder } from "./face-selector.js";
 import { addSugar } from "./solid-sugar.js";
+import { classifyFaceGroups } from "./feature-attribution.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 export function createOcctKernel(replicad) {
@@ -78,15 +79,23 @@ export function createOcctKernel(replicad) {
     return backup;
   };
 
-  const wrap = (shape) => addSugar({
+  // Feature labels: each entry snapshots the labeled solid's geometry at the moment
+  // the label applies; transforms move the snapshots along, booleans merge the two
+  // sides' lists. At toMesh() time result faces are classified against the snapshots.
+  const cloneLabels = (ls) => ls.map((l) => ({ label: l.label, snapshot: l.snapshot.clone() }));
+  const mapLabels = (ls, f) => ls.map((l) => ({ label: l.label, snapshot: f(l.snapshot.clone()) }));
+
+  const wrap = (shape, labels = []) => addSugar({
     _s: shape,
-    cut: (t) => wrap(shape.cut(t._s)),
-    cutAll: (tools) => wrap(shape.cut(makeCompound(tools.map((t) => t._s)))),
-    intersect: (t) => wrap(shape.intersect(t._s)),
-    clone: () => wrap(shape.clone()),
-    // TEMPORARY stub: satisfies the SOLID_OPS contract; real attribution (snapshot
-    // registry + toMesh classification) replaces this in the feature-labels OCCT task.
-    label: (_name) => wrap(shape),
+    _labels: labels,
+    label: (name) => wrap(shape, [...labels, { label: name, snapshot: shape.clone() }]),
+    cut: (t) => wrap(shape.cut(t._s), [...cloneLabels(labels), ...cloneLabels(t._labels ?? [])]),
+    cutAll: (tools) => wrap(
+      shape.cut(makeCompound(tools.map((t) => t._s))),
+      [...cloneLabels(labels), ...tools.flatMap((t) => cloneLabels(t._labels ?? []))]
+    ),
+    intersect: (t) => wrap(shape.intersect(t._s), [...cloneLabels(labels), ...cloneLabels(t._labels ?? [])]),
+    clone: () => wrap(shape.clone(), cloneLabels(labels)),
     boundingBox: () => {
       const bb = shape.boundingBox;        // replicad BoundingBox: .bounds [[min],[max]], .center
       const [min, max] = bb.bounds;
@@ -95,29 +104,37 @@ export function createOcctKernel(replicad) {
         size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
       };
     },
-    translate: (v) => wrap(shape.translate(v)),
-    rotate: (deg, center, axis) => wrap(shape.rotate(deg, center, axis)),
-    mirror: (plane) => wrap(shape.mirror(plane)),
+    translate: (v) => wrap(shape.translate(v), mapLabels(labels, (s) => s.translate(v))),
+    rotate: (deg, center, axis) => wrap(shape.rotate(deg, center, axis), mapLabels(labels, (s) => s.rotate(deg, center, axis))),
+    mirror: (plane) => wrap(shape.mirror(plane), mapLabels(labels, (s) => s.mirror(plane))),
     scale: (factor, center = [0, 0, 0]) => {
       if (!(factor > 0)) throw new Error("scale: factor must be > 0");
-      return wrap(shape.scale(factor, center));
+      return wrap(shape.scale(factor, center), mapLabels(labels, (s) => s.scale(factor, center)));
     },
     toMesh: ({ quality = "preview" } = {}) => {
       const m = shape.mesh(MESH[quality]);
-      return {
+      const out = {
         positions: Float32Array.from(m.vertices),
         normals: new Float32Array(0), // let the main thread crease (matches prior look)
         indices: Uint32Array.from(m.triangles),
         triangles: m.triangles.length / 3,
       };
+      if (labels.length) {
+        const soups = labels.map((l) => {
+          const lm = l.snapshot.clone().mesh(MESH.preview); // clone: mesh() must not disturb the kept snapshot
+          return { label: l.label, vertices: lm.vertices, triangles: lm.triangles };
+        });
+        Object.assign(out, classifyFaceGroups(m, soups));
+      }
+      return out;
     },
     toSTL: ({ quality = "print" } = {}) => shape.blobSTL(MESH[quality]).arrayBuffer(),
-    fillet: (radius, selector) => wrap(safeOp(shape, (sh) => sh.fillet(radius, toEdgeFinder(selector)), `fillet(${radius})`)),
-    chamfer: (distance, selector) => wrap(validChamfer(shape, toEdgeFinder(selector), distance)),
+    fillet: (radius, selector) => wrap(safeOp(shape, (sh) => sh.fillet(radius, toEdgeFinder(selector)), `fillet(${radius})`), cloneLabels(labels)),
+    chamfer: (distance, selector) => wrap(validChamfer(shape, toEdgeFinder(selector), distance), cloneLabels(labels)),
     shell: (thickness, openFaces) => {
       if (openFaces == null) throw new Error("shell: openFaces is required (a fully closed hollow is not supported)");
       // replicad shells inward with a positive thickness in this version, keeping outer dimensions.
-      return wrap(safeOp(shape, (sh) => sh.shell(thickness, toFaceFinder(openFaces)), `shell(${thickness})`));
+      return wrap(safeOp(shape, (sh) => sh.shell(thickness, toFaceFinder(openFaces)), `shell(${thickness})`), cloneLabels(labels));
     },
     volume: () => measureVolume(shape),
     toIndexedMesh: () => {
@@ -172,7 +189,10 @@ export function createOcctKernel(replicad) {
       cylinder(od / 2, od / 2, h).cut(cylinder(bore / 2, bore / 2, h + 4).translate([0, 0, -2])),
     box: (min, max) => wrap(makeBox(min, max)), prism, revolve, helixSweptTube,
     sphere: (r) => wrap(makeSphere(r)),
-    union: (solids) => wrap(solids.map((s) => s._s).reduce((a, b) => a.fuse(b))),
+    union: (solids) => wrap(
+      solids.map((s) => s._s).reduce((a, b) => a.fuse(b)),
+      solids.flatMap((s) => cloneLabels(s._labels ?? []))
+    ),
     toSTEP: (named) => exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._s }))).arrayBuffer(),
   };
 }
