@@ -1,11 +1,16 @@
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
 import { bboxSize } from "../src/testing/mesh.js";
 import { circleProfile } from "../src/framework/geometry/polygon.js";
+import { bootManifoldKernel } from "../src/testing.js";
 
 let k;
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
+
+test("bootManifoldKernel boots a ready kernel in one call", async () => {
+  const kk = await bootManifoldKernel();
+  const bb = kk.box([0, 0, 0], [2, 3, 4]).boundingBox();
+  expect(bb.size).toEqual([2, 3, 4]);
+});
 
 test("cylinder minus a concentric bore removes volume", () => {
   const drum = k.cylinder(10, 10, 20).cut(k.cylinder(4, 4, 30).translate([0, 0, -5]));

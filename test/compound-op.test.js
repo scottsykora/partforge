@@ -1,12 +1,11 @@
 // test/compound-op.test.js
 import { beforeAll, beforeEach, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { createProbeKernel } from "../src/framework/geometry/probe.js";
 import { meshVolume } from "../src/testing/mesh.js";
 
 let k;
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 beforeEach(() => k.resetCacheStats());
 
 test("boredCylinder removes the bore volume", () => {

@@ -1,6 +1,6 @@
 // test/pick-server.test.js
 import { afterEach, expect, test } from "vitest";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { createPickServer, requestPicks, formatPickResult } from "../src/framework/pick-request/server.js";
 
 let srv;
@@ -157,6 +157,33 @@ test("POST /request with non-array prompts returns 400", async () => {
   });
   expect(bad.status).toBe(400);
   expect((await bad.json()).error).toContain("non-empty");
+});
+
+// Fix #6: a Ctrl-C'd CLI client (dropped /request socket) must cancel the batch and
+// free the slot immediately — not leave every new request 409-busy until timeoutMs.
+test("client disconnect mid-batch cancels the batch and frees the slot", async () => {
+  srv = createPickServer({ port: 0 }); // default 120 s timeout — a wedge would outlive the test
+  const { port } = await srv.start();
+
+  // Open /request by hand so we can drop the socket like a Ctrl-C'd CLI.
+  const req = httpRequest({ host: "127.0.0.1", port, path: "/request", method: "POST",
+                            headers: { "content-type": "application/json" } });
+  req.on("error", () => {}); // destroy() surfaces ECONNRESET locally — expected
+  req.end(JSON.stringify({ prompts: ["click A"] }));
+  await nextEvent(port, "prompt"); // batch is active server-side
+  req.destroy();
+  await new Promise((r) => setTimeout(r, 100)); // let the server observe the close
+
+  // The slot must be free: a follow-up batch runs to completion instead of 409 busy.
+  const done = requestPicks({ port, prompts: ["click B"] });
+  const p = await nextEvent(port, "prompt");
+  expect(p.prompt).toBe("click B"); // a wedged server replays the dead batch's "click A"
+  await fetch(`http://127.0.0.1:${port}/resolve`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: p.id, index: 0, selection: { subPart: "ok" } }),
+  });
+  const out = await done;
+  expect(out.status).toBe("done");
 });
 
 // Fix #5: formatPickResult with malformed selection (missing point/normal/params)

@@ -1,11 +1,10 @@
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { linearPattern, circularPattern } from "../src/framework/geometry/polygon.js";
 import { bboxSize } from "../src/testing/mesh.js";
 
 let k;
-beforeAll(async () => { const w = await Module(); w.setup(); k = createManifoldKernel(w, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 test("linearPattern makes `count` copies the union of which spans the run", () => {
   const unit = k.box([-1, -1, -1], [1, 1, 1]);          // 2mm cube at origin

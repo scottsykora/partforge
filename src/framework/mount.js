@@ -21,7 +21,6 @@ import { createPickRequestClient } from "./pick-request/index.js";
 // #part (the view-tab segmented control).
 export function mount(part, { createWorker, container = document.getElementById("app"),
                               controls = document.getElementById("controls") } = {}) {
-  const names = Object.keys(part.parts);
   const viewer = createViewer(container, part);
 
   // ?backend=occt|manifold forces the backend; otherwise it's detected per part.

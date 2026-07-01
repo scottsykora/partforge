@@ -1,11 +1,10 @@
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { buildView } from "../src/testing/build.js";
 import part from "../src/parts/demo.js";
 
 let k;
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 test("buildView returns one live solid + mesh for the demo spacer view", () => {
   const built = buildView(k, part, "spacer");

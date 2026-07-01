@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
 import {
   loadRotating, saveRotating, loadCamera, saveCamera, loadView, saveView,
+  loadTheme, saveTheme,
 } from "../src/framework/view-state.js";
 
 function mockStorage() {
@@ -36,6 +37,19 @@ test("view round-trips a name; null when absent", () => {
   expect(loadView()).toBe("assembly");
 });
 
+test("theme round-trips light/dark; defaults to dark when absent", () => {
+  expect(loadTheme()).toBe("dark");      // absent → default dark
+  saveTheme("light");
+  expect(loadTheme()).toBe("light");
+  saveTheme("dark");
+  expect(loadTheme()).toBe("dark");
+});
+
+test("corrupt stored theme → loadTheme returns the dark default", () => {
+  globalThis.localStorage.setItem("partforge:theme", "neon");
+  expect(loadTheme()).toBe("dark");
+});
+
 test("corrupt camera JSON → loadCamera returns null", () => {
   globalThis.localStorage.setItem("partforge:camera", "{not json");
   expect(loadCamera()).toBeNull();
@@ -61,9 +75,11 @@ test("storage that throws → loads return defaults, saves are no-ops", () => {
   expect(loadRotating()).toBe(true);
   expect(loadCamera()).toBeNull();
   expect(loadView()).toBeNull();
+  expect(loadTheme()).toBe("dark");
   expect(() => {
     saveRotating(false);
     saveCamera({ pos: [1, 2, 3], target: [0, 0, 0] });
     saveView("x");
+    saveTheme("light");
   }).not.toThrow();
 });

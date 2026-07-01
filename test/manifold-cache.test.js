@@ -1,11 +1,10 @@
 // test/manifold-cache.test.js
 import { beforeAll, beforeEach, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { meshVolume, bboxSize } from "../src/testing/mesh.js";
 
 let k;
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 beforeEach(() => k.resetCacheStats());
 
 // Two-boundary build: a flanged barrel (union) bored through (cut). `bore` feeds
@@ -43,8 +42,7 @@ test("a cached-resume mesh equals a cold-built mesh", async () => {
   bboxSize(resumed.positions).forEach((s, i) => expect(s).toBeCloseTo(m2.bbox[i], 2));
 
   async function freshKernel() {
-    const wasm = await Module(); wasm.setup();
-    const kk = createManifoldKernel(wasm, { quality: "preview" });
+    const kk = await bootManifoldKernel();
     return {
       barrel: (boreR) => {
         let s = kk.union([kk.cylinder(4, 4, 10), kk.cylinder(8, 8, 2)]);
