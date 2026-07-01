@@ -2,6 +2,8 @@
 // file only imports bootOcctKernel.
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing.js";
+import filletedBox from "../src/parts/filleted-box.js";
+import { resolveParams, buildPosed } from "../src/framework/jobs.js";
 
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); }, 120000);
@@ -41,4 +43,10 @@ test("fillet surfaces stay unlabeled but other labeled faces persist", () => {
 test("unlabeled OCCT build produces no feature fields", () => {
   const m = k.box([0, 0, 0], [4, 4, 4]).toMesh();
   expect(m.featureIds).toBeUndefined();
+});
+
+test("filleted-box labels its bore", () => {
+  const { p, d } = resolveParams(filletedBox, {});
+  const m = buildPosed(k, filletedBox, "body", { purpose: "display", view: "box", p, d }).toMesh();
+  expect(m.features).toEqual(["Bore"]);
 });

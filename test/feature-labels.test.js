@@ -2,6 +2,8 @@
 // attributes each surviving triangle of that solid's surface to the label.
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel, handle } from "../src/testing.js";
+import planter from "../src/parts/planter.js";
+import { resolveParams, buildPosed } from "../src/framework/jobs.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -76,4 +78,10 @@ test("generate jobs pass featureIds/features through to the mesh payload", async
   const meshes = posted.find((m) => m.type === "meshes").meshes;
   expect(meshes[0].features).toEqual(["Bore"]);
   expect(meshes[0].featureIds).toBeInstanceOf(Uint16Array);
+});
+
+test("planter's build exposes its authored feature names", () => {
+  const { p, d } = resolveParams(planter, {});
+  const m = buildPosed(k, planter, "planter", { purpose: "display", view: "planter", p, d }).toMesh();
+  expect([...m.features].sort()).toEqual(["Cavity", "Drainage hole", "Faceted wall"]);
 });
