@@ -1,14 +1,8 @@
 import { expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
-import { rmSync } from "node:fs";
-import { afterAll } from "vitest";
 
 const run = (args) => execFileSync("node", ["bin/cli.js", ...args], { encoding: "utf8" });
-afterAll(() => {
-  rmSync("measure-spacer-spacer.json", { force: true });
-  rmSync("measure-bad-v.json", { force: true });
-  rmSync("measure-thin-v.json", { force: true });
-});
+// No cleanup needed: measure only writes a file when --out asks for one.
 
 test("measure --process runs verify, prints checks, exits 0 for a sound part", () => {
   const out = run(["measure", "src/parts/demo.js", "--process", "fdm-pla"]);
