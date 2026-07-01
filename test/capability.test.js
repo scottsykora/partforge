@@ -1,11 +1,10 @@
 import { beforeAll, expect, test, vi } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { KernelCapabilityError } from "../src/framework/geometry/errors.js";
 import { handle } from "../src/framework/jobs.js";
 
 let k;
-beforeAll(async () => { const w = await Module(); w.setup(); k = createManifoldKernel(w, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 test("Manifold fillet/chamfer throw KernelCapabilityError with code NEEDS_OCCT", () => {
   expect(() => k.box([0, 0, 0], [1, 1, 1]).fillet(0.1)).toThrow(KernelCapabilityError);

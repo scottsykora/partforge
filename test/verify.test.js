@@ -48,12 +48,11 @@ test("throws on an unknown metric", () => {
 });
 
 import { beforeAll } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { verify } from "../src/testing/verify.js";
 
 let k;
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 const tube = (od, h) => ({
   meta: { title: "Tube", units: "mm" },

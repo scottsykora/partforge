@@ -1,10 +1,9 @@
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { minWall } from "../src/testing/min-wall.js";
 
 let k;
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 // Hand-written INDEXED box [0,0,0]..[10,20,5]: 8 unique verts (24 floats), 12 triangles (36 ints).
 // The thinnest dimension is 5 (z), so minWall should read ~5.

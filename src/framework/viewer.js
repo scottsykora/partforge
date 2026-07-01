@@ -233,13 +233,6 @@ export function createViewer(container, part) {
   }
   function onCameraEnd(cb) { controls.addEventListener("end", cb); }
 
-  // --- dispose --------------------------------------------------------------
-  function dispose() {
-    renderer.setAnimationLoop(null);
-    renderer.dispose();
-    container.removeChild(renderer.domElement);
-  }
-
   // Transient marker at a world-space point — visual confirmation of a pick.
   function flashPoint(world) {
     const dot = new THREE.Mesh(
@@ -252,5 +245,5 @@ export function createViewer(container, part) {
     setTimeout(() => { scene.remove(dot); dot.geometry.dispose(); dot.material.dispose(); }, 1200);
   }
 
-  return { showAssembly, hideAssembly, setSubGeometry, hasSubMesh, subTriangles, resize, dispose, frame, setAutoRotate, setTheme, getCameraState, setCameraState, onCameraEnd, camera, domElement: renderer.domElement, _subMeshes: subMesh, flashPoint };
+  return { showAssembly, hideAssembly, setSubGeometry, hasSubMesh, subTriangles, frame, setAutoRotate, setTheme, getCameraState, setCameraState, onCameraEnd, camera, domElement: renderer.domElement, _subMeshes: subMesh, flashPoint };
 }

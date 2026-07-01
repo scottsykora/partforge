@@ -58,6 +58,16 @@ export function createPickServer({ port = 4518, timeoutMs = 120000 } = {}) {
       }
       batch = createBatch(body.prompts);
       pending = { res, timer: setTimeout(() => { timeout(batch); finish(); }, timeoutMs) };
+      // A dropped client (Ctrl-C'd CLI) must free the slot immediately, not wedge
+      // every new request behind 409-busy until timeoutMs. Drop `pending` first so
+      // finish() never writes to the dead socket. (This also fires after a normal
+      // finish(), where `pending` is already null — the guard makes it a no-op.)
+      res.on("close", () => {
+        if (pending?.res !== res) return;
+        clearTimeout(pending.timer);
+        pending = null;
+        if (batch) { cancel(batch); finish(); }
+      });
       sse("prompt", view(batch));
       return; // held open until finish()
     }

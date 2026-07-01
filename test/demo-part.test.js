@@ -1,10 +1,9 @@
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import part from "../src/parts/demo.js";
 
 let k;
-beforeAll(async () => { const w = await Module(); w.setup(); k = createManifoldKernel(w, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 const buildSpacer = (overrides = {}) => {
   const p = { ...part.defaults, ...overrides };

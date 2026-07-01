@@ -82,7 +82,7 @@ runWorker(part);
 ```
 
 Test your parts headlessly with `partforge/testing`
-(`createManifoldKernel`, `handle`, `assemblyOverlaps`, `bootOcctKernel`, `meshVolume`, `bboxSize`).
+(`bootManifoldKernel`, `bootOcctKernel`, `assemblyOverlaps`, `measure`, `verify`, `meshVolume`, `bboxSize`).
 
 **Smoke-test that an app actually boots** (real Chromium, real worker/WASM): `npm run check`
 (or `node scripts/check-app.mjs <entry>.html`) — it loads the app and verifies the kernel

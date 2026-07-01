@@ -1,11 +1,10 @@
 import { beforeAll, expect, test, vi } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { handle } from "../src/framework/jobs.js";
 import part from "../src/parts/demo.js";
 
 let k;
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 // Demo spacer with the flange on → build is union(barrel, flange) then cut(bore).
 const gen = (params) => handle(k, part, { type: "generate", subparts: ["spacer"], view: "spacer", params }, vi.fn());

@@ -1,10 +1,9 @@
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { addSugar } from "../src/framework/geometry/solid-sugar.js";
 
 let k;
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 // an asymmetric box, so bbox reveals orientation AND position
 const box = () => k.box([0, 0, 0], [2, 4, 6]);

@@ -1,14 +1,13 @@
 import { beforeAll, afterAll, expect, test } from "vitest";
 import { rmSync, existsSync, statSync, readFileSync } from "node:fs";
-import Module from "manifold-3d";
 import { PNG } from "pngjs";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { renderViews } from "../src/testing/render.js";
 import part from "../src/parts/demo.js";
 
 let k;
 const OUT = "test/.render-out";
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 afterAll(() => rmSync(OUT, { recursive: true, force: true }));
 
 test("renderViews writes a valid, non-blank PNG per requested angle", async () => {

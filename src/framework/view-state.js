@@ -2,12 +2,13 @@
 // auto-refresh) in localStorage. All keys are global. Reads/writes are guarded:
 // if localStorage is unavailable (private mode, disabled) or a value is corrupt,
 // reads return the documented default and writes are no-ops — persistence never
-// throws. Theme is persisted separately (in mount.js) and is not handled here.
+// throws.
 
 const KEY = {
   rotating: "partforge:rotating",
   camera: "partforge:camera",
   view: "partforge:view",
+  theme: "partforge:theme",
 };
 
 function read(key) {
@@ -44,6 +45,15 @@ export function loadCamera() {
 export function saveCamera(state) {
   if (!state || !isVec3(state.pos) || !isVec3(state.target)) return;
   write(KEY.camera, JSON.stringify({ pos: state.pos, target: state.target }));
+}
+
+export function loadTheme() {
+  const raw = read(KEY.theme);
+  return raw === "light" ? "light" : "dark"; // default: dark (matches the viewer's default)
+}
+
+export function saveTheme(mode) {
+  if (mode === "light" || mode === "dark") write(KEY.theme, mode);
 }
 
 export function loadView() {

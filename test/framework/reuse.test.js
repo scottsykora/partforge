@@ -2,13 +2,12 @@
 // generate + STL export with no drum knowledge involved. If the framework ever
 // regrows a drum-specific assumption, this breaks.
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../../src/testing.js";
 import { handle, viewSubParts } from "../../src/framework/jobs.js";
 import demo from "../../src/parts/demo.js";
 
 let k;
-beforeAll(async () => { const w = await Module(); w.setup(); k = createManifoldKernel(w, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 test("a non-drum part renders its sub-parts through the framework", async () => {
   expect(viewSubParts(demo, "spacer", {})).toEqual(["spacer"]);

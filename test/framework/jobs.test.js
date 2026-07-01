@@ -1,12 +1,11 @@
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
 import { unzipSync, strFromU8 } from "fflate";
-import { createManifoldKernel } from "../../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../../src/testing.js";
 import { handle } from "../../src/framework/jobs.js";
 import demo from "../fixtures/demo-part.js";
 
 let k;
-beforeAll(async () => { const w = await Module(); w.setup(); k = createManifoldKernel(w, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 test("generate posts one mesh per requested sub-part", async () => {
   const posted = [];

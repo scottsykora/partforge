@@ -2,10 +2,9 @@
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { writeFileSync } from "node:fs";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
 import { detectBackend } from "../src/framework/geometry/probe.js";
 import { bootOcctKernel } from "../src/testing/occt.js";
+import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { measure } from "../src/testing/measure.js";
 import { verify } from "../src/testing/verify.js";
 import { renderViews } from "../src/testing/render.js";
@@ -57,8 +56,7 @@ if (["measure", "render"].includes(cmd)) {
   if (detectBackend(part) === "occt") {
     kernel = await bootOcctKernel();
   } else {
-    const wasm = await Module(); wasm.setup();
-    kernel = createManifoldKernel(wasm, { quality: "preview" });
+    kernel = await bootManifoldKernel();
   }
 
   try {
