@@ -11,7 +11,6 @@ const OUT = "test/.cli-occt-render";
 
 afterAll(() => {
   rmSync(OUT, { recursive: true, force: true });
-  rmSync("measure-filleted-box-box.json", { force: true });
 });
 
 test("render auto-selects OCCT for a filleted part and writes a PNG", () => {
@@ -24,5 +23,5 @@ test("measure runs on the OCCT part and prints n/a topology", () => {
   const out = run(["measure", "src/parts/filleted-box.js"]);
   expect(out).toMatch(/Filleted Box \/ box/);
   expect(out).toMatch(/watertight n\/a/);
-  expect(existsSync("measure-filleted-box-box.json")).toBe(true);
+  expect(existsSync("measure-filleted-box-box.json")).toBe(false); // only --out writes a file
 });
