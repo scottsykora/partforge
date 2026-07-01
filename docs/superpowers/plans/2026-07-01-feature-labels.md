@@ -38,11 +38,14 @@ Both fields are absent (undefined) when the build used no labels — every consu
 
 **Files:**
 - Modify: `src/framework/geometry/manifold-backend.js`
-- Modify: `src/framework/geometry/kernel.js` (typedef only)
+- Modify: `src/framework/geometry/kernel.js` (`SOLID_OPS` list + typedef)
+- Modify: `src/framework/geometry/occt-backend.js` (temporary no-op stub — see step 3f)
 - Test: `test/feature-labels.test.js` (create)
 
 **Interfaces:**
 - Produces: `Solid.label(name: string) => Solid` on the Manifold backend; `toMesh()` returns the payload-contract fields. Later tasks rely on exactly `featureIds` (Uint16Array, per-tri, 1-based into `features`) and `features` (string[]).
+
+> **Contract note:** `kernel.js` exports op lists (`SOLID_OPS` etc.) that parity tests enforce on BOTH backends (`test/kernel-contract.test.js` for Manifold, `test/occt-backend.test.js` for OCCT) — a backend must expose *exactly* the documented ops. Adding `label` to `SOLID_OPS` therefore requires both backends to expose it in the same commit; OCCT gets a stub here (step 3f) that Task 4 replaces with real attribution.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -195,21 +198,38 @@ Note the label participates in the content hash (`h("label", hash, name)`), so r
 
 (Replace the existing single-line `return {...}` at the end of `creasedNormals`.)
 
-3e. Document the new Solid method in `src/framework/geometry/kernel.js`'s typedef, next to `clone`:
+3e. Add `label` to the contract in `src/framework/geometry/kernel.js` — both the data list and the typedef. In `SOLID_OPS`, add it on the `cut`/`clone` line:
 
 ```js
- * @property {(name: string) => Solid} label   name this solid's surface for hover/pick feature attribution (survives transforms + booleans)
+export const SOLID_OPS = [
+  "cut", "cutAll", "intersect", "clone", "label", "boundingBox", "volume",
+  ...
+];
+```
+
+and in the `@typedef {Object} Solid` block, next to `clone`:
+
+```js
+ * @property {(name: string) => Solid} label   name this solid's surface for hover/pick feature attribution (survives transforms + booleans; same name on several solids merges into one feature)
+```
+
+3f. Temporary OCCT stub so the OCCT parity test (`test/occt-backend.test.js` asserts the backend exposes exactly `SOLID_OPS`) stays green until Task 4. In `src/framework/geometry/occt-backend.js`'s `wrap`, next to `clone`:
+
+```js
+    // TEMPORARY stub: satisfies the SOLID_OPS contract; real attribution (snapshot
+    // registry + toMesh classification) replaces this in the feature-labels OCCT task.
+    label: (_name) => wrap(shape),
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `npx vitest run test/feature-labels.test.js test/probe.test.js test/manifold-backend.test.js test/manifold-cache.test.js`
-Expected: ALL PASS (the last two guard against regressions in meshing/caching).
+Run: `npx vitest run test/feature-labels.test.js test/probe.test.js test/manifold-backend.test.js test/manifold-cache.test.js test/kernel-contract.test.js`
+Expected: ALL PASS. Then `npx vitest run test/occt-backend.test.js` (separate invocation is fine; vitest isolates per file regardless) — the OCCT parity test must PASS with the stub.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/framework/geometry/manifold-backend.js src/framework/geometry/kernel.js test/feature-labels.test.js test/probe.test.js
+git add src/framework/geometry/manifold-backend.js src/framework/geometry/kernel.js src/framework/geometry/occt-backend.js test/feature-labels.test.js test/probe.test.js
 git commit -m "feat(geometry): Solid.label() feature attribution on the Manifold backend"
 ```
 
@@ -218,13 +238,12 @@ git commit -m "feat(geometry): Solid.label() feature attribution on the Manifold
 ### Task 2: Worker payload — carry featureIds/features through generate
 
 **Files:**
-- Modify: `src/framework/jobs.js:66` (the `meshes.push` line)
-- Modify: `src/framework/worker.js:33-47` (`transferOf`)
+- Modify: `src/framework/jobs.js` (the generate branch: `meshes.push` line + the `transfer` flatMap right below it — transferables are declared in jobs.js since the worker-protocol consolidation; worker.js needs NO change)
 - Test: `test/feature-labels.test.js` (extend)
 
 **Interfaces:**
 - Consumes: `toMesh()` payload-contract fields from Task 1.
-- Produces: `{type:"meshes"}` messages whose entries carry `featureIds`/`features` verbatim; `featureIds.buffer` is transferred zero-copy.
+- Produces: `{type:"meshes"}` messages whose entries carry `featureIds`/`features` verbatim; `featureIds.buffer` is in the message's transfer list (zero-copy).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -274,10 +293,11 @@ Change to:
           meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features });
 ```
 
-In `src/framework/worker.js`'s `transferOf`, inside the `meshes` loop after the `edges` line:
+and a few lines below, add `featureIds` to the declared transferables:
 
 ```js
-      if (x.featureIds?.buffer) t.push(x.featureIds.buffer);
+      const transfer = meshes.flatMap((m) =>
+        [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -288,7 +308,7 @@ Expected: ALL PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/framework/jobs.js src/framework/worker.js test/feature-labels.test.js
+git add src/framework/jobs.js test/feature-labels.test.js
 git commit -m "feat(worker): carry feature attribution through the generate mesh payload"
 ```
 
@@ -551,11 +571,11 @@ test("unlabeled OCCT build produces no feature fields", () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/feature-labels-occt.test.js`
-Expected: FAIL with `label is not a function`. (OCCT boot takes ~10-30 s — that's normal.)
+Expected: FAIL — `m.features` is undefined (Task 1's stub discards the label). (OCCT boot takes ~10-30 s — that's normal.)
 
 - [ ] **Step 3: Implement label propagation in `wrap`**
 
-In `src/framework/geometry/occt-backend.js`, change `wrap` to carry a labels list. **Every replicad transform consumes its operand**, so snapshots are cloned before transforming.
+In `src/framework/geometry/occt-backend.js`, **replace Task 1's temporary `label` stub** and change `wrap` to carry a labels list. **Every replicad transform consumes its operand**, so snapshots are cloned before transforming.
 
 ```js
   // Feature labels: each entry snapshots the labeled solid's geometry at the moment
