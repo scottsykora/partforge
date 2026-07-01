@@ -89,12 +89,18 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     clone: () => wrap(m, hash),
     // Name this solid's surface for hover/pick feature attribution. asOriginal()
     // stamps a fresh originalID that survives transforms and booleans, so every
-    // surviving triangle of this surface can be traced back to the label.
-    label: (name) => cached(h("label", hash, name), () => {
-      const o = T(m.asOriginal());
-      featureLabels.set(o.originalID(), name);
-      return o;
-    }),
+    // surviving triangle of this surface can be traced back to the label. The
+    // registry entry lives exactly as long as the cache pins the solid — eviction
+    // disposes both, so the registry can't grow unboundedly across regenerates.
+    label: (name) => {
+      const lh = h("label", hash, name);
+      return cache.lookup(lh, () => {
+        const o = T(m.asOriginal());
+        const id = o.originalID();
+        featureLabels.set(id, name);
+        return { value: wrap(o, lh), pin: o, dispose: () => { featureLabels.delete(id); o.delete?.(); } };
+      });
+    },
     boundingBox: () => {
       const b = m.boundingBox();           // { min: Vec3, max: Vec3 }
       const min = [...b.min], max = [...b.max];
