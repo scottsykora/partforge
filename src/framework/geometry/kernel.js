@@ -19,7 +19,7 @@ export const KERNEL_OPTIONAL_OPS = [
 
 // Ops every Solid must implement (including the sugar addSugar() attaches).
 export const SOLID_OPS = [
-  "cut", "cutAll", "intersect", "clone", "boundingBox", "volume",
+  "cut", "cutAll", "intersect", "clone", "label", "boundingBox", "volume",
   "translate", "rotate", "rotateX", "rotateY", "rotateZ", "rotateAbout", "along", "at",
   "mirror", "scale", "toMesh", "toSTL", "toIndexedMesh",
   "fillet", "chamfer", "shell",
@@ -41,6 +41,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(tools: Solid[]) => Solid} cutAll      batch subtract (backend-optimized)
  * @property {(other: Solid) => Solid} intersect     boolean intersection (both backends)
  * @property {() => Solid} clone   independent copy (replicad consumes solids on transform)
+ * @property {(name: string) => Solid} label   name this solid's surface for hover/pick feature attribution (survives transforms + booleans; same name on several solids merges into one feature)
  * @property {() => {min:number[],max:number[],center:number[],size:number[]}} boundingBox   axis-aligned bounds (query)
  * @property {(v: number[]) => Solid} translate
  * @property {(deg: number, center: number[], axis: number[]) => Solid} rotate   internal primitive — prefer rotateX/Y/Z / rotateAbout

@@ -84,6 +84,9 @@ export function createOcctKernel(replicad) {
     cutAll: (tools) => wrap(shape.cut(makeCompound(tools.map((t) => t._s)))),
     intersect: (t) => wrap(shape.intersect(t._s)),
     clone: () => wrap(shape.clone()),
+    // TEMPORARY stub: satisfies the SOLID_OPS contract; real attribution (snapshot
+    // registry + toMesh classification) replaces this in the feature-labels OCCT task.
+    label: (_name) => wrap(shape),
     boundingBox: () => {
       const bb = shape.boundingBox;        // replicad BoundingBox: .bounds [[min],[max]], .center
       const [min, max] = bb.bounds;

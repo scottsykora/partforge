@@ -45,6 +45,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const unionRaw = (ms) => ms.reduce((a, b) => T(a.add(b))); // track each reduce step
 
   const cache = createSolidCache();
+  const featureLabels = new Map(); // originalID -> label string (grows per label(); tiny)
   // Boundary ops route through cache.lookup; on a miss `make` runs the WASM op,
   // tracks the result, and returns the triple the cache needs to pin/dispose it.
   const cached = (hash, computeM) => cache.lookup(hash, () => {
@@ -56,7 +57,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // transient mesh handle.
   function meshOut(m, asStl) {
     const g = m.getMesh();
-    const r = asStl ? stlFromMesh(g) : creasedNormals(g, Math.cos((SHARP_ANGLE * Math.PI) / 180));
+    const r = asStl ? stlFromMesh(g) : creasedNormals(g, Math.cos((SHARP_ANGLE * Math.PI) / 180), featureLabels);
     g.delete?.();
     return r;
   }
@@ -86,6 +87,14 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       () => T(m.subtract(unionRaw(tools.map((t) => t._m))))),
     intersect: (t) => cached(h("intersect", hash, t._hash), () => T(m.intersect(t._m))),
     clone: () => wrap(m, hash),
+    // Name this solid's surface for hover/pick feature attribution. asOriginal()
+    // stamps a fresh originalID that survives transforms and booleans, so every
+    // surviving triangle of this surface can be traced back to the label.
+    label: (name) => cached(h("label", hash, name), () => {
+      const o = T(m.asOriginal());
+      featureLabels.set(o.originalID(), name);
+      return o;
+    }),
     boundingBox: () => {
       const b = m.boundingBox();           // { min: Vec3, max: Vec3 }
       const min = [...b.min], max = [...b.max];
@@ -171,7 +180,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
 // only over incident triangles of the SAME original surface that also meet within
 // `sharpCos` — so cut seams stay crisp at any angle (even near-tangent), and a
 // surface's own sharp edges (e.g. a face meeting a side) stay crisp too.
-function creasedNormals(g, sharpCos) {
+function creasedNormals(g, sharpCos, featureLabels) {
   const np = g.numProp, vp = g.vertProperties, tris = g.triVerts;
   const nTri = (tris.length / 3) | 0, nVert = (vp.length / np) | 0;
 
@@ -250,7 +259,27 @@ function creasedNormals(g, sharpCos) {
       }
     }
 
-  return { positions, normals, triangles: nTri, edges: Float32Array.from(edges) }; // mesh non-indexed
+  // Per-triangle feature attribution: map each triangle's original-surface id
+  // through the label registry. Same label string → same feature entry, so a
+  // pattern of solids labeled alike reads as one feature.
+  let featureIds = null, features = null;
+  if (featureLabels?.size) {
+    const indexOf = new Map(); // label string -> 1-based feature index
+    features = [];
+    featureIds = new Uint16Array(nTri);
+    for (let t = 0; t < nTri; t++) {
+      const label = featureLabels.get(triOID[t]);
+      if (label === undefined) continue;
+      let fi = indexOf.get(label);
+      if (fi === undefined) { features.push(label); fi = features.length; indexOf.set(label, fi); }
+      featureIds[t] = fi;
+    }
+    if (features.length === 0) { featureIds = features = null; } // labels exist in the kernel, none in THIS mesh
+  }
+
+  const out = { positions, normals, triangles: nTri, edges: Float32Array.from(edges) }; // mesh non-indexed
+  if (featureIds) { out.featureIds = featureIds; out.features = features; }
+  return out;
 }
 
 function stlFromMesh(g) {
