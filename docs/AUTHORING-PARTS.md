@@ -422,11 +422,12 @@ check it without opening the app:
     npx partforge measure src/parts/<part>.js [view]      # geometric facts
     npx partforge render  src/parts/<part>.js [view]       # canonical-angle PNGs
 
-`measure` prints a report and writes `measure-<part>-<view>.json`: per sub-part
-and per view it reports bounding box, volume, surface area, triangle count,
-whether the solid is watertight, and the number of through-holes (genus), plus an
-assembly overlap check. It exits non-zero if any sub-part isn't watertight or any
-parts interpenetrate — so it doubles as a CI/agent gate. (Manifold output is
+`measure` prints a report: per sub-part and per view it reports bounding box,
+volume, surface area, triangle count, whether the solid is watertight, and the
+number of through-holes (genus), plus an assembly overlap check. It exits non-zero
+if any sub-part isn't watertight or any parts interpenetrate — so it doubles as a
+CI/agent gate. Add `--json` to also dump the report as JSON on stdout, or
+`--out report.json` to write it to a file (nothing is written otherwise). (Manifold output is
 manifold by construction, so `watertight` is mainly a build-sanity check for
 empty/degenerate results; `holes` is the informative topology number.)
 
