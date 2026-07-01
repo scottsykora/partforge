@@ -21,6 +21,14 @@ test("handle() posts needs-occt when a build uses an OCCT-only op on Manifold", 
   expect(post).toHaveBeenCalledWith({ type: "needs-occt" });
 });
 
+test("Manifold toSTEP throws KernelCapabilityError, same as every other OCCT-only op", () => {
+  // Unreachable via the app (mount routes STEP to the occt worker), but the testing
+  // kernel can hit it — it must signal NEEDS_OCCT, not a plain Error.
+  expect.assertions(2);
+  try { k.toSTEP([]); }
+  catch (e) { expect(e).toBeInstanceOf(KernelCapabilityError); expect(e.code).toBe("NEEDS_OCCT"); }
+});
+
 test("Manifold shell throws KernelCapabilityError with code NEEDS_OCCT", () => {
   expect.assertions(2);
   try { k.box([0, 0, 0], [10, 10, 10]).shell(1, { dir: "Z" }); }

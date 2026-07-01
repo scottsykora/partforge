@@ -1,10 +1,29 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { assemblyOverlaps } from "../src/framework/assembly.js";
+import { KERNEL_OPS, SOLID_OPS, SOLID_OPTIONAL_OPS } from "../src/framework/geometry/kernel.js";
 import planterPart from "../src/parts/planter.js";
 
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); });
+
+// Contract parity — the Manifold twin lives in kernel-contract.test.js (the two
+// backends must never boot in one process, so each file checks its own side).
+const publicKeys = (obj) => Object.keys(obj).filter((key) => !key.startsWith("_"));
+
+test("OCCT kernel implements every required op and nothing undocumented", () => {
+  const keys = publicKeys(k);
+  for (const op of KERNEL_OPS) expect(keys, `kernel is missing ${op}`).toContain(op);
+  const documented = new Set(KERNEL_OPS); // the optional cache brackets are Manifold-only
+  expect(keys.filter((key) => !documented.has(key))).toEqual([]);
+});
+
+test("OCCT solid implements every required op and nothing undocumented", () => {
+  const keys = publicKeys(k.box([0, 0, 0], [1, 1, 1]));
+  for (const op of SOLID_OPS) expect(keys, `solid is missing ${op}`).toContain(op);
+  const documented = new Set([...SOLID_OPS, ...SOLID_OPTIONAL_OPS]);
+  expect(keys.filter((key) => !documented.has(key))).toEqual([]);
+});
 
 test("cylinder minus a bore meshes to a solid", () => {
   const drum = k.cylinder(10, 10, 20).cut(k.cylinder(4, 4, 30).translate([0, 0, -5]));

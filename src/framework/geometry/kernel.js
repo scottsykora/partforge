@@ -1,15 +1,47 @@
-// The GeometryKernel contract (documentation). Backends implement the @typedef
-// below. (2-D polygon helpers live in ./polygon.js.)
+// The GeometryKernel contract. The op lists below are DATA, not just docs: the
+// parity tests (test/kernel-contract.test.js and the OCCT twin in
+// test/occt-backend.test.js) assert each backend exposes exactly these ops, so the
+// contract can't silently drift from the implementations — the drift class that
+// once broke the probe kernel (see probe.js). The @typedefs document signatures.
+// (2-D polygon helpers live in ./polygon.js.)
+
+// Ops every backend kernel must implement.
+export const KERNEL_OPS = [
+  "cylinder", "boredCylinder", "sphere", "box", "prism", "revolve",
+  "helixSweptTube", "union", "toSTEP",
+];
+
+// Backend-optional kernel ops: the Manifold cache brackets + WASM lifetime hooks.
+// jobs.js calls all of these via `?.`, so a backend may simply omit them.
+export const KERNEL_OPTIONAL_OPS = [
+  "beginSubPart", "endSubPart", "cacheStats", "resetCacheStats", "cleanup",
+];
+
+// Ops every Solid must implement (including the sugar addSugar() attaches).
+export const SOLID_OPS = [
+  "cut", "cutAll", "intersect", "clone", "boundingBox", "volume",
+  "translate", "rotate", "rotateX", "rotateY", "rotateZ", "rotateAbout", "along", "at",
+  "mirror", "scale", "toMesh", "toSTL", "toIndexedMesh",
+  "fillet", "chamfer", "shell",
+];
+
+// Backend-optional Solid queries: Manifold mesh-topology numbers (measure.js
+// guards with `typeof`); OCCT has no cheap equivalent.
+export const SOLID_OPTIONAL_OPS = ["genus", "isEmpty"];
+
+// Solid ops only OCCT implements natively. Single source of truth: probe.js routes
+// a part to OCCT when its build uses one of these, and the Manifold backend
+// generates its KernelCapabilityError stubs from the same list — adding an op here
+// wires up both automatically.
+export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
 
 /**
- * @typedef {Object} Solid  An opaque handle to a backend solid.
- * @property {string} _hash   content hash (Manifold backend only; drives the worker solid cache)
+ * @typedef {Object} Solid  An opaque handle to a backend solid. `_`-prefixed keys are backend internals.
  * @property {(tool: Solid) => Solid} cut
  * @property {(tools: Solid[]) => Solid} cutAll      batch subtract (backend-optimized)
  * @property {(other: Solid) => Solid} intersect     boolean intersection (both backends)
  * @property {() => Solid} clone   independent copy (replicad consumes solids on transform)
  * @property {() => {min:number[],max:number[],center:number[],size:number[]}} boundingBox   axis-aligned bounds (query)
- * @property {(thickness:number, openFaces:object) => Solid} shell   hollow inward (OCCT only); openFaces selector required
  * @property {(v: number[]) => Solid} translate
  * @property {(deg: number, center: number[], axis: number[]) => Solid} rotate   internal primitive — prefer rotateX/Y/Z / rotateAbout
  * @property {(deg: number) => Solid} rotateX   rotate about world X through the origin
@@ -21,9 +53,15 @@
  * @property {(plane: "XY"|"XZ"|"YZ") => Solid} mirror
  * @property {(factor:number, center?:number[]) => Solid} scale   uniform scale about center (default origin)
  * @property {() => number} volume                   solid volume in mm³ (both backends; used by collision/overlap tests)
- * @property {(opts?: {quality?: "preview"|"print"}) => {positions:Float32Array, normals:Float32Array, indices:Uint32Array, triangles:number}} toMesh
+ * @property {(opts?: {quality?: "preview"|"print"}) => {positions:Float32Array, normals:Float32Array, indices?:Uint32Array, triangles:number, edges?:Float32Array}} toMesh
+ *           `edges` = feature-edge line segments (Manifold); quality is advisory — the Manifold kernel bakes it at creation
  * @property {(opts?: {quality?: "preview"|"print"}) => Promise<ArrayBuffer>} toSTL
- * @property {() => {positions:Float32Array, indices:Uint32Array}} toIndexedMesh   indexed mesh, for 3MF (Manifold)
+ * @property {() => {positions:Float32Array, indices:Uint32Array}} toIndexedMesh   indexed mesh, for 3MF
+ * @property {(radius:number, selector?:object) => Solid} fillet    round edges (OCCT only; Manifold throws KernelCapabilityError)
+ * @property {(distance:number, selector?:object) => Solid} chamfer  bevel edges (OCCT only; Manifold throws KernelCapabilityError)
+ * @property {(thickness:number, openFaces:object) => Solid} shell   hollow inward (OCCT only); openFaces selector required
+ * @property {() => number} [genus]     through-hole count (Manifold only)
+ * @property {() => boolean} [isEmpty]  no geometry at all (Manifold only)
  *
  * @typedef {Object} GeometryKernel
  * @property {(rBottom:number, rTop:number, h:number, opts?:{center?:boolean}) => Solid} cylinder
@@ -34,6 +72,10 @@
  * @property {(points2D:number[][], opts?:{degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union
- * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only
+ * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)
+ * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (Manifold only)
+ * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)
+ * @property {() => {hits:number,misses:number}} [cacheStats]
+ * @property {() => void} [resetCacheStats]
  * @property {() => void} [cleanup]   free per-job WASM objects (Manifold backend); call after each job
  */

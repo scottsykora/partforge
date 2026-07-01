@@ -29,23 +29,6 @@ async function occtKernel() {
   return createOcctKernel(replicad);
 }
 
-// Transfer the big binary buffers (zero-copy) instead of structured-cloning them.
-function transferOf(m) {
-  if (m.type === "meshes") {
-    const t = [];
-    for (const x of m.meshes) {
-      t.push(x.positions.buffer);
-      if (x.normals?.buffer) t.push(x.normals.buffer);
-      if (x.indices?.buffer) t.push(x.indices.buffer);
-      if (x.edges?.buffer) t.push(x.edges.buffer);
-    }
-    return t;
-  }
-  if (m.type === "download-parts") return m.parts.map((p) => (ArrayBuffer.isView(p.data) ? p.data.buffer : p.data));
-  if (m.type === "download") return [m.data];
-  return [];
-}
-
 export function runWorker(part) {
   const backend = self.name === "occt" ? "occt" : "manifold";
   let manifold = null; // { preview, print }
@@ -55,14 +38,22 @@ export function runWorker(part) {
   // Manifold is cheap to boot — bring it up eagerly and signal readiness.
   if (backend === "manifold") {
     booting = manifoldKernels().then((m) => { manifold = m; postMessage({ type: "ready" }); });
+  } else {
+    // OCCT boots lazily (its ~11 MB WASM loads on the first job), but the worker can
+    // accept jobs as soon as its module graph is up — messages queue in the port.
+    // EVERY worker must post ready: mount gates the first generate on it, so if only
+    // the manifold worker signalled, boot would silently depend on the manifold
+    // worker always being spawned alongside this one.
+    postMessage({ type: "ready" });
   }
 
   self.onmessage = async (e) => {
     let kernel;
     if (backend === "manifold") {
       await booting;
-      const printJob = e.data.type === "export-stl" || e.data.type === "export-3mf"; // high-res mesh exports
-      kernel = printJob ? manifold.print : manifold.preview;
+      // The sender declares the job's mesh quality; the worker knows nothing about
+      // job-type semantics (mount marks STL/3MF exports quality:"print").
+      kernel = e.data.quality === "print" ? manifold.print : manifold.preview;
     } else {
       if (!occt) {
         postMessage({ type: "progress", phase: "loading exact kernel" }); // feedback during cold boot
@@ -71,6 +62,7 @@ export function runWorker(part) {
       }
       kernel = occt;
     }
-    await handle(kernel, part, e.data, (m) => postMessage(m, transferOf(m)));
+    // handle() declares each message's transferables (the big binary buffers).
+    await handle(kernel, part, e.data, (m, transfer = []) => postMessage(m, transfer));
   };
 }
