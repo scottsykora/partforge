@@ -37,14 +37,19 @@ export function buildPosed(kernel, part, name, { purpose, view, p, d, onProgress
   return sp.place ? sp.place(solid, { view, purpose, p, d }) : solid;
 }
 
-// Handle one geometry job, posting results/progress via `post`. Backend-agnostic
-// and part-agnostic: every part specific comes through `part`.
+// Handle one geometry job, posting results/progress via `post(msg, transfer?)`.
+// Backend-agnostic and part-agnostic: every part specific comes through `part`.
 //   { type:"generate", subparts, view, params } → { type:"meshes", meshes, ms }
 //   { type:"export-stl", view, params }         → { type:"download-parts", ext, mime, parts }
 //   { type:"export-step", view, params }        → { type:"download", data, filename, mime }
+// Each result branch declares its own transferables (the big binary buffers,
+// zero-copy across the worker boundary) right where the buffers are created —
+// so a new job type can't silently regress to structured-cloning its payload.
 // Progress is posted as { type:"progress", phase }. Export builds thread the
 // progress callback into build() so a part's own per-feature progress surfaces;
 // preview generates stay quiet (no callback) to avoid flicker during slider drags.
+const bufferOf = (data) => (ArrayBuffer.isView(data) ? data.buffer : data);
+
 export async function handle(kernel, part, msg, post) {
   const onProgress = (phase) => post({ type: "progress", phase });
   const { p, d } = resolveParams(part, msg.params);
@@ -69,14 +74,16 @@ export async function handle(kernel, part, msg, post) {
           kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)
         }
       }
-      post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.() });
+      const transfer = meshes.flatMap((m) =>
+        [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer].filter(Boolean));
+      post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.() }, transfer);
     } else if (msg.type === "export-stl") {
       const out = [];
       for (const name of exportSubParts(part, msg.view, p)) {
         onProgress(`building ${label(name)}`);
         out.push({ name: exportName(name), data: await posed(name, "export", onProgress).toSTL({ quality: "print" }) });
       }
-      post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out });
+      post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out }, out.map((p) => bufferOf(p.data)));
     } else if (msg.type === "export-step") {
       const solids = exportSubParts(part, msg.view, p).map((name) => {
         onProgress(`building ${label(name)}`);
@@ -84,7 +91,7 @@ export async function handle(kernel, part, msg, post) {
       });
       onProgress("writing STEP file");
       const data = await kernel.toSTEP(solids);
-      post({ type: "download", data, filename: `${msg.view}.step`, mime: "application/step" });
+      post({ type: "download", data, filename: `${msg.view}.step`, mime: "application/step" }, [bufferOf(data)]);
     } else if (msg.type === "export-3mf") {
       const meshes = exportSubParts(part, msg.view, p).map((name) => {
         onProgress(`building ${label(name)}`);
@@ -92,7 +99,8 @@ export async function handle(kernel, part, msg, post) {
         return { name: exportName(name), positions, indices };
       });
       onProgress("writing 3MF file");
-      post({ type: "download", data: meshTo3MF(meshes), filename: `${msg.view}.3mf`, mime: "model/3mf" });
+      const data = meshTo3MF(meshes);
+      post({ type: "download", data, filename: `${msg.view}.3mf`, mime: "model/3mf" }, [bufferOf(data)]);
     }
   } catch (err) {
     if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt" });

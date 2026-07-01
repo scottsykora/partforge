@@ -49,8 +49,8 @@ test("binary STL writes a real outward unit normal per facet (so viewers can lig
   }
 });
 
-test("toSTEP throws (unsupported)", () => {
-  expect(() => k.toSTEP([])).toThrow(/not supported/i);
+test("toSTEP throws (OCCT-only capability)", () => {
+  expect(() => k.toSTEP([])).toThrow(/requires the OCCT backend/);
 });
 
 test("Solid.rotate swaps X/Y extents for a 90° Z-axis rotation", () => {
