@@ -20,32 +20,23 @@ function recorder(obj, seen) {
 }
 
 export function relevantParamKeys(part, view, params) {
+  // The union of every on-screen sub-part's read set (that's exactly what
+  // subPartReadKeys computes, derive-input folding included)...
+  const reads = subPartReadKeys(part, view, params);
+  if (reads === RELEVANT_ALL) return RELEVANT_ALL; // analysis failed → everything relevant
   try {
     const relevant = new Set();
-
-    // derive: record which raw params feed it; produce real derived values once.
-    const deriveInputs = new Set();
-    const derived = part.derive ? (part.derive(recorder(params, deriveInputs)) ?? {}) : {};
-
-    // gate params: a param read by a view sub-part's enabled() changes what's on screen.
+    for (const keys of reads.values()) for (const k of keys) relevant.add(k);
+    // ...plus the gate params of EVERY in-view sub-part, on or off: toggling one
+    // changes what's on screen, so its enabled() inputs are relevant even when the
+    // sub-part is currently hidden (on-screen ones are already in `reads`).
     for (const name of Object.keys(part.parts)) {
       const sp = part.parts[name];
       if (sp.views.includes(view) && sp.enabled) sp.enabled(recorder(params, relevant));
     }
-
-    // direct build reads across the on-screen (enabled) sub-parts.
-    const { kernel } = createProbeKernel();
-    let anyDerivedRead = false;
-    for (const name of viewSubParts(part, view, params)) {
-      const dSeen = new Set();
-      part.parts[name].build(kernel, recorder(params, relevant), recorder(derived, dSeen));
-      if (dSeen.size > 0) anyDerivedRead = true;
-    }
-    if (anyDerivedRead) for (const k of deriveInputs) relevant.add(k);
-
     return relevant;
   } catch {
-    return RELEVANT_ALL; // couldn't analyze — treat everything as relevant
+    return RELEVANT_ALL;
   }
 }
 

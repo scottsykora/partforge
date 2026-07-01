@@ -19,6 +19,24 @@ export function exportSubParts(part, view, params) {
   return viewSubParts(part, view, params).filter((name) => part.parts[name].exportable !== false);
 }
 
+// Resolve a part's effective params + derived values for a build: the user's params
+// layered over the part defaults, and derive() run once over the result.
+export function resolveParams(part, params) {
+  const p = { ...part.defaults, ...params };
+  const d = part.derive ? part.derive(p) : {};
+  return { p, d };
+}
+
+// Build one sub-part and apply its optional place() for the given purpose/view.
+// `p`/`d` come from resolveParams(). This is the SINGLE definition of "a posed
+// sub-part solid" — the worker, the collision check, and the test harness all call
+// it, so display/export poses can never drift between the app and its tests.
+export function buildPosed(kernel, part, name, { purpose, view, p, d, onProgress } = {}) {
+  const sp = part.parts[name];
+  const solid = sp.build(kernel, p, d, onProgress);
+  return sp.place ? sp.place(solid, { view, purpose, p, d }) : solid;
+}
+
 // Handle one geometry job, posting results/progress via `post`. Backend-agnostic
 // and part-agnostic: every part specific comes through `part`.
 //   { type:"generate", subparts, view, params } → { type:"meshes", meshes, ms }
@@ -29,15 +47,11 @@ export function exportSubParts(part, view, params) {
 // preview generates stay quiet (no callback) to avoid flicker during slider drags.
 export async function handle(kernel, part, msg, post) {
   const onProgress = (phase) => post({ type: "progress", phase });
-  const p = { ...part.defaults, ...msg.params };
-  const d = part.derive ? part.derive(p) : {};
+  const { p, d } = resolveParams(part, msg.params);
   const label = (name) => part.parts[name].label ?? name;
   const exportName = (name) => part.parts[name].export?.name ?? name;
-  const buildPosed = (name, purpose, view, prog) => {
-    const sp = part.parts[name];
-    const solid = sp.build(kernel, p, d, prog);
-    return sp.place ? sp.place(solid, { view, purpose, p, d }) : solid;
-  };
+  // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
+  const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
 
   try {
     if (msg.type === "generate") {
@@ -48,7 +62,7 @@ export async function handle(kernel, part, msg, post) {
       for (const name of msg.subparts) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
         try {
-          const m = buildPosed(name, "display", msg.view).toMesh({ quality: "preview" });
+          const m = posed(name, "display").toMesh({ quality: "preview" });
           meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges });
         } finally {
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
@@ -60,13 +74,13 @@ export async function handle(kernel, part, msg, post) {
       const out = [];
       for (const name of exportSubParts(part, msg.view, p)) {
         onProgress(`building ${label(name)}`);
-        out.push({ name: exportName(name), data: await buildPosed(name, "export", msg.view, onProgress).toSTL({ quality: "print" }) });
+        out.push({ name: exportName(name), data: await posed(name, "export", onProgress).toSTL({ quality: "print" }) });
       }
       post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out });
     } else if (msg.type === "export-step") {
       const solids = exportSubParts(part, msg.view, p).map((name) => {
         onProgress(`building ${label(name)}`);
-        return { name: exportName(name), solid: buildPosed(name, "export", msg.view, onProgress) };
+        return { name: exportName(name), solid: posed(name, "export", onProgress) };
       });
       onProgress("writing STEP file");
       const data = await kernel.toSTEP(solids);
@@ -74,7 +88,7 @@ export async function handle(kernel, part, msg, post) {
     } else if (msg.type === "export-3mf") {
       const meshes = exportSubParts(part, msg.view, p).map((name) => {
         onProgress(`building ${label(name)}`);
-        const { positions, indices } = buildPosed(name, "export", msg.view, onProgress).toIndexedMesh();
+        const { positions, indices } = posed(name, "export", onProgress).toIndexedMesh();
         return { name: exportName(name), positions, indices };
       });
       onProgress("writing 3MF file");

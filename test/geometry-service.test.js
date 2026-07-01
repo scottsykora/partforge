@@ -7,25 +7,25 @@ function fakeWorkers() {
   return { posts, createWorker };
 }
 
-test("generate routes to the named backend; default is manifold", () => {
+test("send routes to the named backend; default is manifold", () => {
   const { posts, createWorker } = fakeWorkers();
   const s = createGeometryService({ createWorker, onMessage: () => {} });
-  s.generate({ type: "generate", a: 1 }, "occt");
-  s.generate({ type: "generate", a: 2 });
+  s.send({ type: "generate", a: 1 }, "occt");
+  s.send({ type: "generate", a: 2 });
   expect(posts.occt).toEqual([{ type: "generate", a: 1 }]);
   expect(posts.manifold).toEqual([{ type: "generate", a: 2 }]);
 });
 
-test("exportStep always routes to occt", () => {
+test("STEP export routes to occt when the caller passes that backend", () => {
   const { posts, createWorker } = fakeWorkers();
   const s = createGeometryService({ createWorker, onMessage: () => {} });
-  s.exportStep({ type: "export-step" });
+  s.send({ type: "export-step" }, "occt");
   expect(posts.occt).toEqual([{ type: "export-step" }]);
 });
 
-test("exportStl routes to the named backend", () => {
+test("STL export routes to the named backend", () => {
   const { posts, createWorker } = fakeWorkers();
   const s = createGeometryService({ createWorker, onMessage: () => {} });
-  s.exportStl({ type: "export-stl" }, "occt");
+  s.send({ type: "export-stl" }, "occt");
   expect(posts.occt).toEqual([{ type: "export-stl" }]);
 });

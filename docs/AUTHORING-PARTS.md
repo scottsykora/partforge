@@ -7,13 +7,15 @@ part you write **one script** — geometry build functions + a parameter schema 
 the framework does the rest.
 
 - Reusable framework: `src/framework/` (knows nothing about any specific part).
-- Parts: `src/parts/` — e.g. `drum.js` (full, complex) and `demo.js` (minimal).
+- Parts: `src/parts/` — e.g. `planter.js` (full, rich) and `demo.js` (minimal).
 - A part module is **plain data + pure functions**: no DOM, no side effects (it
   loads in both the main thread and a Web Worker).
 
 Two worked examples to read alongside this guide: **`src/parts/demo.js`** (a
-parametric spacer — the smallest complete part) and **`src/parts/drum.js`** (the
-capstan drum — every feature in use).
+parametric spacer — the smallest complete part) and **`src/parts/planter.js`** (a
+faceted planter — facets, taper, twist, even walls, an optional feature, a `derive`,
+and a `verify` block). **`src/parts/filleted-box.js`** is the worked example for the
+OCCT-only fillet/chamfer/shell ops.
 
 ---
 
@@ -404,14 +406,13 @@ test("assembly has no interpenetrating parts", () => {
 });
 ```
 
-See `test/parts/drum-assembly.test.js` for a real example, and `test/framework/jobs.test.js`
+See `test/framework/assembly.test.js` for a real example, and `test/framework/jobs.test.js`
 for exporting through the job loop.
 
-**OCCT tests** (STEP / B-rep parity) boot via `bootOcctKernel()` in `test/occt-kernel.js`.
+**OCCT tests** (STEP / B-rep) boot the OCCT kernel with `bootOcctKernel()` from
+`partforge/testing` (in a `beforeAll`) — see `test/occt-backend.test.js`.
 **OCCT and Manifold must not boot in the same process** — keep OCCT-booting tests in their
-own files (vitest isolates files). For Manifold↔OCCT volume parity, see `test/parity.test.js`
-+ the `test/fixtures/occt-volumes.json` fixture (regenerate with
-`node scripts/gen-occt-fixtures.mjs` after a geometry change).
+own files (vitest isolates files).
 
 ---
 
@@ -536,7 +537,7 @@ See `src/parts/filleted-box.js` for the worked example.
 
 **Automatic backend selection.** Before building, the framework runs a geometry-free *probe*
 of your `build` to see whether it uses a CAD-only op, and routes accordingly — Manifold for
-everything else (so sweep-heavy parts like the drum stay fast). Force it with
+everything else (so sweep-heavy parts, e.g. helical grooves, stay fast). Force it with
 `meta.backend: "occt" | "manifold"` if you ever need to. Because an OCCT part is built
 entirely on OCCT, its fillets are exact in the STEP **and** present in the printed STL.
 

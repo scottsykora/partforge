@@ -134,8 +134,14 @@ export function createViewer(container, part) {
   const subCache = Object.fromEntries(names.map((n) => [n, null]));
 
   function setSubGeometry(name, payload) {
+    const prev = subCache[name]; // free the geometry this replaces (its own buffers + edge lines)
+    if (prev) { prev.userData.edges?.dispose(); prev.dispose(); }
     subCache[name] = buildGeometry(payload);
   }
+
+  // Cache queries for the app's regenerate loop (so it never reaches into subCache).
+  const hasSubMesh = (name) => !!subCache[name];
+  const subTriangles = (name) => subCache[name]?.userData.triangles ?? 0;
 
   // --- show / hide assembly -------------------------------------------------
   const _box = new THREE.Box3();
@@ -246,5 +252,5 @@ export function createViewer(container, part) {
     setTimeout(() => { scene.remove(dot); dot.geometry.dispose(); dot.material.dispose(); }, 1200);
   }
 
-  return { showAssembly, hideAssembly, setSubGeometry, resize, dispose, frame, setAutoRotate, setTheme, getCameraState, setCameraState, onCameraEnd, _subCache: subCache, camera, domElement: renderer.domElement, _subMeshes: subMesh, flashPoint };
+  return { showAssembly, hideAssembly, setSubGeometry, hasSubMesh, subTriangles, resize, dispose, frame, setAutoRotate, setTheme, getCameraState, setCameraState, onCameraEnd, camera, domElement: renderer.domElement, _subMeshes: subMesh, flashPoint };
 }
