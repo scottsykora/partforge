@@ -78,10 +78,12 @@ export function classifyFaceGroups(resultMesh, soups, tol = DEFAULT_TOL) {
 
   for (const g of groups) {
     const start = g.start / div, count = g.count / div;
+    if (count <= 0) continue; // degenerate group: no triangles, nothing to attribute
     // sample a few spread triangles of the face
     const picks = [];
+    const denom = Math.max(1, Math.min(SAMPLES_PER_FACE, count) - 1);
     for (let s = 0; s < Math.min(SAMPLES_PER_FACE, count); s++) {
-      picks.push(start + Math.floor((s * (count - 1)) / Math.max(1, SAMPLES_PER_FACE - 1)));
+      picks.push(start + Math.floor((s * (count - 1)) / denom));
     }
     // last matching soup wins (most recently applied label)
     let winner = null;
