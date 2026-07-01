@@ -1,10 +1,9 @@
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../../src/testing.js";
 import { assemblyOverlaps } from "../../src/framework/assembly.js";
 
 let k;
-beforeAll(async () => { const w = await Module(); w.setup(); k = createManifoldKernel(w, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 // Two 2×2×2 boxes; `gap` slides part b along +X. gap 0 → they just touch (faces at
 // x=2), gap 1 → they overlap by a 1×2×2 = 4 mm³ slab.

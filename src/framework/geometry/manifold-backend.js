@@ -1,8 +1,15 @@
 import { helixTube } from "./helix-tube.js";
 import { KernelCapabilityError } from "./errors.js";
+import { OCCT_ONLY_OPS } from "./kernel.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
 import { addSugar } from "./solid-sugar.js";
+
+// One throwing stub per OCCT-only op, generated from the contract's single list —
+// so a new OCCT-only op gets its NEEDS_OCCT reroute (and probe routing) for free.
+const occtOnlyStubs = Object.fromEntries(OCCT_ONLY_OPS.map((op) => [
+  op, () => { throw new KernelCapabilityError(`${op} requires the OCCT backend`); },
+]));
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
@@ -110,9 +117,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     toMesh: () => meshOut(m, false),
     toSTL: () => Promise.resolve(meshOut(m, true)),
     toIndexedMesh: () => indexedMeshOut(m),
-    fillet: () => { throw new KernelCapabilityError("fillet requires the OCCT backend"); },
-    chamfer: () => { throw new KernelCapabilityError("chamfer requires the OCCT backend"); },
-    shell: () => { throw new KernelCapabilityError("shell requires the OCCT backend"); },
+    ...occtOnlyStubs,
   });
 
   return {
@@ -149,7 +154,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         return T(Manifold.revolve([pts], segs, degrees));
       }),
     union: (solids) => cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
-    toSTEP: () => { throw new Error("STEP export not supported by the Manifold backend"); },
+    toSTEP: () => { throw new KernelCapabilityError("toSTEP requires the OCCT backend"); },
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
     cacheStats: () => cache.stats(),

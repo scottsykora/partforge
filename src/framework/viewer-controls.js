@@ -1,4 +1,4 @@
-import { loadRotating, saveRotating, saveCamera } from "./view-state.js";
+import { loadRotating, saveRotating, saveCamera, loadTheme, saveTheme } from "./view-state.js";
 
 // Wire the optional viewer-chrome buttons on the host page (#pause / #reframe /
 // #theme) to the viewer, plus persist the camera pose. Each button is optional —
@@ -11,13 +11,13 @@ export function attachViewerControls(viewer) {
 
   // Theme: toggle the page chrome (CSS vars keyed off <html data-theme>) and the
   // scene together; remember the choice across reloads.
-  let theme = localStorage.getItem("theme") || "dark";
+  let theme = loadTheme();
   function applyTheme(mode) {
     theme = mode;
     document.documentElement.dataset.theme = mode;
     viewer.setTheme(mode);
     themeBtn?.classList.toggle("on", mode === "light");
-    localStorage.setItem("theme", mode);
+    saveTheme(mode);
   }
   applyTheme(theme);
   themeBtn?.addEventListener("click", () => applyTheme(theme === "light" ? "dark" : "light"));

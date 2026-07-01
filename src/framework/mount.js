@@ -21,7 +21,6 @@ import { createPickRequestClient } from "./pick-request/index.js";
 // #part (the view-tab segmented control).
 export function mount(part, { createWorker, container = document.getElementById("app"),
                               controls = document.getElementById("controls") } = {}) {
-  const names = Object.keys(part.parts);
   const viewer = createViewer(container, part);
 
   // ?backend=occt|manifold forces the backend; otherwise it's detected per part.
@@ -250,7 +249,7 @@ export function mount(part, { createWorker, container = document.getElementById(
 
   dlBtn.addEventListener("click", () => {
     showBusy("exporting STL");
-    service.send({ type: "export-stl", view, params }, backendFor());
+    service.send({ type: "export-stl", view, params, quality: "print" }, backendFor());
   });
 
   dlStepBtn.addEventListener("click", () => {
@@ -260,7 +259,7 @@ export function mount(part, { createWorker, container = document.getElementById(
 
   dl3mfBtn?.addEventListener("click", () => {
     showBusy("exporting 3MF");
-    service.send({ type: "export-3mf", view, params }, backendFor());
+    service.send({ type: "export-3mf", view, params, quality: "print" }, backendFor());
   });
 
   // Optional host-page viewer chrome (#pause / #reframe / #theme) + camera persistence.

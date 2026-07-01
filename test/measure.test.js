@@ -1,10 +1,9 @@
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../src/testing.js";
 import { measure } from "../src/testing/measure.js";
 
 let k;
-beforeAll(async () => { const wasm = await Module(); wasm.setup(); k = createManifoldKernel(wasm, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 const boxPart = {
   meta: { title: "Box", units: "mm" },

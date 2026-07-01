@@ -1,12 +1,11 @@
 import { beforeAll, expect, test } from "vitest";
-import Module from "manifold-3d";
 import { unzipSync, strFromU8 } from "fflate";
-import { createManifoldKernel } from "../../src/framework/geometry/manifold-backend.js";
+import { bootManifoldKernel } from "../../src/testing.js";
 import { handle } from "../../src/framework/jobs.js";
 import demo from "../fixtures/demo-part.js";
 
 let k;
-beforeAll(async () => { const w = await Module(); w.setup(); k = createManifoldKernel(w, { quality: "preview" }); });
+beforeAll(async () => { k = await bootManifoldKernel(); });
 
 test("generate posts one mesh per requested sub-part", async () => {
   const posted = [];
@@ -39,6 +38,29 @@ test("export-step emits a final 'writing STEP file' progress before the (unsuppo
   await handle(k, demo, { type: "export-step", view: "base", params: {} }, (m) => posted.push(m));
   const phases = posted.filter((m) => m.type === "progress").map((m) => m.phase);
   expect(phases[phases.length - 1]).toBe("writing STEP file");
-  // Manifold kernel can't write STEP → an error is posted (build + progress still ran)
-  expect(posted.some((m) => m.type === "error")).toBe(true);
+  // Manifold toSTEP throws KernelCapabilityError → the accurate needs-occt signal
+  // (build + progress still ran). Unreachable in the app: mount routes STEP to occt.
+  expect(posted.some((m) => m.type === "needs-occt")).toBe(true);
+});
+
+test("generate posts its mesh buffers in the transfer list (zero-copy to the main thread)", async () => {
+  const posted = [];
+  await handle(k, demo, { type: "generate", subparts: ["base"], view: "all", params: {} },
+    (m, transfer = []) => posted.push([m, transfer]));
+  const [meshes, transfer] = posted.find(([m]) => m.type === "meshes");
+  const m0 = meshes.meshes[0];
+  expect(transfer).toContain(m0.positions.buffer);
+  expect(transfer).toContain(m0.normals.buffer);
+  if (m0.edges?.buffer) expect(transfer).toContain(m0.edges.buffer);
+});
+
+test("export posts carry their payload buffers in the transfer list", async () => {
+  const posted = [];
+  const post = (m, transfer = []) => posted.push([m, transfer]);
+  await handle(k, demo, { type: "export-stl", view: "all", params: {} }, post);
+  await handle(k, demo, { type: "export-3mf", view: "all", params: {} }, post);
+  const [stl, stlTransfer] = posted.find(([m]) => m.type === "download-parts");
+  expect(stlTransfer).toContain(stl.parts[0].data);
+  const [dl, dlTransfer] = posted.find(([m]) => m.type === "download");
+  expect(dlTransfer).toContain(dl.data);
 });

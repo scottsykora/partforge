@@ -350,13 +350,12 @@ stylesheet). `mount` looks up these element IDs:
 |---|---|
 | `#app` | viewer canvas mounts here |
 | `#controls` | control panel is built into this |
-| `#part` | view-tab bar: one `<button data-part="<view>">` per view, the active one with `class="on"` |
+| `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
 | `#viewbar` with `#pause` / `#reframe` / `#theme` | optional viewer controls (omit any you don't want) |
 
-Copy `demo.html` and change the title, the `#part` buttons (one per view), the panel
-heading, and the `<script src>`. Two workers are spawned from your one worker entry
+Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two workers are spawned from your one worker entry
 (`name` = `"manifold"` for preview/STL/3MF, `"occt"` for STEP — handled for you).
 
 > Production deploy builds `index.html` only. Extra `*.html` files are **dev-only**
@@ -385,12 +384,10 @@ Tests run under **Node 24** (`nvm use` first; the default shell Node is too old)
 `npx vitest run`. Build geometry directly off your part with a Manifold kernel:
 
 ```js
-import Module from "manifold-3d";
-import { createManifoldKernel } from "../../src/framework/geometry/manifold-backend.js";
-import part from "../../src/parts/<part>.js";
+import { bootManifoldKernel } from "partforge/testing";
+import part from "../src/parts/<part>.js";
 
-const w = await Module(); w.setup();
-const k = createManifoldKernel(w, { quality: "preview" });
+const k = await bootManifoldKernel();
 const solid = part.parts.<name>.build(k, part.defaults, part.derive?.(part.defaults) ?? {});
 expect(solid.toMesh().triangles).toBeGreaterThan(0);
 ```
@@ -400,7 +397,7 @@ its assembly pose and returns any interpenetrating pair with its overlap volume 
 parts meant to fit (e.g. seated in a pocket) read ~0 and don't trip it:
 
 ```js
-import { assemblyOverlaps } from "../../src/framework/assembly.js";
+import { assemblyOverlaps } from "partforge/testing";
 test("assembly has no interpenetrating parts", () => {
   expect(assemblyOverlaps(k, part, "<view>", {})).toEqual([]); // [{a,b,volume}] on failure
 });

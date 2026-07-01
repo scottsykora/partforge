@@ -1,7 +1,10 @@
 // Geometry-free backend detection. A probe kernel records every op a part's
 // build() invokes (returning chainable no-op proxies, dummy values for queries);
-// if an OCCT-only op was used, the part needs the OCCT backend.
-export const OCCT_ONLY = new Set(["fillet", "chamfer", "shell"]);
+// if an OCCT-only op was used, the part needs the OCCT backend. The op list lives
+// in kernel.js — the same list generates the Manifold backend's throwing stubs.
+import { OCCT_ONLY_OPS } from "./kernel.js";
+
+const OCCT_ONLY = new Set(OCCT_ONLY_OPS);
 
 export function createProbeKernel() {
   const used = new Set();
