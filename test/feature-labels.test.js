@@ -1,7 +1,7 @@
 // Manifold-side feature labels: .label() marks a solid; after booleans, toMesh()
 // attributes each surviving triangle of that solid's surface to the label.
 import { beforeAll, expect, test } from "vitest";
-import { bootManifoldKernel } from "../src/testing.js";
+import { bootManifoldKernel, handle } from "../src/testing.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -57,4 +57,23 @@ test("two distinct labels produce two feature entries", () => {
   expect([...m.features].sort()).toEqual(["Bore A", "Bore B"]);
   const ids = new Set(m.featureIds.filter((v) => v > 0));
   expect(ids.size).toBe(2);
+});
+
+test("generate jobs pass featureIds/features through to the mesh payload", async () => {
+  const part = {
+    defaults: { bore: 4 },
+    parts: {
+      body: {
+        views: ["v"],
+        build: (k, p) => k.box([0, 0, 0], [10, 10, 10])
+          .cut(k.cylinder(p.bore / 2, p.bore / 2, 12).at([5, 5, -1]).label("Bore")),
+      },
+    },
+    views: { v: {} },
+  };
+  const posted = [];
+  await handle(k, part, { type: "generate", subparts: ["body"], view: "v", params: {} }, (m) => posted.push(m));
+  const meshes = posted.find((m) => m.type === "meshes").meshes;
+  expect(meshes[0].features).toEqual(["Bore"]);
+  expect(meshes[0].featureIds).toBeInstanceOf(Uint16Array);
 });
