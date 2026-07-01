@@ -1,9 +1,16 @@
 // src/framework/geometry/solid-sugar.js
-// Self-describing build-step vocabulary, defined ONCE over both geometry backends.
-// Every Solid a backend's wrap() returns is passed through addSugar(), which attaches
-// readable transform/placement methods composed purely from the solid's existing
-// rotate()/translate() primitives — so the sugar is geometry-identical to the
-// hand-written primitive calls, on Manifold and OCCT alike.
+// The backend-shared Solid front, defined ONCE over both geometry backends. Every
+// Solid a backend's wrap() returns is passed through addSugar(), which:
+//   - attaches the readable transform/placement vocabulary (rotateX/along/at/…),
+//     composed purely from the solid's own rotate()/translate() primitives, so the
+//     sugar is geometry-identical on Manifold and OCCT alike;
+//   - validates arguments the backends would otherwise each check (scale factor);
+//   - derives boundingBox center/size from the backend's raw {min,max};
+//   - stubs any OCCT-only op the backend lacks with a KernelCapabilityError, so
+//     the needs-occt reroute works without hand-written per-backend stubs.
+import { KernelCapabilityError } from "./errors.js";
+import { OCCT_ONLY_OPS } from "./kernel.js";
+
 const ORIGIN = [0, 0, 0];
 const AXIS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
 
@@ -31,5 +38,25 @@ const SUGAR = {
 };
 
 export function addSugar(s) {
+  const rawScale = s.scale;
+  s.scale = (factor, center = ORIGIN) => {
+    if (!(factor > 0)) throw new Error("scale: factor must be > 0");
+    return rawScale(factor, center);
+  };
+
+  const rawBoundingBox = s.boundingBox;
+  s.boundingBox = () => {
+    const { min, max } = rawBoundingBox();
+    return {
+      min, max,
+      center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2],
+      size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
+    };
+  };
+
+  for (const op of OCCT_ONLY_OPS) {
+    s[op] ??= () => { throw new KernelCapabilityError(`${op} requires the OCCT backend`); };
+  }
+
   return Object.assign(s, SUGAR);
 }
