@@ -1,4 +1,4 @@
-import { viewSubParts } from "./jobs.js";
+import { viewSubParts, resolveParams, buildPosed } from "./jobs.js";
 
 // Collision check for an assembled view: build each sub-part in its display
 // (assembly) pose and return the pairs whose solid-intersection volume exceeds
@@ -8,14 +8,11 @@ import { viewSubParts } from "./jobs.js";
 // part tests so an author/LLM editing a part sees collisions fail.
 //   → [{ a, b, volume }] for each offending pair (empty = no collisions)
 export function assemblyOverlaps(kernel, part, view, params = {}, { tolerance = 1 } = {}) {
-  const p = { ...part.defaults, ...params };
-  const d = part.derive ? part.derive(p) : {};
-  const posed = viewSubParts(part, view, p).map((name) => {
-    const sp = part.parts[name];
-    let solid = sp.build(kernel, p, d);
-    if (sp.place) solid = sp.place(solid, { view, purpose: "display", p, d });
-    return { name, solid };
-  });
+  const { p, d } = resolveParams(part, params);
+  const posed = viewSubParts(part, view, p).map((name) => ({
+    name,
+    solid: buildPosed(kernel, part, name, { purpose: "display", view, p, d }),
+  }));
 
   const overlaps = [];
   for (let i = 0; i < posed.length; i++) {

@@ -238,3 +238,17 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
   from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+
+/* ?pick clipboard mode: a bottom-left toggle button + a transient token toast. */
+#pf-pick {
+  position: fixed; left: 12px; bottom: 12px; z-index: 9999;
+  font: 12px system-ui, sans-serif; padding: 6px 10px; cursor: pointer;
+}
+#pf-pick.on { outline: 2px solid #ffcc33; }
+#pf-pick-toast {
+  position: fixed; left: 12px; bottom: 48px; z-index: 9999; max-width: 60ch;
+  font: 12px ui-monospace, monospace; padding: 6px 10px; border-radius: 4px;
+  background: rgba(20,24,29,0.92); color: #d8e0ea;
+  white-space: pre-wrap; word-break: break-word; display: none;
+}
+#pf-pick-toast.show { display: block; }

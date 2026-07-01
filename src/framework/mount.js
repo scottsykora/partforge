@@ -1,14 +1,16 @@
 import "./app.css"; // shared chrome styles — every part-app gets them via mount
-import { zipSync } from "fflate";
+import { triggerDownload, downloadParts } from "./download.js";
 import { createViewer } from "./viewer.js";
-import { loadRotating, saveRotating, loadCamera, saveCamera, loadView, saveView } from "./view-state.js";
+import { attachViewerControls } from "./viewer-controls.js";
+import { loadCamera, loadView, saveView } from "./view-state.js";
 import { buildControls } from "./controls.js";
-import { relevantParamKeys, subPartReadKeys, relevanceHash, RELEVANT_ALL } from "./param-deps.js";
+import { relevantParamKeys } from "./param-deps.js";
+import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts } from "./jobs.js";
 import { detectBackend } from "./geometry/probe.js";
 import { createDebugOverlay } from "./debug-overlay.js";
-import { attachPicker, formatSelection } from "./selection/index.js";
+import { attachPickToggle } from "./selection/index.js";
 import { createPickRequestClient } from "./pick-request/index.js";
 
 // Mount a full parametric-part app from a PartDefinition: 3-D viewer + control
@@ -69,58 +71,22 @@ export function mount(part, { createWorker, container = document.getElementById(
   let view = savedBtn ? savedView : defaultView;
   if (savedBtn) for (const b of partSeg.children) b.classList.toggle("on", b === savedBtn);
 
+  // Current selection context for the pickers: the active view + live params +
+  // derived values. Shared by both ?pick modes below.
+  const getContext = () => ({ view, params, derived: part.derive ? part.derive({ ...part.defaults, ...params }) : {} });
+
   // ?pick enables click-to-select: a toggle button + a transient toast. Off by
   // default — no button, no listener, no behavior change. Deleting this block and
   // the selection/ dir reverts the app exactly.
   if (qs.has("pick")) {
-    const btn = document.createElement("button");
-    btn.id = "pf-pick";
-    btn.textContent = "Pick";
-    btn.title = "Click a surface to copy a selection token";
-    Object.assign(btn.style, {
-      position: "fixed", left: "12px", bottom: "12px", zIndex: 9999,
-      font: "12px system-ui, sans-serif", padding: "6px 10px", cursor: "pointer",
-    });
-    document.body.appendChild(btn);
-
-    const toast = document.createElement("div");
-    Object.assign(toast.style, {
-      position: "fixed", left: "12px", bottom: "48px", zIndex: 9999, maxWidth: "60ch",
-      font: "12px ui-monospace, monospace", padding: "6px 10px", borderRadius: "4px",
-      background: "rgba(20,24,29,0.92)", color: "#d8e0ea", display: "none",
-      whiteSpace: "pre-wrap", wordBreak: "break-word",
-    });
-    document.body.appendChild(toast);
-
-    const picker = attachPicker(viewer, {
-      part,
-      getContext: () => ({ view, params, derived: part.derive ? part.derive({ ...part.defaults, ...params }) : {} }),
-      onPick: (selection) => {
-        const token = formatSelection(selection, { style: "token" });
-        navigator.clipboard?.writeText(token);
-        toast.textContent = `copied: ${token}`;
-        toast.style.display = "block";
-        setTimeout(() => { toast.style.display = "none"; }, 4000);
-      },
-    });
-
-    btn.addEventListener("click", () => {
-      const isActive = btn.classList.toggle("on");
-      picker.setActive(isActive);
-      btn.style.outline = isActive ? "2px solid #ffcc33" : "";
-    });
+    attachPickToggle(viewer, { part, getContext });
   } else if (qs.has("pickserver")) {
     // Agent-driven mode: arm the picker only when the local pick-server asks for a
     // click. Mutually exclusive with the clipboard ?pick toggle (else-if), so only one
     // click listener is ever live. `?pickserver` or `?pickserver=http://host:port`.
     const serverUrl = typeof qs.get("pickserver") === "string" && qs.get("pickserver")
       ? qs.get("pickserver") : "http://127.0.0.1:4518";
-    createPickRequestClient({
-      serverUrl,
-      viewer,
-      part,
-      getContext: () => ({ view, params, derived: part.derive ? part.derive({ ...part.defaults, ...params }) : {} }),
-    });
+    createPickRequestClient({ serverUrl, viewer, part, getContext });
   }
 
   let framedView = null; // the view the camera was last framed to (null until first show)
@@ -129,27 +95,16 @@ export function mount(part, { createWorker, container = document.getElementById(
   let paramsVersion = 0; // bumped on every settings edit
   let genVersion = -1;   // the params version the in-flight generate is building
   let genTimer = null;   // debounce timer for auto-regenerate
-  const cacheHash = {}; // n -> relevance hash each sub-part's cached mesh was built at
 
-  // Memoize the per-sub-part read-key map per (paramsVersion, view): subPartReadKeys
-  // runs probe builds, so we compute it once per change, not per sub-part.
-  let _readsKey = null, _readsMap = null;
-  const readsFor = () => {
-    const key = `${paramsVersion}|${view}`;
-    if (_readsKey !== key) { _readsKey = key; _readsMap = subPartReadKeys(part, view, params); }
-    return _readsMap;
-  };
-  // The relevance hash for one sub-part at the current params (RELEVANT_ALL → hash
-  // over ALL params, so any edit invalidates it — the safe fallback).
-  const hashFor = (n) => {
-    if (!cachingOn) return `v${paramsVersion}`; // caching off: any edit invalidates every sub-part (Layer 1 off)
-    const reads = readsFor();
-    const keys = reads === RELEVANT_ALL ? Object.keys(params) : [...(reads.get(n) ?? Object.keys(params))];
-    return relevanceHash(keys, params);
-  };
-
-  // A cached sub-part is current only if its relevance hash is unchanged.
-  const isCurrent = (n) => !!viewer._subCache[n] && cacheHash[n] === hashFor(n);
+  // Per-sub-part cache-validity tracker (Layer 1): view/version/caching change over
+  // time, so they're passed as getters; params is a stable in-place-mutated object.
+  const cache = createMeshCache(part, viewer, {
+    params,
+    getView: () => view,
+    getParamsVersion: () => paramsVersion,
+    isCaching: () => cachingOn,
+  });
+  const isCurrent = cache.isCurrent;
   const missingParts = () => viewSubParts(part, view, params).filter((n) => !isCurrent(n));
 
   // Reflect the active view. If every needed part is current, show it and enable
@@ -175,9 +130,9 @@ export function mount(part, { createWorker, container = document.getElementById(
     if (needed.every(isCurrent)) {
       showView(needed);
       setExportEnabled(true);
-      const tris = needed.reduce((s, n) => s + viewer._subCache[n].userData.triangles, 0);
+      const tris = needed.reduce((s, n) => s + viewer.subTriangles(n), 0);
       setStatus(`${tris.toLocaleString()} triangles`);
-    } else if (needed.every((n) => viewer._subCache[n])) {
+    } else if (needed.every((n) => viewer.hasSubMesh(n))) {
       showView(needed); // stale but present — keep it visible during regenerate
       setExportEnabled(false);
     } else {
@@ -188,22 +143,8 @@ export function mount(part, { createWorker, container = document.getElementById(
 
   showBusy("booting kernel"); // visible from first paint until the kernel is ready
 
-  // --- download helpers ------------------------------------------------------
-  function triggerDownload(arrayBuffer, filename, mime) {
-    const url = URL.createObjectURL(new Blob([arrayBuffer], { type: mime }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function onDownloadParts({ parts, ext, mime }) {
-    if (parts.length === 1) return triggerDownload(parts[0].data, `${parts[0].name}.${ext}`, mime);
-    const entries = {};
-    for (const p of parts) entries[`${p.name}.${ext}`] = new Uint8Array(p.data);
-    triggerDownload(zipSync(entries, { level: 0 }), `${part.meta?.title ?? "parts"}.zip`.toLowerCase().replace(/\s+/g, "-"), "application/zip");
-  }
+  // Bundle filename for a multi-part export (single parts download under their own name).
+  const zipName = `${part.meta?.title ?? "parts"}.zip`.toLowerCase().replace(/\s+/g, "-");
 
   // --- shared message handler ------------------------------------------------
   function onWorkerMessage({ data }) {
@@ -220,9 +161,8 @@ export function mount(part, { createWorker, container = document.getElementById(
         generating = false;
         if (genVersion !== paramsVersion) { maybeGenerate(); break; } // changed mid-build → redo
         for (const m of data.meshes) {
-          if (viewer._subCache[m.name]) { viewer._subCache[m.name].userData.edges?.dispose(); viewer._subCache[m.name].dispose(); }
-          viewer.setSubGeometry(m.name, m);
-          cacheHash[m.name] = hashFor(m.name);
+          viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
+          cache.record(m.name);
         }
         hideBusy();
         refreshView();
@@ -235,7 +175,7 @@ export function mount(part, { createWorker, container = document.getElementById(
       }
       case "download-parts":
         hideBusy();
-        onDownloadParts(data);
+        downloadParts(data, zipName);
         setStatus(`${data.parts.length} part(s) downloaded`);
         break;
       case "download":
@@ -286,13 +226,13 @@ export function mount(part, { createWorker, container = document.getElementById(
     genVersion = paramsVersion;
     lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length }; // for the overlay
     showBusy("generating");
-    service.generate({ type: "generate", subparts: missing, view, params, cache: cachingOn }, backendFor());
+    service.send({ type: "generate", subparts: missing, view, params, cache: cachingOn }, backendFor());
   }
 
   // Re-run the active view under the current caching setting, so toggling the
   // ?debug switch updates the readout for the same design without a param change.
   function forceRegen() {
-    for (const n of viewSubParts(part, view, params)) delete cacheHash[n];
+    for (const n of viewSubParts(part, view, params)) cache.forget(n);
     refreshView();
     maybeGenerate();
   }
@@ -310,57 +250,19 @@ export function mount(part, { createWorker, container = document.getElementById(
 
   dlBtn.addEventListener("click", () => {
     showBusy("exporting STL");
-    service.exportStl({ type: "export-stl", view, params }, backendFor());
+    service.send({ type: "export-stl", view, params }, backendFor());
   });
 
   dlStepBtn.addEventListener("click", () => {
     showBusy("exporting STEP");
-    service.exportStep({ type: "export-step", view, params });
+    service.send({ type: "export-step", view, params }, "occt"); // STEP is always OCCT
   });
 
   dl3mfBtn?.addEventListener("click", () => {
     showBusy("exporting 3MF");
-    service.export3mf({ type: "export-3mf", view, params }, backendFor());
+    service.send({ type: "export-3mf", view, params }, backendFor());
   });
 
-  // --- viewer controls (optional host-page buttons: #pause / #reframe / #theme) --
-  const pauseBtn = document.getElementById("pause");
-  const reframeBtn = document.getElementById("reframe");
-  const themeBtn = document.getElementById("theme");
-
-  // Theme: toggle the page chrome (CSS vars keyed off <html data-theme>) and the
-  // scene together; remember the choice across reloads.
-  let theme = localStorage.getItem("theme") || "dark";
-  function applyTheme(mode) {
-    theme = mode;
-    document.documentElement.dataset.theme = mode;
-    viewer.setTheme(mode);
-    themeBtn?.classList.toggle("on", mode === "light");
-    localStorage.setItem("theme", mode);
-  }
-  applyTheme(theme);
-  themeBtn?.addEventListener("click", () => applyTheme(theme === "light" ? "dark" : "light"));
-
-  // Pause/resume the idle auto-rotation.
-  let rotating = loadRotating();
-  viewer.setAutoRotate(rotating);
-  if (pauseBtn) {
-    pauseBtn.textContent = rotating ? "⏸" : "▶";
-    pauseBtn.title = rotating ? "Pause rotation" : "Resume rotation";
-  }
-  pauseBtn?.addEventListener("click", () => {
-    rotating = !rotating;
-    viewer.setAutoRotate(rotating);
-    pauseBtn.textContent = rotating ? "⏸" : "▶";
-    pauseBtn.title = rotating ? "Pause rotation" : "Resume rotation";
-    saveRotating(rotating);
-  });
-
-  // Re-fit the camera to the current view.
-  reframeBtn?.addEventListener("click", () => viewer.frame());
-
-  // Persist the camera when the user finishes an orbit/zoom, and right before a
-  // reload (captures the latest pose, including auto-rotation drift).
-  viewer.onCameraEnd(() => saveCamera(viewer.getCameraState()));
-  window.addEventListener("pagehide", () => saveCamera(viewer.getCameraState()));
+  // Optional host-page viewer chrome (#pause / #reframe / #theme) + camera persistence.
+  attachViewerControls(viewer);
 }
