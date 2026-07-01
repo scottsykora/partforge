@@ -10,7 +10,7 @@ import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts } from "./jobs.js";
 import { detectBackend } from "./geometry/probe.js";
 import { createDebugOverlay } from "./debug-overlay.js";
-import { attachPickToggle } from "./selection/index.js";
+import { attachPickToggle, attachHoverLabels } from "./selection/index.js";
 import { createPickRequestClient } from "./pick-request/index.js";
 
 // Mount a full parametric-part app from a PartDefinition: 3-D viewer + control
@@ -22,6 +22,7 @@ import { createPickRequestClient } from "./pick-request/index.js";
 export function mount(part, { createWorker, container = document.getElementById("app"),
                               controls = document.getElementById("controls") } = {}) {
   const viewer = createViewer(container, part);
+  attachHoverLabels(viewer, { part }); // always-on hover inspection (no-op on touch-only devices)
 
   // ?backend=occt|manifold forces the backend; otherwise it's detected per part.
   let forcedBackend = new URLSearchParams(location.search).get("backend");
