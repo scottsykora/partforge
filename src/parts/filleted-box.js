@@ -37,7 +37,7 @@ export default {
         // the shortest edge it touches (here the fillets' bottom arcs), so it stops at
         // its valid maximum instead of mangling the bottom face.
         if (p.chamfer > 0) s = s.chamfer(p.chamfer, { inPlane: "XY", at: 0 });    // base edges
-        if (p.bore > 0) s = s.cut(k.cylinder(p.bore / 2, p.bore / 2, p.h + 2).at([p.w / 2, p.d / 2, -1]));
+        if (p.bore > 0) s = s.cut(k.cylinder(p.bore / 2, p.bore / 2, p.h + 2).at([p.w / 2, p.d / 2, -1]).label("Bore"));
         return s;
       },
     },

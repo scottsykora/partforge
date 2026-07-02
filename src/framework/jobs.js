@@ -68,14 +68,14 @@ export async function handle(kernel, part, msg, post) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
         try {
           const m = posed(name, "display").toMesh({ quality: "preview" });
-          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges });
+          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features });
         } finally {
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
           kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)
         }
       }
       const transfer = meshes.flatMap((m) =>
-        [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer].filter(Boolean));
+        [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
       post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.() }, transfer);
     } else if (msg.type === "export-stl") {
       const out = [];

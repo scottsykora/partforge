@@ -42,13 +42,8 @@ export function resolveSelection(part, ctx, hit) {
     normal: snapNormal(hit.normalLocal),
     params: scopeParams(part, ctx.view, ctx.params, hit.subPart),
   };
-  if (hit.face) {
-    // L1 — feature.selector is the author's own { dir, inPlane, at, near } vocabulary,
-    // so the LLM can drop it straight into a faces(...)/edges(...) call.
-    const feature = { kind: hit.face.kind, selector: { near: point } };
-    if (hit.face.axis != null) { feature.axis = hit.face.axis; feature.selector.dir = hit.face.axis; }
-    if (hit.face.radius != null) feature.radius = hit.face.radius;
-    selection.feature = feature;
-  }
+  // Feature attribution from the mesh payload (Solid.label() in the part's build) —
+  // the same name the hover tooltip shows, so user, agent, and viewer share vocabulary.
+  if (hit.feature) selection.feature = { label: hit.feature.label };
   return selection;
 }

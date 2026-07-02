@@ -13,7 +13,7 @@ import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
 import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
-import { attachPickToggle } from "./selection/index.js";
+import { attachPickToggle, attachHoverLabels } from "./selection/index.js";
 import { createPickRequestClient } from "./pick-request/index.js";
 
 // Mount a full parametric-part app from a PartDefinition. mount is WIRING: the
@@ -27,6 +27,7 @@ import { createPickRequestClient } from "./pick-request/index.js";
 export function mount(part, { createWorker, container = document.getElementById("app"),
                               controls = document.getElementById("controls") } = {}) {
   const viewer = createViewer(container, part);
+  attachHoverLabels(viewer, { part }); // always-on hover inspection (no-op on touch-only devices)
   const ui = createStatusUi();
 
   // ?backend=occt|manifold forces the backend; otherwise it's detected per part.

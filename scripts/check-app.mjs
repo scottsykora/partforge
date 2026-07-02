@@ -35,6 +35,7 @@ page.on("pageerror", (e) => errors.push("pageerror: " + (e.message || e)));
 page.on("worker", (w) => w.on("console", (m) => { if (m.type() === "error") errors.push("worker: " + m.text()); }));
 
 let booted = false;
+let hovered = false;
 try {
   await page.goto(url, { waitUntil: "load", timeout: 30000 });
   await page.waitForFunction(
@@ -42,6 +43,17 @@ try {
     { timeout: 60000 }
   );
   booted = true;
+
+  // Hover inspection: move the mouse across the canvas and expect the feature
+  // tooltip to appear (any hit — labeled features or the sub-part fallback).
+  const box = await page.locator("#app canvas").boundingBox();
+  if (box) {
+    for (const [fx, fy] of [[0.5, 0.5], [0.4, 0.45], [0.6, 0.55], [0.5, 0.35]]) {
+      await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
+      await sleep(120);
+      if (await page.locator("#pf-hover-tip.show").count()) { hovered = true; break; }
+    }
+  }
 } catch { /* report below */ }
 const status = await page.$eval("#status", (e) => e.textContent).catch(() => "(no #status)");
 
@@ -49,6 +61,6 @@ await browser.close();
 if (!process.argv.includes("--keep")) vite.kill("SIGTERM");
 
 console.log(`check ${url}`);
-console.log(`  booted: ${booted}   status: ${JSON.stringify(status)}   errors: ${errors.length}`);
+console.log(`  booted: ${booted}   hovered: ${hovered}   status: ${JSON.stringify(status)}   errors: ${errors.length}`);
 for (const e of errors.slice(0, 10)) console.log("    - " + e.split("\n")[0]);
-process.exit(booted ? 0 : 1);
+process.exit(booted && hovered ? 0 : 1);

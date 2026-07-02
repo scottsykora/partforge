@@ -105,7 +105,7 @@ export function createViewer(container, part) {
   // --- geometry builder -----------------------------------------------------
   // BufferGeometry from a worker mesh payload — kept in its shared-frame coords
   // (NOT recentred) so the pieces assemble in the right relative positions.
-  function buildGeometry({ positions, normals, indices, triangles, edges }) {
+  function buildGeometry({ positions, normals, indices, triangles, edges, featureIds, features }) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     if (indices?.length) geo.setIndex(new THREE.BufferAttribute(indices, 1)); // Manifold is non-indexed
@@ -122,6 +122,7 @@ export function createViewer(container, part) {
       out.computeBoundingBox();
     }
     out.userData.triangles = triCount;
+    if (featureIds) { out.userData.featureIds = featureIds; out.userData.features = features; }
     // feature edge lines: Manifold supplies seam-aware segments; else derive by angle
     const lg = new LineSegmentsGeometry();
     if (edges?.length) lg.setPositions(edges);

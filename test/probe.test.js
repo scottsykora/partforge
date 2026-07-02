@@ -21,3 +21,12 @@ test("a part using shell routes to occt", () => {
   const shelled = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box([0, 0, 0], [10, 10, 10]).shell(1, { dir: "Z" }) } } };
   expect(detectBackend(shelled)).toBe("occt");
 });
+
+test("label() chains on the probe kernel and does not force OCCT", () => {
+  const part = {
+    defaults: { a: 5 },
+    parts: { p: { views: ["v"], build: (k, p) => k.box([0, 0, 0], [p.a, p.a, p.a]).label("Body") } },
+    views: { v: {} },
+  };
+  expect(detectBackend(part)).toBe("manifold");
+});

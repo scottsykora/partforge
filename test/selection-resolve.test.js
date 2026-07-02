@@ -38,13 +38,17 @@ test("L0: scopes params to the clicked sub-part's read keys, quantizes, snaps", 
   expect(sel.feature).toBeUndefined();     // no face metadata → L0 only
 });
 
-test("L1: when hit.face is present, emits a finder-ready selector", () => {
-  const sel = resolveSelection(part, ctx, {
-    subPart: "one", pointLocal: [0, 0, 5.2], normalLocal: [1, 0, 0],
-    face: { kind: "cylinder", axis: "Z", radius: 1.7 },
+test("a hit with a feature resolves to selection.feature.label", () => {
+  const s = resolveSelection(part, ctx, {
+    subPart: "one", pointLocal: [1, 2, 3], normalLocal: [0, 0, 1],
+    feature: { id: 1, label: "Drainage hole" },
   });
-  expect(sel.feature).toEqual({
-    kind: "cylinder", axis: "Z", radius: 1.7,
-    selector: { dir: "Z", near: [0, 0, 5.2] },
+  expect(s.feature).toEqual({ label: "Drainage hole" });
+});
+
+test("a hit without a feature has no selection.feature", () => {
+  const s = resolveSelection(part, ctx, {
+    subPart: "one", pointLocal: [1, 2, 3], normalLocal: [0, 0, 1], feature: null,
   });
+  expect(s.feature).toBeUndefined();
 });

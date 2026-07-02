@@ -9,17 +9,13 @@ const fmtParams = (p) => Object.entries(p).map(([k, v]) => `${k}:${v}`).join(","
 
 function tokenStyle(s) {
   const head = `@${s.subPart}`;
-  const feat = s.feature
-    ? ` · ${s.feature.kind === "cylinder"
-        ? `cyl-face r=${s.feature.radius} axis=${s.feature.axis}`
-        : `${s.feature.kind}-face`}`
-    : "";
+  const feat = s.feature ? ` · ${s.feature.label}` : "";
   return `${head}${feat} · pt(${s.point.join(",")}) n(${fmtNormal(s.normal)}) · {${fmtParams(s.params)}}`;
 }
 
 function promptStyle(s) {
   const params = Object.entries(s.params).map(([k, v]) => `${k}: ${v}`).join(", ");
-  const feat = s.feature ? ` a ${s.feature.kind} face,` : "";
+  const feat = s.feature ? ` **${s.feature.label}**,` : "";
   return `On sub-part **${s.subPart}**, the user pointed at${feat} local point (${s.point.join(", ")}), `
     + `normal ${fmtNormal(s.normal)}, with params {${params}}.`;
 }

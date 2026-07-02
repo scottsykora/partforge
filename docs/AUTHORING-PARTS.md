@@ -116,6 +116,7 @@ entry pulls in the DOM viewer/controls, and your build functions run in a Web Wo
 | `s.mirror("XY"\|"XZ"\|"YZ")` | mirror across a plane |
 | `s.scale(factor, center?)` | uniform scale (single factor) about `center` (default origin) — scaling an off-origin part about the origin also moves it; pass a center (e.g. `s.boundingBox().center`) to resize in place |
 | `s.clone()` | independent copy (replicad consumes solids on transform) |
+| `s.label(name)` | name this solid's surface for hover/pick feature attribution; survives transforms + booleans; same name on several solids merges into one feature |
 | `s.boundingBox()` | `{ min, max, center, size }` axis-aligned bounds (query) |
 | `s.volume()` | volume in mm³ (Manifold) |
 | `s.toMesh({ quality })` / `s.toSTL({ quality })` / `s.toIndexedMesh()` | meshes / STL / indexed mesh (3MF) — the framework calls these |
@@ -158,6 +159,31 @@ magic vectors. Three habits:
 
 The bare `rotate(deg, center, axis)` remains available as the low-level primitive for
 anything `rotateX/Y/Z`/`rotateAbout` can't express, but prefer the vocabulary above.
+
+### Naming features (`.label()`)
+
+Give build-step solids human-readable names — the viewer's hover tooltip, the
+highlight, and pick selections all use them, so you, the app user, and an agent
+share the same vocabulary ("Make the Drainage hole 10 mm").
+
+```js
+const body = k.prism(d.outerPts, p.height, { scaleTop: p.taper }).label("Faceted wall");
+let s = body.cut(cavity.label("Cavity"));
+if (p.drain > 0) s = s.cut(k.cylinder(d.drainR, d.drainR, p.floor + 4).at([0, 0, -2]).label("Drainage hole"));
+```
+
+- A label names the solid's **surface** wherever it survives into the final part —
+  a cutting tool's label lands on the faces it leaves behind (the hole's wall).
+- Label **after** shaping compound tools (e.g. after an `intersect` clip) and
+  either before or after transforms — labels ride through `at`/`rotate`/etc.
+- The **same label on several solids merges into one feature** — label a pattern
+  of four holes `"Mounting holes"` and they hover/highlight as one.
+- Unlabeled geometry falls back to the sub-part's `label`. Faces created by
+  `fillet`/`chamfer`/`shell` are new surfaces, so they use the fallback too.
+- Works on both backends. On OCCT each label keeps a geometry snapshot for
+  mesh-time classification — label a handful of features, not hundreds.
+- Names should describe intent ("Drainage hole", not "cylinder2"); keep them
+  unique per sub-part unless you want the merge behavior.
 
 ### Caching & determinism
 
