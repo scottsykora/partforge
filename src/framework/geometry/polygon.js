@@ -97,6 +97,49 @@ export function ringSectorPolygon(innerR, outerR, arcDeg, segs = 32) {
   return pts;
 }
 
+// Round every corner of a CCW polygon: each vertex is replaced by a tangent circular
+// arc of radius r, tessellated with `segs` segments per corner (default 8, matching
+// roundedRectPolygon). Returns a plain [[x,y],…] point list usable by prism/extrude/loft
+// on BOTH kernels by construction. Corners are CLAMPED per-corner: r is reduced so an
+// arc's tangent points never pass the midpoint of either adjacent edge, so neighbouring
+// rounded corners can never overlap (pass a very large r to fully round every corner).
+// Intended for convex CCW outlines (brackets, gussets, pads, knob/star profiles); a
+// reflex corner is still rounded but its arc is placed on the angle bisector.
+export function filletPolygon(points, r, { segs = 8 } = {}) {
+  const n = points.length;
+  if (n < 3) throw new Error("filletPolygon: need at least 3 points");
+  if (!(r > 0)) throw new Error("filletPolygon: r must be > 0");
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const p0 = points[(i - 1 + n) % n], p1 = points[i], p2 = points[(i + 1) % n];
+    let v0 = [p0[0] - p1[0], p0[1] - p1[1]], v2 = [p2[0] - p1[0], p2[1] - p1[1]];
+    const l0 = Math.hypot(v0[0], v0[1]), l2 = Math.hypot(v2[0], v2[1]);
+    if (l0 < 1e-9 || l2 < 1e-9) { out.push([p1[0], p1[1]]); continue; } // zero-length edge
+    v0 = [v0[0] / l0, v0[1] / l0]; v2 = [v2[0] / l2, v2[1] / l2];
+    const cosA = Math.max(-1, Math.min(1, v0[0] * v2[0] + v0[1] * v2[1]));
+    const half = Math.acos(cosA) / 2;                    // half the corner's interior angle
+    let bis = [v0[0] + v2[0], v0[1] + v2[1]];
+    const bl = Math.hypot(bis[0], bis[1]);
+    if (half < 1e-6 || bl < 1e-9) { out.push([p1[0], p1[1]]); continue; } // straight (180°) corner
+    bis = [bis[0] / bl, bis[1] / bl];
+    let rr = r, t = r / Math.tan(half);                  // tangent setback along each edge
+    const tmax = Math.min(l0, l2) / 2;                   // clamp: never past an edge midpoint
+    if (t > tmax) { t = tmax; rr = t * Math.tan(half); }
+    const a = [p1[0] + v0[0] * t, p1[1] + v0[1] * t];    // tangent point on the incoming edge
+    const b = [p1[0] + v2[0] * t, p1[1] + v2[1] * t];    // tangent point on the outgoing edge
+    const c = [p1[0] + bis[0] * (rr / Math.sin(half)), p1[1] + bis[1] * (rr / Math.sin(half))]; // arc center
+    const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+    let dA = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0;   // sweep the SHORT arc from a to b
+    while (dA <= -Math.PI) dA += 2 * Math.PI;
+    while (dA > Math.PI) dA -= 2 * Math.PI;
+    for (let s = 0; s <= segs; s++) {
+      const ang = a0 + dA * (s / segs);
+      out.push([c[0] + rr * Math.cos(ang), c[1] + rr * Math.sin(ang)]);
+    }
+  }
+  return out;
+}
+
 const PATTERN_AXIS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
 
 // `count` copies of `solid` translated by i*step ([dx,dy,dz]) for i in 0..count-1.

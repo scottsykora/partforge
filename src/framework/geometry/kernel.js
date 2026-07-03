@@ -7,8 +7,8 @@
 
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
-  "cylinder", "boredCylinder", "sphere", "box", "prism", "revolve",
-  "helixSweptTube", "union", "toSTEP",
+  "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
+  "loft", "helixSweptTube", "union", "toSTEP",
 ];
 
 // Backend-optional kernel ops: the Manifold cache brackets + WASM lifetime hooks.
@@ -70,6 +70,8 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(r:number) => Solid} sphere   sphere centred at the origin
  * @property {(min:number[], max:number[]) => Solid} box
  * @property {(points2D:number[][], h:number, opts?:{twist?:number,scaleTop?:number}) => Solid} prism   extrude polygon from z=0 (optional twist° + uniform top taper)
+ * @property {(profile:number[][]|{outer:number[][],holes?:number[][][]}, h:number, opts?:{twist?:number,scaleTop?:number}) => Solid} extrude   extrude a polygon-with-holes region from z=0 in one op (bare array = outer only)
+ * @property {(rings:{polygon?:number[][],sides?:number,radius?:number,z:number,rotate?:number,scale?:number|number[]}[], opts?:{ruled?:boolean,closed?:boolean}) => Solid} loft   stack polygon cross-sections (per-ring z/rotate/scale), ruled walls, capped ends
  * @property {(points2D:number[][], opts?:{degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union
