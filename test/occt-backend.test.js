@@ -2,7 +2,7 @@ import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { assemblyOverlaps } from "../src/framework/assembly.js";
 import { KERNEL_OPS, SOLID_OPS, SOLID_OPTIONAL_OPS } from "../src/framework/geometry/kernel.js";
-import { roundedProfile, filletPolygon } from "../src/framework/geometry/polygon.js";
+import { roundedProfile, filletPolygon, circleProfile } from "../src/framework/geometry/polygon.js";
 import planterPart from "../src/parts/planter.js";
 
 let k;
@@ -220,6 +220,15 @@ test("sweep closed:true loops are Manifold-only — OCCT throws a clear error", 
 
 test("sweep throws up front on a too-tight bend (same fold guard as Manifold)", () => {
   expect(() => k.sweep(SW, [[-3, 0, 0], [0, 0, 0], [0, 3, 0]])).toThrow(/too wide|too sharp/);
+});
+
+test("cornerRadius arc-fan (default non-smooth path) matches the Manifold arc-fan volume", () => {
+  // Same inputs as the Manifold arc-fan case (manifold-backend.test.js "cornerRadius fillets
+  // a bend into a smooth arc"): circleProfile(3) along an L-path with a 6 mm filleted corner.
+  // The default (non-smooth) OCCT path lofts the SAME arc-fan stations Manifold hand-meshes,
+  // so both report ~912.47 mm³ (parity by construction — verified 0.0000 rel diff vs Manifold).
+  const s = k.sweep(circleProfile(3), [[0, 0, 0], [0, 0, 20], [15, 0, 20]], { cornerRadius: 6 });
+  expect(s.volume()).toBeCloseTo(912.47, -1); // OCCT tolerance convention
 });
 
 test("smooth:true builds a native swept B-rep and exports STEP", async () => {
