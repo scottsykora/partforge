@@ -124,3 +124,45 @@ test("scale(2) multiplies volume ~8x", () => {
 test("scale rejects factor <= 0", () => {
   expect(() => k.box([0, 0, 0], [1, 1, 1]).scale(0)).toThrow(/factor must be/);
 });
+
+// ── loft ──────────────────────────────────────────────────────────────────────
+const LSQ = [[-5, -5], [5, -5], [5, 5], [-5, 5]];
+
+test("loft of two identical square rings equals a box volume", () => {
+  const v = k.loft([{ polygon: LSQ, z: 0 }, { polygon: LSQ, z: 10 }]).volume();
+  expect(v).toBeCloseTo(10 * 10 * 10, -1); // 1000 mm³
+});
+
+test("loft of a scaled top ring is a frustum (analytic prismatoid volume)", () => {
+  const v = k.loft([{ polygon: LSQ, z: 0 }, { polygon: LSQ, z: 10, scale: 0.5 }]).volume();
+  expect(v).toBeCloseTo((10 / 3) * (100 + 25 + 50), -1); // 583.3 mm³
+});
+
+test("loft rejects mismatched vertex counts (shared validation with Manifold)", () => {
+  expect(() => k.loft([{ polygon: LSQ, z: 0 }, { polygon: [[0, 0], [5, 0], [5, 5], [0, 5], [0, 2]], z: 5 }]))
+    .toThrow(/same number of points/);
+});
+
+test("loft closed:true loops are Manifold-only — OCCT throws a clear error", () => {
+  expect(() => k.loft([{ polygon: LSQ, z: 0 }, { polygon: LSQ, z: 5 }], { closed: true }))
+    .toThrow(/Manifold backend/);
+});
+
+// ── extrude (polygon-with-holes) ────────────────────────────────────────────────
+const EOUT = [[-10, -10], [10, -10], [10, 10], [-10, 10]];
+const EHOLE = [[-3, -3], [3, -3], [3, 3], [-3, 3]];
+
+test("extrude of a region with a hole removes the hole volume in one op", () => {
+  const v = k.extrude({ outer: EOUT, holes: [EHOLE] }, 5).volume();
+  expect(v).toBeCloseTo((20 * 20 - 6 * 6) * 5, -1); // 1820 mm³
+});
+
+test("extrude accepts a bare points array as outer-only", () => {
+  expect(k.extrude(EOUT, 5).volume()).toBeCloseTo(20 * 20 * 5, -1);
+});
+
+test("extrude with a hole exports STEP (region-with-hole survives to B-rep)", async () => {
+  const solid = k.extrude({ outer: EOUT, holes: [EHOLE] }, 5);
+  const step = await k.toSTEP([{ name: "gasket", solid }]);
+  expect(new TextDecoder().decode(step.slice(0, 13))).toBe("ISO-10303-21;");
+});

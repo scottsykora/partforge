@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bboxSize } from "../src/testing/mesh.js";
-import { circleProfile } from "../src/framework/geometry/polygon.js";
+import { circleProfile, regularPolygon, filletPolygon } from "../src/framework/geometry/polygon.js";
 import { bootManifoldKernel } from "../src/testing.js";
 
 let k;
@@ -180,4 +180,94 @@ test("scale about the part's own center leaves the bbox center fixed", () => {
 
 test("scale rejects factor <= 0", () => {
   expect(() => k.box([0, 0, 0], [1, 1, 1]).scale(0)).toThrow(/factor must be/);
+});
+
+// ── loft ──────────────────────────────────────────────────────────────────────
+const LSQ = [[-5, -5], [5, -5], [5, 5], [-5, 5]];
+
+test("loft of two identical square rings equals a box volume", () => {
+  const v = k.loft([{ polygon: LSQ, z: 0 }, { polygon: LSQ, z: 10 }]).volume();
+  expect(v).toBeCloseTo(10 * 10 * 10, -2); // 10×10 square × height 10 = 1000 mm³
+});
+
+test("loft reports the stacked bounding box (rings' XY extent × z span)", () => {
+  const bb = k.loft([{ polygon: LSQ, z: 2 }, { polygon: LSQ, z: 12 }]).boundingBox();
+  expect(bb.size).toEqual([10, 10, 10]);
+  expect(bb.min[2]).toBeCloseTo(2, 6);
+});
+
+test("loft accepts the sides+radius ring shorthand (regular n-gon rings)", () => {
+  const shorthand = k.loft([{ sides: 6, radius: 10, z: 0 }, { sides: 6, radius: 10, z: 8 }]).volume();
+  const explicit = k.loft([{ polygon: regularPolygon(6, 10), z: 0 }, { polygon: regularPolygon(6, 10), z: 8 }]).volume();
+  expect(shorthand).toBeCloseTo(explicit, 5);
+});
+
+test("a twisted multi-ring loft has ~the same volume as the untwisted one (continuous twist ≈ prism)", () => {
+  const steps = 24, hex = regularPolygon(6, 10);
+  const straight = [], twisted = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    straight.push({ polygon: hex, z: 20 * t });
+    twisted.push({ sides: 6, radius: 10, z: 20 * t, rotate: 60 * t }); // one full facet over the height
+  }
+  const vs = k.loft(straight).volume(), vt = k.loft(twisted).volume();
+  expect(vt).toBeGreaterThan(vs * 0.97); // ruled segments pinch a hair, but stay within ~2%
+  expect(vt).toBeLessThan(vs * 1.01);
+});
+
+test("a scaled top ring makes a frustum (analytic prismatoid volume)", () => {
+  const v = k.loft([{ polygon: LSQ, z: 0 }, { polygon: LSQ, z: 10, scale: 0.5 }]).volume();
+  expect(v).toBeCloseTo((10 / 3) * (100 + 25 + 50), -1); // base 10×10, top 5×5: 583.3 mm³
+});
+
+test("loft rejects fewer than 2 rings, a missing z, and mismatched vertex counts", () => {
+  expect(() => k.loft([{ polygon: LSQ, z: 0 }])).toThrow(/at least 2/);
+  expect(() => k.loft([{ polygon: LSQ }, { polygon: LSQ, z: 5 }])).toThrow(/finite z/);
+  expect(() => k.loft([{ polygon: LSQ, z: 0 }, { polygon: regularPolygon(6, 5), z: 5 }])).toThrow(/same number of points/);
+});
+
+test("loft is a single atomic cache node, and its hash folds every ring's transform", () => {
+  k.resetCacheStats();
+  k.beginSubPart("a"); k.loft([{ polygon: LSQ, z: 0 }, { polygon: LSQ, z: 10 }]).toMesh(); k.endSubPart(); k.cleanup();
+  expect(k.cacheStats().misses).toBe(1); // one node, not its internal mesh ops
+  k.resetCacheStats();
+  k.beginSubPart("a"); k.loft([{ polygon: LSQ, z: 0 }, { polygon: LSQ, z: 10 }]).toMesh(); k.endSubPart(); k.cleanup();
+  expect(k.cacheStats()).toEqual({ hits: 1, misses: 0 }); // identical build reused
+  // a shape-affecting change (a ring's rotate) must change the hash
+  const a = k.loft([{ polygon: LSQ, z: 0 }, { polygon: LSQ, z: 10 }]);
+  const b = k.loft([{ polygon: LSQ, z: 0 }, { polygon: LSQ, z: 10, rotate: 15 }]);
+  expect(a._hash).not.toBe(b._hash);
+  expect(a._hash).toBe(k.loft([{ polygon: LSQ, z: 0 }, { polygon: LSQ, z: 10 }])._hash); // deterministic
+});
+
+// ── extrude (polygon-with-holes) ────────────────────────────────────────────────
+const EOUT = [[-10, -10], [10, -10], [10, 10], [-10, 10]]; // 20×20
+const EHOLE = [[-3, -3], [3, -3], [3, 3], [-3, 3]];        // 6×6
+
+test("extrude of a region with a hole removes the hole volume in one op", () => {
+  const v = k.extrude({ outer: EOUT, holes: [EHOLE] }, 5).volume();
+  expect(v).toBeCloseTo((20 * 20 - 6 * 6) * 5, -2); // (400−36)×5 = 1820 mm³
+  expect(k.extrude({ outer: EOUT, holes: [EHOLE] }, 5).genus()).toBe(1); // a real through-hole
+});
+
+test("extrude accepts a bare points array as outer-only (equals { outer })", () => {
+  expect(k.extrude(EOUT, 5).volume()).toBeCloseTo(k.extrude({ outer: EOUT }, 5).volume(), 5);
+  expect(k.extrude(EOUT, 5).volume()).toBeCloseTo(20 * 20 * 5, -2);
+});
+
+test("extrude composes with filletPolygon (rounded outer + hole) into a positive solid", () => {
+  const s = k.extrude({ outer: filletPolygon(EOUT, 3), holes: [EHOLE] }, 5);
+  expect(s.volume()).toBeGreaterThan(0);
+  expect(s.volume()).toBeLessThan(20 * 20 * 5); // rounded corners + hole ⇒ less than the full block
+});
+
+test("extrude rejects negative scaleTop and a degenerate outer", () => {
+  expect(() => k.extrude(EOUT, 5, { scaleTop: -1 })).toThrow(/scaleTop/);
+  expect(() => k.extrude([[0, 0], [1, 1]], 5)).toThrow(/≥3 points/);
+});
+
+test("extrude hash folds twist (tessellation-affecting) — a twisted region differs from a straight one", () => {
+  const a = k.extrude(EOUT, 5);
+  const b = k.extrude(EOUT, 5, { twist: 45 });
+  expect(a._hash).not.toBe(b._hash);
 });
