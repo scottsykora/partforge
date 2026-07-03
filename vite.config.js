@@ -21,6 +21,7 @@ export default defineConfig(({ command }) => ({
         spacer: "demo.html",
         filletedBox: "filleted-box.html",
         planter: "planter.html",
+        facetedVase: "faceted-vase.html",
       },
     },
   },
