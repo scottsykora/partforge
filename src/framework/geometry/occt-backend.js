@@ -85,16 +85,25 @@ export function createOcctKernel(replicad) {
     return wrap(loft([w1, w2]));
   };
 
-  // draw a closed polygon Drawing from a 2-D point list
-  const polyDrawing = (pts) => {
-    let pen = draw(pts[0]);
-    for (let i = 1; i < pts.length; i++) pen = pen.lineTo(pts[i]);
+  // Draw a closed Drawing from a Contour: a legacy 2-D point list (all straight edges,
+  // the former polyDrawing) OR an ArcContour whose { to, via } segments become true
+  // OCCT arc edges via threePointsArcTo — so a rounded corner survives to STEP as a
+  // real CIRCLE B-rep entity, not a fan of LINEs. close() joins the last point back to
+  // the start with a straight edge (mirrors the implied ArcContour closure).
+  const contourDrawing = (contour) => {
+    if (Array.isArray(contour)) {
+      let pen = draw(contour[0]);
+      for (let i = 1; i < contour.length; i++) pen = pen.lineTo(contour[i]);
+      return pen.close();
+    }
+    let pen = draw(contour.start);
+    for (const seg of contour.segments) pen = seg.via ? pen.threePointsArcTo(seg.to, seg.via) : pen.lineTo(seg.to);
     return pen.close();
   };
 
   // extrude a 2-D polygon from z=0 (arguments validated by the kernel front)
   const prism = (pts, h, { twist = 0, scaleTop = 1 } = {}) => {
-    const sketch = polyDrawing(pts).sketchOnPlane("XY");
+    const sketch = contourDrawing(pts).sketchOnPlane("XY");
     if (twist === 0 && scaleTop === 1) return wrap(sketch.extrude(h));
     const cfg = {};
     if (twist !== 0) cfg.twistAngle = twist;
@@ -104,14 +113,14 @@ export function createOcctKernel(replicad) {
 
   // revolve a lathe profile [[r,z],…] around the Z axis (degrees defaults to 360)
   const revolve = (pts, { degrees = 360 } = {}) =>
-    wrap(polyDrawing(pts).sketchOnPlane("XZ").revolve([0, 0, 1], { angle: degrees }));
+    wrap(contourDrawing(pts).sketchOnPlane("XZ").revolve([0, 0, 1], { angle: degrees }));
 
   // extrude a polygon-with-holes region from z=0: cut each hole Drawing out of the outer
   // Drawing (winding-agnostic 2-D boolean), sketch it, then extrude (twist/taper via cfg).
   const extrude = (profile, h, { twist = 0, scaleTop = 1 } = {}) => {
     const { outer, holes } = normalizeProfile(profile);
-    let region = polyDrawing(outer);
-    for (const hole of holes) region = region.cut(polyDrawing(hole));
+    let region = contourDrawing(outer);
+    for (const hole of holes) region = region.cut(contourDrawing(hole));
     const sketch = region.sketchOnPlane("XY");
     if (twist === 0 && scaleTop === 1) return wrap(sketch.extrude(h));
     const cfg = {};
@@ -124,7 +133,7 @@ export function createOcctKernel(replicad) {
   // the ends for closed wires). closed:true loops are Manifold-only (replicad loft is open).
   const loftOp = (rings, { ruled = true, closed = false } = {}) => {
     if (closed) throw new Error("loft: closed:true loops are only supported on the Manifold backend");
-    const wires = resolveRings(rings).map(({ pts2d, z }) => polyDrawing(pts2d).sketchOnPlane("XY", z).wire);
+    const wires = resolveRings(rings).map(({ pts2d, z }) => contourDrawing(pts2d).sketchOnPlane("XY", z).wire);
     return wrap(loft(wires, { ruled }));
   };
 

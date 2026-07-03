@@ -1,6 +1,6 @@
 import { helixTube } from "./helix-tube.js";
 import { loftMesh } from "./loft.js";
-import { normalizeProfile } from "./profile.js";
+import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
 import { addSugar } from "./solid-sugar.js";
@@ -142,7 +142,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     prism: (pts, height, { twist = 0, scaleTop = 1 } = {}) =>
       cached(h("prism", pts, height, twist, scaleTop, segs), () => {
-        const cs = T(CrossSection.ofPolygons([pts]));
+        const cs = T(CrossSection.ofPolygons([tessellateContour(pts, segs)]));
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
         const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
         // Manifold's extrude scaleTop is a Vec2 — a scalar is NOT broadcast (it scales
@@ -153,7 +153,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // holes regardless of their winding (outer + holes, no per-hole boolean cut).
     extrude: (profile, height, { twist = 0, scaleTop = 1 } = {}) =>
       cached(h("extrude", profile, height, twist, scaleTop, segs), () => {
-        const { outer, holes } = normalizeProfile(profile);
+        const { outer, holes } = tessellateProfile(profile, segs);
         const cs = T(CrossSection.ofPolygons([outer, ...holes], "EvenOdd"));
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
         const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));

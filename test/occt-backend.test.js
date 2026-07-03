@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { assemblyOverlaps } from "../src/framework/assembly.js";
 import { KERNEL_OPS, SOLID_OPS, SOLID_OPTIONAL_OPS } from "../src/framework/geometry/kernel.js";
+import { roundedProfile, filletPolygon } from "../src/framework/geometry/polygon.js";
 import planterPart from "../src/parts/planter.js";
 
 let k;
@@ -165,4 +166,32 @@ test("extrude with a hole exports STEP (region-with-hole survives to B-rep)", as
   const solid = k.extrude({ outer: EOUT, holes: [EHOLE] }, 5);
   const step = await k.toSTEP([{ name: "gasket", solid }]);
   expect(new TextDecoder().decode(step.slice(0, 13))).toBe("ISO-10303-21;");
+});
+
+// ── arc profiles (roundedProfile) — true B-rep CIRCLE fillets ────────────────────
+const ASQ = (a) => [[-a / 2, -a / 2], [a / 2, -a / 2], [a / 2, a / 2], [-a / 2, a / 2]];
+const stepText = async (solid) => new TextDecoder().decode(await k.toSTEP([{ name: "p", solid }]));
+
+test("extrude(roundedProfile) matches the EXACT rounded-square volume (B-rep is not faceted)", () => {
+  const a = 20, r = 4, hgt = 5;
+  const analytic = (a * a - (4 - Math.PI) * r * r) * hgt; // exact fillets ⇒ exact area·h
+  // This assertion FAILS if OCCT faceted the corners (faceted volume is smaller by ~0.02·r²·h).
+  expect(k.extrude(roundedProfile(ASQ(a), r), hgt).volume()).toBeCloseTo(analytic, 3);
+});
+
+test("roundedProfile writes a true CIRCLE to STEP; filletPolygon (faceted) does not", async () => {
+  const rounded = await stepText(k.extrude(roundedProfile(ASQ(20), 4), 5));
+  expect(rounded).toMatch(/CIRCLE\s*\(/);                 // the whole point: true fillet survived to B-rep
+  const faceted = await stepText(k.extrude(filletPolygon(ASQ(20), 4), 5));
+  expect(faceted).not.toMatch(/CIRCLE\s*\(/);             // negative control: tessellated corners are LINEs
+});
+
+test("a rounded outer AND a rounded hole each contribute true CIRCLE edges to STEP", async () => {
+  const solid = k.extrude({ outer: roundedProfile(ASQ(20), 4), holes: [roundedProfile(ASQ(6), 1)] }, 5);
+  const text = await stepText(solid);
+  expect((text.match(/CIRCLE\s*\(/g) ?? []).length).toBeGreaterThanOrEqual(2); // outer + hole
+});
+
+test("prism(roundedProfile) also carries a true CIRCLE (outer-only arc region)", async () => {
+  expect(await stepText(k.prism(roundedProfile(ASQ(20), 4), 5))).toMatch(/CIRCLE\s*\(/);
 });

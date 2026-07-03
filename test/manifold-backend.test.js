@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bboxSize } from "../src/testing/mesh.js";
-import { circleProfile, regularPolygon, filletPolygon } from "../src/framework/geometry/polygon.js";
+import { circleProfile, regularPolygon, filletPolygon, roundedProfile } from "../src/framework/geometry/polygon.js";
 import { bootManifoldKernel } from "../src/testing.js";
 
 let k;
@@ -270,4 +270,45 @@ test("extrude hash folds twist (tessellation-affecting) — a twisted region dif
   const a = k.extrude(EOUT, 5);
   const b = k.extrude(EOUT, 5, { twist: 45 });
   expect(a._hash).not.toBe(b._hash);
+});
+
+// ── arc profiles (roundedProfile) ───────────────────────────────────────────────
+const ASQ = (a) => [[-a / 2, -a / 2], [a / 2, -a / 2], [a / 2, a / 2], [-a / 2, a / 2]];
+
+test("extrude(roundedProfile) hits the rounded-square volume, inscribed and below the sharp block", () => {
+  const a = 20, r = 4, hgt = 5;
+  const analytic = (a * a - (4 - Math.PI) * r * r) * hgt; // (a²−(4−π)r²)·h
+  const v = k.extrude(roundedProfile(ASQ(a), r), hgt).volume();
+  expect(v).toBeLessThanOrEqual(analytic + 1e-6);         // tessellation inscribes the true arc
+  expect(v).toBeCloseTo(analytic, -1);                    // and is close (loose preview tolerance)
+  expect(v).toBeLessThan(a * a * hgt);                    // rounded ⇒ less than the sharp block
+});
+
+test("extrude(roundedProfile) converges up toward the analytic volume vs a coarse filletPolygon", () => {
+  const a = 20, r = 4, hgt = 5;
+  const analytic = (a * a - (4 - Math.PI) * r * r) * hgt;
+  const arcV = k.extrude(roundedProfile(ASQ(a), r), hgt).volume();
+  const facetV = k.extrude(filletPolygon(ASQ(a), r), hgt).volume(); // fixed segs=8 corners
+  expect(analytic - arcV).toBeLessThan(analytic - facetV);          // arc path is closer to truth
+});
+
+test("extrude(roundedProfile) with a rounded hole is a genus-1 solid", () => {
+  const s = k.extrude({ outer: roundedProfile(ASQ(20), 4), holes: [roundedProfile(ASQ(6), 1)] }, 5);
+  expect(s.genus()).toBe(1);
+  expect(s.volume()).toBeGreaterThan(0);
+});
+
+test("prism(roundedProfile) rounds an outer-only region (equals the same-area extrude)", () => {
+  const a = 20, r = 4, hgt = 5;
+  expect(k.prism(roundedProfile(ASQ(a), r), hgt).volume())
+    .toBeCloseTo(k.extrude(roundedProfile(ASQ(a), r), hgt).volume(), 3);
+});
+
+test("extrude hash folds the arc spec AND the segs quality (no preview geometry served to print)", () => {
+  const sharp = k.extrude(ASQ(20), 5);
+  const rounded = k.extrude(roundedProfile(ASQ(20), 4), 5);
+  expect(sharp._hash).not.toBe(rounded._hash);            // arc spec changes the key
+  const r2 = k.extrude(roundedProfile(ASQ(20), 2), 5);
+  expect(rounded._hash).not.toBe(r2._hash);               // a different radius is a fresh node
+  expect(rounded._hash).toBe(k.extrude(roundedProfile(ASQ(20), 4), 5)._hash); // deterministic
 });
