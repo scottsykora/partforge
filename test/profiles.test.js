@@ -2,7 +2,9 @@ import { expect, test } from "vitest";
 import {
   roundedRectPolygon, regularPolygon, ellipsePolygon,
   slotPolygon, starPolygon, ringSectorPolygon, circleProfile,
+  roundedProfile, filletPolygon,
 } from "../src/framework/geometry/polygon.js";
+import { tessellateProfile, tessellateContour } from "../src/framework/geometry/profile.js";
 
 const signedArea = (p) => {
   let a = 0;
@@ -81,4 +83,48 @@ test("circleProfile defaults center to origin and rejects r <= 0", () => {
   for (const [x, y] of c) expect(Math.hypot(x, y)).toBeCloseTo(3, 6);
   expect(() => circleProfile(0)).toThrow(/r must be/);
   expect(() => circleProfile(-1)).toThrow(/r must be/);
+});
+
+// ── roundedProfile (arc-aware sibling of filletPolygon) ─────────────────────────
+const A = 20, R = 4;
+const SQ = [[-A / 2, -A / 2], [A / 2, -A / 2], [A / 2, A / 2], [-A / 2, A / 2]];
+const roundedSquareArea = A * A - (4 - Math.PI) * R * R; // exact: a² − (4−π)r²
+
+test("roundedProfile compiles to a canonical ArcContour (start + line/arc segments)", () => {
+  const c = roundedProfile(SQ, R);
+  expect(c.arc).toBe(true);
+  expect(Array.isArray(c.start)).toBe(true);
+  // four rounded corners → four arc segments (each { to, via }), interleaved with lines
+  expect(c.segments.filter((s) => s.via).length).toBe(4);
+  for (const s of c.segments.filter((v) => v.via)) expect(s.via.length).toBe(2);
+});
+
+test("roundedProfile tessellates CCW and hits the exact rounded-square area (inscribed)", () => {
+  const ring = tessellateProfile(roundedProfile(SQ, R), 116).outer;
+  expect(signedArea(ring)).toBeGreaterThan(0);                 // CCW
+  expect(signedArea(ring)).toBeLessThanOrEqual(roundedSquareArea + 1e-6); // inscribed ⇒ ≤ analytic
+  expect(signedArea(ring)).toBeCloseTo(roundedSquareArea, 1);  // and close (0.02·r² closed-form deficit)
+});
+
+test("roundedProfile tessellation converges to the true area as segs↑ and beats fixed-segs filletPolygon", () => {
+  const near = signedArea(tessellateContour(roundedProfile(SQ, R), 480));
+  const coarse = signedArea(tessellateContour(roundedProfile(SQ, R), 32));
+  expect(Math.abs(near - roundedSquareArea)).toBeLessThan(Math.abs(coarse - roundedSquareArea)); // more facets → closer
+  // the arc path (segs-scaled) beats filletPolygon's fixed segs=8 corners at print resolution
+  expect(Math.abs(near - roundedSquareArea)).toBeLessThan(Math.abs(signedArea(filletPolygon(SQ, R)) - roundedSquareArea));
+});
+
+test("roundedProfile keeps sharp/degenerate corners as plain lines (r=0, per-corner r[], collinear)", () => {
+  const half = roundedProfile(SQ, [R, 0, R, 0]);              // only 2 corners rounded
+  expect(half.segments.filter((s) => s.via).length).toBe(2);
+  expect(roundedProfile(SQ, 0)).toBeDefined();                // scalar 0 → all sharp (no arcs)
+  expect(roundedProfile(SQ, 0).segments.every((s) => !s.via)).toBe(true);
+  // a collinear (straight) vertex is skipped, not turned into a degenerate arc
+  const withStraight = roundedProfile([[0, 0], [10, 0], [20, 0], [20, 10], [0, 10]], R);
+  expect(withStraight.segments.filter((s) => s.via).length).toBe(4); // the 180° vertex stays a line
+});
+
+test("roundedProfile validates inputs", () => {
+  expect(() => roundedProfile([[0, 0], [1, 1]], R)).toThrow(/at least 3/);
+  expect(() => roundedProfile(SQ, [R, R])).toThrow(/length must match/);
 });

@@ -1,6 +1,7 @@
 import { helixTube } from "./helix-tube.js";
 import { loftMesh } from "./loft.js";
-import { normalizeProfile } from "./profile.js";
+import { sweepMesh } from "./sweep.js";
+import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
 import { addSugar } from "./solid-sugar.js";
@@ -142,7 +143,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     prism: (pts, height, { twist = 0, scaleTop = 1 } = {}) =>
       cached(h("prism", pts, height, twist, scaleTop, segs), () => {
-        const cs = T(CrossSection.ofPolygons([pts]));
+        const cs = T(CrossSection.ofPolygons([tessellateContour(pts, segs)]));
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
         const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
         // Manifold's extrude scaleTop is a Vec2 — a scalar is NOT broadcast (it scales
@@ -153,7 +154,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // holes regardless of their winding (outer + holes, no per-hole boolean cut).
     extrude: (profile, height, { twist = 0, scaleTop = 1 } = {}) =>
       cached(h("extrude", profile, height, twist, scaleTop, segs), () => {
-        const { outer, holes } = normalizeProfile(profile);
+        const { outer, holes } = tessellateProfile(profile, segs);
         const cs = T(CrossSection.ofPolygons([outer, ...holes], "EvenOdd"));
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
         const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
@@ -162,6 +163,11 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // Ring loft: hand-meshed via the shared ring-mesh helpers (helix-tube recipe).
     // Cached atomically; the hash folds every ring's points/z/rotate/scale and the opts.
     loft: (rings, opts = {}) => cached(h("loft", rings, opts), () => T(loftMesh(wasm, rings, opts))),
+    // Sweep a fixed 2-D profile along a 3-D polyline: hand-meshed from the shared station
+    // list (sweep.js), so it agrees with OCCT's ruled loft of the same stations by
+    // construction. Cached atomically; the hash folds profile pts, path pts, and opts
+    // (closed/cornerRadius) so a shape change is a fresh node and an identical rebuild hits.
+    sweep: (profile, path, opts = {}) => cached(h("sweep", profile, path, opts), () => T(sweepMesh(wasm, profile, path, opts))),
     helixSweptTube: (o) => cached(h("helixSweptTube", o, tube), () => T(helixTube(wasm, { ...o, ...tube }))),
     revolve: (pts, { degrees = 360 } = {}) =>
       cached(h("revolve", pts, degrees, segs), () => T(Manifold.revolve([pts], segs, degrees))),

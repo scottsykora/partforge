@@ -97,6 +97,37 @@ export function ringSectorPolygon(innerR, outerR, arcDeg, segs = 32) {
   return pts;
 }
 
+// Per-corner rounding geometry, shared verbatim by filletPolygon (which tessellates it)
+// and roundedProfile (which emits it as a symbolic arc). Given a corner p0→p1→p2 and a
+// requested radius r, returns the incoming/outgoing tangent points `a`/`b`, the arc centre
+// `c`, the clamped radius `rr`, the short sweep `dA`, and the incoming start angle `a0` —
+// or null for a corner that must stay sharp (zero-length edge or a straight/180° corner).
+// The per-corner clamp (t ≤ min(l0,l2)/2) keeps neighbouring arcs from overlapping.
+// Extracting this means the two consumers can never diverge on clamping/winding.
+export function cornerArc(p0, p1, p2, r) {
+  let v0 = [p0[0] - p1[0], p0[1] - p1[1]], v2 = [p2[0] - p1[0], p2[1] - p1[1]];
+  const l0 = Math.hypot(v0[0], v0[1]), l2 = Math.hypot(v2[0], v2[1]);
+  if (l0 < 1e-9 || l2 < 1e-9) return null;               // zero-length edge → sharp
+  v0 = [v0[0] / l0, v0[1] / l0]; v2 = [v2[0] / l2, v2[1] / l2];
+  const cosA = Math.max(-1, Math.min(1, v0[0] * v2[0] + v0[1] * v2[1]));
+  const half = Math.acos(cosA) / 2;                      // half the corner's interior angle
+  let bis = [v0[0] + v2[0], v0[1] + v2[1]];
+  const bl = Math.hypot(bis[0], bis[1]);
+  if (half < 1e-6 || bl < 1e-9) return null;             // straight (180°) corner → sharp
+  bis = [bis[0] / bl, bis[1] / bl];
+  let rr = r, t = r / Math.tan(half);                    // tangent setback along each edge
+  const tmax = Math.min(l0, l2) / 2;                     // clamp: never past an edge midpoint
+  if (t > tmax) { t = tmax; rr = t * Math.tan(half); }
+  const a = [p1[0] + v0[0] * t, p1[1] + v0[1] * t];      // tangent point on the incoming edge
+  const b = [p1[0] + v2[0] * t, p1[1] + v2[1] * t];      // tangent point on the outgoing edge
+  const c = [p1[0] + bis[0] * (rr / Math.sin(half)), p1[1] + bis[1] * (rr / Math.sin(half))]; // arc center
+  const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+  let dA = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0;     // sweep the SHORT arc from a to b
+  while (dA <= -Math.PI) dA += 2 * Math.PI;
+  while (dA > Math.PI) dA -= 2 * Math.PI;
+  return { a, b, c, rr, dA, a0 };
+}
+
 // Round every corner of a CCW polygon: each vertex is replaced by a tangent circular
 // arc of radius r, tessellated with `segs` segments per corner (default 8, matching
 // roundedRectPolygon). Returns a plain [[x,y],…] point list usable by prism/extrude/loft
@@ -105,39 +136,54 @@ export function ringSectorPolygon(innerR, outerR, arcDeg, segs = 32) {
 // rounded corners can never overlap (pass a very large r to fully round every corner).
 // Intended for convex CCW outlines (brackets, gussets, pads, knob/star profiles); a
 // reflex corner is still rounded but its arc is placed on the angle bisector.
+// NOTE: bakes each arc into `segs` straight facets, so STEP export of a filletPolygon
+// part has faceted (LINE) corners; for mathematically-true CIRCLE corners in STEP use
+// roundedProfile, which carries the arc symbolically to both backends.
 export function filletPolygon(points, r, { segs = 8 } = {}) {
   const n = points.length;
   if (n < 3) throw new Error("filletPolygon: need at least 3 points");
   if (!(r > 0)) throw new Error("filletPolygon: r must be > 0");
   const out = [];
   for (let i = 0; i < n; i++) {
-    const p0 = points[(i - 1 + n) % n], p1 = points[i], p2 = points[(i + 1) % n];
-    let v0 = [p0[0] - p1[0], p0[1] - p1[1]], v2 = [p2[0] - p1[0], p2[1] - p1[1]];
-    const l0 = Math.hypot(v0[0], v0[1]), l2 = Math.hypot(v2[0], v2[1]);
-    if (l0 < 1e-9 || l2 < 1e-9) { out.push([p1[0], p1[1]]); continue; } // zero-length edge
-    v0 = [v0[0] / l0, v0[1] / l0]; v2 = [v2[0] / l2, v2[1] / l2];
-    const cosA = Math.max(-1, Math.min(1, v0[0] * v2[0] + v0[1] * v2[1]));
-    const half = Math.acos(cosA) / 2;                    // half the corner's interior angle
-    let bis = [v0[0] + v2[0], v0[1] + v2[1]];
-    const bl = Math.hypot(bis[0], bis[1]);
-    if (half < 1e-6 || bl < 1e-9) { out.push([p1[0], p1[1]]); continue; } // straight (180°) corner
-    bis = [bis[0] / bl, bis[1] / bl];
-    let rr = r, t = r / Math.tan(half);                  // tangent setback along each edge
-    const tmax = Math.min(l0, l2) / 2;                   // clamp: never past an edge midpoint
-    if (t > tmax) { t = tmax; rr = t * Math.tan(half); }
-    const a = [p1[0] + v0[0] * t, p1[1] + v0[1] * t];    // tangent point on the incoming edge
-    const b = [p1[0] + v2[0] * t, p1[1] + v2[1] * t];    // tangent point on the outgoing edge
-    const c = [p1[0] + bis[0] * (rr / Math.sin(half)), p1[1] + bis[1] * (rr / Math.sin(half))]; // arc center
-    const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
-    let dA = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0;   // sweep the SHORT arc from a to b
-    while (dA <= -Math.PI) dA += 2 * Math.PI;
-    while (dA > Math.PI) dA -= 2 * Math.PI;
+    const arc = cornerArc(points[(i - 1 + n) % n], points[i], points[(i + 1) % n], r);
+    if (!arc) { out.push([points[i][0], points[i][1]]); continue; } // sharp corner
+    const { c, rr, dA, a0 } = arc;
     for (let s = 0; s <= segs; s++) {
       const ang = a0 + dA * (s / segs);
       out.push([c[0] + rr * Math.cos(ang), c[1] + rr * Math.sin(ang)]);
     }
   }
   return out;
+}
+
+// Arc-aware sibling of filletPolygon: rounds the corners of a CCW polygon with the SAME
+// tangent/centre/sweep math (via cornerArc), but instead of tessellating each arc into
+// line facets it emits a canonical ArcContour { start, segments:[{to}|{to,via}], arc:true }
+// that carries the arc SYMBOLICALLY. Feed it to prism/extrude (not loft yet): OCCT builds a
+// true CIRCLE B-rep edge (exact STEP fillets) while Manifold tessellates the same spec, so
+// both kernels agree by construction. `r` is a scalar (every corner) or a per-corner array
+// r[] (length === points.length; a 0 or a degenerate corner stays sharp — a plain line).
+export function roundedProfile(points, r) {
+  const n = points.length;
+  if (n < 3) throw new Error("roundedProfile: need at least 3 points");
+  const radii = Array.isArray(r) ? r : null;
+  if (radii && radii.length !== n)
+    throw new Error("roundedProfile: r[] length must match points length");
+  if (!radii && !(r >= 0)) throw new Error("roundedProfile: r must be ≥ 0 (or a per-corner r[]); 0 keeps every corner sharp");
+  const segments = [];
+  let start = null;
+  const lineTo = (p) => { if (start === null) start = [p[0], p[1]]; else segments.push({ to: [p[0], p[1]] }); };
+  for (let i = 0; i < n; i++) {
+    const p1 = points[i];
+    const ri = radii ? radii[i] : r;
+    const arc = ri > 0 ? cornerArc(points[(i - 1 + n) % n], p1, points[(i + 1) % n], ri) : null;
+    if (!arc) { lineTo(p1); continue; }                  // sharp / degenerate corner → plain vertex
+    const { a, b, c, rr, dA, a0 } = arc;
+    lineTo(a);                                           // straight run into the incoming tangent point
+    const mid = a0 + dA / 2;                             // arc midpoint (three-point via — sign/winding-free)
+    segments.push({ to: [b[0], b[1]], via: [c[0] + rr * Math.cos(mid), c[1] + rr * Math.sin(mid)] });
+  }
+  return { start, segments, arc: true };
 }
 
 const PATTERN_AXIS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };

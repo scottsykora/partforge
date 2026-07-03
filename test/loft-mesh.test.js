@@ -1,7 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import Module from "manifold-3d";
 import { loftMesh } from "../src/framework/geometry/loft.js";
-import { regularPolygon } from "../src/framework/geometry/polygon.js";
+import { regularPolygon, roundedProfile } from "../src/framework/geometry/polygon.js";
 
 // Raw-mesh test for the Manifold loft helper, mirroring helix-tube.test.js: boot the raw
 // manifold-3d module and assert the hand-built ring mesh is a valid watertight manifold,
@@ -58,4 +58,13 @@ test("closed:true builds a capless loop (topological loop: genus 1 vs the open l
   expect(() => loftMesh(wasm, rings, { closed: true })).not.toThrow();
   expect(loftMesh(wasm, rings, { closed: false }).genus()).toBe(0); // capped ends → solid ball topology
   expect(loftMesh(wasm, rings, { closed: true }).genus()).toBe(1);  // last ring stitched to first → loop
+});
+
+// The arc-ring guard lives in resolveRings (shared by both backends), so one focused test
+// covers loft.js:21 for OCCT and Manifold alike: an arc profile (roundedProfile) is not a
+// point array and must be rejected up front — arc rings are extrude/prism-only in v1.
+test("an arc profile (roundedProfile) is rejected as a loft ring with a clear error", () => {
+  const arcRing = roundedProfile(SQ, 2); // true-arc contour, not a plain point array
+  expect(() => loftMesh(wasm, [{ polygon: arcRing, z: 0 }, { polygon: SQ, z: 10 }]))
+    .toThrow(/arc profile.*not supported/);
 });

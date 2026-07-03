@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { assemblyOverlaps } from "../src/framework/assembly.js";
 import { KERNEL_OPS, SOLID_OPS, SOLID_OPTIONAL_OPS } from "../src/framework/geometry/kernel.js";
+import { roundedProfile, filletPolygon, circleProfile } from "../src/framework/geometry/polygon.js";
 import planterPart from "../src/parts/planter.js";
 
 let k;
@@ -164,5 +165,75 @@ test("extrude accepts a bare points array as outer-only", () => {
 test("extrude with a hole exports STEP (region-with-hole survives to B-rep)", async () => {
   const solid = k.extrude({ outer: EOUT, holes: [EHOLE] }, 5);
   const step = await k.toSTEP([{ name: "gasket", solid }]);
+  expect(new TextDecoder().decode(step.slice(0, 13))).toBe("ISO-10303-21;");
+});
+
+// ── arc profiles (roundedProfile) — true B-rep CIRCLE fillets ────────────────────
+const ASQ = (a) => [[-a / 2, -a / 2], [a / 2, -a / 2], [a / 2, a / 2], [-a / 2, a / 2]];
+const stepText = async (solid) => new TextDecoder().decode(await k.toSTEP([{ name: "p", solid }]));
+
+test("extrude(roundedProfile) matches the EXACT rounded-square volume (B-rep is not faceted)", () => {
+  const a = 20, r = 4, hgt = 5;
+  const analytic = (a * a - (4 - Math.PI) * r * r) * hgt; // exact fillets ⇒ exact area·h
+  // This assertion FAILS if OCCT faceted the corners (faceted volume is smaller by ~0.02·r²·h).
+  expect(k.extrude(roundedProfile(ASQ(a), r), hgt).volume()).toBeCloseTo(analytic, 3);
+});
+
+test("roundedProfile writes a true CIRCLE to STEP; filletPolygon (faceted) does not", async () => {
+  const rounded = await stepText(k.extrude(roundedProfile(ASQ(20), 4), 5));
+  expect(rounded).toMatch(/CIRCLE\s*\(/);                 // the whole point: true fillet survived to B-rep
+  const faceted = await stepText(k.extrude(filletPolygon(ASQ(20), 4), 5));
+  expect(faceted).not.toMatch(/CIRCLE\s*\(/);             // negative control: tessellated corners are LINEs
+});
+
+test("a rounded outer AND a rounded hole each contribute true CIRCLE edges to STEP", async () => {
+  const solid = k.extrude({ outer: roundedProfile(ASQ(20), 4), holes: [roundedProfile(ASQ(6), 1)] }, 5);
+  const text = await stepText(solid);
+  expect((text.match(/CIRCLE\s*\(/g) ?? []).length).toBeGreaterThanOrEqual(2); // outer + hole
+});
+
+test("prism(roundedProfile) also carries a true CIRCLE (outer-only arc region)", async () => {
+  expect(await stepText(k.prism(roundedProfile(ASQ(20), 4), 5))).toMatch(/CIRCLE\s*\(/);
+});
+
+// ── sweep ───────────────────────────────────────────────────────────────────────
+const SW = [[-3, -3], [3, -3], [3, 3], [-3, 3]]; // 6×6 square profile
+const SL = 20;
+
+test("a straight sweep equals an extrude of the same profile (both build the shared stations)", () => {
+  expect(k.sweep(SW, [[0, 0, 0], [0, 0, SL]]).volume()).toBeCloseTo(6 * 6 * SL, -1); // 720
+});
+
+test("a 90° L-path is the true mitered elbow (2·w²·L) — same number the Manifold backend reports", () => {
+  // Parity by construction: OCCT lofts the SAME stations the Manifold backend hand-meshes,
+  // so both report the exact mitered-elbow volume 2·w²·L and the same mitered bbox.
+  const elbow = k.sweep(SW, [[-SL, 0, 0], [0, 0, 0], [0, SL, 0]]);
+  expect(elbow.volume()).toBeCloseTo(2 * 6 * 6 * SL, -1); // 1440
+  const bb = elbow.boundingBox();
+  expect(bb.min.map((v) => Math.round(v))).toEqual([-SL, -3, -3]);
+  expect(bb.max.map((v) => Math.round(v))).toEqual([3, SL, 3]);
+});
+
+test("sweep closed:true loops are Manifold-only — OCCT throws a clear error", () => {
+  expect(() => k.sweep(SW, [[0, 0, 0], [10, 0, 0]], { closed: true })).toThrow(/Manifold backend/);
+});
+
+test("sweep throws up front on a too-tight bend (same fold guard as Manifold)", () => {
+  expect(() => k.sweep(SW, [[-3, 0, 0], [0, 0, 0], [0, 3, 0]])).toThrow(/too wide|too sharp/);
+});
+
+test("cornerRadius arc-fan (default non-smooth path) matches the Manifold arc-fan volume", () => {
+  // Same inputs as the Manifold arc-fan case (manifold-backend.test.js "cornerRadius fillets
+  // a bend into a smooth arc"): circleProfile(3) along an L-path with a 6 mm filleted corner.
+  // The default (non-smooth) OCCT path lofts the SAME arc-fan stations Manifold hand-meshes,
+  // so both report ~912.47 mm³ (parity by construction — verified 0.0000 rel diff vs Manifold).
+  const s = k.sweep(circleProfile(3), [[0, 0, 0], [0, 0, 20], [15, 0, 20]], { cornerRadius: 6 });
+  expect(s.volume()).toBeCloseTo(912.47, -1); // OCCT tolerance convention
+});
+
+test("smooth:true builds a native swept B-rep and exports STEP", async () => {
+  const s = k.sweep(SW, [[0, 0, 0], [0, 0, 20], [15, 0, 20]], { cornerRadius: 5, smooth: true });
+  expect(s.volume()).toBeGreaterThan(0);
+  const step = await k.toSTEP([{ name: "hose", solid: s }]);
   expect(new TextDecoder().decode(step.slice(0, 13))).toBe("ISO-10303-21;");
 });

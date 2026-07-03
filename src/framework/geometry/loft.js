@@ -4,6 +4,7 @@
 // calls native loft). loftMesh() is the Manifold path — the helix-tube ring recipe
 // generalized to arbitrary polygon rings via the mesh-build.js helpers.
 import { regularPolygon } from "./polygon.js";
+import { isArcContour } from "./profile.js";
 import { sideQuads, fanCap, manifoldFromMesh, reverseWinding } from "./mesh-build.js";
 
 // A ring: { polygon:[[x,y],…] | (sides,radius), z, rotate?:deg, scale?:number|[sx,sy] }.
@@ -17,6 +18,8 @@ export function resolveRings(rings) {
     if (!r || typeof r !== "object") throw new Error(`loft: ring ${i} must be an object { polygon|sides+radius, z }`);
     if (!Number.isFinite(r.z)) throw new Error(`loft: ring ${i} needs a finite z`);
     let pts = r.polygon;
+    if (isArcContour(pts)) // arc profiles (roundedProfile) are extrude/prism-only in v1
+      throw new Error(`loft: ring ${i} is an arc profile — loft rings must be a point array (arc rings are not supported yet; use prism/extrude for true STEP arcs)`);
     if (!pts && Number.isFinite(r.sides) && Number.isFinite(r.radius)) pts = regularPolygon(r.sides, r.radius);
     if (!Array.isArray(pts) || pts.length < 3)
       throw new Error(`loft: ring ${i} needs polygon:[[x,y],…] (≥3 points) or sides+radius shorthand`);
