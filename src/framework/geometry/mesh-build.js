@@ -34,6 +34,13 @@ export function fanCap(V, Tr, ringStart, ringSegs, center, flip) {
   }
 }
 
+// Reverse the winding of every triangle in `Tr` in place (swap the 2nd and 3rd index of
+// each tri). Flips which way all faces point, i.e. turns an inward-facing (negative-volume)
+// mesh into an outward-facing one. Used to make loft winding/z-order agnostic.
+export function reverseWinding(Tr) {
+  for (let t = 0; t < Tr.length; t += 3) { const tmp = Tr[t + 1]; Tr[t + 1] = Tr[t + 2]; Tr[t + 2] = tmp; }
+}
+
 // Import a flat vertex array + triangle indices as a watertight Manifold. merge() welds
 // coincident vertices so ofMesh sees a closed manifold; ofMesh consumes the mesh handle,
 // so free it here and let the caller track the returned Manifold.

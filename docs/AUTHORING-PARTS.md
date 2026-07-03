@@ -92,7 +92,7 @@ handles. The same code runs on **Manifold** (fast meshes — preview + STL + 3MF
 | `k.box(min, max)` | axis-aligned box from `[x,y,z]` min/max |
 | `k.prism(points2D, h, { twist?, scaleTop? })` | extrude a 2-D polygon from z=0; optional `twist` (degrees over the height) and `scaleTop` (uniform top taper: 1 straight, <1 taper in, 0 → point/cone) |
 | `k.extrude(profile, h, { twist?, scaleTop? })` | extrude a **polygon-with-holes** region from z=0 in one op — `profile` is `{ outer:[[x,y],…], holes?:[[[x,y],…],…] }` (or a bare points array for outer-only); same `twist`/`scaleTop` as `prism` (both backends) |
-| `k.loft(rings, { ruled?, closed? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only) |
+| `k.loft(rings, { ruled?, closed? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls |
 | `k.sphere(r)` | sphere centred at the origin |
 | `k.revolve(points2D, { degrees })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove) |
@@ -100,7 +100,9 @@ handles. The same code runs on **Manifold** (fast meshes — preview + STL + 3MF
 
 **`loft` rings** — each ring is `{ polygon:[[x,y],…] | sides+radius, z, rotate?, scale? }`
 (all rings must share the same vertex count; `rotate` is degrees about Z, `scale` is a
-number or `[sx,sy]`). Worked snippets:
+number or `[sx,sy]`). Author rings CCW and ordered by ascending `z` (the `regularPolygon`
+/ `polygon.js` helpers are already CCW); loft self-corrects a fully-inverted result so
+CW-wound or descending-z rings still export a valid outward solid. Worked snippets:
 
 ```js
 // a square tube (extrude a region with a hole) — one op, no boolean cut

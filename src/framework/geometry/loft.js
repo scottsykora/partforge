@@ -4,7 +4,7 @@
 // calls native loft). loftMesh() is the Manifold path — the helix-tube ring recipe
 // generalized to arbitrary polygon rings via the mesh-build.js helpers.
 import { regularPolygon } from "./polygon.js";
-import { sideQuads, fanCap, manifoldFromMesh } from "./mesh-build.js";
+import { sideQuads, fanCap, manifoldFromMesh, reverseWinding } from "./mesh-build.js";
 
 // A ring: { polygon:[[x,y],…] | (sides,radius), z, rotate?:deg, scale?:number|[sx,sy] }.
 // Returns [{ pts2d:[[x,y],…], z }] with scale-then-rotate(Z) baked into pts2d. Throws
@@ -44,6 +44,11 @@ const centroid = (pts2d, z) => {
 // Manifold path: stack the resolved rings, stitch side quads, and (unless closed) fan a
 // cap over each end from its centroid. Caps assume star-convex-from-centroid rings, which
 // covers regular n-gons and every polygon.js helper. Returns a raw Manifold (caller T()s).
+//
+// NOTE on `ruled`: the OCCT backend's native loft honours `ruled:false` (a smooth C2 blend
+// between rings); this hand-mesh always emits faceted straight walls between consecutive
+// rings and ignores `ruled`. So `ruled:false` previews faceted here and only exports the
+// true smooth surface via the OCCT (STEP) path — documented on the loft doc row.
 export function loftMesh(wasm, rings, { closed = false } = {}) {
   const resolved = resolveRings(rings);
   const N = resolved[0].pts2d.length;
@@ -56,5 +61,16 @@ export function loftMesh(wasm, rings, { closed = false } = {}) {
     fanCap(V, Tr, 0, N, centroid(first.pts2d, first.z), true);                    // bottom faces −Z
     fanCap(V, Tr, (resolved.length - 1) * N, N, centroid(lastR.pts2d, lastR.z), false); // top faces +Z
   }
-  return manifoldFromMesh(wasm, V, Tr);
+  let out = manifoldFromMesh(wasm, V, Tr);
+  // The mesh helpers wind for CCW rings ordered along +Z. CW-wound rings or descending-z
+  // rings invert every face, yielding a negative-volume solid that ofMesh imports without
+  // complaint but that behaves BACKWARDS under booleans (cut adds material). Detect the
+  // inversion and rebuild with reversed winding so loft is winding/z-order agnostic — this
+  // matches OCCT, whose native loft always returns a positively-oriented solid.
+  if (out.volume() < 0) {
+    out.delete?.();
+    reverseWinding(Tr);
+    out = manifoldFromMesh(wasm, V, Tr);
+  }
+  return out;
 }

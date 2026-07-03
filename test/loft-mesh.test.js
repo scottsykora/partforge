@@ -32,6 +32,26 @@ test("a tapered loft (top ring scaled 0.5) is a frustum — volume between the t
   expect(frustum.volume()).toBeCloseTo((10 / 3) * (100 + 25 + 50), 5);
 });
 
+// CW winding and descending z both invert the hand-mesh; loft must self-correct so the
+// result is a positive-volume, boolean-safe solid regardless of authoring order.
+const CW = [[-5, -5], [-5, 5], [5, 5], [5, -5]]; // same square, clockwise
+
+test("CW-wound rings still produce a positive-volume (outward) solid", () => {
+  const solid = loftMesh(wasm, [{ polygon: CW, z: 0 }, { polygon: CW, z: 10 }]);
+  expect(solid.volume()).toBeCloseTo(1000, 5);
+});
+
+test("descending-z rings still produce a positive-volume (outward) solid", () => {
+  const solid = loftMesh(wasm, [{ polygon: SQ, z: 10 }, { polygon: SQ, z: 0 }]);
+  expect(solid.volume()).toBeCloseTo(1000, 5);
+});
+
+test("self-corrected loft is boolean-safe: subtracting from a blank REMOVES material", () => {
+  const blank = wasm.Manifold.cube([40, 40, 40], true).translate([0, 0, 5]);
+  const cut = blank.subtract(loftMesh(wasm, [{ polygon: CW, z: 0 }, { polygon: CW, z: 10 }]));
+  expect(cut.volume()).toBeLessThan(blank.volume());
+});
+
 test("closed:true builds a capless loop (topological loop: genus 1 vs the open loft's genus 0)", () => {
   const rings = [];
   for (let i = 0; i < 6; i++) rings.push({ polygon: regularPolygon(6, 8 + i), z: i * 3 });
