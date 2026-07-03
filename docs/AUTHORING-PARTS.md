@@ -93,6 +93,7 @@ handles. The same code runs on **Manifold** (fast meshes — preview + STL + 3MF
 | `k.prism(points2D, h, { twist?, scaleTop? })` | extrude a 2-D polygon (or an **arc profile** from `roundedProfile`) from z=0; optional `twist` (degrees over the height) and `scaleTop` (uniform top taper: 1 straight, <1 taper in, 0 → point/cone) |
 | `k.extrude(profile, h, { twist?, scaleTop? })` | extrude a **polygon-with-holes** region from z=0 in one op — `profile` is `{ outer, holes? }` where each contour is a points array **or an arc profile** (`roundedProfile`, for true STEP fillets), or a bare points array / arc profile for outer-only; same `twist`/`scaleTop` as `prism` (both backends) |
 | `k.loft(rings, { ruled?, closed? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls |
+| `k.sweep(profile2D, path3D, { cornerRadius?, closed?, ruled?, smooth? })` | sweep a fixed 2-D profile along a 3-D polyline path — sharp mitered corners (or `cornerRadius` fillets), capped ends (both backends). `closed:true` capless loops and `smooth:true` (OCCT-native swept B-rep, STEP-exact / preview-faceted) are backend-specific, like loft's `closed`/`ruled:false` |
 | `k.sphere(r)` | sphere centred at the origin |
 | `k.revolve(points2D, { degrees })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove) |
@@ -104,7 +105,10 @@ number or `[sx,sy]`). Author rings CCW and ordered by ascending `z` (the `regula
 / `polygon.js` helpers are already CCW); loft self-corrects a fully-inverted result so
 CW-wound or descending-z rings still export a valid outward solid. (Arc profiles from
 `roundedProfile` are **not** accepted as loft rings yet — a ring must be a point array;
-use `prism`/`extrude` for true-arc STEP export.) Worked snippets:
+use `prism`/`extrude` for true-arc STEP export.) **`sweep`** takes the same CCW
+`polygon.js` outline as its `profile2D` and a plain `[[x,y,z],…]` point list as its
+`path3D`; the profile stays perpendicular to the path (a rotation-minimizing frame), with
+sharp mitered corners by default or `cornerRadius` fillets. Worked snippets:
 
 ```js
 // a square tube (extrude a region with a hole) — one op, no boolean cut
@@ -115,6 +119,9 @@ const rings = [];
 for (let i = 0; i <= 24; i++) { const t = i / 24;
   rings.push({ sides: 6, radius: 30 - 8 * t, z: 120 * t, rotate: 90 * t }); }
 k.loft(rings);                          // ruled walls, capped ends
+
+// a cable/hose: sweep a circle along a 3-D polyline, with rounded bends
+k.sweep(circleProfile(3), [[0, 0, 0], [0, 0, 20], [15, 0, 20]], { cornerRadius: 5 });
 
 // round every corner of any CCW outline, then extrude/loft/prism it
 k.prism(filletPolygon(bracketOutline, 3), 4);       // tessellated corners (faceted in STEP)
@@ -231,11 +238,11 @@ Cache granularity follows the operations you call. Booleans and heavy primitives
 cached; cheap transforms are recomputed. To make a multi-step shape into a single
 cache node, use (or add) a **compound op** like `k.boredCylinder({ od, h, bore })` —
 it hashes from its own arguments and never exposes its internals to the cache. The heavy
-primitives `loft`, `extrude`, `prism`, and `revolve` are cached this way too: their hash
-folds every shape-affecting argument (each `loft` ring's points/`z`/`rotate`/`scale`,
-`extrude`'s holes, an arc profile's segment specs from `roundedProfile`, and the
-tessellation from `twist`), so changing any of them is a fresh cache node while an identical
-rebuild is a hit.
+primitives `loft`, `sweep`, `extrude`, `prism`, and `revolve` are cached this way too:
+their hash folds every shape-affecting argument (each `loft` ring's points/`z`/`rotate`/`scale`,
+`sweep`'s profile points/path points/`cornerRadius`/`closed`, `extrude`'s holes, an arc
+profile's segment specs from `roundedProfile`, and the tessellation from `twist`), so
+changing any of them is a fresh cache node while an identical rebuild is a hit.
 
 ---
 

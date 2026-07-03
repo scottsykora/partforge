@@ -1,5 +1,6 @@
 import { helixTube } from "./helix-tube.js";
 import { loftMesh } from "./loft.js";
+import { sweepMesh } from "./sweep.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
@@ -162,6 +163,11 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // Ring loft: hand-meshed via the shared ring-mesh helpers (helix-tube recipe).
     // Cached atomically; the hash folds every ring's points/z/rotate/scale and the opts.
     loft: (rings, opts = {}) => cached(h("loft", rings, opts), () => T(loftMesh(wasm, rings, opts))),
+    // Sweep a fixed 2-D profile along a 3-D polyline: hand-meshed from the shared station
+    // list (sweep.js), so it agrees with OCCT's ruled loft of the same stations by
+    // construction. Cached atomically; the hash folds profile pts, path pts, and opts
+    // (closed/cornerRadius) so a shape change is a fresh node and an identical rebuild hits.
+    sweep: (profile, path, opts = {}) => cached(h("sweep", profile, path, opts), () => T(sweepMesh(wasm, profile, path, opts))),
     helixSweptTube: (o) => cached(h("helixSweptTube", o, tube), () => T(helixTube(wasm, { ...o, ...tube }))),
     revolve: (pts, { degrees = 360 } = {}) =>
       cached(h("revolve", pts, degrees, segs), () => T(Manifold.revolve([pts], segs, degrees))),

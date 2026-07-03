@@ -312,3 +312,75 @@ test("extrude hash folds the arc spec AND the segs quality (no preview geometry 
   expect(rounded._hash).not.toBe(r2._hash);               // a different radius is a fresh node
   expect(rounded._hash).toBe(k.extrude(roundedProfile(ASQ(20), 4), 5)._hash); // deterministic
 });
+
+// ── sweep ───────────────────────────────────────────────────────────────────────
+const W = 6;
+const SW = [[-W / 2, -W / 2], [W / 2, -W / 2], [W / 2, W / 2], [-W / 2, W / 2]]; // W×W square profile
+const SL = 20;
+
+test("a straight single-segment sweep equals an extrude of the same profile (volume AND bbox)", () => {
+  const swept = k.sweep(SW, [[0, 0, 0], [0, 0, SL]]);
+  expect(swept.volume()).toBeCloseTo(W * W * SL, -2);       // 6×6×20 = 720
+  expect(swept.volume()).toBeCloseTo(k.extrude(SW, SL).volume(), -2);
+  expect(swept.boundingBox().size).toEqual(k.extrude(SW, SL).boundingBox().size);
+});
+
+test("a sweep along a non-axis diagonal scales the caps correctly (√3·a length)", () => {
+  const a = 10;
+  expect(k.sweep(SW, [[0, 0, 0], [a, a, a]]).volume()).toBeCloseTo(W * W * Math.sqrt(3) * a, 0); // broken seed frame would mis-scale
+});
+
+test("a 90° L-path is a true mitered elbow: volume 2·w²·L and the mitered bbox", () => {
+  // A true miter terminates each leg at the bisecting plane, so the elbow volume is exactly
+  // 2·w²·L (the two legs partition space across the miter — no overlap, no gap). This is the
+  // real mitered-elbow volume; it is NOT the union of two square-corner prisms (2w²L − w³/4).
+  const elbow = k.sweep(SW, [[-SL, 0, 0], [0, 0, 0], [0, SL, 0]]);
+  expect(elbow.volume()).toBeCloseTo(2 * W * W * SL, -1);   // 1440
+  const bb = elbow.boundingBox();
+  expect(bb.min).toEqual([-SL, -W / 2, -W / 2]);            // outer corner reaches +w/2 in x and y
+  expect(bb.max).toEqual([W / 2, SL, W / 2]);
+  expect(elbow.genus()).toBe(0);                           // open sweep → no through-hole
+});
+
+test("a planar circular-arc path matches the analytic torus-sector volume (Pappus) and converges", () => {
+  const R = 20, r = 2, alpha = Math.PI;                     // half torus centerline
+  const analytic = Math.PI * r * r * (R * alpha);           // Pappus: πr²·(Rα)
+  const arcPath = (M) => Array.from({ length: M + 1 }, (_, i) => {
+    const t = (alpha * i) / M; return [R * Math.cos(t), R * Math.sin(t), 0];
+  });
+  const coarse = k.sweep(circleProfile(r), arcPath(24)).volume();
+  const fine = k.sweep(circleProfile(r), arcPath(96)).volume();
+  expect(Math.abs(fine - analytic) / analytic).toBeLessThan(0.05);        // within 5% of analytic
+  expect(Math.abs(fine - analytic)).toBeLessThan(Math.abs(coarse - analytic)); // finer sampling → closer
+});
+
+test("a closed square-loop path is a genus-1 picture frame", () => {
+  const R = 20;
+  const loop = [[-R, -R, 0], [R, -R, 0], [R, R, 0], [-R, R, 0]];
+  const frame = k.sweep(SW, loop, { closed: true });
+  expect(frame.genus()).toBe(1);                           // a loop with a hole
+  expect(frame.volume()).toBeGreaterThan(0);
+});
+
+test("cornerRadius fillets a bend into a smooth arc (positive-volume, watertight solid)", () => {
+  const s = k.sweep(circleProfile(3), [[0, 0, 0], [0, 0, 20], [15, 0, 20]], { cornerRadius: 6 });
+  expect(s.volume()).toBeGreaterThan(0);
+  expect(s.genus()).toBe(0);
+});
+
+test("sweep is a single atomic cache node whose hash folds the path/profile/opts", () => {
+  k.resetCacheStats();
+  k.beginSubPart("a"); k.sweep(SW, [[0, 0, 0], [0, 0, SL]]).toMesh(); k.endSubPart(); k.cleanup();
+  expect(k.cacheStats().misses).toBe(1);
+  k.resetCacheStats();
+  k.beginSubPart("a"); k.sweep(SW, [[0, 0, 0], [0, 0, SL]]).toMesh(); k.endSubPart(); k.cleanup();
+  expect(k.cacheStats()).toEqual({ hits: 1, misses: 0 });  // identical build reused
+  const base = k.sweep(SW, [[0, 0, 0], [0, 0, SL]]);
+  expect(base._hash).not.toBe(k.sweep(SW, [[0, 0, 0], [0, 0, SL + 1]])._hash);            // path change
+  expect(base._hash).not.toBe(k.sweep(SW, [[-SL, 0, 0], [0, 0, 0], [0, SL, 0]], { cornerRadius: 6 })._hash); // opts change
+  expect(base._hash).toBe(k.sweep(SW, [[0, 0, 0], [0, 0, SL]])._hash);                    // deterministic
+});
+
+test("sweep throws up front on a fold (too-tight bend) rather than shipping bad geometry", () => {
+  expect(() => k.sweep(SW, [[-3, 0, 0], [0, 0, 0], [0, 3, 0]])).toThrow(/too wide|too sharp/);
+});

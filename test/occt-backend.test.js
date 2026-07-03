@@ -195,3 +195,36 @@ test("a rounded outer AND a rounded hole each contribute true CIRCLE edges to ST
 test("prism(roundedProfile) also carries a true CIRCLE (outer-only arc region)", async () => {
   expect(await stepText(k.prism(roundedProfile(ASQ(20), 4), 5))).toMatch(/CIRCLE\s*\(/);
 });
+
+// ── sweep ───────────────────────────────────────────────────────────────────────
+const SW = [[-3, -3], [3, -3], [3, 3], [-3, 3]]; // 6×6 square profile
+const SL = 20;
+
+test("a straight sweep equals an extrude of the same profile (both build the shared stations)", () => {
+  expect(k.sweep(SW, [[0, 0, 0], [0, 0, SL]]).volume()).toBeCloseTo(6 * 6 * SL, -1); // 720
+});
+
+test("a 90° L-path is the true mitered elbow (2·w²·L) — same number the Manifold backend reports", () => {
+  // Parity by construction: OCCT lofts the SAME stations the Manifold backend hand-meshes,
+  // so both report the exact mitered-elbow volume 2·w²·L and the same mitered bbox.
+  const elbow = k.sweep(SW, [[-SL, 0, 0], [0, 0, 0], [0, SL, 0]]);
+  expect(elbow.volume()).toBeCloseTo(2 * 6 * 6 * SL, -1); // 1440
+  const bb = elbow.boundingBox();
+  expect(bb.min.map((v) => Math.round(v))).toEqual([-SL, -3, -3]);
+  expect(bb.max.map((v) => Math.round(v))).toEqual([3, SL, 3]);
+});
+
+test("sweep closed:true loops are Manifold-only — OCCT throws a clear error", () => {
+  expect(() => k.sweep(SW, [[0, 0, 0], [10, 0, 0]], { closed: true })).toThrow(/Manifold backend/);
+});
+
+test("sweep throws up front on a too-tight bend (same fold guard as Manifold)", () => {
+  expect(() => k.sweep(SW, [[-3, 0, 0], [0, 0, 0], [0, 3, 0]])).toThrow(/too wide|too sharp/);
+});
+
+test("smooth:true builds a native swept B-rep and exports STEP", async () => {
+  const s = k.sweep(SW, [[0, 0, 0], [0, 0, 20], [15, 0, 20]], { cornerRadius: 5, smooth: true });
+  expect(s.volume()).toBeGreaterThan(0);
+  const step = await k.toSTEP([{ name: "hose", solid: s }]);
+  expect(new TextDecoder().decode(step.slice(0, 13))).toBe("ISO-10303-21;");
+});

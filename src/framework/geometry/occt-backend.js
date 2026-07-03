@@ -8,12 +8,13 @@ import { finishKernel } from "./kernel-front.js";
 import { createOcctRepair } from "./occt-repair.js";
 import { classifyFaceGroups } from "./feature-attribution.js";
 import { resolveRings } from "./loft.js";
+import { resolveSweepStations } from "./sweep.js";
 import { normalizeProfile } from "./profile.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
-          makeCompound, loft, draw, exportSTEP, measureVolume, makeSphere } = replicad;
+          makeCompound, loft, draw, exportSTEP, measureVolume, makeSphere, makeLine, Plane } = replicad;
 
   // Fillet/chamfer/shell failure recovery (skip-on-failure, chamfer binary search) —
   // see occt-repair.js for the policies and why they differ per op.
@@ -137,6 +138,31 @@ export function createOcctKernel(replicad) {
     return wrap(loft(wires, { ruled }));
   };
 
+  // Sweep a 2-D profile along a 3-D polyline path. DEFAULT (§3A recipe): loft the SAME
+  // 3-D stations resolveSweepStations() hands the Manifold backend, as ruled polygon wires
+  // — so the two backends produce identical elbow geometry by construction (the loft-parity
+  // mechanism, not a tolerance). smooth:true switches to the OCCT-native genericSweep along
+  // a spline spine for an exact swept B-rep (STEP-exact / preview-faceted, parity waived —
+  // the same contract loft ships for ruled:false). closed:true loops are Manifold-only.
+  const sweepSmooth = (profile2D, path3D, cornerRadius) => {
+    const edges = [];
+    for (let i = 0; i < path3D.length - 1; i++) edges.push(makeLine(path3D[i], path3D[i + 1]));
+    const spine = assembleWire(edges);
+    const t0 = [path3D[1][0] - path3D[0][0], path3D[1][1] - path3D[0][1], path3D[1][2] - path3D[0][2]];
+    const profileWire = contourDrawing(profile2D).sketchOnPlane(new Plane(path3D[0], null, t0)).wire;
+    return wrap(genericSweep(profileWire, spine, {
+      transitionMode: cornerRadius > 0 ? "round" : "right", // sharp miter analogue vs rounded joint
+      forceProfileSpineOthogonality: true,
+    }));
+  };
+  const sweep = (profile2D, path3D, { closed = false, cornerRadius = 0, ruled = true, smooth = false } = {}) => {
+    if (closed) throw new Error("sweep: closed:true loops are only supported on the Manifold backend");
+    if (smooth) return sweepSmooth(profile2D, path3D, cornerRadius);
+    const { stations } = resolveSweepStations(profile2D, path3D, { closed, cornerRadius });
+    const wires = stations.map((ring) => assembleWire(ring.map((p, i) => makeLine(p, ring[(i + 1) % ring.length]))));
+    return wrap(loft(wires, { ruled }));
+  };
+
   // circle profile swept along a helix (frenet)
   const helixSweptTube = ({ pathR, profileR, pitch, turns, z0, lefthand }) => {
     const spine = makeHelix(pitch, pitch * turns, pathR, [0, 0, z0], [0, 0, 1], lefthand);
@@ -148,7 +174,7 @@ export function createOcctKernel(replicad) {
 
   return finishKernel({
     cylinder, // boredCylinder: the kernel front's default composition is exactly right here
-    box: (min, max) => wrap(makeBox(min, max)), prism, extrude, revolve, loft: loftOp, helixSweptTube,
+    box: (min, max) => wrap(makeBox(min, max)), prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube,
     sphere: (r) => wrap(makeSphere(r)),
     union: (solids) => wrap(
       solids.map((s) => s._s).reduce((a, b) => a.fuse(b)),
