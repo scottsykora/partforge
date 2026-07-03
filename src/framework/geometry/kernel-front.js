@@ -15,6 +15,12 @@ export function finishKernel(k) {
     return rawPrism(pts, h, opts);
   };
 
+  const rawExtrude = k.extrude;
+  k.extrude = (profile, h, opts) => {
+    if ((opts?.scaleTop ?? 1) < 0) throw new Error("extrude: scaleTop must be ≥ 0");
+    return rawExtrude(profile, h, opts);
+  };
+
   const rawRevolve = k.revolve;
   k.revolve = (pts, opts) => {
     for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");

@@ -91,12 +91,38 @@ handles. The same code runs on **Manifold** (fast meshes — preview + STL + 3MF
 | `k.cylinder(rBottom, rTop, h, { center? })` | cylinder/cone along +Z (frustum if radii differ) |
 | `k.box(min, max)` | axis-aligned box from `[x,y,z]` min/max |
 | `k.prism(points2D, h, { twist?, scaleTop? })` | extrude a 2-D polygon from z=0; optional `twist` (degrees over the height) and `scaleTop` (uniform top taper: 1 straight, <1 taper in, 0 → point/cone) |
+| `k.extrude(profile, h, { twist?, scaleTop? })` | extrude a **polygon-with-holes** region from z=0 in one op — `profile` is `{ outer:[[x,y],…], holes?:[[[x,y],…],…] }` (or a bare points array for outer-only); same `twist`/`scaleTop` as `prism` (both backends) |
+| `k.loft(rings, { ruled?, closed? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls |
 | `k.sphere(r)` | sphere centred at the origin |
 | `k.revolve(points2D, { degrees })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove) |
 | `k.union(solids[])` | boolean union |
 
-2-D polygon helpers for `prism`: `import { piePolygon, hexPolygon } from "partforge/geometry"`.
+**`loft` rings** — each ring is `{ polygon:[[x,y],…] | sides+radius, z, rotate?, scale? }`
+(all rings must share the same vertex count; `rotate` is degrees about Z, `scale` is a
+number or `[sx,sy]`). Author rings CCW and ordered by ascending `z` (the `regularPolygon`
+/ `polygon.js` helpers are already CCW); loft self-corrects a fully-inverted result so
+CW-wound or descending-z rings still export a valid outward solid. Worked snippets:
+
+```js
+// a square tube (extrude a region with a hole) — one op, no boolean cut
+k.extrude({ outer: roundedRectPolygon(40, 30, 4), holes: [circleProfile(6)] }, 10);
+
+// a tapered, twisting faceted vase wall (see src/parts/faceted-vase.js)
+const rings = [];
+for (let i = 0; i <= 24; i++) { const t = i / 24;
+  rings.push({ sides: 6, radius: 30 - 8 * t, z: 120 * t, rotate: 90 * t }); }
+k.loft(rings);                          // ruled walls, capped ends
+
+// round every corner of any CCW outline, then extrude/loft/prism it
+k.prism(filletPolygon(bracketOutline, 3), 4);
+```
+
+2-D polygon helpers for `prism`/`extrude`/`loft`: `import { piePolygon, hexPolygon,
+regularPolygon, roundedRectPolygon, starPolygon, circleProfile, filletPolygon } from
+"partforge/geometry"`. `filletPolygon(points, r, { segs? })` rounds every corner of a CCW
+polygon (per-corner radius clamped so neighbouring arcs never overlap) and returns points
+usable by `prism`/`extrude`/`loft` on both backends.
 **Import geometry helpers from `partforge/geometry`, never from `partforge`** — the main
 entry pulls in the DOM viewer/controls, and your build functions run in a Web Worker
 (importing the main entry there throws `document is not defined`).
@@ -195,7 +221,11 @@ module-level mutable state. An impure build will silently return stale geometry.
 Cache granularity follows the operations you call. Booleans and heavy primitives are
 cached; cheap transforms are recomputed. To make a multi-step shape into a single
 cache node, use (or add) a **compound op** like `k.boredCylinder({ od, h, bore })` —
-it hashes from its own arguments and never exposes its internals to the cache.
+it hashes from its own arguments and never exposes its internals to the cache. The heavy
+primitives `loft`, `extrude`, `prism`, and `revolve` are cached this way too: their hash
+folds every shape-affecting argument (each `loft` ring's points/`z`/`rotate`/`scale`,
+`extrude`'s holes, and the tessellation from `twist`), so changing any of them is a fresh
+cache node while an identical rebuild is a hit.
 
 ---
 

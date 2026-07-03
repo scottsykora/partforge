@@ -7,6 +7,8 @@ import { addSugar } from "./solid-sugar.js";
 import { finishKernel } from "./kernel-front.js";
 import { createOcctRepair } from "./occt-repair.js";
 import { classifyFaceGroups } from "./feature-attribution.js";
+import { resolveRings } from "./loft.js";
+import { normalizeProfile } from "./profile.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 export function createOcctKernel(replicad) {
@@ -83,11 +85,16 @@ export function createOcctKernel(replicad) {
     return wrap(loft([w1, w2]));
   };
 
-  // extrude a 2-D polygon from z=0 (arguments validated by the kernel front)
-  const prism = (pts, h, { twist = 0, scaleTop = 1 } = {}) => {
+  // draw a closed polygon Drawing from a 2-D point list
+  const polyDrawing = (pts) => {
     let pen = draw(pts[0]);
     for (let i = 1; i < pts.length; i++) pen = pen.lineTo(pts[i]);
-    const sketch = pen.close().sketchOnPlane("XY");
+    return pen.close();
+  };
+
+  // extrude a 2-D polygon from z=0 (arguments validated by the kernel front)
+  const prism = (pts, h, { twist = 0, scaleTop = 1 } = {}) => {
+    const sketch = polyDrawing(pts).sketchOnPlane("XY");
     if (twist === 0 && scaleTop === 1) return wrap(sketch.extrude(h));
     const cfg = {};
     if (twist !== 0) cfg.twistAngle = twist;
@@ -96,11 +103,29 @@ export function createOcctKernel(replicad) {
   };
 
   // revolve a lathe profile [[r,z],…] around the Z axis (degrees defaults to 360)
-  const revolve = (pts, { degrees = 360 } = {}) => {
-    let pen = draw(pts[0]);
-    for (let i = 1; i < pts.length; i++) pen = pen.lineTo(pts[i]);
-    const sketch = pen.close().sketchOnPlane("XZ");
-    return wrap(sketch.revolve([0, 0, 1], { angle: degrees }));
+  const revolve = (pts, { degrees = 360 } = {}) =>
+    wrap(polyDrawing(pts).sketchOnPlane("XZ").revolve([0, 0, 1], { angle: degrees }));
+
+  // extrude a polygon-with-holes region from z=0: cut each hole Drawing out of the outer
+  // Drawing (winding-agnostic 2-D boolean), sketch it, then extrude (twist/taper via cfg).
+  const extrude = (profile, h, { twist = 0, scaleTop = 1 } = {}) => {
+    const { outer, holes } = normalizeProfile(profile);
+    let region = polyDrawing(outer);
+    for (const hole of holes) region = region.cut(polyDrawing(hole));
+    const sketch = region.sketchOnPlane("XY");
+    if (twist === 0 && scaleTop === 1) return wrap(sketch.extrude(h));
+    const cfg = {};
+    if (twist !== 0) cfg.twistAngle = twist;
+    if (scaleTop !== 1) cfg.extrusionProfile = { profile: "linear", endFactor: scaleTop };
+    return wrap(sketch.extrude(h, cfg));
+  };
+
+  // ring loft: each ring becomes a closed polygon wire placed at its z (native loft closes
+  // the ends for closed wires). closed:true loops are Manifold-only (replicad loft is open).
+  const loftOp = (rings, { ruled = true, closed = false } = {}) => {
+    if (closed) throw new Error("loft: closed:true loops are only supported on the Manifold backend");
+    const wires = resolveRings(rings).map(({ pts2d, z }) => polyDrawing(pts2d).sketchOnPlane("XY", z).wire);
+    return wrap(loft(wires, { ruled }));
   };
 
   // circle profile swept along a helix (frenet)
@@ -114,7 +139,7 @@ export function createOcctKernel(replicad) {
 
   return finishKernel({
     cylinder, // boredCylinder: the kernel front's default composition is exactly right here
-    box: (min, max) => wrap(makeBox(min, max)), prism, revolve, helixSweptTube,
+    box: (min, max) => wrap(makeBox(min, max)), prism, extrude, revolve, loft: loftOp, helixSweptTube,
     sphere: (r) => wrap(makeSphere(r)),
     union: (solids) => wrap(
       solids.map((s) => s._s).reduce((a, b) => a.fuse(b)),
