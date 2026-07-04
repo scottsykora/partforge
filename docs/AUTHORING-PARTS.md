@@ -633,8 +633,8 @@ symptom first** — it maps error text → cause → fix. The invariants, one li
 - **`build` is a pure function of `(k, p, d)`** — impurity silently defeats the geometry
   cache ([impure-build-stale-preview](ERROR-PATTERNS.md#impure-build-stale-preview)).
 - **Units are millimetres** throughout.
-- **Preview vs print quality:** builds are quality-agnostic; the export path uses a
-  separate high-res kernel.
+- **Preview vs print quality:** Manifold bakes segment counts in at primitive creation,
+  so builds are quality-agnostic; the export path uses a separate high-res "print" kernel.
 - **Display placement is view-independent**; only `place(..., { purpose: "export" })` may
   depend on `view` ([view-dependent-display-place](ERROR-PATTERNS.md#view-dependent-display-place)).
 - **Keep geometry backend-agnostic** (kernel calls only); only STEP requires OCCT

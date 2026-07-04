@@ -54,8 +54,9 @@ Contract rules (stated verbatim in the preamble):
   links the governing rule (AUTHORING-PARTS.md section) rather than restating it.
   No tables.
 - **Subsystems that throw should throw greppable strings:** an error message thrown by
-  partforge code should match its pattern's Symptom line verbatim, so the grep is a
-  one-step lookup. (The hardware library is the first subsystem designed to this rule.)
+  partforge code should appear verbatim, in backticks, within its pattern's Symptom
+  line, so the grep is a one-step lookup. (The hardware library is the first subsystem
+  designed to this rule.)
 
 ## Seed patterns (~18)
 

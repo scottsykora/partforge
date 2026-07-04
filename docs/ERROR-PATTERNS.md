@@ -42,7 +42,7 @@ test parses every one; keep prose like this as plain paragraphs):
 
 - **Symptom:** On the OCCT backend a solid is unexpectedly empty, or the build crashes, right after the same solid was transformed or used in a boolean — often only in STEP export, with the Manifold preview fine.
 - **Cause:** replicad transforms and booleans (`translate`/`rotate`/`mirror`/`cut`/…) consume their operand — the input solid is deleted and a new one returned.
-- **Fix:** Never reuse a solid after transforming it; take a `.clone()` first when you need the original again. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Conventions & gotchas".
+- **Fix:** Never reuse a solid after transforming it; take a `.clone()` first when you need the original again. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Geometry: the kernel / `Solid` API" (the `s.clone()` row).
 
 The framework itself rebuilds each sub-part fresh per job and applies `place` once, which avoids the problem — follow the same pattern in your own code.
 
@@ -90,7 +90,7 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 
 ## param-key-missing-from-defaults
 
-- **Symptom:** The affected control's number box shows `NaN` (from `numStr` computing on `undefined`) instead of the real value, or its range slider silently resets to a browser default position — not a thrown error — and if the key is `hidden`, no control is rendered for it at all.
+- **Symptom:** The affected control's number box renders empty/blank (internally `numStr(undefined)` produces the string `NaN`, which a number input sanitizes to empty), or its range slider sits at a browser-default position and edits don't drive the geometry — no error is thrown — and if the key is `hidden`, no control is rendered for it at all.
 - **Cause:** A `key` used in the `parameters` schema (slider, feature, or preset override) doesn't exist in `defaults` — every key must, including `hidden` ones.
 - **Fix:** Add the key to `defaults` with a sensible starting value. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Parameters: the control-panel schema".
 

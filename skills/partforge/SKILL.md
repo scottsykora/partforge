@@ -59,6 +59,5 @@ Picks come back **in request order**, each echoing its prompt, so you can map th
 
 ## Related: debugging failures
 
-If a build, test, or `measure` run fails while you're working on a part, grep
-`docs/ERROR-PATTERNS.md` for the symptom (literal error text) before debugging —
-it's the symptom-indexed cause→fix lookup for the whole framework.
+If anything fails while you're editing a part, grep `docs/ERROR-PATTERNS.md` for the
+symptom first — its preamble states the full grep-first rule.

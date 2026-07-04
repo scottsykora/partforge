@@ -79,8 +79,9 @@ kernels run in **separate Web Workers** (`name` = `"manifold"` / `"occt"`). See
 
 ### Non-obvious invariants (these bite if violated)
 
-**On any build/measure/test failure, grep `docs/ERROR-PATTERNS.md` for the symptom
-first** — it maps literal error text / misbehavior → cause → fix, one `##` per pattern.
+**On any build, test, `measure`, or `verify` failure, grep `docs/ERROR-PATTERNS.md` for
+the symptom first** — it maps literal error text / misbehavior → cause → fix, one `##`
+per pattern. (Its preamble is the canonical statement of this rule.)
 
 - **`build` must be a pure function of `(k, p, d)`** — no `Math.random`, clock, or
   module-level mutable state. The preview kernel memoizes geometry by content hash; an

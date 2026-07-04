@@ -2,6 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **EXECUTED 2026-07-04 — do not re-execute.** Historical record only. Final review
+> corrected two claims embedded below (commit c13cc45): the production build compiles
+> every page in `build.rollupOptions.input` (five today), NOT "index.html only"; and
+> `boolean-not-watertight`'s Fix cites § "Verifying a part headlessly (render + measure)",
+> not § "Testing a part". The shipped `docs/ERROR-PATTERNS.md` is authoritative over the
+> entry texts embedded in this plan.
+
 **Goal:** Create `docs/ERROR-PATTERNS.md` — a symptom-indexed error→solution lookup with stable pattern IDs — wire it into the agent-facing docs, and guard its format with a lint test.
 
 **Architecture:** Plain Markdown, one pattern per `##` heading whose text is a permanent kebab-case ID; a vitest parses the file and enforces the entry shape. Core patterns are bare slugs; the `hardware-*` prefix is reserved for issue #30. Spec: `docs/superpowers/specs/2026-07-04-error-patterns-design.md`.
@@ -139,7 +146,7 @@ test parses every one; keep prose like this as plain paragraphs):
     ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) section) rather than restating it.
 - No tables inside entries.
 - Code that throws should throw greppable strings: an error message thrown by
-  partforge should match its pattern's Symptom line verbatim.
+  partforge should appear verbatim, in backticks, within its pattern's Symptom line.
 - `test/error-patterns.test.js` lints this file's structure.
 
 # Core framework
@@ -463,8 +470,12 @@ Expected: all files pass, including `test/error-patterns.test.js`. (If an unrela
 
 - [ ] **Step 3: Comment on the issue**
 
+If the change lands via a PR whose description says `Closes #28`, skip this — the PR
+body already tells the story. Otherwise comment in plain language (per the PR-tone
+preference in the user CLAUDE.md), e.g.:
+
 ```bash
-gh issue comment 28 --repo scottsykora/partforge --body "Implemented: docs/ERROR-PATTERNS.md (19 patterns), format-lint test, and doc wiring. Conventions (stable IDs, hardware-* namespace, verbatim thrown strings) per docs/superpowers/specs/2026-07-04-error-patterns-design.md — #30 builds on these."
+gh issue comment 28 --repo scottsykora/partforge --body "Done — the repo now has a grep-first error lookup: docs/ERROR-PATTERNS.md maps the error text you actually see to what went wrong and how to fix it (19 entries to start). The debugging docs point there instead of repeating themselves, and a small test keeps the entries consistently shaped. Conventions for adding patterns (and the reserved hardware-* namespace for #30) are in the file's intro."
 ```
 
 Then close it: `gh issue close 28 --repo scottsykora/partforge`

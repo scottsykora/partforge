@@ -7,3 +7,5 @@ scripts/out/
 
 # never commit npm auth tokens
 .npmrc
+# CLI render output (npx partforge render) — generated, not tracked
+render/
