@@ -21,7 +21,7 @@ test parses every one; keep prose like this as plain paragraphs):
     ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) section) rather than restating it.
 - No tables inside entries.
 - Code that throws should throw greppable strings: an error message thrown by
-  partforge should match its pattern's Symptom line verbatim.
+  partforge should appear verbatim, in backticks, within its pattern's Symptom line.
 - `test/error-patterns.test.js` lints this file's structure.
 
 # Core framework
@@ -44,11 +44,13 @@ test parses every one; keep prose like this as plain paragraphs):
 - **Cause:** replicad transforms and booleans (`translate`/`rotate`/`mirror`/`cut`/…) consume their operand — the input solid is deleted and a new one returned.
 - **Fix:** Never reuse a solid after transforming it; take a `.clone()` first when you need the original again. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Conventions & gotchas".
 
+The framework itself rebuilds each sub-part fresh per job and applies `place` once, which avoids the problem — follow the same pattern in your own code.
+
 ## probe-routed-to-occt
 
 - **Symptom:** A part builds far slower than expected (preview takes seconds instead of milliseconds), and the worker logs show it running on the `occt` worker.
-- **Cause:** The geometry-free probe found a CAD-only op (`fillet`/`chamfer`/`shell`) referenced in `build` — even in a dead or conditional branch — and routed the whole part to OCCT.
-- **Fix:** Remove the unused CAD-only call, or force the backend with `meta.backend: "manifold"` (or `"occt"`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Fillet & chamfer (automatic OCCT backend)".
+- **Cause:** The geometry-free probe runs `build` against a recording proxy (dummy query values), and a `fillet`/`chamfer`/`shell` call it reaches — including a branch the real build wouldn't take, since queries return dummies — routes the whole part to OCCT.
+- **Fix:** Remove the CAD-only call the probe reaches unnecessarily, or force the backend with `meta.backend: "manifold"` (or `"occt"`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Fillet & chamfer (automatic OCCT backend)".
 
 ## boolean-not-watertight
 
@@ -137,7 +139,7 @@ test parses every one; keep prose like this as plain paragraphs):
 ## html-page-missing-in-prod
 
 - **Symptom:** A part's page 404s in the production deploy while working fine under `npm run dev`.
-- **Cause:** The production build compiles `index.html` only — extra root `*.html` part pages are dev-only conveniences Vite serves without building.
+- **Cause:** Only pages listed in `build.rollupOptions.input` are compiled by the production build; other root `*.html` pages are dev-only conveniences Vite serves without building.
 - **Fix:** Add the page to `build.rollupOptions.input` in `vite.config.js` if it should ship. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Wiring a part into a runnable app".
 
 # Hardware library

@@ -25,7 +25,7 @@ facets/taper/twist/verify block), and `filleted-box.js` (OCCT fillet/chamfer).
 
 ```bash
 npm run dev        # Vite dev server; open /demo.html, /planter.html, /filleted-box.html
-npm run build      # production build (index.html only — extra *.html are dev-only)
+npm run build      # production build (pages in rollupOptions.input — other *.html are dev-only)
 npm test           # vitest run (whole suite)
 npm run test:watch # vitest in watch mode
 npx vitest run test/measure.test.js          # a single test file

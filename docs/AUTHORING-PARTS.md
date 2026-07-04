@@ -431,9 +431,10 @@ stylesheet). `mount` looks up these element IDs:
 Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two workers are spawned from your one worker entry
 (`name` = `"manifold"` for preview/STL/3MF, `"occt"` for STEP — handled for you).
 
-> Production deploy builds `index.html` only. Extra `*.html` files are **dev-only**
-> (Vite serves any root HTML in `npm run dev`). To also ship one, add it to
-> `build.rollupOptions.input` in `vite.config.js`.
+> Production deploy compiles only the pages listed in `build.rollupOptions.input`
+> (currently the landing gallery + the demo part pages). Other root `*.html` files are
+> **dev-only** (Vite serves any root HTML in `npm run dev`) unless added there. To also
+> ship one, add it to `build.rollupOptions.input` in `vite.config.js`.
 
 ### Developing against a local (linked) partforge
 

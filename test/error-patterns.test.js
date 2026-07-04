@@ -7,7 +7,7 @@ import { describe, test, expect } from "vitest";
 
 const doc = readFileSync(new URL("../docs/ERROR-PATTERNS.md", import.meta.url), "utf8");
 
-// An entry = a `## <id>` heading plus everything until the next heading (any level).
+// An entry = a `## <id>` heading plus everything until the next h1/h2 heading.
 function parseEntries(md) {
   const entries = [];
   const re = /^## (.+)$/gm;
