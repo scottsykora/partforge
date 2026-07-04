@@ -1,9 +1,9 @@
 # Error-pattern library (issue #28) — design
 
 **Issue:** [#28 — docs: symptom-indexed error→solution pattern library](https://github.com/scottsykora/partforge/issues/28)
-**Related:** #27 (structured measure/verify diagnostics — will cite pattern IDs), the
-hardware-library companion issue (drafted below — first subsystem authored against the
-symptom-string contract this file establishes).
+**Related:** #27 (structured measure/verify diagnostics — will cite pattern IDs), #30
+(hardware library — drafted below, filed 2026-07-04 — first subsystem authored against
+the symptom-string contract this file establishes).
 
 ## Goal
 
