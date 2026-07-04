@@ -86,6 +86,60 @@ test parses every one; keep prose like this as plain paragraphs):
 - **Cause:** The ray-shot wall-thickness measurement can catch sliver triangles at facet seams, reading a near-zero "wall" that isn't a designed wall.
 - **Fix:** Check where the reported thin spot is: at a facet seam or chamfer transition it's a sliver artifact (minWall is a warning, never a gate — safe to note and move on); along a real wall, thicken the wall. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
 
+## param-key-missing-from-defaults
+
+- **Symptom:** The affected control's number box shows `NaN` (from `numStr` computing on `undefined`) instead of the real value, or its range slider silently resets to a browser default position — not a thrown error — and if the key is `hidden`, no control is rendered for it at all.
+- **Cause:** A `key` used in the `parameters` schema (slider, feature, or preset override) doesn't exist in `defaults` — every key must, including `hidden` ones.
+- **Fix:** Add the key to `defaults` with a sensible starting value. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Parameters: the control-panel schema".
+
+## dimmed-control-vestigial-param
+
+- **Symptom:** A control renders dimmed (but still editable) and changing it does nothing on screen.
+- **Cause:** No sub-part visible in the active view reads that parameter — the relevance-aware panel dims controls with no on-screen effect.
+- **Fix:** This is a signal, not a bug: either the parameter is vestigial (delete it), the control is in the wrong section/view scope, or you're in a view that legitimately doesn't use it. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "The relevance-aware panel".
+
+## linked-checkout-wasm-403
+
+- **Symptom:** In a consuming app using an `npm link`ed partforge checkout, the kernel never boots and the dev-server network tab shows `403` on the Manifold/OCCT `.wasm` files.
+- **Cause:** The linked checkout lives outside the app's project root, so Vite's dev server refuses to serve its files.
+- **Fix:** Allow-list it: `server: { fs: { allow: ["./", "../partforge"] } }` in the app's `vite.config.js`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Developing against a local (linked) partforge".
+
+## ring-sector-full-circle
+
+- **Symptom:** `ringSectorPolygon: arcDeg must be < 360 (use a cut for a full ring)`
+- **Cause:** A full annulus can't be a single simple polygon — it's a contour-with-hole.
+- **Fix:** Cut an inner cylinder from an outer one (or `k.extrude({ outer, holes })`); use `ringSectorPolygon` only for partial arcs. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Profiles & patterns".
+
+## occt-closed-loop-unsupported
+
+- **Symptom:** `loft: closed:true loops are only supported on the Manifold backend` (or the same message from `sweep:`) — typically during STEP export of a part that previews fine.
+- **Cause:** Capless closed loops are a Manifold-only capability; the OCCT backend rejects them, and STEP export always runs on OCCT.
+- **Fix:** Keep the part on Manifold (no STEP) or model the loop as a capped solid both backends support. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Geometry: the kernel / `Solid` API".
+
+## smooth-geometry-faceted-preview
+
+- **Symptom:** A `ruled:false` loft or `smooth:true` sweep looks faceted/straight-walled in the viewer even though the options are set.
+- **Cause:** Smooth blending is OCCT-native; the Manifold preview always tessellates ruled straight walls — only STEP export carries the smooth surface.
+- **Fix:** Nothing is wrong — verify smoothness in the exported STEP, not the preview. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Geometry: the kernel / `Solid` API".
+
+## scale-moved-the-part
+
+- **Symptom:** After `s.scale(f)` a part is resized but also relocated — features drift away from where they were built.
+- **Cause:** `scale(factor, center?)` defaults its center to the origin, so scaling an off-origin solid about the origin also translates it.
+- **Fix:** Pass the center you mean, e.g. `s.scale(f, s.boundingBox().center)` to resize in place. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Geometry: the kernel / `Solid` API".
+
+## occt-holes-watertight-na
+
+- **Symptom:** `watertight n/a` in `partforge measure` output, and `holes`/`watertight` assertions in a `verify` block don't run, on a part with fillets/chamfers.
+- **Cause:** `holes` and `watertight` are Manifold-only topology facts, and this part auto-routed to OCCT — the assertions skip rather than fail.
+- **Fix:** Expected behavior: assert on backend-independent facts (`bbox`, `volume`, `overlaps`) for OCCT parts, or split topology assertions into a Manifold-buildable configuration. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
+
+## html-page-missing-in-prod
+
+- **Symptom:** A part's page 404s in the production deploy while working fine under `npm run dev`.
+- **Cause:** The production build compiles `index.html` only — extra root `*.html` part pages are dev-only conveniences Vite serves without building.
+- **Fix:** Add the page to `build.rollupOptions.input` in `vite.config.js` if it should ship. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Wiring a part into a runnable app".
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.
