@@ -56,3 +56,8 @@ Picks come back **in request order**, each echoing its prompt, so you can map th
 
 - This only *reads* a click — it never edits files. You make the edits yourself after.
 - The server is localhost-only and holds one request at a time.
+
+## Related: debugging failures
+
+If anything fails while you're editing a part, grep `docs/ERROR-PATTERNS.md` for the
+symptom first — its preamble states the full grep-first rule.

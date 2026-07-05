@@ -431,9 +431,10 @@ stylesheet). `mount` looks up these element IDs:
 Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two workers are spawned from your one worker entry
 (`name` = `"manifold"` for preview/STL/3MF, `"occt"` for STEP — handled for you).
 
-> Production deploy builds `index.html` only. Extra `*.html` files are **dev-only**
-> (Vite serves any root HTML in `npm run dev`). To also ship one, add it to
-> `build.rollupOptions.input` in `vite.config.js`.
+> Production deploy compiles only the pages listed in `build.rollupOptions.input`
+> (currently the landing gallery + the demo part pages). Other root `*.html` files are
+> **dev-only** (Vite serves any root HTML in `npm run dev`) unless added there. To also
+> ship one, add it to `build.rollupOptions.input` in `vite.config.js`.
 
 ### Developing against a local (linked) partforge
 
@@ -622,20 +623,23 @@ entirely on OCCT, its fillets are exact in the STEP **and** present in the print
 
 ## Conventions & gotchas
 
-- **replicad (OCCT) transforms consume their input.** `s.translate/.rotate/.mirror/.cut`
-  delete the operand and return a new solid; never reuse a solid after transforming it.
-  The framework rebuilds each sub-part fresh per job and applies `place` once, which
-  avoids this — follow the same pattern in your own code.
-- **Part modules are DOM-free and side-effect-free** — they import into both the main
-  thread (schema → controls) and the worker (build → kernel).
+When something fails confusingly, **grep [ERROR-PATTERNS.md](ERROR-PATTERNS.md) for the
+symptom first** — it maps error text → cause → fix. The invariants, one line each:
+
+- **replicad (OCCT) transforms consume their input** — never reuse a transformed solid;
+  `.clone()` first ([replicad-consumed-operand](ERROR-PATTERNS.md#replicad-consumed-operand)).
+- **Part modules are DOM-free and side-effect-free** — they load in both the main thread
+  and the worker ([worker-imports-main-entry](ERROR-PATTERNS.md#worker-imports-main-entry)).
+- **`build` is a pure function of `(k, p, d)`** — impurity silently defeats the geometry
+  cache ([impure-build-stale-preview](ERROR-PATTERNS.md#impure-build-stale-preview)).
 - **Units are millimetres** throughout.
-- **Preview vs print quality.** Manifold bakes segment counts in at primitive creation,
-  so the export path uses a separate high-res "print" kernel — your `build` is quality-
-  agnostic; just build the geometry.
-- **Display placement is view-independent** (so meshes cache across views); only
-  `place(..., { purpose: "export" })` may depend on `view`.
-- Keep geometry backend-agnostic (kernel calls only) so it works in both backends; only
-  STEP requires OCCT.
+- **Preview vs print quality:** Manifold bakes segment counts in at primitive creation,
+  so builds are quality-agnostic; the export path uses a separate high-res "print" kernel.
+- **Display placement is view-independent**; only `place(..., { purpose: "export" })` may
+  depend on `view` ([view-dependent-display-place](ERROR-PATTERNS.md#view-dependent-display-place)).
+- **Keep geometry backend-agnostic** (kernel calls only); only STEP requires OCCT
+  ([probe-routed-to-occt](ERROR-PATTERNS.md#probe-routed-to-occt),
+  [occt-holes-watertight-na](ERROR-PATTERNS.md#occt-holes-watertight-na)).
 
 ---
 

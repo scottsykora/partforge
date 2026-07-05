@@ -25,7 +25,7 @@ facets/taper/twist/verify block), and `filleted-box.js` (OCCT fillet/chamfer).
 
 ```bash
 npm run dev        # Vite dev server; open /demo.html, /planter.html, /filleted-box.html
-npm run build      # production build (index.html only — extra *.html are dev-only)
+npm run build      # production build (pages in rollupOptions.input — other *.html are dev-only)
 npm test           # vitest run (whole suite)
 npm run test:watch # vitest in watch mode
 npx vitest run test/measure.test.js          # a single test file
@@ -78,6 +78,10 @@ kernels run in **separate Web Workers** (`name` = `"manifold"` / `"occt"`). See
 `docs/geometry-backend-strategy.md` for the why (OCCT booleans are ~75–1400× slower).
 
 ### Non-obvious invariants (these bite if violated)
+
+**On any build, test, `measure`, or `verify` failure, grep `docs/ERROR-PATTERNS.md` for
+the symptom first** — it maps literal error text / misbehavior → cause → fix, one `##`
+per pattern. (Its preamble is the canonical statement of this rule.)
 
 - **`build` must be a pure function of `(k, p, d)`** — no `Math.random`, clock, or
   module-level mutable state. The preview kernel memoizes geometry by content hash; an
