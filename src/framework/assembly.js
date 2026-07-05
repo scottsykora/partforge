@@ -6,7 +6,7 @@ import { viewSubParts, resolveParams, buildPosed } from "./jobs.js";
 // Parts meant to fit together (e.g. a block seated in a pocket void) read ~0 and
 // don't trip it. Manifold-only (needs Solid.intersect + Solid.volume); meant for
 // part tests so an author/LLM editing a part sees collisions fail.
-//   → [{ a, b, volume }] for each offending pair (empty = no collisions)
+//   → [{ a, b, volume, location }] for each offending pair (empty = no collisions)
 export function assemblyOverlaps(kernel, part, view, params = {}, { tolerance = 1 } = {}) {
   const { p, d } = resolveParams(part, params);
   const posed = viewSubParts(part, view, p).map((name) => ({
@@ -17,8 +17,11 @@ export function assemblyOverlaps(kernel, part, view, params = {}, { tolerance = 
   const overlaps = [];
   for (let i = 0; i < posed.length; i++) {
     for (let j = i + 1; j < posed.length; j++) {
-      const volume = posed[i].solid.intersect(posed[j].solid).volume();
-      if (volume > tolerance) overlaps.push({ a: posed[i].name, b: posed[j].name, volume });
+      const inter = posed[i].solid.intersect(posed[j].solid);
+      const volume = inter.volume();
+      if (volume > tolerance) {
+        overlaps.push({ a: posed[i].name, b: posed[j].name, volume, location: inter.boundingBox().center });
+      }
     }
   }
   kernel.cleanup?.(); // free the per-check WASM objects
