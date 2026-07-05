@@ -20,6 +20,9 @@ export function assemblyOverlaps(kernel, part, view, params = {}, { tolerance = 
       const inter = posed[i].solid.intersect(posed[j].solid);
       const volume = inter.volume();
       if (volume > tolerance) {
+        // location = the intersection's bounding-box center — a nearby indicator, not
+        // an exact contact point: for a disjoint (multi-region) intersection it is the
+        // midpoint of those regions and can land in the empty space between them.
         overlaps.push({ a: posed[i].name, b: posed[j].name, volume, location: inter.boundingBox().center });
       }
     }

@@ -132,6 +132,10 @@ describe("matchPattern", () => {
     "- **Symptom:** `boom in the geometry worker` on build.",
     "- **Cause:** y.",
     "- **Fix:** do the long fix.",
+    "## prose-literal",
+    "- **Symptom:** Warnings from `verify` on faceted parts.",
+    "- **Cause:** z.",
+    "- **Fix:** do the prose fix.",
   ].join("\n");
   const patterns = parsePatterns(md);
 
@@ -139,6 +143,13 @@ describe("matchPattern", () => {
     expect(patterns[1].symptomStrings).toEqual(["boom in the geometry worker"]);
     expect(patterns[1].cause).toBe("y.");
     expect(patterns[1].fix).toBe("do the long fix.");
+  });
+
+  test("a mid-line prose literal contributes no match (leading-literal convention)", () => {
+    // `verify` sits mid-sentence, not at the start of the Symptom text, so it is
+    // prose — it must not become a match literal (this is the mis-attribution bug).
+    expect(patterns[2].symptomStrings).toEqual([]);
+    expect(matchPattern("Warnings from verify on faceted parts", patterns)).toBeNull();
   });
 
   test("longest matching symptom string wins", () => {
@@ -162,5 +173,11 @@ describe("matchPattern", () => {
     // accept either null or a { id, fix } shape, but never a throw.
     const m = matchPattern('assertion: unrecognized form: "wat"', parsePatterns(doc));
     expect(m === null || (typeof m.id === "string" && typeof m.fix === "string")).toBe(true);
+  });
+
+  test("a prose backtick in a real entry does not mis-attribute an unrelated crash", () => {
+    // Regression: "verify" appears mid-line in minwall-sliver-triangles' Symptom;
+    // a load-failure message whose path merely contains "verify" must NOT tag it.
+    expect(matchPattern('cannot load part "/tmp/x-verify-helper.js": not found', parsePatterns(doc))).toBeNull();
   });
 });

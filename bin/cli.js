@@ -72,18 +72,24 @@ const commands = {
       const kernel = await bootKernel(part);
       const report = measure(kernel, part, view);
       printMeasure(report);
+      // Write --out right after measure succeeds, then re-write once verify has
+      // attached report.verify. If verify throws (unknown metric, per-case build
+      // crash) the file already holds the measure half (no `verify` key) — matching
+      // the doc's advice to prefer --out for exactly that non-pure-stdout case.
+      const writeOut = () => {
+        mkdirSync(dirname(resolve(flags.out)), { recursive: true });
+        writeFileSync(flags.out, JSON.stringify(report, null, 2));
+      };
+      if (flags.out) writeOut();
       let vok = true;
       if ((part.verify || flags.process) && !flags["no-verify"]) {
         const v = verify(kernel, part, { process: flags.process, view });
         printVerify(v);
         report.verify = v;
         vok = v.ok;
+        if (flags.out) writeOut();
       }
-      if (flags.out) {
-        mkdirSync(dirname(resolve(flags.out)), { recursive: true });
-        writeFileSync(flags.out, JSON.stringify(report, null, 2));
-        console.log(`\nwrote ${flags.out}`);
-      }
+      if (flags.out) console.log(`\nwrote ${flags.out}`);
       if (flags.json) console.log(JSON.stringify(report, null, 2));
       process.exit(report.ok && vok ? 0 : 1);
     } catch (e) {

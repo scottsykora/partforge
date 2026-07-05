@@ -2,8 +2,9 @@
 // error→pattern library (issue #28). The parser here is the single source of
 // truth: the format lint (test/error-patterns.test.js) and the CLI crash-path
 // matcher (issue #27) both import it. Contract: partforge code that throws must
-// throw strings appearing verbatim, in backticks, in some entry's Symptom line —
-// that is what matchPattern matches on.
+// throw strings appearing verbatim, in a backtick literal AT THE START of some
+// entry's Symptom line — only a leading literal participates in matching, so
+// backticks used for prose mid-sentence never mis-attribute an unrelated crash.
 import { readFileSync } from "node:fs";
 
 // Single-pass, fence-aware parse: a heading inside a ``` / ~~~ fence is quoted
@@ -35,12 +36,16 @@ export function parsePatterns(md) {
   };
   return entries.map((e) => {
     const symptom = field(e.body, "Symptom");
+    // Leading-literal convention: only a backtick literal at the very START of the
+    // Symptom text is a match literal (kept as a ≤1-element array for compatibility
+    // — tests and the matcher read symptomStrings). Mid-line backticks are prose.
+    const leading = symptom?.match(/^`([^`]+)`/);
     return {
       ...e,
       symptom,
       cause: field(e.body, "Cause"),
       fix: field(e.body, "Fix"),
-      symptomStrings: symptom ? [...symptom.matchAll(/`([^`]+)`/g)].map((m) => m[1]) : [],
+      symptomStrings: leading ? [leading[1]] : [],
     };
   });
 }
@@ -59,7 +64,7 @@ export function loadPatterns() {
   return cached;
 }
 
-// First-line symptom literals ≥ 6 chars, longest match wins. Never throws.
+// Leading symptom literals ≥ 6 chars, longest match wins. Never throws.
 export function matchPattern(message, patterns = loadPatterns()) {
   if (!patterns || typeof message !== "string") return null;
   let best = null;

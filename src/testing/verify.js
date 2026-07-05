@@ -34,7 +34,7 @@ export const VIEW_METRICS = {
   volume: { kind: "gate", extract: (r) => r.aggregate.volume,
     hint: "total assembly volume is out of range — a sub-part is missing, doubled, or mis-scaled" },
   overlaps: { kind: "gate", extract: (r) => r.overlaps.length,
-    hint: "sub-parts interpenetrate at the reported location — adjust placement or add clearance in derive()",
+    hint: "sub-parts interpenetrate near the reported location — adjust placement or add clearance in derive()",
     locate: (r) => r.overlaps[0]?.location ?? null },
 };
 

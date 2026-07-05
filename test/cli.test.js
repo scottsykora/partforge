@@ -81,3 +81,16 @@ test("human verify output appends hint lines on failures", () => {
   const err = runFail(["measure", "test/fixtures/bad-verify-part.js"]);
   expect(`${err.stdout}`).toMatch(/hint: /);
 });
+
+test("--out writes the measure half even when a later verify throw crashes the run", () => {
+  const err = runFail(["measure", "test/fixtures/unknown-metric-part.js", "--json", "--out", `${OUT}/um.json`]);
+  // A throw after printMeasure appends the crash JSON after the human lines, so
+  // stdout is not pure JSON — parse the trailing JSON object (pretty-printed).
+  const payload = JSON.parse(`${err.stdout}`.match(/\{[\s\S]*\}\s*$/)[0]);
+  expect(payload.ok).toBe(false);
+  expect(payload.error.message).toMatch(/unknown subpart metric/);
+  // The measure half landed on disk before the verify throw; no `verify` key.
+  const report = JSON.parse(readFileSync(`${OUT}/um.json`, "utf8"));
+  expect(report.subparts).toBeTruthy();
+  expect(report.verify).toBeUndefined();
+});
