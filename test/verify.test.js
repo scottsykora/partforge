@@ -97,3 +97,56 @@ test("the demo part ships a passing verify block", () => {
   expect(mw.actual).toBeGreaterThan(1.2);   // spacer wall ~2.2 mm
   expect(mw.status).toBe("pass");
 });
+
+const factsThin = {
+  subparts: [{ name: "ring", holes: 1, volume: 500, surfaceArea: 300, triangleCount: 200,
+    bbox: [8, 8, 10], watertight: true, minWall: 0.8, minWallAt: [3.7, 0, 5] }],
+  aggregate: { bbox: [8, 8, 10], volume: 500 },
+  overlaps: [],
+};
+
+test("a failed check carries registry hint, pattern, and location", () => {
+  const checks = evaluateCase(factsThin, { profile: resolveProfile("fdm-pla"), expect: {} });
+  const w = byKey(checks, "subpart", "minWall");
+  expect(w.status).toBe("warn");
+  expect(w.hint).toMatch(/wall/);
+  expect(w.pattern).toBe("minwall-sliver-triangles");
+  expect(w.location).toEqual([3.7, 0, 5]);
+});
+
+test("part-authored { expr, hint } wins over the registry hint (pattern still applies)", () => {
+  const checks = evaluateCase(factsThin, { profile: null,
+    expect: { ring: { minWall: { expr: ">=1.2", hint: "increase `wallThickness` or reduce `twist`" } } } });
+  const w = byKey(checks, "subpart", "minWall");
+  expect(w.status).toBe("warn");
+  expect(w.expr).toBe(">=1.2");
+  expect(w.hint).toBe("increase `wallThickness` or reduce `twist`");
+  expect(w.pattern).toBe("minwall-sliver-triangles");
+});
+
+test("passing checks carry no diagnostic noise", () => {
+  const checks = evaluateCase(factsThin, { profile: null, expect: { ring: { holes: 1 } } });
+  const c = byKey(checks, "subpart", "holes");
+  expect(c.status).toBe("pass");
+  expect(c.hint).toBeUndefined();
+  expect(c.pattern).toBeUndefined();
+  expect(c.location).toBeUndefined();
+});
+
+test("a failing view overlaps gate locates the first offending pair", () => {
+  const facts2 = { ...factsThin, overlaps: [{ a: "a", b: "b", volume: 200, location: [9, 5, 5] }] };
+  const checks = evaluateCase(facts2, { profile: null, expect: { _view: { overlaps: 0 } } });
+  const c = byKey(checks, "view", "overlaps");
+  expect(c.status).toBe("fail");
+  expect(c.hint).toMatch(/clearance|placement/);
+  expect(c.location).toEqual([9, 5, 5]);
+});
+
+test("min-wall-unavailable warn still carries a hint", () => {
+  const noReading = { ...factsThin, subparts: [{ ...factsThin.subparts[0], minWall: null, minWallAt: null }] };
+  const checks = evaluateCase(noReading, { profile: resolveProfile("fdm-pla"), expect: {} });
+  const w = byKey(checks, "subpart", "minWall");
+  expect(w.status).toBe("warn");
+  expect(w.message).toMatch(/unavailable/);
+  expect(w.hint).toBeTruthy();
+});

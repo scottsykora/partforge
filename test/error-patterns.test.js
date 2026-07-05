@@ -104,6 +104,21 @@ describe("ERROR-PATTERNS.md format contract", () => {
       }
     }
   });
+
+  test("every verify registry metric has a hint (report contract: hint on every fail/warn)", async () => {
+    const { SUBPART_METRICS, VIEW_METRICS } = await import("../src/testing/verify.js");
+    for (const [name, reg] of [...Object.entries(SUBPART_METRICS), ...Object.entries(VIEW_METRICS)]) {
+      expect(typeof reg.hint, `${name}: missing registry hint`).toBe("string");
+    }
+  });
+
+  test("every pattern ID cited by the verify registries resolves", async () => {
+    const { SUBPART_METRICS, VIEW_METRICS } = await import("../src/testing/verify.js");
+    const ids = new Set(entries.map((e) => e.id));
+    for (const [name, reg] of [...Object.entries(SUBPART_METRICS), ...Object.entries(VIEW_METRICS)]) {
+      if (reg.pattern) expect(ids.has(reg.pattern), `${name}: dangling pattern "${reg.pattern}"`).toBe(true);
+    }
+  });
 });
 
 describe("matchPattern", () => {
