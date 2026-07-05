@@ -532,8 +532,10 @@ carries:
   sample point) and `overlaps` (center of the first offending intersection).
   Whole-solid metrics (bbox, volume, …) have none.
 
-Subpart facts include `minWall` (number) and `minWallAt` (`[x,y,z]` or `null`);
-overlap entries are `{ a, b, volume, location }`.
+Subpart facts include `minWall` (number or `null` — null exactly when no reading
+exists, e.g. the OCCT backend or min-wall measurement turned off, matching
+`minWallAt`'s null) and `minWallAt` (`[x,y,z]` or `null`); overlap entries are
+`{ a, b, volume, location }`.
 
 A **thrown** error (bad part module, kernel failure) with `--json` prints pure
 JSON to stdout and exits 1:
@@ -543,7 +545,11 @@ JSON to stdout and exits 1:
 ```
 
 `pattern`/`hint` appear when the message matches an ERROR-PATTERNS.md symptom
-string. Exit codes: 0 pass, 1 gate failure or crash — unchanged.
+string. Exit codes: 0 pass, 1 gate failure or crash — unchanged. Caveat: a throw
+*after* measure output has printed (e.g. an unknown metric in `verify.expect`, or
+a per-case build crash) appends this JSON after the human lines, so stdout is no
+longer pure JSON; prefer `--out` (or parse from the last line) for robust machine
+parsing.
 
 **Part-authored hints.** Any `verify.expect` metric accepts `{ expr, hint }` in
 place of a bare expression — use it to name the governing parameter:

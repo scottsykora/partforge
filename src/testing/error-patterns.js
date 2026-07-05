@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 // Single-pass, fence-aware parse: a heading inside a ``` / ~~~ fence is quoted
 // content, not structure. Each `## <id>` entry records the `# <section>` it sits
 // under; its body runs to the next h1/h2 heading. (Moved verbatim from the lint
-// test, then enriched with symptom/fix extraction.)
+// test, then enriched with symptom/cause/fix extraction.)
 export function parsePatterns(md) {
   const entries = [];
   let section = null;
@@ -38,6 +38,7 @@ export function parsePatterns(md) {
     return {
       ...e,
       symptom,
+      cause: field(e.body, "Cause"),
       fix: field(e.body, "Fix"),
       symptomStrings: symptom ? [...symptom.matchAll(/`([^`]+)`/g)].map((m) => m[1]) : [],
     };

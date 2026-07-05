@@ -137,6 +137,7 @@ describe("matchPattern", () => {
 
   test("parses symptom strings and fix text", () => {
     expect(patterns[1].symptomStrings).toEqual(["boom in the geometry worker"]);
+    expect(patterns[1].cause).toBe("y.");
     expect(patterns[1].fix).toBe("do the long fix.");
   });
 

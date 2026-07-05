@@ -21,8 +21,12 @@ const USAGE = "usage: partforge <measure|render|pick-serve|pick> …";
 
 // Crash contract (issue #27): with --json, a thrown error becomes structured
 // stdout JSON; either way the message is matched against ERROR-PATTERNS.md and
-// the pattern's fix is surfaced. Exit 1 always. NOTE: on the crash path nothing
-// else has been printed yet, so --json stdout is pure JSON.
+// the pattern's fix is surfaced. Exit 1 always. NOTE on stdout purity: crash
+// JSON is the only thing on stdout for errors thrown before any report printing
+// (load/boot/measure). But verify() runs after printMeasure and can throw (an
+// unknown metric in verify.expect, or a per-case build crash), so a throw after
+// printing appends the JSON after the human lines — it is not pure. Consumers
+// should prefer --out for robust machine parsing.
 function crash(cmd, e, jsonMode) {
   const message = e?.message || String(e);
   const m = matchPattern(message);
