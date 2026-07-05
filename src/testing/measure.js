@@ -20,6 +20,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   const subparts = built.map(({ name, solid, mesh }) => {
     const b = bounds(mesh.positions);
     subBounds.push(b);
+    const mw = opts.minWall ? minWall(mesh) : null;
     return {
       name,
       bbox: size(b),
@@ -28,7 +29,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       triangleCount: mesh.triangles,
       watertight: typeof solid.isEmpty === "function" ? !solid.isEmpty() : null,
       holes: typeof solid.genus === "function" ? solid.genus() : null,
-      minWall: opts.minWall ? (minWall(mesh)?.value ?? null) : null,
+      minWall: mw?.value ?? null,
+      minWallAt: mw?.location ?? null,
     };
   });
 

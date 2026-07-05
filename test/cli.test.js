@@ -52,3 +52,45 @@ test("CLI render writes a PNG for the requested angle", () => {
 test("CLI exits non-zero on a bad part path", () => {
   expect(() => run(["measure", "src/parts/does-not-exist.js"])).toThrow();
 });
+
+const runFail = (args) => {
+  try { run(args); } catch (e) { return e; }
+  throw new Error("expected non-zero exit");
+};
+
+test("measure --json crash contract: structured JSON on stdout, exit 1", () => {
+  const err = runFail(["measure", "test/fixtures/no-such-part.js", "--json"]);
+  const payload = JSON.parse(`${err.stdout}`);   // stdout is PURE JSON on the crash path
+  expect(payload.ok).toBe(false);
+  expect(payload.error.message).toMatch(/cannot load part/);
+});
+
+test("measure crash without --json keeps the human message on stderr", () => {
+  const err = runFail(["measure", "test/fixtures/no-such-part.js"]);
+  expect(`${err.stderr}`).toMatch(/measure failed: cannot load part/);
+});
+
+test("failing verify checks carry hints in the written report", () => {
+  const err = runFail(["measure", "test/fixtures/bad-verify-part.js", "--out", `${OUT}/bad.json`]);
+  const report = JSON.parse(readFileSync(`${OUT}/bad.json`, "utf8"));
+  expect(report.verify.failures.length).toBeGreaterThan(0);
+  for (const f of report.verify.failures) expect(f.hint, `${f.metric} lacks a hint`).toBeTruthy();
+});
+
+test("human verify output appends hint lines on failures", () => {
+  const err = runFail(["measure", "test/fixtures/bad-verify-part.js"]);
+  expect(`${err.stdout}`).toMatch(/hint: /);
+});
+
+test("--out writes the measure half even when a later verify throw crashes the run", () => {
+  const err = runFail(["measure", "test/fixtures/unknown-metric-part.js", "--json", "--out", `${OUT}/um.json`]);
+  // A throw after printMeasure appends the crash JSON after the human lines, so
+  // stdout is not pure JSON — parse the trailing JSON object (pretty-printed).
+  const payload = JSON.parse(`${err.stdout}`.match(/\{[\s\S]*\}\s*$/)[0]);
+  expect(payload.ok).toBe(false);
+  expect(payload.error.message).toMatch(/unknown subpart metric/);
+  // The measure half landed on disk before the verify throw; no `verify` key.
+  const report = JSON.parse(readFileSync(`${OUT}/um.json`, "utf8"));
+  expect(report.subparts).toBeTruthy();
+  expect(report.verify).toBeUndefined();
+});

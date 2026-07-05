@@ -21,7 +21,10 @@ test parses every one; keep prose like this as plain paragraphs):
     ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) section) rather than restating it.
 - No tables inside entries.
 - Code that throws should throw greppable strings: an error message thrown by
-  partforge should appear verbatim, in backticks, within its pattern's Symptom line.
+  partforge should appear verbatim, in a backtick literal **at the start** of its
+  pattern's Symptom line. Only that leading literal is what the crash matcher
+  matches on — backticks used for prose later in the line never participate, so a
+  reworded Symptom must lead with the thrown string, not bury it mid-sentence.
 - `test/error-patterns.test.js` lints this file's structure.
 
 # Core framework

@@ -18,6 +18,7 @@
     "bin",
     "skills/partforge/SKILL.md",
     "docs/AUTHORING-PARTS.md",
+    "docs/ERROR-PATTERNS.md",
     "README.md"
   ],
   "exports": {

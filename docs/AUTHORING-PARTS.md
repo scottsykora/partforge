@@ -519,6 +519,54 @@ The `measure` function is also exported for vitest (boot a Manifold kernel as in
       expect(r.subparts[0].holes).toBe(1);   // e.g. expects one bore
     });
 
+### The diagnostics contract (for agents)
+
+`partforge measure <part> --json` / `--out <file>` emits the machine-readable
+report. Every `fail`/`warn` check in `verify.failures` / `verify.warnings`
+carries:
+
+- `hint` — one self-contained corrective sentence (always present),
+- `pattern` — a stable [ERROR-PATTERNS.md](ERROR-PATTERNS.md) entry ID when one
+  applies (follow it with `ERROR-PATTERNS.md#<id>`),
+- `location` — `[x, y, z]` in mm where the metric has one: `minWall` (thinnest
+  sample point) and `overlaps` (the center of the first offending intersection's
+  *bounding box* — a nearby indicator, not an exact point: when a pair overlaps in
+  more than one place the bbox center can fall in the empty space between regions).
+  Whole-solid metrics (bbox, volume, …) have none.
+
+Subpart facts include `minWall` (number or `null` — null exactly when no reading
+exists, e.g. the OCCT backend or min-wall measurement turned off, matching
+`minWallAt`'s null) and `minWallAt` (`[x,y,z]` or `null`); overlap entries are
+`{ a, b, volume, location }`.
+
+A **thrown** error (bad part module, kernel failure) with `--json` prints pure
+JSON to stdout and exits 1:
+
+```json
+{ "ok": false, "error": { "message": "…", "pattern": "<id>", "hint": "…" } }
+```
+
+`pattern`/`hint` appear when the message matches an ERROR-PATTERNS.md symptom
+string. Exit codes: 0 pass, 1 gate failure or crash — unchanged. Caveat: a throw
+*after* measure output has printed (e.g. an unknown metric in `verify.expect`, or
+a per-case build crash) appends this JSON after the human lines, so stdout is no
+longer pure JSON; prefer `--out` (or parse the trailing JSON object — the crash
+JSON is pretty-printed across multiple lines) for robust machine parsing. With
+`--out` the measure report is written to the file as soon as `measure` succeeds,
+so even if a later `verify` throw crashes the run the file is there — it just
+lacks the `verify` key.
+
+**Part-authored hints.** Any `verify.expect` metric accepts `{ expr, hint }` in
+place of a bare expression — use it to name the governing parameter:
+
+```js
+verify: {
+  expect: {
+    body: { minWall: { expr: ">=1.2", hint: "increase `wallThickness` or reduce `twist`" } },
+  },
+}
+```
+
 ---
 
 ## Self-verification (the `verify` block)

@@ -5,6 +5,7 @@
 // namespaces, ID permanence, and resolvable cited anchors.
 import { readFileSync } from "node:fs";
 import { describe, test, expect } from "vitest";
+import { parsePatterns, matchPattern } from "../src/testing/error-patterns.js";
 
 const doc = readFileSync(new URL("../docs/ERROR-PATTERNS.md", import.meta.url), "utf8");
 
@@ -38,32 +39,7 @@ const BASELINE_IDS = [
   "html-page-missing-in-prod",
 ];
 
-// Single-pass, fence-aware parse: a heading inside a ``` / ~~~ fence is quoted
-// content, not structure. Each `## <id>` entry records the `# <section>` it sits
-// under; its body runs to the next h1/h2 heading.
-function parse(md) {
-  const entries = [];
-  let section = null;
-  let entry = null;
-  let inFence = false;
-  for (const line of md.split("\n")) {
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
-      if (entry) entry.body += line + "\n";
-      continue;
-    }
-    if (!inFence) {
-      const h1 = line.match(/^# (.+)$/);
-      const h2 = line.match(/^## (.+)$/);
-      if (h1) { section = h1[1]; entry = null; continue; }
-      if (h2) { entry = { id: h2[1], section, body: "" }; entries.push(entry); continue; }
-    }
-    if (entry) entry.body += line + "\n";
-  }
-  return entries;
-}
-
-const entries = parse(doc);
+const entries = parsePatterns(doc);
 
 describe("ERROR-PATTERNS.md format contract", () => {
   test("has at least 15 patterns", () => {
@@ -127,5 +103,81 @@ describe("ERROR-PATTERNS.md format contract", () => {
         expect(ids.has(m[1]), `${rel}: dangling anchor #${m[1]}`).toBe(true);
       }
     }
+  });
+
+  test("every verify registry metric has a hint (report contract: hint on every fail/warn)", async () => {
+    const { SUBPART_METRICS, VIEW_METRICS } = await import("../src/testing/verify.js");
+    for (const [name, reg] of [...Object.entries(SUBPART_METRICS), ...Object.entries(VIEW_METRICS)]) {
+      expect(typeof reg.hint, `${name}: missing registry hint`).toBe("string");
+    }
+  });
+
+  test("every pattern ID cited by the verify registries resolves", async () => {
+    const { SUBPART_METRICS, VIEW_METRICS } = await import("../src/testing/verify.js");
+    const ids = new Set(entries.map((e) => e.id));
+    for (const [name, reg] of [...Object.entries(SUBPART_METRICS), ...Object.entries(VIEW_METRICS)]) {
+      if (reg.pattern) expect(ids.has(reg.pattern), `${name}: dangling pattern "${reg.pattern}"`).toBe(true);
+    }
+  });
+});
+
+describe("matchPattern", () => {
+  const md = [
+    "# Core framework",
+    "## short-string",
+    "- **Symptom:** `boom` everywhere.",
+    "- **Cause:** x.",
+    "- **Fix:** do the short fix.",
+    "## long-string",
+    "- **Symptom:** `boom in the geometry worker` on build.",
+    "- **Cause:** y.",
+    "- **Fix:** do the long fix.",
+    "## prose-literal",
+    "- **Symptom:** Warnings from `verify` on faceted parts.",
+    "- **Cause:** z.",
+    "- **Fix:** do the prose fix.",
+  ].join("\n");
+  const patterns = parsePatterns(md);
+
+  test("parses symptom strings and fix text", () => {
+    expect(patterns[1].symptomStrings).toEqual(["boom in the geometry worker"]);
+    expect(patterns[1].cause).toBe("y.");
+    expect(patterns[1].fix).toBe("do the long fix.");
+  });
+
+  test("a mid-line prose literal contributes no match (leading-literal convention)", () => {
+    // `verify` sits mid-sentence, not at the start of the Symptom text, so it is
+    // prose — it must not become a match literal (this is the mis-attribution bug).
+    expect(patterns[2].symptomStrings).toEqual([]);
+    expect(matchPattern("Warnings from verify on faceted parts", patterns)).toBeNull();
+  });
+
+  test("longest matching symptom string wins", () => {
+    const m = matchPattern("Error: boom in the geometry worker (job 3)", patterns);
+    expect(m).toEqual({ id: "long-string", fix: "do the long fix." });
+  });
+
+  test("symptom strings under 6 chars never match (guards generic backticks)", () => {
+    expect(matchPattern("boom", patterns)).toBeNull();
+  });
+
+  test("no match, null patterns, and non-string messages return null, never throw", () => {
+    expect(matchPattern("totally unrelated", patterns)).toBeNull();
+    expect(matchPattern("anything", null)).toBeNull();
+    expect(matchPattern(undefined, patterns)).toBeNull();
+  });
+
+  test("matches a real thrown string from the live doc", () => {
+    // assert-dsl.js throws `assertion: unrecognized form: "…"`; if no live entry
+    // covers it yet this test documents the gap — match against the real doc and
+    // accept either null or a { id, fix } shape, but never a throw.
+    const m = matchPattern('assertion: unrecognized form: "wat"', parsePatterns(doc));
+    expect(m === null || (typeof m.id === "string" && typeof m.fix === "string")).toBe(true);
+  });
+
+  test("a prose backtick in a real entry does not mis-attribute an unrelated crash", () => {
+    // Regression: "verify" appears mid-line in minwall-sliver-triangles' Symptom;
+    // a load-failure message whose path merely contains "verify" must NOT tag it.
+    expect(matchPattern('cannot load part "/tmp/x-verify-helper.js": not found', parsePatterns(doc))).toBeNull();
   });
 });
