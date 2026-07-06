@@ -3,6 +3,7 @@ import { measure as defaultMeasure } from "./measure.js";
 import { resolveProfile } from "./dfm-profiles.js";
 import { expandCases } from "./cases.js";
 import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../framework/param-deps.js";
+import { resolveParams } from "../framework/jobs.js";
 
 // Metric registry: name → how to pull the value out of facts, whether a failure
 // is a hard gate or a warning, and the diagnostics attached to a non-pass check:
@@ -93,11 +94,22 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   view = view ?? Object.keys(part.views)[0];
   const profileSpec = process ?? part.verify?.process;
   const profile = profileSpec ? resolveProfile(profileSpec) : null;
-  const expect = part.verify?.expect ?? {};
-  const expectMentionsMinWall = Object.values(expect).some((o) => o && typeof o === "object" && "minWall" in o);
-  const needMinWall = profile?.minWall != null || expectMentionsMinWall;
+  const expectSpec = part.verify?.expect ?? {};
 
   const cases = expandCases(part);
+  // `expect` can be a pure function of the case's resolved params — (p, d) →
+  // expect object — so topology that legitimately changes with a preset (an
+  // optional drain or bore flipping the genus) can be pinned per case instead
+  // of one static number that some presets must violate.
+  const resolveExpect = (params) => {
+    if (typeof expectSpec !== "function") return expectSpec;
+    const { p, d } = resolveParams(part, params);
+    return expectSpec(p, d) ?? {};
+  };
+  const expanded = cases.map((c) => ({ ...c, expect: resolveExpect(c.params) }));
+  const expectMentionsMinWall = expanded.some(({ expect }) =>
+    Object.values(expect).some((o) => o && typeof o === "object" && "minWall" in o));
+  const needMinWall = profile?.minWall != null || expectMentionsMinWall;
   const readKeys = subPartReadKeys(part, view, part.defaults);
   const signature = (params) =>
     readKeys === RELEVANT_ALL
@@ -111,7 +123,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     return memo.get(key);
   };
 
-  const caseResults = cases.map(({ name, params }) => ({ name, params, checks: evaluateCase(measureCase(params), { profile, expect }) }));
+  const caseResults = expanded.map(({ name, params, expect }) => ({ name, params, checks: evaluateCase(measureCase(params), { profile, expect }) }));
   const all = caseResults.flatMap((c) => c.checks.map((ch) => ({ case: c.name, ...ch })));
   return {
     ok: !all.some((c) => c.status === "fail"),
