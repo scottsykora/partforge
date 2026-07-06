@@ -105,6 +105,9 @@ function distSqBox(p, min, max) {
   return s;
 }
 
+// summed extent of a node's AABB — the "which node is larger" heuristic for dual traversal
+const nodeExtent = (n) => (n.max[0] - n.min[0]) + (n.max[1] - n.min[1]) + (n.max[2] - n.min[2]);
+
 // squared distance between two AABBs (0 when they overlap)
 function boxBoxDistSq(a, b) {
   let s = 0;
@@ -239,7 +242,6 @@ export function buildBVH(mesh) {
   // Dual traversal pruned by AABB–AABB distance; exact triangle–triangle
   // distance at leaf pairs; early-exits at 0 (touching/intersecting).
   function distanceTo(other) {
-    const ext = (n) => (n.max[0] - n.min[0]) + (n.max[1] - n.min[1]) + (n.max[2] - n.min[2]);
     let best = { d2: Infinity, a: null, b: null };
     const stack = [[root, other._root]];
     while (stack.length && best.d2 > 0) {
@@ -251,7 +253,7 @@ export function buildBVH(mesh) {
           const r = triTriDist(ta, tb);
           if (r.d2 < best.d2) best = r;
         }
-      } else if (!aLeaf && (bLeaf || ext(na) >= ext(nb))) {
+      } else if (!aLeaf && (bLeaf || nodeExtent(na) >= nodeExtent(nb))) {
         // descend the larger node; push the nearer child last so it pops first
         const dl = boxBoxDistSq(na.left, nb), dr = boxBoxDistSq(na.right, nb);
         if (dl < dr) stack.push([na.right, nb], [na.left, nb]);

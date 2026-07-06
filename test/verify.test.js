@@ -234,6 +234,23 @@ test("contact/clearance skip when facts carry no gap table (legacy facts)", () =
   expect(pairCheck(checks, "clearance").status).toBe("skip");
 });
 
+test("a declared pair MISSING from a present gap table fails loudly (empty sub-part mesh)", () => {
+  // gaps exists but has no entry for the pair (meshGaps skips empty meshes) —
+  // a declared gate must not silently skip, or verify.ok lies.
+  const facts = twoBoxFacts({ gaps: [], nearMisses: [] });
+  const checks = evaluateCase(facts, { profile: null,
+    expect: { _view: { contacts: [["left", "right"]], clearance: { "left×right": ">=0.3" } } } });
+  expect(pairCheck(checks, "contact").status).toBe("fail");
+  expect(pairCheck(checks, "contact").message).toMatch(/no measured distance/);
+  expect(pairCheck(checks, "contact").hint).toBeTruthy();
+  expect(pairCheck(checks, "clearance").status).toBe("fail");
+});
+
+test("a flat (non-nested) contacts entry throws a clear shape error", () => {
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: ["left", "right"] } } }))
+    .toThrow(/\["a", "b"\] pair/);
+});
+
 import gapPart from "./fixtures/gap-part.js";
 
 test("end-to-end: contacts gate fails on the real 0.2mm gap part", () => {

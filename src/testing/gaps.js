@@ -5,14 +5,23 @@ import { buildBVH } from "./bvh.js";
 // posing float error while staying far below any real print clearance.
 export const CONTACT_EPS = 1e-3;
 
+// Default near-miss threshold (mm): pairs closer than this without touching are
+// the "did you mean these to touch?" signal.
+export const GAP_THRESHOLD = 0.5;
+
+// Canonical order-insensitive pair identity — the one rule for "the same pair"
+// shared by measure's overlap exclusion and verify's declared-pair matching.
+export const pairKey = (a, b) => [a, b].sort().join("×");
+
 // Minimum surface-to-surface distance for every sub-part pair of pre-built posed
 // meshes ([{ name, mesh }] — buildView output). Distance 0 = touching or
 // interpenetrating surfaces; callers filter. Pairs involving an empty mesh are
 // skipped (the watertight gate owns that failure). Pure mesh math — both backends.
 //   → [{ a, b, distance, at: [x,y,z] }]
 export function meshGaps(built) {
+  const hasTris = (m) => (m.indices ? m.indices.length > 0 : m.positions.length > 0);
   const bvhs = built
-    .filter(({ mesh }) => mesh.positions.length > 0)
+    .filter(({ mesh }) => hasTris(mesh))
     .map(({ name, mesh }) => ({ name, bvh: buildBVH(mesh) }));
   const out = [];
   for (let i = 0; i < bvhs.length; i++) {
@@ -29,7 +38,7 @@ export function meshGaps(built) {
 // pose. Same posing path as assemblyOverlaps; no kernel booleans, so it runs on
 // Manifold and OCCT alike.
 //   → [{ a, b, distance, at }] (empty = no near misses)
-export function assemblyGaps(kernel, part, view, params = {}, { threshold = 0.5 } = {}) {
+export function assemblyGaps(kernel, part, view, params = {}, { threshold = GAP_THRESHOLD } = {}) {
   const gaps = meshGaps(buildView(kernel, part, view, params));
   kernel.cleanup?.(); // free the per-check WASM objects (meshes are JS-owned copies)
   return gaps.filter((g) => g.distance > CONTACT_EPS && g.distance < threshold);

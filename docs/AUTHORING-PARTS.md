@@ -633,7 +633,10 @@ silence it. Distances are measured mesh-to-mesh (exact triangle distance, so it
 works on both backends with no kernel booleans); contact tolerates ~1 µm, so a
 tessellation-limited curved contact (e.g. equal-radius cylinder-in-bore built with
 different facet counts) may read a few hundredths of a millimetre — prefer a tight
-`clearance` bound like `"<=0.05"` over `contacts` for those.
+`clearance` bound like `"<=0.05"` over `contacts` for those. One OCCT caveat: with
+no overlap detection there (`Solid.intersect` is Manifold-only), a sub-part
+*fully contained* inside another reads as its surface-to-surface distance, so it
+can surface as a near miss — check containment cases on Manifold.
 
 **Running it:**
 

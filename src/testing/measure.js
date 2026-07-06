@@ -1,6 +1,6 @@
 import { buildView } from "./build.js";
 import { assemblyOverlaps } from "../framework/assembly.js";
-import { meshGaps, CONTACT_EPS } from "./gaps.js";
+import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea } from "./mesh.js";
 import { minWall } from "./min-wall.js";
 
@@ -48,9 +48,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   const overlaps = canIntersect ? assemblyOverlaps(kernel, part, view, params) : [];
   kernel.cleanup?.();
 
-  const pairKey = (a, b) => [a, b].sort().join("×");
   const overlapping = new Set(overlaps.map((o) => pairKey(o.a, o.b)));
-  const gapThreshold = opts.gapThreshold ?? 0.5;
+  const gapThreshold = opts.gapThreshold ?? GAP_THRESHOLD;
   const nearMisses = gaps.filter(
     (g) => g.distance > CONTACT_EPS && g.distance < gapThreshold && !overlapping.has(pairKey(g.a, g.b)),
   );

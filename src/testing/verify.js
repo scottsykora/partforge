@@ -1,6 +1,6 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
-import { CONTACT_EPS } from "./gaps.js";
+import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { resolveProfile } from "./dfm-profiles.js";
 import { expandCases } from "./cases.js";
 import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../framework/param-deps.js";
@@ -45,8 +45,6 @@ const normalizeExpectation = (spec) =>
     ? { expr: spec.expr, hint: spec.hint }
     : { expr: spec, hint: undefined };
 
-const pairKey = (a, b) => [a, b].sort().join("×");
-
 const PAIR_HINTS = {
   contact: "the pair should touch but doesn't — grow the joining feature or move the mating datum so the faces meet",
   clearance: "the pair's free-fit gap is out of the declared range — adjust the mating dimensions or the declared clearance",
@@ -65,13 +63,25 @@ function pairGapChecks(facts, { contacts, clearance }) {
     for (const n of [a, b]) if (!names.has(n)) throw new Error(`${what}: unknown sub-part "${n}" (view has: ${[...names].join(", ")})`);
   };
   const gapFor = (a, b) => facts.gaps?.find((g) => pairKey(g.a, g.b) === pairKey(a, b));
+  // No gap table at all = legacy facts → skip. A table that MERELY LACKS the pair
+  // = the sub-part built empty (meshGaps skips empty meshes) → a declared gate
+  // must fail loudly, not skip, or verify.ok would vouch for an unverified pair.
+  const noReading = (base) => (facts.gaps
+    ? { ...base, actual: null, status: "fail", pass: false,
+        message: "no measured distance for the pair",
+        hint: "one sub-part produced no mesh (an empty solid?) — fix the build before trusting this gate" }
+    : { ...base, actual: null, status: "skip", pass: null, message: "unavailable" });
 
-  for (const [a, b] of contacts ?? []) {
+  for (const pair of contacts ?? []) {
+    if (!Array.isArray(pair) || pair.length !== 2) {
+      throw new Error(`contacts: each entry must be an ["a", "b"] pair, got ${JSON.stringify(pair)}`);
+    }
+    const [a, b] = pair;
     requireNames(a, b, "contacts");
     declared.add(pairKey(a, b));
     const base = { scope: "view", subpart: `${a}×${b}`, metric: "contact", kind: "gate", expr: "touching" };
     const g = gapFor(a, b);
-    if (!g) { checks.push({ ...base, actual: null, status: "skip", pass: null, message: "unavailable" }); continue; }
+    if (!g) { checks.push(noReading(base)); continue; }
     const overlapping = (facts.overlaps ?? []).some((o) => pairKey(o.a, o.b) === pairKey(a, b));
     if (overlapping || g.distance <= CONTACT_EPS) {
       checks.push({ ...base, actual: g.distance, status: "pass", pass: true, message: overlapping ? "in contact (overlapping)" : "in contact" });
@@ -91,7 +101,7 @@ function pairGapChecks(facts, { contacts, clearance }) {
     const { expr, hint: partHint } = normalizeExpectation(spec);
     const base = { scope: "view", subpart: `${a}×${b}`, metric: "clearance", kind: "gate", expr: String(expr) };
     const g = gapFor(a, b);
-    if (!g) { checks.push({ ...base, actual: null, status: "skip", pass: null, message: "unavailable" }); continue; }
+    if (!g) { checks.push(noReading(base)); continue; }
     const { pass, message } = evaluateAssertion(parseAssertion(expr), g.distance);
     const out = { ...base, actual: g.distance, status: pass ? "pass" : "fail", pass, message };
     if (!pass) { out.hint = partHint ?? PAIR_HINTS.clearance; out.pattern = "near-miss-gap"; out.location = g.at; }
