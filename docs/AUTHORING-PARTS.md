@@ -498,7 +498,10 @@ check it without opening the app:
 
 `measure` prints a report: per sub-part and per view it reports bounding box,
 volume, surface area, triangle count, whether the solid is watertight, and the
-number of through-holes (genus), plus an assembly overlap check. It exits non-zero
+number of through-holes (genus), plus an assembly overlap check, and a
+**near-miss** check — sub-part pairs whose surfaces come closer than 0.5 mm
+without touching (`near-misses:` in the output; reported for judgment, never an
+exit-code gate by itself). It exits non-zero
 if any sub-part isn't watertight or any parts interpenetrate — so it doubles as a
 CI/agent gate. Add `--json` to also dump the report as JSON on stdout, or
 `--out report.json` to write it to a file (nothing is written otherwise). (Manifold output is
@@ -531,13 +534,17 @@ carries:
 - `location` — `[x, y, z]` in mm where the metric has one: `minWall` (thinnest
   sample point) and `overlaps` (the center of the first offending intersection's
   *bounding box* — a nearby indicator, not an exact point: when a pair overlaps in
-  more than one place the bbox center can fall in the empty space between regions).
-  Whole-solid metrics (bbox, volume, …) have none.
+  more than one place the bbox center can fall in the empty space between regions)
+  and the pair checks `contact` / `clearance` / `nearMiss` (the midpoint between
+  the pair's closest surface points). Whole-solid metrics (bbox, volume, …) have
+  none.
 
 Subpart facts include `minWall` (number or `null` — null exactly when no reading
 exists, e.g. the OCCT backend or min-wall measurement turned off, matching
 `minWallAt`'s null) and `minWallAt` (`[x,y,z]` or `null`); overlap entries are
-`{ a, b, volume, location }`.
+`{ a, b, volume, location }`. Pair-distance facts are `gaps` (every sub-part
+pair: `{ a, b, distance, at }`, distance 0 = touching or overlapping) and
+`nearMisses` (the pairs with an unintended-looking gap under 0.5 mm).
 
 A **thrown** error (bad part module, kernel failure) with `--json` prints pure
 JSON to stdout and exits 1:
@@ -582,7 +589,9 @@ verify: {
   cases: ["defaults", "M3"],     // optional; default = defaults + every preset
   expect: {                      // design intent, by sub-part name (+ "_view")
     spacer: { holes: 1, bbox: "<=[60,60,60]", volume: "0.4..0.6cm3" },
-    _view:  { overlaps: 0 },
+    _view:  { overlaps: 0,
+              contacts:  [["drum", "flange"]],       // these pairs must touch
+              clearance: { "lid×body": ">=0.3" } },  // intended free fits
   },
 }
 ```
@@ -591,7 +600,7 @@ verify: {
 and a **min-wall** warning. **What `expect` gives you:** per-sub-part assertions on the
 facts `measure` already reports — `holes` (through-bores / genus), `volume`,
 `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`; and `_view` assertions
-`bbox`, `volume`, `overlaps`.
+`bbox`, `volume`, `overlaps`, plus the pair-wise `contacts` / `clearance` below.
 
 **Assertion DSL:** a bare number means equality (`holes: 1`); `">=n"`, `"<=n"`, `">n"`,
 `"<n"`, or a range `"a..b"`; an optional unit suffix `mm`/`cm`/`mm3`/`cm3`; and for
@@ -603,6 +612,28 @@ The parser is strict — a malformed assertion fails loudly.
 **warning** — it flags walls below the profile's minimum but never fails the build.
 `holes`/`watertight` are Manifold-only, so those assertions **skip** on OCCT parts
 rather than fail.
+
+**Contacts & clearance (near-miss gaps).** Volume, bbox, and render checks all miss
+sub-parts that *almost* touch — a flange floating 0.3 mm off its drum body passes
+every one of them. `measure` therefore reports `nearMisses` (pairs with a
+surface-to-surface gap under 0.5 mm), and `_view` accepts two pair-wise gates:
+
+- `contacts: [["drum", "flange"]]` — each listed pair must touch. The gate fails
+  with the measured gap and the closest-point location when the surfaces don't
+  meet. Interpenetration counts as contact — the separate `overlaps` gate owns
+  *excessive* interpenetration.
+- `clearance: { "lid×body": ">=0.3" }` — an intended free fit. Keys are `"a×b"`
+  (order doesn't matter); values take the same assertion DSL as any metric (and
+  the `{ expr, hint }` form), evaluated against the pair's minimum surface
+  distance in mm.
+
+Any pair *not* declared either way that sits closer than 0.5 mm becomes a
+**warning** — the "did you mean these to touch?" signal. Declare the pair to
+silence it. Distances are measured mesh-to-mesh (exact triangle distance, so it
+works on both backends with no kernel booleans); contact tolerates ~1 µm, so a
+tessellation-limited curved contact (e.g. equal-radius cylinder-in-bore built with
+different facet counts) may read a few hundredths of a millimetre — prefer a tight
+`clearance` bound like `"<=0.05"` over `contacts` for those.
 
 **Running it:**
 
