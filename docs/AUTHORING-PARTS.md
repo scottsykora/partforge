@@ -604,6 +604,26 @@ The parser is strict — a malformed assertion fails loudly.
 `holes`/`watertight` are Manifold-only, so those assertions **skip** on OCCT parts
 rather than fail.
 
+**Per-case expectations.** Checks run across defaults **and every preset**, so a
+static `expect` breaks the moment a preset legitimately changes an asserted fact —
+a "cup" preset that turns the drainage hole off flips the genus from 1 to 0.
+For that, declare `expect` as a **pure function of the case's resolved params**,
+`(p, d) => ({ … })` (same `p`/`d` your `build` sees, `d` from `derive`):
+
+```js
+verify: {
+  process: "fdm-pla",
+  expect: (p) => ({
+    planter: { holes: p.drain > 0 ? 1 : 0, bbox: "<=[220,220,250]" },
+    _view: { overlaps: 0 },
+  }),
+}
+```
+
+`src/parts/planter.js` is the worked example — its "Pen cup" and "Vase" presets
+disable the drain, so the hole count is pinned per case. Keep the function pure
+(no clock/randomness), like every other part function.
+
 **Running it:**
 
 ```bash
