@@ -109,12 +109,14 @@ export default {
   views: { planter: { label: "Planter" } },
   // Self-verification (see docs/AUTHORING-PARTS.md "Self-verification"): opt into the
   // FDM-PLA process profile (bed-fit gate + min-wall warning) and pin the design intent
-  // — one drainage hole through the base, fits the bed, no interpenetration.
+  // — fits the bed, no interpenetration, and the RIGHT genus per case: verify runs
+  // across every preset, and "Pen cup"/"Vase" turn the drain off, so `expect` is a
+  // function of the case's params rather than one static hole count.
   verify: {
     process: "fdm-pla",
-    expect: {
-      planter: { holes: 1 /* drain=8 at defaults → 1 hole; adjust if running verify with a non-default drain */, bbox: "<=[220,220,250]" },
+    expect: (p) => ({
+      planter: { holes: p.drain > 0 ? 1 : 0, bbox: "<=[220,220,250]" },
       _view: { overlaps: 0 } /* _view = whole-model composite (not a named part) */,
-    },
+    }),
   },
 };

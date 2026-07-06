@@ -320,3 +320,58 @@ test("end-to-end: contacts on an enabled()-gated sub-part skips cases where it i
   const bare = v.cases.find((c) => c.name === "Bare");
   expect(bare.checks.find((c) => c.metric === "contact").status).toBe("skip");       // lid disabled
 });
+
+// ── function-valued expect (per-case expectations) ─────────────────────────────────────────
+
+// A puck with an optional bore: presets legitimately change the topology
+// (bore on → genus 1, bore off → genus 0) — the case a static expect can't pin.
+const holey = () => ({
+  meta: { title: "Holey", units: "mm" },
+  defaults: { od: 12, h: 10, bore: 4 },
+  parameters: [{ id: "b", presets: { Solid: { bore: 0 }, Wide: { bore: 6 } } }],
+  derive: (p) => ({ boreR: p.bore / 2 }),
+  parts: {
+    puck: { views: ["v"], build: (kk, p, d) => {
+      const s = kk.cylinder(p.od / 2, p.od / 2, p.h);
+      return p.bore > 0 ? s.cut(kk.cylinder(d.boreR, d.boreR, p.h + 4).translate([0, 0, -2])) : s;
+    } },
+  },
+  views: { v: { label: "V" } },
+});
+
+test("a function-valued expect is resolved per case and passes topology-changing presets", () => {
+  const part = { ...holey(), verify: { expect: (p) => ({ puck: { holes: p.bore > 0 ? 1 : 0 } }) } };
+  const v = verify(k, part);
+  expect(v.ok).toBe(true);
+  expect(v.cases.map((c) => c.name)).toEqual(["defaults", "Solid", "Wide"]);
+});
+
+test("a function-valued expect still fails a genuinely wrong case", () => {
+  const part = { ...holey(), verify: { expect: () => ({ puck: { holes: 2 } }) } };
+  const v = verify(k, part);
+  expect(v.ok).toBe(false);
+  expect(v.failures).toHaveLength(3);
+});
+
+test("the expect function receives the case's resolved (p, d)", () => {
+  const seen = [];
+  const part = { ...holey(), verify: { expect: (p, d) => { seen.push([p.bore, d.boreR]); return {}; } } };
+  verify(k, part);
+  expect(seen).toEqual([[4, 2], [0, 0], [6, 3]]);   // defaults, Solid, Wide
+});
+
+test("a function expect mentioning minWall turns the measurement on", () => {
+  const part = { ...holey(), verify: { expect: () => ({ puck: { minWall: ">=1" } }) } };
+  const v = verify(k, part);
+  const mw = v.cases[0].checks.find((c) => c.metric === "minWall");
+  expect(typeof mw.actual).toBe("number");          // a real reading, not "unavailable"
+});
+
+import planter from "../src/parts/planter.js";
+
+test("the planter's shipped verify block passes every preset (drain on AND off)", () => {
+  const v = verify(k, planter);
+  expect(v.failures).toEqual([]);
+  expect(v.ok).toBe(true);
+  expect(v.cases.map((c) => c.name)).toEqual(["defaults", "Pen cup", "Planter", "Vase"]);
+});

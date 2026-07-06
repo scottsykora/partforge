@@ -97,6 +97,12 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 - **Cause:** Two sub-parts that should meet don't quite — a boss shorter than the gap it must bridge, a mis-placed mating datum in `derive()`, or a union that silently missed. Renders and volume/bbox checks cannot see sub-mm joint gaps; this check exists precisely for them.
 - **Fix:** If the pair should touch, grow the joining feature or fix the datum math so the faces meet, then declare the pair in `verify.expect._view.contacts`; if a free fit is intended, declare it under `clearance`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
 
+## expect-static-across-presets
+
+- **Symptom:** A `verify` exact gate (`holes`, `volume`, …) fails on SOME presets only — e.g. `✗ planter holes 1  (0 != 1)` on two cases while defaults pass — and the preview looks right for every preset.
+- **Cause:** `verify` runs `expect` across defaults + every preset, and a preset legitimately changes the asserted fact (an optional feature like a drain/bore toggles the genus), while the expectation is one static value.
+- **Fix:** Declare `expect` as a pure function of the case's resolved params — `expect: (p, d) => ({ body: { holes: p.drain > 0 ? 1 : 0 } })` — or restrict `verify.cases`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Self-verification (the `verify` block)".
+
 ## param-key-missing-from-defaults
 
 - **Symptom:** The affected control's number box renders empty/blank (internally `numStr(undefined)` produces the string `NaN`, which a number input sanitizes to empty), or its range slider sits at a browser-default position and edits don't drive the geometry — no error is thrown — and if the key is `hidden`, no control is rendered for it at all.
