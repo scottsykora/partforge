@@ -221,6 +221,31 @@ test("clearance accepts { expr, hint } and surfaces the part-authored hint", () 
   expect(pairCheck(checks, "clearance").hint).toBe("grow `gap`");
 });
 
+test("a non-array contacts value throws a named shape error, not 'not iterable'", () => {
+  // a string is iterable char-by-char, so the container guard must run first
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: "left×right" } } }))
+    .toThrow(/array of \["a", "b"\] pairs/);
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: { left: "right" } } } }))
+    .toThrow(/array of \["a", "b"\] pairs/);
+});
+
+test("a self-pair throws in contacts and in clearance", () => {
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: [["left", "left"]] } } }))
+    .toThrow(/two different sub-parts/);
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { clearance: { "left×left": ">=0.3" } } } }))
+    .toThrow(/two different sub-parts/);
+});
+
+test("a declared pair absent from the case but known to the part skips instead of throwing", () => {
+  const facts = twoBoxFacts({ subparts: [twoBoxFacts().subparts[0]], gaps: [], nearMisses: [] }); // only "left" built
+  const checks = evaluateCase(facts, { profile: null,
+    expect: { _view: { contacts: [["left", "right"]], clearance: { "left×right": ">=0.3" } } },
+    subPartNames: ["left", "right"] });
+  expect(pairCheck(checks, "contact").status).toBe("skip");
+  expect(pairCheck(checks, "contact").message).toMatch(/disabled/);
+  expect(pairCheck(checks, "clearance").status).toBe("skip");
+});
+
 test("unknown sub-part names and malformed pair keys throw", () => {
   expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: [["left", "wing"]] } } })).toThrow(/wing/);
   expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { clearance: { "left+right": ">=0.3" } } } })).toThrow(/a×b/);
@@ -274,4 +299,24 @@ test("end-to-end: declared clearance passes a separated pair", () => {
   const v = verify(k, part);
   expect(v.ok).toBe(true);
   expect(v.warnings.filter((w) => w.metric === "nearMiss")).toEqual([]);
+});
+
+test("end-to-end: contacts on an enabled()-gated sub-part skips cases where it is disabled", () => {
+  const part = {
+    meta: { title: "LidBox", units: "mm" },
+    defaults: { with_lid: 1 },
+    parameters: [{ id: "b", presets: { Bare: { with_lid: 0 } } }],
+    parts: {
+      base: { views: ["v"], build: (kk) => kk.box([0, 0, 0], [10, 10, 5]) },
+      lid:  { views: ["v"], enabled: (p) => p.with_lid > 0, build: (kk) => kk.box([0, 0, 5], [10, 10, 7]) },
+    },
+    views: { v: { label: "V" } },
+    verify: { expect: { _view: { contacts: [["base", "lid"]] } } },
+  };
+  const v = verify(k, part);                                   // must not throw
+  expect(v.ok).toBe(true);
+  const defaults = v.cases.find((c) => c.name === "defaults");
+  expect(defaults.checks.find((c) => c.metric === "contact").status).toBe("pass");   // touching at z=5
+  const bare = v.cases.find((c) => c.name === "Bare");
+  expect(bare.checks.find((c) => c.metric === "contact").status).toBe("skip");       // lid disabled
 });

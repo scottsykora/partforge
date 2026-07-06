@@ -33,6 +33,11 @@ test("threshold is configurable", () => {
   expect(assemblyGaps(k, gapPart, "v", { gap: 0.7 }, { threshold: 1 })).toHaveLength(1);
 });
 
+test("a threshold at or below CONTACT_EPS throws instead of silently matching nothing", () => {
+  expect(() => assemblyGaps(k, gapPart, "v", {}, { threshold: 0.0005 })).toThrow(/CONTACT_EPS/);
+  expect(() => assemblyGaps(k, gapPart, "v", {}, { threshold: 0 })).toThrow(/CONTACT_EPS/);
+});
+
 test("meshGaps returns raw distances for every pair (no threshold)", () => {
   const built = buildView(k, gapPart, "v", { gap: 3 });
   const gaps = meshGaps(built);

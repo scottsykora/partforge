@@ -55,14 +55,28 @@ const PAIR_HINTS = {
 // the measured pair distance), and warnings for undeclared near misses. These are
 // per-pair, so they live outside the scalar VIEW_METRICS registry but emit the
 // same structured check objects.
-function pairGapChecks(facts, { contacts, clearance }) {
+function pairGapChecks(facts, { contacts, clearance }, subPartNames) {
   const checks = [];
   const declared = new Set();
   const names = new Set(facts.subparts.map((s) => s.name));
-  const requireNames = (a, b, what) => {
-    for (const n of [a, b]) if (!names.has(n)) throw new Error(`${what}: unknown sub-part "${n}" (view has: ${[...names].join(", ")})`);
+  // The part's full sub-part vocabulary (when the caller knows it): a declared
+  // name absent from THIS case's facts but present in the part is an
+  // enabled()-gated sub-part that is off for this case → skip, don't throw.
+  // A name in neither set is a typo → throw. Without the vocabulary (bare
+  // evaluateCase callers) the case's own names are the vocabulary.
+  const known = subPartNames ? new Set(subPartNames) : names;
+  const requirePair = (a, b, what) => {
+    if (a === b) throw new Error(`${what}: a pair must name two different sub-parts, got ["${a}", "${b}"]`);
+    let absent = false;
+    for (const n of [a, b]) {
+      if (names.has(n)) continue;
+      if (!known.has(n)) throw new Error(`${what}: unknown sub-part "${n}" (view has: ${[...names].join(", ")})`);
+      absent = true;
+    }
+    return absent; // true = valid pair, but a sub-part is disabled in this case
   };
   const gapFor = (a, b) => facts.gaps?.find((g) => pairKey(g.a, g.b) === pairKey(a, b));
+  const disabledSkip = (base) => ({ ...base, actual: null, status: "skip", pass: null, message: "sub-part disabled in this case" });
   // No gap table at all = legacy facts → skip. A table that MERELY LACKS the pair
   // = the sub-part built empty (meshGaps skips empty meshes) → a declared gate
   // must fail loudly, not skip, or verify.ok would vouch for an unverified pair.
@@ -72,14 +86,18 @@ function pairGapChecks(facts, { contacts, clearance }) {
         hint: "one sub-part produced no mesh (an empty solid?) — fix the build before trusting this gate" }
     : { ...base, actual: null, status: "skip", pass: null, message: "unavailable" });
 
+  if (contacts != null && !Array.isArray(contacts)) {
+    throw new Error(`contacts: must be an array of ["a", "b"] pairs, got ${JSON.stringify(contacts)}`);
+  }
   for (const pair of contacts ?? []) {
     if (!Array.isArray(pair) || pair.length !== 2) {
       throw new Error(`contacts: each entry must be an ["a", "b"] pair, got ${JSON.stringify(pair)}`);
     }
     const [a, b] = pair;
-    requireNames(a, b, "contacts");
+    const disabled = requirePair(a, b, "contacts");
     declared.add(pairKey(a, b));
     const base = { scope: "view", subpart: `${a}×${b}`, metric: "contact", kind: "gate", expr: "touching" };
+    if (disabled) { checks.push(disabledSkip(base)); continue; }
     const g = gapFor(a, b);
     if (!g) { checks.push(noReading(base)); continue; }
     const overlapping = (facts.overlaps ?? []).some((o) => pairKey(o.a, o.b) === pairKey(a, b));
@@ -96,10 +114,11 @@ function pairGapChecks(facts, { contacts, clearance }) {
     const pair = key.split("×").map((s) => s.trim());
     if (pair.length !== 2 || !pair[0] || !pair[1]) throw new Error(`clearance: pair key must be "a×b", got "${key}"`);
     const [a, b] = pair;
-    requireNames(a, b, "clearance");
+    const disabled = requirePair(a, b, "clearance");
     declared.add(pairKey(a, b));
     const { expr, hint: partHint } = normalizeExpectation(spec);
     const base = { scope: "view", subpart: `${a}×${b}`, metric: "clearance", kind: "gate", expr: String(expr) };
+    if (disabled) { checks.push(disabledSkip(base)); continue; }
     const g = gapFor(a, b);
     if (!g) { checks.push(noReading(base)); continue; }
     const { pass, message } = evaluateAssertion(parseAssertion(expr), g.distance);
@@ -145,7 +164,7 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
 }
 
 // Pure policy: profile rules + per-part expect → checks for one case's facts.
-export function evaluateCase(facts, { profile, expect }) {
+export function evaluateCase(facts, { profile, expect, subPartNames }) {
   const checks = [];
   // contacts/clearance are per-pair, not scalar view metrics — peel them off
   // before the registry loop and hand them to pairGapChecks.
@@ -155,7 +174,7 @@ export function evaluateCase(facts, { profile, expect }) {
     ...viewScalarExp,
   };
   for (const [metric, expr] of Object.entries(viewExp)) checks.push(check("view", null, metric, expr, VIEW_METRICS, facts));
-  checks.push(...pairGapChecks(facts, { contacts, clearance }));
+  checks.push(...pairGapChecks(facts, { contacts, clearance }, subPartNames));
 
   for (const s of facts.subparts) {
     const merged = {
@@ -189,7 +208,8 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     return memo.get(key);
   };
 
-  const caseResults = cases.map(({ name, params }) => ({ name, params, checks: evaluateCase(measureCase(params), { profile, expect }) }));
+  const subPartNames = Object.keys(part.parts);
+  const caseResults = cases.map(({ name, params }) => ({ name, params, checks: evaluateCase(measureCase(params), { profile, expect, subPartNames }) }));
   const all = caseResults.flatMap((c) => c.checks.map((ch) => ({ case: c.name, ...ch })));
   return {
     ok: !all.some((c) => c.status === "fail"),

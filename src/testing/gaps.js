@@ -39,6 +39,9 @@ export function meshGaps(built) {
 // Manifold and OCCT alike.
 //   → [{ a, b, distance, at }] (empty = no near misses)
 export function assemblyGaps(kernel, part, view, params = {}, { threshold = GAP_THRESHOLD } = {}) {
+  if (!(threshold > CONTACT_EPS)) {
+    throw new Error(`assemblyGaps: threshold must exceed CONTACT_EPS (${CONTACT_EPS} mm), got ${threshold}`);
+  }
   const gaps = meshGaps(buildView(kernel, part, view, params));
   kernel.cleanup?.(); // free the per-check WASM objects (meshes are JS-owned copies)
   return gaps.filter((g) => g.distance > CONTACT_EPS && g.distance < threshold);

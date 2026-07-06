@@ -621,7 +621,9 @@ surface-to-surface gap under 0.5 mm), and `_view` accepts two pair-wise gates:
 - `contacts: [["drum", "flange"]]` — each listed pair must touch. The gate fails
   with the measured gap and the closest-point location when the surfaces don't
   meet. Interpenetration counts as contact — the separate `overlaps` gate owns
-  *excessive* interpenetration.
+  *excessive* interpenetration. A pair naming an `enabled()`-gated sub-part
+  **skips** in cases where that sub-part is off; a name that exists nowhere in
+  the part still throws.
 - `clearance: { "lid×body": ">=0.3" }` — an intended free fit. Keys are `"a×b"`
   (order doesn't matter); values take the same assertion DSL as any metric (and
   the `{ expr, hint }` form), evaluated against the pair's minimum surface
