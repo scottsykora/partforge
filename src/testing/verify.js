@@ -1,5 +1,6 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
+import { CONTACT_EPS } from "./gaps.js";
 import { resolveProfile } from "./dfm-profiles.js";
 import { expandCases } from "./cases.js";
 import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../framework/param-deps.js";
@@ -44,6 +45,69 @@ const normalizeExpectation = (spec) =>
     ? { expr: spec.expr, hint: spec.hint }
     : { expr: spec, hint: undefined };
 
+const pairKey = (a, b) => [a, b].sort().join("×");
+
+const PAIR_HINTS = {
+  contact: "the pair should touch but doesn't — grow the joining feature or move the mating datum so the faces meet",
+  clearance: "the pair's free-fit gap is out of the declared range — adjust the mating dimensions or the declared clearance",
+  nearMiss: "sub-parts nearly touch here — if they should meet, declare the pair in verify.expect._view.contacts and close the gap; if a free fit is intended, declare it under clearance",
+};
+
+// Pair-wise view checks: `contacts` (must touch), `clearance` (assertion DSL vs
+// the measured pair distance), and warnings for undeclared near misses. These are
+// per-pair, so they live outside the scalar VIEW_METRICS registry but emit the
+// same structured check objects.
+function pairGapChecks(facts, { contacts, clearance }) {
+  const checks = [];
+  const declared = new Set();
+  const names = new Set(facts.subparts.map((s) => s.name));
+  const requireNames = (a, b, what) => {
+    for (const n of [a, b]) if (!names.has(n)) throw new Error(`${what}: unknown sub-part "${n}" (view has: ${[...names].join(", ")})`);
+  };
+  const gapFor = (a, b) => facts.gaps?.find((g) => pairKey(g.a, g.b) === pairKey(a, b));
+
+  for (const [a, b] of contacts ?? []) {
+    requireNames(a, b, "contacts");
+    declared.add(pairKey(a, b));
+    const base = { scope: "view", subpart: `${a}×${b}`, metric: "contact", kind: "gate", expr: "touching" };
+    const g = gapFor(a, b);
+    if (!g) { checks.push({ ...base, actual: null, status: "skip", pass: null, message: "unavailable" }); continue; }
+    const overlapping = (facts.overlaps ?? []).some((o) => pairKey(o.a, o.b) === pairKey(a, b));
+    if (overlapping || g.distance <= CONTACT_EPS) {
+      checks.push({ ...base, actual: g.distance, status: "pass", pass: true, message: overlapping ? "in contact (overlapping)" : "in contact" });
+    } else {
+      checks.push({ ...base, actual: g.distance, status: "fail", pass: false,
+        message: `${g.distance.toFixed(3)}mm apart, expected touching`,
+        hint: PAIR_HINTS.contact, pattern: "near-miss-gap", location: g.at });
+    }
+  }
+
+  for (const [key, spec] of Object.entries(clearance ?? {})) {
+    const pair = key.split("×").map((s) => s.trim());
+    if (pair.length !== 2 || !pair[0] || !pair[1]) throw new Error(`clearance: pair key must be "a×b", got "${key}"`);
+    const [a, b] = pair;
+    requireNames(a, b, "clearance");
+    declared.add(pairKey(a, b));
+    const { expr, hint: partHint } = normalizeExpectation(spec);
+    const base = { scope: "view", subpart: `${a}×${b}`, metric: "clearance", kind: "gate", expr: String(expr) };
+    const g = gapFor(a, b);
+    if (!g) { checks.push({ ...base, actual: null, status: "skip", pass: null, message: "unavailable" }); continue; }
+    const { pass, message } = evaluateAssertion(parseAssertion(expr), g.distance);
+    const out = { ...base, actual: g.distance, status: pass ? "pass" : "fail", pass, message };
+    if (!pass) { out.hint = partHint ?? PAIR_HINTS.clearance; out.pattern = "near-miss-gap"; out.location = g.at; }
+    checks.push(out);
+  }
+
+  for (const g of facts.nearMisses ?? []) {
+    if (declared.has(pairKey(g.a, g.b))) continue;
+    checks.push({ scope: "view", subpart: `${g.a}×${g.b}`, metric: "nearMiss", kind: "warn",
+      expr: "intent undeclared", actual: g.distance, status: "warn", pass: false,
+      message: `${g.distance.toFixed(3)}mm gap`, hint: PAIR_HINTS.nearMiss,
+      pattern: "near-miss-gap", location: g.at });
+  }
+  return checks;
+}
+
 function check(scope, subpart, metric, spec, registry, factsObj) {
   const reg = registry[metric];
   if (!reg) throw new Error(`unknown ${scope} metric "${metric}"${subpart ? ` on sub-part "${subpart}"` : ""}`);
@@ -73,11 +137,15 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
 // Pure policy: profile rules + per-part expect → checks for one case's facts.
 export function evaluateCase(facts, { profile, expect }) {
   const checks = [];
+  // contacts/clearance are per-pair, not scalar view metrics — peel them off
+  // before the registry loop and hand them to pairGapChecks.
+  const { contacts, clearance, ...viewScalarExp } = expect?._view ?? {};
   const viewExp = {
     ...(profile?.bed ? { bbox: `<=[${profile.bed.join(",")}]` } : {}),
-    ...(expect?._view ?? {}),
+    ...viewScalarExp,
   };
   for (const [metric, expr] of Object.entries(viewExp)) checks.push(check("view", null, metric, expr, VIEW_METRICS, facts));
+  checks.push(...pairGapChecks(facts, { contacts, clearance }));
 
   for (const s of facts.subparts) {
     const merged = {

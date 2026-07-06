@@ -150,3 +150,111 @@ test("min-wall-unavailable warn still carries a hint", () => {
   expect(w.message).toMatch(/unavailable/);
   expect(w.hint).toBeTruthy();
 });
+
+// ── contacts / clearance / near-miss warnings ──────────────────────────────────────────────
+
+const twoBoxFacts = (over = {}) => ({
+  subparts: [
+    { name: "left", holes: 0, volume: 1000, surfaceArea: 600, triangleCount: 12, bbox: [10, 10, 10], watertight: true, minWall: null },
+    { name: "right", holes: 0, volume: 1000, surfaceArea: 600, triangleCount: 12, bbox: [10, 10, 10], watertight: true, minWall: null },
+  ],
+  aggregate: { bbox: [20.2, 10, 10], volume: 2000 },
+  overlaps: [],
+  gaps: [{ a: "left", b: "right", distance: 0.2, at: [10.1, 5, 5] }],
+  nearMisses: [{ a: "left", b: "right", distance: 0.2, at: [10.1, 5, 5] }],
+  ...over,
+});
+const pairCheck = (checks, metric) => checks.find((c) => c.metric === metric);
+
+test("an undeclared near miss is a warning with location, hint, and pattern", () => {
+  const checks = evaluateCase(twoBoxFacts(), { profile: null, expect: {} });
+  const w = pairCheck(checks, "nearMiss");
+  expect(w.kind).toBe("warn");
+  expect(w.status).toBe("warn");
+  expect(w.subpart).toBe("left×right");
+  expect(w.actual).toBeCloseTo(0.2, 6);
+  expect(w.location).toEqual([10.1, 5, 5]);
+  expect(w.hint).toMatch(/contacts|clearance/);
+  expect(w.pattern).toBe("near-miss-gap");
+});
+
+test("declaring the pair in contacts turns the near miss into a gate failure (and silences the warning)", () => {
+  const checks = evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: [["left", "right"]] } } });
+  const c = pairCheck(checks, "contact");
+  expect(c.kind).toBe("gate");
+  expect(c.status).toBe("fail");
+  expect(c.actual).toBeCloseTo(0.2, 6);
+  expect(c.location).toEqual([10.1, 5, 5]);
+  expect(c.hint).toBeTruthy();
+  expect(pairCheck(checks, "nearMiss")).toBeUndefined();
+});
+
+test("contacts passes on a touching pair, in either name order", () => {
+  const facts = twoBoxFacts({ gaps: [{ a: "left", b: "right", distance: 0, at: [10, 5, 5] }], nearMisses: [] });
+  const checks = evaluateCase(facts, { profile: null, expect: { _view: { contacts: [["right", "left"]] } } });
+  expect(pairCheck(checks, "contact").status).toBe("pass");
+});
+
+test("contacts passes on an overlapping pair (interpenetration is contact)", () => {
+  const facts = twoBoxFacts({
+    overlaps: [{ a: "left", b: "right", volume: 50, location: [10, 5, 5] }],
+    gaps: [{ a: "left", b: "right", distance: 0.4, at: [10, 5, 5] }],  // contained-ish reading
+    nearMisses: [],
+  });
+  const checks = evaluateCase(facts, { profile: null, expect: { _view: { contacts: [["left", "right"]] } } });
+  expect(pairCheck(checks, "contact").status).toBe("pass");
+});
+
+test("clearance gates the measured pair distance with the assertion DSL", () => {
+  const fail = evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { clearance: { "left×right": ">=0.3" } } } });
+  expect(pairCheck(fail, "clearance").status).toBe("fail");
+  expect(pairCheck(fail, "clearance").location).toEqual([10.1, 5, 5]);
+  expect(pairCheck(fail, "nearMiss")).toBeUndefined();     // declared → no warning
+  const ok = evaluateCase(twoBoxFacts({ gaps: [{ a: "left", b: "right", distance: 5, at: [12.5, 5, 5] }], nearMisses: [] }),
+    { profile: null, expect: { _view: { clearance: { "left×right": ">=0.3" } } } });
+  expect(pairCheck(ok, "clearance").status).toBe("pass");
+});
+
+test("clearance accepts { expr, hint } and surfaces the part-authored hint", () => {
+  const checks = evaluateCase(twoBoxFacts(), { profile: null,
+    expect: { _view: { clearance: { "left×right": { expr: ">=0.3", hint: "grow `gap`" } } } } });
+  expect(pairCheck(checks, "clearance").hint).toBe("grow `gap`");
+});
+
+test("unknown sub-part names and malformed pair keys throw", () => {
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: [["left", "wing"]] } } })).toThrow(/wing/);
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { clearance: { "left+right": ">=0.3" } } } })).toThrow(/a×b/);
+});
+
+test("contact/clearance skip when facts carry no gap table (legacy facts)", () => {
+  const facts = twoBoxFacts({ gaps: undefined, nearMisses: undefined });
+  const checks = evaluateCase(facts, { profile: null,
+    expect: { _view: { contacts: [["left", "right"]], clearance: { "left×right": ">=0.3" } } } });
+  expect(pairCheck(checks, "contact").status).toBe("skip");
+  expect(pairCheck(checks, "clearance").status).toBe("skip");
+});
+
+import gapPart from "./fixtures/gap-part.js";
+
+test("end-to-end: contacts gate fails on the real 0.2mm gap part", () => {
+  const part = { ...gapPart, verify: { expect: { _view: { contacts: [["left", "right"]] } } } };
+  const v = verify(k, part);
+  expect(v.ok).toBe(false);
+  const c = v.failures.find((f) => f.metric === "contact");
+  expect(c.actual).toBeCloseTo(0.2, 4);
+  expect(c.location[0]).toBeCloseTo(10.1, 3);
+  expect(c.pattern).toBe("near-miss-gap");
+});
+
+test("end-to-end: undeclared near miss is a warning; verify still ok", () => {
+  const v = verify(k, { ...gapPart, verify: { expect: {} } });
+  expect(v.ok).toBe(true);
+  expect(v.warnings.some((w) => w.metric === "nearMiss")).toBe(true);
+});
+
+test("end-to-end: declared clearance passes a separated pair", () => {
+  const part = { ...gapPart, defaults: { gap: 5 }, verify: { expect: { _view: { clearance: { "left×right": ">=0.3" } } } } };
+  const v = verify(k, part);
+  expect(v.ok).toBe(true);
+  expect(v.warnings.filter((w) => w.metric === "nearMiss")).toEqual([]);
+});
