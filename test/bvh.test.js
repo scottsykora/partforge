@@ -113,6 +113,65 @@ test("INDEXED mesh — closestPoint above top face returns correct distance", ()
   expect(r.point[2]).toBeCloseTo(5, 5);
 });
 
+// ── distanceTo (mesh-to-mesh) ──────────────────────────────────────────────────────────────
+const translated = (mesh, [dx, dy, dz]) =>
+  ({ ...mesh, positions: Array.from(mesh.positions).map((v, i) => v + [dx, dy, dz][i % 3]) });
+
+test("distanceTo: parallel faces 0.2 apart → 0.2, at between the faces", () => {
+  const a = buildBVH(boxMesh(10, 20, 5));
+  const b = buildBVH(translated(boxMesh(10, 20, 5), [10.2, 0, 0]));
+  const r = a.distanceTo(b);
+  expect(r.distance).toBeCloseTo(0.2, 6);
+  expect(r.at[0]).toBeCloseTo(10.1, 6);
+});
+
+test("distanceTo: diagonal corner-to-corner separation is exact", () => {
+  const a = buildBVH(boxMesh(10, 20, 5));
+  const b = buildBVH(translated(boxMesh(8, 6, 4), [13, 22, 6])); // gaps x:3 y:2 z:1
+  const r = a.distanceTo(b);
+  expect(r.distance).toBeCloseTo(Math.sqrt(14), 6);
+  expect(r.at[0]).toBeCloseTo(11.5, 6);  // midpoint of (10,20,5)–(13,22,6)
+  expect(r.at[1]).toBeCloseTo(21, 6);
+  expect(r.at[2]).toBeCloseTo(5.5, 6);
+});
+
+test("distanceTo: crossed-edge configuration is exact (edge–edge closest)", () => {
+  const a = buildBVH({ positions: [-5, 0, 0, 5, 0, 0, 0, 0.01, 0] });   // edge along x at z=0
+  const b = buildBVH({ positions: [0, -5, 1, 0, 5, 1, 0.01, 0, 1] });   // edge along y at z=1
+  expect(a.distanceTo(b).distance).toBeCloseTo(1, 6);
+});
+
+test("distanceTo: touching faces read 0", () => {
+  const a = buildBVH(boxMesh(10, 20, 5));
+  const b = buildBVH(translated(boxMesh(10, 20, 5), [10, 0, 0]));
+  expect(a.distanceTo(b).distance).toBe(0);
+});
+
+test("distanceTo: interpenetrating boxes read 0", () => {
+  const a = buildBVH(boxMesh(10, 20, 5));
+  const b = buildBVH(translated(boxMesh(10, 20, 5), [9, 0, 0]));
+  expect(a.distanceTo(b).distance).toBe(0);
+});
+
+test("distanceTo: a triangle piercing another's interior reads 0", () => {
+  // no vertex-face or edge-edge feature pair is near — only the piercing test sees it
+  const a = buildBVH({ positions: [-10, -10, 0, 10, -10, 0, 0, 10, 0] });
+  const b = buildBVH({ positions: [0, 0, -1, 0.5, 0, 1, -0.5, 0, 1] });
+  expect(a.distanceTo(b).distance).toBe(0);
+});
+
+test("distanceTo is symmetric", () => {
+  const a = buildBVH(boxMesh(10, 20, 5));
+  const b = buildBVH(translated(boxMesh(8, 6, 4), [13, 22, 6]));
+  expect(b.distanceTo(a).distance).toBeCloseTo(a.distanceTo(b).distance, 9);
+});
+
+test("distanceTo works across indexed and soup meshes", () => {
+  const a = buildBVH(indexedBoxMesh(10, 20, 5));
+  const b = buildBVH(translated(boxMesh(10, 20, 5), [10.2, 0, 0]));
+  expect(a.distanceTo(b).distance).toBeCloseTo(0.2, 6);
+});
+
 // ── reference closest-point-on-triangle (Ericson) for the brute-force check ────────────────
 function distSqPointTriRef(P, A, B, C) {
   const sub = (p, q) => [p[0]-q[0], p[1]-q[1], p[2]-q[2]];

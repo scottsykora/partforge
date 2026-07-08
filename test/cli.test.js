@@ -82,6 +82,16 @@ test("human verify output appends hint lines on failures", () => {
   expect(`${err.stdout}`).toMatch(/hint: /);
 });
 
+test("CLI measure prints near-misses (report-only — exit stays 0)", () => {
+  const out = run(["measure", "test/fixtures/gap-part.js"]);
+  expect(out).toMatch(/near-misses: left×right \(0\.20mm at \[/);
+});
+
+test("CLI measure prints 'near-misses: none' on a clean part", () => {
+  const out = run(["measure", "src/parts/demo.js"]);
+  expect(out).toMatch(/near-misses: none/);
+});
+
 test("--out writes the measure half even when a later verify throw crashes the run", () => {
   const err = runFail(["measure", "test/fixtures/unknown-metric-part.js", "--json", "--out", `${OUT}/um.json`]);
   // A throw after printMeasure appends the crash JSON after the human lines, so
