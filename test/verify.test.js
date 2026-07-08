@@ -151,6 +151,176 @@ test("min-wall-unavailable warn still carries a hint", () => {
   expect(w.hint).toBeTruthy();
 });
 
+// ── contacts / clearance / near-miss warnings ──────────────────────────────────────────────
+
+const twoBoxFacts = (over = {}) => ({
+  subparts: [
+    { name: "left", holes: 0, volume: 1000, surfaceArea: 600, triangleCount: 12, bbox: [10, 10, 10], watertight: true, minWall: null },
+    { name: "right", holes: 0, volume: 1000, surfaceArea: 600, triangleCount: 12, bbox: [10, 10, 10], watertight: true, minWall: null },
+  ],
+  aggregate: { bbox: [20.2, 10, 10], volume: 2000 },
+  overlaps: [],
+  gaps: [{ a: "left", b: "right", distance: 0.2, at: [10.1, 5, 5] }],
+  nearMisses: [{ a: "left", b: "right", distance: 0.2, at: [10.1, 5, 5] }],
+  ...over,
+});
+const pairCheck = (checks, metric) => checks.find((c) => c.metric === metric);
+
+test("an undeclared near miss is a warning with location, hint, and pattern", () => {
+  const checks = evaluateCase(twoBoxFacts(), { profile: null, expect: {} });
+  const w = pairCheck(checks, "nearMiss");
+  expect(w.kind).toBe("warn");
+  expect(w.status).toBe("warn");
+  expect(w.subpart).toBe("left×right");
+  expect(w.actual).toBeCloseTo(0.2, 6);
+  expect(w.location).toEqual([10.1, 5, 5]);
+  expect(w.hint).toMatch(/contacts|clearance/);
+  expect(w.pattern).toBe("near-miss-gap");
+});
+
+test("declaring the pair in contacts turns the near miss into a gate failure (and silences the warning)", () => {
+  const checks = evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: [["left", "right"]] } } });
+  const c = pairCheck(checks, "contact");
+  expect(c.kind).toBe("gate");
+  expect(c.status).toBe("fail");
+  expect(c.actual).toBeCloseTo(0.2, 6);
+  expect(c.location).toEqual([10.1, 5, 5]);
+  expect(c.hint).toBeTruthy();
+  expect(pairCheck(checks, "nearMiss")).toBeUndefined();
+});
+
+test("contacts passes on a touching pair, in either name order", () => {
+  const facts = twoBoxFacts({ gaps: [{ a: "left", b: "right", distance: 0, at: [10, 5, 5] }], nearMisses: [] });
+  const checks = evaluateCase(facts, { profile: null, expect: { _view: { contacts: [["right", "left"]] } } });
+  expect(pairCheck(checks, "contact").status).toBe("pass");
+});
+
+test("contacts passes on an overlapping pair (interpenetration is contact)", () => {
+  const facts = twoBoxFacts({
+    overlaps: [{ a: "left", b: "right", volume: 50, location: [10, 5, 5] }],
+    gaps: [{ a: "left", b: "right", distance: 0.4, at: [10, 5, 5] }],  // contained-ish reading
+    nearMisses: [],
+  });
+  const checks = evaluateCase(facts, { profile: null, expect: { _view: { contacts: [["left", "right"]] } } });
+  expect(pairCheck(checks, "contact").status).toBe("pass");
+});
+
+test("clearance gates the measured pair distance with the assertion DSL", () => {
+  const fail = evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { clearance: { "left×right": ">=0.3" } } } });
+  expect(pairCheck(fail, "clearance").status).toBe("fail");
+  expect(pairCheck(fail, "clearance").location).toEqual([10.1, 5, 5]);
+  expect(pairCheck(fail, "nearMiss")).toBeUndefined();     // declared → no warning
+  const ok = evaluateCase(twoBoxFacts({ gaps: [{ a: "left", b: "right", distance: 5, at: [12.5, 5, 5] }], nearMisses: [] }),
+    { profile: null, expect: { _view: { clearance: { "left×right": ">=0.3" } } } });
+  expect(pairCheck(ok, "clearance").status).toBe("pass");
+});
+
+test("clearance accepts { expr, hint } and surfaces the part-authored hint", () => {
+  const checks = evaluateCase(twoBoxFacts(), { profile: null,
+    expect: { _view: { clearance: { "left×right": { expr: ">=0.3", hint: "grow `gap`" } } } } });
+  expect(pairCheck(checks, "clearance").hint).toBe("grow `gap`");
+});
+
+test("a non-array contacts value throws a named shape error, not 'not iterable'", () => {
+  // a string is iterable char-by-char, so the container guard must run first
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: "left×right" } } }))
+    .toThrow(/array of \["a", "b"\] pairs/);
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: { left: "right" } } } }))
+    .toThrow(/array of \["a", "b"\] pairs/);
+});
+
+test("a self-pair throws in contacts and in clearance", () => {
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: [["left", "left"]] } } }))
+    .toThrow(/two different sub-parts/);
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { clearance: { "left×left": ">=0.3" } } } }))
+    .toThrow(/two different sub-parts/);
+});
+
+test("a declared pair absent from the case but known to the part skips instead of throwing", () => {
+  const facts = twoBoxFacts({ subparts: [twoBoxFacts().subparts[0]], gaps: [], nearMisses: [] }); // only "left" built
+  const checks = evaluateCase(facts, { profile: null,
+    expect: { _view: { contacts: [["left", "right"]], clearance: { "left×right": ">=0.3" } } },
+    subPartNames: ["left", "right"] });
+  expect(pairCheck(checks, "contact").status).toBe("skip");
+  expect(pairCheck(checks, "contact").message).toMatch(/disabled/);
+  expect(pairCheck(checks, "clearance").status).toBe("skip");
+});
+
+test("unknown sub-part names and malformed pair keys throw", () => {
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: [["left", "wing"]] } } })).toThrow(/wing/);
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { clearance: { "left+right": ">=0.3" } } } })).toThrow(/a×b/);
+});
+
+test("contact/clearance skip when facts carry no gap table (legacy facts)", () => {
+  const facts = twoBoxFacts({ gaps: undefined, nearMisses: undefined });
+  const checks = evaluateCase(facts, { profile: null,
+    expect: { _view: { contacts: [["left", "right"]], clearance: { "left×right": ">=0.3" } } } });
+  expect(pairCheck(checks, "contact").status).toBe("skip");
+  expect(pairCheck(checks, "clearance").status).toBe("skip");
+});
+
+test("a declared pair MISSING from a present gap table fails loudly (empty sub-part mesh)", () => {
+  // gaps exists but has no entry for the pair (meshGaps skips empty meshes) —
+  // a declared gate must not silently skip, or verify.ok lies.
+  const facts = twoBoxFacts({ gaps: [], nearMisses: [] });
+  const checks = evaluateCase(facts, { profile: null,
+    expect: { _view: { contacts: [["left", "right"]], clearance: { "left×right": ">=0.3" } } } });
+  expect(pairCheck(checks, "contact").status).toBe("fail");
+  expect(pairCheck(checks, "contact").message).toMatch(/no measured distance/);
+  expect(pairCheck(checks, "contact").hint).toBeTruthy();
+  expect(pairCheck(checks, "clearance").status).toBe("fail");
+});
+
+test("a flat (non-nested) contacts entry throws a clear shape error", () => {
+  expect(() => evaluateCase(twoBoxFacts(), { profile: null, expect: { _view: { contacts: ["left", "right"] } } }))
+    .toThrow(/\["a", "b"\] pair/);
+});
+
+import gapPart from "./fixtures/gap-part.js";
+
+test("end-to-end: contacts gate fails on the real 0.2mm gap part", () => {
+  const part = { ...gapPart, verify: { expect: { _view: { contacts: [["left", "right"]] } } } };
+  const v = verify(k, part);
+  expect(v.ok).toBe(false);
+  const c = v.failures.find((f) => f.metric === "contact");
+  expect(c.actual).toBeCloseTo(0.2, 4);
+  expect(c.location[0]).toBeCloseTo(10.1, 3);
+  expect(c.pattern).toBe("near-miss-gap");
+});
+
+test("end-to-end: undeclared near miss is a warning; verify still ok", () => {
+  const v = verify(k, { ...gapPart, verify: { expect: {} } });
+  expect(v.ok).toBe(true);
+  expect(v.warnings.some((w) => w.metric === "nearMiss")).toBe(true);
+});
+
+test("end-to-end: declared clearance passes a separated pair", () => {
+  const part = { ...gapPart, defaults: { gap: 5 }, verify: { expect: { _view: { clearance: { "left×right": ">=0.3" } } } } };
+  const v = verify(k, part);
+  expect(v.ok).toBe(true);
+  expect(v.warnings.filter((w) => w.metric === "nearMiss")).toEqual([]);
+});
+
+test("end-to-end: contacts on an enabled()-gated sub-part skips cases where it is disabled", () => {
+  const part = {
+    meta: { title: "LidBox", units: "mm" },
+    defaults: { with_lid: 1 },
+    parameters: [{ id: "b", presets: { Bare: { with_lid: 0 } } }],
+    parts: {
+      base: { views: ["v"], build: (kk) => kk.box([0, 0, 0], [10, 10, 5]) },
+      lid:  { views: ["v"], enabled: (p) => p.with_lid > 0, build: (kk) => kk.box([0, 0, 5], [10, 10, 7]) },
+    },
+    views: { v: { label: "V" } },
+    verify: { expect: { _view: { contacts: [["base", "lid"]] } } },
+  };
+  const v = verify(k, part);                                   // must not throw
+  expect(v.ok).toBe(true);
+  const defaults = v.cases.find((c) => c.name === "defaults");
+  expect(defaults.checks.find((c) => c.metric === "contact").status).toBe("pass");   // touching at z=5
+  const bare = v.cases.find((c) => c.name === "Bare");
+  expect(bare.checks.find((c) => c.metric === "contact").status).toBe("skip");       // lid disabled
+});
+
 // ── function-valued expect (per-case expectations) ─────────────────────────────────────────
 
 // A puck with an optional bore: presets legitimately change the topology

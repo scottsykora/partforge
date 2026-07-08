@@ -5,6 +5,7 @@ export { createManifoldKernel } from "./framework/geometry/manifold-backend.js";
 export { bootManifoldKernel } from "./testing/manifold.js";
 export { handle, viewSubParts } from "./framework/jobs.js";
 export { assemblyOverlaps } from "./framework/assembly.js";
+export { assemblyGaps, meshGaps } from "./testing/gaps.js";
 export { bootOcctKernel } from "./testing/occt.js";
 export { meshVolume, bboxSize } from "./testing/mesh.js";
 export { buildView } from "./testing/build.js";

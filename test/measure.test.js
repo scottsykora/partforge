@@ -1,6 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { measure } from "../src/testing/measure.js";
+import gapPart from "./fixtures/gap-part.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -51,4 +52,37 @@ test("minWall is null unless opts.minWall is set, then it is the measured thickn
   expect(measure(k, boxPart, "v").subparts[0].minWall).toBe(null);                 // off by default
   const w = measure(k, boxPart, "v", {}, { minWall: true }).subparts[0].minWall;   // boxPart is 10x20x5
   expect(w).toBeCloseTo(5, 1);                                                      // thinnest dimension
+});
+
+test("measure reports the near-miss pair with distance and location", () => {
+  const r = measure(k, gapPart, "v");                     // gap 0.2
+  expect(r.nearMisses).toHaveLength(1);
+  expect(r.nearMisses[0]).toMatchObject({ a: "left", b: "right" });
+  expect(r.nearMisses[0].distance).toBeCloseTo(0.2, 5);
+  expect(r.nearMisses[0].at[0]).toBeCloseTo(10.1, 4);
+  expect(r.gaps).toHaveLength(1);                          // raw pair table
+  expect(r.ok).toBe(true);                                 // near misses never gate measure.ok
+});
+
+test("separated and touching pairs produce no near-miss noise", () => {
+  expect(measure(k, gapPart, "v", { gap: 5 }).nearMisses).toEqual([]);
+  expect(measure(k, gapPart, "v", { gap: 0 }).nearMisses).toEqual([]);
+});
+
+test("an overlapping pair is in overlaps, not nearMisses", () => {
+  const r = measure(k, gapPart, "v", { gap: -1 });
+  expect(r.overlaps).toHaveLength(1);
+  expect(r.nearMisses).toEqual([]);
+  expect(r.ok).toBe(false);                                // the existing overlap gate
+});
+
+test("single-sub-part views report empty gaps and nearMisses", () => {
+  const r = measure(k, boxPart, "v");
+  expect(r.gaps).toEqual([]);
+  expect(r.nearMisses).toEqual([]);
+});
+
+test("gapThreshold is configurable", () => {
+  expect(measure(k, gapPart, "v", { gap: 0.7 }).nearMisses).toEqual([]);
+  expect(measure(k, gapPart, "v", { gap: 0.7 }, { gapThreshold: 1 }).nearMisses).toHaveLength(1);
 });
