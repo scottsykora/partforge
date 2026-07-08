@@ -2,8 +2,9 @@
 // Triangle BVH over a mesh in either Manifold non-indexed soup form (9 floats per
 // triangle, no `indices`) or OCCT indexed form (`positions` = 3 floats/vertex +
 // `indices` = 3 vertex-indices/triangle). A reusable spatial index: nearest ray hit
-// (raycast) and nearest surface point (closestPoint, added alongside). AABB tree,
-// median split on the widest centroid axis, slab ray–box test with pruning.
+// (raycast), nearest surface point (closestPoint), and exact mesh-to-mesh distance
+// (distanceTo). AABB tree, median split on the widest centroid axis, slab ray–box
+// test with pruning.
 
 const LEAF = 4; // max triangles per leaf
 
@@ -104,6 +105,82 @@ function distSqBox(p, min, max) {
   return s;
 }
 
+// summed extent of a node's AABB — the "which node is larger" heuristic for dual traversal
+const nodeExtent = (n) => (n.max[0] - n.min[0]) + (n.max[1] - n.min[1]) + (n.max[2] - n.min[2]);
+
+// squared distance between two AABBs (0 when they overlap)
+function boxBoxDistSq(a, b) {
+  let s = 0;
+  for (let ax = 0; ax < 3; ax++) {
+    const v = a.min[ax] > b.max[ax] ? a.min[ax] - b.max[ax] : b.min[ax] > a.max[ax] ? b.min[ax] - a.max[ax] : 0;
+    s += v * v;
+  }
+  return s;
+}
+
+// closest points between segments P1→Q1 and P2→Q2 (Ericson 5.1.9), → { a, b, d2 }
+function closestSegSeg(P1, Q1, P2, Q2) {
+  const sub = (p, q) => [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+  const dot = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+  const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+  const d1 = sub(Q1, P1), d2v = sub(Q2, P2), r = sub(P1, P2);
+  const a = dot(d1, d1), e = dot(d2v, d2v), f = dot(d2v, r);
+  const EPS = 1e-12;
+  let s, t;
+  if (a <= EPS && e <= EPS) { s = 0; t = 0; }
+  else if (a <= EPS) { s = 0; t = clamp01(f / e); }
+  else {
+    const c = dot(d1, r);
+    if (e <= EPS) { t = 0; s = clamp01(-c / a); }
+    else {
+      const b = dot(d1, d2v), denom = a * e - b * b;
+      s = denom !== 0 ? clamp01((b * f - c * e) / denom) : 0;
+      t = (b * s + f) / e;
+      if (t < 0) { t = 0; s = clamp01(-c / a); }
+      else if (t > 1) { t = 1; s = clamp01((b - c) / a); }
+    }
+  }
+  const A = [P1[0] + d1[0] * s, P1[1] + d1[1] * s, P1[2] + d1[2] * s];
+  const B = [P2[0] + d2v[0] * t, P2[1] + d2v[1] * t, P2[2] + d2v[2] * t];
+  const pq = sub(A, B);
+  return { a: A, b: B, d2: dot(pq, pq) };
+}
+
+// exact min distance between two triangles → { d2, a, b } (a on t1, b on t2).
+// Non-intersecting triangles realize their minimum at a vertex-face or edge-edge
+// feature pair; a piercing edge (interior×interior crossing) is caught first with
+// rayTri, since feature distances alone would miss it. rayTri's t is in units of
+// the unnormalized edge direction, so 0 < t <= 1 means the segment itself pierces;
+// parallel/grazing edges return Infinity and the coplanar cases fall to the
+// feature distances.
+function triTriDist(t1, t2) {
+  const edges = (t) => [[t.v0, t.v1], [t.v1, t.v2], [t.v2, t.v0]];
+  for (const [p, q] of edges(t1)) {
+    const d = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+    const t = rayTri(p, d, t2, 0);
+    if (t <= 1) { const at = [p[0] + d[0] * t, p[1] + d[1] * t, p[2] + d[2] * t]; return { d2: 0, a: at, b: at }; }
+  }
+  for (const [p, q] of edges(t2)) {
+    const d = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+    const t = rayTri(p, d, t1, 0);
+    if (t <= 1) { const at = [p[0] + d[0] * t, p[1] + d[1] * t, p[2] + d[2] * t]; return { d2: 0, a: at, b: at }; }
+  }
+  let best = { d2: Infinity, a: null, b: null };
+  for (const v of [t2.v0, t2.v1, t2.v2]) {
+    const r = closestOnTri(v, t1);
+    if (r.d2 < best.d2) best = { d2: r.d2, a: r.point, b: v };
+  }
+  for (const v of [t1.v0, t1.v1, t1.v2]) {
+    const r = closestOnTri(v, t2);
+    if (r.d2 < best.d2) best = { d2: r.d2, a: v, b: r.point };
+  }
+  for (const [p1, q1] of edges(t1)) for (const [p2, q2] of edges(t2)) {
+    const r = closestSegSeg(p1, q1, p2, q2);
+    if (r.d2 < best.d2) best = { d2: r.d2, a: r.a, b: r.b };
+  }
+  return best;
+}
+
 // Möller–Trumbore; returns t>tMin or Infinity
 function rayTri(o, d, tri, tMin) {
   const e1 = [tri.v1[0] - tri.v0[0], tri.v1[1] - tri.v0[1], tri.v1[2] - tri.v0[2]];
@@ -144,7 +221,6 @@ export function buildBVH(mesh) {
     return bestTri === -1 ? null : { t: best, tri: bestTri };
   }
 
-  // No production consumer yet — pre-built + tested as the reusable primitive for the deferred clearance/min-feature gate.
   function closestPoint(p) {
     let best2 = Infinity, bestPt = null, bestTri = -1;
     const stack = [root];
@@ -162,5 +238,36 @@ export function buildBVH(mesh) {
     return { point: bestPt, dist: Math.sqrt(best2), tri: bestTri };
   }
 
-  return { raycast, closestPoint };
+  // Exact minimum surface-to-surface distance to another buildBVH result.
+  // Dual traversal pruned by AABB–AABB distance; exact triangle–triangle
+  // distance at leaf pairs; early-exits at 0 (touching/intersecting).
+  function distanceTo(other) {
+    let best = { d2: Infinity, a: null, b: null };
+    const stack = [[root, other._root]];
+    while (stack.length && best.d2 > 0) {
+      const [na, nb] = stack.pop();
+      if (boxBoxDistSq(na, nb) >= best.d2) continue;
+      const aLeaf = !!na.tris, bLeaf = !!nb.tris;
+      if (aLeaf && bLeaf) {
+        for (const ta of na.tris) for (const tb of nb.tris) {
+          const r = triTriDist(ta, tb);
+          if (r.d2 < best.d2) best = r;
+        }
+      } else if (!aLeaf && (bLeaf || nodeExtent(na) >= nodeExtent(nb))) {
+        // descend the larger node; push the nearer child last so it pops first
+        const dl = boxBoxDistSq(na.left, nb), dr = boxBoxDistSq(na.right, nb);
+        if (dl < dr) stack.push([na.right, nb], [na.left, nb]);
+        else stack.push([na.left, nb], [na.right, nb]);
+      } else {
+        const dl = boxBoxDistSq(na, nb.left), dr = boxBoxDistSq(na, nb.right);
+        if (dl < dr) stack.push([na, nb.right], [na, nb.left]);
+        else stack.push([na, nb.left], [na, nb.right]);
+      }
+    }
+    if (best.a === null) return { distance: Infinity, at: null, pointA: null, pointB: null }; // empty mesh
+    const at = [(best.a[0] + best.b[0]) / 2, (best.a[1] + best.b[1]) / 2, (best.a[2] + best.b[2]) / 2];
+    return { distance: Math.sqrt(best.d2), at, pointA: best.a, pointB: best.b };
+  }
+
+  return { raycast, closestPoint, distanceTo, _root: root };
 }

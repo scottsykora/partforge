@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { measure } from "../src/testing/measure.js";
 import part from "../src/parts/filleted-box.js";
+import gapPart from "./fixtures/gap-part.js";
 
 let k;
 const boxPart = {
@@ -36,4 +37,12 @@ test("measure on OCCT filleted-box with minWall:true returns plausible minWall â
   const s = r.subparts[0];
   expect(Number.isFinite(s.minWall)).toBe(true);
   expect(s.minWall).toBeGreaterThanOrEqual(5);
+});
+
+test("gaps/nearMisses populate on OCCT (mesh-based, no Solid.intersect)", () => {
+  const r = measure(k, gapPart, "v");
+  expect(r.overlaps).toEqual([]);                    // intersect unavailable â†’ skipped
+  expect(r.nearMisses).toHaveLength(1);
+  expect(r.nearMisses[0].distance).toBeCloseTo(0.2, 3);
+  expect(r.nearMisses[0].at[0]).toBeCloseTo(10.1, 2);
 });

@@ -150,6 +150,9 @@ function printMeasure(r) {
   console.log(`  overlaps: ${r.overlaps.length
     ? r.overlaps.map((o) => `${o.a}×${o.b} (${o.volume.toFixed(1)}mm³ at [${o.location.map((n) => n.toFixed(1)).join(", ")}])`).join(", ")
     : "none"}`);
+  console.log(`  near-misses: ${r.nearMisses.length
+    ? r.nearMisses.map((g) => `${g.a}×${g.b} (${g.distance.toFixed(2)}mm at [${g.at.map((n) => n.toFixed(1)).join(", ")}])`).join(", ")
+    : "none"}`);
 }
 
 function printVerify(v) {
