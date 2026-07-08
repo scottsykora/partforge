@@ -204,9 +204,16 @@ anything `rotateX/Y/Z`/`rotateAbout` can't express, but prefer the vocabulary ab
 
 ### Naming features (`.label()`)
 
-Give build-step solids human-readable names — the viewer's hover tooltip, the
-highlight, and pick selections all use them, so you, the app user, and an agent
-share the same vocabulary ("Make the Drainage hole 10 mm").
+Label your part's features, and label them **thoroughly** — this is how a user points
+at what they want changed. The viewer's hover tooltip, highlight, and pick selection
+all show a feature's label, so you, the app user, and an agent editing on their behalf
+share one vocabulary: "make the Drainage hole 10 mm", "raise the Motor upright". A
+feature with no name can't be referred to — it reads as the whole part, so the request
+has nowhere to land.
+
+Treat comprehensive labeling as the default, not a finishing touch. Name every feature
+a user could reasonably want to change: the base body, and each functional feature —
+grooves, mounts, bores, pockets, distinct structural members.
 
 ```js
 const body = k.prism(d.outerPts, p.height, { scaleTop: p.taper }).label("Faceted wall");
@@ -214,18 +221,26 @@ let s = body.cut(cavity.label("Cavity"));
 if (p.drain > 0) s = s.cut(k.cylinder(d.drainR, d.drainR, p.floor + 4).at([0, 0, -2]).label("Drainage hole"));
 ```
 
+- **Aim for functional groups.** Label at the granularity a user would name a thing
+  ("Rope groove", "Tensioner pockets", "Bearing seat"), grouping repeated or related
+  faces under one name. Fine enough to reference any feature; coarse enough that
+  near-identical surfaces don't fragment into dozens of near-duplicates.
 - A label names the solid's **surface** wherever it survives into the final part —
   a cutting tool's label lands on the faces it leaves behind (the hole's wall).
 - Label **after** shaping compound tools (e.g. after an `intersect` clip) and
   either before or after transforms — labels ride through `at`/`rotate`/etc.
-- The **same label on several solids merges into one feature** — label a pattern
-  of four holes `"Mounting holes"` and they hover/highlight as one.
+- **Same label merges; distinct siblings need distinct names.** The same label on
+  several solids merges into one feature — label a ring of four bolt holes
+  `"Mounting holes"` and they hover/highlight as one. Conversely, when two similar
+  features are things a user would tell apart, name them apart — two uprights as
+  `"Drum upright"` and `"Motor upright"`, not both `"Upright"`.
 - Unlabeled geometry falls back to the sub-part's `label`. Faces created by
   `fillet`/`chamfer`/`shell` are new surfaces, so they use the fallback too.
 - Works on both backends. On OCCT each label keeps a geometry snapshot for
-  mesh-time classification — label a handful of features, not hundreds.
-- Names should describe intent ("Drainage hole", not "cylinder2"); keep them
-  unique per sub-part unless you want the merge behavior.
+  mesh-time classification, so label meaningful features (functional groups — a
+  handful to a couple dozen per part), not hundreds of individual faces.
+- Names should describe intent ("Drainage hole", not "cylinder2"); make them
+  unique per sub-part unless you specifically want the merge behavior.
 
 ### Caching & determinism
 
