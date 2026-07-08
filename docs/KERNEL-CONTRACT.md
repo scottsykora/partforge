@@ -1,7 +1,8 @@
 # The partforge kernel contract
 
-**Contract version: 1** (partforge 0.9.x) — see [Versioning](#versioning) for what may
-change under which version bump.
+**Contract version: 1** (introduced in partforge 0.9) — mirrored by `CONTRACT_VERSION`
+in `src/framework/geometry/kernel.js` and asserted by `test/kernel-contract.test.js`;
+see [Versioning](#versioning) for what may change under which version bump.
 
 This document is the portable seam of partforge. A part's `build(k, p, d)` is a pure ESM
 function written against the kernel `k` and the `Solid` handles it returns — no framework
@@ -23,16 +24,19 @@ The contract has two halves:
 
 Audience: backend/host implementers, and anyone (human or LLM) generating parts outside
 this repo. For *authoring guidance* — usage tables, worked snippets, control-panel schema
-— read `docs/AUTHORING-PARTS.md`; this doc does not repeat it.
+— read `docs/AUTHORING-PARTS.md`. Where the two overlap (the op tables), this doc
+carries the conformance semantics and that one the usage guidance;
+`test/kernel-contract.test.js` keeps this doc's op coverage in sync with the code.
 
 ## Conformance classes
 
-**Core (mesh class).** A conforming core kernel implements every op in `KERNEL_OPS` and
+**Core class.** A conforming core kernel implements every op in `KERNEL_OPS` and
 every `Solid` op in `SOLID_OPS`, *except* that the B-rep ops (`fillet`, `chamfer`,
 `shell` — the `OCCT_ONLY_OPS` list — and `toSTEP`) may instead throw
 `KernelCapabilityError`. The in-repo Manifold backend is the reference core kernel.
-Kernels built from this repo get the stubs for free: `finishKernel()` (kernel-level) and
-`addSugar()` (solid-level) generate them from `OCCT_ONLY_OPS`.
+Kernels built from this repo get the stubs for free: `addSugar()` generates the
+Solid-level stubs from `OCCT_ONLY_OPS`, and `finishKernel()` stubs `toSTEP` (a
+kernel-level op, so it is not in that Solid-op list).
 
 **B-rep class.** Core plus native `fillet`/`chamfer`/`shell` and `toSTEP`. The in-repo
 OCCT/replicad backend is the reference.
@@ -65,24 +69,31 @@ provide them.
   (produced by `roundedProfile`), where a segment with `via` is a three-point circular
   arc; B-rep backends must carry these arcs exactly (real CIRCLE edges in STEP), mesh
   backends tessellate them.
-- **Value semantics: every op returns a new `Solid` and never invalidates its inputs.**
-  `a.cut(b)` leaves both `a` and `b` usable. If the underlying engine consumes operands
-  (replicad does), the backend must hide that with internal clones — that gotcha must
-  never leak to part code. `clone()` exists and must return an independent handle, but a
-  part should never *need* it for correctness.
+- **Ops never mutate — but they MAY consume.** Every op returns a new `Solid` and never
+  mutates one in place. Whether the *inputs stay valid* is backend-dependent: the mesh
+  backend leaves them usable, but the B-rep backend's engine (replicad) deletes the
+  operand of a transform or boolean. The portable rule is therefore: **never reuse a
+  `Solid` after passing it to a transform or boolean — `.clone()` first if you need it
+  again** (failure signature: ERROR-PATTERNS.md `replicad-consumed-operand`). `clone()`
+  must return an independent handle on every backend; a backend MAY additionally provide
+  full value semantics, but a portable part must not rely on it.
 - **Purity and determinism: identical arguments must produce identical geometry.** No
   randomness, clocks, or hidden global state in an implementation. partforge's solid
   cache memoizes by a content hash of `(op, args)`; a nondeterministic op silently
   poisons the cache.
-- **Shared validation** (enforced once in `finishKernel`/`addSugar`; a standalone
-  implementation must enforce the same): `prism`/`extrude` `scaleTop ≥ 0`; `scale`
-  `factor > 0`; `revolve` profile radii `≥ 0`; `shell` requires `openFaces` (a fully
+- **Validation** (a conforming implementation enforces all of these; in-repo the kernel
+  front checks the `prism`/`extrude`/`revolve` rules, `addSugar` the `scale` rule, and
+  the B-rep backend the `shell` rule): `prism`/`extrude` `scaleTop ≥ 0`; `revolve`
+  profile radii `≥ 0`; `scale` `factor > 0`; `shell` requires `openFaces` (a fully
   closed hollow is not supported).
 - **Error taxonomy:** invalid arguments throw plain `Error` with a message naming the op
-  (`"prism: scaleTop must be ≥ 0"`); capability gaps throw `KernelCapabilityError`
-  (from `geometry/errors.js`). Nothing else is thrown for well-formed input — a boolean
-  or fillet that the engine cannot compute is a backend bug or falls under the repair
-  policy below, not a part-visible error class.
+  (`"prism: scaleTop must be ≥ 0"`); a whole op a backend class lacks throws
+  `KernelCapabilityError` (from `geometry/errors.js`) — the routing signal. A
+  backend-divergent *option* (`loft`/`sweep` `closed: true` on a B-rep kernel) throws a
+  plain `Error` naming the limitation, not `KernelCapabilityError`: option misuse is not
+  reroutable, and a host must fail loudly rather than silently ignore the option. Beyond
+  those, nothing else is thrown for well-formed input — a fillet the engine cannot
+  compute falls under the repair policy below, not a part-visible error class.
 
 ## Kernel ops (make solids)
 
@@ -105,10 +116,11 @@ the behavior. All ops return a `Solid`.
 | `toSTEP(named[])` | `[{name, solid}]` → `Promise<ArrayBuffer>` of a STEP assembly. B-rep class only. |
 
 **Backend-divergent options** (a portable part must treat these as declared here):
-`loft` `closed: true` (capless loop) and `sweep` `closed: true` are **mesh-class only**;
-B-rep kernels throw. `loft` `ruled: false` (smooth C2 walls) and `sweep` `smooth: true`
-(native swept B-rep) are honored only by B-rep kernels; mesh kernels render the ruled
-form. `sweep` `closed: true` loops must be planar. Where both backends build the same
+`loft` `closed: true` (capless loop) and `sweep` `closed: true` are supported **only by
+mesh backends** (Manifold); B-rep kernels throw a plain `Error` naming the limitation
+(see the error taxonomy). `loft` `ruled: false` (smooth C2 walls) and `sweep`
+`smooth: true` (native swept B-rep) are honored only by B-rep kernels; mesh kernels
+render the ruled form. `sweep` `closed: true` loops must be planar. Where both backends build the same
 shape they do it **by construction, not by tolerance**: sweep elbows loft the identical
 station list (`sweep.js`) on both backends.
 
@@ -119,15 +131,15 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 | Op | Contract |
 |---|---|
 | `cut(tool)` / `cutAll(tools[])` / `intersect(other)` | Boolean subtract (single / batched) and intersection. |
-| `translate(v)` · `rotate(deg, center, axis)` · `mirror("XY"\|"XZ"\|"YZ")` · `scale(factor, center?)` | Rigid/uniform transforms. `rotate` is the primitive; the sugar below is defined *purely in terms of it* (`solid-sugar.js`), so it is geometry-identical on every backend and a host gets it for free via `addSugar()`. |
-| `rotateX/Y/Z(deg)` · `rotateAbout({axis, deg, through?})` · `along(dir)` · `at(v)` | The readable placement vocabulary parts actually use. `along` maps the canonical +Z build axis to `"±X"\|"±Y"\|"±Z"`. |
+| `translate(v)` · `rotate(deg, center, axis)` · `mirror("XY"\|"XZ"\|"YZ")` · `scale(factor, center?)` | Transforms — but only two are **rigid** (pose): `translate`/`rotate` move a solid without altering it (position + orientation, shape and handedness preserved). `mirror` **reflects** — it returns the opposite-handed (chiral) solid, which no rotation can reproduce; `scale` **resizes**. So `mirror`/`scale` change the solid *itself*, not just where it sits — think of them as build operations, and never as the difference between a display pose and an export pose (see AUTHORING-PARTS.md `place`). `translate`/`rotate` are the primitives; the placement sugar below is composed *purely from them* (`solid-sugar.js`), so it is geometry-identical on every backend and a host gets it for free via `addSugar()`. |
+| `rotateX(deg)` / `rotateY(deg)` / `rotateZ(deg)` · `rotateAbout({axis, deg, through?})` · `along(dir)` · `at(v)` | The readable placement vocabulary parts actually use. `along` maps the canonical +Z build axis to `"±X"\|"±Y"\|"±Z"`. |
 | `clone()` | Independent handle (see value semantics). |
 | `label(name)` | Name this solid's surface for feature attribution; must survive transforms and booleans; equal names merge into one feature. Affects mesh metadata only, never geometry. |
 | `boundingBox()` | `{min, max, center, size}`; `center`/`size` are derived by `addSugar` from the backend's `{min, max}`. |
 | `volume()` | Solid volume in mm³. |
-| `genus()` / `isEmpty()` | Optional (mesh class): through-hole count / no-geometry test. |
+| `genus()` / `isEmpty()` | Optional (`SOLID_OPTIONAL_OPS`): mesh-topology queries — through-hole count / no-geometry test. The mesh backend provides them; OCCT has no cheap equivalent. |
 | `toMesh({quality?})` | Render mesh: `{positions, normals, indices?, triangles, edges?, featureIds?, features?}`. `indices` optional (a backend may emit soup or indexed); `normals` may be empty (`length 0`) to delegate creasing to the viewer; `edges` (feature-line segments) and the feature fields are optional metadata. |
-| `toSTL({quality?})` | `Promise<ArrayBuffer>`, binary STL, outward CCW winding, non-zero facet normals. |
+| `toSTL({quality?})` | `Promise<ArrayBuffer>`, binary STL, outward CCW winding. Stored facet normals may be zero — slicers recompute them (the mesh backend happens to write them). |
 | `toIndexedMesh()` | `{positions, indices}` indexed mesh (3MF path). |
 | `fillet(radius, selector?)` / `chamfer(distance, selector?)` / `shell(thickness, openFaces)` | B-rep class (core throws `KernelCapabilityError`). `shell` hollows inward, keeping outer dimensions. |
 
@@ -139,33 +151,44 @@ depend on triangle counts, segment counts, or normals being present.
 objects, criteria AND-combined:
 
 ```js
-{ dir: "X"|"Y"|"Z"|[x,y,z],   // edges along / faces normal-to this axis
+{ dir: "X"|"Y"|"Z",           // edges along / faces normal-to this axis — edge
+                              //   selectors ALSO accept an [x,y,z] vector; face
+                              //   selectors (shell openFaces) accept ONLY the strings
   inPlane: "XY"|"XZ"|"YZ", at: number,   // in the given plane at offset `at`
   near: [x,y,z] }                        // containing this point
 ```
 
-`undefined` selects all edges/faces. Passing a raw function is a replicad escape hatch —
-**non-portable**, rejected by the contract for parts meant to travel.
+`undefined` selects all edges/faces. A raw replicad finder function is also accepted
+in-repo (AUTHORING-PARTS.md offers it for parts that are content to stay OCCT-bound),
+but it is
+inherently backend-specific: portable parts **MUST** use the object form, and a host
+**MAY** reject function selectors.
 
-**B-rep repair policy** (`occt-repair.js`): a failing fillet skips the offending edge
-rather than aborting; a failing chamfer binary-searches the largest valid distance.
-A conforming B-rep kernel must degrade this way — parts are written assuming a fillet
-request cannot brick the build.
+**B-rep repair policy** (`occt-repair.js`): a failing fillet or shell is skipped **as a
+whole** — attempted once, and on failure the shape reverts to its pre-op state (OCCT
+fillet failures are not monotonic in the radius, so per-edge retry would converge on
+garbage). A failing chamfer instead binary-searches the largest valid distance. A
+conforming B-rep kernel must degrade this way — a fillet request must never brick the
+build, and authors should expect all-or-nothing filleting per call, not per edge.
 
 ## The 2-D helper library
 
-`partforge/geometry` ships pure-JS contour builders: `piePolygon`, `hexPolygon`,
-`regularPolygon`, `roundedRectPolygon`, `ellipsePolygon`, `slotPolygon`, `starPolygon`,
-`ringSectorPolygon`, `circleProfile`, `filletPolygon`, `roundedProfile`, plus the solid
-patterns `linearPattern`/`circularPattern`. They emit plain CCW point lists or arc
-profiles — i.e. *data already in this contract's input format* — and call only `Solid`
-ops from the tables above. They are therefore portable by construction: a host
-implements the kernel, and the helpers come along unmodified.
+`partforge/geometry` ships pure-JS helpers of two kinds. The **contour builders**
+(`piePolygon`, `hexPolygon`, `regularPolygon`, `roundedRectPolygon`, `ellipsePolygon`,
+`slotPolygon`, `starPolygon`, `ringSectorPolygon`, `circleProfile`, `cornerArc`,
+`filletPolygon`, `roundedProfile`) are pure functions from numbers to plain CCW point
+lists or arc profiles — *data already in this contract's input format*, with no kernel
+dependency at all. The **solid patterns** (`linearPattern`, `circularPattern`) take a
+`Solid` and call only ops from the tables above (`clone`/`translate`/`rotate`/
+`boundingBox`). Both kinds are therefore portable by construction: a host implements
+the kernel and the helpers come along unmodified. (`test/kernel-contract.test.js`
+asserts every `polygon.js` export is named here.)
 
 ## Versioning
 
-The contract version is this document's number plus the op lists in `kernel.js`; the
-parity tests bind them to the code.
+The contract version is the number at the top of this document, mirrored by
+`CONTRACT_VERSION` in `kernel.js` (the parity test asserts the two match). The op lists
+in `kernel.js` define the current surface; only breaking changes bump the version:
 
 - **Additive** (new kernel/Solid op, new optional field on an options object, new
   optional mesh-output field): contract version unchanged, minor npm release. Old parts
@@ -197,7 +220,8 @@ The recurring constraint: every op here is implementable on **both** a mesh-CSG 
 and a B-rep kernel (see `docs/geometry-backend-strategy.md` for why that dual-backend
 property is worth protecting — OCCT booleans are ~75–1400× slower). Generation *safety*
 comes not from a restricted DSL but from the verify loop (`measure`/`verify` gates:
-`bbox`, `volume`, `holes`, `minWall`, overlaps) — a generator gets machine-checkable
+`bbox`, `volume`, `holes`, `watertight`, overlaps — plus `minWall` *warnings*, which
+report but never fail) — a generator gets machine-checkable
 pass/fail feedback per part, which a syntax could never provide.
 
 ## Conformance checklist for a new backend or host
@@ -208,6 +232,9 @@ pass/fail feedback per part, which a syntax could never provide.
 2. Pass `test/kernel-contract.test.js` (op-list parity) — add an equivalent for an
    out-of-repo host.
 3. Honor the global semantics above (units, Z-up, CCW, value semantics, determinism).
-4. Run the in-repo parts through `npx partforge measure` — `demo.js`, `planter.js`, and
-   (B-rep class) `filleted-box.js` must pass their gates unmodified. That suite, not
-   this prose, is the acceptance test.
+4. Run **every part in `src/parts/`** through `npx partforge measure` unmodified — the
+   directory, not this prose, is the acceptance suite (today that includes
+   `faceted-vase.js`, the `loft` exerciser, and — B-rep class — `filleted-box.js`).
+   Caveat: a part with no `verify` block (`filleted-box.js` today) exercises only the
+   default measure gates, so B-rep implementers should also render it and export STEP
+   rather than trust the exit code alone.

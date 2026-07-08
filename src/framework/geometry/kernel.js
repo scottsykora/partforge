@@ -7,6 +7,11 @@
 // classes, versioning policy — is docs/KERNEL-CONTRACT.md; change either side and
 // you must update the other. (2-D polygon helpers live in ./polygon.js.)
 
+// The prose half's version: docs/KERNEL-CONTRACT.md's "Contract version" header
+// must match this number (asserted in kernel-contract.test.js). Bump only on a
+// breaking contract change — see the doc's Versioning section.
+export const CONTRACT_VERSION = 1;
+
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",

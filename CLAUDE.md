@@ -60,7 +60,10 @@ demo apps. Playwright's Chromium is required for the smoke check only:
 **`docs/AUTHORING-PARTS.md` is the authoritative guide** — read it before writing or
 editing a part. It has the full `PartDefinition` contract, the kernel/`Solid` API tables,
 the parameter-schema format, app wiring, the `verify` block, and gotchas. Don't duplicate
-that here; go read it.
+that here; go read it. Its normative twin for the kernel itself is
+**`docs/KERNEL-CONTRACT.md`** (conformance classes, cross-backend semantics, versioning)
+— read that one before changing kernel/backend behavior; `test/kernel-contract.test.js`
+holds its version header and op coverage to the code.
 
 ### Two geometry backends, auto-selected
 
