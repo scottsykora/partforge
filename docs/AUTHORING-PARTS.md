@@ -71,6 +71,14 @@ export default {
   `"display"` or `"export"`; `ctx.view` is the active view. Default is identity, so simple
   parts omit it. **Display placement must not depend on `view`** — display meshes are built
   once per sub-part and cached across views (the viewer re-centres per view).
+  **Any difference between the display and export pose must be a rigid motion** —
+  `translate`/`rotate`/`rotateAbout`/`along`/`at` only. Never put a `mirror` or a
+  non-identity `scale` on one purpose but not the other: the exported (printed) part is the
+  same physical object you show in the assembly, and a reflection or resize there makes the
+  two silently disagree — you print the mirror image of what the viewer showed
+  ([place-not-rigid](ERROR-PATTERNS.md#place-not-rigid)). If a part genuinely needs a
+  reflected or resized form (e.g. a block that seats flipped), bake that into `build` so
+  both purposes share one canonical solid, then pose it rigidly.
 - `enabled(p)` gates a conditional sub-part (e.g. only present when a feature is on).
 - A view's sub-parts are derived, never hard-coded: those whose `views` include the view
   and whose `enabled(p)` is true.
@@ -81,8 +89,10 @@ export default {
 
 `build` receives a backend-agnostic `kernel` (`k`). It returns and combines `Solid`
 handles. The same code runs on **Manifold** (fast meshes — preview + STL + 3MF) and
-**OCCT/replicad** (exact B-rep — STEP). Contract lives in
-`src/framework/geometry/kernel.js`.
+**OCCT/replicad** (exact B-rep — STEP). Op lists live in
+`src/framework/geometry/kernel.js`; the normative semantics (conventions, value
+semantics, conformance classes, versioning) are in `docs/KERNEL-CONTRACT.md` — the
+tables below are the authoring-side view of that contract.
 
 **Kernel — make solids:**
 
@@ -716,7 +726,9 @@ whole part to OCCT — no declaration needed:
 - `{ dir: "X"｜"Y"｜"Z" }` — edges running along an axis (e.g. `{dir:"Z"}` = the vertical edges)
 - `{ inPlane: "XY"｜"XZ"｜"YZ", at }` — edges lying in a plane (e.g. base edges: `{inPlane:"XY", at:0}`)
 - `{ near: [x,y,z] }` — edges passing through a point
-- a raw `(edgeFinder) => edgeFinder` replicad finder, for anything fancier
+- a raw `(edgeFinder) => edgeFinder` replicad finder, for anything fancier — **OCCT-only
+  escape hatch**: fine for a part that's happy to stay in this repo, but non-portable
+  (parts meant to travel must use the object forms — see `KERNEL-CONTRACT.md`)
 
 ```js
 let s = k.box([0,0,0],[40,30,16]);
