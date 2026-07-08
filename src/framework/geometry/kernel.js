@@ -3,7 +3,9 @@
 // test/occt-backend.test.js) assert each backend exposes exactly these ops, so the
 // contract can't silently drift from the implementations — the drift class that
 // once broke the probe kernel (see probe.js). The @typedefs document signatures.
-// (2-D polygon helpers live in ./polygon.js.)
+// The prose half of the contract — conventions, value semantics, conformance
+// classes, versioning policy — is docs/KERNEL-CONTRACT.md; change either side and
+// you must update the other. (2-D polygon helpers live in ./polygon.js.)
 
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [

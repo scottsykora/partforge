@@ -81,8 +81,10 @@ export default {
 
 `build` receives a backend-agnostic `kernel` (`k`). It returns and combines `Solid`
 handles. The same code runs on **Manifold** (fast meshes — preview + STL + 3MF) and
-**OCCT/replicad** (exact B-rep — STEP). Contract lives in
-`src/framework/geometry/kernel.js`.
+**OCCT/replicad** (exact B-rep — STEP). Op lists live in
+`src/framework/geometry/kernel.js`; the normative semantics (conventions, value
+semantics, conformance classes, versioning) are in `docs/KERNEL-CONTRACT.md` — the
+tables below are the authoring-side view of that contract.
 
 **Kernel — make solids:**
 
