@@ -1,4 +1,5 @@
 import { meshTo3MF } from "./geometry/threemf.js";
+import { resolveDerived } from "./derive.js";
 
 // Names of the sub-parts a view shows: declared in the view and enabled for these
 // params. Order follows Object.keys(part.parts) (definition order).
@@ -23,8 +24,7 @@ export function exportSubParts(part, view, params) {
 // layered over the part defaults, and derive() run once over the result.
 export function resolveParams(part, params) {
   const p = { ...part.defaults, ...params };
-  const d = part.derive ? part.derive(p) : {};
-  return { p, d };
+  return { p, d: resolveDerived(part, p) };
 }
 
 // Build one sub-part and apply its optional place() for the given purpose/view.
@@ -52,13 +52,16 @@ const bufferOf = (data) => (ArrayBuffer.isView(data) ? data.buffer : data);
 
 export async function handle(kernel, part, msg, post) {
   const onProgress = (phase) => post({ type: "progress", phase });
-  const { p, d } = resolveParams(part, msg.params);
   const label = (name) => part.parts[name].label ?? name;
   const exportName = (name) => part.parts[name].export?.name ?? name;
-  // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
-  const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
 
   try {
+    // Inside the try so a throwing derive posts an error the UI can show,
+    // instead of killing the worker turn silently (an endless spinner).
+    const { p, d } = resolveParams(part, msg.params);
+    // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
+    const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
+
     if (msg.type === "generate") {
       const t0 = Date.now();
       const useCache = msg.cache !== false; // ?debug toggle can disable caching (cache:false)
