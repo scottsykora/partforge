@@ -1,4 +1,5 @@
 import { meshTo3MF } from "./geometry/threemf.js";
+import { resolveDerived } from "./derive.js";
 
 // Names of the sub-parts a view shows: declared in the view and enabled for these
 // params. Order follows Object.keys(part.parts) (definition order).
@@ -23,8 +24,7 @@ export function exportSubParts(part, view, params) {
 // layered over the part defaults, and derive() run once over the result.
 export function resolveParams(part, params) {
   const p = { ...part.defaults, ...params };
-  const d = part.derive ? part.derive(p) : {};
-  return { p, d };
+  return { p, d: resolveDerived(part, p) };
 }
 
 // Build one sub-part and apply its optional place() for the given purpose/view.

@@ -4,6 +4,7 @@
 // probe kernel). Errs toward RELEVANT_ALL whenever it can't analyze a build.
 import { createProbeKernel } from "./geometry/probe.js";
 import { viewSubParts } from "./jobs.js";
+import { resolveDerived } from "./derive.js";
 
 export const RELEVANT_ALL = Symbol("relevant-all");
 
@@ -19,9 +20,39 @@ function recorder(obj, seen) {
   });
 }
 
+// Run derive with recorders. `allInputs` is every raw param derive reads.
+// For the grouped form (derive as an object of group functions — see derive.js),
+// `depsOf` maps each derived key to the raw params of just its own group,
+// transitively including the groups whose outputs it read. For the single-function
+// form there is no per-key attribution, so depsOf is null and callers fall back to
+// treating every derive input as feeding every derived key.
+function analyzeDerive(part, params) {
+  const allInputs = new Set();
+  if (!part.derive) return { derived: {}, allInputs, depsOf: null };
+  if (typeof part.derive === "function") {
+    const derived = part.derive(recorder(params, allInputs)) ?? {};
+    return { derived, allInputs, depsOf: null };
+  }
+  const derived = {};
+  const depsOf = new Map();
+  for (const fn of Object.values(part.derive)) {
+    const raw = new Set();
+    const fromEarlier = new Set();
+    const out = fn(recorder(params, raw), recorder(derived, fromEarlier)) ?? {};
+    const deps = new Set(raw);
+    for (const k of fromEarlier) for (const dep of depsOf.get(k) ?? []) deps.add(dep);
+    for (const r of raw) allInputs.add(r);
+    for (const key of Object.keys(out)) {
+      depsOf.set(key, deps);
+      derived[key] = out[key];
+    }
+  }
+  return { derived, allInputs, depsOf };
+}
+
 export function relevantParamKeys(part, view, params) {
   // The union of every on-screen sub-part's read set (that's exactly what
-  // subPartReadKeys computes, derive-input folding included)...
+  // subPartReadKeys computes, derive attribution included)...
   const reads = subPartReadKeys(part, view, params);
   if (reads === RELEVANT_ALL) return RELEVANT_ALL; // analysis failed → everything relevant
   try {
@@ -46,8 +77,7 @@ export function relevantParamKeys(part, view, params) {
 // analysis failure (caller then treats every param as relevant — safe, just slower).
 export function subPartReadKeys(part, view, params) {
   try {
-    const deriveInputs = new Set();
-    const derived = part.derive ? (part.derive(recorder(params, deriveInputs)) ?? {}) : {};
+    const { derived, allInputs, depsOf } = analyzeDerive(part, params);
     const { kernel } = createProbeKernel();
     const map = new Map();
     for (const name of viewSubParts(part, view, params)) {
@@ -56,7 +86,15 @@ export function subPartReadKeys(part, view, params) {
       const dSeen = new Set();
       if (sp.enabled) sp.enabled(recorder(params, reads)); // gate params change presence too
       sp.build(kernel, recorder(params, reads), recorder(derived, dSeen));
-      if (dSeen.size > 0) for (const k of deriveInputs) reads.add(k);
+      if (dSeen.size > 0) {
+        if (depsOf && [...dSeen].every((k) => depsOf.has(k))) {
+          for (const k of dSeen) for (const dep of depsOf.get(k)) reads.add(dep);
+        } else {
+          // single-function derive, or a derived key no group produced: no
+          // attribution possible — fold every derive input in (safe, coarser).
+          for (const dep of allInputs) reads.add(dep);
+        }
+      }
       map.set(name, reads);
     }
     return map;

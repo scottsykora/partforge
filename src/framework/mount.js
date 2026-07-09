@@ -8,6 +8,7 @@ import { relevantParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts } from "./jobs.js";
+import { resolveDerived } from "./derive.js";
 import { detectBackend } from "./geometry/probe.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
@@ -58,7 +59,7 @@ export function mount(part, { createWorker, container = document.getElementById(
 
   // Current selection context for the pickers: the active view + live params +
   // derived values. Shared by both ?pick modes below.
-  const getContext = () => ({ view: view(), params, derived: part.derive ? part.derive({ ...part.defaults, ...params }) : {} });
+  const getContext = () => ({ view: view(), params, derived: resolveDerived(part, { ...part.defaults, ...params }) });
 
   // ?pick enables click-to-select: a toggle button + a transient toast. Off by
   // default — no button, no listener, no behavior change. Deleting this block and

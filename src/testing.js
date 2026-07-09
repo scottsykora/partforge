@@ -3,7 +3,9 @@
 // See docs/AUTHORING-PARTS.md "Testing a part".
 export { createManifoldKernel } from "./framework/geometry/manifold-backend.js";
 export { bootManifoldKernel } from "./testing/manifold.js";
-export { handle, viewSubParts } from "./framework/jobs.js";
+export { handle, viewSubParts, resolveParams } from "./framework/jobs.js";
+export { resolveDerived } from "./framework/derive.js";
+export { relevantParamKeys, subPartReadKeys, RELEVANT_ALL } from "./framework/param-deps.js";
 export { assemblyOverlaps } from "./framework/assembly.js";
 export { assemblyGaps, meshGaps } from "./testing/gaps.js";
 export { bootOcctKernel } from "./testing/occt.js";

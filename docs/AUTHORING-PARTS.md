@@ -44,7 +44,7 @@ export default {
   meta: { title, units, background? },     // title string; units e.g. "mm"; background = 0xRRGGBB scene colour
   parameters,                              // the control-panel schema (array of sections — see below)
   defaults,                                // flat { paramKey: value } — seeds params + control values
-  derive?,                                 // (p) => d   optional dependent values computed once per build
+  derive?,                                 // (p) => d, or { group: (p, d) => {…}, … } — dependent values computed once per build
   parts: {                                 // named sub-parts; each builds ONE solid
     <name>: {
       label?,                              // display name (tabs/progress); defaults to the key
@@ -349,6 +349,24 @@ coherently:
   thicknesses — so a single input feeds everything downstream. In the demo, `derive`
   turns the nominal `bore` into `boreR` (with a fixed print clearance) and `h` into the
   cut-tool height `cutH`; `build(k, p, d)` reads those.
+- **Grouped `derive` (recommended once it grows):** `derive` may instead be an object of
+  named group functions, run in declaration order; each group receives `(p, d)` where `d`
+  holds the merged outputs of the groups **before** it:
+
+  ```js
+  derive: {
+    core:  (p) => ({ boreR: p.bore / 2 + 0.15 }),
+    stand: (p, d) => ({ postH: d.boreR * 4 + p.base_t }),   // may read earlier groups
+  }
+  ```
+
+  Builds see the same merged `d` either way. The point is the **control panel's
+  relevance dimming** (and the rebuild cache): with a single function, a sub-part that
+  reads *any* derived value is assumed to depend on *every* param `derive` touches, so
+  e.g. stand-only controls stay lit in a drum-only view. With groups, each derived key
+  is attributed to just its own group's inputs (plus, transitively, those of the groups
+  it read), so unrelated controls dim correctly. Group along your sub-part seams:
+  values only one sub-part family reads belong in their own group.
 - **Reuse a param `key`** across sub-parts/features so one slider moves all of them.
 - **`enabled(p)`** gates a whole sub-part on a toggle param (the part appears/disappears
   with the control).
@@ -483,11 +501,11 @@ Tests run under **Node 24** (`nvm use` first; the default shell Node is too old)
 `npx vitest run`. Build geometry directly off your part with a Manifold kernel:
 
 ```js
-import { bootManifoldKernel } from "partforge/testing";
+import { bootManifoldKernel, resolveDerived } from "partforge/testing";
 import part from "../src/parts/<part>.js";
 
 const k = await bootManifoldKernel();
-const solid = part.parts.<name>.build(k, part.defaults, part.derive?.(part.defaults) ?? {});
+const solid = part.parts.<name>.build(k, part.defaults, resolveDerived(part, part.defaults));
 expect(solid.toMesh().triangles).toBeGreaterThan(0);
 ```
 
