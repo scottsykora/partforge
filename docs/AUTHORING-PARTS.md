@@ -370,10 +370,12 @@ coherently:
 
   Grouped-form rules: a group reading a key **no earlier group produced** throws
   immediately (misordered groups / typos would otherwise surface as silent NaN
-  geometry). Prefer returning values over mutating `d` in place — mutation works and
-  is tracked, but returned keys read clearer. Outside the part definition (helpers,
-  tests), merge groups with `resolveDerived(part, p)` from **`partforge/derive`** — a
-  lean, DOM-free entry safe to import from part modules; don't hand-roll the merge.
+  geometry) — this includes optional-chaining reads like `d.maybe?.x`, so probe for a
+  conditionally-produced key with `"maybe" in d`, not `?.`. Prefer returning values
+  over mutating `d` in place — mutation works and is tracked, but returned keys read
+  clearer. Outside the part definition (helpers, tests), merge groups with
+  `resolveDerived(part, p)` from **`partforge/derive`** — a lean, DOM-free entry safe
+  to import from part modules; don't hand-roll the merge.
 - **Reuse a param `key`** across sub-parts/features so one slider moves all of them.
 - **`enabled(p)`** gates a whole sub-part on a toggle param (the part appears/disappears
   with the control).
