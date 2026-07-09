@@ -4,4 +4,3 @@
 // Part build functions import geometry helpers from "partforge/geometry" instead.
 export { mount } from "./framework/index.js";
 export { viewSubParts } from "./framework/jobs.js";
-export { resolveDerived } from "./framework/derive.js";

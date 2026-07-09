@@ -59,7 +59,12 @@ export function mount(part, { createWorker, container = document.getElementById(
 
   // Current selection context for the pickers: the active view + live params +
   // derived values. Shared by both ?pick modes below.
-  const getContext = () => ({ view: view(), params, derived: resolveDerived(part, { ...part.defaults, ...params }) });
+  const getContext = () => {
+    let derived = {};
+    // A throwing derive must not crash the pick flow — proceed without derived context.
+    try { derived = resolveDerived(part, { ...part.defaults, ...params }); } catch { /* derived stays {} */ }
+    return { view: view(), params, derived };
+  };
 
   // ?pick enables click-to-select: a toggle button + a transient toast. Off by
   // default — no button, no listener, no behavior change. Deleting this block and

@@ -50,7 +50,11 @@ export function createProbeKernel() {
 export function detectBackend(part, params = {}) {
   if (part.meta?.backend) return part.meta.backend;
   const p = { ...part.defaults, ...params };
-  const d = resolveDerived(part, p);
+  let d = {};
+  // A throwing derive must not escape here — this runs on the main thread mid
+  // regen (after the busy spinner goes up). Probe with an empty `d`; the worker
+  // build hits the same throw and posts a proper error for the UI.
+  try { d = resolveDerived(part, p); } catch { /* fall through with d = {} */ }
   const { kernel, used } = createProbeKernel();
   for (const name of Object.keys(part.parts)) {
     try { part.parts[name].build(kernel, p, d); } catch { /* probe miss → capability backstop covers it */ }

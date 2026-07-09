@@ -65,3 +65,56 @@ test("detectBackend handles a grouped derive", () => {
   part.parts.usesCore.build = (k, p, d) => k.box(d.w, 1, 1).fillet(0.5);
   expect(detectBackend(part)).toBe("occt");
 });
+
+// --- fixes from the grouped-derive code review ---
+
+test("params read only via a sub-part's display place() count as reads", () => {
+  const part = {
+    defaults: { a: 2, b: 3, c: 4, off: 5 },
+    views: { v: { label: "V" } },
+    derive: {
+      core: (p) => ({ x: p.a + 1 }),
+      pose: (p) => ({ y: p.b * 2 }),
+      other: (p) => ({ z: p.c }), // nothing reads z → c must stay out
+    },
+    parts: {
+      s: {
+        views: ["v"],
+        build: (k, p, d) => k.cylinder(d.x, d.x, 10),
+        place: (solid, { p, d }) => solid.at([d.y, p.off, 0]),
+      },
+    },
+  };
+  const map = subPartReadKeys(part, "v", part.defaults);
+  expect(map).not.toBe(RELEVANT_ALL);
+  expect([...map.get("s")].sort()).toEqual(["a", "b", "off"]);
+});
+
+test("detectBackend survives a throwing derive (falls back to per-build probing)", () => {
+  const part = {
+    defaults: { r: 2 },
+    views: { v: { label: "V" } },
+    derive: { bad: () => { throw new Error("nope"); } },
+    parts: { s: { views: ["v"], build: (k, p) => k.cylinder(p.r, p.r, 4) } },
+  };
+  expect(detectBackend(part)).toBe("manifold");
+});
+
+test("a group that mutates d in place is still attributed to its own inputs", () => {
+  const part = {
+    defaults: { a: 2, b: 3, c: 4 },
+    views: { v: { label: "V" } },
+    derive: {
+      g1: (p) => ({ w: p.a }),
+      g2: (p, d) => { d.z = d.w * p.b; return {}; }, // writes z by mutation
+      g3: (p) => ({ q: p.c }),
+    },
+    parts: { s: { views: ["v"], build: (k, p, d) => k.box(d.z, 1, 1) } },
+  };
+  expect([...relevantParamKeys(part, "v", part.defaults)].sort()).toEqual(["a", "b"]);
+});
+
+test("reading a derived key before any group produced it throws loudly", () => {
+  const misordered = { derive: { g2: (p, d) => ({ h: d.w * 2 }), g1: () => ({ w: 1 }) } };
+  expect(() => resolveDerived(misordered, {})).toThrow(/before any earlier group/);
+});

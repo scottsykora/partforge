@@ -38,13 +38,30 @@ function analyzeDerive(part, params) {
   for (const fn of Object.values(part.derive)) {
     const raw = new Set();
     const fromEarlier = new Set();
-    const out = fn(recorder(params, raw), recorder(derived, fromEarlier)) ?? {};
+    const written = new Set();
+    // Reads are recorded (and guarded against not-yet-produced keys, matching
+    // resolveDerived); writes pass THROUGH to the real accumulator so a group
+    // that mutates `d` in place analyzes exactly like it runs in production.
+    const dProxy = new Proxy(derived, {
+      get(t, key) {
+        if (typeof key === "string" && key !== "then") {
+          if (!(key in t)) throw new Error(`derive: group read "${key}" before any earlier group produced it`);
+          fromEarlier.add(key);
+        }
+        return Reflect.get(t, key);
+      },
+      set(t, key, v) {
+        if (typeof key === "string") written.add(key);
+        return Reflect.set(t, key, v);
+      },
+    });
+    const out = fn(recorder(params, raw), dProxy) ?? {};
     const deps = new Set(raw);
     for (const k of fromEarlier) for (const dep of depsOf.get(k) ?? []) deps.add(dep);
     for (const r of raw) allInputs.add(r);
-    for (const key of Object.keys(out)) {
+    for (const key of [...Object.keys(out), ...written]) {
       depsOf.set(key, deps);
-      derived[key] = out[key];
+      if (Object.hasOwn(out, key)) derived[key] = out[key];
     }
   }
   return { derived, allInputs, depsOf };
@@ -85,7 +102,11 @@ export function subPartReadKeys(part, view, params) {
       const reads = new Set();
       const dSeen = new Set();
       if (sp.enabled) sp.enabled(recorder(params, reads)); // gate params change presence too
-      sp.build(kernel, recorder(params, reads), recorder(derived, dSeen));
+      const built = sp.build(kernel, recorder(params, reads), recorder(derived, dSeen));
+      // place() shapes what's on screen too (display pose is baked into the cached
+      // mesh), so its reads count — without this, a param consumed only by place()
+      // would let the mesh cache skip a rebuild and leave the sub-part misplaced.
+      if (sp.place) sp.place(built, { view, purpose: "display", p: recorder(params, reads), d: recorder(derived, dSeen) });
       if (dSeen.size > 0) {
         if (depsOf && [...dSeen].every((k) => depsOf.has(k))) {
           for (const k of dSeen) for (const dep of depsOf.get(k)) reads.add(dep);

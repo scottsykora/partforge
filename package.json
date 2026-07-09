@@ -25,6 +25,7 @@
     ".": "./src/index.js",
     "./worker": "./src/framework/worker.js",
     "./geometry": "./src/framework/geometry/polygon.js",
+    "./derive": "./src/framework/derive.js",
     "./testing": "./src/testing.js"
   },
   "bin": {
