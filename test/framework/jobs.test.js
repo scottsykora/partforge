@@ -64,3 +64,16 @@ test("export posts carry their payload buffers in the transfer list", async () =
   const [dl, dlTransfer] = posted.find(([m]) => m.type === "download");
   expect(dlTransfer).toContain(dl.data);
 });
+
+test("a throwing derive posts an error instead of hanging the job", async () => {
+  const bad = {
+    defaults: { r: 4 },
+    derive: () => { throw new Error("derive blew up"); },
+    views: { all: { label: "All" } },
+    parts: { base: { views: ["all"], build: (k2, p) => k2.cylinder(p.r, p.r, 10) } },
+  };
+  const posted = [];
+  await handle(k, bad, { type: "generate", subparts: ["base"], view: "all", params: {} }, (m) => posted.push(m));
+  const err = posted.find((m) => m.type === "error");
+  expect(err?.message).toMatch(/derive blew up/);
+});
