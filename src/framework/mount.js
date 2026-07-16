@@ -236,5 +236,9 @@ export function mount(part, { createWorker, container = document.getElementById(
   });
 
   // Optional host-page viewer chrome (#pause / #reframe / #theme) + camera persistence.
-  attachViewerControls(viewer);
+  attachViewerControls(viewer, {
+    pause: document.getElementById("pause"),
+    reframe: document.getElementById("reframe"),
+    theme: document.getElementById("theme"),
+  });
 }
