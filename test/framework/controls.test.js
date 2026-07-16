@@ -185,3 +185,49 @@ test("applyRelevance(RELEVANT_ALL) clears all dimming and shows all sections", (
   expect(sectionByTitle(root, "Body").classList.contains("section-hidden")).toBe(false);
   expect(wrapByLabel(root, "OD").classList.contains("irrelevant")).toBe(false);
 });
+
+test("info glyph toggles a popover; dispose removes it and its listeners", () => {
+  document.body.innerHTML = "";
+  const root = document.createElement("div");
+  document.body.append(root);
+  const panel = buildControls(
+    root,
+    [{ id: "b", title: "Body", description: "About the body",
+       advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] }],
+    { od: 5 },
+    () => {},
+  );
+
+  const glyph = root.querySelector("button.info");
+  glyph.click();
+  const pop = document.body.querySelector(".popover");
+  expect(pop.hidden).toBe(false);
+  expect(glyph.getAttribute("aria-expanded")).toBe("true");
+
+  glyph.click(); // toggle off
+  expect(pop.hidden).toBe(true);
+
+  panel.dispose();
+  expect(document.body.querySelector(".popover")).toBeNull();
+  expect(root.children.length).toBe(0);
+});
+
+test("Escape closes the popover; after dispose the document listener is gone", () => {
+  document.body.innerHTML = "";
+  const root = document.createElement("div");
+  document.body.append(root);
+  const panel = buildControls(
+    root,
+    [{ id: "b", title: "Body", description: "About the body",
+       advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] }],
+    { od: 5 },
+    () => {},
+  );
+  root.querySelector("button.info").click();
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  expect(document.body.querySelector(".popover").hidden).toBe(true);
+  panel.dispose();
+  // no popover left to act on — dispatching again must not throw or recreate one
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  expect(document.body.querySelector(".popover")).toBeNull();
+});

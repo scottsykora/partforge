@@ -47,35 +47,51 @@ export function clampToRange(raw, min, max) {
   return Math.min(max, Math.max(min, v));
 }
 
-// --- info glyph + shared popover ------------------------------------------
-// One popover element, reused across glyphs (only one open at a time). Global
-// dismiss listeners are registered once at module load.
-let popover = null;
-function ensurePopover() {
-  if (!popover || !popover.isConnected) {
-    popover = document.createElement("div");
-    popover.className = "popover";
-    popover.hidden = true;
-    document.body.append(popover);
+// --- info glyph + per-panel popover -----------------------------------------
+// One popover element per panel, shared by all its glyphs (only one open at a
+// time). Document-level dismiss listeners are registered per panel and removed
+// by panel.dispose().
+function createInfoPopover() {
+  const pop = el("div", "popover");
+  pop.hidden = true;
+  document.body.append(pop);
+  let owner = null; // the glyph whose description is showing
+
+  function close() {
+    if (pop.hidden) return;
+    pop.hidden = true;
+    if (owner) { owner.setAttribute("aria-expanded", "false"); owner = null; }
   }
-  return popover;
-}
-function closePopover() {
-  if (popover && !popover.hidden) {
-    popover.hidden = true;
-    if (popover._owner) { popover._owner.setAttribute("aria-expanded", "false"); popover._owner = null; }
-  }
-}
-if (typeof document !== "undefined") {
-  document.addEventListener("click", (e) => {
-    if (popover && !popover.hidden && !popover.contains(e.target) && !e.target.closest?.(".info")) closePopover();
-  });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePopover(); });
+  const onDocClick = (e) => {
+    if (!pop.hidden && !pop.contains(e.target) && !e.target.closest?.(".info")) close();
+  };
+  const onDocKeydown = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("click", onDocClick);
+  document.addEventListener("keydown", onDocKeydown);
+
+  return {
+    toggle(glyph, description) {
+      if (owner === glyph) { close(); return; } // toggle off
+      close();
+      pop.innerHTML = renderMarkdown(description);
+      pop.hidden = false;
+      owner = glyph;
+      glyph.setAttribute("aria-expanded", "true");
+      const r = glyph.getBoundingClientRect();
+      pop.style.top = `${r.bottom + 6}px`;
+      pop.style.left = `${Math.max(8, r.left - 8)}px`;
+    },
+    dispose() {
+      document.removeEventListener("click", onDocClick);
+      document.removeEventListener("keydown", onDocKeydown);
+      pop.remove();
+    },
+  };
 }
 
-// Append a focusable ⓘ glyph to `container` that toggles the shared popover with
-// `description` (Markdown). No-op when description is empty.
-function attachInfo(container, description) {
+// Append a focusable ⓘ glyph to `container` that toggles the panel's shared
+// popover with `description` (Markdown). No-op when description is empty.
+function attachInfo(container, description, info) {
   if (typeof description !== "string" || !description.trim()) return;
   const glyph = document.createElement("button");
   glyph.type = "button";
@@ -83,19 +99,7 @@ function attachInfo(container, description) {
   glyph.textContent = "ⓘ";
   glyph.setAttribute("aria-label", "More info");
   glyph.setAttribute("aria-expanded", "false");
-  glyph.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const pop = ensurePopover();
-    if (pop._owner === glyph) { closePopover(); return; } // toggle off
-    closePopover();
-    pop.innerHTML = renderMarkdown(description);
-    pop.hidden = false;
-    pop._owner = glyph;
-    glyph.setAttribute("aria-expanded", "true");
-    const r = glyph.getBoundingClientRect();
-    pop.style.top = `${r.bottom + 6}px`;
-    pop.style.left = `${Math.max(8, r.left - 8)}px`;
-  });
+  glyph.addEventListener("click", (e) => { e.stopPropagation(); info.toggle(glyph, description); });
   container.append(glyph);
 }
 
@@ -111,12 +115,12 @@ function el(tag, className, text) {
 //   "number"           — number box only (no slider)
 // The box accepts exact values (finer than `step`); typed values clamp to
 // [min, max] on commit (blur/Enter). Returns { wrap, sync }.
-function makeSlider(def, params, onChange) {
+function makeSlider(def, params, onChange, info) {
   const numeric = def.control === "number";
   const wrap = el("div", "slider");
   const row = el("div", "row");
   const label = el("label", "", def.label);
-  attachInfo(label, def.description);
+  attachInfo(label, def.description, info);
   row.append(label);
 
   // editable value box (+ optional unit suffix)
@@ -181,25 +185,29 @@ function advancedBlock() {
 }
 
 export function buildControls(root, parameters, params, onDirty) {
+  const info = createInfoPopover();
   const controls = []; // { key, el } per control element
   const sections = []; // { el, keys:Set } per rendered section
   for (const sec of parameters) {
     if (!sectionRenders(sec)) continue;
     const section = el("div", "section");
     const title = el("div", "sec-title", sec.title);
-    attachInfo(title, sec.description);
+    attachInfo(title, sec.description, info);
     section.append(title);
     const keys = new Set();
     const register = (key, node) => { controls.push({ key, el: node }); keys.add(key); };
-    if (sec.features) buildFeatureSection(section, sec, params, onDirty, register);
-    else buildPresetSection(section, sec, params, onDirty, register);
+    if (sec.features) buildFeatureSection(section, sec, params, onDirty, register, info);
+    else buildPresetSection(section, sec, params, onDirty, register, info);
     root.append(section);
     sections.push({ el: section, keys });
   }
-  return { applyRelevance: (relevant) => applyRelevance(relevant, controls, sections) };
+  return {
+    applyRelevance: (relevant) => applyRelevance(relevant, controls, sections),
+    dispose: () => { info.dispose(); root.replaceChildren(); },
+  };
 }
 
-function buildPresetSection(section, sec, params, onDirty, register) {
+function buildPresetSection(section, sec, params, onDirty, register, info) {
   // preset picker, below the title, full width (omitted when the section has no presets)
   let preset = null;
   const presetNames = sec.presets ? Object.keys(sec.presets) : [];
@@ -222,7 +230,7 @@ function buildPresetSection(section, sec, params, onDirty, register) {
     box.type = "checkbox";
     box.checked = params[t.key] > 0;
     const lbl = el("span", "", t.label);
-    attachInfo(lbl, t.description);
+    attachInfo(lbl, t.description, info);
     row.append(box, lbl);
     box.addEventListener("change", () => { params[t.key] = box.checked ? (t.on ?? 1) : 0; onDirty?.(); });
     register(t.key, row);
@@ -234,7 +242,7 @@ function buildPresetSection(section, sec, params, onDirty, register) {
   if (advanced.length) {
     const { adv, toggle } = advancedBlock();
     for (const def of advanced) {
-      const s = makeSlider(def, params, () => { if (preset) preset.value = "Custom"; onDirty?.(); });
+      const s = makeSlider(def, params, () => { if (preset) preset.value = "Custom"; onDirty?.(); }, info);
       adv.append(s.wrap);
       syncs[def.key] = s.sync;
       register(def.key, s.wrap);
@@ -254,7 +262,7 @@ function buildPresetSection(section, sec, params, onDirty, register) {
   }
 }
 
-function buildFeatureSection(section, sec, params, onDirty, register) {
+function buildFeatureSection(section, sec, params, onDirty, register, info) {
   // Everything lives under Advanced: each feature is a checkbox followed by its
   // own controls, which appear directly below it when the box is checked.
   const { adv, toggle } = advancedBlock();
@@ -266,14 +274,14 @@ function buildFeatureSection(section, sec, params, onDirty, register) {
     box.type = "checkbox";
     box.checked = params[feat.key] > 0;
     const featLabel = el("span", "", feat.label);
-    attachInfo(featLabel, feat.description);
+    attachInfo(featLabel, feat.description, info);
     checkRow.append(box, featLabel);
     register(feat.key, checkRow);
 
     const group = el("div", "feat-group");
     const syncs = [];
     for (const def of feat.sliders.filter((d) => !d.hidden)) {
-      const s = makeSlider(def, params, onDirty);
+      const s = makeSlider(def, params, onDirty, info);
       group.append(s.wrap);
       syncs.push(s.sync);
       register(def.key, s.wrap);
