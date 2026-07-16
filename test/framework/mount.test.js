@@ -255,3 +255,10 @@ test("dispose() detaches the onPick picker", () => {
   els.chrome.reframe.click();
   expect(fakeViewers.at(-1).frame).not.toHaveBeenCalled();
 });
+
+test("dispose() before the first build rejects ready instead of hanging", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+  runtime.dispose(); // no build ever completed
+  return expect(runtime.ready).rejects.toThrow("disposed before first build");
+});

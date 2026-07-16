@@ -33,7 +33,7 @@ import { createPickRequestClient } from "./pick-request/index.js";
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
 export function mount(part, { createWorker, elements = {}, onBuild, onPick,
                               container: legacyContainer, controls: legacyControls } = {}) {
-  // --- element resolution (the ONLY getElementById calls in the framework) ----
+  // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
   const els = {
     viewer: elements.viewer ?? legacyContainer ?? byId("app"),
@@ -291,6 +291,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
   function dispose() {
     if (disposed) return;
     disposed = true;
+    if (!readySettled) { readySettled = true; rejectReady(new Error("disposed before first build")); }
     picker?.detach();
     pickToggle?.detach();
     pickClient?.detach();
@@ -304,6 +305,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
     tabsCtl.detach();
     panel.dispose();
     dbg?.detach();
+    ui.hideBusy();
+    ui.setStatus("");
     viewer.dispose();
   }
 
