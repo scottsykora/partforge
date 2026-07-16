@@ -13,12 +13,15 @@ function fakeViewer() {
 
 test("detach() removes the button, toast, and click listener", () => {
   const viewer = fakeViewer();
+  const added = vi.spyOn(viewer.domElement, "addEventListener");
+  const removed = vi.spyOn(viewer.domElement, "removeEventListener");
   const toggle = attachPickToggle(viewer, { part: { parts: {} }, getContext: () => ({}) });
   expect(document.getElementById("pf-pick")).not.toBeNull();
   expect(document.getElementById("pf-pick-toast")).not.toBeNull();
   toggle.detach();
   expect(document.getElementById("pf-pick")).toBeNull();
   expect(document.getElementById("pf-pick-toast")).toBeNull();
-  // an armed-then-detached picker must not react to clicks (no raycast → no throw)
-  expect(() => viewer.domElement.click()).not.toThrow();
+  // the exact click handler the picker registered must be the one removed
+  const clickHandler = added.mock.calls.find(([type]) => type === "click")[1];
+  expect(removed).toHaveBeenCalledWith("click", clickHandler);
 });
