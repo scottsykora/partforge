@@ -8,8 +8,9 @@ The selection picker listens to the viewer canvas's native `click` event. Browse
 
 Keep click-to-select inside `attachPicker`, but classify the pointer gesture that precedes each click:
 
-- On `pointerdown`, remember the active pointer's identifier and starting client coordinates.
-- On matching `pointermove` events, mark the gesture as a drag once its squared displacement exceeds 16 pixels squared (a four-pixel tolerance).
+- On `pointerdown`, remember each active pointer's starting client coordinates without allowing an additional touch to reset the gesture.
+- On matching `pointermove` events, mark the overall gesture as a drag once any pointer's squared displacement exceeds 16 pixels squared (a four-pixel tolerance).
+- On `pointerup` and `pointercancel`, retire that pointer's coordinates while preserving drag suppression long enough for the browser's subsequent `click`; a wholly cancelled gesture resets immediately.
 - On `click`, consume the gesture state. If it was a drag, return before raycasting; otherwise preserve the existing selection behavior.
 - Register and remove the new pointer listeners alongside the existing click listener.
 
@@ -35,6 +36,7 @@ Extend `test/selection-pick.test.js` with focused interaction tests:
 
 - A pointer gesture moving beyond four pixels followed by `click` must not raycast, flash, or call `onPick`.
 - A pointer gesture moving within four pixels followed by `click` must still select normally.
+- A second pointer joining after the first has crossed the threshold must not erase drag suppression.
 - Existing plain-click, inactive, miss, and detach behavior must remain green.
 
 Run the focused Vitest file first, then the entire unit suite and production build.

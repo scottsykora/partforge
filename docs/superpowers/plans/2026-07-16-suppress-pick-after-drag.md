@@ -4,7 +4,7 @@
 
 **Goal:** Prevent a camera-orbit drag that ends over the viewer canvas from being interpreted as a geometry pick.
 
-**Architecture:** `attachPicker` remains the single owner of click-to-select behavior. It records pointer-down coordinates and marks the gesture as dragged after more than four pixels of movement, then consumes that state in the existing click handler before raycasting.
+**Architecture:** `attachPicker` remains the single owner of click-to-select behavior. It records each active pointer's down coordinates and marks the overall gesture as dragged after more than four pixels of movement, then consumes that state in the existing click handler before raycasting.
 
 **Tech Stack:** Plain ESM JavaScript, browser Pointer Events, three.js, Vitest, Happy DOM
 
@@ -37,7 +37,7 @@ Add a sibling test that moves from `(100, 100)` to `(102, 102)` before clicking 
 
 **Step 1: Track pointer gesture state**
 
-Add private state for the current pointer identifier, its starting coordinates, and whether it crossed the drag threshold. Register `pointerdown` and `pointermove` listeners on `viewer.domElement`.
+Add private state for active pointer identifiers and their starting coordinates, plus whether any pointer crossed the drag threshold. Register `pointerdown`, `pointermove`, `pointerup`, and `pointercancel` listeners on `viewer.domElement`; additional touch pointers must not reset an in-progress gesture.
 
 **Step 2: Suppress and consume drag clicks**
 
@@ -45,7 +45,7 @@ At the start of the active click path, capture and reset the gesture state. Retu
 
 **Step 3: Clean up every listener**
 
-Extend `detach()` to remove `pointerdown`, `pointermove`, and `click` handlers using the same function references that were registered.
+Extend `detach()` to remove all four pointer handlers and the `click` handler using the same function references that were registered.
 
 **Step 4: Run the focused test and verify GREEN**
 
