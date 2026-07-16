@@ -29,3 +29,15 @@ test("STL export routes to the named backend", () => {
   s.send({ type: "export-stl" }, "occt");
   expect(posts.occt).toEqual([{ type: "export-stl" }]);
 });
+
+test("terminate() terminates both workers", () => {
+  const terminated = [];
+  const createWorker = (name) => ({
+    postMessage: () => {},
+    onmessage: null,
+    terminate: () => terminated.push(name),
+  });
+  const s = createGeometryService({ createWorker, onMessage: () => {} });
+  s.terminate();
+  expect(terminated.sort()).toEqual(["manifold", "occt"]);
+});
