@@ -187,3 +187,71 @@ test("deprecated container/controls aliases still work", () => {
   finishFirstBuild(workers);
   return expect(runtime.ready).resolves.toBeUndefined();
 });
+
+test("onPick arms the picker permanently and delivers label/prompt/token", () => {
+  const onPick = vi.fn();
+  const { createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: makeElements(), onPick });
+
+  expect(attachPicker).toHaveBeenCalledTimes(1);
+  const pickerHandle = attachPicker.mock.results[0].value;
+  expect(pickerHandle.setActive).toHaveBeenCalledWith(true); // always-on
+
+  // simulate a click resolving to a Selection (the picker core is tested elsewhere)
+  const armed = attachPicker.mock.calls[0][1];
+  armed.onPick({ subPart: "body", point: [0, 0, 1.5], normal: [0, 0, -1],
+                 params: { h: 4 }, feature: { label: "Drainage hole" } });
+
+  expect(onPick).toHaveBeenCalledTimes(1);
+  const payload = onPick.mock.calls[0][0];
+  expect(payload.label).toBe("Drainage hole"); // feature label wins
+  expect(payload.prompt).toBe(
+    "On sub-part **body**, the user pointed at **Drainage hole**, local point (0, 0, 1.5), normal -Z, with params {h: 4}."
+  );
+  expect(payload.token).toBe("@body · Drainage hole · pt(0,0,1.5) n(-Z) · {h:4}");
+  expect(payload.selection.subPart).toBe("body");
+});
+
+test("label falls back to the sub-part label, then the sub-part name", () => {
+  const onPick = vi.fn();
+  const { createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: makeElements(), onPick });
+  const armed = attachPicker.mock.calls[0][1];
+
+  armed.onPick({ subPart: "body", point: [0, 0, 0], normal: [0, 0, 1], params: {} });
+  expect(onPick.mock.calls[0][0].label).toBe("Body"); // part.parts.body.label
+
+  armed.onPick({ subPart: "ghost", point: [0, 0, 0], normal: [0, 0, 1], params: {} });
+  expect(onPick.mock.calls[1][0].label).toBe("ghost"); // unknown sub-part → name
+});
+
+test("onPick wins over ?pick and ?pickserver (one click listener ever live)", async () => {
+  vi.stubGlobal("location", { search: "?pick&pickserver" });
+  const { createPickRequestClient } = await import("../../src/framework/pick-request/index.js");
+  const { createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn() });
+  expect(attachPicker).toHaveBeenCalledTimes(1);
+  expect(attachPickToggle).not.toHaveBeenCalled();
+  expect(createPickRequestClient).not.toHaveBeenCalled();
+});
+
+test("without onPick, ?pick still enables the clipboard toggle", () => {
+  vi.stubGlobal("location", { search: "?pick" });
+  const { createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: makeElements() });
+  expect(attachPickToggle).toHaveBeenCalledTimes(1);
+  expect(attachPicker).not.toHaveBeenCalled();
+});
+
+test("dispose() detaches the onPick picker", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els, onPick: vi.fn() });
+  runtime.dispose();
+  expect(attachPicker.mock.results[0].value.detach).toHaveBeenCalled();
+
+  // Task 9 review follow-up: dispose() must also detach the viewer chrome —
+  // a reframe click after dispose must not reach the (now-disposed) viewer.
+  els.chrome.reframe.click();
+  expect(fakeViewers.at(-1).frame).not.toHaveBeenCalled();
+});
