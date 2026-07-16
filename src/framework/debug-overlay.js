@@ -36,5 +36,6 @@ export function createDebugOverlay({ initialCachingOn = true, onToggle } = {}) {
         `L2 ops: ${l2}\n` +
         `L1 parts: ${skipped} skipped / ${rebuilt} rebuilt`;
     },
+    detach: () => box.remove(),
   };
 }
