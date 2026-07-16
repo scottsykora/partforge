@@ -70,3 +70,20 @@ test("a part without views keeps hand-written buttons and reads the active one",
   expect(tabs.current()).toBe("y");
   expect(el.querySelectorAll("button")).toHaveLength(2); // markup untouched
 });
+
+test("detach() stops click handling and empties generated buttons", () => {
+  const onChange = vi.fn();
+  const tabs = createViewTabs(el, part, { onChange });
+  tabs.detach();
+  expect(el.children.length).toBe(0);
+  el.innerHTML = '<button data-part="drum"></button>'; // even a re-added button is inert
+  el.querySelector("button").click();
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+test("detach() leaves hand-written buttons in place for a part without views", () => {
+  el.innerHTML = '<button data-part="only" class="on">Only</button>';
+  const tabs = createViewTabs(el, { views: undefined }, { onChange: () => {} });
+  tabs.detach();
+  expect(el.querySelector("button")).not.toBeNull();
+});

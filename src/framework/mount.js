@@ -14,7 +14,7 @@ import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
 import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
-import { attachPickToggle, attachHoverLabels } from "./selection/index.js";
+import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
 import { createPickRequestClient } from "./pick-request/index.js";
 
 // Mount a full parametric-part app from a PartDefinition. mount is WIRING: the
@@ -22,14 +22,43 @@ import { createPickRequestClient } from "./pick-request/index.js";
 // the schema-driven control panel, the regenerate state machine (regen-loop.js),
 // the view tabs (view-tabs.js), the status chrome (status-ui.js), the per-sub-part
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
-// so Vite can bundle the worker (see geometry-service.js). DOM element ids match the
-// host page: #app (viewer), #controls, #status, #download, #download-step, #busy,
-// #phase, #part (the view-tab segmented control).
-export function mount(part, { createWorker, container = document.getElementById("app"),
-                              controls = document.getElementById("controls") } = {}) {
-  const viewer = createViewer(container, part);
-  attachHoverLabels(viewer, { part }); // always-on hover inspection (no-op on touch-only devices)
-  const ui = createStatusUi();
+// so Vite can bundle the worker (see geometry-service.js).
+//
+// Embedding contract (0.12.0):
+//   const runtime = mount(part, { createWorker, elements, onBuild, onPick });
+//   await runtime.ready;   // first successful build of the default view
+//   runtime.dispose();     // full teardown
+// Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
+// exactly once here — submodules take element refs and never query the document.
+// `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
+export function mount(part, { createWorker, elements = {}, onBuild, onPick,
+                              container: legacyContainer, controls: legacyControls } = {}) {
+  // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
+  const byId = (id) => document.getElementById(id);
+  const els = {
+    viewer: elements.viewer ?? legacyContainer ?? byId("app"),
+    controls: elements.controls ?? legacyControls ?? byId("controls"),
+    status: {
+      status: elements.status?.status ?? byId("status"),
+      busy: elements.status?.busy ?? byId("busy"),
+      phase: elements.status?.phase ?? byId("phase"),
+    },
+    tabs: elements.tabs ?? byId("part"),
+    exports: {
+      stl: elements.exports?.stl ?? byId("download"),
+      step: elements.exports?.step ?? byId("download-step"),
+      threeMf: elements.exports?.threeMf ?? byId("download-3mf"),
+    },
+    chrome: {
+      pause: elements.chrome?.pause ?? byId("pause"),
+      reframe: elements.chrome?.reframe ?? byId("reframe"),
+      theme: elements.chrome?.theme ?? byId("theme"),
+    },
+  };
+
+  const viewer = createViewer(els.viewer, part);
+  const hover = attachHoverLabels(viewer, { part }); // always-on hover inspection (no-op on touch-only devices)
+  const ui = createStatusUi({ ...els.status, exports: [els.exports.stl, els.exports.step, els.exports.threeMf] });
 
   // ?backend=occt|manifold forces the backend; otherwise it's detected per part.
   let forcedBackend = new URLSearchParams(location.search).get("backend");
@@ -45,20 +74,16 @@ export function mount(part, { createWorker, container = document.getElementById(
     ? createDebugOverlay({ initialCachingOn: cachingOn, onToggle: (on) => { cachingOn = on; forceRegen(); } })
     : null;
 
-  const dlBtn = document.getElementById("download");
-  const dlStepBtn = document.getElementById("download-step");
-  const dl3mfBtn = document.getElementById("download-3mf");
-
   // View tabs (generated from part.views) + live params. A tab switch shows the
   // cached assembly instantly if it's current, else auto-builds what's missing.
-  const tabs = createViewTabs(document.getElementById("part"), part, {
+  const tabsCtl = createViewTabs(els.tabs, part, {
     onChange: () => { refreshView(); updateRelevance(); loop.kick(); },
   });
-  const view = () => tabs.current();
+  const view = () => tabsCtl.current();
   const params = { ...part.defaults };
 
   // Current selection context for the pickers: the active view + live params +
-  // derived values. Shared by both ?pick modes below.
+  // derived values. Shared by every pick mode below.
   const getContext = () => {
     let derived = {};
     // A throwing derive must not crash the pick flow — proceed without derived context.
@@ -66,18 +91,30 @@ export function mount(part, { createWorker, container = document.getElementById(
     return { view: view(), params, derived };
   };
 
-  // ?pick enables click-to-select: a toggle button + a transient toast. Off by
-  // default — no button, no listener, no behavior change. Deleting this block and
-  // the selection/ dir reverts the app exactly.
-  if (qs.has("pick")) {
-    attachPickToggle(viewer, { part, getContext });
+  // Click-to-select. Precedence (one click listener is ever live): the programmatic
+  // onPick option, else the ?pick clipboard toggle, else the ?pickserver client.
+  let picker = null;      // { setActive, detach } — armed permanently for onPick
+  let pickToggle = null;  // { detach }
+  let pickClient = null;  // { detach }
+  if (onPick) {
+    picker = attachPicker(viewer, {
+      part, getContext,
+      onPick: (selection) => onPick({
+        selection,
+        label: selection.feature?.label ?? part.parts[selection.subPart]?.label ?? selection.subPart,
+        prompt: formatSelection(selection, { style: "prompt" }),
+        token: formatSelection(selection, { style: "token" }),
+      }),
+    });
+    picker.setActive(true);
+  } else if (qs.has("pick")) {
+    pickToggle = attachPickToggle(viewer, { part, getContext });
   } else if (qs.has("pickserver")) {
     // Agent-driven mode: arm the picker only when the local pick-server asks for a
-    // click. Mutually exclusive with the clipboard ?pick toggle (else-if), so only one
-    // click listener is ever live. `?pickserver` or `?pickserver=http://host:port`.
+    // click. `?pickserver` or `?pickserver=http://host:port`.
     const serverUrl = typeof qs.get("pickserver") === "string" && qs.get("pickserver")
       ? qs.get("pickserver") : "http://127.0.0.1:4518";
-    createPickRequestClient({ serverUrl, viewer, part, getContext });
+    pickClient = createPickRequestClient({ serverUrl, viewer, part, getContext });
   }
 
   let framedView = null; // the view the camera was last framed to (null until first show)
@@ -105,6 +142,13 @@ export function mount(part, { createWorker, container = document.getElementById(
       service.send({ type: "generate", subparts: missing, view: view(), params, cache: cachingOn }, backendFor());
     },
   });
+
+  // First-build readiness: resolves on the first accepted meshes result, rejects on
+  // a first-build error. Guarded against unhandled rejection when never awaited.
+  let readySettled = false;
+  let resolveReady, rejectReady;
+  const ready = new Promise((res, rej) => { resolveReady = res; rejectReady = rej; });
+  ready.catch(() => {});
 
   // Reflect the active view. If every needed part is current, show it and enable
   // export. If stale (a regenerate is in flight), keep the old mesh visible so the
@@ -167,6 +211,8 @@ export function mount(part, { createWorker, container = document.getElementById(
             ui.setStatus(`${ui.statusText()} · ${(data.ms / 1000).toFixed(1)} s`);
           }
           dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt });
+          onBuild?.({ status: "success", ms: data.ms });
+          if (!readySettled) { readySettled = true; resolveReady(); }
         }
         loop.kick(); // stale → rebuild; fresh → the view may still need parts (tab switched mid-build)
         break;
@@ -191,13 +237,15 @@ export function mount(part, { createWorker, container = document.getElementById(
         ui.hideBusy();
         ui.setStatus(`failed: ${data.message}`, true);
         refreshView();
+        onBuild?.({ status: "error", error: data.message });
+        if (!readySettled) { readySettled = true; rejectReady(new Error(data.message)); }
         break;
     }
   }
 
   const service = createGeometryService({ createWorker, onMessage: onWorkerMessage });
 
-  const panel = buildControls(controls, part.parameters, params, onParamChange);
+  const panel = buildControls(els.controls, part.parameters, params, onParamChange);
   const updateRelevance = () => panel.applyRelevance(relevantParamKeys(part, view(), params));
   updateRelevance(); // initial view
 
@@ -215,21 +263,52 @@ export function mount(part, { createWorker, container = document.getElementById(
     loop.kick();
   }
 
-  dlBtn.addEventListener("click", () => {
+  const onStlClick = () => {
     ui.showBusy("exporting STL");
     service.send({ type: "export-stl", view: view(), params, quality: "print" }, backendFor());
-  });
+  };
+  els.exports.stl?.addEventListener("click", onStlClick);
 
-  dlStepBtn.addEventListener("click", () => {
+  const onStepClick = () => {
     ui.showBusy("exporting STEP");
     service.send({ type: "export-step", view: view(), params }, "occt"); // STEP is always OCCT
-  });
+  };
+  els.exports.step?.addEventListener("click", onStepClick);
 
-  dl3mfBtn?.addEventListener("click", () => {
+  const on3mfClick = () => {
     ui.showBusy("exporting 3MF");
     service.send({ type: "export-3mf", view: view(), params, quality: "print" }, backendFor());
-  });
+  };
+  els.exports.threeMf?.addEventListener("click", on3mfClick);
 
-  // Optional host-page viewer chrome (#pause / #reframe / #theme) + camera persistence.
-  attachViewerControls(viewer);
+  // Optional host-page viewer chrome (pause / reframe / theme) + camera persistence.
+  const chrome = attachViewerControls(viewer, els.chrome);
+
+  // Full teardown of everything this mount created. Idempotent. A disposed runtime
+  // can never surface a late build result (workers are terminated, the loop is
+  // terminal), which is what makes cross-mount swap races safe for embedders.
+  let disposed = false;
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    if (!readySettled) { readySettled = true; rejectReady(new Error("disposed before first build")); }
+    picker?.detach();
+    pickToggle?.detach();
+    pickClient?.detach();
+    hover.detach();
+    loop.dispose();
+    service.terminate();
+    els.exports.stl?.removeEventListener("click", onStlClick);
+    els.exports.step?.removeEventListener("click", onStepClick);
+    els.exports.threeMf?.removeEventListener("click", on3mfClick);
+    chrome.detach();
+    tabsCtl.detach();
+    panel.dispose();
+    dbg?.detach();
+    ui.hideBusy();
+    ui.setStatus("");
+    viewer.dispose();
+  }
+
+  return { ready, dispose };
 }

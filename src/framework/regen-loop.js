@@ -13,12 +13,13 @@
 export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
   let kernelReady = false;
   let generating = false;
+  let disposed = false;
   let paramsVersion = 0; // bumped on every settings edit
   let genVersion = -1;   // the params version the in-flight build is building
   let timer = null;
 
   function kick() {
-    if (!kernelReady || generating) return; // re-kicked when the current build finishes
+    if (disposed || !kernelReady || generating) return; // re-kicked when the current build finishes
     const missing = missingParts();
     if (missing.length === 0) return;
     generating = true;
@@ -28,7 +29,7 @@ export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
 
   return {
     kick,
-    ready() { kernelReady = true; kick(); },
+    ready() { if (disposed) return; kernelReady = true; kick(); },
     markDirty() {
       paramsVersion++;
       clearTimeout(timer);
@@ -41,5 +42,7 @@ export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
       return genVersion === paramsVersion;
     },
     version: () => paramsVersion,
+    // Terminal: cancel the pending debounce and refuse all future sends.
+    dispose() { disposed = true; clearTimeout(timer); },
   };
 }

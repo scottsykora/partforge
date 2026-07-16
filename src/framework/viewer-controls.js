@@ -1,14 +1,10 @@
 import { loadRotating, saveRotating, saveCamera, loadTheme, saveTheme } from "./view-state.js";
 
-// Wire the optional viewer-chrome buttons on the host page (#pause / #reframe /
-// #theme) to the viewer, plus persist the camera pose. Each button is optional —
-// omit it from the page and its behavior is simply absent. Self-contained: touches
-// only the viewer and the DOM, none of the part/params/regenerate state.
-export function attachViewerControls(viewer) {
-  const pauseBtn = document.getElementById("pause");
-  const reframeBtn = document.getElementById("reframe");
-  const themeBtn = document.getElementById("theme");
-
+// Wire the optional viewer-chrome buttons (pause / reframe / theme) to the viewer,
+// plus persist the camera pose. Element refs in (mount resolves defaults); each
+// button is optional — pass nothing and its behavior is simply absent. Returns
+// { detach } removing every listener this attached.
+export function attachViewerControls(viewer, { pause: pauseBtn, reframe: reframeBtn, theme: themeBtn } = {}) {
   // Theme: toggle the page chrome (CSS vars keyed off <html data-theme>) and the
   // scene together; remember the choice across reloads.
   let theme = loadTheme();
@@ -20,7 +16,8 @@ export function attachViewerControls(viewer) {
     saveTheme(mode);
   }
   applyTheme(theme);
-  themeBtn?.addEventListener("click", () => applyTheme(theme === "light" ? "dark" : "light"));
+  const onThemeClick = () => applyTheme(theme === "light" ? "dark" : "light");
+  themeBtn?.addEventListener("click", onThemeClick);
 
   // Pause/resume the idle auto-rotation.
   let rotating = loadRotating();
@@ -31,18 +28,32 @@ export function attachViewerControls(viewer) {
     pauseBtn.title = rotating ? "Pause rotation" : "Resume rotation";
   };
   syncPause();
-  pauseBtn?.addEventListener("click", () => {
+  const onPauseClick = () => {
     rotating = !rotating;
     viewer.setAutoRotate(rotating);
     syncPause();
     saveRotating(rotating);
-  });
+  };
+  pauseBtn?.addEventListener("click", onPauseClick);
 
   // Re-fit the camera to the current view.
-  reframeBtn?.addEventListener("click", () => viewer.frame());
+  const onReframeClick = () => viewer.frame();
+  reframeBtn?.addEventListener("click", onReframeClick);
 
   // Persist the camera when the user finishes an orbit/zoom, and right before a
   // reload (captures the latest pose, including auto-rotation drift).
   viewer.onCameraEnd(() => saveCamera(viewer.getCameraState()));
-  window.addEventListener("pagehide", () => saveCamera(viewer.getCameraState()));
+  const onPageHide = () => saveCamera(viewer.getCameraState());
+  window.addEventListener("pagehide", onPageHide);
+
+  return {
+    detach: () => {
+      themeBtn?.removeEventListener("click", onThemeClick);
+      pauseBtn?.removeEventListener("click", onPauseClick);
+      reframeBtn?.removeEventListener("click", onReframeClick);
+      window.removeEventListener("pagehide", onPageHide);
+      // the onCameraEnd listener lives on the OrbitControls object, which
+      // viewer.dispose() destroys — nothing to remove here
+    },
+  };
 }

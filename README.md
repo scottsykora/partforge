@@ -88,6 +88,40 @@ Test your parts headlessly with `partforge/testing`
 (or `node scripts/check-app.mjs <entry>.html`) — it loads the app and verifies the kernel
 boots with no errors. Needs Playwright: `npm i -D playwright && npx playwright install chromium`.
 
+### Embedding (0.12.0+)
+
+`mount()` returns a runtime handle and accepts element references, so an
+embedding app (React, iframe, multiple mounts) can size, await, and tear down
+the viewer without global IDs:
+
+```js
+const runtime = mount(part, {
+  createWorker,
+  elements: {
+    viewer, controls,                       // canvas host + param-panel host
+    status: { status, busy, phase },        // status chrome
+    tabs,                                   // view-tab segmented control
+    exports: { stl, step, threeMf },        // export buttons
+    chrome: { pause, reframe, theme },      // viewer buttons
+  },
+  onBuild: ({ status, ms, error }) => {},   // per accepted build: "success" | "error"
+  onPick: ({ selection, label, prompt, token }) => {}, // programmatic click-to-select
+});
+await runtime.ready;   // first successful build (rejects on a first-build error)
+runtime.dispose();     // stops loops, workers, observers, listeners; frees GPU resources
+```
+
+Every `elements` entry defaults to the legacy global ID (`#app`, `#controls`,
+`#status`/`#busy`/`#phase`, `#part`, `#download`/`#download-step`/`#download-3mf`,
+`#pause`/`#reframe`/`#theme`), so a classic host page needs no changes. The viewer
+sizes from its container via ResizeObserver — no window coupling.
+
+`onPick` arms click-to-select permanently: `label` is the feature label (falling
+back to the sub-part label/name) for compact UI, `prompt` is the LLM-ready
+sentence, `token` the compact form, `selection` the raw object. When `onPick` is
+set, the `?pick` / `?pickserver` URL modes are ignored (one click listener ever
+live); hover labels stay always-on.
+
 ## Authoring guide
 
 **[docs/AUTHORING-PARTS.md](docs/AUTHORING-PARTS.md)** is the full guide — the part

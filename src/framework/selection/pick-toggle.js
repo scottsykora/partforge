@@ -31,4 +31,13 @@ export function attachPickToggle(viewer, { part, getContext }) {
   });
 
   btn.addEventListener("click", () => picker.setActive(btn.classList.toggle("on")));
+
+  return {
+    detach: () => {
+      picker.detach();
+      clearTimeout(hideTimer);
+      btn.remove();
+      toast.remove();
+    },
+  };
 }

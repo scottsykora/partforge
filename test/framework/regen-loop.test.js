@@ -88,3 +88,22 @@ test("version() increments once per edit (drives the mesh cache's validity stamp
   loop.markDirty();
   expect(loop.version()).toBe(2);
 });
+
+test("dispose() cancels a pending debounced kick", () => {
+  const { loop, send } = makeLoop();
+  loop.ready();
+  send.mockClear();
+  loop.buildDone();
+  loop.markDirty();       // queues a debounced kick
+  loop.dispose();
+  vi.runAllTimers();
+  expect(send).not.toHaveBeenCalled();
+});
+
+test("after dispose(), ready() and kick() send nothing", () => {
+  const { loop, send } = makeLoop();
+  loop.dispose();
+  loop.ready();
+  loop.kick();
+  expect(send).not.toHaveBeenCalled();
+});

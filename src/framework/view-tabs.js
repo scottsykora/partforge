@@ -5,7 +5,8 @@ import { loadView, saveView } from "./view-state.js";
 // the #part div empty); a part without `views` keeps whatever buttons the page
 // hand-wrote. The active view persists across reloads via view-state.
 export function createViewTabs(el, part, { onChange }) {
-  if (el && part.views) {
+  const generated = !!(el && part.views);
+  if (generated) {
     el.innerHTML = Object.entries(part.views)
       .map(([key, v], i) => `<button data-part="${key}"${i === 0 ? ' class="on"' : ""}>${v?.label ?? key}</button>`)
       .join("");
@@ -20,14 +21,21 @@ export function createViewTabs(el, part, { onChange }) {
   let view = savedBtn ? saved : defaultView;
   if (savedBtn) setActive(savedBtn);
 
-  el.addEventListener("click", (e) => {
+  const onClick = (e) => {
     const btn = e.target.closest("button[data-part]");
     if (!btn) return;
     view = btn.dataset.part;
     saveView(view);
     setActive(btn);
     onChange(view);
-  });
+  };
+  el.addEventListener("click", onClick);
 
-  return { current: () => view };
+  return {
+    current: () => view,
+    detach: () => {
+      el.removeEventListener("click", onClick);
+      if (generated) el.innerHTML = ""; // we generated these buttons; hand-written markup stays
+    },
+  };
 }

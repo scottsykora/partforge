@@ -12,5 +12,8 @@ export function createGeometryService({ createWorker, onMessage }) {
   // Post a job to the chosen backend's worker. The message's own `type` says what to
   // do (generate / export-stl / export-3mf / export-step); `backend` picks the worker
   // — manifold for preview/STL/3MF, occt for STEP (the caller passes "occt" for that).
-  return { send: (msg, backend = "manifold") => workers[backend].postMessage(msg) };
+  return {
+    send: (msg, backend = "manifold") => workers[backend].postMessage(msg),
+    terminate: () => { workers.manifold.terminate(); workers.occt.terminate(); },
+  };
 }
