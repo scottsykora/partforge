@@ -29,7 +29,12 @@ export function mount(part, { createWorker, container = document.getElementById(
                               controls = document.getElementById("controls") } = {}) {
   const viewer = createViewer(container, part);
   attachHoverLabels(viewer, { part }); // always-on hover inspection (no-op on touch-only devices)
-  const ui = createStatusUi();
+  const ui = createStatusUi({
+    status: document.getElementById("status"),
+    busy: document.getElementById("busy"),
+    phase: document.getElementById("phase"),
+    exports: ["download", "download-step", "download-3mf"].map((id) => document.getElementById(id)),
+  });
 
   // ?backend=occt|manifold forces the backend; otherwise it's detected per part.
   let forcedBackend = new URLSearchParams(location.search).get("backend");
