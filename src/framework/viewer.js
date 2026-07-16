@@ -87,7 +87,7 @@ export function createViewer(container, part) {
   // CAD-style feature edge lines (anti-aliased "fat" lines), one per sub-part.
   const EDGE_ANGLE = 35; // deg — OCCT fallback threshold (Manifold supplies seam-aware edges)
   const lineMaterial = new LineMaterial({ color: 0x1c232d, linewidth: 1.0 }); // ~10% lighter, 1 px
-  lineMaterial.resolution.set(innerWidth, innerHeight);
+  lineMaterial.resolution.set(1, 1); // real size set by resize() below
   const subLines = Object.fromEntries(
     names.map((n) => [n, new LineSegments2(new LineSegmentsGeometry(), lineMaterial)])
   );
@@ -204,14 +204,16 @@ export function createViewer(container, part) {
   }
 
   // --- resize ---------------------------------------------------------------
+  // Size from the host container (not the window) so embedders control the pane.
   function resize() {
-    const w = innerWidth, h = innerHeight;
+    const w = container.clientWidth || 300, h = container.clientHeight || 150;
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     lineMaterial.resolution.set(w, h); // fat lines need the viewport size for px width
   }
-  addEventListener("resize", resize);
+  const ro = new ResizeObserver(resize);
+  ro.observe(container);
   resize();
 
   // --- render loop ----------------------------------------------------------
@@ -235,6 +237,7 @@ export function createViewer(container, part) {
   function onCameraEnd(cb) { controls.addEventListener("end", cb); }
 
   // Transient marker at a world-space point — visual confirmation of a pick.
+  const flashTimers = new Set();
   function flashPoint(world) {
     const dot = new THREE.Mesh(
       new THREE.SphereGeometry(1.2, 16, 12),
@@ -243,8 +246,38 @@ export function createViewer(container, part) {
     dot.renderOrder = 999;
     dot.position.set(world[0], world[1], world[2]);
     scene.add(dot);
-    setTimeout(() => { scene.remove(dot); dot.geometry.dispose(); dot.material.dispose(); }, 1200);
+    const t = setTimeout(() => {
+      flashTimers.delete(t);
+      scene.remove(dot); dot.geometry.dispose(); dot.material.dispose();
+    }, 1200);
+    flashTimers.add(t);
   }
 
-  return { showAssembly, hideAssembly, setSubGeometry, hasSubMesh, subTriangles, frame, setAutoRotate, setTheme, getCameraState, setCameraState, onCameraEnd, camera, domElement: renderer.domElement, _subMeshes: subMesh, flashPoint };
+  // Full teardown: render loop, observers, controls, timers, GPU resources, DOM.
+  // Idempotent. Cached sub-part geometries and their edge lines are freed; the
+  // shared and per-part cloned materials tolerate double-dispose.
+  let disposed = false;
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    ro.disconnect();
+    renderer.setAnimationLoop(null);
+    controls.dispose();
+    for (const t of flashTimers) clearTimeout(t);
+    flashTimers.clear();
+    for (const n of names) {
+      const g = subCache[n];
+      if (g) { g.userData.edges?.dispose(); g.dispose(); subCache[n] = null; }
+      subMesh[n].material?.dispose();
+      subMesh[n].geometry?.dispose(); // the initial empty BufferGeometry, if never replaced
+    }
+    material.dispose();
+    lineMaterial.dispose();
+    grid.geometry.dispose();
+    grid.material.dispose();
+    renderer.dispose();
+    renderer.domElement.remove();
+  }
+
+  return { showAssembly, hideAssembly, setSubGeometry, hasSubMesh, subTriangles, frame, setAutoRotate, setTheme, getCameraState, setCameraState, onCameraEnd, camera, domElement: renderer.domElement, _subMeshes: subMesh, flashPoint, dispose };
 }
