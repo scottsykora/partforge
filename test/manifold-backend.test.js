@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bboxSize } from "../src/testing/mesh.js";
-import { circleProfile, regularPolygon, filletPolygon, roundedProfile } from "../src/framework/geometry/polygon.js";
+import { circleProfile, regularPolygon, filletPolygon, roundedProfile, offsetPolygon } from "../src/framework/geometry/polygon.js";
 import { bootManifoldKernel } from "../src/testing.js";
 
 let k;
@@ -383,4 +383,9 @@ test("sweep is a single atomic cache node whose hash folds the path/profile/opts
 
 test("sweep throws up front on a fold (too-tight bend) rather than shipping bad geometry", () => {
   expect(() => k.sweep({ profile: SW, path: [[-3, 0, 0], [0, 0, 0], [0, 3, 0]] })).toThrow(/too wide|too sharp/);
+});
+
+test("extrude accepts an offsetPolygon result", () => {
+  const grown = offsetPolygon([[0, 0], [10, 0], [10, 10], [0, 10]], 0.5, { corners: "sharp" });
+  expect(k.extrude({ profile: grown, h: 5 }).volume()).toBeCloseTo(11 * 11 * 5, 3);
 });

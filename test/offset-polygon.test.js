@@ -93,3 +93,40 @@ test("collapse and result-self-intersection throw", () => {
   expect(() => offsetPolygon(dumbbell, -1.5, { corners: "sharp" }))
     .toThrow("offsetPolygon: offset result self-intersects (reduce |delta| or simplify the profile)");
 });
+
+test("regions offset as material: outer grows, holes shrink", () => {
+  const region = { outer: SQ(40), holes: [[[15, 15], [25, 15], [25, 25], [15, 25]]] };
+  const out = offsetPolygon(region, 1, { corners: "sharp" });
+  expect(area(out.outer)).toBeCloseTo(42 * 42, 9);
+  expect(area(out.holes[0])).toBeCloseTo(8 * 8, 9);
+  // input without holes mirrors shape: no holes key on output
+  expect(offsetPolygon({ outer: SQ(10) }, 1, { corners: "sharp" }).holes).toBeUndefined();
+});
+
+test("a hole that would vanish throws collapse", () => {
+  const region = { outer: SQ(40), holes: [[[15, 15], [25, 15], [25, 25], [15, 25]]] };
+  expect(() => offsetPolygon(region, 6, { corners: "sharp" }))
+    .toThrow("offsetPolygon: inset collapses the polygon");
+});
+
+test("sharp inset of a regular n-gon reproduces planter's closed form", () => {
+  // planter.js derives Rin = Rout − wall/cos(π/n); a sharp inset along the face
+  // normals is exactly that — each inset vertex is the original scaled by Rin/Rout.
+  for (const n of [3, 6, 9]) {
+    const Rout = 60, wall = 3;
+    const outer = regularPolygon(n, Rout);
+    const inner = offsetPolygon(outer, -wall, { corners: "sharp" });
+    const scale = (Rout - wall / Math.cos(Math.PI / n)) / Rout;
+    expect(inner.length).toBe(n);
+    for (let i = 0; i < n; i++) {
+      expect(inner[i][0]).toBeCloseTo(outer[i][0] * scale, 9);
+      expect(inner[i][1]).toBeCloseTo(outer[i][1] * scale, 9);
+    }
+  }
+});
+
+test("purity: identical input twice gives deeply equal output", () => {
+  const L = [[0, 0], [20, 0], [20, 10], [10, 10], [10, 20], [0, 20]];
+  expect(offsetPolygon(L, 0.7, { corners: "round" }))
+    .toEqual(offsetPolygon(L, 0.7, { corners: "round" }));
+});
