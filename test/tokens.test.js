@@ -7,7 +7,7 @@ const read = (rel) =>
 
 test("tokens.css defines the core palette custom properties in both themes", () => {
   const css = read("tokens.css");
-  for (const v of ["--bg", "--text", "--accent", "--mono", "--surface", "--border", "--muted"])
+  for (const v of ["--pf-bg", "--pf-text", "--pf-accent", "--pf-mono", "--pf-surface", "--pf-border", "--pf-muted"])
     expect(css, `tokens.css must define ${v}`).toContain(`${v}:`);
   expect(css).toMatch(/:root\s*\{/);                       // default (dark) block
   expect(css).toMatch(/:root\[data-theme="light"\]\s*\{/); // light overrides
@@ -22,6 +22,6 @@ test("app.css imports tokens.css and no longer defines the palette itself", () =
   const beforeImport = css.slice(0, css.indexOf('@import "./tokens.css";'));
   expect(beforeImport.replace(/\/\*[\s\S]*?\*\//g, "").trim()).toBe("");
   // The palette moved out — app.css must NOT still hard-define it (guards against a leftover copy).
-  expect(css).not.toContain("--bg:");
+  expect(css).not.toContain("--pf-bg:");
   expect(css).not.toContain('data-theme="light"');
 });
