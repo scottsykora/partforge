@@ -131,7 +131,7 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 
 - **Symptom:** `ringSectorPolygon: arcDeg must be < 360 (use a cut for a full ring)`
 - **Cause:** A full annulus can't be a single simple polygon — it's a contour-with-hole.
-- **Fix:** Cut an inner cylinder from an outer one (or `k.extrude({ outer, holes })`); use `ringSectorPolygon` only for partial arcs. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Profiles & patterns".
+- **Fix:** Cut an inner cylinder from an outer one (or `k.extrude({ profile: { outer, holes }, h })`); use `ringSectorPolygon` only for partial arcs. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Profiles & patterns".
 
 ## occt-closed-loop-unsupported
 
