@@ -95,6 +95,68 @@ provide them.
   those, nothing else is thrown for well-formed input — a fillet the engine cannot
   compute falls under the repair policy below, not a part-visible error class.
 
+## Calling convention
+
+**Detection rule (normative):** a call is **options form** when the op receives
+**exactly one argument and it is a plain object** — not an `Array`, not a `Solid`.
+Any other arity or first argument is legacy positional form. "Plain object" means
+`Object.getPrototypeOf(x) === Object.prototype || null`, which excludes arrays,
+`Solid` handles (backend handles carry methods/prototypes), and typed arrays. This
+one rule disambiguates every op with no key-sniffing — the load-bearing case:
+`extrude({outer, holes}, h)` is positional (two arguments); `extrude({profile, h})`
+is options (one plain object).
+
+Options form is canonical — the form this document, `AUTHORING-PARTS.md`, and every
+in-repo part teach and use. Legacy positional forms remain accepted (silently — no
+runtime warning) until contract v2 removes them; a conforming implementation must
+accept both, and this repo's `finishKernel()`/`addSugar()` provide the normalization
+for free.
+
+### Kernel factory ops (options-canonical; legacy positional accepted)
+
+| Op | Canonical options form | Legacy positional (until v2) |
+|---|---|---|
+| `cylinder` | `{r\|d, h, center?}` straight · `{r1, r2, h, center?}` or `{d1, d2, h, center?}` cone | `(rBottom, rTop, h, {center?})` |
+| `sphere` | `{r\|d}` — `sphere(5)` stays valid, undeprecated | `(r)` |
+| `box` | `{size:[x,y,z], center?}` (centered X/Y, base z=0; `center:true` also centers Z) · `{min, max}` | `(min, max)` |
+| `prism` | `{points, h, twist?, scaleTop?}` | `(points2D, h, {twist?,scaleTop?})` |
+| `extrude` | `{profile, h, twist?, scaleTop?}` — `profile` = points array, `{outer, holes}`, or arc profile | `(profile, h, {twist?,scaleTop?})` |
+| `revolve` | `{profile, degrees?}` | `(points2D, {degrees?})` |
+| `loft` | `{rings, ruled?, closed?}` | `(rings, {ruled?,closed?})` |
+| `sweep` | `{profile, path, closed?, cornerRadius?, ruled?, smooth?}` | `(profile2D, path3D, opts?)` |
+
+`boredCylinder` and `helixSweptTube` are already options-only — unchanged.
+`union(solids[])` and `toSTEP(named[])` take a single array — unchanged.
+
+### Solid ops
+
+| Op | Canonical form(s) | Notes |
+|---|---|---|
+| `fillet` | `fillet(3)` · `fillet({r, edges?})` | options form replaces `fillet(3, selector)` |
+| `chamfer` | `chamfer(1)` · `chamfer({d, edges?})` | ditto |
+| `shell` | `shell({t, open})` | replaces `(thickness, openFaces)`; `open` was already required |
+| everything else | unchanged | `translate/at/along/rotate*/rotateAbout/mirror/scale/cut/cutAll/intersect/clone/label` + queries |
+
+### Cylinder key rules
+
+- Straight: exactly one of `r` / `d`. Cone: `r1`+`r2` or `d1`+`d2` (no mixing
+  radius and diameter across ends; no mixing straight and cone keys).
+- `h` required everywhere.
+- Diameter keys are sugar: normalized to radii before the backend sees them.
+
+### `box({size})` placement
+
+`{size:[x,y,z]}` is centered in X and Y with its base at `z = 0` — the same
+canonical placement `cylinder` already has (build canonical at the origin, then
+orient/place). `{center:true}` additionally centers Z. `{min, max}` remains for
+explicit corners and is unaffected.
+
+Scalar shorthands are permanent, not legacy: `sphere(5)`, `fillet(3)`, and
+`chamfer(1)` stay valid and undeprecated — they take a single number with no
+transposition risk, so there is no options-form pressure to replace them (only
+`fillet`/`chamfer`'s two-argument selector call is superseded, by
+`fillet({r, edges})` / `chamfer({d, edges})`).
+
 ## Kernel ops (make solids)
 
 Signatures are normative in `kernel.js`'s `@typedef GeometryKernel`; this table fixes

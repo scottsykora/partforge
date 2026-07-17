@@ -2,10 +2,14 @@
 // parity tests (test/kernel-contract.test.js and the OCCT twin in
 // test/occt-backend.test.js) assert each backend exposes exactly these ops, so the
 // contract can't silently drift from the implementations — the drift class that
-// once broke the probe kernel (see probe.js). The @typedefs document signatures.
-// The prose half of the contract — conventions, value semantics, conformance
-// classes, versioning policy — is docs/KERNEL-CONTRACT.md; change either side and
-// you must update the other. (2-D polygon helpers live in ./polygon.js.)
+// once broke the probe kernel (see probe.js). The @typedefs document signatures,
+// options-object form first (the canonical calling convention — normalizers and
+// exact valid-key lists live in op-options.js, wired in at kernel-front.js
+// (finishKernel) and solid-sugar.js (addSugar); legacy positional forms stay
+// silently accepted until contract v2). The prose half of the contract —
+// conventions, value semantics, conformance classes, versioning policy — is
+// docs/KERNEL-CONTRACT.md; change either side and you must update the other.
+// (2-D polygon helpers live in ./polygon.js.)
 
 // The prose half's version: docs/KERNEL-CONTRACT.md's "Contract version" header
 // must match this number (asserted in kernel-contract.test.js). Bump only on a
@@ -65,22 +69,22 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  *           `edges` = feature-edge line segments (Manifold); quality is advisory — the Manifold kernel bakes it at creation
  * @property {(opts?: {quality?: "preview"|"print"}) => Promise<ArrayBuffer>} toSTL
  * @property {() => {positions:Float32Array, indices:Uint32Array}} toIndexedMesh   indexed mesh, for 3MF
- * @property {(radius:number, selector?:object) => Solid} fillet    round edges (OCCT only; Manifold throws KernelCapabilityError)
- * @property {(distance:number, selector?:object) => Solid} chamfer  bevel edges (OCCT only; Manifold throws KernelCapabilityError)
- * @property {(thickness:number, openFaces:object) => Solid} shell   hollow inward (OCCT only); openFaces selector required
+ * @property {(r:number|{r:number,edges?:object}) => Solid} fillet    round edges (OCCT only); fillet(3) or fillet({r,edges}); legacy (r,selector) accepted until v2
+ * @property {(d:number|{d:number,edges?:object}) => Solid} chamfer  bevel edges (OCCT only); chamfer(1) or chamfer({d,edges}); legacy (d,selector) accepted until v2
+ * @property {(o:{t:number,open:object}) => Solid} shell   hollow inward (OCCT only); legacy (thickness,openFaces) accepted until v2
  * @property {() => number} [genus]     through-hole count (Manifold only)
  * @property {() => boolean} [isEmpty]  no geometry at all (Manifold only)
  *
  * @typedef {Object} GeometryKernel
- * @property {(rBottom:number, rTop:number, h:number, opts?:{center?:boolean}) => Solid} cylinder
+ * @property {(o:{r?:number,d?:number,r1?:number,r2?:number,d1?:number,d2?:number,h:number,center?:boolean}) => Solid} cylinder   canonical: {r|d,h} straight, {r1,r2,h}|{d1,d2,h} cone; legacy (rBottom,rTop,h,opts) accepted until contract v2
  * @property {(o:{od:number,h:number,bore:number}) => Solid} boredCylinder   compound: bored-through cylinder (one cache node)
- * @property {(r:number) => Solid} sphere   sphere centred at the origin
- * @property {(min:number[], max:number[]) => Solid} box
- * @property {(points2D:number[][], h:number, opts?:{twist?:number,scaleTop?:number}) => Solid} prism   extrude polygon from z=0 (optional twist° + uniform top taper)
- * @property {(profile:number[][]|{outer:number[][],holes?:number[][][]}, h:number, opts?:{twist?:number,scaleTop?:number}) => Solid} extrude   extrude a polygon-with-holes region from z=0 in one op (bare array = outer only)
- * @property {(rings:{polygon?:number[][],sides?:number,radius?:number,z:number,rotate?:number,scale?:number|number[]}[], opts?:{ruled?:boolean,closed?:boolean}) => Solid} loft   stack polygon cross-sections (per-ring z/rotate/scale), ruled walls, capped ends
- * @property {(profile2D:number[][], path3D:number[][], opts?:{closed?:boolean,cornerRadius?:number,ruled?:boolean,smooth?:boolean}) => Solid} sweep   sweep a fixed 2-D profile along a 3-D polyline path (sharp mitered corners or cornerRadius fillets; capped ends; closed:true loops and smooth:true native B-rep are backend-specific)
- * @property {(points2D:number[][], opts?:{degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z
+ * @property {(o:{r?:number,d?:number}) => Solid} sphere   sphere centred at the origin; {r|d}; bare sphere(r) stays valid
+ * @property {(o:{size?:number[],center?:boolean,min?:number[],max?:number[]}) => Solid} box   {size} = centered X/Y, base z=0 ({center:true} centers Z too) or {min,max}; legacy (min,max) accepted until v2
+ * @property {(o:{points:number[][],h:number,twist?:number,scaleTop?:number}) => Solid} prism   extrude polygon from z=0; legacy (points,h,opts) accepted until v2
+ * @property {(o:{profile:number[][]|{outer:number[][],holes?:number[][][]},h:number,twist?:number,scaleTop?:number}) => Solid} extrude   polygon-with-holes region from z=0; legacy (profile,h,opts) accepted until v2
+ * @property {(o:{rings:{polygon?:number[][],sides?:number,radius?:number,z:number,rotate?:number,scale?:number|number[]}[],ruled?:boolean,closed?:boolean}) => Solid} loft   stack polygon cross-sections; legacy (rings,opts) accepted until v2
+ * @property {(o:{profile:number[][],path:number[][],closed?:boolean,cornerRadius?:number,ruled?:boolean,smooth?:boolean}) => Solid} sweep   sweep a 2-D profile along a 3-D polyline; legacy (profile,path,opts) accepted until v2
+ * @property {(o:{profile:number[][],degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z; legacy (points,opts) accepted until v2
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)

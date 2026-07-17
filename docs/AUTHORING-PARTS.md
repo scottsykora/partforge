@@ -94,18 +94,29 @@ handles. The same code runs on **Manifold** (fast meshes — preview + STL + 3MF
 semantics, conformance classes, versioning) are in `docs/KERNEL-CONTRACT.md` — the
 tables below are the authoring-side view of that contract.
 
+**Calling convention.** Every multi-parameter op below takes a single **options
+object** — this is the canonical, documented way to call them (`k.cylinder({ r, h
+})`, not `k.cylinder(r, r, h)`); the object's keys are named the same across both
+backends, so a call is self-describing and immune to the positional-argument
+transposition mistake (swap two same-typed numbers, get a valid *wrong* solid).
+Single-argument chaining ops (`translate`, `rotate*`, `cut`, `mirror`, `scale`, …)
+already take one argument and are unaffected. Legacy positional calls (e.g.
+`k.cylinder(rBottom, rTop, h)`) still work — they're accepted silently until a
+future contract v2 — but are not shown here; see `docs/KERNEL-CONTRACT.md`
+"Calling convention" for the full canonical/legacy table and the detection rule.
+
 **Kernel — make solids:**
 
 | Call | Result |
 |---|---|
-| `k.cylinder(rBottom, rTop, h, { center? })` | cylinder/cone along +Z (frustum if radii differ) |
-| `k.box(min, max)` | axis-aligned box from `[x,y,z]` min/max |
-| `k.prism(points2D, h, { twist?, scaleTop? })` | extrude a 2-D polygon (or an **arc profile** from `roundedProfile`) from z=0; optional `twist` (degrees over the height) and `scaleTop` (uniform top taper: 1 straight, <1 taper in, 0 → point/cone) |
-| `k.extrude(profile, h, { twist?, scaleTop? })` | extrude a **polygon-with-holes** region from z=0 in one op — `profile` is `{ outer, holes? }` where each contour is a points array **or an arc profile** (`roundedProfile`, for true STEP fillets), or a bare points array / arc profile for outer-only; same `twist`/`scaleTop` as `prism` (both backends) |
-| `k.loft(rings, { ruled?, closed? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls |
-| `k.sweep(profile2D, path3D, { cornerRadius?, closed?, ruled?, smooth? })` | sweep a fixed 2-D profile along a 3-D polyline path — sharp mitered corners (or `cornerRadius` fillets), capped ends (both backends). `closed:true` capless loops and `smooth:true` (OCCT-native swept B-rep, STEP-exact / preview-faceted) are backend-specific, like loft's `closed`/`ruled:false`. `closed:true` loops must be **planar** — RMF frame-transport holonomy can seam-twist a non-planar closed loop where the last station rejoins the first, so only planar closed loops are supported/tested |
-| `k.sphere(r)` | sphere centred at the origin |
-| `k.revolve(points2D, { degrees })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
+| `k.cylinder({ r\|d, h, center? })` · `k.cylinder({ r1, r2, h, center? })` \| `{ d1, d2, h }` | cylinder/cone along +Z (frustum for the cone form); straight takes exactly one of `r`/`d` |
+| `k.box({ size, center? })` · `k.box({ min, max })` | `{size:[x,y,z]}` = centered X/Y, base at z=0 (`center:true` also centers Z); `{min,max}` = explicit `[x,y,z]` corners |
+| `k.prism({ points, h, twist?, scaleTop? })` | extrude a 2-D polygon (or an **arc profile** from `roundedProfile`) from z=0; optional `twist` (degrees over the height) and `scaleTop` (uniform top taper: 1 straight, <1 taper in, 0 → point/cone) |
+| `k.extrude({ profile, h, twist?, scaleTop? })` | extrude a **polygon-with-holes** region from z=0 in one op — `profile` is `{ outer, holes? }` where each contour is a points array **or an arc profile** (`roundedProfile`, for true STEP fillets), or a bare points array / arc profile for outer-only; same `twist`/`scaleTop` as `prism` (both backends) |
+| `k.loft({ rings, ruled?, closed? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls |
+| `k.sweep({ profile, path, cornerRadius?, closed?, ruled?, smooth? })` | sweep a fixed 2-D profile along a 3-D polyline path — sharp mitered corners (or `cornerRadius` fillets), capped ends (both backends). `closed:true` capless loops and `smooth:true` (OCCT-native swept B-rep, STEP-exact / preview-faceted) are backend-specific, like loft's `closed`/`ruled:false`. `closed:true` loops must be **planar** — RMF frame-transport holonomy can seam-twist a non-planar closed loop where the last station rejoins the first, so only planar closed loops are supported/tested |
+| `k.sphere({ r\|d })` | sphere centred at the origin; bare `k.sphere(r)` also stays valid |
+| `k.revolve({ profile, degrees? })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove) |
 | `k.union(solids[])` | boolean union |
 
@@ -116,26 +127,26 @@ number or `[sx,sy]`). Author rings CCW and ordered by ascending `z` (the `regula
 CW-wound or descending-z rings still export a valid outward solid. (Arc profiles from
 `roundedProfile` are **not** accepted as loft rings yet — a ring must be a point array;
 use `prism`/`extrude` for true-arc STEP export.) **`sweep`** takes the same CCW
-`polygon.js` outline as its `profile2D` and a plain `[[x,y,z],…]` point list as its
-`path3D`; the profile stays perpendicular to the path (a rotation-minimizing frame), with
+`polygon.js` outline as its `profile` and a plain `[[x,y,z],…]` point list as its
+`path`; the profile stays perpendicular to the path (a rotation-minimizing frame), with
 sharp mitered corners by default or `cornerRadius` fillets. Worked snippets:
 
 ```js
 // a square tube (extrude a region with a hole) — one op, no boolean cut
-k.extrude({ outer: roundedRectPolygon(40, 30, 4), holes: [circleProfile(6)] }, 10);
+k.extrude({ outer: roundedRectPolygon(40, 30, 4), holes: [circleProfile(6)], h: 10 });
 
 // a tapered, twisting faceted vase wall (see src/parts/faceted-vase.js)
 const rings = [];
 for (let i = 0; i <= 24; i++) { const t = i / 24;
   rings.push({ sides: 6, radius: 30 - 8 * t, z: 120 * t, rotate: 90 * t }); }
-k.loft(rings);                          // ruled walls, capped ends
+k.loft({ rings });                      // ruled walls, capped ends
 
 // a cable/hose: sweep a circle along a 3-D polyline, with rounded bends
-k.sweep(circleProfile(3), [[0, 0, 0], [0, 0, 20], [15, 0, 20]], { cornerRadius: 5 });
+k.sweep({ profile: circleProfile(3), path: [[0, 0, 0], [0, 0, 20], [15, 0, 20]], cornerRadius: 5 });
 
 // round every corner of any CCW outline, then extrude/loft/prism it
-k.prism(filletPolygon(bracketOutline, 3), 4);       // tessellated corners (faceted in STEP)
-k.prism(roundedProfile(bracketOutline, 3), 4);      // true CIRCLE corners in STEP export
+k.prism({ points: filletPolygon(bracketOutline, 3), h: 4 });   // tessellated corners (faceted in STEP)
+k.prism({ points: roundedProfile(bracketOutline, 3), h: 4 });  // true CIRCLE corners in STEP export
 ```
 
 2-D polygon helpers for `prism`/`extrude`/`loft`: `import { piePolygon, hexPolygon,
@@ -187,9 +198,9 @@ magic vectors. Three habits:
 
   ```js
   // ✗ cryptic: which axis? what centre?
-  k.cylinder(r, r, L).rotate(-90, [0, 0, 0], [1, 0, 0]).translate([rp, y1, sz])
+  k.cylinder({ r, h: L }).rotate(-90, [0, 0, 0], [1, 0, 0]).translate([rp, y1, sz])
   // ✓ legible
-  k.cylinder(r, r, L).along("+Y").at([rp, y1, sz])
+  k.cylinder({ r, h: L }).along("+Y").at([rp, y1, sz])
   ```
 
 - **Rotate about a point with `rotateAbout`** when the axis isn't through the origin
@@ -226,9 +237,9 @@ a user could reasonably want to change: the base body, and each functional featu
 grooves, mounts, bores, pockets, distinct structural members.
 
 ```js
-const body = k.prism(d.outerPts, p.height, { scaleTop: p.taper }).label("Faceted wall");
+const body = k.prism({ points: d.outerPts, h: p.height, scaleTop: p.taper }).label("Faceted wall");
 let s = body.cut(cavity.label("Cavity"));
-if (p.drain > 0) s = s.cut(k.cylinder(d.drainR, d.drainR, p.floor + 4).at([0, 0, -2]).label("Drainage hole"));
+if (p.drain > 0) s = s.cut(k.cylinder({ r: d.drainR, h: p.floor + 4 }).at([0, 0, -2]).label("Drainage hole"));
 ```
 
 - **Aim for functional groups.** Label at the granularity a user would name a thing
@@ -430,15 +441,15 @@ Pure helpers from `partforge/geometry` (no backend dependency):
 `ringSectorPolygon(innerR,outerR,arcDeg)` (**arcDeg < 360** — a full ring is a contour-with-hole;
 cut an inner cylinder from an outer one instead).
 `circleProfile(r, center?)` — a circle of radius `r` centered at `[cx,cy]` (default origin).
-Compose it for round solids: `k.prism(circleProfile(r), h)` is a cylinder, and
-**a torus is `k.revolve(circleProfile(minorR, [majorR, 0]))`** (with `majorR > minorR`) —
+Compose it for round solids: `k.prism({ points: circleProfile(r), h })` is a cylinder, and
+**a torus is `k.revolve({ profile: circleProfile(minorR, [majorR, 0]) })`** (with `majorR > minorR`) —
 partforge has no `torus` primitive because it's just a revolved circle.
 
 **Patterns** (return `Solid[]` — feed to `k.union(...)` for features or `s.cutAll(...)` for holes):
 `linearPattern(solid, count, [dx,dy,dz])`, `circularPattern(solid, count, { center, axis, angle, rotateCopies })`.
 
 ```js
-const hole = k.cylinder(2, 2, 20).translate([20, 0, 0]);
+const hole = k.cylinder({ r: 2, h: 20 }).translate([20, 0, 0]);
 body = body.cutAll(circularPattern(hole, 8, { axis: "Z" }));   // 8 bolt holes on a 40mm circle
 ```
 
@@ -744,11 +755,11 @@ whole part to OCCT — no declaration needed:
 
 | Op | Meaning |
 |---|---|
-| `s.fillet(radius, selector?)` | round edges (curve-following, exact) |
-| `s.chamfer(distance, selector?)` | bevel edges |
-| `s.shell(thickness, openFaces)` | hollow inward, wall = `thickness`; `openFaces` selector (`{inPlane,at}`/`{dir}`/`{near}`) chooses which face(s) to open. Closed (no-open-face) hollows are not supported. |
+| `s.fillet(radius)` · `s.fillet({ r, edges? })` | round edges (curve-following, exact); the bare-number scalar shorthand fillets **all** edges, the options form adds a selector |
+| `s.chamfer(distance)` · `s.chamfer({ d, edges? })` | bevel edges; same scalar-shorthand-or-options-with-selector shape as `fillet` |
+| `s.shell({ t, open })` | hollow inward, wall = `t`; `open` selector (`{inPlane,at}`/`{dir}`/`{near}`) chooses which face(s) to open. Closed (no-open-face) hollows are not supported. |
 
-`selector` chooses which edges (omit it for **all** edges):
+`edges` (fillet/chamfer) / `open` (shell) chooses which edges/faces (omit `edges` for **all** edges — `shell` always requires `open`):
 
 - `{ dir: "X"｜"Y"｜"Z" }` — edges running along an axis (e.g. `{dir:"Z"}` = the vertical edges)
 - `{ inPlane: "XY"｜"XZ"｜"YZ", at }` — edges lying in a plane (e.g. base edges: `{inPlane:"XY", at:0}`)
@@ -758,9 +769,9 @@ whole part to OCCT — no declaration needed:
   (parts meant to travel must use the object forms — see `KERNEL-CONTRACT.md`)
 
 ```js
-let s = k.box([0,0,0],[40,30,16]);
-s = s.fillet(3, { dir: "Z" });            // round the 4 vertical edges
-s = s.chamfer(1, { inPlane: "XY", at: 0 }); // bevel the base
+let s = k.box({ min: [0, 0, 0], max: [40, 30, 16] });
+s = s.fillet({ r: 3, edges: { dir: "Z" } });            // round the 4 vertical edges
+s = s.chamfer({ d: 1, edges: { inPlane: "XY", at: 0 } }); // bevel the base
 ```
 
 See `src/parts/filleted-box.js` for the worked example.
