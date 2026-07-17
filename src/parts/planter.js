@@ -89,19 +89,19 @@ export default {
       views: ["planter"],
       export: { name: "planter" },
       build: (k, p, d) => {
-        const body = k.prism(d.outerPts, p.height, { scaleTop: p.taper, twist: p.twist }).label("Faceted wall");
+        const body = k.prism({ points: d.outerPts, h: p.height, scaleTop: p.taper, twist: p.twist }).label("Faceted wall");
         // Hollow it. The cavity is built from z=0 sharing the body's exact twist RATE and
         // taper slope (f rescales the ~4 mm overshoot so the rates still match), so the
         // inner and outer facets stay radially aligned at every height — the wall can't
         // pinch when twisted. Then clip the cavity to z ≥ floor so the base stays solid.
         const f = (p.height + 4) / p.height;
         const cavity = k
-          .prism(d.innerPts, p.height + 4, { scaleTop: 1 + (d.innerTaper - 1) * f, twist: p.twist * f })
-          .intersect(k.box([-1e4, -1e4, p.floor], [1e4, 1e4, p.height + 10]))
+          .prism({ points: d.innerPts, h: p.height + 4, scaleTop: 1 + (d.innerTaper - 1) * f, twist: p.twist * f })
+          .intersect(k.box({ min: [-1e4, -1e4, p.floor], max: [1e4, 1e4, p.height + 10] }))
           .label("Cavity");
         let s = body.cut(cavity);
         // Optional drainage hole straight through the base.
-        if (p.drain > 0) s = s.cut(k.cylinder(d.drainR, d.drainR, p.floor + 4).at([0, 0, -2]).label("Drainage hole"));
+        if (p.drain > 0) s = s.cut(k.cylinder({ r: d.drainR, h: p.floor + 4 }).at([0, 0, -2]).label("Drainage hole"));
         return s;
       },
     },

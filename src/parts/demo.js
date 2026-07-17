@@ -48,9 +48,9 @@ export default {
       views: ["spacer"],
       export: { name: "spacer" },
       build: (k, p, d) => {
-        let s = k.cylinder(p.od / 2, p.od / 2, p.h);
-        if (p.flange_d > 0) s = k.union([s, k.cylinder(p.flange_d / 2, p.flange_d / 2, p.flange_h)]);
-        return s.cut(k.cylinder(d.boreR, d.boreR, d.cutH).at([0, 0, -2]));
+        let s = k.cylinder({ d: p.od, h: p.h });
+        if (p.flange_d > 0) s = k.union([s, k.cylinder({ d: p.flange_d, h: p.flange_h })]);
+        return s.cut(k.cylinder({ r: d.boreR, h: d.cutH }).at([0, 0, -2]));
       },
     },
   },
