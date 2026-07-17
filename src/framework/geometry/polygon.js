@@ -227,3 +227,180 @@ export function circleProfile(r, center = [0, 0], segs = 48) {
   }
   return pts;
 }
+
+// --- offsetPolygon ---------------------------------------------------------
+
+const OFFSET_EPS = 1e-9;
+
+// Fresh copies, consecutive duplicates dropped, closing point (== first) dropped.
+function dedupePoints(points) {
+  const out = [];
+  for (const p of points) {
+    const last = out[out.length - 1];
+    if (!last || Math.hypot(p[0] - last[0], p[1] - last[1]) > OFFSET_EPS) out.push([p[0], p[1]]);
+  }
+  while (out.length > 1 &&
+    Math.hypot(out[0][0] - out[out.length - 1][0], out[0][1] - out[out.length - 1][1]) <= OFFSET_EPS) out.pop();
+  return out;
+}
+
+function polySignedArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length];
+    a += x1 * y2 - x2 * y1;
+  }
+  return a / 2;
+}
+
+// True where segments a-b and c-d properly cross. Shared endpoints and collinear
+// touches don't count — adjacent edges always share a vertex, and the collinear
+// case is degenerate input the dedupe/straight-vertex paths already absorb.
+function segmentsCross(a, b, c, d) {
+  const orient = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  return orient(a, b, c) * orient(a, b, d) < 0 && orient(c, d, a) * orient(c, d, b) < 0;
+}
+
+// True where p lies strictly inside segment a-b (not at either endpoint) —
+// a degenerate touch that segmentsCross's proper-crossing test doesn't see.
+function pointOnSegment(p, a, b) {
+  const cross = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+  if (Math.abs(cross) > OFFSET_EPS) return false;
+  const dot = (p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1]);
+  const lenSq = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2;
+  return dot > OFFSET_EPS && dot < lenSq - OFFSET_EPS;
+}
+
+// O(n²) simplicity test — trivial at profile point counts (tens to hundreds).
+function isSimplePolygon(pts) {
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (j === i + 1 || (i === 0 && j === n - 1)) continue;   // adjacent edges share a vertex
+      const [a, b] = [pts[i], pts[(i + 1) % n]], [c, d] = [pts[j], pts[(j + 1) % n]];
+      if (segmentsCross(a, b, c, d)) return false;
+      // A vertex landing exactly on a non-adjacent edge is also a self-touch —
+      // e.g. an inset waist pinching two opposite edges together.
+      if (pointOnSegment(a, c, d) || pointOnSegment(b, c, d) ||
+          pointOnSegment(c, a, b) || pointOnSegment(d, a, b)) return false;
+    }
+  }
+  return true;
+}
+
+// Intersection of two infinite lines given as point + unit direction; null if parallel.
+function lineIntersect(p, dp, q, dq) {
+  const denom = dp[0] * dq[1] - dp[1] * dq[0];
+  if (Math.abs(denom) < OFFSET_EPS) return null;
+  const t = ((q[0] - p[0]) * dq[1] - (q[1] - p[1]) * dq[0]) / denom;
+  return [p[0] + dp[0] * t, p[1] + dp[1] * t];
+}
+
+// Offset a profile by `delta` mm: positive grows material outward, negative
+// insets. `profile` is a CCW [[x,y],…] point list (either winding accepted,
+// output always CCW) or an {outer, holes} region — regions offset as material:
+// outer by +delta, holes by −delta, so a +0.2 clearance on a cut region loosens
+// the whole cut. Corners where the offset edges diverge fill per `corners`:
+// "round" (arc of radius |delta| about the original vertex, `segs` segments —
+// the true Minkowski clearance), "chamfer" (the arc's chord), or "sharp" (true
+// miter, falling back to chamfer past a miter length of 2·|delta|). Where
+// offset edges cross (reflex on outset, convex on inset) they trim to their
+// intersection regardless of style. Simple polygon in, simple polygon out:
+// a result that self-intersects or vanishes THROWS (greppable errors below)
+// rather than returning degenerate geometry — offsets that would split a
+// region (dumbbell insets) are out of scope. Pure and deterministic; usable in
+// derive() and build() alike. See AUTHORING-PARTS.md "Profiles & patterns".
+export function offsetPolygon(profile, delta, opts = {}) {
+  const { corners = "round", segs = 8 } = opts;
+  if (profile !== null && typeof profile === "object" && !Array.isArray(profile)) {
+    if (!Array.isArray(profile.outer)) throw new Error("offsetPolygon: profile must be a point list or {outer, holes}");
+    const region = { outer: offsetPolygon(profile.outer, delta, opts) };
+    if (profile.holes) region.holes = profile.holes.map((h) => offsetPolygon(h, -delta, opts));
+    return region;
+  }
+  if (!Array.isArray(profile)) throw new Error("offsetPolygon: profile must be a point list or {outer, holes}");
+  if (typeof delta !== "number" || !Number.isFinite(delta)) throw new Error("offsetPolygon: delta must be a finite number");
+  if (corners !== "round" && corners !== "chamfer" && corners !== "sharp")
+    throw new Error('offsetPolygon: corners must be "round" | "chamfer" | "sharp"');
+  for (const p of profile)
+    if (!Array.isArray(p) || !Number.isFinite(p[0]) || !Number.isFinite(p[1]))
+      throw new Error("offsetPolygon: coordinates must be finite numbers");
+
+  const pts = dedupePoints(profile);
+  if (pts.length < 3) throw new Error("offsetPolygon: need at least 3 points");
+  if (polySignedArea(pts) < 0) pts.reverse();                     // work in CCW
+  if (!isSimplePolygon(pts)) throw new Error("offsetPolygon: input polygon self-intersects");
+  if (delta === 0) return pts;
+
+  // Each edge i (pts[i] → pts[i+1]): unit direction and endpoints displaced
+  // along the outward normal (CCW ⇒ outward = (dy, −dx)).
+  const n = pts.length, dir = [], off = [];
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = pts[(i + 1) % n];
+    const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    const d = [(q[0] - p[0]) / len, (q[1] - p[1]) / len];
+    const mx = d[1] * delta, my = -d[0] * delta;
+    dir.push(d);
+    off.push([[p[0] + mx, p[1] + my], [q[0] + mx, q[1] + my]]);
+  }
+
+  // Join edge (i−1)'s offset to edge i's offset at each original vertex. Also
+  // track each edge's start/end parameter along its own direction: a heavily
+  // over-inset edge can be trimmed from both ends past its own start and still
+  // trace out a simple-looking (but phantom, reflected) loop — isSimplePolygon
+  // only catches crossing segments, not a reversed edge, so that case needs
+  // this separate check below.
+  const out = [];
+  const tStart = new Array(n), tEnd = new Array(n);
+  const paramOf = (i, p) => (p[0] - off[i][0][0]) * dir[i][0] + (p[1] - off[i][0][1]) * dir[i][1];
+  const join = (prev, i, point) => {
+    out.push(point);
+    tEnd[prev] = paramOf(prev, point);
+    tStart[i] = paramOf(i, point);
+  };
+  for (let i = 0; i < n; i++) {
+    const prev = (i + n - 1) % n, V = pts[i];
+    const endPrev = off[prev][1], startNext = off[i][0];
+    const cross = dir[prev][0] * dir[i][1] - dir[prev][1] * dir[i][0];
+
+    if (Math.abs(cross) < OFFSET_EPS) { join(prev, i, endPrev); continue; }   // straight vertex
+
+    if (cross * delta < 0) {                                             // offset edges cross → trim
+      const m = lineIntersect(off[prev][0], dir[prev], off[i][0], dir[i]);
+      join(prev, i, m ?? endPrev);
+      continue;
+    }
+
+    // Offset edges diverge → fill the wedge per style.
+    if (corners === "sharp") {
+      const m = lineIntersect(off[prev][0], dir[prev], off[i][0], dir[i]);
+      if (m && Math.hypot(m[0] - V[0], m[1] - V[1]) <= 2 * Math.abs(delta)) { join(prev, i, m); continue; }
+      out.push(endPrev, startNext);                                      // past the miter limit → chamfer
+      tEnd[prev] = paramOf(prev, endPrev); tStart[i] = paramOf(i, startNext);
+    } else if (corners === "chamfer") {
+      out.push(endPrev, startNext);
+      tEnd[prev] = paramOf(prev, endPrev); tStart[i] = paramOf(i, startNext);
+    } else {                                                             // round: short arc about V
+      tEnd[prev] = paramOf(prev, endPrev); tStart[i] = paramOf(i, startNext);
+      const a0 = Math.atan2(endPrev[1] - V[1], endPrev[0] - V[0]);
+      let dA = Math.atan2(startNext[1] - V[1], startNext[0] - V[0]) - a0;
+      while (dA <= -Math.PI) dA += 2 * Math.PI;
+      while (dA > Math.PI) dA -= 2 * Math.PI;
+      const r = Math.abs(delta);
+      for (let s = 0; s <= segs; s++) {
+        const a = a0 + (dA * s) / segs;
+        out.push([V[0] + r * Math.cos(a), V[1] + r * Math.sin(a)]);
+      }
+    }
+  }
+
+  for (let i = 0; i < n; i++)
+    if (tEnd[i] < tStart[i] - OFFSET_EPS) throw new Error("offsetPolygon: inset collapses the polygon");
+
+  const cleaned = dedupePoints(out);
+  if (cleaned.length < 3 || polySignedArea(cleaned) <= OFFSET_EPS)
+    throw new Error("offsetPolygon: inset collapses the polygon");
+  if (!isSimplePolygon(cleaned))
+    throw new Error("offsetPolygon: offset result self-intersects (reduce |delta| or simplify the profile)");
+  return cleaned;
+}
