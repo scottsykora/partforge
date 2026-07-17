@@ -133,7 +133,7 @@ sharp mitered corners by default or `cornerRadius` fillets. Worked snippets:
 
 ```js
 // a square tube (extrude a region with a hole) — one op, no boolean cut
-k.extrude({ outer: roundedRectPolygon(40, 30, 4), holes: [circleProfile(6)], h: 10 });
+k.extrude({ profile: { outer: roundedRectPolygon(40, 30, 4), holes: [circleProfile(6)] }, h: 10 });
 
 // a tapered, twisting faceted vase wall (see src/parts/faceted-vase.js)
 const rings = [];

@@ -84,7 +84,7 @@ provide them.
 - **Validation** (a conforming implementation enforces all of these; in-repo the kernel
   front checks the `prism`/`extrude`/`revolve` rules, `addSugar` the `scale` rule, and
   the B-rep backend the `shell` rule): `prism`/`extrude` `scaleTop ≥ 0`; `revolve`
-  profile radii `≥ 0`; `scale` `factor > 0`; `shell` requires `openFaces` (a fully
+  profile radii `≥ 0`; `scale` `factor > 0`; `shell` requires `open` (a fully
   closed hollow is not supported).
 - **Error taxonomy:** invalid arguments throw plain `Error` with a message naming the op
   (`"prism: scaleTop must be ≥ 0"`); a whole op a backend class lacks throws
@@ -160,19 +160,21 @@ transposition risk, so there is no options-form pressure to replace them (only
 ## Kernel ops (make solids)
 
 Signatures are normative in `kernel.js`'s `@typedef GeometryKernel`; this table fixes
-the behavior. All ops return a `Solid`.
+the behavior. Signatures are shown in the canonical options form — the legacy
+positional equivalents live in the [Calling convention](#calling-convention) table
+above. All ops return a `Solid`.
 
 | Op | Contract |
 |---|---|
-| `cylinder(rBottom, rTop, h, {center?})` | Cylinder (or frustum when radii differ) along +Z from z = 0; `center: true` centers on z = 0. |
+| `cylinder({r\|d, h, center?})` · `cylinder({r1, r2, h, center?})` \| `{d1, d2, h}` | Cylinder along +Z from z = 0 (straight: exactly one of `r`/`d`); the cone form (`r1`/`r2` or `d1`/`d2` ends) gives a frustum. `center: true` centers on z = 0. |
 | `boredCylinder({od, h, bore})` | Compound: cylinder of diameter `od` with a through-bore `bore`. Semantically identical to the composition in `kernel-front.js`; a backend may override only for caching, never for different geometry. |
-| `sphere(r)` | Sphere centered at the origin. |
-| `box(min, max)` | Axis-aligned box from `[x,y,z]` corners. |
-| `prism(pts, h, {twist?, scaleTop?})` | Extrude one CCW contour (point list or arc profile) from z = 0. `twist` = total degrees over the height; `scaleTop` = uniform top scale (1 straight, 0 → apex). |
-| `extrude(profile, h, {twist?, scaleTop?})` | Same, for a polygon-with-holes region `{outer, holes?}` (bare contour = outer only), in one op — no per-hole boolean. |
-| `revolve(pts, {degrees?})` | Revolve a lathe profile `[[r, z], …]` (r ≥ 0) about Z; `degrees` < 360 gives a capped partial revolve. Default 360. |
-| `loft(rings, {ruled?, closed?})` | Stack polygon cross-sections (per-ring `z`/`rotate`/`scale`, equal vertex counts) with ruled walls and capped ends. Must self-correct a fully inverted result (CW rings / descending z) to an outward solid. |
-| `sweep(profile2D, path3D, {closed?, cornerRadius?, ruled?, smooth?})` | Sweep a fixed CCW profile along a polyline with a rotation-minimizing frame; sharp mitered corners, or `cornerRadius` fillets; capped ends. |
+| `sphere({r\|d})` | Sphere centered at the origin; bare `sphere(r)` stays valid. |
+| `box({size, center?})` · `box({min, max})` | Axis-aligned box: `{size:[x,y,z]}` centered in X/Y with base at z = 0 (`center: true` also centers Z), or explicit `[x,y,z]` `{min, max}` corners. |
+| `prism({points, h, twist?, scaleTop?})` | Extrude one CCW contour (point list or arc profile) from z = 0. `twist` = total degrees over the height; `scaleTop` = uniform top scale (1 straight, 0 → apex). |
+| `extrude({profile, h, twist?, scaleTop?})` | Same, for a polygon-with-holes region — `profile` is `{outer, holes?}` (bare contour = outer only) — in one op, no per-hole boolean. |
+| `revolve({profile, degrees?})` | Revolve a lathe profile `[[r, z], …]` (r ≥ 0) about Z; `degrees` < 360 gives a capped partial revolve. Default 360. |
+| `loft({rings, ruled?, closed?})` | Stack polygon cross-sections (per-ring `z`/`rotate`/`scale`, equal vertex counts) with ruled walls and capped ends. Must self-correct a fully inverted result (CW rings / descending z) to an outward solid. |
+| `sweep({profile, path, closed?, cornerRadius?, ruled?, smooth?})` | Sweep a fixed CCW profile along a polyline with a rotation-minimizing frame; sharp mitered corners, or `cornerRadius` fillets; capped ends. |
 | `helixSweptTube({pathR, profileR, pitch, turns, z0, lefthand})` | Circle of radius `profileR` swept along a helix (e.g. a rope groove). |
 | `union(solids[])` | Boolean union of one or more solids. |
 | `toSTEP(named[])` | `[{name, solid}]` → `Promise<ArrayBuffer>` of a STEP assembly. B-rep class only. |
@@ -203,19 +205,19 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 | `toMesh({quality?})` | Render mesh: `{positions, normals, indices?, triangles, edges?, featureIds?, features?}`. `indices` optional (a backend may emit soup or indexed); `normals` may be empty (`length 0`) to delegate creasing to the viewer; `edges` (feature-line segments) and the feature fields are optional metadata. |
 | `toSTL({quality?})` | `Promise<ArrayBuffer>`, binary STL, outward CCW winding. Stored facet normals may be zero — slicers recompute them (the mesh backend happens to write them). |
 | `toIndexedMesh()` | `{positions, indices}` indexed mesh (3MF path). |
-| `fillet(radius, selector?)` / `chamfer(distance, selector?)` / `shell(thickness, openFaces)` | B-rep class (core throws `KernelCapabilityError`). `shell` hollows inward, keeping outer dimensions. |
+| `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | B-rep class (core throws `KernelCapabilityError`). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` hollows inward, keeping outer dimensions; `open` (face selector) is required. |
 
 `quality` (`"preview"` | `"print"`) is **advisory**: it trades tessellation density for
 speed and a backend may bake it at kernel creation (Manifold does). A part must never
 depend on triangle counts, segment counts, or normals being present.
 
-**Selectors** (`fillet`/`chamfer` edge selector, `shell` face selector) are declarative
-objects, criteria AND-combined:
+**Selectors** (`fillet`/`chamfer` `edges` selector, `shell` `open` face selector) are
+declarative objects, criteria AND-combined:
 
 ```js
 { dir: "X"|"Y"|"Z",           // edges along / faces normal-to this axis — edge
                               //   selectors ALSO accept an [x,y,z] vector; face
-                              //   selectors (shell openFaces) accept ONLY the strings
+                              //   selectors (shell open) accept ONLY the strings
   inPlane: "XY"|"XZ"|"YZ", at: number,   // in the given plane at offset `at`
   near: [x,y,z] }                        // containing this point
 ```
