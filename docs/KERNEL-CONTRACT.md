@@ -125,7 +125,9 @@ for free.
 | `loft` | `{rings, ruled?, closed?}` | `(rings, {ruled?,closed?})` |
 | `sweep` | `{profile, path, closed?, cornerRadius?, ruled?, smooth?}` | `(profile2D, path3D, opts?)` |
 
-`boredCylinder` and `helixSweptTube` are already options-only — unchanged.
+`boredCylinder` and `helixSweptTube` were always options-only (no positional
+legacy form exists); they get the same unknown-key / required-key validation as
+the ops above.
 `union(solids[])` and `toSTEP(named[])` take a single array — unchanged.
 
 ### Solid ops

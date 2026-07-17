@@ -76,6 +76,17 @@ test("validation errors surface through the kernel", () => {
   expect(() => k.prism(TRI, 5, { scaleTop: -1 })).toThrow("prism: scaleTop must be ≥ 0"); // positional still checked
 });
 
+test("options-only compound ops get key validation too", () => {
+  // These predate the convention (always options-form); a typo'd key must fail
+  // loudly instead of destructuring to undefined → NaN geometry.
+  expect(() => k.boredCylinder({ od: 8, h: 10, boreDiameter: 3 }))
+    .toThrow('boredCylinder: unknown option "boreDiameter" — did you mean bore?');
+  expect(() => k.boredCylinder({ od: 8, h: 10 })).toThrow("boredCylinder: bore is required");
+  expect(() => k.helixSweptTube({ pathR: 10, profileR: 1.5, pitch: 4 }))
+    .toThrow("helixSweptTube: turns is required");
+  expect(k.boredCylinder({ od: 8, h: 10, bore: 3 }).volume()).toBeGreaterThan(0); // valid call unaffected
+});
+
 test("options-form fillet still throws the OCCT routing error on Manifold", () => {
   expect(() => k.box({ size: [1, 1, 1] }).fillet({ r: 0.2 })).toThrow(KernelCapabilityError);
 });

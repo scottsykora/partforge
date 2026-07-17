@@ -189,6 +189,12 @@ The sphere variant is `sphere: pass exactly one of r/d` (same cause and fix).
 - **Cause:** the two `box` forms were mixed in one call.
 - **Fix:** either `{size, center?}` (centered in X/Y, base at z=0; `center:true` centers Z too) or `{min, max}` — see [AUTHORING-PARTS.md](AUTHORING-PARTS.md).
 
+## box-center-with-corners
+
+- **Symptom:** `box: center only applies to the size form`
+- **Cause:** `center` was passed alongside `min`/`max`, but explicit corners already fix the placement.
+- **Fix:** drop `center`, or switch to `{size, center?}` — see [AUTHORING-PARTS.md](AUTHORING-PARTS.md).
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

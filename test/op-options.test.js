@@ -89,11 +89,35 @@ test("revolve/loft/sweep normalize", () => {
 
 test("KERNEL_OP_SPECS carries the semantic checks (both calling forms)", () => {
   expect(Object.keys(KERNEL_OP_SPECS).sort()).toEqual(
-    ["box", "cylinder", "extrude", "loft", "prism", "revolve", "sphere", "sweep"]);
+    ["boredCylinder", "box", "cylinder", "extrude", "helixSweptTube", "loft", "prism", "revolve", "sphere", "sweep"]);
   expect(() => KERNEL_OP_SPECS.prism.check(TRI, 5, { scaleTop: -1 })).toThrow("prism: scaleTop must be ≥ 0");
   expect(() => KERNEL_OP_SPECS.extrude.check(TRI, 5, { scaleTop: -1 })).toThrow("extrude: scaleTop must be ≥ 0");
   expect(() => KERNEL_OP_SPECS.revolve.check([[-1, 0]])).toThrow("revolve: profile radius must be ≥ 0");
   expect(KERNEL_OP_SPECS.prism.check(TRI, 5, { scaleTop: 0.5 })).toBeUndefined();
+});
+
+test("options-only compound ops validate keys and pass the object through", () => {
+  const bored = { od: 8, h: 10, bore: 3 };
+  expect(KERNEL_OP_SPECS.boredCylinder.toArgs(bored)).toEqual([bored]);
+  expect(() => KERNEL_OP_SPECS.boredCylinder.toArgs({ od: 8, h: 10, boreDiameter: 3 }))
+    .toThrow('boredCylinder: unknown option "boreDiameter" — did you mean bore?');
+  expect(() => KERNEL_OP_SPECS.boredCylinder.toArgs({ od: 8, h: 10 })).toThrow("boredCylinder: bore is required");
+  const helix = { pathR: 10, profileR: 1.5, pitch: 4, turns: 3, z0: 2, lefthand: true };
+  expect(KERNEL_OP_SPECS.helixSweptTube.toArgs(helix)).toEqual([helix]);
+  expect(() => KERNEL_OP_SPECS.helixSweptTube.toArgs({ pathR: 10, profileR: 1.5, pitch: 4 }))
+    .toThrow("helixSweptTube: turns is required");
+  expect(() => KERNEL_OP_SPECS.helixSweptTube.toArgs({ ...helix, radius: 2 }))
+    .toThrow('helixSweptTube: unknown option "radius"');
+});
+
+test("box: center mixed with min/max gets its own message", () => {
+  expect(() => boxArgs({ min: [0, 0, 0], max: [1, 1, 1], center: true }))
+    .toThrow("box: center only applies to the size form");
+});
+
+test("did-you-mean recombines digit suffixes (radius1 → r1)", () => {
+  expect(() => cylinderArgs({ radius1: 5, r2: 1, h: 3 }))
+    .toThrow('cylinder: unknown option "radius1" — did you mean r1?');
 });
 
 test("SOLID_OP_SPECS: fillet/chamfer/shell", () => {

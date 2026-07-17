@@ -26,9 +26,12 @@ function editDistance(a, b) {
 }
 
 // Prefix match first so long-form names hit their short key (radius→r,
-// height→h, diameter→d), then edit distance ≤ 2 for plain typos.
+// height→h, diameter→d), then edit distance ≤ 2 for plain typos. A digit
+// suffix is peeled and re-attached so radius1 hints r1, not r.
 function suggest(key, valid) {
   const lk = key.toLowerCase();
+  const m = /^([a-z]+)(\d+)$/.exec(lk);
+  if (m) for (const v of valid) if (m[1].startsWith(v.toLowerCase()) && valid.includes(v + m[2])) return v + m[2];
   for (const v of valid) if (lk.startsWith(v.toLowerCase())) return v;
   for (const v of valid) if (editDistance(lk, v.toLowerCase()) <= 2) return v;
   return null;
@@ -82,8 +85,8 @@ export function sphereArgs(o) {
 export function boxArgs(o) {
   checkKeys("box", o, ["size", "center", "min", "max"]);
   if (o.min !== undefined || o.max !== undefined) {
-    if (o.size !== undefined || o.center !== undefined)
-      throw new Error("box: pass size or min+max, not both");
+    if (o.size !== undefined) throw new Error("box: pass size or min+max, not both");
+    if (o.center !== undefined) throw new Error("box: center only applies to the size form");
     return [req("box", o, "min"), req("box", o, "max")];
   }
   const [x, y, z] = req("box", o, "size");
@@ -124,6 +127,15 @@ const checkScaleTop = (op) => (_profile, _h, opts) => {
   if ((opts?.scaleTop ?? 1) < 0) throw new Error(`${op}: scaleTop must be ≥ 0`);
 };
 
+// Ops that were always options-only have no positional form to normalize —
+// toArgs validates keys/required and passes the object through unchanged, so a
+// typo'd key fails loudly instead of destructuring to undefined → NaN geometry.
+const passThrough = (op, valid, required) => (o) => {
+  checkKeys(op, o, valid);
+  for (const key of required) req(op, o, key);
+  return [o];
+};
+
 // Kernel factory ops under the options convention. finishKernel() wraps each:
 // normalize (if options form) → check → raw backend op.
 export const KERNEL_OP_SPECS = {
@@ -137,6 +149,9 @@ export const KERNEL_OP_SPECS = {
   } },
   loft:     { toArgs: loftArgs },
   sweep:    { toArgs: sweepArgs },
+  boredCylinder:  { toArgs: passThrough("boredCylinder", ["od", "h", "bore"], ["od", "h", "bore"]) },
+  helixSweptTube: { toArgs: passThrough("helixSweptTube",
+    ["pathR", "profileR", "pitch", "turns", "z0", "lefthand"], ["pathR", "profileR", "pitch", "turns"]) },
 };
 
 // Solid ops under the options convention; addSugar() wraps these when the

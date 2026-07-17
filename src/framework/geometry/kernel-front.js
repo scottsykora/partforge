@@ -14,6 +14,12 @@ import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
 
 export function finishKernel(k) {
+  // Compound default: bored-through cylinder (tool overshoots 2 mm each end for
+  // a clean cut). Assigned BEFORE the wrap loop so the fallback composition gets
+  // the same key validation as a backend-native override.
+  k.boredCylinder ??= ({ od, h, bore }) =>
+    k.cylinder(od / 2, od / 2, h).cut(k.cylinder(bore / 2, bore / 2, h + 4).translate([0, 0, -2]));
+
   for (const [op, { toArgs, check }] of Object.entries(KERNEL_OP_SPECS)) {
     const raw = k[op];
     if (!raw) continue;
@@ -23,10 +29,6 @@ export function finishKernel(k) {
       return raw(...pos);
     };
   }
-
-  // Compound: bored-through cylinder (tool overshoots 2 mm each end for a clean cut).
-  k.boredCylinder ??= ({ od, h, bore }) =>
-    k.cylinder(od / 2, od / 2, h).cut(k.cylinder(bore / 2, bore / 2, h + 4).translate([0, 0, -2]));
 
   k.toSTEP ??= () => { throw new KernelCapabilityError("toSTEP requires the OCCT backend"); };
 
