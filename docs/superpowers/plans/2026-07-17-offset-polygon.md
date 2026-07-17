@@ -25,6 +25,16 @@
 
 ### Task 1: offsetPolygon core — point lists, three corner styles, full validation
 
+> **Execution correction:** the reference implementation below has two verified
+> bugs its own tests catch: (1) a symmetric over-inset can re-emerge as a
+> positive-area CCW "phantom" polygon (square −7 → area-16 square) that the
+> area+simplicity checks pass — fixed in the committed code by tracking the trim
+> parameter along each offset edge and treating edge inversion as collapse;
+> (2) the dumbbell's failure mode is a self-*touch* (vertex interior to a
+> non-adjacent edge, `orient = 0`), which proper-crossing-only `segmentsCross`
+> misses by design — fixed by a `pointOnSegment` check inside `isSimplePolygon`.
+> See the committed polygon.js, which is the authority.
+
 **Files:**
 - Modify: `src/framework/geometry/polygon.js` (append at end of file)
 - Test: `test/offset-polygon.test.js` (create)
