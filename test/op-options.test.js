@@ -2,6 +2,8 @@
 // Pure unit tests for the options-object normalizers — no WASM, no kernel boot.
 import { expect, test } from "vitest";
 import { isPlainOptions, cylinderArgs, sphereArgs, boxArgs } from "../src/framework/geometry/op-options.js";
+import { prismArgs, extrudeArgs, revolveArgs, loftArgs, sweepArgs, KERNEL_OP_SPECS, SOLID_OP_SPECS }
+  from "../src/framework/geometry/op-options.js";
 
 test("isPlainOptions accepts plain objects only", () => {
   expect(isPlainOptions({})).toBe(true);
@@ -58,4 +60,47 @@ test("boxArgs: size is centered in X/Y with base at z=0; center:true centers Z t
     .toThrow("box: pass size or min+max, not both");
   expect(() => boxArgs({ min: [0, 0, 0] })).toThrow("box: max is required");
   expect(() => boxArgs({})).toThrow("box: size is required");
+});
+
+const TRI = [[0, 0], [10, 0], [0, 10]];
+
+test("prism/extrude normalize with an options tail only when needed", () => {
+  expect(prismArgs({ points: TRI, h: 5 })).toEqual([TRI, 5]);            // no empty {} tail
+  expect(prismArgs({ points: TRI, h: 5, twist: 30, scaleTop: 0.5 })).toEqual([TRI, 5, { twist: 30, scaleTop: 0.5 }]);
+  expect(extrudeArgs({ profile: TRI, h: 5 })).toEqual([TRI, 5]);
+  expect(extrudeArgs({ profile: { outer: TRI }, h: 5, scaleTop: 0.5 })).toEqual([{ outer: TRI }, 5, { scaleTop: 0.5 }]);
+  expect(() => prismArgs({ h: 5 })).toThrow("prism: points is required");
+  expect(() => extrudeArgs({ profile: TRI })).toThrow("extrude: h is required");
+});
+
+test("revolve/loft/sweep normalize", () => {
+  const RZ = [[0, 0], [5, 0], [5, 8], [0, 8]];
+  expect(revolveArgs({ profile: RZ })).toEqual([RZ]);
+  expect(revolveArgs({ profile: RZ, degrees: 90 })).toEqual([RZ, { degrees: 90 }]);
+  const RINGS = [{ sides: 6, radius: 5, z: 0 }, { sides: 6, radius: 3, z: 10 }];
+  expect(loftArgs({ rings: RINGS })).toEqual([RINGS]);
+  expect(loftArgs({ rings: RINGS, ruled: true, closed: false })).toEqual([RINGS, { ruled: true, closed: false }]);
+  const PATH = [[0, 0, 0], [0, 0, 20]];
+  expect(sweepArgs({ profile: TRI, path: PATH })).toEqual([TRI, PATH]);
+  expect(sweepArgs({ profile: TRI, path: PATH, cornerRadius: 2, smooth: true })).toEqual([TRI, PATH, { cornerRadius: 2, smooth: true }]);
+  expect(() => sweepArgs({ profile: TRI })).toThrow("sweep: path is required");
+  expect(() => loftArgs({})).toThrow("loft: rings is required");
+});
+
+test("KERNEL_OP_SPECS carries the semantic checks (both calling forms)", () => {
+  expect(Object.keys(KERNEL_OP_SPECS).sort()).toEqual(
+    ["box", "cylinder", "extrude", "loft", "prism", "revolve", "sphere", "sweep"]);
+  expect(() => KERNEL_OP_SPECS.prism.check(TRI, 5, { scaleTop: -1 })).toThrow("prism: scaleTop must be ≥ 0");
+  expect(() => KERNEL_OP_SPECS.extrude.check(TRI, 5, { scaleTop: -1 })).toThrow("extrude: scaleTop must be ≥ 0");
+  expect(() => KERNEL_OP_SPECS.revolve.check([[-1, 0]])).toThrow("revolve: profile radius must be ≥ 0");
+  expect(KERNEL_OP_SPECS.prism.check(TRI, 5, { scaleTop: 0.5 })).toBeUndefined();
+});
+
+test("SOLID_OP_SPECS: fillet/chamfer/shell", () => {
+  expect(SOLID_OP_SPECS.fillet.toArgs({ r: 2 })).toEqual([2]);
+  expect(SOLID_OP_SPECS.fillet.toArgs({ r: 2, edges: { dir: "Z" } })).toEqual([2, { dir: "Z" }]);
+  expect(() => SOLID_OP_SPECS.fillet.toArgs({ edges: { dir: "Z" } })).toThrow("fillet: r is required");
+  expect(SOLID_OP_SPECS.chamfer.toArgs({ d: 1, edges: { at: 0 } })).toEqual([1, { at: 0 }]);
+  expect(SOLID_OP_SPECS.shell.toArgs({ t: 2, open: { face: "+Z" } })).toEqual([2, { face: "+Z" }]);
+  expect(() => SOLID_OP_SPECS.shell.toArgs({ t: 2 })).toThrow("shell: open is required");
 });

@@ -91,3 +91,62 @@ export function boxArgs(o) {
     ? [[-x / 2, -y / 2, -z / 2], [x / 2, y / 2, z / 2]]   // centered on all axes
     : [[-x / 2, -y / 2, 0], [x / 2, y / 2, z]];           // canonical: centered X/Y, base at z=0
 }
+
+export function prismArgs(o) {
+  checkKeys("prism", o, ["points", "h", "twist", "scaleTop"]);
+  return [req("prism", o, "points"), req("prism", o, "h"), ...tail(o, ["twist", "scaleTop"])];
+}
+
+export function extrudeArgs(o) {
+  checkKeys("extrude", o, ["profile", "h", "twist", "scaleTop"]);
+  return [req("extrude", o, "profile"), req("extrude", o, "h"), ...tail(o, ["twist", "scaleTop"])];
+}
+
+export function revolveArgs(o) {
+  checkKeys("revolve", o, ["profile", "degrees"]);
+  return [req("revolve", o, "profile"), ...tail(o, ["degrees"])];
+}
+
+export function loftArgs(o) {
+  checkKeys("loft", o, ["rings", "ruled", "closed"]);
+  return [req("loft", o, "rings"), ...tail(o, ["ruled", "closed"])];
+}
+
+export function sweepArgs(o) {
+  checkKeys("sweep", o, ["profile", "path", "closed", "cornerRadius", "ruled", "smooth"]);
+  return [req("sweep", o, "profile"), req("sweep", o, "path"),
+    ...tail(o, ["closed", "cornerRadius", "ruled", "smooth"])];
+}
+
+// Per-op semantic validations, applied to the NORMALIZED positional args so
+// they cover both calling forms (these moved here from kernel-front.js).
+const checkScaleTop = (op) => (_profile, _h, opts) => {
+  if ((opts?.scaleTop ?? 1) < 0) throw new Error(`${op}: scaleTop must be ≥ 0`);
+};
+
+// Kernel factory ops under the options convention. finishKernel() wraps each:
+// normalize (if options form) → check → raw backend op.
+export const KERNEL_OP_SPECS = {
+  cylinder: { toArgs: cylinderArgs },
+  sphere:   { toArgs: sphereArgs },
+  box:      { toArgs: boxArgs },
+  prism:    { toArgs: prismArgs, check: checkScaleTop("prism") },
+  extrude:  { toArgs: extrudeArgs, check: checkScaleTop("extrude") },
+  revolve:  { toArgs: revolveArgs, check: (pts) => {
+    for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
+  } },
+  loft:     { toArgs: loftArgs },
+  sweep:    { toArgs: sweepArgs },
+};
+
+// Solid ops under the options convention; addSugar() wraps these when the
+// backend provides them natively (OCCT). The Manifold KernelCapabilityError
+// stubs ignore arguments, so options-form calls still throw the routing error.
+export const SOLID_OP_SPECS = {
+  fillet:  { toArgs: (o) => { checkKeys("fillet", o, ["r", "edges"]);
+    return [req("fillet", o, "r"), ...(o.edges !== undefined ? [o.edges] : [])]; } },
+  chamfer: { toArgs: (o) => { checkKeys("chamfer", o, ["d", "edges"]);
+    return [req("chamfer", o, "d"), ...(o.edges !== undefined ? [o.edges] : [])]; } },
+  shell:   { toArgs: (o) => { checkKeys("shell", o, ["t", "open"]);
+    return [req("shell", o, "t"), req("shell", o, "open")]; } },
+};
