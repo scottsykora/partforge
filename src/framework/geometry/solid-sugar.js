@@ -6,10 +6,13 @@
 //     sugar is geometry-identical on Manifold and OCCT alike;
 //   - validates arguments the backends would otherwise each check (scale factor);
 //   - derives boundingBox center/size from the backend's raw {min,max};
+//   - normalizes the options-object calling convention for fillet/chamfer/shell
+//     when the backend provides them natively (OCCT);
 //   - stubs any OCCT-only op the backend lacks with a KernelCapabilityError, so
 //     the needs-occt reroute works without hand-written per-backend stubs.
 import { KernelCapabilityError } from "./errors.js";
 import { OCCT_ONLY_OPS } from "./kernel.js";
+import { isPlainOptions, SOLID_OP_SPECS } from "./op-options.js";
 
 const ORIGIN = [0, 0, 0];
 const AXIS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
@@ -53,6 +56,14 @@ export function addSugar(s) {
       size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
     };
   };
+
+  // Options-object calling convention for the multi-param B-rep ops. Wrap only
+  // when the backend provides the op natively (OCCT); the Manifold stubs below
+  // ignore their arguments, so options-form calls still throw the routing error.
+  for (const [op, { toArgs }] of Object.entries(SOLID_OP_SPECS)) {
+    const raw = s[op];
+    if (raw) s[op] = (...a) => raw(...(a.length === 1 && isPlainOptions(a[0]) ? toArgs(a[0]) : a));
+  }
 
   for (const op of OCCT_ONLY_OPS) {
     s[op] ??= () => { throw new KernelCapabilityError(`${op} requires the OCCT backend`); };
