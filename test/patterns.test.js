@@ -7,7 +7,7 @@ let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
 test("linearPattern makes `count` copies the union of which spans the run", () => {
-  const unit = k.box([-1, -1, -1], [1, 1, 1]);          // 2mm cube at origin
+  const unit = k.box({ min: [-1, -1, -1], max: [1, 1, 1] });          // 2mm cube at origin
   const copies = linearPattern(unit, 4, [10, 0, 0]);
   expect(copies.length).toBe(4);
   const [w] = bboxSize(k.union(copies).toMesh().positions);
@@ -15,7 +15,7 @@ test("linearPattern makes `count` copies the union of which spans the run", () =
 });
 
 test("circularPattern makes `count` copies arranged around the axis", () => {
-  const tool = k.box([18, -1, -1], [22, 1, 1]);          // a tab out at radius ~20 on +X
+  const tool = k.box({ min: [18, -1, -1], max: [22, 1, 1] });          // a tab out at radius ~20 on +X
   const copies = circularPattern(tool, 4, { axis: "Z" });
   expect(copies.length).toBe(4);
   const u = k.union(copies).toMesh().positions;
@@ -25,7 +25,7 @@ test("circularPattern makes `count` copies arranged around the axis", () => {
 });
 
 test("rotateCopies:false keeps each copy axis-aligned", () => {
-  const tool = k.box([18, -1, -2], [22, 1, 2]);          // longer in Z
+  const tool = k.box({ min: [18, -1, -2], max: [22, 1, 2] });          // longer in Z
   const rotated = circularPattern(tool, 4, { axis: "Z", rotateCopies: true });
   const fixed = circularPattern(tool, 4, { axis: "Z", rotateCopies: false });
   // every fixed copy keeps the original Z-extent of 4; bbox Z stays 4

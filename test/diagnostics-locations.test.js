@@ -27,8 +27,8 @@ const overlapping = {
   meta: { title: "Overlap", units: "mm" },
   defaults: {},
   parts: {
-    a: { views: ["v"], build: (k) => k.box([0, 0, 0], [10, 10, 10]) },
-    b: { views: ["v"], build: (k) => k.box([8, 0, 0], [18, 10, 10]) },
+    a: { views: ["v"], build: (k) => k.box({ min: [0, 0, 0], max: [10, 10, 10] }) },
+    b: { views: ["v"], build: (k) => k.box({ min: [8, 0, 0], max: [18, 10, 10] }) },
   },
   views: { v: { label: "V" } },
 };

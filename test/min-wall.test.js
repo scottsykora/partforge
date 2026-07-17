@@ -30,19 +30,19 @@ test("INDEXED box [10x20x5] — minWall reads ~5 (thinnest dimension)", () => {
   expect(result.value).toBeCloseTo(5, 1);
 });
 
-const tube = (rOut, rIn, h) => k.cylinder(rOut, rOut, h).cut(k.cylinder(rIn, rIn, h + 4).translate([0, 0, -2]));
+const tube = (rOut, rIn, h) => k.cylinder({ r: rOut, h }).cut(k.cylinder({ r: rIn, h: h + 4 }).translate([0, 0, -2]));
 
 test("tube with a 1.0 mm wall reads ~1.0", () => {
   expect(minWall(tube(6, 5, 20).toMesh()).value).toBeCloseTo(1.0, 1);
 });
 test("plate with a 1.2 mm wall reads ~1.2", () => {
-  expect(minWall(k.box([0, 0, 0], [30, 30, 1.2]).toMesh()).value).toBeCloseTo(1.2, 1);
+  expect(minWall(k.box({ min: [0, 0, 0], max: [30, 30, 1.2] }).toMesh()).value).toBeCloseTo(1.2, 1);
 });
 test("thin tube with a 0.6 mm wall reads ~0.6", () => {
   expect(minWall(tube(6, 5.4, 20).toMesh()).value).toBeCloseTo(0.6, 1);
 });
 test("a solid block reads its thinnest dimension (~5)", () => {
-  expect(minWall(k.box([0, 0, 0], [10, 20, 5]).toMesh()).value).toBeCloseTo(5, 1);
+  expect(minWall(k.box({ min: [0, 0, 0], max: [10, 20, 5] }).toMesh()).value).toBeCloseTo(5, 1);
 });
 test("reports the location of the thin spot", () => {
   const r = minWall(tube(6, 5, 20).toMesh());

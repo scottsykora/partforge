@@ -6,7 +6,7 @@ import { worldToSubPartLocal, attachPicker } from "../src/framework/selection/pi
 const view = { v: { label: "V" } };
 const part = {
   defaults: { a: 1 }, views: view,
-  parts: { one: { views: ["v"], build: (k, p) => k.cylinder(p.a, p.a, p.a) } },
+  parts: { one: { views: ["v"], build: (k, p) => k.cylinder({ r: p.a, h: p.a }) } },
 };
 
 afterEach(() => { document.body.innerHTML = ""; });

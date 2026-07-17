@@ -6,7 +6,7 @@ let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
 // an asymmetric box, so bbox reveals orientation AND position
-const box = () => k.box([0, 0, 0], [2, 4, 6]);
+const box = () => k.box({ min: [0, 0, 0], max: [2, 4, 6] });
 const sameGeom = (a, b) => {
   expect(a.volume()).toBeCloseTo(b.volume(), 6);
   const ba = a.boundingBox(), bb = b.boundingBox();
@@ -49,42 +49,42 @@ test("at equals translate", () => {
 });
 
 test("kernel solids come pre-sugared (manifold) and along works end to end", () => {
-  const s = k.box([0, 0, 0], [2, 4, 6]);
+  const s = k.box({ min: [0, 0, 0], max: [2, 4, 6] });
   expect(typeof s.along).toBe("function");
-  sameGeom(s.along("+Y"), k.box([0, 0, 0], [2, 4, 6]).rotate(-90, [0, 0, 0], [1, 0, 0]));
+  sameGeom(s.along("+Y"), k.box({ min: [0, 0, 0], max: [2, 4, 6] }).rotate(-90, [0, 0, 0], [1, 0, 0]));
 });
 
 test("sugar survives chaining (every returned solid is sugared)", () => {
-  const s = k.box([0, 0, 0], [2, 4, 6]).rotateZ(10).at([1, 2, 3]);
+  const s = k.box({ min: [0, 0, 0], max: [2, 4, 6] }).rotateZ(10).at([1, 2, 3]);
   expect(typeof s.rotateX).toBe("function");
 });
 
 test("a feature built with the vocabulary equals the raw-primitive build", () => {
-  const viaVocab = k.box([0, 0, 0], [20, 20, 10]).cutAll([
-    k.cylinder(2, 2, 30).along("+Y").at([10, -5, 5]),   // cross bore along Y
-    k.cylinder(1.5, 1.5, 12).at([5, 5, -1]),            // vertical hole
-    k.cylinder(1.5, 1.5, 12).at([15, 15, -1]),
+  const viaVocab = k.box({ min: [0, 0, 0], max: [20, 20, 10] }).cutAll([
+    k.cylinder({ r: 2, h: 30 }).along("+Y").at([10, -5, 5]),   // cross bore along Y
+    k.cylinder({ r: 1.5, h: 12 }).at([5, 5, -1]),            // vertical hole
+    k.cylinder({ r: 1.5, h: 12 }).at([15, 15, -1]),
   ]);
-  let viaRaw = k.box([0, 0, 0], [20, 20, 10]);
-  viaRaw = viaRaw.cut(k.cylinder(2, 2, 30).rotate(-90, [0, 0, 0], [1, 0, 0]).translate([10, -5, 5]));
-  viaRaw = viaRaw.cut(k.cylinder(1.5, 1.5, 12).translate([5, 5, -1]));
-  viaRaw = viaRaw.cut(k.cylinder(1.5, 1.5, 12).translate([15, 15, -1]));
+  let viaRaw = k.box({ min: [0, 0, 0], max: [20, 20, 10] });
+  viaRaw = viaRaw.cut(k.cylinder({ r: 2, h: 30 }).rotate(-90, [0, 0, 0], [1, 0, 0]).translate([10, -5, 5]));
+  viaRaw = viaRaw.cut(k.cylinder({ r: 1.5, h: 12 }).translate([5, 5, -1]));
+  viaRaw = viaRaw.cut(k.cylinder({ r: 1.5, h: 12 }).translate([15, 15, -1]));
   sameGeom(viaVocab, viaRaw);
 });
 
 test('along("+Z") returns a fresh handle with identity geometry', () => {
-  const s = k.box([0, 0, 0], [2, 4, 6]);
+  const s = k.box({ min: [0, 0, 0], max: [2, 4, 6] });
   const r = s.along("+Z");
   expect(r).not.toBe(s);
-  sameGeom(r, k.box([0, 0, 0], [2, 4, 6]));
+  sameGeom(r, k.box({ min: [0, 0, 0], max: [2, 4, 6] }));
 });
 
 test("sugar methods are shared across solids (no per-solid closures)", () => {
-  expect(k.box([0,0,0],[1,1,1]).rotateX).toBe(k.box([0,0,0],[2,2,2]).rotateX);
+  expect(k.box({ min: [0,0,0], max: [1,1,1] }).rotateX).toBe(k.box({ min: [0,0,0], max: [2,2,2] }).rotateX);
 });
 
 test("rotateAbout does a TRUE axis-angle rotation for a non-basis axis (matches analytic ground truth)", () => {
-  const r = k.box([0, 0, 0], [2, 4, 6]).rotateAbout({ axis: [1, 1, 0], deg: 90 });
+  const r = k.box({ min: [0, 0, 0], max: [2, 4, 6] }).rotateAbout({ axis: [1, 1, 0], deg: 90 });
   const b = r.boundingBox();
   expect(b.min[0]).toBeCloseTo(0, 3);      expect(b.max[0]).toBeCloseTo(7.2426, 3);
   expect(b.min[1]).toBeCloseTo(-4.2426, 3); expect(b.max[1]).toBeCloseTo(3, 3);
@@ -92,6 +92,6 @@ test("rotateAbout does a TRUE axis-angle rotation for a non-basis axis (matches 
 });
 
 test("basis-axis rotateAbout is unchanged (still equals the euler path)", () => {
-  sameGeom(k.box([0,0,0],[2,4,6]).rotateAbout({ axis: "Z", deg: 30 }),
-           k.box([0,0,0],[2,4,6]).rotate(30, [0,0,0], [0,0,1]));
+  sameGeom(k.box({ min: [0,0,0], max: [2,4,6] }).rotateAbout({ axis: "Z", deg: 30 }),
+           k.box({ min: [0,0,0], max: [2,4,6] }).rotate(30, [0,0,0], [0,0,1]));
 });

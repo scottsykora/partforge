@@ -9,13 +9,13 @@ beforeAll(async () => { k = await bootManifoldKernel(); });
 const boxPart = {
   meta: { title: "Box", units: "mm" },
   defaults: {},
-  parts: { block: { views: ["v"], build: (kk) => kk.box([0, 0, 0], [10, 20, 5]) } },
+  parts: { block: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 20, 5] }) } },
   views: { v: { label: "V" } },
 };
 const tubePart = {
   meta: { title: "Tube", units: "mm" },
   defaults: {},
-  parts: { tube: { views: ["v"], build: (kk) => kk.cylinder(10, 10, 20).cut(kk.cylinder(4, 4, 30).translate([0, 0, -5])) } },
+  parts: { tube: { views: ["v"], build: (kk) => kk.cylinder({ r: 10, h: 20 }).cut(kk.cylinder({ r: 4, h: 30 }).translate([0, 0, -5])) } },
   views: { v: { label: "V" } },
 };
 

@@ -10,8 +10,8 @@ beforeEach(() => k.resetCacheStats());
 // Two-boundary build: a flanged barrel (union) bored through (cut). `bore` feeds
 // only the cut, so changing it must HIT the union and MISS only the cut.
 const barrel = (od, h, flangeD, flangeH, boreR) => {
-  let s = k.union([k.cylinder(od / 2, od / 2, h), k.cylinder(flangeD / 2, flangeD / 2, flangeH)]);
-  return s.cut(k.cylinder(boreR, boreR, h + 4).translate([0, 0, -2]));
+  let s = k.union([k.cylinder({ r: od / 2, h }), k.cylinder({ r: flangeD / 2, h: flangeH })]);
+  return s.cut(k.cylinder({ r: boreR, h: h + 4 }).translate([0, 0, -2]));
 };
 
 test("an identical rebuild is all hits, zero new misses", () => {
@@ -45,8 +45,8 @@ test("a cached-resume mesh equals a cold-built mesh", async () => {
     const kk = await bootManifoldKernel();
     return {
       barrel: (boreR) => {
-        let s = kk.union([kk.cylinder(4, 4, 10), kk.cylinder(8, 8, 2)]);
-        const mesh = s.cut(kk.cylinder(boreR, boreR, 14).translate([0, 0, -2])).toMesh();
+        let s = kk.union([kk.cylinder({ r: 4, h: 10 }), kk.cylinder({ r: 8, h: 2 })]);
+        const mesh = s.cut(kk.cylinder({ r: boreR, h: 14 }).translate([0, 0, -2])).toMesh();
         const vol = meshVolume(mesh.positions), bbox = bboxSize(mesh.positions);
         kk.cleanup();
         return { vol, bbox };

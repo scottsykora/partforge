@@ -4,8 +4,8 @@ export default {
   meta: { title: "GapRig", units: "mm" },
   defaults: { gap: 0.2 },
   parts: {
-    left:  { views: ["v"], build: (k) => k.box([0, 0, 0], [10, 10, 10]) },
-    right: { views: ["v"], build: (k, p) => k.box([10 + p.gap, 0, 0], [20 + p.gap, 10, 10]) },
+    left:  { views: ["v"], build: (k) => k.box({ min: [0, 0, 0], max: [10, 10, 10] }) },
+    right: { views: ["v"], build: (k, p) => k.box({ min: [10 + p.gap, 0, 0], max: [20 + p.gap, 10, 10] }) },
   },
   views: { v: { label: "V" } },
 };

@@ -5,8 +5,8 @@ const view = { v: { label: "V" } };
 const part = {
   defaults: { a: 1, b: 2 }, views: view,
   parts: {
-    one: { views: ["v"], build: (k, p) => k.cylinder(p.a, p.a, p.a) },        // reads a only
-    two: { views: ["v"], build: (k, p) => k.box([0, 0, 0], [p.b, p.b, p.b]) }, // reads b only
+    one: { views: ["v"], build: (k, p) => k.cylinder({ r: p.a, h: p.a }) },        // reads a only
+    two: { views: ["v"], build: (k, p) => k.box({ min: [0, 0, 0], max: [p.b, p.b, p.b] }) }, // reads b only
   },
 };
 const ctx = { view: "v", params: { a: 1, b: 2 }, derived: {} };

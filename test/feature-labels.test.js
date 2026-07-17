@@ -9,14 +9,14 @@ let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
 test("unlabeled build produces no feature fields", () => {
-  const m = k.box([0, 0, 0], [4, 4, 4]).toMesh();
+  const m = k.box({ min: [0, 0, 0], max: [4, 4, 4] }).toMesh();
   expect(m.featureIds).toBeUndefined();
   expect(m.features).toBeUndefined();
 });
 
 test("label() attributes a cut tool's surviving surface", () => {
-  const s = k.box([0, 0, 0], [10, 10, 10])
-    .cut(k.cylinder(2, 2, 12).at([5, 5, -1]).label("Bore"));
+  const s = k.box({ min: [0, 0, 0], max: [10, 10, 10] })
+    .cut(k.cylinder({ r: 2, h: 12 }).at([5, 5, -1]).label("Bore"));
   const m = s.toMesh();
   expect(m.features).toEqual(["Bore"]);
   expect(m.featureIds).toBeInstanceOf(Uint16Array);
@@ -36,25 +36,25 @@ test("label() attributes a cut tool's surviving surface", () => {
 });
 
 test("labels survive transforms applied after label()", () => {
-  const tool = k.cylinder(2, 2, 12).label("Bore").at([5, 5, -1]); // label BEFORE at()
-  const m = k.box([0, 0, 0], [10, 10, 10]).cut(tool).toMesh();
+  const tool = k.cylinder({ r: 2, h: 12 }).label("Bore").at([5, 5, -1]); // label BEFORE at()
+  const m = k.box({ min: [0, 0, 0], max: [10, 10, 10] }).cut(tool).toMesh();
   expect(m.features).toEqual(["Bore"]);
   expect(m.featureIds.some((v) => v === 1)).toBe(true);
 });
 
 test("same label string merges into one feature (patterned features)", () => {
   const holes = [
-    k.cylinder(1, 1, 12).at([3, 3, -1]).label("Mounting holes"),
-    k.cylinder(1, 1, 12).at([7, 7, -1]).label("Mounting holes"),
+    k.cylinder({ r: 1, h: 12 }).at([3, 3, -1]).label("Mounting holes"),
+    k.cylinder({ r: 1, h: 12 }).at([7, 7, -1]).label("Mounting holes"),
   ];
-  const m = k.box([0, 0, 0], [10, 10, 10]).cutAll(holes).toMesh();
+  const m = k.box({ min: [0, 0, 0], max: [10, 10, 10] }).cutAll(holes).toMesh();
   expect(m.features).toEqual(["Mounting holes"]);
 });
 
 test("two distinct labels produce two feature entries", () => {
-  const m = k.box([0, 0, 0], [10, 10, 10])
-    .cut(k.cylinder(1, 1, 12).at([3, 3, -1]).label("Bore A"))
-    .cut(k.cylinder(1, 1, 12).at([7, 7, -1]).label("Bore B"))
+  const m = k.box({ min: [0, 0, 0], max: [10, 10, 10] })
+    .cut(k.cylinder({ r: 1, h: 12 }).at([3, 3, -1]).label("Bore A"))
+    .cut(k.cylinder({ r: 1, h: 12 }).at([7, 7, -1]).label("Bore B"))
     .toMesh();
   expect([...m.features].sort()).toEqual(["Bore A", "Bore B"]);
   const ids = new Set(m.featureIds.filter((v) => v > 0));
@@ -67,8 +67,8 @@ test("generate jobs pass featureIds/features through to the mesh payload", async
     parts: {
       body: {
         views: ["v"],
-        build: (k, p) => k.box([0, 0, 0], [10, 10, 10])
-          .cut(k.cylinder(p.bore / 2, p.bore / 2, 12).at([5, 5, -1]).label("Bore")),
+        build: (k, p) => k.box({ min: [0, 0, 0], max: [10, 10, 10] })
+          .cut(k.cylinder({ r: p.bore / 2, h: 12 }).at([5, 5, -1]).label("Bore")),
       },
     },
     views: { v: {} },

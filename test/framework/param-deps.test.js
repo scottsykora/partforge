@@ -7,8 +7,8 @@ const conditional = () => ({
   views: { v: { label: "V" } },
   parts: {
     a: { views: ["v"], build: (k, p) => {
-      let s = k.cylinder(p.x, p.x, 10);
-      if (p.on > 0) s = s.cut(k.cylinder(p.y, p.y, 12));
+      let s = k.cylinder({ r: p.x, h: 10 });
+      if (p.on > 0) s = s.cut(k.cylinder({ r: p.y, h: 12 }));
       return s;
     } },
   },
@@ -25,7 +25,7 @@ test("derive inputs are included only when a visible sub-part reads a derived va
     defaults: { a: 1, b: 2, c: 9 },
     views: { v: { label: "V" } },
     derive: (p) => ({ sum: p.a + p.b }),                 // reads a, b
-    parts: { d: { views: ["v"], build: (k, p, d) => k.cylinder(d.sum, d.sum, 10) } }, // reads d.sum
+    parts: { d: { views: ["v"], build: (k, p, d) => k.cylinder({ r: d.sum, h: 10 }) } }, // reads d.sum
   };
   expect([...relevantParamKeys(usesDerived, "v", usesDerived.defaults)].sort()).toEqual(["a", "b"]);
 
@@ -33,7 +33,7 @@ test("derive inputs are included only when a visible sub-part reads a derived va
     defaults: { a: 1, b: 2, c: 9 },
     views: { v: { label: "V" } },
     derive: (p) => ({ sum: p.a + p.b }),
-    parts: { d: { views: ["v"], build: (k, p) => k.cylinder(p.c, p.c, 10) } }, // reads p.c only, no d
+    parts: { d: { views: ["v"], build: (k, p) => k.cylinder({ r: p.c, h: 10 }) } }, // reads p.c only, no d
   };
   expect([...relevantParamKeys(ignoresDerived, "v", ignoresDerived.defaults)].sort()).toEqual(["c"]);
 });
@@ -43,7 +43,7 @@ test("a param used only in a sub-part's enabled() gate is relevant", () => {
     defaults: { capOn: 0, r: 4 },
     views: { v: { label: "V" } },
     parts: {
-      base: { views: ["v"], build: (k, p) => k.cylinder(p.r, p.r, 10) },
+      base: { views: ["v"], build: (k, p) => k.cylinder({ r: p.r, h: 10 }) },
       cap: { views: ["v"], enabled: (p) => p.capOn > 0, build: (k) => k.sphere(2) },
     },
   };

@@ -5,7 +5,7 @@
 export default {
   meta: { title: "UnknownMetric", units: "mm" },
   defaults: {},
-  parts: { ring: { views: ["v"], build: (k) => k.cylinder(4, 4, 10).cut(k.cylinder(3.4, 3.4, 14).translate([0, 0, -2])) } },
+  parts: { ring: { views: ["v"], build: (k) => k.cylinder({ r: 4, h: 10 }).cut(k.cylinder({ r: 3.4, h: 14 }).translate([0, 0, -2])) } },
   views: { v: { label: "V" } },
   verify: { expect: { ring: { bogusMetric: 1 } } },
 };
