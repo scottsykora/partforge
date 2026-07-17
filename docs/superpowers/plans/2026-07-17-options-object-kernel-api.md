@@ -430,9 +430,12 @@ test("detection rule: two-argument object-profile extrude stays positional", () 
 });
 
 test("both spellings share one solid-cache entry", () => {
-  k.beginSubPart("cc"); k.cylinder(4, 4, 10).toMesh(); k.endSubPart(); k.cleanup();
+  // NOTE (execution correction): must use a cache-backed op — Manifold's
+  // cylinder/sphere/box are bare primitives that never touch cache.lookup, so
+  // the original cylinder version of this test asserted hits>0 vacuously-false.
+  k.beginSubPart("cc"); k.prism(TRI, 5, { twist: 30 }).toMesh(); k.endSubPart(); k.cleanup();
   k.resetCacheStats();
-  k.beginSubPart("cc"); k.cylinder({ r: 4, h: 10 }).toMesh(); k.endSubPart(); k.cleanup();
+  k.beginSubPart("cc"); k.prism({ points: TRI, h: 5, twist: 30 }).toMesh(); k.endSubPart(); k.cleanup();
   expect(k.cacheStats().misses).toBe(0);
   expect(k.cacheStats().hits).toBeGreaterThan(0);
 });
