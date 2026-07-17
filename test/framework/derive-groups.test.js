@@ -17,7 +17,7 @@ const grouped = () => ({
     other: (p) => ({ z: p.c * 2 }),
   },
   parts: {
-    usesCore: { views: ["v"], build: (k, p, d) => k.cylinder(d.w, d.w, 10) },
+    usesCore: { views: ["v"], build: (k, p, d) => k.cylinder({ r: d.w, h: 10 }) },
     usesChained: { views: ["v"], build: (k, p, d) => k.box(d.h, 1, 1) },
   },
 });
@@ -54,7 +54,7 @@ test("grouped derive: per-sub-part reads follow each group's own inputs", () => 
 
 test("grouped derive: reading a derived key no group produced falls back to all derive inputs", () => {
   const part = grouped();
-  part.parts.usesCore.build = (k, p, d) => k.cylinder(d.nope ?? 1, 1, 10);
+  part.parts.usesCore.build = (k, p, d) => k.cylinder({ r1: d.nope ?? 1, r2: 1, h: 10 });
   const map = subPartReadKeys(part, "v", part.defaults);
   expect([...map.get("usesCore")].sort()).toEqual(["a", "b", "c"]);
 });
@@ -80,7 +80,7 @@ test("params read only via a sub-part's display place() count as reads", () => {
     parts: {
       s: {
         views: ["v"],
-        build: (k, p, d) => k.cylinder(d.x, d.x, 10),
+        build: (k, p, d) => k.cylinder({ r: d.x, h: 10 }),
         place: (solid, { p, d }) => solid.at([d.y, p.off, 0]),
       },
     },
@@ -95,7 +95,7 @@ test("detectBackend survives a throwing derive (falls back to per-build probing)
     defaults: { r: 2 },
     views: { v: { label: "V" } },
     derive: { bad: () => { throw new Error("nope"); } },
-    parts: { s: { views: ["v"], build: (k, p) => k.cylinder(p.r, p.r, 4) } },
+    parts: { s: { views: ["v"], build: (k, p) => k.cylinder({ r: p.r, h: 4 }) } },
   };
   expect(detectBackend(part)).toBe("manifold");
 });

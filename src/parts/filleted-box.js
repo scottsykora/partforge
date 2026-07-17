@@ -24,20 +24,20 @@ export default {
       label: "Body",
       views: ["box"],
       build: (k, p) => {
-        let s = k.box([0, 0, 0], [p.w, p.d, p.h]);
+        let s = k.box({ min: [0, 0, 0], max: [p.w, p.d, p.h] });
         const half = Math.min(p.w, p.d) / 2;
         // Round the vertical edges, then the top rim — each clamped to the box so a
         // radius can't exceed the available material.
         const vFillet = Math.min(p.fillet, half - 0.5, p.h - 0.5);
-        if (vFillet > 0) s = s.fillet(vFillet, { dir: "Z" });                   // 4 vertical edges
+        if (vFillet > 0) s = s.fillet({ r: vFillet, edges: { dir: "Z" } });                    // 4 vertical edges
         const topFillet = Math.min(p.top, half - vFillet - 0.5, p.h / 2 - 0.5);
-        if (topFillet > 0) s = s.fillet(topFillet, { inPlane: "XY", at: p.h });  // top rim — curves all the way around
+        if (topFillet > 0) s = s.fillet({ r: topFillet, edges: { inPlane: "XY", at: p.h } });  // top rim — curves all the way around
         // Base chamfer AFTER the fillets, so it cuts a clean curve across the rounded
         // corners. No manual limit needed: the backend auto-clamps a chamfer to half
         // the shortest edge it touches (here the fillets' bottom arcs), so it stops at
         // its valid maximum instead of mangling the bottom face.
-        if (p.chamfer > 0) s = s.chamfer(p.chamfer, { inPlane: "XY", at: 0 });    // base edges
-        if (p.bore > 0) s = s.cut(k.cylinder(p.bore / 2, p.bore / 2, p.h + 2).at([p.w / 2, p.d / 2, -1]).label("Bore"));
+        if (p.chamfer > 0) s = s.chamfer({ d: p.chamfer, edges: { inPlane: "XY", at: 0 } });   // base edges
+        if (p.bore > 0) s = s.cut(k.cylinder({ d: p.bore, h: p.h + 2 }).at([p.w / 2, p.d / 2, -1]).label("Bore"));
         return s;
       },
     },

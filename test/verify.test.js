@@ -58,7 +58,7 @@ const tube = (od, h) => ({
   meta: { title: "Tube", units: "mm" },
   defaults: { od, h, label: "a" },
   parameters: [{ id: "b", presets: { Big: { od: 20, h: 30 }, Relabel: { label: "z" } } }],
-  parts: { tube: { views: ["v"], build: (kk, p) => kk.cylinder(p.od / 2, p.od / 2, p.h).cut(kk.cylinder(2, 2, p.h + 4).translate([0, 0, -2])) } },
+  parts: { tube: { views: ["v"], build: (kk, p) => kk.cylinder({ r: p.od / 2, h: p.h }).cut(kk.cylinder({ r: 2, h: p.h + 4 }).translate([0, 0, -2])) } },
   views: { v: { label: "V" } },
 });
 
@@ -307,8 +307,8 @@ test("end-to-end: contacts on an enabled()-gated sub-part skips cases where it i
     defaults: { with_lid: 1 },
     parameters: [{ id: "b", presets: { Bare: { with_lid: 0 } } }],
     parts: {
-      base: { views: ["v"], build: (kk) => kk.box([0, 0, 0], [10, 10, 5]) },
-      lid:  { views: ["v"], enabled: (p) => p.with_lid > 0, build: (kk) => kk.box([0, 0, 5], [10, 10, 7]) },
+      base: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 5] }) },
+      lid:  { views: ["v"], enabled: (p) => p.with_lid > 0, build: (kk) => kk.box({ min: [0, 0, 5], max: [10, 10, 7] }) },
     },
     views: { v: { label: "V" } },
     verify: { expect: { _view: { contacts: [["base", "lid"]] } } },
@@ -332,8 +332,8 @@ const holey = () => ({
   derive: (p) => ({ boreR: p.bore / 2 }),
   parts: {
     puck: { views: ["v"], build: (kk, p, d) => {
-      const s = kk.cylinder(p.od / 2, p.od / 2, p.h);
-      return p.bore > 0 ? s.cut(kk.cylinder(d.boreR, d.boreR, p.h + 4).translate([0, 0, -2])) : s;
+      const s = kk.cylinder({ r: p.od / 2, h: p.h });
+      return p.bore > 0 ? s.cut(kk.cylinder({ r: d.boreR, h: p.h + 4 }).translate([0, 0, -2])) : s;
     } },
   },
   views: { v: { label: "V" } },

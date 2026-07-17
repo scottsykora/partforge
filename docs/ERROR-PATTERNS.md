@@ -131,7 +131,7 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 
 - **Symptom:** `ringSectorPolygon: arcDeg must be < 360 (use a cut for a full ring)`
 - **Cause:** A full annulus can't be a single simple polygon — it's a contour-with-hole.
-- **Fix:** Cut an inner cylinder from an outer one (or `k.extrude({ outer, holes })`); use `ringSectorPolygon` only for partial arcs. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Profiles & patterns".
+- **Fix:** Cut an inner cylinder from an outer one (or `k.extrude({ profile: { outer, holes }, h })`); use `ringSectorPolygon` only for partial arcs. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Profiles & patterns".
 
 ## occt-closed-loop-unsupported
 
@@ -162,6 +162,38 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 - **Symptom:** A part's page 404s in the production deploy while working fine under `npm run dev`.
 - **Cause:** Only pages listed in `build.rollupOptions.input` are compiled by the production build; other root `*.html` pages are dev-only conveniences Vite serves without building.
 - **Fix:** Add the page to `build.rollupOptions.input` in `vite.config.js` if it should ship. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Wiring a part into a runnable app".
+
+## options-unknown-key
+
+- **Symptom:** `unknown option` — e.g. `cylinder: unknown option "radius" — did you mean r?`
+- **Cause:** an options-form kernel call passed a key the op does not accept (typo, or long-form vocabulary like `radius`/`height`).
+- **Fix:** use the canonical keys from the op table in [AUTHORING-PARTS.md](AUTHORING-PARTS.md); the error's did-you-mean / valid-keys hint names them.
+
+## options-missing-key
+
+- **Symptom:** `is required` — e.g. `cylinder: h is required`, `sweep: path is required`.
+- **Cause:** an options-form kernel call omitted a required key.
+- **Fix:** supply the key; canonical forms are in the [AUTHORING-PARTS.md](AUTHORING-PARTS.md) op table and KERNEL-CONTRACT.md "Calling convention".
+
+## cylinder-radius-keys
+
+- **Symptom:** `cylinder: pass exactly one of r/d, or r1+r2 / d1+d2`
+- **Cause:** mixed or missing radius vocabulary — both `r` and `d`, straight + cone keys together, only one cone end, or `r1`+`d2`.
+- **Fix:** straight cylinders take one of `r`|`d` plus `h`; cones take `r1`+`r2` or `d1`+`d2` plus `h`.
+
+The sphere variant is `sphere: pass exactly one of r/d` (same cause and fix).
+
+## box-size-vs-corners
+
+- **Symptom:** `box: pass size or min+max, not both`
+- **Cause:** the two `box` forms were mixed in one call.
+- **Fix:** either `{size, center?}` (centered in X/Y, base at z=0; `center:true` centers Z too) or `{min, max}` — see [AUTHORING-PARTS.md](AUTHORING-PARTS.md).
+
+## box-center-with-corners
+
+- **Symptom:** `box: center only applies to the size form`
+- **Cause:** `center` was passed alongside `min`/`max`, but explicit corners already fix the placement.
+- **Fix:** drop `center`, or switch to `{size, center?}` — see [AUTHORING-PARTS.md](AUTHORING-PARTS.md).
 
 # Hardware library
 

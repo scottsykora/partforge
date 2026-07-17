@@ -7,7 +7,7 @@ import gapPart from "./fixtures/gap-part.js";
 let k;
 const boxPart = {
   meta: { title: "OcctBox", backend: "occt" }, defaults: {}, views: { v: { label: "V" } },
-  parts: { a: { views: ["v"], build: (kk) => kk.box([0, 0, 0], [10, 10, 10]) } },
+  parts: { a: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 10] }) } },
 };
 beforeAll(async () => { k = await bootOcctKernel(); });
 

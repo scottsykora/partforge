@@ -31,7 +31,7 @@ test("a build that throws mid-way still closes the cache bracket — the kernel 
     defaults: { boom: false },
     views: { v: { label: "V" } },
     parts: { a: { views: ["v"], build: (k, p) => {
-      const s = k.cylinder(5, 5, 10).cut(k.cylinder(2, 2, 12).translate([0, 0, -1]));
+      const s = k.cylinder({ r: 5, h: 10 }).cut(k.cylinder({ r: 2, h: 12 }).translate([0, 0, -1]));
       if (p.boom) throw new Error("boom");
       return s;
     } } },

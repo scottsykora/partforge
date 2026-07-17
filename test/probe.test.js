@@ -2,11 +2,11 @@ import { expect, test } from "vitest";
 import { detectBackend } from "../src/framework/geometry/probe.js";
 
 const view = { v: { label: "V" } };
-const plain = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box([0, 0, 0], [1, 1, 1]) } } };
-const fillets = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box([0, 0, 0], [1, 1, 1]).fillet(0.1) } } };
+const plain = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box({ min: [0, 0, 0], max: [1, 1, 1] }) } } };
+const fillets = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box({ min: [0, 0, 0], max: [1, 1, 1] }).fillet(0.1) } } };
 const conditional = {
   defaults: { round: 0 }, views: view,
-  parts: { a: { views: ["v"], build: (k, p) => p.round > 0 ? k.box([0, 0, 0], [1, 1, 1]).fillet(p.round) : k.box([0, 0, 0], [1, 1, 1]) } },
+  parts: { a: { views: ["v"], build: (k, p) => p.round > 0 ? k.box({ min: [0, 0, 0], max: [1, 1, 1] }).fillet(p.round) : k.box({ min: [0, 0, 0], max: [1, 1, 1] }) } },
 };
 
 test("a part using fillet routes to occt", () => { expect(detectBackend(fillets)).toBe("occt"); });
@@ -18,14 +18,14 @@ test("a conditional fillet is detected only when its param enables it", () => {
 });
 
 test("a part using shell routes to occt", () => {
-  const shelled = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box([0, 0, 0], [10, 10, 10]).shell(1, { dir: "Z" }) } } };
+  const shelled = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box({ min: [0, 0, 0], max: [10, 10, 10] }).shell({ t: 1, open: { dir: "Z" } }) } } };
   expect(detectBackend(shelled)).toBe("occt");
 });
 
 test("label() chains on the probe kernel and does not force OCCT", () => {
   const part = {
     defaults: { a: 5 },
-    parts: { p: { views: ["v"], build: (k, p) => k.box([0, 0, 0], [p.a, p.a, p.a]).label("Body") } },
+    parts: { p: { views: ["v"], build: (k, p) => k.box({ min: [0, 0, 0], max: [p.a, p.a, p.a] }).label("Body") } },
     views: { v: {} },
   };
   expect(detectBackend(part)).toBe("manifold");

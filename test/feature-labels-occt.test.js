@@ -9,8 +9,8 @@ let k;
 beforeAll(async () => { k = await bootOcctKernel(); }, 120000);
 
 test("label() attributes a cut tool's surviving surface (OCCT)", () => {
-  const s = k.box([0, 0, 0], [10, 10, 10])
-    .cut(k.cylinder(2, 2, 12).at([5, 5, -1]).label("Bore"));
+  const s = k.box({ min: [0, 0, 0], max: [10, 10, 10] })
+    .cut(k.cylinder({ r: 2, h: 12 }).at([5, 5, -1]).label("Bore"));
   const m = s.toMesh();
   expect(m.features).toEqual(["Bore"]);
   expect(m.featureIds).toBeInstanceOf(Uint16Array);
@@ -28,20 +28,20 @@ test("label() attributes a cut tool's surviving surface (OCCT)", () => {
 });
 
 test("labels survive transforms applied after label() (OCCT)", () => {
-  const tool = k.cylinder(2, 2, 12).label("Bore").at([5, 5, -1]);
-  const m = k.box([0, 0, 0], [10, 10, 10]).cut(tool).toMesh();
+  const tool = k.cylinder({ r: 2, h: 12 }).label("Bore").at([5, 5, -1]);
+  const m = k.box({ min: [0, 0, 0], max: [10, 10, 10] }).cut(tool).toMesh();
   expect(m.features).toEqual(["Bore"]);
 });
 
 test("fillet surfaces stay unlabeled but other labeled faces persist", () => {
-  const s = k.box([0, 0, 0], [20, 20, 10]).fillet(2, { dir: "Z" })
-    .cut(k.cylinder(3, 3, 12).at([10, 10, -1]).label("Bore"));
+  const s = k.box({ min: [0, 0, 0], max: [20, 20, 10] }).fillet({ r: 2, edges: { dir: "Z" } })
+    .cut(k.cylinder({ r: 3, h: 12 }).at([10, 10, -1]).label("Bore"));
   const m = s.toMesh();
   expect(m.features).toEqual(["Bore"]);
 });
 
 test("unlabeled OCCT build produces no feature fields", () => {
-  const m = k.box([0, 0, 0], [4, 4, 4]).toMesh();
+  const m = k.box({ min: [0, 0, 0], max: [4, 4, 4] }).toMesh();
   expect(m.featureIds).toBeUndefined();
 });
 

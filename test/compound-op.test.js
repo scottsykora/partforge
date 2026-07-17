@@ -10,7 +10,7 @@ beforeEach(() => k.resetCacheStats());
 
 test("boredCylinder removes the bore volume", () => {
   const solid = k.boredCylinder({ od: 10, h: 20, bore: 4 });
-  const plain = k.cylinder(5, 5, 20);
+  const plain = k.cylinder({ r: 5, h: 20 });
   expect(meshVolume(solid.toMesh().positions)).toBeLessThan(meshVolume(plain.toMesh().positions));
 });
 

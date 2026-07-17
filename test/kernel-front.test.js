@@ -21,15 +21,15 @@ function fakeKernel() {
 
 test("prism arguments are validated once, in the front", () => {
   const k = finishKernel(fakeKernel());
-  expect(() => k.prism([[0, 0]], 5, { scaleTop: -1 })).toThrow(/scaleTop must be/);
-  expect(k.prism([[0, 0]], 5)).toBe("prism-result");
-  expect(k.prism([[0, 0]], 5, { scaleTop: 0.5, twist: 30 })).toBe("prism-result");
+  expect(() => k.prism({ points: [[0, 0]], h: 5, scaleTop: -1 })).toThrow(/scaleTop must be/);
+  expect(k.prism({ points: [[0, 0]], h: 5 })).toBe("prism-result");
+  expect(k.prism({ points: [[0, 0]], h: 5, scaleTop: 0.5, twist: 30 })).toBe("prism-result");
 });
 
 test("revolve rejects a negative profile radius in the front", () => {
   const k = finishKernel(fakeKernel());
-  expect(() => k.revolve([[-1, 0], [10, 0], [10, 20]])).toThrow(/radius must be/);
-  expect(k.revolve([[1, 0], [10, 0], [10, 20]])).toBe("revolve-result");
+  expect(() => k.revolve({ profile: [[-1, 0], [10, 0], [10, 20]] })).toThrow(/radius must be/);
+  expect(k.revolve({ profile: [[1, 0], [10, 0], [10, 20]] })).toBe("revolve-result");
 });
 
 test("boredCylinder defaults to the cylinder-minus-cylinder composition", () => {

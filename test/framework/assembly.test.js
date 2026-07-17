@@ -10,8 +10,8 @@ beforeAll(async () => { k = await bootManifoldKernel(); });
 const twoBoxes = {
   defaults: { gap: 0 },
   parts: {
-    a: { views: ["v"], build: (kk) => kk.box([0, 0, 0], [2, 2, 2]) },
-    b: { views: ["v"], build: (kk, p) => kk.box([0, 0, 0], [2, 2, 2]).translate([2 - p.gap, 0, 0]) },
+    a: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [2, 2, 2] }) },
+    b: { views: ["v"], build: (kk, p) => kk.box({ min: [0, 0, 0], max: [2, 2, 2] }).translate([2 - p.gap, 0, 0]) },
   },
   views: { v: {} },
 };

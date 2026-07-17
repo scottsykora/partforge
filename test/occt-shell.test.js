@@ -5,8 +5,8 @@ let k;
 beforeAll(async () => { k = await bootOcctKernel(); });
 
 test("shell hollows a box inward, keeping outer dimensions", () => {
-  const solidV = k.box([0, 0, 0], [20, 20, 20]).volume(); // 8000
-  const cup = k.box([0, 0, 0], [20, 20, 20]).shell(2, { inPlane: "XY", at: 20 }); // open top
+  const solidV = k.box({ min: [0, 0, 0], max: [20, 20, 20] }).volume(); // 8000
+  const cup = k.box({ min: [0, 0, 0], max: [20, 20, 20] }).shell({ t: 2, open: { inPlane: "XY", at: 20 } }); // open top
   const v = cup.volume();
   expect(v).toBeLessThan(solidV);        // material removed
   expect(v).toBeGreaterThan(1000);       // a wall remains (not vanished)
@@ -17,5 +17,7 @@ test("shell hollows a box inward, keeping outer dimensions", () => {
 });
 
 test("shell requires openFaces", () => {
-  expect(() => k.box([0, 0, 0], [10, 10, 10]).shell(1)).toThrow(/openFaces/);
+  // kept positional: the options form's own key-check requires `open` and throws
+  // "open is required" before reaching the backend, which would not match /openFaces/.
+  expect(() => k.box({ min: [0, 0, 0], max: [10, 10, 10] }).shell(1)).toThrow(/openFaces/);
 });

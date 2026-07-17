@@ -25,13 +25,13 @@ test("Manifold kernel exposes no op the contract doesn't document", () => {
 });
 
 test("Manifold solid implements every required op", () => {
-  const keys = publicKeys(k.box([0, 0, 0], [1, 1, 1]));
+  const keys = publicKeys(k.box({ min: [0, 0, 0], max: [1, 1, 1] }));
   for (const op of SOLID_OPS) expect(keys, `solid is missing ${op}`).toContain(op);
 });
 
 test("Manifold solid exposes no op the contract doesn't document", () => {
   const documented = new Set([...SOLID_OPS, ...SOLID_OPTIONAL_OPS]);
-  expect(publicKeys(k.box([0, 0, 0], [1, 1, 1])).filter((key) => !documented.has(key))).toEqual([]);
+  expect(publicKeys(k.box({ min: [0, 0, 0], max: [1, 1, 1] })).filter((key) => !documented.has(key))).toEqual([]);
 });
 
 // The prose half of the contract (docs/KERNEL-CONTRACT.md) must not drift from the

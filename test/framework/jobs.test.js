@@ -70,7 +70,7 @@ test("a throwing derive posts an error instead of hanging the job", async () => 
     defaults: { r: 4 },
     derive: () => { throw new Error("derive blew up"); },
     views: { all: { label: "All" } },
-    parts: { base: { views: ["all"], build: (k2, p) => k2.cylinder(p.r, p.r, 10) } },
+    parts: { base: { views: ["all"], build: (k2, p) => k2.cylinder({ r: p.r, h: 10 }) } },
   };
   const posted = [];
   await handle(k, bad, { type: "generate", subparts: ["base"], view: "all", params: {} }, (m) => posted.push(m));

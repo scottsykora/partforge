@@ -6,7 +6,7 @@ import { runWorker } from "../src/framework/worker.js";
 
 const part = {
   defaults: {}, views: { v: { label: "V" } },
-  parts: { a: { views: ["v"], build: (k) => k.cylinder(5, 5, 10) } },
+  parts: { a: { views: ["v"], build: (k) => k.cylinder({ r: 5, h: 10 }) } },
 };
 
 afterEach(() => { delete globalThis.self; delete globalThis.postMessage; });

@@ -54,10 +54,10 @@ export default {
     vase: {
       label: "Vase", views: ["vase"], export: { name: "vase" },
       build: (k, p) => {
-        const body = k.loft(vaseRings(p, false)).label("Faceted wall");
+        const body = k.loft({ rings: vaseRings(p, false) }).label("Faceted wall");
         // Hollow it: an inset loft clipped to z ≥ floor (so the base stays solid), cut from the body.
-        const cavity = k.loft(vaseRings(p, true))
-          .intersect(k.box([-1e4, -1e4, p.floor], [1e4, 1e4, p.height + 10])).label("Cavity");
+        const cavity = k.loft({ rings: vaseRings(p, true) })
+          .intersect(k.box({ min: [-1e4, -1e4, p.floor], max: [1e4, 1e4, p.height + 10] })).label("Cavity");
         return body.cut(cavity);
       },
     },

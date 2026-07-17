@@ -6,8 +6,8 @@ const view = { v: { label: "V" } };
 const part = {
   defaults: { a: 1, b: 2 }, views: view,
   parts: {
-    one: { views: ["v"], build: (k, p) => k.cylinder(p.a, p.a, p.a) },   // reads a only
-    two: { views: ["v"], build: (k, p) => k.box([0, 0, 0], [p.b, p.b, p.b]) }, // reads b only
+    one: { views: ["v"], build: (k, p) => k.cylinder({ r: p.a, h: p.a }) },   // reads a only
+    two: { views: ["v"], build: (k, p) => k.box({ min: [0, 0, 0], max: [p.b, p.b, p.b] }) }, // reads b only
   },
 };
 
@@ -25,7 +25,7 @@ const vocab = {
   defaults: { a: 1, b: 2 }, views: view,
   parts: {
     p: { views: ["v"], build: (k, p) =>
-      k.cylinder(p.a, p.a, p.a)
+      k.cylinder({ r: p.a, h: p.a })
         .at([0, 0, 0]).along("+Z").rotateX(0).rotateY(0).rotateZ(0).rotateAbout({ axis: "Z", deg: p.a }) },
   },
 };
@@ -44,7 +44,7 @@ test("relevance analysis survives an unknown/future solid op — the probe is dr
   const future = {
     defaults: { a: 1 }, views: view,
     parts: { p: { views: ["v"], build: (k, p) =>
-      k.cylinder(p.a, p.a, p.a).someFutureOp(p.a).at([0, 0, 0]) } },
+      k.cylinder({ r: p.a, h: p.a }).someFutureOp(p.a).at([0, 0, 0]) } },
   };
   const r = relevantParamKeys(future, "v", future.defaults);
   expect(r).not.toBe(RELEVANT_ALL);
