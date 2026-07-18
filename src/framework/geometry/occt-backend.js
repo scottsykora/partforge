@@ -98,7 +98,10 @@ export function createOcctKernel(replicad) {
       return pen.close();
     }
     let pen = draw(contour.start);
-    for (const seg of contour.segments) pen = seg.via ? pen.threePointsArcTo(seg.to, seg.via) : pen.lineTo(seg.to);
+    for (const seg of contour.segments)
+      pen = seg.c1 ? pen.cubicBezierCurveTo(seg.to, seg.c1, seg.c2)
+          : seg.via ? pen.threePointsArcTo(seg.to, seg.via)
+          : pen.lineTo(seg.to);
     return pen.close();
   };
 
