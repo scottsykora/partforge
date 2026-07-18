@@ -151,11 +151,18 @@ k.prism({ points: roundedProfile(bracketOutline, 3), h: 4 });  // true CIRCLE co
 // print clearance on an arbitrary cut profile, or an inset wall
 k.extrude({ profile: offsetPolygon(slotPolygon(20, 3), 0.2), h: 10 });   // slot cut 0.2 mm looser all around
 offsetPolygon(outline, -wall, { corners: "sharp" });                     // inset a wall (see planter.js)
+
+// A tab with one free-form curved side (exact on STEP, faceted at mesh LOD):
+const tab = pathProfile([0, 0])
+  .lineTo([20, 0]).lineTo([20, 8])
+  .cubicTo([0, 8], [14, 16], [6, 16])   // curved top edge
+  .close();
+k.extrude({ profile: tab, h: 3 });
 ```
 
 2-D polygon helpers for `prism`/`extrude`/`loft`: `import { piePolygon, hexPolygon,
 regularPolygon, roundedRectPolygon, starPolygon, slotPolygon, circleProfile, filletPolygon,
-roundedProfile, offsetPolygon } from "partforge/geometry"`. `filletPolygon(points, r, { segs? })` rounds
+roundedProfile, offsetPolygon, pathProfile } from "partforge/geometry"`. `filletPolygon(points, r, { segs? })` rounds
 every corner of a CCW polygon (per-corner radius clamped so neighbouring arcs never overlap)
 and returns points usable by `prism`/`extrude`/`loft` on both backends — but it **bakes each
 corner into line facets**, so STEP corners are faceted. `roundedProfile(points, r | r[])`
@@ -173,6 +180,7 @@ an offset whose true result would collapse or split into multiple contours (e.g.
 dumbbell past its waist) **throws** a greppable error rather than returning degenerate
 geometry. Being pure, it works in `derive()` as well as `build()` — the natural home for
 clearance math.
+`pathProfile(start)` is a fluent builder for a curve-native path contour (`lineTo` / `arcTo` / `cubicTo` / `close`); cubic segments become exact B-rep spline edges on the OCCT/STEP backend and facet at the mesh LOD on Manifold — the same exact-vs-faceted split as `roundedProfile` arcs.
 **Import geometry helpers from `partforge/geometry`, never from `partforge`** — the main
 entry pulls in the DOM viewer/controls, and your build functions run in a Web Worker
 (importing the main entry there throws `document is not defined`).

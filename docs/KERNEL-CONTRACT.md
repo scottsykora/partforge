@@ -68,7 +68,10 @@ provide them.
   symbolic-arc alternative is an **arc profile** `{ start, segments: [{ to, via? }, …] }`
   (produced by `roundedProfile`), where a segment with `via` is a three-point circular
   arc; B-rep backends must carry these arcs exactly (real CIRCLE edges in STEP), mesh
-  backends tessellate them.
+  backends tessellate them. Cubic Bézier segments (`{to, c1, c2}`, built via `pathProfile().cubicTo(…)`)
+  follow the same rule: exact spline B-rep on OCCT (→ STEP), adaptively faceted at
+  the mesh `segs` LOD on Manifold. Measure-parity (volume/bbox) holds within
+  tolerance as facets converge; this is not a parity waiver.
 - **Ops never mutate — but they MAY consume.** Every op returns a new `Solid` and never
   mutates one in place. Whether the *inputs stay valid* is backend-dependent: the mesh
   backend leaves them usable, but the B-rep backend's engine (replicad) deletes the
