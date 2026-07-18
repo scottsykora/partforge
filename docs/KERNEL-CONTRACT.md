@@ -140,7 +140,7 @@ the ops above.
 | `fillet` | `fillet(3)` · `fillet({r, edges?})` | options form replaces `fillet(3, selector)` |
 | `chamfer` | `chamfer(1)` · `chamfer({d, edges?})` | ditto |
 | `shell` | `shell({t, open})` | replaces `(thickness, openFaces)`; `open` was already required |
-| everything else | unchanged | `translate/at/along/rotate*/rotateAbout/mirror/scale/cut/cutAll/intersect/clone/label` + queries |
+| everything else | unchanged | `translate/at/along/rotate*/rotateAbout/mirror/scale/cut/cutAll/intersect/union/clone/label` + queries |
 
 ### Cylinder key rules
 
@@ -199,7 +199,7 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 
 | Op | Contract |
 |---|---|
-| `cut(tool)` / `cutAll(tools[])` / `intersect(other)` | Boolean subtract (single / batched) and intersection. |
+| `cut(tool)` / `cutAll(tools[])` / `intersect(other)` / `union(other)` | Boolean subtract (single / batched), intersection, and union. |
 | `translate(v)` · `rotate(deg, center, axis)` · `mirror("XY"\|"XZ"\|"YZ")` · `scale(factor, center?)` | Transforms — but only two are **rigid** (pose): `translate`/`rotate` move a solid without altering it (position + orientation, shape and handedness preserved). `mirror` **reflects** — it returns the opposite-handed (chiral) solid, which no rotation can reproduce; `scale` **resizes**. So `mirror`/`scale` change the solid *itself*, not just where it sits — think of them as build operations, and never as the difference between a display pose and an export pose (see AUTHORING-PARTS.md `place`). `translate`/`rotate` are the primitives; the placement sugar below is composed *purely from them* (`solid-sugar.js`), so it is geometry-identical on every backend and a host gets it for free via `addSugar()`. |
 | `rotateX(deg)` / `rotateY(deg)` / `rotateZ(deg)` · `rotateAbout({axis, deg, through?})` · `along(dir)` · `at(v)` | The readable placement vocabulary parts actually use. `along` maps the canonical +Z build axis to `"±X"\|"±Y"\|"±Z"`. |
 | `clone()` | Independent handle (see value semantics). |

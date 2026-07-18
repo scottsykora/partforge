@@ -389,3 +389,10 @@ test("extrude accepts an offsetPolygon result", () => {
   const grown = offsetPolygon([[0, 0], [10, 0], [10, 10], [0, 10]], 0.5, { corners: "sharp" });
   expect(k.extrude({ profile: grown, h: 5 }).volume()).toBeCloseTo(11 * 11 * 5, 3);
 });
+
+test("Solid.union(other) equals k.union([a, b])", () => {
+  const a = k.box({ min: [0, 0, 0], max: [10, 10, 10] });
+  const b = k.box({ min: [5, 5, 0], max: [15, 15, 10] });
+  const viaMethod = k.box({ min: [0, 0, 0], max: [10, 10, 10] }).union(k.box({ min: [5, 5, 0], max: [15, 15, 10] }));
+  expect(viaMethod.volume()).toBeCloseTo(k.union([a, b]).volume(), 6);
+});

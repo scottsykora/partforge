@@ -82,6 +82,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)),
       () => T(m.subtract(unionRaw(tools.map((t) => t._m))))),
     intersect: (t) => cached(h("intersect", hash, t._hash), () => T(m.intersect(t._m))),
+    union: (t) => cached(h("union", [hash, t._hash]), () => unionRaw([m, t._m])),
     clone: () => wrap(m, hash),
     // Name this solid's surface for hover/pick feature attribution. asOriginal()
     // stamps a fresh originalID that survives transforms and booleans, so every

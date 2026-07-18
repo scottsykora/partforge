@@ -36,6 +36,7 @@ export function createOcctKernel(replicad) {
       [...cloneLabels(labels), ...tools.flatMap((t) => cloneLabels(t._labels ?? []))]
     ),
     intersect: (t) => wrap(shape.intersect(t._s), [...cloneLabels(labels), ...cloneLabels(t._labels ?? [])]),
+    union: (t) => wrap(shape.fuse(t._s), [...cloneLabels(labels), ...cloneLabels(t._labels ?? [])]),
     clone: () => wrap(shape.clone(), cloneLabels(labels)),
     boundingBox: () => {
       const [min, max] = shape.boundingBox.bounds; // addSugar derives center/size
