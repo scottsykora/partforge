@@ -246,7 +246,11 @@ build, and authors should expect all-or-nothing filleting per call, not per edge
 lists or arc profiles — *data already in this contract's input format*, with no kernel
 dependency at all. The **solid patterns** (`linearPattern`, `circularPattern`) take a
 `Solid` and call only ops from the tables above (`clone`/`translate`/`rotate`/
-`boundingBox`). Both kinds are therefore portable by construction: a host implements
+`boundingBox`). The **profile transform** (`offsetPolygon`) takes a point list or
+`{outer, holes}` region and grows or shrinks it by a delta in mm — printer-clearance
+offsetting with round/chamfer/sharp corner styles — validating its input and result and
+throwing rather than ever returning degenerate (self-intersecting or collapsed)
+geometry. All three kinds are therefore portable by construction: a host implements
 the kernel and the helpers come along unmodified. (`test/kernel-contract.test.js`
 asserts every `polygon.js` export is named here.)
 

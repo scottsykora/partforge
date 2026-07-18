@@ -195,6 +195,32 @@ The sphere variant is `sphere: pass exactly one of r/d` (same cause and fix).
 - **Cause:** `center` was passed alongside `min`/`max`, but explicit corners already fix the placement.
 - **Fix:** drop `center`, or switch to `{size, center?}` — see [AUTHORING-PARTS.md](AUTHORING-PARTS.md).
 
+## offset-polygon-bad-input
+
+- **Symptom:** `offsetPolygon: need at least 3 points`
+- **Cause:** malformed input to `offsetPolygon` — too few points after dedup, or (variant messages) a non-finite `delta`, non-finite coordinates, an unknown `corners` style, or a profile that is neither a point list nor `{outer, holes}`.
+- **Fix:** pass a CCW `[[x,y],…]` list (≥ 3 distinct points) or `{outer, holes}`, a finite `delta` in mm, and `corners: "round" | "chamfer" | "sharp"` — see [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Profiles & patterns".
+
+Variant literals under this entry: `offsetPolygon: delta must be a finite number`, `offsetPolygon: coordinates must be finite numbers`, `offsetPolygon: corners must be "round" | "chamfer" | "sharp"`, `offsetPolygon: profile must be a point list or {outer, holes}`.
+
+## offset-polygon-input-self-intersects
+
+- **Symptom:** `offsetPolygon: input polygon self-intersects`
+- **Cause:** the input contour crosses itself — the profile is broken before any offsetting happens (checked up front so bad input is not blamed on the offset).
+- **Fix:** repair the generating math for the contour; the offset envelope requires simple polygons in and out.
+
+## offset-polygon-collapse
+
+- **Symptom:** `offsetPolygon: offset collapses the polygon`
+- **Cause:** the offset consumed the shape — either an inset ate the whole polygon (result area ≤ 0 or fewer than 3 points, `|delta|` past the narrowest half-width; also thrown for a region hole that would vanish), or an offset displaced an edge past its own length so the edge inverts (a large inset, or a large *outset* of a concave profile where `|delta|` exceeds a reflex-adjacent edge — this last case can also depend on `corners`, since `"sharp"` extends edges further than `"round"`/`"chamfer"`).
+- **Fix:** reduce `|delta|`, or clamp it from the shape's dimensions before offsetting (see planter.js's wall cap). If a vanishing hole is intended, remove the hole from the region explicitly. Realistic clearances (fractions of a mm) on any profile, and wall insets up to the narrowest feature, never trip this.
+
+## offset-polygon-result-self-intersects
+
+- **Symptom:** `offsetPolygon: offset result self-intersects (reduce |delta| or simplify the profile)`
+- **Cause:** the true offset of this shape at this `|delta|` is not a single simple polygon (e.g. insetting a dumbbell past its waist would split it in two) — out of `offsetPolygon`'s envelope.
+- **Fix:** reduce `|delta|`, or decompose the profile into separately-offset simple contours.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.
