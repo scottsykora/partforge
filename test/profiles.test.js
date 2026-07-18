@@ -191,3 +191,33 @@ test("sampleBezier is pure (same input twice → deep equal)", () => {
   const { p0, c1, c2, p1 } = quarterArcCubic(7);
   expect(sampleBezier(p0, c1, c2, p1, 24)).toEqual(sampleBezier(p0, c1, c2, p1, 24));
 });
+
+// ── pathProfile (fluent builder) ──────────────────────────────────────────
+
+import { pathProfile } from "../src/framework/geometry/polygon.js";
+
+test("pathProfile builds the canonical { start, segments } with correct kinds", () => {
+  const c = pathProfile([0, 0])
+    .lineTo([10, 0])
+    .arcTo([10, 10], [11, 5])
+    .cubicTo([0, 10], [7, 12], [3, 12])
+    .close();
+  expect(c.start).toEqual([0, 0]);
+  expect(c.segments).toEqual([
+    { to: [10, 0] },
+    { to: [10, 10], via: [11, 5] },
+    { to: [0, 10], c1: [7, 12], c2: [3, 12] },
+  ]);
+});
+
+test("pathProfile rejects bad points and empty paths", () => {
+  expect(() => pathProfile([0])).toThrow("pathProfile: start must be a finite [x,y]");
+  expect(() => pathProfile([0, 0]).lineTo([1, NaN])).toThrow("pathProfile: lineTo point must be a finite [x,y]");
+  expect(() => pathProfile([0, 0]).close()).toThrow("pathProfile: need ≥1 segment before close()");
+});
+
+test("a pathProfile contour tessellates and normalizes like any path contour", () => {
+  const c = pathProfile([0, 0]).lineTo([10, 0]).cubicTo([0, 10], [10, 4], [4, 10]).close();
+  expect(normalizeProfile(c).outer).toBe(c);
+  expect(tessellateContour(c, 24).length).toBeGreaterThan(3);
+});
