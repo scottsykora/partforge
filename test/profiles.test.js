@@ -4,7 +4,7 @@ import {
   slotPolygon, starPolygon, ringSectorPolygon, circleProfile,
   roundedProfile, filletPolygon,
 } from "../src/framework/geometry/polygon.js";
-import { tessellateProfile, tessellateContour, normalizeProfile, isPathContour } from "../src/framework/geometry/profile.js";
+import { tessellateProfile, tessellateContour, normalizeProfile, isPathContour, sampleBezier } from "../src/framework/geometry/profile.js";
 
 const signedArea = (p) => {
   let a = 0;
@@ -148,4 +148,46 @@ test("cubic segment validation: mixing via+cubic and missing controls throw", ()
 test("a valid cubic contour passes normalizeProfile unchanged", () => {
   const c = { start: [0, 0], segments: [{ to: [10, 0], c1: [3, 4], c2: [7, 4] }] };
   expect(normalizeProfile(c).outer).toBe(c);
+});
+
+// Standard cubic approximation of a quarter circle radius R, (R,0)→(0,R).
+const KAPPA = 0.5522847498307936;
+const quarterArcCubic = (R) => ({ p0: [R, 0], c1: [R, R * KAPPA], c2: [R * KAPPA, R], p1: [0, R] });
+
+test("sampleBezier excludes the start and pins the exact endpoint", () => {
+  const { p0, c1, c2, p1 } = quarterArcCubic(10);
+  const pts = sampleBezier(p0, c1, c2, p1, 32);
+  expect(pts.length).toBeGreaterThan(1);
+  expect(pts[0]).not.toEqual(p0);
+  expect(pts[pts.length - 1]).toEqual(p1);
+});
+
+test("sampleBezier facet count rises with segs on a curved input", () => {
+  const { p0, c1, c2, p1 } = quarterArcCubic(10);
+  const lo = sampleBezier(p0, c1, c2, p1, 8).length;
+  const hi = sampleBezier(p0, c1, c2, p1, 64).length;
+  expect(hi).toBeGreaterThan(lo);
+});
+
+test("sampleBezier points of a quarter-circle cubic all lie on the circle (within Bézier tolerance)", () => {
+  // de Casteljau split points are EXACT curve points, so every sample lies on the
+  // Bézier — within its intrinsic ~0.027% circle-approximation error at any segs.
+  // (Sample-point radius error does NOT shrink with segs — the flattening error
+  // lives between samples. LOD is exercised by the point-count test above and the
+  // Manifold volume-parity test in Task 5.)
+  const R = 10, { p0, c1, c2, p1 } = quarterArcCubic(R);
+  for (const segs of [8, 32, 64])
+    for (const [x, y] of sampleBezier(p0, c1, c2, p1, segs))
+      expect(Math.abs(Math.hypot(x, y) - R)).toBeLessThan(0.01);
+});
+
+test("sampleBezier of a near-straight cubic collapses to few chords", () => {
+  const pts = sampleBezier([0, 0], [3, 0], [7, 0], [10, 0], 32); // controls on the line
+  expect(pts.length).toBeLessThanOrEqual(2);
+  expect(pts[pts.length - 1]).toEqual([10, 0]);
+});
+
+test("sampleBezier is pure (same input twice → deep equal)", () => {
+  const { p0, c1, c2, p1 } = quarterArcCubic(7);
+  expect(sampleBezier(p0, c1, c2, p1, 24)).toEqual(sampleBezier(p0, c1, c2, p1, 24));
 });

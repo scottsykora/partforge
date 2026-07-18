@@ -86,6 +86,40 @@ export function sampleArc(p0, via, p1, segs) {
   return out;
 }
 
+// Flatten the cubic Bézier (p0,c1,c2,p1) into points p1…pN — EXCLUDING the start
+// p0 (the ring already holds it), last point pinned exactly to p1. Adaptive: split
+// at t=½ (de Casteljau) until the control polygon's total unsigned turn is ≤ 2π/segs
+// — the exact generalization of sampleArc's "a point every 2π/segs of sweep", so a
+// cubic tracing a circular arc facets like the arc primitive at the same segs. Summing
+// |turn| at BOTH interior control points also catches S-curves a pure endpoint-tangent
+// test would miss. Depth cap guarantees termination. Pure in (args, segs).
+export function sampleBezier(p0, c1, c2, p1, segs) {
+  const maxTurn = (2 * Math.PI) / Math.max(3, segs);
+  const out = [];
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const turn = (u, v) => {
+    const du = Math.hypot(u[0], u[1]), dv = Math.hypot(v[0], v[1]);
+    if (du < 1e-12 || dv < 1e-12) return 0;
+    let c = (u[0] * v[0] + u[1] * v[1]) / (du * dv);
+    if (c > 1) c = 1; else if (c < -1) c = -1;
+    return Math.acos(c);
+  };
+  const recurse = (a, b, c, d, depth) => {
+    const ab = [b[0] - a[0], b[1] - a[1]];
+    const bc = [c[0] - b[0], c[1] - b[1]];
+    const cd = [d[0] - c[0], d[1] - c[1]];
+    if (depth >= 12 || turn(ab, bc) + turn(bc, cd) <= maxTurn) { out.push([d[0], d[1]]); return; }
+    const p01 = mid(a, b), p12 = mid(b, c), p23 = mid(c, d);
+    const p012 = mid(p01, p12), p123 = mid(p12, p23), m = mid(p012, p123);
+    recurse(a, p01, p012, m, depth + 1);
+    recurse(m, p123, p23, d, depth + 1);
+  };
+  recurse(p0, c1, c2, p1, 0);
+  if (out.length === 0) out.push([p1[0], p1[1]]);
+  out[out.length - 1] = [p1[0], p1[1]];   // pin the exact endpoint
+  return out;
+}
+
 // Tessellate a single contour into a CCW point ring. A legacy array is returned unchanged
 // (identical to the former path); an ArcContour is walked start→segment→segment, lines
 // pushing their `to` and arcs pushing their sampled points.
@@ -94,7 +128,8 @@ export function tessellateContour(contour, segs) {
   const ring = [[contour.start[0], contour.start[1]]];
   let prev = contour.start;
   for (const seg of contour.segments) {
-    if (seg.via) for (const p of sampleArc(prev, seg.via, seg.to, segs)) ring.push(p);
+    if (seg.c1) for (const p of sampleBezier(prev, seg.c1, seg.c2, seg.to, segs)) ring.push(p);
+    else if (seg.via) for (const p of sampleArc(prev, seg.via, seg.to, segs)) ring.push(p);
     else ring.push([seg.to[0], seg.to[1]]);
     prev = seg.to;
   }
