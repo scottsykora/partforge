@@ -9,6 +9,8 @@
 // pens, the drainage hole is a real functional choice (planter vs. cup), and dropping
 // Wall below the fdm-pla 1.2 mm minimum trips partforge's min-wall warning.
 
+import { offsetPolygon } from "partforge/geometry";
+
 // A regular n-gon of circumradius R, in the XY plane, as [[x,y],…] for k.prism.
 // A small rotation seats a flat edge toward the viewer so even-sided shapes read right.
 const ngon = (R, n) => {
@@ -69,14 +71,18 @@ export default {
   // build needs, sized so the wall stays even (see build()).
   derive: (p) => {
     const Rout = p.dia / 2;
-    // Offset the inner polygon inward by `wall` along the FACE normals, not the radius:
-    // for a regular n-gon an edge offset of `wall` shrinks the circumradius by
-    // wall / cos(π/n). This keeps the perpendicular wall = `wall` on every flat.
-    // clamp only matters if wall is set past the slider bounds via the API
-    const Rin = Math.max(Rout - p.wall / Math.cos(Math.PI / p.facets), 1);
+    // Inset the outer polygon inward by `wall` along the FACE normals via
+    // offsetPolygon (sharp corners keep the n-gon exact — see the closed-form
+    // pin in test/offset-polygon.test.js). Cap the wall so the inset can never
+    // collapse below circumradius 1 — same clamp as the old closed form (only
+    // matters if wall is set past the slider bounds via the API).
+    const wall = Math.min(p.wall, (Rout - 1) * Math.cos(Math.PI / p.facets));
+    const outerPts = ngon(Rout, p.facets);
+    const innerPts = offsetPolygon(outerPts, -wall, { corners: "sharp" });
+    const Rin = Math.hypot(innerPts[0][0], innerPts[0][1]);   // read back from the geometry
     return {
-      outerPts: ngon(Rout, p.facets),
-      innerPts: ngon(Rin, p.facets),
+      outerPts,
+      innerPts,
       // Inner taper that holds the wall constant top-to-bottom even as the body flares:
       // pick it so inner_radius(top) = outer_radius(top) − wall.
       innerTaper: 1 + (Rout * (p.taper - 1)) / Rin,

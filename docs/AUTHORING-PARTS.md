@@ -147,11 +147,15 @@ k.sweep({ profile: circleProfile(3), path: [[0, 0, 0], [0, 0, 20], [15, 0, 20]],
 // round every corner of any CCW outline, then extrude/loft/prism it
 k.prism({ points: filletPolygon(bracketOutline, 3), h: 4 });   // tessellated corners (faceted in STEP)
 k.prism({ points: roundedProfile(bracketOutline, 3), h: 4 });  // true CIRCLE corners in STEP export
+
+// print clearance on an arbitrary cut profile, or an inset wall
+k.extrude({ profile: offsetPolygon(slotPolygon(20, 3), 0.2), h: 10 });   // slot cut 0.2 mm looser all around
+offsetPolygon(outline, -wall, { corners: "sharp" });                     // inset a wall (see planter.js)
 ```
 
 2-D polygon helpers for `prism`/`extrude`/`loft`: `import { piePolygon, hexPolygon,
-regularPolygon, roundedRectPolygon, starPolygon, circleProfile, filletPolygon,
-roundedProfile } from "partforge/geometry"`. `filletPolygon(points, r, { segs? })` rounds
+regularPolygon, roundedRectPolygon, starPolygon, slotPolygon, circleProfile, filletPolygon,
+roundedProfile, offsetPolygon } from "partforge/geometry"`. `filletPolygon(points, r, { segs? })` rounds
 every corner of a CCW polygon (per-corner radius clamped so neighbouring arcs never overlap)
 and returns points usable by `prism`/`extrude`/`loft` on both backends — but it **bakes each
 corner into line facets**, so STEP corners are faceted. `roundedProfile(points, r | r[])`
@@ -159,7 +163,16 @@ rounds corners the same way but keeps them **mathematically true** — it carrie
 symbolically so STEP export gets real circular edges. Use it for `prism`/`extrude` (not yet
 `loft` — arc rings are rejected there in v1). A scalar `r` rounds every corner; a per-corner
 `r[]` (length = points) rounds selectively (a `0`, a zero-length edge, or a straight/180°
-corner stays sharp).
+corner stays sharp). `offsetPolygon(profile, delta, { corners?, segs? })` offsets a
+point-list polygon or `{ outer, holes }` region by `delta` mm — positive grows material,
+negative insets; regions offset material-wise (outer `+delta`, holes `−delta`, so a
+clearance loosens the whole cut). `corners` picks the convex-corner style: `"round"`
+(default; the true Minkowski clearance), `"chamfer"`, or `"sharp"` (miter, falling back to
+chamfer past a miter length of 2·|delta|). It is **simple polygon in, simple polygon out**:
+an offset whose true result would collapse or split into multiple contours (e.g. insetting a
+dumbbell past its waist) **throws** a greppable error rather than returning degenerate
+geometry. Being pure, it works in `derive()` as well as `build()` — the natural home for
+clearance math.
 **Import geometry helpers from `partforge/geometry`, never from `partforge`** — the main
 entry pulls in the DOM viewer/controls, and your build functions run in a Web Worker
 (importing the main entry there throws `document is not defined`).
