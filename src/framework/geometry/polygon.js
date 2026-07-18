@@ -395,11 +395,11 @@ export function offsetPolygon(profile, delta, opts = {}) {
   }
 
   for (let i = 0; i < n; i++)
-    if (tEnd[i] < tStart[i] - OFFSET_EPS) throw new Error("offsetPolygon: inset collapses the polygon");
+    if (tEnd[i] < tStart[i] - OFFSET_EPS) throw new Error("offsetPolygon: offset collapses the polygon");
 
   const cleaned = dedupePoints(out);
   if (cleaned.length < 3 || polySignedArea(cleaned) <= OFFSET_EPS)
-    throw new Error("offsetPolygon: inset collapses the polygon");
+    throw new Error("offsetPolygon: offset collapses the polygon");
   if (!isSimplePolygon(cleaned))
     throw new Error("offsetPolygon: offset result self-intersects (reduce |delta| or simplify the profile)");
   return cleaned;

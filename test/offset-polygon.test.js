@@ -82,8 +82,8 @@ test("input validation errors", () => {
 });
 
 test("collapse and result-self-intersection throw", () => {
-  expect(() => offsetPolygon(SQ(10), -5, { corners: "sharp" })).toThrow("offsetPolygon: inset collapses the polygon");
-  expect(() => offsetPolygon(SQ(10), -7, { corners: "sharp" })).toThrow("offsetPolygon: inset collapses the polygon");
+  expect(() => offsetPolygon(SQ(10), -5, { corners: "sharp" })).toThrow("offsetPolygon: offset collapses the polygon");
+  expect(() => offsetPolygon(SQ(10), -7, { corners: "sharp" })).toThrow("offsetPolygon: offset collapses the polygon");
   // dumbbell: two 10-wide lobes joined by a 2-wide waist — inset past the waist
   // would split the region; we throw instead of returning a figure-eight.
   const dumbbell = [
@@ -106,7 +106,7 @@ test("regions offset as material: outer grows, holes shrink", () => {
 test("a hole that would vanish throws collapse", () => {
   const region = { outer: SQ(40), holes: [[[15, 15], [25, 15], [25, 25], [15, 25]]] };
   expect(() => offsetPolygon(region, 6, { corners: "sharp" }))
-    .toThrow("offsetPolygon: inset collapses the polygon");
+    .toThrow("offsetPolygon: offset collapses the polygon");
 });
 
 test("sharp inset of a regular n-gon reproduces planter's closed form", () => {

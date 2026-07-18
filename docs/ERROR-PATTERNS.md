@@ -211,9 +211,9 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 
 ## offset-polygon-collapse
 
-- **Symptom:** `offsetPolygon: inset collapses the polygon`
-- **Cause:** the inset ate the whole polygon (result area ≤ 0 or fewer than 3 points) — `|delta|` exceeds the shape's narrowest half-width. Also thrown for a region hole that would vanish.
-- **Fix:** reduce `|delta|`, or clamp it from the shape's dimensions before offsetting (see planter.js's wall cap). If a vanishing hole is intended, remove the hole from the region explicitly.
+- **Symptom:** `offsetPolygon: offset collapses the polygon`
+- **Cause:** the offset consumed the shape — either an inset ate the whole polygon (result area ≤ 0 or fewer than 3 points, `|delta|` past the narrowest half-width; also thrown for a region hole that would vanish), or an offset displaced an edge past its own length so the edge inverts (a large inset, or a large *outset* of a concave profile where `|delta|` exceeds a reflex-adjacent edge — this last case can also depend on `corners`, since `"sharp"` extends edges further than `"round"`/`"chamfer"`).
+- **Fix:** reduce `|delta|`, or clamp it from the shape's dimensions before offsetting (see planter.js's wall cap). If a vanishing hole is intended, remove the hole from the region explicitly. Realistic clearances (fractions of a mm) on any profile, and wall insets up to the narrowest feature, never trip this.
 
 ## offset-polygon-result-self-intersects
 
