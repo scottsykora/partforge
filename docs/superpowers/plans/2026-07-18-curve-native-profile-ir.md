@@ -345,7 +345,7 @@ export function pathProfile(start) {
     },
     close() {
       if (segments.length < 1) throw new Error("pathProfile: need ≥1 segment before close()");
-      return { start: [s[0], s[1]], segments };
+      return { start: [s[0], s[1]], segments: segments.slice() }; // snapshot — chaining after close() must not mutate the returned contour
     },
   };
   return api;
