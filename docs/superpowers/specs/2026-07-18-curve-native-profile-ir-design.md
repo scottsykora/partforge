@@ -185,9 +185,15 @@ mirrored by ERROR-PATTERNS entries:
   tolerance (parity/consistency pin).
 
 **OCCT integration (own file, `bootOcctKernel`, no Manifold co-boot):**
-- extrude and revolve a cubic profile → watertight, sane volume;
-- STEP export succeeds and contains a spline edge (or at minimum exports without
-  error and re-measures consistently).
+- extrude a cubic profile → watertight, sane volume (πR²h for the 4-Bézier
+  circle, OCCT-exact);
+- STEP export succeeds and contains a spline edge (`B_SPLINE`).
+- **Note (found in planning):** `revolve` (and `prism`) do not accept the
+  symbolic contour form today — `revolve`'s radius-check iterates the profile as
+  `[[r,z],…]` point arrays, so a `{start, segments}` object throws before
+  reaching the drawing. This predates F1 (arc contours hit it too); extending
+  `revolve`/`prism` to curve contours is deferred follow-up. F1 proves the cubic
+  B-rep through `extrude`.
 
 ## Docs
 
@@ -202,4 +208,6 @@ mirrored by ERROR-PATTERNS entries:
 - Quadratic Béziers, `smoothSplineTo` splines, `ellipse` segments — later
   additions that slot into the same mechanism.
 - SVG path-string parsing.
+- Extending `revolve` / `prism` to accept symbolic (arc/cubic) contours — their
+  option-checks assume point arrays; a separate follow-up (see Testing note).
 - F2 (2-D booleans) and F3 (curve-native offset) — separate specs built on this.
