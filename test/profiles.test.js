@@ -174,7 +174,7 @@ test("sampleBezier points of a quarter-circle cubic all lie on the circle (withi
   // Bézier — within its intrinsic ~0.027% circle-approximation error at any segs.
   // (Sample-point radius error does NOT shrink with segs — the flattening error
   // lives between samples. LOD is exercised by the point-count test above and the
-  // Manifold volume-parity test in Task 5.)
+  // Manifold cubic/circleProfile volume-parity test.)
   const R = 10, { p0, c1, c2, p1 } = quarterArcCubic(R);
   for (const segs of [8, 32, 64])
     for (const [x, y] of sampleBezier(p0, c1, c2, p1, segs))

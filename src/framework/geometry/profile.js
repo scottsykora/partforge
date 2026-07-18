@@ -1,11 +1,12 @@
 // Backend-shared 2-D region normalization + tessellation for extrude()/prism(). A contour
-// is EITHER a bare points array (legacy, all straight edges) OR a canonical ArcContour
-// { start:[x,y], segments:[{to}|{to,via}], arc:true } carrying true circular arcs (from
-// roundedProfile). normalizeProfile validates the polymorphic { outer, holes } envelope
-// (bare array = outer only), preserving each contour's shape; tessellateProfile turns the
-// arcs into point rings for the Manifold (mesh) path. The OCCT path consumes the same
-// ArcContour directly (contourDrawing → threePointsArcTo) for true CIRCLE B-rep edges.
-// Legacy point-array contours take the exact former path byte-for-byte — no cache-busting.
+// is EITHER a bare points array (legacy, all straight edges) OR a canonical path contour
+// { start:[x,y], segments:[{to}|{to,via}|{to,c1,c2}] } carrying true circular arcs ({to,via},
+// from roundedProfile) and/or cubic Béziers ({to,c1,c2}, from pathProfile). normalizeProfile
+// validates the polymorphic { outer, holes } envelope (bare array = outer only), preserving
+// each contour's shape; tessellateProfile turns arcs/cubics into point rings for the Manifold
+// (mesh) path at the mesh LOD. The OCCT path consumes the same contour directly (contourDrawing
+// → threePointsArcTo / cubicBezierCurveTo) for true CIRCLE / B-spline B-rep edges. Legacy
+// point-array contours take the exact former path byte-for-byte — no cache-busting.
 
 // An ArcContour is a non-array object carrying arcs symbolically.
 export function isArcContour(c) {
@@ -121,8 +122,8 @@ export function sampleBezier(p0, c1, c2, p1, segs) {
 }
 
 // Tessellate a single contour into a CCW point ring. A legacy array is returned unchanged
-// (identical to the former path); an ArcContour is walked start→segment→segment, lines
-// pushing their `to` and arcs pushing their sampled points.
+// (identical to the former path); a path contour is walked start→segment→segment, lines
+// pushing their `to`, arcs and cubics pushing their sampled points (sampleArc/sampleBezier).
 export function tessellateContour(contour, segs) {
   if (Array.isArray(contour)) return contour;
   const ring = [[contour.start[0], contour.start[1]]];
