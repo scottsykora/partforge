@@ -41,6 +41,13 @@ needed (the martinez question from the research thread is moot):
   without a lossy flatten-then-rebuild round-trip. Materializing (B1) was
   rejected because it defeats OCCT exactness.
 - **Content-hash caching**, reusing the existing `Solid` machinery.
+- **3-D `Solid` boolean surface aligns to the 2-D method shape** — add a binary
+  `Solid.union(other)` method mirroring `Shape2D.union`, so both value types
+  expose `.union`/`.cut`/`.cutAll`/`.intersect` as methods. The `k.union([array])`
+  kernel op stays for the n-ary/dynamic-list case.
+- **Both backends materialize** — OCCT `.toRegions()`/`.simple()` are implemented
+  (not deferred), by discretizing the result `Drawing`.
+- **`revolve` accepts a `Shape2D`** in v1 (both backends).
 
 ## The `Shape2D` value & API
 
@@ -68,10 +75,21 @@ k.extrude({ profile: keyhole, h: 4 });
   `.intersect(other)` — `.cut`/`.cutAll`/`.intersect` match `Solid` names;
   `.union` is the binary 2-D counterpart. N-ary composition is chaining.
   `other` is a profile spec or a `Shape2D` (auto-lifted).
-- **Consumption:** `extrude`'s `profile` option also accepts a `Shape2D`.
-- **Escape hatch / inspection:** `.area()` and `.boundingBox()` (both backends);
-  `.toRegions()` → `[{outer,holes}]` and `.simple()` → single region or throw
-  (Manifold only in v1 — see Scope).
+- **Consumption:** `extrude`'s and `revolve`'s `profile` option also accepts a
+  `Shape2D`.
+- **Escape hatch / inspection:** `.area()`, `.boundingBox()`, `.toRegions()` →
+  `[{outer,holes}]`, `.simple()` → single region or throw — **all on both
+  backends**.
+
+### 3-D `Solid` alignment
+
+To keep the two boolean surfaces consistent, `Solid` gains a binary
+`Solid.union(other): Solid` method mirroring `Shape2D.union`. After this, both
+value types expose the same method shape — `.union` / `.cut` / `.cutAll` /
+`.intersect`. Existing simple binary call sites (`k.union([s, tool])`) migrate to
+`s.union(tool)`; the `k.union([array])` kernel op is retained for the n-ary /
+dynamic-list case (e.g. `k.union(patternCopies)`), which the method form does not
+cover ergonomically. No behavior change to the booleans themselves.
 
 ## Backend representation & caching
 
@@ -112,30 +130,60 @@ Operands may be curve contours (`pathProfile`/`roundedProfile`):
 
 Point-lists and `{outer,holes}` regions work trivially on both.
 
-## Extrude integration
+## Materialization — `.toRegions()` / `.simple()` (both backends)
+
+- **Manifold:** `CrossSection.toPolygons()` → `SimplePolygon[]`, assembled into
+  `[{outer, holes}]` by winding + point-in-polygon nesting (CCW outers, holes
+  nested inside their container).
+- **OCCT:** the result `Drawing` has no direct point accessor, so materialization
+  parses `Drawing.toSVGPathD()` (one path per contour via `toSVGPaths()`) and
+  discretizes each command — lines verbatim, cubic `C` via **F1's `sampleBezier`**,
+  arcs via **`sampleArc`** — then assembles like Manifold. Reuses the F1 samplers,
+  so an OCCT-materialized curve facets consistently with the Manifold path.
+  - **Impl risk (resolve in planning):** confirm what `toSVGPathD()` emits for a
+    known circle/curve — cubic `C` commands vs SVG elliptical-arc `A` commands —
+    and handle whichever appears (arc `A` uses endpoint parameterization; if
+    present, convert to center form before sampling). This is the highest-risk
+    task; the implementer verifies emitted commands against a fixture first.
+- `.simple()` unwraps a single-region result or throws; both backends share the
+  assembled-region representation, so `.simple()` is backend-agnostic on top of
+  `.toRegions()`.
+
+## Extrude / revolve integration
 
 `extrude`'s `profile` option gains a `Shape2D` branch:
 - **Manifold:** `shape.<crossSection>.extrude(h, …)` (twist/scaleTop via config).
 - **OCCT:** `shape.<drawing>.sketchOnPlane("XY").extrude(h, cfg)`.
 
-The existing profile-spec path is unchanged; only a new branch is added.
+`revolve` likewise accepts a `Shape2D` (v1):
+- **Manifold:** `shape.<crossSection>.revolve(segs, degrees)` (`CrossSection.revolve`).
+- **OCCT:** `shape.<drawing>.sketchOnPlane("XZ").revolve([0,0,1], { angle: degrees })`.
+- The `revolveArgs` option-check currently iterates the profile as `[[r,z],…]`;
+  it gains a `Shape2D` branch that enforces the radius ≥ 0 rule via
+  `shape.boundingBox().min[0] >= 0` instead of the per-point scan. (A curved
+  lathe profile is achieved by wrapping: `k.shape2d(curveContour)` → `revolve` —
+  so this also resolves F1's deferred "revolve of a curve contour" for the
+  Shape2D path; a raw curve-contour passed straight to `revolve` stays out of
+  scope.)
+
+As with `Shape2D`, a 2-D shape's coordinates are interpreted by the consuming op
+— XY for `extrude`, `(r,z)` for `revolve` — exactly as profile specs already are.
+
+The existing profile-spec paths are unchanged; only new `Shape2D` branches are
+added.
 
 ## Scope (v1)
 
-**In:** `k.shape2d(profile)`; `.union`/`.cut`/`.cutAll`/`.intersect`; `extrude`
-accepts `Shape2D`; `.area()`/`.boundingBox()` (both backends);
-`.toRegions()`/`.simple()` (Manifold); curve operands (both backends);
-content-hash caching.
+**In:** `k.shape2d(profile)`; `.union`/`.cut`/`.cutAll`/`.intersect`;
+`extrude` **and `revolve`** accept `Shape2D`; `.area()`/`.boundingBox()`/
+`.toRegions()`/`.simple()` **on both backends**; curve operands (both backends);
+content-hash caching; **`Solid.union(other)` method + call-site migration**.
 
 **Deferred (documented follow-ups):**
-- `revolve`/`prism` accepting `Shape2D` — their option-checks assume `[[r,z],…]`
-  point arrays (the same limitation F1's revolve/prism deferral names). Bundle
-  "teach revolve/prism the Shape2D + curve-contour forms" as one follow-up.
-- OCCT `.toRegions()`/`.simple()` — extracting point-rings from a `Drawing` means
-  discretizing its blueprints; rarely needed (boolean+extrude parts route to
-  Manifold). On OCCT these throw a clear "materialize-to-regions not supported
-  yet — extrude directly, or inspect via area/boundingBox."
-- Variadic kernel-op form (`k.union2d([...])`) — chaining covers n-ary.
+- `prism` accepting `Shape2D` — redundant with `extrude` + `Shape2D`; left as-is.
+- A raw curve-contour passed straight to `revolve` (not wrapped in `Shape2D`) —
+  needs Manifold-side tessellation in `revolve`; wrap in `k.shape2d(...)` instead.
+- Variadic 2-D kernel-op form (`k.union2d([...])`) — chaining covers n-ary.
 - A `shape.extrude({h})` sugar method — use `k.extrude({profile: shape, h})`.
 
 ## Backend routing
@@ -160,28 +208,40 @@ to the geometry-free probe / backend-selection logic.
 **Manifold integration (`bootManifoldKernel`, own file, no OCCT co-boot):**
 - union/cut/intersect of two overlapping squares → `.area()` matches closed form;
 - subtract that punches a hole → `extrude` → genus 1 (real through-hole);
-- booleaned shape `extrude` → volume sane;
+- booleaned shape `extrude` → volume sane; **`revolve` of a booleaned shape →
+  volume sane**;
 - cache: same op twice → cache hit (stats) and identical geometry;
 - curve operand: cut a `circleProfile` hole from a rect → faceted area sane;
-- `.toRegions()`/`.simple()` round-trip.
+- `.toRegions()`/`.simple()` round-trip (materialize → re-lift → equal area).
 
 **OCCT integration (`bootOcctKernel`, own file, no Manifold co-boot):**
 - union/cut/intersect → `extrude` → volume matches Manifold within tolerance;
+- `revolve` of a Shape2D → volume sane;
 - curve operand stays exact: cut a cubic-circle hole → STEP contains `B_SPLINE`;
-- `.boundingBox()` sane; `.toRegions()` throws the documented deferral error.
+- `.boundingBox()` sane; **`.toRegions()` materializes** (round-trips: area of the
+  materialized regions matches `.area()` within tolerance).
+
+**3-D alignment:**
+- `Solid.union(other)` produces the same geometry as `k.union([a, b])`;
+- migrated call sites still pass their existing assertions.
 
 **Pure-ish unit tests (no WASM):**
 - hash composition: `h("union2d", a._hash, b._hash)` stable and operand-sensitive
   (different operand → different hash);
 - `k.shape2d` auto-lifts a profile spec; passing a `Shape2D` is idempotent;
-- validation errors for bad profiles / empty-shape `.simple()`.
+- validation errors for bad profiles / empty-shape `.simple()`;
+- SVG-path discretizer (the OCCT `.toRegions()` helper) is unit-testable without
+  WASM: feed known path strings (`M…L…`, `M…C…`) → expect point rings, cubic `C`
+  sampled via `sampleBezier`.
 
 **Cross-backend parity:** a boolean+extrude volume pin close across backends
 (tolerance — parity-relevant op).
 
 ## Out of scope (explicitly)
 
-- The deferred items above (revolve/prism + Shape2D, OCCT `.toRegions()`,
-  variadic op, sugar `.extrude`).
+- The deferred items in Scope (prism + Shape2D, raw curve-contour `revolve`,
+  variadic 2-D op, sugar `.extrude`).
 - F3 (curve-native offset) — its own spec, built on F1/F2.
-- Any change to 3-D `Solid` booleans.
+- Any change to the *behavior* of 3-D `Solid` booleans (the alignment adds a
+  `Solid.union(other)` method that delegates to the existing union; the boolean
+  logic is untouched).
