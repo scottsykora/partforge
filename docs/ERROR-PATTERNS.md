@@ -221,6 +221,18 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 - **Cause:** the true offset of this shape at this `|delta|` is not a single simple polygon (e.g. insetting a dumbbell past its waist would split it in two) — out of `offsetPolygon`'s envelope.
 - **Fix:** reduce `|delta|`, or decompose the profile into separately-offset simple contours.
 
+## cubic-segment-mixes-arc-and-cubic
+
+- **Symptom:** `extrude: <role> segment cannot mix arc (via) and cubic (c1/c2)`
+- **Cause:** A path-contour segment carries both `via` (three-point arc) and `c1`/`c2` (cubic Bézier). A segment is exactly one kind.
+- **Fix:** Drop `via` for a cubic, or drop `c1`/`c2` for an arc. Use `pathProfile().arcTo(to, via)` or `.cubicTo(to, c1, c2)` to build segments.
+
+## cubic-segment-missing-controls
+
+- **Symptom:** `extrude: <role> cubic segment needs c1 and c2 as finite [x,y]`
+- **Cause:** A cubic segment is missing `c1` or `c2`, or a control point is not a finite `[x,y]` (e.g. `NaN`, wrong length).
+- **Fix:** Provide both control points as finite `[x,y]`. A cubic Bézier needs two controls between the previous point and `to`.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

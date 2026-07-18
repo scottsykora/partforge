@@ -4,7 +4,7 @@ import {
   slotPolygon, starPolygon, ringSectorPolygon, circleProfile,
   roundedProfile, filletPolygon,
 } from "../src/framework/geometry/polygon.js";
-import { tessellateProfile, tessellateContour } from "../src/framework/geometry/profile.js";
+import { tessellateProfile, tessellateContour, normalizeProfile, isPathContour } from "../src/framework/geometry/profile.js";
 
 const signedArea = (p) => {
   let a = 0;
@@ -127,4 +127,25 @@ test("roundedProfile keeps sharp/degenerate corners as plain lines (r=0, per-cor
 test("roundedProfile validates inputs", () => {
   expect(() => roundedProfile([[0, 0], [1, 1]], R)).toThrow(/at least 3/);
   expect(() => roundedProfile(SQ, [R, R])).toThrow(/length must match/);
+});
+
+test("isPathContour accepts the symbolic form (line/arc/cubic), rejects arrays", () => {
+  expect(isPathContour({ start: [0, 0], segments: [{ to: [1, 0], c1: [0, 1], c2: [1, 1] }] })).toBe(true);
+  expect(isPathContour([[0, 0], [1, 0], [1, 1]])).toBe(false);
+});
+
+test("cubic segment validation: mixing via+cubic and missing controls throw", () => {
+  const mix = { start: [0, 0], segments: [{ to: [1, 1], via: [0, 1], c1: [0, 0], c2: [1, 0] }] };
+  expect(() => normalizeProfile(mix)).toThrow("segment cannot mix arc (via) and cubic (c1/c2)");
+
+  const half = { start: [0, 0], segments: [{ to: [1, 1], c1: [0, 1] }] };
+  expect(() => normalizeProfile(half)).toThrow("cubic segment needs c1 and c2 as finite [x,y]");
+
+  const nan = { start: [0, 0], segments: [{ to: [1, 1], c1: [0, NaN], c2: [1, 0] }] };
+  expect(() => normalizeProfile(nan)).toThrow("cubic segment needs c1 and c2 as finite [x,y]");
+});
+
+test("a valid cubic contour passes normalizeProfile unchanged", () => {
+  const c = { start: [0, 0], segments: [{ to: [10, 0], c1: [3, 4], c2: [7, 4] }] };
+  expect(normalizeProfile(c).outer).toBe(c);
 });

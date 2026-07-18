@@ -12,12 +12,25 @@ export function isArcContour(c) {
   return !!c && typeof c === "object" && !Array.isArray(c) && (c.arc === true || Array.isArray(c.segments));
 }
 
+// Curves generalize arcs; the symbolic-form predicate is the same. Prefer this name.
+export const isPathContour = isArcContour;
+
 function validateContour(c, role) {
   if (isArcContour(c)) {
     if (!Array.isArray(c.start) || c.start.length < 2)
       throw new Error(`extrude: ${role} arc contour needs a start [x,y]`);
     if (!Array.isArray(c.segments) || c.segments.length < 1)
       throw new Error(`extrude: ${role} arc contour needs ≥1 segment`);
+    for (const s of c.segments) {
+      const hasCubic = s.c1 != null || s.c2 != null;
+      if (hasCubic) {
+        if (s.via != null)
+          throw new Error(`extrude: ${role} segment cannot mix arc (via) and cubic (c1/c2)`);
+        const ok = (p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]);
+        if (!ok(s.c1) || !ok(s.c2))
+          throw new Error(`extrude: ${role} cubic segment needs c1 and c2 as finite [x,y]`);
+      }
+    }
     return;
   }
   if (!Array.isArray(c) || c.length < 3) throw new Error(`extrude: ${role} needs ≥3 points`);
