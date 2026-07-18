@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import {
   roundedRectPolygon, regularPolygon, ellipsePolygon,
   slotPolygon, starPolygon, ringSectorPolygon, circleProfile,
-  roundedProfile, filletPolygon,
+  roundedProfile, filletPolygon, pathProfile,
 } from "../src/framework/geometry/polygon.js";
 import { tessellateProfile, tessellateContour, normalizeProfile, isPathContour, sampleBezier } from "../src/framework/geometry/profile.js";
 
@@ -194,8 +194,6 @@ test("sampleBezier is pure (same input twice → deep equal)", () => {
 
 // ── pathProfile (fluent builder) ──────────────────────────────────────────
 
-import { pathProfile } from "../src/framework/geometry/polygon.js";
-
 test("pathProfile builds the canonical { start, segments } with correct kinds", () => {
   const c = pathProfile([0, 0])
     .lineTo([10, 0])
@@ -220,4 +218,11 @@ test("a pathProfile contour tessellates and normalizes like any path contour", (
   const c = pathProfile([0, 0]).lineTo([10, 0]).cubicTo([0, 10], [10, 4], [4, 10]).close();
   expect(normalizeProfile(c).outer).toBe(c);
   expect(tessellateContour(c, 24).length).toBeGreaterThan(3);
+});
+
+test("pathProfile.close() snapshots segments — chaining afterward does not mutate the returned contour", () => {
+  const b = pathProfile([0, 0]).lineTo([10, 0]);
+  const a = b.close();
+  b.lineTo([20, 20]);          // mutate the builder after close()
+  expect(a.segments).toEqual([{ to: [10, 0] }]); // unchanged
 });

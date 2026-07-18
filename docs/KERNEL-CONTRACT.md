@@ -242,7 +242,7 @@ build, and authors should expect all-or-nothing filleting per call, not per edge
 `partforge/geometry` ships pure-JS helpers of two kinds. The **contour builders**
 (`piePolygon`, `hexPolygon`, `regularPolygon`, `roundedRectPolygon`, `ellipsePolygon`,
 `slotPolygon`, `starPolygon`, `ringSectorPolygon`, `circleProfile`, `cornerArc`,
-`filletPolygon`, `roundedProfile`, `pathProfile`) are pure functions from numbers to plain CCW point
+`filletPolygon`, `roundedProfile`) are pure functions from numbers to plain CCW point
 lists or arc profiles — *data already in this contract's input format*, with no kernel
 dependency at all. The **solid patterns** (`linearPattern`, `circularPattern`) take a
 `Solid` and call only ops from the tables above (`clone`/`translate`/`rotate`/
