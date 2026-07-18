@@ -3,7 +3,7 @@
 // regions by winding + point-in-polygon nesting. svgPathToRings discretizes a
 // replicad Drawing's SVG path (from toSVGPathD) into rings, reusing F1's
 // sampleBezier / sampleArc so an OCCT-materialized curve facets like Manifold.
-import { sampleBezier, sampleArc } from "./profile.js";
+import { sampleBezier } from "./profile.js";
 
 const ringArea = (p) => {
   let a = 0;
@@ -50,40 +50,79 @@ export function regionsArea(regions) {
   return a;
 }
 
-// Minimal SVG-path tokenizer for the absolute commands replicad emits: M, L, C,
-// A, Z (and their explicit forms). Coordinates are numbers separated by spaces
-// or commas. One subpath (M…Z) → one ring; the start point is not duplicated.
-export function svgPathToRings(d, segs) {
-  const toks = d.match(/[MLCAZ]|-?\d*\.?\d+(?:e-?\d+)?/gi) ?? [];
-  const rings = [];
-  let ring = null, cur = null, start = null, i = 0;
-  const num = () => Number(toks[i++]);
-  while (i < toks.length) {
-    const t = toks[i++];
-    if (t === "M") { if (ring && ring.length >= 3) rings.push(ring); cur = start = [num(), num()]; ring = [cur.slice()]; }
-    else if (t === "L") { cur = [num(), num()]; ring.push(cur.slice()); }
-    else if (t === "C") {
-      const c1 = [num(), num()], c2 = [num(), num()], end = [num(), num()];
-      for (const p of sampleBezier(cur, c1, c2, end, segs)) ring.push(p);
-      cur = end;
-    }
-    else if (t === "A") {
-      // SVG elliptical arc: rx ry rot largeArc sweep x y. Treated as circular
-      // (rx≈ry) via the three-point sampleArc: midpoint of the chord bulged by
-      // the sagitta is a good `via`. If replicad never emits A (see Task 4), this
-      // branch is dead but harmless.
-      const rx = num(), ry = num(); num(); const large = num(), sweep = num(); const end = [num(), num()];
-      const r = (rx + ry) / 2;
-      const mx = (cur[0] + end[0]) / 2, my = (cur[1] + end[1]) / 2;
-      const dx = end[0] - cur[0], dy = end[1] - cur[1], dist = Math.hypot(dx, dy) || 1e-9;
-      const h2 = Math.max(0, r * r - (dist / 2) ** 2) ** 0.5;
-      const sign = (large === sweep) ? 1 : -1;   // bulge side
-      const via = [mx + sign * h2 * (-dy / dist), my + sign * h2 * (dx / dist)];
-      for (const p of sampleArc(cur, via, end, segs)) ring.push(p);
-      cur = end;
-    }
-    else if (t === "Z") { if (ring && ring.length >= 3) rings.push(ring); ring = null; }
+// Sample an SVG elliptical-arc segment (endpoint parameterization → center form,
+// W3C SVG 1.1 notes F.6) from `from` to `to` into points AFTER `from` (last pinned
+// to `to`), honoring rx/ry/x-rotation and the large-arc/sweep flags. Exact for the
+// semicircle case a three-point circle fit degenerates on.
+function sampleSvgArc(from, rx, ry, rotDeg, largeArc, sweep, to, segs) {
+  const [x1, y1] = from, [x2, y2] = to;
+  if (rx === 0 || ry === 0) return [[x2, y2]];
+  const phi = (rotDeg * Math.PI) / 180, cosP = Math.cos(phi), sinP = Math.sin(phi);
+  const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
+  const x1p = cosP * dx + sinP * dy, y1p = -sinP * dx + cosP * dy;
+  let RX = Math.abs(rx), RY = Math.abs(ry);
+  const lambda = (x1p * x1p) / (RX * RX) + (y1p * y1p) / (RY * RY);
+  if (lambda > 1) { const s = Math.sqrt(lambda); RX *= s; RY *= s; }
+  const numr = RX * RX * RY * RY - RX * RX * y1p * y1p - RY * RY * x1p * x1p;
+  const den = RX * RX * y1p * y1p + RY * RY * x1p * x1p;
+  let coef = Math.sqrt(Math.max(0, numr / den));
+  if (Boolean(largeArc) === Boolean(sweep)) coef = -coef;
+  const cxp = (coef * RX * y1p) / RY, cyp = (-coef * RY * x1p) / RX;
+  const cx = cosP * cxp - sinP * cyp + (x1 + x2) / 2;
+  const cy = sinP * cxp + cosP * cyp + (y1 + y2) / 2;
+  const angle = (ux, uy, vx, vy) => {
+    const dot = ux * vx + uy * vy, len = Math.hypot(ux, uy) * Math.hypot(vx, vy) || 1e-12;
+    let a = Math.acos(Math.min(1, Math.max(-1, dot / len)));
+    if (ux * vy - uy * vx < 0) a = -a;
+    return a;
+  };
+  const theta1 = angle(1, 0, (x1p - cxp) / RX, (y1p - cyp) / RY);
+  let dTheta = angle((x1p - cxp) / RX, (y1p - cyp) / RY, (-x1p - cxp) / RX, (-y1p - cyp) / RY);
+  if (!sweep && dTheta > 0) dTheta -= 2 * Math.PI;
+  if (sweep && dTheta < 0) dTheta += 2 * Math.PI;
+  const steps = Math.max(2, Math.ceil((segs * Math.abs(dTheta)) / (2 * Math.PI)));
+  const out = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = theta1 + dTheta * (i / steps);
+    const ex = RX * Math.cos(t), ey = RY * Math.sin(t);
+    out.push([cx + cosP * ex - sinP * ey, cy + sinP * ex + cosP * ey]);
   }
-  if (ring && ring.length >= 3) rings.push(ring);
+  out[out.length - 1] = [x2, y2];
+  return out;
+}
+
+// Minimal SVG-path tokenizer for the absolute commands replicad emits: M, L, C,
+// Q, A, Z. Coordinates are numbers separated by spaces or commas; a command may
+// be followed by several coordinate sets (implicit repeat). One subpath (M…Z) →
+// one ring; the start point is not duplicated. Throws on unsupported commands.
+export function svgPathToRings(d, segs) {
+  const toks = d.match(/[a-zA-Z]|-?\d*\.?\d+(?:e[-+]?\d+)?/g) ?? [];
+  const rings = [];
+  let ring = null, cur = [0, 0], cmd = null, i = 0;
+  const num = () => Number(toks[i++]);
+  const pt = () => [num(), num()];
+  const pushRing = () => { if (ring && ring.length >= 3) rings.push(ring); ring = null; };
+  while (i < toks.length) {
+    if (/^[a-zA-Z]$/.test(toks[i])) {
+      cmd = toks[i++];
+      if (!"MLCQAZ".includes(cmd)) throw new Error(`svgPathToRings: unsupported SVG command "${cmd}"`);
+    }
+    if (cmd === "M") { pushRing(); cur = pt(); ring = [cur.slice()]; cmd = "L"; }
+    else if (cmd === "L") { cur = pt(); ring.push(cur.slice()); }
+    else if (cmd === "C") { const c1 = pt(), c2 = pt(), end = pt(); for (const p of sampleBezier(cur, c1, c2, end, segs)) ring.push(p); cur = end; }
+    else if (cmd === "Q") {
+      const q = pt(), end = pt();
+      const c1 = [cur[0] + (2 / 3) * (q[0] - cur[0]), cur[1] + (2 / 3) * (q[1] - cur[1])];
+      const c2 = [end[0] + (2 / 3) * (q[0] - end[0]), end[1] + (2 / 3) * (q[1] - end[1])];
+      for (const p of sampleBezier(cur, c1, c2, end, segs)) ring.push(p); cur = end;
+    }
+    else if (cmd === "A") {
+      const rx = num(), ry = num(), rot = num(), large = num(), sweep = num(), end = pt();
+      for (const p of sampleSvgArc(cur, rx, ry, rot, large, sweep, end, segs)) ring.push(p); cur = end;
+    }
+    else if (cmd === "Z") { pushRing(); }
+    else throw new Error("svgPathToRings: coordinate before any command");
+  }
+  pushRing();
   return rings;
 }

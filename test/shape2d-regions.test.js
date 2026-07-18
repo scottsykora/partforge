@@ -36,3 +36,20 @@ test("regionsArea = Σ|outer| − Σ|holes|", () => {
   const outer = [[0,0],[10,0],[10,10],[0,10]], hole = [[3,3],[3,7],[7,7],[7,3]];
   expect(regionsArea(assembleRegions([outer, hole]))).toBeCloseTo(100 - 16, 6);
 });
+
+test("svgPathToRings samples an A arc onto the true circle (semicircle, not a chord)", () => {
+  const rings = svgPathToRings("M2,0 A2,2 0 0 1 -2,0", 32);
+  for (const [x, y] of rings[0]) expect(Math.hypot(x, y)).toBeCloseTo(2, 4);
+});
+test("svgPathToRings reconstructs a full circle from two 180° A commands", () => {
+  const rings = svgPathToRings("M2,0 A2,2 0 0 1 -2,0 A2,2 0 0 1 2,0 Z", 64);
+  expect(rings).toHaveLength(1);
+  expect(Math.abs(area(rings[0]))).toBeCloseTo(Math.PI * 4, 1);
+});
+test("svgPathToRings elevates a quadratic Q to a cubic and samples it", () => {
+  const rings = svgPathToRings("M0,0 Q5,10 10,0 Z", 32);
+  expect(rings[0].length).toBeGreaterThan(4);
+});
+test("svgPathToRings throws on an unsupported (e.g. relative) command", () => {
+  expect(() => svgPathToRings("m0,0 l10,0", 32)).toThrow("unsupported SVG command");
+});
