@@ -36,8 +36,12 @@ Verified premises (checked against `node_modules/replicad`):
 contour carrying `line | arc | bezier | spline` segments. OCCT maps each segment
 to its pen method (exact); Manifold flattens at the shared mesh LOD (add
 `sampleBezier` beside `sampleArc`). Independently valuable — curved profiles for
-`extrude`/`revolve`/`sweep` with exact STEP — regardless of booleans. **In
-brainstorming now.**
+`extrude`/`revolve`/`sweep` with exact STEP — regardless of booleans.
+**Implemented (v0.16.0, PR pending): cubic Béziers + `pathProfile` builder;**
+**exact on OCCT, faceted at mesh LOD on Manifold. F1-follow-ups: (a) teach**
+**`revolve`/`prism` the symbolic contour form — their option-checks assume**
+**`[[r,z],…]` point arrays and throw an opaque "not iterable" on a contour**
+**object; (b) quadratic/spline/ellipse segments; (c) SVG path-string parser.**
 
 **F2 — 2-D booleans** (`union` / `intersect` / `subtract` on profiles), on top
 of F1. Backend-split like the rest of the kernel:
