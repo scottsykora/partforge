@@ -3,16 +3,16 @@
    consumers (e.g. partforge-cloud's app chrome) to share one source of truth. */
 :root {
   color-scheme: dark;
-  --pf-bg: #15181d; --pf-surface: #1f242c; --pf-surface-2: #20262e; --pf-border: #2c333d;
-  --pf-text: #d6dbe2; --pf-text-strong: #e7ebf1; --pf-text-2: #cdd4dd;
-  --pf-muted: #7d8794; --pf-muted-2: #aab2bd; --pf-status: #8b94a0; --pf-hint: #6b7480;
-  --pf-accent: #3f7bf0; --pf-accent-soft: #26314a; --pf-on-accent: #fff; --pf-input-bg: #161a20; --pf-err: #f8746c;
+  --pf-bg: oklch(0.19 0.01 262); --pf-surface: oklch(0.23 0.011 262); --pf-surface-2: oklch(0.274 0.006 286.033); --pf-border: oklch(1 0 0 / 12%);
+  --pf-text: oklch(0.985 0 0); --pf-text-strong: oklch(1 0 0); --pf-text-2: oklch(0.92 0.004 286.32);
+  --pf-muted: oklch(0.705 0.015 286.067); --pf-muted-2: oklch(0.80 0.01 286); --pf-status: oklch(0.705 0.015 286.067); --pf-hint: oklch(0.552 0.016 285.938);
+  --pf-accent: #3f7bf0; --pf-accent-soft: #26314a; --pf-on-accent: #fff; --pf-input-bg: oklch(0.165 0.009 262); --pf-err: oklch(0.704 0.191 22.216);
   --pf-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  --pf-bg: #eef1f5; --pf-surface: #ffffff; --pf-surface-2: #f4f6f9; --pf-border: #d4dae2;
-  --pf-text: #2b333d; --pf-text-strong: #1a2129; --pf-text-2: #3a434e;
-  --pf-muted: #6b7480; --pf-muted-2: #59636f; --pf-status: #6b7480; --pf-hint: #8a93a0;
-  --pf-accent: #1f5bd6; --pf-accent-soft: #e6edfc; --pf-on-accent: #fff; --pf-input-bg: #ffffff; --pf-err: #d8453d;
+  --pf-bg: oklch(1 0 0); --pf-surface: oklch(1 0 0); --pf-surface-2: oklch(0.967 0.001 286.375); --pf-border: oklch(0.92 0.004 286.32);
+  --pf-text: oklch(0.141 0.005 285.823); --pf-text-strong: oklch(0.10 0.005 285.823); --pf-text-2: oklch(0.21 0.006 285.885);
+  --pf-muted: oklch(0.552 0.016 285.938); --pf-muted-2: oklch(0.44 0.015 285.9); --pf-status: oklch(0.552 0.016 285.938); --pf-hint: oklch(0.705 0.015 286.067);
+  --pf-accent: #1f5bd6; --pf-accent-soft: #e6edfc; --pf-on-accent: #fff; --pf-input-bg: #ffffff; --pf-err: oklch(0.577 0.245 27.325);
 }
