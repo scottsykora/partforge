@@ -2,9 +2,9 @@ import { expect, test } from "vitest";
 import {
   roundedRectPolygon, regularPolygon, ellipsePolygon,
   slotPolygon, starPolygon, ringSectorPolygon, circleProfile,
-  roundedProfile, filletPolygon,
+  roundedProfile, filletPolygon, pathProfile,
 } from "../src/framework/geometry/polygon.js";
-import { tessellateProfile, tessellateContour } from "../src/framework/geometry/profile.js";
+import { tessellateProfile, tessellateContour, normalizeProfile, isPathContour, sampleBezier } from "../src/framework/geometry/profile.js";
 
 const signedArea = (p) => {
   let a = 0;
@@ -127,4 +127,102 @@ test("roundedProfile keeps sharp/degenerate corners as plain lines (r=0, per-cor
 test("roundedProfile validates inputs", () => {
   expect(() => roundedProfile([[0, 0], [1, 1]], R)).toThrow(/at least 3/);
   expect(() => roundedProfile(SQ, [R, R])).toThrow(/length must match/);
+});
+
+test("isPathContour accepts the symbolic form (line/arc/cubic), rejects arrays", () => {
+  expect(isPathContour({ start: [0, 0], segments: [{ to: [1, 0], c1: [0, 1], c2: [1, 1] }] })).toBe(true);
+  expect(isPathContour([[0, 0], [1, 0], [1, 1]])).toBe(false);
+});
+
+test("cubic segment validation: mixing via+cubic and missing controls throw", () => {
+  const mix = { start: [0, 0], segments: [{ to: [1, 1], via: [0, 1], c1: [0, 0], c2: [1, 0] }] };
+  expect(() => normalizeProfile(mix)).toThrow("segment cannot mix arc (via) and cubic (c1/c2)");
+
+  const half = { start: [0, 0], segments: [{ to: [1, 1], c1: [0, 1] }] };
+  expect(() => normalizeProfile(half)).toThrow("cubic segment needs c1 and c2 as finite [x,y]");
+
+  const nan = { start: [0, 0], segments: [{ to: [1, 1], c1: [0, NaN], c2: [1, 0] }] };
+  expect(() => normalizeProfile(nan)).toThrow("cubic segment needs c1 and c2 as finite [x,y]");
+});
+
+test("a valid cubic contour passes normalizeProfile unchanged", () => {
+  const c = { start: [0, 0], segments: [{ to: [10, 0], c1: [3, 4], c2: [7, 4] }] };
+  expect(normalizeProfile(c).outer).toBe(c);
+});
+
+// Standard cubic approximation of a quarter circle radius R, (R,0)→(0,R).
+const KAPPA = 0.5522847498307936;
+const quarterArcCubic = (R) => ({ p0: [R, 0], c1: [R, R * KAPPA], c2: [R * KAPPA, R], p1: [0, R] });
+
+test("sampleBezier excludes the start and pins the exact endpoint", () => {
+  const { p0, c1, c2, p1 } = quarterArcCubic(10);
+  const pts = sampleBezier(p0, c1, c2, p1, 32);
+  expect(pts.length).toBeGreaterThan(1);
+  expect(pts[0]).not.toEqual(p0);
+  expect(pts[pts.length - 1]).toEqual(p1);
+});
+
+test("sampleBezier facet count rises with segs on a curved input", () => {
+  const { p0, c1, c2, p1 } = quarterArcCubic(10);
+  const lo = sampleBezier(p0, c1, c2, p1, 8).length;
+  const hi = sampleBezier(p0, c1, c2, p1, 64).length;
+  expect(hi).toBeGreaterThan(lo);
+});
+
+test("sampleBezier points of a quarter-circle cubic all lie on the circle (within Bézier tolerance)", () => {
+  // de Casteljau split points are EXACT curve points, so every sample lies on the
+  // Bézier — within its intrinsic ~0.027% circle-approximation error at any segs.
+  // (Sample-point radius error does NOT shrink with segs — the flattening error
+  // lives between samples. LOD is exercised by the point-count test above and the
+  // Manifold cubic/circleProfile volume-parity test.)
+  const R = 10, { p0, c1, c2, p1 } = quarterArcCubic(R);
+  for (const segs of [8, 32, 64])
+    for (const [x, y] of sampleBezier(p0, c1, c2, p1, segs))
+      expect(Math.abs(Math.hypot(x, y) - R)).toBeLessThan(0.01);
+});
+
+test("sampleBezier of a near-straight cubic collapses to few chords", () => {
+  const pts = sampleBezier([0, 0], [3, 0], [7, 0], [10, 0], 32); // controls on the line
+  expect(pts.length).toBeLessThanOrEqual(2);
+  expect(pts[pts.length - 1]).toEqual([10, 0]);
+});
+
+test("sampleBezier is pure (same input twice → deep equal)", () => {
+  const { p0, c1, c2, p1 } = quarterArcCubic(7);
+  expect(sampleBezier(p0, c1, c2, p1, 24)).toEqual(sampleBezier(p0, c1, c2, p1, 24));
+});
+
+// ── pathProfile (fluent builder) ──────────────────────────────────────────
+
+test("pathProfile builds the canonical { start, segments } with correct kinds", () => {
+  const c = pathProfile([0, 0])
+    .lineTo([10, 0])
+    .arcTo([10, 10], [11, 5])
+    .cubicTo([0, 10], [7, 12], [3, 12])
+    .close();
+  expect(c.start).toEqual([0, 0]);
+  expect(c.segments).toEqual([
+    { to: [10, 0] },
+    { to: [10, 10], via: [11, 5] },
+    { to: [0, 10], c1: [7, 12], c2: [3, 12] },
+  ]);
+});
+
+test("pathProfile rejects bad points and empty paths", () => {
+  expect(() => pathProfile([0])).toThrow("pathProfile: start must be a finite [x,y]");
+  expect(() => pathProfile([0, 0]).lineTo([1, NaN])).toThrow("pathProfile: lineTo point must be a finite [x,y]");
+  expect(() => pathProfile([0, 0]).close()).toThrow("pathProfile: need ≥1 segment before close()");
+});
+
+test("a pathProfile contour tessellates and normalizes like any path contour", () => {
+  const c = pathProfile([0, 0]).lineTo([10, 0]).cubicTo([0, 10], [10, 4], [4, 10]).close();
+  expect(normalizeProfile(c).outer).toBe(c);
+  expect(tessellateContour(c, 24).length).toBeGreaterThan(3);
+});
+
+test("pathProfile.close() snapshots segments — chaining afterward does not mutate the returned contour", () => {
+  const b = pathProfile([0, 0]).lineTo([10, 0]);
+  const a = b.close();
+  b.lineTo([20, 20]);          // mutate the builder after close()
+  expect(a.segments).toEqual([{ to: [10, 0] }]); // unchanged
 });

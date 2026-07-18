@@ -156,6 +156,32 @@ export function filletPolygon(points, r, { segs = 8 } = {}) {
   return out;
 }
 
+// Fluent builder for a curve-native path contour { start, segments }. Segment kinds:
+// lineTo → {to}, arcTo → {to,via} (three-point arc), cubicTo → {to,c1,c2} (cubic Bézier).
+// close() returns the plain contour object (feeds extrude/revolve/prism), not a Solid.
+export function pathProfile(start) {
+  const fin2 = (p, what) => {
+    if (!Array.isArray(p) || p.length < 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1]))
+      throw new Error(`pathProfile: ${what} must be a finite [x,y]`);
+    return [p[0], p[1]];
+  };
+  const s = fin2(start, "start");
+  const segments = [];
+  const api = {
+    lineTo(to) { segments.push({ to: fin2(to, "lineTo point") }); return api; },
+    arcTo(to, via) { segments.push({ to: fin2(to, "arcTo point"), via: fin2(via, "arcTo via") }); return api; },
+    cubicTo(to, c1, c2) {
+      segments.push({ to: fin2(to, "cubicTo point"), c1: fin2(c1, "cubicTo c1"), c2: fin2(c2, "cubicTo c2") });
+      return api;
+    },
+    close() {
+      if (segments.length < 1) throw new Error("pathProfile: need ≥1 segment before close()");
+      return { start: [s[0], s[1]], segments: segments.slice() }; // snapshot — chaining after close() must not mutate the returned contour
+    },
+  };
+  return api;
+}
+
 // Arc-aware sibling of filletPolygon: rounds the corners of a CCW polygon with the SAME
 // tangent/centre/sweep math (via cornerArc), but instead of tessellating each arc into
 // line facets it emits a canonical ArcContour { start, segments:[{to}|{to,via}], arc:true }

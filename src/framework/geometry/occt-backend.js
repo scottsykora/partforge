@@ -89,8 +89,9 @@ export function createOcctKernel(replicad) {
   // Draw a closed Drawing from a Contour: a legacy 2-D point list (all straight edges,
   // the former polyDrawing) OR an ArcContour whose { to, via } segments become true
   // OCCT arc edges via threePointsArcTo — so a rounded corner survives to STEP as a
-  // real CIRCLE B-rep entity, not a fan of LINEs. close() joins the last point back to
-  // the start with a straight edge (mirrors the implied ArcContour closure).
+  // real CIRCLE B-rep entity, not a fan of LINEs. Cubic segments ({ to, c1, c2 })
+  // map to cubicBezierCurveTo for exact B-rep spline edges. close() joins the last
+  // point back to the start with a straight edge (mirrors the implied ArcContour closure).
   const contourDrawing = (contour) => {
     if (Array.isArray(contour)) {
       let pen = draw(contour[0]);
@@ -98,7 +99,10 @@ export function createOcctKernel(replicad) {
       return pen.close();
     }
     let pen = draw(contour.start);
-    for (const seg of contour.segments) pen = seg.via ? pen.threePointsArcTo(seg.to, seg.via) : pen.lineTo(seg.to);
+    for (const seg of contour.segments)
+      pen = seg.c1 ? pen.cubicBezierCurveTo(seg.to, seg.c1, seg.c2)
+          : seg.via ? pen.threePointsArcTo(seg.to, seg.via)
+          : pen.lineTo(seg.to);
     return pen.close();
   };
 
