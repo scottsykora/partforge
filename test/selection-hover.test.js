@@ -105,6 +105,28 @@ test("hover overlay material follows cutaway clipping until detach", () => {
   // highlight must render after them so it remains legible on retained faces.
   expect(overlay.renderOrder).toBeGreaterThan(2_000_000);
 
+  const disposeMaterial = vi.spyOn(material, "dispose");
+  const disposeSubset = vi.spyOn(overlay.geometry, "dispose");
+  hover.detach();
   hover.detach();
   expect(unregister).toHaveBeenCalledTimes(1);
+  expect(disposeMaterial).toHaveBeenCalledTimes(1);
+  expect(disposeSubset).toHaveBeenCalledTimes(1);
+});
+
+test("a queued hover frame has no effect after detach", () => {
+  const viewer = makeViewer();
+  let runFrame;
+  const hover = attachHoverLabels(viewer, {
+    part,
+    schedule: (callback) => { runFrame = callback; },
+  });
+
+  move(viewer.domElement, 100, 100);
+  expect(runFrame).toBeTypeOf("function");
+  hover.detach();
+  runFrame();
+
+  expect(document.getElementById("pf-hover-tip")).toBeNull();
+  expect(viewer._group.children).toEqual([viewer._subMeshes.one]);
 });

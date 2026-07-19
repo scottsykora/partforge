@@ -91,8 +91,10 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
 
   let pending = null; // latest pointer position; one raycast per scheduled frame
   let down = false;
+  let detached = false;
 
   function onMove(ev) {
+    if (detached) return;
     if (ev.pointerType === "touch") return;
     if (down) return;
     const had = pending;
@@ -101,7 +103,7 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
     schedule(() => {
       const p = pending;
       pending = null;
-      if (!p || down) return;
+      if (detached || !p || down) return;
       const hit = raycastViewer(viewer, p.x, p.y);
       if (hit) show(hit, p.x, p.y); else hide();
     });
@@ -117,6 +119,9 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
 
   return {
     detach: () => {
+      if (detached) return;
+      detached = true;
+      pending = null;
       viewer.domElement.removeEventListener("pointermove", onMove);
       viewer.domElement.removeEventListener("pointerdown", onDown);
       viewer.domElement.removeEventListener("pointerup", onUp);
@@ -124,6 +129,7 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
       tip.remove();
       overlayParent?.remove(overlay);
       for (const { byId } of subsets.values()) for (const g of byId.values()) g.dispose();
+      subsets.clear();
       unregisterCutaway();
       material.dispose();
     },

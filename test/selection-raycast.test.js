@@ -13,7 +13,6 @@ function makeViewer({ isWorldPointVisible } = {}) {
   geo.userData.featureIds = new Uint16Array(nTri).fill(1);
   geo.userData.features = ["Test feature"];
   const mesh = new THREE.Mesh(geo);
-  mesh.material.side = THREE.DoubleSide;
   mesh.name = "one";
   mesh.visible = true;
   new THREE.Group().add(mesh); // hover adds overlays to mesh.parent
@@ -58,6 +57,7 @@ test("invisible meshes are not hit", () => {
 
 test("raycast skips a clipped front hit and returns the retained back hit", () => {
   const viewer = makeViewer({ isWorldPointVisible: (point) => point.z < 0 });
+  viewer._subMeshes.one.material.side = THREE.DoubleSide;
   const hit = raycastViewer(viewer, 100, 100);
   expect(hit).not.toBeNull();
   expect(hit.pointWorld.z).toBeCloseTo(-2, 4);
