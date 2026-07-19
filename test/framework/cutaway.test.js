@@ -318,6 +318,29 @@ test("active appearance schedules an 800ms fade and disable cancels it", () => {
   expect(gizmo.visible).toBe(false);
 });
 
+test("hover and focus restore active appearance and reschedule fade without moving the plane", () => {
+  const fixture = createFixture();
+  fixture.controller.setEnabled(true);
+  const gizmo = findGizmo(fixture.scene);
+  const fill = gizmo.children.find((child) => child.isMesh);
+  fixture.timer.entries[0].callback();
+  expect(fill.material.opacity).toBeLessThan(0.1);
+
+  fixture.domElement.dispatchEvent(new PointerEvent("pointerenter"));
+
+  expect(fill.material.opacity).toBeGreaterThan(0.1);
+  expect(fixture.timer.entries).toHaveLength(2);
+  expect(fixture.timer.entries[1].delay).toBe(800);
+  fixture.timer.entries[1].callback();
+  expect(fill.material.opacity).toBeLessThan(0.1);
+
+  fixture.domElement.dispatchEvent(new FocusEvent("focus"));
+
+  expect(fill.material.opacity).toBeGreaterThan(0.1);
+  expect(fixture.timer.entries).toHaveLength(3);
+  expect(fixture.timer.entries[2].delay).toBe(800);
+});
+
 test("replacing a subpart refreshes source display properties and restores exact materials", () => {
   const fixture = createFixture();
   const first = addSubpart(fixture);

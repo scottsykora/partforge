@@ -453,6 +453,7 @@ const gizmo = createCutawayGizmo({
   domElement,
   orbitControls: { enabled: true },
   onPoseChange: vi.fn(),
+  onActivity: vi.fn(),
 });
 
 gizmo.setPose({
@@ -518,8 +519,11 @@ px at the intended 72 px apparent handle scale.
 
 ### Step 4: Implement direct manipulation
 
-Register pointerdown, pointermove, pointerup, pointercancel,
-lostpointercapture, pointerleave, and window blur.
+Register pointerdown, pointermove, pointerenter, focus, pointerup, pointercancel,
+lostpointercapture, pointerleave, and window blur. The optional onActivity
+callback reports hover/focus while the gizmo is visible and a successful handle
+pointerdown before any pose movement; hidden and disposed gizmos do not report
+activity.
 
 On pointerdown:
 
@@ -568,7 +572,9 @@ orbitControls.enabled value.
 setActiveAppearance(true) makes the fill translucent and the handles vivid.
 setActiveAppearance(false) leaves the border and handles visible but reduces
 the fill below 0.1 opacity. The higher-level cutaway controller will own the
-idle timer; the gizmo only applies requested appearance.
+idle timer; the gizmo only applies requested appearance. Pointer hover, canvas
+focus, and interaction start call the optional onActivity callback so the
+controller can restore the active appearance without waiting for a pose change.
 
 setTheme(mode) updates fill, border, and handle colors. setVisible(false) ends
 any active drag. dispose is idempotent and removes all listeners, geometry, and
@@ -674,6 +680,9 @@ Implementation rules:
   false.
 - setEnabled(true), hover/focus, and onPoseChange call showActive(), which resets
   an 800 ms timeout that fades the plane through gizmo.setActiveAppearance(false).
+- Pass showActive as the gizmo's onActivity callback so pointer hover, canvas
+  focus, and a successful handle press restore the active appearance even when
+  the plane pose has not moved.
 - registerClippableMaterial tracks materials in a Set and returns an unregister
   function. Synchronization sets clippingPlanes to [plane] while enabled and
   null while disabled, then sets needsUpdate when the array length changes.

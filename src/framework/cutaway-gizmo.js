@@ -35,6 +35,7 @@ export function createCutawayGizmo({
   domElement,
   orbitControls,
   onPoseChange = () => {},
+  onActivity = () => {},
   pickHandle,
 }) {
   const group = new THREE.Group();
@@ -299,6 +300,7 @@ export function createCutawayGizmo({
       }
     }
 
+    onActivity();
     drag = nextDrag;
     if (orbitControls) orbitControls.enabled = false;
     safeCapture(event.pointerId);
@@ -306,6 +308,7 @@ export function createCutawayGizmo({
   }
 
   function onPointerMove(event) {
+    if (!disposed && group.visible) onActivity();
     if (!drag || event.pointerId !== drag.pointerId) return;
     const ray = rayFromEvent(event);
     if (!ray) return;
@@ -359,9 +362,15 @@ export function createCutawayGizmo({
     endDrag();
   }
 
+  function onPassiveActivity() {
+    if (!disposed && group.visible) onActivity();
+  }
+
   const listeners = [
     [domElement, "pointerdown", onPointerDown],
     [domElement, "pointermove", onPointerMove],
+    [domElement, "pointerenter", onPassiveActivity],
+    [domElement, "focus", onPassiveActivity],
     [domElement, "pointerup", onPointerEnd],
     [domElement, "pointercancel", onPointerEnd],
     [domElement, "lostpointercapture", onPointerEnd],

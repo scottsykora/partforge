@@ -135,6 +135,7 @@ export function createCutaway({
     domElement,
     orbitControls,
     onPoseChange,
+    onActivity: showActive,
   });
   gizmo.setVisible(false);
   gizmo.setTheme(theme);

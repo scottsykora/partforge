@@ -123,6 +123,36 @@ test("active appearance makes the plane prominent and idle appearance leaves it 
   expect(gizmo.border.visible).toBe(true);
 });
 
+test("reports hover, focus, and successful handle presses only while visible and alive", () => {
+  const onActivity = vi.fn();
+  const { domElement, gizmo } = createFixture({
+    onActivity,
+    pickHandle: () => "translate",
+  });
+
+  domElement.dispatchEvent(new PointerEvent("pointerenter"));
+  pointer(domElement, "pointermove");
+  domElement.dispatchEvent(new FocusEvent("focus"));
+  pointer(domElement, "pointerdown");
+
+  expect(onActivity).toHaveBeenCalledTimes(4);
+
+  gizmo.setVisible(false);
+  domElement.dispatchEvent(new PointerEvent("pointerenter"));
+  pointer(domElement, "pointermove");
+  domElement.dispatchEvent(new FocusEvent("focus"));
+  pointer(domElement, "pointerdown");
+  expect(onActivity).toHaveBeenCalledTimes(4);
+
+  gizmo.dispose();
+  gizmo.setVisible(true);
+  domElement.dispatchEvent(new PointerEvent("pointerenter"));
+  pointer(domElement, "pointermove");
+  domElement.dispatchEvent(new FocusEvent("focus"));
+  pointer(domElement, "pointerdown");
+  expect(onActivity).toHaveBeenCalledTimes(4);
+});
+
 test("theme changes the fill, border, and visible handle colors in place", () => {
   const { gizmo } = createFixture();
   const dark = gizmo.fill.material.color.getHex();
