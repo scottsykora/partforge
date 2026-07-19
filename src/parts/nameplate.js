@@ -19,6 +19,8 @@ export default {
           description: "Height of the uppercase letters. The second line scales with it." },
         { key: "depth", label: "Relief depth", unit: "mm", min: 0.4, max: 3, step: 0.1,
           description: "How far the lettering is raised above (emboss) or recessed into (engrave) the plate face." },
+        { key: "stroke", label: "Stroke offset", unit: "mm", min: -0.3, max: 1.5, step: 0.05,
+          description: "Grow (>0, bolder) or shrink (<0, thinner) the letters with a **Shape2D offset** — the same operation used for print clearance. Large negative values collapse thin strokes, so the letters hold at their thinnest valid size rather than breaking." },
       ],
     },
     {
@@ -43,14 +45,19 @@ export default {
       ],
     },
   ],
-  defaults: { size: 8, depth: 1.2, margin: 4, corner: 3, thickness: 3, engrave: 0 },
+  defaults: { size: 8, depth: 1.2, stroke: 0, margin: 4, corner: 3, thickness: 3, engrave: 0 },
   parts: {
     plate: {
       label: "Nameplate",
       views: ["plate"],
       export: { name: "nameplate" },
       build: (k, p) => {
-        const text = k.text2d(LABEL, { size: p.size, align: "center", valign: "middle", lineHeight: p.size * 1.7 });
+        let text = k.text2d(LABEL, { size: p.size, align: "center", valign: "middle", lineHeight: p.size * 1.7 });
+        // Shape2D offset on the lettering: grow (>0, bolder) or shrink (<0, thinner). Guard
+        // against a shrink that collapses thin strokes — keep the un-offset letters if so.
+        if (p.stroke !== 0) {
+          try { const g = text.offset(p.stroke); if (g.area() > 1) text = g; } catch { /* collapsed — keep un-offset */ }
+        }
         const bb = text.boundingBox();
         const w = (bb.max[0] - bb.min[0]) + 2 * p.margin;
         const h = (bb.max[1] - bb.min[1]) + 2 * p.margin;
