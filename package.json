@@ -45,6 +45,7 @@
     "fflate": "^0.8.3",
     "manifold-3d": "^3.5.1",
     "marked": "^18.0.5",
+    "opentype.js": "^2.0.0",
     "pngjs": "^7.0.0",
     "replicad": "^0.23.1",
     "replicad-opencascadejs": "^0.23.0",
