@@ -19,26 +19,61 @@ import { setTimeout as sleep } from "node:timers/promises";
 const entry = process.argv.find((a, i) => i >= 2 && !a.startsWith("--")) || "demo.html";
 const PORT = Number(process.env.CHECK_PORT) || 5179;
 const url = `http://localhost:${PORT}/${entry}`;
+const keepServer = process.argv.includes("--keep");
 
 const vite = spawn("npx", ["vite", "--port", String(PORT), "--strictPort"], { stdio: ["ignore", "pipe", "pipe"] });
 let ready = false;
+let viteFailure = null;
 vite.stdout.on("data", (d) => { if (/localhost:/.test(String(d))) ready = true; });
-for (let i = 0; i < 80 && !ready; i++) await sleep(250);
-const fail = (code, msg) => { console.error(msg); vite.kill("SIGTERM"); process.exit(code); };
-if (!ready) fail(2, "dev server did not start");
+vite.on("error", (error) => { viteFailure = error; });
 
-const browser = await chromium.launch();
-const page = await browser.newPage();
 const errors = [];
-page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
-page.on("pageerror", (e) => errors.push("pageerror: " + (e.message || e)));
-page.on("worker", (w) => w.on("console", (m) => { if (m.type() === "error") errors.push("worker: " + m.text()); }));
-
 let booted = false;
 let hovered = false;
 let cutaway = false;
 let cutawayControl = "missing";
+let status = "(unavailable)";
+let browser;
+let page;
+
+function errorMessage(error) {
+  return error?.message || String(error);
+}
+
+async function checkCompactLayout(width) {
+  await page.setViewportSize({ width, height: 720 });
+  await sleep(50);
+  const result = await page.evaluate(() => {
+    const viewbar = document.getElementById("viewbar");
+    const topbar = document.getElementById("topbar");
+    const viewRect = viewbar?.getBoundingClientRect();
+    const topRect = topbar?.getBoundingClientRect();
+    const overlaps = Boolean(viewRect && topRect
+      && viewRect.left < topRect.right
+      && viewRect.right > topRect.left
+      && viewRect.top < topRect.bottom
+      && viewRect.bottom > topRect.top);
+    const overflowingActions = [...document.querySelectorAll("#viewbar .pf-cutaway-actions button")]
+      .filter((button) => button.scrollWidth > button.clientWidth)
+      .map((button) => button.textContent?.trim() || "(unlabelled)");
+    return { overlaps, overflowingActions };
+  });
+  if (result.overlaps) errors.push(`layout ${width}px: #viewbar overlaps #topbar`);
+  if (result.overflowingActions.length) {
+    errors.push(`layout ${width}px: cutaway actions overflow (${result.overflowingActions.join(", ")})`);
+  }
+}
+
 try {
+  for (let i = 0; i < 80 && !ready && !viteFailure; i++) await sleep(250);
+  if (!ready) throw viteFailure || new Error("dev server did not start");
+
+  browser = await chromium.launch();
+  page = await browser.newPage();
+  page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
+  page.on("pageerror", (e) => errors.push("pageerror: " + errorMessage(e)));
+  page.on("worker", (w) => w.on("console", (m) => { if (m.type() === "error") errors.push("worker: " + m.text()); }));
+
   await page.goto(url, { waitUntil: "load", timeout: 30000 });
   await page.waitForFunction(
     () => /triangle/i.test(document.getElementById("status")?.textContent || ""),
@@ -67,14 +102,36 @@ try {
       await sleep(200);
     }
   }
-} catch { /* report below */ }
-const status = await page.$eval("#status", (e) => e.textContent).catch(() => "(no #status)");
 
-await browser.close();
-if (!process.argv.includes("--keep")) vite.kill("SIGTERM");
+  if (cutaway) {
+    const viewport = page.viewportSize();
+    await checkCompactLayout(390);
+    await checkCompactLayout(320);
+    if (viewport) await page.setViewportSize(viewport);
+  }
+} catch (error) {
+  errors.push("check: " + errorMessage(error));
+} finally {
+  if (page) {
+    try {
+      status = await page.$eval("#status", (element) => element.textContent);
+    } catch (error) {
+      errors.push("status: " + errorMessage(error));
+      status = "(no #status)";
+    }
+  }
+  if (browser) {
+    try {
+      await browser.close();
+    } catch (error) {
+      errors.push("cleanup: " + errorMessage(error));
+    }
+  }
+  if (!keepServer) vite.kill("SIGTERM");
+}
 
 console.log(`check ${url}`);
 console.log(`  booted: ${booted}   hovered: ${hovered}   cutaway: ${cutaway}   status: ${JSON.stringify(status)}   errors: ${errors.length}`);
 if (!cutaway) console.log(`  cutaway control: ${cutawayControl}`);
 for (const e of errors.slice(0, 10)) console.log("    - " + e.split("\n")[0]);
-process.exit(booted && hovered && cutaway ? 0 : 1);
+process.exit(booted && hovered && cutaway && errors.length === 0 ? 0 : 1);

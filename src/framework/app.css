@@ -163,10 +163,16 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 }
 #viewbar .pf-cutaway-actions { display: flex; gap: 4px; }
 #viewbar .pf-cutaway-actions[hidden] { display: none; }
+#viewbar .pf-cutaway-actions button { width: auto; min-width: 56px; padding: 0 8px; }
 #viewbar button:disabled { opacity: .38; cursor: not-allowed; }
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
+
+@media (max-width: 600px) {
+  #viewbar { top: 64px; flex-direction: column; align-items: stretch; }
+  #viewbar .pf-cutaway-actions { flex-direction: column; }
+}
 
 #busy {
   position: fixed; inset: 0; z-index: 20; pointer-events: none;
