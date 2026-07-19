@@ -265,7 +265,7 @@ not an OCCT limitation.
 | `simple()` | `toRegions()` unwrapped — throws unless the result is exactly one region. |
 | `clone()` | Independent handle. |
 
-On `offset`: `round` and `sharp` corner styles are identical on both backends; `chamfer` differs — Manifold uses Clipper2's `Square` join (a squared corner slightly LARGER than round), OCCT uses a traditional 45° bevel (slightly SMALLER than round). Both are valid non-round corner treatments; pick `round` or `sharp` if exact cross-backend corner identity matters.
+On `offset`: `round` and `sharp` corner styles are identical on both backends; `chamfer` differs — Manifold uses Clipper2's `Square` join (a squared corner slightly LARGER than round), OCCT uses a traditional 45° bevel (noticeably SMALLER than round — a straight chord across the corner). Both are valid non-round corner treatments; pick `round` or `sharp` if exact cross-backend corner identity matters.
 
 2-D boolean ops are a **parity-relevant operation**: on OCCT they carry exact circular arcs and Bézier curves; on Manifold they facet curves to mesh LOD. Measure-parity (area, bounding box) holds within the tessellation tolerance as LOD converges — this is not a parity waiver.
 

@@ -86,7 +86,7 @@ test("corner styles differ at convex right angles (sharp > chamfer > round)", ()
   // sharp/miter corner — it circumscribes the round arc with a flat segment
   // tangent to it, perpendicular to the corner bisector. That flat segment sits
   // strictly outside the arc, so at a convex corner chamfer area > round area
-  // (verified against the closed-form wedge: 4 * d*(2-sqrt(2)) = 3.3137 at d=1).
+  // (closed form: 4 corners * per-corner 2(√2−1)d² = 8(√2−1) = 3.3137 at d=1).
   const sharp = k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "sharp" }).area();
   const round = k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "round" }).area();
   const cham  = k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "chamfer" }).area();

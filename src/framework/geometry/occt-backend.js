@@ -179,6 +179,8 @@ export function createOcctKernel(replicad) {
         // Collapse doesn't throw and Drawing has no public `blueprints` array (that's on
         // Blueprints/CompoundBlueprint, not Drawing) — replicad instead returns a Drawing
         // whose private `innerShape` is null (confirmed by probe). That's the collapse signal.
+        // NB: `innerShape` is replicad-internal; the "collapse throws immediately (OCCT)" test
+        // guards this — a replicad upgrade that renames it must keep that test green.
         if (!result || !result.innerShape)
           throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
         return wrapShape2d(result);
