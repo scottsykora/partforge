@@ -128,9 +128,27 @@ describe("attachCutawayControls", () => {
     expect(viewer.cutawayEnabled()).toBe(true);
   });
 
+  test("Escape returns focus to the primary button before hiding its actions", () => {
+    const { viewer, button } = setup();
+    const actions = button.nextElementSibling;
+    const [flip] = actions.querySelectorAll("button");
+    button.click();
+    flip.focus();
+    expect(document.activeElement).toBe(flip);
+
+    pressEscape(flip);
+
+    expect(viewer.cutawayEnabled()).toBe(false);
+    expect(actions.hidden).toBe(true);
+    expect(document.activeElement).toBe(button);
+  });
+
   test("makes the canvas focusable without replacing an existing tabindex", () => {
     const first = setup();
     expect(first.viewer.domElement.getAttribute("tabindex")).toBe("0");
+
+    first.handle.detach();
+    expect(first.viewer.domElement.hasAttribute("tabindex")).toBe(false);
 
     const viewer = fakeViewer();
     viewer.domElement.setAttribute("tabindex", "-1");
@@ -140,6 +158,27 @@ describe("attachCutawayControls", () => {
     handles.push(handle);
 
     expect(viewer.domElement.getAttribute("tabindex")).toBe("-1");
+    handle.detach();
+    expect(viewer.domElement.getAttribute("tabindex")).toBe("-1");
+  });
+
+  test("gives the focusable canvas a reversible accessible name", () => {
+    const first = setup();
+    expect(first.viewer.domElement.getAttribute("aria-label")).toBe("3D part viewer");
+
+    first.handle.detach();
+    expect(first.viewer.domElement.hasAttribute("aria-label")).toBe(false);
+
+    const viewer = fakeViewer();
+    viewer.domElement.setAttribute("aria-label", "Interactive gearbox preview");
+    const button = document.createElement("button");
+    document.body.append(viewer.domElement, button);
+    const handle = attachCutawayControls(viewer, { cutaway: button });
+    handles.push(handle);
+
+    expect(viewer.domElement.getAttribute("aria-label")).toBe("Interactive gearbox preview");
+    handle.detach();
+    expect(viewer.domElement.getAttribute("aria-label")).toBe("Interactive gearbox preview");
   });
 
   test("focuses the canvas without scrolling after pointer interaction", () => {
@@ -156,6 +195,9 @@ describe("attachCutawayControls", () => {
 
     expect(button.disabled).toBe(true);
     expect(button.title).toBe("Cutaway requires a stencil-capable WebGL context");
+    expect(button.getAttribute("aria-description")).toBe(
+      "Cutaway requires a stencil-capable WebGL context",
+    );
     expect(button.getAttribute("aria-pressed")).toBe("false");
     button.click();
     expect(viewer.setCutawayEnabled).not.toHaveBeenCalled();
@@ -194,5 +236,62 @@ describe("attachCutawayControls", () => {
     expect(viewer.setCutawayEnabled).not.toHaveBeenCalled();
     expect(viewer.flipCutaway).not.toHaveBeenCalled();
     expect(focus).not.toHaveBeenCalled();
+  });
+
+  test("detach restores primary host state and reset becomes inert", () => {
+    const viewer = fakeViewer({ supported: false });
+    const button = document.createElement("button");
+    button.setAttribute("type", "submit");
+    button.setAttribute("aria-pressed", "mixed");
+    button.setAttribute("title", "Host section control");
+    button.setAttribute("aria-description", "Host description");
+    button.classList.add("on");
+    document.body.append(viewer.domElement, button);
+    const handle = attachCutawayControls(viewer, { cutaway: button });
+    handles.push(handle);
+
+    expect(button.type).toBe("button");
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-pressed")).toBe("false");
+    expect(button.classList.contains("on")).toBe(false);
+    expect(button.nextElementSibling?.classList.contains("pf-cutaway-actions")).toBe(true);
+
+    handle.detach();
+    viewer.setCutawayEnabled.mockClear();
+    handle.reset();
+
+    expect(button.getAttribute("type")).toBe("submit");
+    expect(button.getAttribute("aria-pressed")).toBe("mixed");
+    expect(button.getAttribute("title")).toBe("Host section control");
+    expect(button.getAttribute("aria-description")).toBe("Host description");
+    expect(button.disabled).toBe(false);
+    expect(button.hasAttribute("disabled")).toBe(false);
+    expect(button.classList.contains("on")).toBe(true);
+    expect(button.nextElementSibling).toBeNull();
+    expect(viewer.setCutawayEnabled).not.toHaveBeenCalled();
+  });
+
+  test("detach restores absent primary attributes and allows a clean remount", () => {
+    const unsupported = fakeViewer({ supported: false });
+    const button = document.createElement("button");
+    document.body.append(unsupported.domElement, button);
+    const first = attachCutawayControls(unsupported, { cutaway: button });
+    handles.push(first);
+    first.detach();
+
+    expect(button.hasAttribute("type")).toBe(false);
+    expect(button.hasAttribute("aria-pressed")).toBe(false);
+    expect(button.hasAttribute("title")).toBe(false);
+    expect(button.hasAttribute("aria-description")).toBe(false);
+    expect(button.hasAttribute("disabled")).toBe(false);
+    expect(button.classList.contains("on")).toBe(false);
+
+    const supported = fakeViewer();
+    const second = attachCutawayControls(supported, { cutaway: button });
+    handles.push(second);
+    button.click();
+
+    expect(supported.setCutawayEnabled).toHaveBeenCalledOnce();
+    expect(document.querySelectorAll(".pf-cutaway-actions")).toHaveLength(1);
   });
 });

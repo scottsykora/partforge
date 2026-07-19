@@ -1,4 +1,11 @@
 const UNSUPPORTED_TITLE = "Cutaway requires a stencil-capable WebGL context";
+const BUTTON_ATTRIBUTES = [
+  "type",
+  "aria-pressed",
+  "title",
+  "disabled",
+  "aria-description",
+];
 
 const noop = () => {};
 
@@ -10,6 +17,20 @@ function actionButton(label, title) {
   return button;
 }
 
+function captureAttributes(element, names) {
+  return new Map(names.map((name) => [name, {
+    present: element.hasAttribute(name),
+    value: element.getAttribute(name),
+  }]));
+}
+
+function restoreAttributes(element, attributes) {
+  for (const [name, { present, value }] of attributes) {
+    if (present) element.setAttribute(name, value);
+    else element.removeAttribute(name);
+  }
+}
+
 // Wire the optional cutaway button to the viewer and create its contextual
 // actions. Hosts that omit the primary button opt out of all DOM behavior.
 export function attachCutawayControls(viewer, { cutaway: button } = {}) {
@@ -17,7 +38,13 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}) {
 
   const canvas = viewer.domElement;
   const addedCanvasTabIndex = !canvas.hasAttribute("tabindex");
+  const addedCanvasLabel = !canvas.hasAttribute("aria-label");
   if (addedCanvasTabIndex) canvas.tabIndex = 0;
+  if (addedCanvasLabel) canvas.setAttribute("aria-label", "3D part viewer");
+
+  const hostButtonAttributes = captureAttributes(button, BUTTON_ATTRIBUTES);
+  const hostButtonDisabled = button.disabled;
+  const hostButtonOn = button.classList.contains("on");
 
   button.type = "button";
   button.setAttribute("aria-pressed", "false");
@@ -27,6 +54,7 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}) {
   if (!supported) {
     button.disabled = true;
     button.title = UNSUPPORTED_TITLE;
+    button.setAttribute("aria-description", UNSUPPORTED_TITLE);
   }
 
   const actions = document.createElement("span");
@@ -43,7 +71,9 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}) {
     actions.hidden = !enabled;
   }
 
+  let detached = false;
   function disable() {
+    if (detached) return;
     viewer.setCutawayEnabled(false);
     sync();
   }
@@ -60,6 +90,9 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}) {
   const onEscape = (event) => {
     if (event.key !== "Escape" || !viewer.cutawayEnabled()) return;
     event.preventDefault();
+    if (actions.contains(document.activeElement)) {
+      button.focus({ preventScroll: true });
+    }
     disable();
   };
   const onCanvasPointerDown = () => canvas.focus({ preventScroll: true });
@@ -73,7 +106,6 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}) {
   canvas.addEventListener("pointerdown", onCanvasPointerDown);
   sync();
 
-  let detached = false;
   return {
     reset: disable,
     detach() {
@@ -87,7 +119,11 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}) {
       }
       canvas.removeEventListener("pointerdown", onCanvasPointerDown);
       if (addedCanvasTabIndex) canvas.removeAttribute("tabindex");
+      if (addedCanvasLabel) canvas.removeAttribute("aria-label");
       actions.remove();
+      restoreAttributes(button, hostButtonAttributes);
+      button.disabled = hostButtonDisabled;
+      button.classList.toggle("on", hostButtonOn);
     },
   };
 }
