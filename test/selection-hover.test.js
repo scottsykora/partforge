@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import * as THREE from "three";
 import { attachHoverLabels } from "../src/framework/selection/hover.js";
 
@@ -83,4 +83,28 @@ test("detach removes the tooltip element and listeners", () => {
   const h = attachHoverLabels(viewer, { part, schedule: sync });
   h.detach();
   expect(document.getElementById("pf-hover-tip")).toBeNull();
+});
+
+test("hover overlay material follows cutaway clipping until detach", () => {
+  const viewer = makeViewer();
+  const unregister = vi.fn();
+  viewer.registerCutawayMaterial = vi.fn(() => unregister);
+
+  const hover = attachHoverLabels(viewer, { part, schedule: sync });
+
+  expect(viewer.registerCutawayMaterial).toHaveBeenCalledTimes(1);
+  const material = viewer.registerCutawayMaterial.mock.calls[0][0];
+  expect(material).toBeInstanceOf(THREE.MeshBasicMaterial);
+
+  move(viewer.domElement, 100, 100);
+  const overlay = viewer._group.children.find(
+    (child) => child !== viewer._subMeshes.one,
+  );
+  expect(overlay.material).toBe(material);
+  // Cutaway feature lines start at render order 2,000,000; the translucent
+  // highlight must render after them so it remains legible on retained faces.
+  expect(overlay.renderOrder).toBeGreaterThan(2_000_000);
+
+  hover.detach();
+  expect(unregister).toHaveBeenCalledTimes(1);
 });

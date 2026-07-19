@@ -3,6 +3,7 @@
 // surface. Feature names come from Solid.label() in the part's build, carried
 // per-triangle in the mesh payload (geometry.userData.featureIds/features).
 import * as THREE from "three";
+import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../cutaway-render.js";
 import { raycastViewer } from "./raycast.js";
 
 const HIGHLIGHT = 0x4da3ff;
@@ -42,9 +43,10 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
     color: HIGHLIGHT, transparent: true, opacity: 0.35,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
+  const unregisterCutaway = viewer.registerCutawayMaterial?.(material) ?? (() => {});
   const overlay = new THREE.Mesh(new THREE.BufferGeometry(), material);
   overlay.visible = false;
-  overlay.renderOrder = 2;
+  overlay.renderOrder = CUTAWAY_OVERLAY_RENDER_ORDER;
   let overlayParent = null;
   // Subset cache per sub-part: rebuilt when the sub-part's geometry object changes
   // (i.e. after a regenerate) — keyed on the geometry instance.
@@ -122,6 +124,7 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
       tip.remove();
       overlayParent?.remove(overlay);
       for (const { byId } of subsets.values()) for (const g of byId.values()) g.dispose();
+      unregisterCutaway();
       material.dispose();
     },
   };

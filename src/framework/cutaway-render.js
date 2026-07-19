@@ -11,6 +11,7 @@ const HATCH_INK = {
 const SURFACE_ORDER_BASE = 1_000_000;
 const EDGE_ORDER_BASE = 2_000_000;
 const SECTION_ORDER_STRIDE = 2;
+export const CUTAWAY_OVERLAY_RENDER_ORDER = 3_000_000;
 
 export function createHatchMaterial({ color, opacity, theme }) {
   const material = new THREE.ShaderMaterial({

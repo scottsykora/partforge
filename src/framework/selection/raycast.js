@@ -27,7 +27,10 @@ export function raycastViewer(viewer, clientX, clientY) {
   ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(ndc, viewer.camera);
   const meshes = Object.values(viewer._subMeshes).filter((m) => m.visible);
-  const hit = raycaster.intersectObjects(meshes, false)[0];
+  const hits = raycaster.intersectObjects(meshes, false);
+  const hit = hits.find((candidate) =>
+    viewer.isWorldPointVisible?.(candidate.point) ?? true
+  );
   if (!hit) return null;
   return {
     mesh: hit.object,
