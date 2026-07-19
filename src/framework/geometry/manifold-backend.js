@@ -74,6 +74,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       return cachedCS(h("cutAll2d", hash, ts.map((t) => t._hash)), () => ts.reduce((acc, t) => T(acc.subtract(t._cs)), cs));
     },
     intersect: (o) => { const t = liftCS(o); return cachedCS(h("intersect2d", hash, t._hash), () => T(cs.intersect(t._cs))); },
+    offset: (delta, { corners = "round", segs: nSeg = segs } = {}) => {
+      const joinType = { round: "Round", chamfer: "Square", sharp: "Miter" }[corners];
+      if (!joinType) throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
+      if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
+      return cachedCS(h("offset2d", hash, delta, corners, nSeg), () => {
+        const out = T(cs.offset(delta, joinType, 2, nSeg));       // miterLimit 2 (Clipper2 default)
+        if (out.numContour() === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
+        return out;
+      });
+    },
     area: () => cs.area(),
     boundingBox: () => { const r = cs.bounds(); return { min: [r.min[0], r.min[1]], max: [r.max[0], r.max[1]] }; },
     toRegions: () => assembleRegions(cs.toPolygons()),

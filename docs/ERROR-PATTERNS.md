@@ -239,6 +239,15 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 - **Cause:** `.simple()` was called on a boolean result that is empty or split into multiple disjoint regions (e.g. `intersect` of disjoint shapes, or a `cut` that severs a shape in two).
 - **Fix:** Use `.toRegions()` to get the array, or adjust the operands so the result is a single connected region. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "2-D booleans".
 
+## shape2d-offset-collapses
+
+- **Symptom:** `Shape2D.offset: offset collapses the shape (reduce |delta|)`
+- **Cause:** A negative (inset) `offset` removed more than the shape's half-width,
+  leaving no geometry — or the delta is larger than the feature it offsets.
+- **Fix:** Reduce `|delta|`, or check the source profile is large enough for the
+  inset. Realistic clearances (fractions of a mm) and wall insets up to the
+  narrowest feature never trip this.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

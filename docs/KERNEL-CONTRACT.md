@@ -258,6 +258,7 @@ not an OCCT limitation.
 | Op | Contract |
 |---|---|
 | `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). |
+| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Curve-preserving on OCCT, faceted at mesh LOD on Manifold. Throws if the offset collapses the shape. |
 | `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². |
 | `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds (no `center`/`size`, unlike `Solid.boundingBox`). |
 | `toRegions()` | Materialize into `{outer, holes}[]` region arrays (`assembleRegions`); a boolean result may be several disjoint regions. |

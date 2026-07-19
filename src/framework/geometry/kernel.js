@@ -42,7 +42,7 @@ export const SOLID_OPTIONAL_OPS = ["genus", "isEmpty"];
 
 // Public methods every Shape2D exposes (2-D boolean value; contract-linted).
 export const SHAPE2D_OPS = [
-  "union", "cut", "cutAll", "intersect", "area", "boundingBox", "toRegions", "simple", "clone",
+  "union", "cut", "cutAll", "intersect", "offset", "area", "boundingBox", "toRegions", "simple", "clone",
 ];
 
 // Solid ops only OCCT implements natively. Single source of truth: probe.js routes
