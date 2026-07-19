@@ -4,12 +4,13 @@ import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { createCutaway } from "./cutaway.js";
 
 export function createViewer(container, part) {
   const names = Object.keys(part.parts);
 
   // --- renderer / scene / camera --------------------------------------------
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
 
@@ -96,6 +97,31 @@ export function createViewer(container, part) {
     partsGroup.add(l);
   }
 
+  // The cutaway plane lives in world space, so its initial/reset bounds must
+  // include the pivot rotation and the per-view recentering transform.
+  const _worldBounds = new THREE.Box3();
+  function getVisibleWorldBounds() {
+    _worldBounds.makeEmpty();
+    for (const mesh of Object.values(subMesh)) {
+      if (!mesh.visible || !mesh.geometry) continue;
+      mesh.updateWorldMatrix(true, false);
+      _worldBounds.expandByObject(mesh);
+    }
+    return _worldBounds;
+  }
+
+  const cutaway = createCutaway({
+    renderer,
+    scene,
+    camera,
+    orbitControls: controls,
+    domElement: renderer.domElement,
+    getBounds: getVisibleWorldBounds,
+  });
+  for (const name of names) {
+    cutaway.setSubpart(name, subMesh[name], subLines[name]);
+  }
+
   // Smooth shading within CREASE_ANGLE of a shared edge, hard edge past it — so the
   // round body and helical groove read smooth while bore rims, drum faces, and
   // groove walls stay crisp. Lower = more hard edges; raise toward Math.PI/3 for
@@ -135,9 +161,13 @@ export function createViewer(container, part) {
   const subCache = Object.fromEntries(names.map((n) => [n, null]));
 
   function setSubGeometry(name, payload) {
-    const prev = subCache[name]; // free the geometry this replaces (its own buffers + edge lines)
+    const prev = subCache[name];
+    const next = buildGeometry(payload);
+    subCache[name] = next;
+    // Section helpers must stop referring to the old buffers before those
+    // buffers are released.
+    cutaway.updateGeometry(name, next);
     if (prev) { prev.userData.edges?.dispose(); prev.dispose(); }
-    subCache[name] = buildGeometry(payload);
   }
 
   // Cache queries for the app's regenerate loop (so it never reaches into subCache).
@@ -178,6 +208,7 @@ export function createViewer(container, part) {
       subLines[name].visible = on;
     }
     if (frame) frameTo(visibleNames);
+    cutaway.setVisible(visibleNames);
   }
 
   // Re-frame whatever is currently visible (the reframe button).
@@ -185,7 +216,19 @@ export function createViewer(container, part) {
     frameTo(names.filter((n) => subMesh[n].visible && subCache[n]));
   }
 
-  function setAutoRotate(on) { controls.autoRotate = on; }
+  let autoRotateRequested = true;
+  function syncAutoRotate() {
+    controls.autoRotate = autoRotateRequested && !cutaway.isEnabled;
+  }
+  function setAutoRotate(on) {
+    autoRotateRequested = !!on;
+    syncAutoRotate();
+  }
+  function setCutawayEnabled(on) {
+    const changed = cutaway.setEnabled(on);
+    syncAutoRotate();
+    return changed;
+  }
 
   // Swap the scene background, grid, and edge-line colors for the given theme.
   function setTheme(mode) {
@@ -196,11 +239,13 @@ export function createViewer(container, part) {
     grid.position.y = floorY; // keep the floor at the bbox bottom across theme swaps
     scene.add(grid);
     lineMaterial.color.set(t.line);
+    cutaway.setTheme(mode);
   }
 
   function hideAssembly() {
     for (const m of Object.values(subMesh)) m.visible = false;
     for (const l of Object.values(subLines)) l.visible = false;
+    cutaway.setVisible([]);
   }
 
   // --- resize ---------------------------------------------------------------
@@ -219,6 +264,7 @@ export function createViewer(container, part) {
   // --- render loop ----------------------------------------------------------
   renderer.setAnimationLoop(() => {
     controls.update();
+    cutaway.updateForCamera();
     renderer.render(scene, camera);
   });
 
@@ -265,6 +311,7 @@ export function createViewer(container, part) {
     controls.dispose();
     for (const t of flashTimers) clearTimeout(t);
     flashTimers.clear();
+    cutaway.dispose();
     for (const n of names) {
       const g = subCache[n];
       if (g) { g.userData.edges?.dispose(); g.dispose(); subCache[n] = null; }
@@ -279,5 +326,29 @@ export function createViewer(container, part) {
     renderer.domElement.remove();
   }
 
-  return { showAssembly, hideAssembly, setSubGeometry, hasSubMesh, subTriangles, frame, setAutoRotate, setTheme, getCameraState, setCameraState, onCameraEnd, camera, domElement: renderer.domElement, _subMeshes: subMesh, flashPoint, dispose };
+  return {
+    showAssembly,
+    hideAssembly,
+    setSubGeometry,
+    hasSubMesh,
+    subTriangles,
+    frame,
+    setAutoRotate,
+    setTheme,
+    getCameraState,
+    setCameraState,
+    onCameraEnd,
+    camera,
+    domElement: renderer.domElement,
+    _subMeshes: subMesh,
+    flashPoint,
+    cutawaySupported: () => cutaway.isSupported,
+    cutawayEnabled: () => cutaway.isEnabled,
+    setCutawayEnabled,
+    flipCutaway: cutaway.flip,
+    resetCutaway: cutaway.reset,
+    isWorldPointVisible: cutaway.isPointVisible,
+    registerCutawayMaterial: cutaway.registerClippableMaterial,
+    dispose,
+  };
 }

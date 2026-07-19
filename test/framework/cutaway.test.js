@@ -433,3 +433,84 @@ test("world-space recentered parent bounds place the initial plane through the w
     worldBounds.getCenter(new THREE.Vector3()),
   )).toBeCloseTo(0);
 });
+
+test("viewer supplies visible transformed meshes as world-space cutaway bounds", async () => {
+  class FakeRenderer {
+    constructor(options) {
+      this.options = options;
+      this.domElement = document.createElement("canvas");
+      this.localClippingEnabled = false;
+    }
+    getContext() { return { getContextAttributes: () => ({ stencil: true }) }; }
+    setPixelRatio() {}
+    setSize() {}
+    setAnimationLoop(callback) { this.animationLoop = callback; }
+    render() {}
+    dispose() {}
+  }
+
+  vi.doMock("three", async (importOriginal) => ({
+    ...(await importOriginal()),
+    WebGLRenderer: FakeRenderer,
+  }));
+
+  let cutawayOptions;
+  const fakeCutaway = {
+    isSupported: true,
+    isEnabled: false,
+    setSubpart: vi.fn(),
+    updateGeometry: vi.fn(),
+    setVisible: vi.fn(),
+    setEnabled: vi.fn((on) => {
+      fakeCutaway.isEnabled = !!on;
+      return true;
+    }),
+    flip: vi.fn(),
+    reset: vi.fn(),
+    setTheme: vi.fn(),
+    isPointVisible: vi.fn(() => true),
+    registerClippableMaterial: vi.fn(),
+    updateForCamera: vi.fn(),
+    dispose: vi.fn(),
+  };
+  vi.doMock("../../src/framework/cutaway.js", () => ({
+    createCutaway: vi.fn((options) => {
+      cutawayOptions = options;
+      return fakeCutaway;
+    }),
+  }));
+
+  const { createViewer } = await import("../../src/framework/viewer.js");
+  const container = document.createElement("div");
+  Object.defineProperties(container, {
+    clientWidth: { value: 400 },
+    clientHeight: { value: 300 },
+  });
+  document.body.appendChild(container);
+  const viewer = createViewer(container, {
+    meta: {},
+    parts: { body: {}, hidden: {} },
+  });
+  const payload = (offset) => ({
+    positions: new Float32Array([
+      offset, 0, 0,
+      offset + 2, 0, 0,
+      offset, 4, 0,
+    ]),
+    triangles: 1,
+  });
+  viewer.setSubGeometry("body", payload(10));
+  viewer.setSubGeometry("hidden", payload(100));
+  viewer.showAssembly(["body"], { frame: true });
+
+  const actual = cutawayOptions.getBounds();
+  const expected = new THREE.Box3().setFromObject(viewer._subMeshes.body);
+
+  expect(actual.min.distanceTo(expected.min)).toBeLessThan(1e-9);
+  expect(actual.max.distanceTo(expected.max)).toBeLessThan(1e-9);
+  expect(actual.max.x).toBeLessThan(50);
+  expect(fakeCutaway.setSubpart).toHaveBeenCalledTimes(2);
+  viewer.dispose();
+  vi.doUnmock("three");
+  vi.doUnmock("../../src/framework/cutaway.js");
+});
