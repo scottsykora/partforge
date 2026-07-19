@@ -55,3 +55,9 @@ test("cutAll subtracts several tools; empty list is a safe identity (no double-f
   expect(id.area()).toBeCloseTo(100, 4);
   k.cleanup();                                       // would throw "already deleted" on the aliasing bug
 });
+
+test("revolve of a Shape2D lathe profile builds a sane solid", () => {
+  const prof = k.shape2d([[2, 0], [6, 0], [6, 8], [2, 8]]);   // rectangle in +X (r,z)
+  const v = k.revolve({ profile: prof, degrees: 360 }).volume();
+  expect(v).toBeCloseTo(Math.PI * (6 * 6 - 2 * 2) * 8, -1);   // annular ring volume
+});

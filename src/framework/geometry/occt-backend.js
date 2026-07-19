@@ -177,8 +177,10 @@ export function createOcctKernel(replicad) {
   };
 
   // revolve a lathe profile [[r,z],…] around the Z axis (degrees defaults to 360)
-  const revolve = (pts, { degrees = 360 } = {}) =>
-    wrap(contourDrawing(pts).sketchOnPlane("XZ").revolve([0, 0, 1], { angle: degrees }));
+  const revolve = (pts, { degrees = 360 } = {}) => {
+    const region = pts && pts._shape2d ? pts._drawing.clone() : contourDrawing(pts);
+    return wrap(region.sketchOnPlane("XZ").revolve([0, 0, 1], { angle: degrees }));
+  };
 
   // extrude a polygon-with-holes region from z=0: cut each hole Drawing out of the outer
   // Drawing (winding-agnostic 2-D boolean), sketch it, then extrude (twist/taper via cfg).

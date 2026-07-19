@@ -216,8 +216,11 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // (closed/cornerRadius) so a shape change is a fresh node and an identical rebuild hits.
     sweep: (profile, path, opts = {}) => cached(h("sweep", profile, path, opts), () => T(sweepMesh(wasm, profile, path, opts))),
     helixSweptTube: (o) => cached(h("helixSweptTube", o, tube), () => T(helixTube(wasm, { ...o, ...tube }))),
-    revolve: (pts, { degrees = 360 } = {}) =>
-      cached(h("revolve", pts, degrees, segs), () => T(Manifold.revolve([pts], segs, degrees))),
+    revolve: (pts, { degrees = 360 } = {}) => {
+      if (pts && pts._shape2d)
+        return cached(h("revolve", pts._hash, degrees, segs), () => T(pts._cs.revolve(segs, degrees)));
+      return cached(h("revolve", pts, degrees, segs), () => T(Manifold.revolve([pts], segs, degrees)));
+    },
     union: (solids) => cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
     shape2d,
     beginSubPart: (name) => cache.begin(name),

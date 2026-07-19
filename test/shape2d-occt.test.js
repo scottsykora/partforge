@@ -92,3 +92,8 @@ test("curve operand: cut a circleProfile hole from a square (faceted → loose t
   const s = k.shape2d(SQ(-10, -10, 20)).cut(circleProfile(5));
   expect(s.area()).toBeCloseTo(400 - Math.PI * 25, 0);
 });
+
+test("revolve of a Shape2D builds a positive-volume solid", () => {
+  const prof = k.shape2d([[2, 0], [6, 0], [6, 8], [2, 8]]);
+  expect(k.revolve({ profile: prof, degrees: 360 }).volume()).toBeGreaterThan(0);
+});

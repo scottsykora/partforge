@@ -145,6 +145,10 @@ export const KERNEL_OP_SPECS = {
   prism:    { toArgs: prismArgs, check: checkScaleTop("prism") },
   extrude:  { toArgs: extrudeArgs, check: checkScaleTop("extrude") },
   revolve:  { toArgs: revolveArgs, check: (pts) => {
+    if (pts && pts._shape2d) {
+      if (pts.boundingBox().min[0] < 0) throw new Error("revolve: profile radius must be ≥ 0");
+      return;
+    }
     for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
   } },
   loft:     { toArgs: loftArgs },
