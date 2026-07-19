@@ -237,6 +237,66 @@ describe("createSectionRenderSet", () => {
     expect(ink.getHex()).not.toBe(before);
   });
 
+  test("refreshes source color and opacity while preserving exact restoration ownership", () => {
+    const { mesh, edgeLines, renderSet, geometry, edgeGeometry } = createFixture();
+    const firstClippedMesh = (() => {
+      renderSet.setEnabled(true);
+      const clipped = mesh.material;
+      renderSet.setEnabled(false);
+      return clipped;
+    })();
+    const firstClippedDispose = vi.spyOn(firstClippedMesh, "dispose");
+    const replacementMeshMaterial = new THREE.MeshStandardMaterial({
+      color: 0xe87922,
+      opacity: 0.35,
+      transparent: true,
+      depthWrite: false,
+    });
+    const replacementLineMaterial = new THREE.LineBasicMaterial({ color: 0xfafafa });
+    const replacementDispose = vi.spyOn(replacementMeshMaterial, "dispose");
+    const replacementLineDispose = vi.spyOn(replacementLineMaterial, "dispose");
+    const geometryDispose = vi.spyOn(geometry, "dispose");
+    const edgeGeometryDispose = vi.spyOn(edgeGeometry, "dispose");
+    mesh.material = replacementMeshMaterial;
+    edgeLines.material = replacementLineMaterial;
+
+    renderSet.refreshSourceMaterial(replacementMeshMaterial, replacementLineMaterial);
+
+    expect(firstClippedDispose).toHaveBeenCalledOnce();
+    expect(renderSet.cap.material.uniforms.uBase.value.getHex()).toBe(0xe87922);
+    expect(renderSet.cap.material.uniforms.uOpacity.value).toBe(0.35);
+    expect(renderSet.cap.material.transparent).toBe(true);
+    expect(renderSet.cap.material.depthWrite).toBe(false);
+    renderSet.setEnabled(true);
+    expect(mesh.material).not.toBe(replacementMeshMaterial);
+    expect(mesh.material.clippingPlanes).toEqual([renderSet.back.material.clippingPlanes[0]]);
+    renderSet.setEnabled(false);
+    expect(mesh.material).toBe(replacementMeshMaterial);
+    expect(edgeLines.material).toBe(replacementLineMaterial);
+
+    renderSet.dispose();
+    expect(replacementDispose).not.toHaveBeenCalled();
+    expect(replacementLineDispose).not.toHaveBeenCalled();
+    expect(geometryDispose).not.toHaveBeenCalled();
+    expect(edgeGeometryDispose).not.toHaveBeenCalled();
+  });
+
+  test("refreshes cap transparency and depth-write flags from the source material exactly", () => {
+    const { mesh, edgeLines, renderSet } = createFixture();
+    const replacement = new THREE.MeshStandardMaterial({
+      color: 0xabcdef,
+      opacity: 1,
+      transparent: true,
+      depthWrite: false,
+    });
+    mesh.material = replacement;
+
+    renderSet.refreshSourceMaterial(replacement, edgeLines.material);
+
+    expect(renderSet.cap.material.transparent).toBe(true);
+    expect(renderSet.cap.material.depthWrite).toBe(false);
+  });
+
   test("removes helpers and disposes only owned materials, idempotently", () => {
     const fixture = createFixture();
     const {

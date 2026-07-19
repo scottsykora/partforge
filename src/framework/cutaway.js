@@ -1,0 +1,305 @@
+import * as THREE from "three";
+
+import { createCutawayGizmo } from "./cutaway-gizmo.js";
+import {
+  initialCutawayPose,
+  planeFromPose,
+  pointSurvivesPlane,
+} from "./cutaway-math.js";
+import { createSectionRenderSet } from "./cutaway-render.js";
+
+const IDLE_DELAY_MS = 800;
+
+function defaultSchedule(callback, delay) {
+  const timer = setTimeout(callback, delay);
+  return () => clearTimeout(timer);
+}
+
+function validBounds(getBounds) {
+  try {
+    const bounds = getBounds?.();
+    return bounds?.isBox3 && !bounds.isEmpty() ? bounds : null;
+  } catch {
+    return null;
+  }
+}
+
+export function createCutaway({
+  renderer,
+  scene,
+  camera,
+  orbitControls,
+  domElement,
+  getBounds,
+  schedule = defaultSchedule,
+}) {
+  let supported = false;
+  try {
+    supported = Boolean(
+      renderer.getContext().getContextAttributes().stencil,
+    );
+  } catch {
+    supported = false;
+  }
+
+  const plane = new THREE.Plane();
+  const planeNormal = new THREE.Vector3();
+  const capGeometry = new THREE.PlaneGeometry(1, 1);
+  const renderSets = new Map();
+  const auxiliaryMaterials = new Map();
+  let selectedNames = null;
+  let nextOrder = 0;
+  let enabled = false;
+  let flipped = false;
+  let theme = "dark";
+  let pose = null;
+  let cancelIdle = null;
+  let disposed = false;
+
+  function selected(name) {
+    return selectedNames == null || selectedNames.has(name);
+  }
+
+  function applyCapPose(renderSet) {
+    if (!pose) return;
+    renderSet.setCapPose({
+      position: pose.position,
+      quaternion: pose.quaternion,
+      size: pose.size,
+      spacing: pose.hatchSpacing,
+    });
+  }
+
+  function cancelIdleFade() {
+    if (!cancelIdle) return;
+    cancelIdle();
+    cancelIdle = null;
+  }
+
+  function showActive() {
+    cancelIdleFade();
+    gizmo.setActiveAppearance(true);
+    const scheduled = schedule(() => {
+      cancelIdle = null;
+      if (enabled && !disposed) gizmo.setActiveAppearance(false);
+    }, IDLE_DELAY_MS);
+    cancelIdle = typeof scheduled === "function"
+      ? scheduled
+      : () => clearTimeout(scheduled);
+  }
+
+  function syncAuxiliaryMaterial(material) {
+    if (enabled) {
+      if (
+        !Array.isArray(material.clippingPlanes)
+        || material.clippingPlanes.length !== 1
+        || material.clippingPlanes[0] !== plane
+      ) {
+        material.clippingPlanes = [plane];
+        material.needsUpdate = true;
+      }
+    } else if (material.clippingPlanes != null) {
+      material.clippingPlanes = null;
+      material.needsUpdate = true;
+    }
+  }
+
+  function syncAuxiliaryMaterials() {
+    for (const material of auxiliaryMaterials.keys()) {
+      syncAuxiliaryMaterial(material);
+    }
+  }
+
+  function applyPose(nextPose, { resetFlip = false, activeAppearance = false } = {}) {
+    pose = {
+      position: nextPose.position.clone(),
+      quaternion: nextPose.quaternion.clone(),
+      size: nextPose.size,
+      hatchSpacing: nextPose.hatchSpacing ?? pose?.hatchSpacing ?? 1,
+    };
+    if (resetFlip) flipped = false;
+    planeFromPose(plane, planeNormal, pose.position, pose.quaternion, flipped);
+    for (const { renderSet } of renderSets.values()) applyCapPose(renderSet);
+    gizmo.setPose(pose);
+    if (activeAppearance) showActive();
+  }
+
+  function onPoseChange(nextPose) {
+    if (!enabled || disposed) return;
+    applyPose(nextPose, { activeAppearance: true });
+  }
+
+  const gizmo = createCutawayGizmo({
+    scene,
+    camera,
+    domElement,
+    orbitControls,
+    onPoseChange,
+  });
+  gizmo.setVisible(false);
+  gizmo.setTheme(theme);
+
+  function setSubpart(name, mesh, edgeLines) {
+    if (disposed) return false;
+    const previous = renderSets.get(name);
+    const order = previous?.order ?? nextOrder++;
+    previous?.renderSet.dispose();
+
+    const renderSet = createSectionRenderSet({
+      scene,
+      mesh,
+      edgeLines,
+      plane,
+      capGeometry,
+      order,
+    });
+    renderSets.set(name, { renderSet, mesh, edgeLines, order });
+    renderSet.setTheme(theme);
+    applyCapPose(renderSet);
+    renderSet.setVisible(enabled && selected(name));
+    renderSet.setEnabled(enabled);
+    return true;
+  }
+
+  function updateGeometry(name, geometry) {
+    const entry = renderSets.get(name);
+    if (!entry || disposed) return false;
+    if (!enabled) {
+      entry.renderSet.refreshSourceMaterial(
+        entry.mesh.material,
+        entry.edgeLines?.material,
+      );
+    }
+    entry.renderSet.setGeometry(geometry);
+    return true;
+  }
+
+  function setVisible(names) {
+    if (disposed) return false;
+    selectedNames = new Set(typeof names === "string" ? [names] : names ?? []);
+    for (const [name, { renderSet }] of renderSets) {
+      renderSet.setVisible(enabled && selected(name));
+    }
+    return true;
+  }
+
+  function disable() {
+    cancelIdleFade();
+    enabled = false;
+    gizmo.setVisible(false);
+    for (const { renderSet } of renderSets.values()) {
+      renderSet.setVisible(false);
+      renderSet.setEnabled(false);
+    }
+    syncAuxiliaryMaterials();
+    renderer.localClippingEnabled = false;
+    return true;
+  }
+
+  function setEnabled(on) {
+    if (disposed) return false;
+    if (!on) return disable();
+    if (enabled) return true;
+    if (!supported) return false;
+    const bounds = validBounds(getBounds);
+    if (!bounds) return false;
+
+    const initialPose = initialCutawayPose(bounds, camera);
+    enabled = true;
+    flipped = false;
+    applyPose(initialPose);
+    renderer.localClippingEnabled = true;
+    for (const [name, { renderSet }] of renderSets) {
+      renderSet.setVisible(selected(name));
+      renderSet.setEnabled(true);
+    }
+    syncAuxiliaryMaterials();
+    gizmo.setVisible(true);
+    gizmo.updateForCamera();
+    showActive();
+    return true;
+  }
+
+  function reset() {
+    if (!enabled || disposed) return false;
+    const bounds = validBounds(getBounds);
+    if (!bounds) return false;
+    applyPose(initialCutawayPose(bounds, camera), {
+      resetFlip: true,
+      activeAppearance: true,
+    });
+    return true;
+  }
+
+  function flip() {
+    if (!enabled || disposed || !pose) return false;
+    flipped = !flipped;
+    planeFromPose(plane, planeNormal, pose.position, pose.quaternion, flipped);
+    showActive();
+    return true;
+  }
+
+  function setTheme(mode) {
+    if (disposed) return false;
+    theme = mode;
+    gizmo.setTheme(mode);
+    for (const { renderSet } of renderSets.values()) renderSet.setTheme(mode);
+    return true;
+  }
+
+  function isPointVisible(point) {
+    return !enabled || pointSurvivesPlane(plane, point);
+  }
+
+  function registerClippableMaterial(material) {
+    if (disposed || !material) return () => {};
+    auxiliaryMaterials.set(material, (auxiliaryMaterials.get(material) ?? 0) + 1);
+    syncAuxiliaryMaterial(material);
+    let registered = true;
+    return () => {
+      if (!registered) return;
+      registered = false;
+      const remaining = (auxiliaryMaterials.get(material) ?? 1) - 1;
+      if (remaining > 0) {
+        auxiliaryMaterials.set(material, remaining);
+        return;
+      }
+      auxiliaryMaterials.delete(material);
+      if (material.clippingPlanes != null) {
+        material.clippingPlanes = null;
+        material.needsUpdate = true;
+      }
+    };
+  }
+
+  function updateForCamera() {
+    if (!disposed) gizmo.updateForCamera();
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disable();
+    disposed = true;
+    for (const { renderSet } of renderSets.values()) renderSet.dispose();
+    renderSets.clear();
+    auxiliaryMaterials.clear();
+    gizmo.dispose();
+    capGeometry.dispose();
+  }
+
+  return {
+    get isSupported() { return supported; },
+    get isEnabled() { return enabled; },
+    setSubpart,
+    updateGeometry,
+    setVisible,
+    setEnabled,
+    reset,
+    flip,
+    setTheme,
+    isPointVisible,
+    registerClippableMaterial,
+    updateForCamera,
+    dispose,
+  };
+}

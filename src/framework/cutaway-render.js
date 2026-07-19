@@ -111,14 +111,14 @@ export function createSectionRenderSet({
   capGeometry,
   order,
 }) {
-  const originalMeshMaterial = mesh.material;
-  const originalEdgeMaterial = edgeLines?.material;
+  let originalMeshMaterial = mesh.material;
+  let originalEdgeMaterial = edgeLines?.material;
   const originalMeshOrder = mesh.renderOrder;
   const originalEdgeOrder = edgeLines?.renderOrder;
   const ownedMaterials = new Set();
 
-  const clippedMeshMaterial = cloneClipped(originalMeshMaterial, plane, ownedMaterials);
-  const clippedEdgeMaterial = edgeLines
+  let clippedMeshMaterial = cloneClipped(originalMeshMaterial, plane, ownedMaterials);
+  let clippedEdgeMaterial = edgeLines
     ? cloneClipped(originalEdgeMaterial, plane, ownedMaterials)
     : null;
 
@@ -235,6 +235,44 @@ export function createSectionRenderSet({
     capMaterial.userData.setTheme(mode);
   }
 
+  function disposeClipped(material) {
+    if (Array.isArray(material)) {
+      for (const entry of material) disposeClipped(entry);
+      return;
+    }
+    if (!material) return;
+    ownedMaterials.delete(material);
+    material.dispose();
+  }
+
+  function refreshSourceMaterial(
+    meshMaterial = mesh.material,
+    lineMaterial = edgeLines?.material,
+  ) {
+    if (disposed || enabled) return false;
+
+    disposeClipped(clippedMeshMaterial);
+    disposeClipped(clippedEdgeMaterial);
+    originalMeshMaterial = meshMaterial;
+    originalEdgeMaterial = lineMaterial;
+    clippedMeshMaterial = cloneClipped(meshMaterial, plane, ownedMaterials);
+    clippedEdgeMaterial = edgeLines
+      ? cloneClipped(lineMaterial, plane, ownedMaterials)
+      : null;
+
+    const source = firstMaterial(meshMaterial);
+    capMaterial.uniforms.uBase.value.copy(source?.color ?? new THREE.Color(0x9fb4cc));
+    capMaterial.uniforms.uOpacity.value = source?.opacity ?? 1;
+    capMaterial.opacity = source?.opacity ?? 1;
+    capMaterial.transparent = source?.transparent ?? capMaterial.opacity < 1;
+    capMaterial.depthWrite = source?.depthWrite ?? !capMaterial.transparent;
+    capMaterial.needsUpdate = true;
+    backMaterial.transparent = capMaterial.transparent;
+    frontMaterial.transparent = capMaterial.transparent;
+    if (clippedEdgeMaterial && capMaterial.transparent) makeTransparent(clippedEdgeMaterial);
+    return true;
+  }
+
   function dispose() {
     if (disposed) return;
     setEnabled(false);
@@ -253,6 +291,7 @@ export function createSectionRenderSet({
     setGeometry,
     setCapPose,
     setTheme,
+    refreshSourceMaterial,
     dispose,
   };
 }
