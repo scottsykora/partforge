@@ -506,6 +506,70 @@ const wall  = k.shape2d(outer).offset(-2, { corners: "sharp" });  // inset, mite
 
 `Shape2D.offset(delta, {corners})` grows (`delta>0`) or insets (`delta<0`) a shape with round/chamfer/sharp corners — curve-preserving on OCCT, faceted at mesh LOD on Manifold; it throws if the offset collapses the shape. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.)
 
+## Text (`text2d`)
+
+`k.text2d(string, { size, font?, align?, valign?, lineHeight?, tracking?, kerning? })` renders outline-font text as a `Shape2D` — a 2-D boolean you can compose with other shapes (union / cut / offset) and extrude into 3-D geometry.
+
+**Parameters:**
+
+- `string` — the text to render
+- `size` — **cap height in mm** (the design-height of capital letters like "H"); the layout engine scales the font to this height
+- `font` — optional font name (declared in the part's `fonts` field, below); omit it to use the bundled default (Roboto)
+- `align` — horizontal alignment: `"left"` (default), `"center"`, or `"right"`
+- `valign` — vertical alignment: `"baseline"` (default), `"top"`, `"middle"`, or `"bottom"`
+- `lineHeight` — line spacing multiplier (default 1.2); used for multi-line text
+- `tracking` — letter spacing in mm (default 0); positive widens, negative tightens
+- `kerning` — boolean, enable pair-wise kerning (default true)
+
+**Shape2D composition:**
+
+Like any `Shape2D`, the result composes with booleans and offset — you can union it onto a face, cut it out as a depression, expand it with `offset()`, or combine multiple text shapes:
+
+```js
+// Emboss text onto a plate
+const baseplate = k.extrude({ profile: roundedRectPolygon(100, 60, 4), h: 5 });
+const emboss = k.text2d("v2.0", { size: 8 }).offset(0.2);  // 0.2 mm relief
+const part = baseplate.cut(k.extrude({ profile: emboss, h: 1 }));
+
+// Deboss text into a lid
+const lid = k.extrude({ profile: circleProfile(40), h: 3 });
+const deboss = k.text2d("PART-042", { size: 6 });
+const carved = lid.cut(k.extrude({ profile: deboss, h: 0.5 }));
+
+// Extrude text as a solid letters
+const raised = k.extrude({ profile: k.text2d("LOGO", { size: 10, align: "center" }), h: 2 });
+
+// Multi-line label with tight tracking
+const label = k.text2d("YEAR 2025\nSERIES A", { size: 4, align: "center", tracking: -0.1 });
+```
+
+**Font sourcing (the `fonts` PartDefinition field):**
+
+Declare fonts in your part definition's optional `fonts` object — a map of font names to sources. The framework resolves and parses these before `build()` runs, so `k.text2d(str, { font: name })` can look them up synchronously:
+
+```js
+fonts: {
+  heading: () => import("./fonts/Raleway-Bold.ttf"),    // bundle via Vite dynamic import
+  label: "https://cdn.example.com/fonts/Courier-Prime.ttf",  // URL fetch
+  default: new Uint8Array([...])                             // inline bytes (rare)
+},
+```
+
+- **Dynamic import:** `() => import("./path/to/font.ttf")` — Vite bundles the font; resolves to `{ default: url }` at runtime
+- **URL:** a string — the framework fetches it (CORS must allow it)
+- **Inline bytes:** an `ArrayBuffer` or `Uint8Array` — useful for generated or embedded fonts
+
+Reference a font by name: `k.text2d("text", { font: "heading" })`. Omit the `font` option to use the bundled **Roboto** default (light weight, available in the package).
+
+**Build-time & curve semantics:**
+
+`text2d` is a **build-time operation** (not `derive()`), and **the curve representation differs by backend:**
+
+- **OCCT (B-rep):** text outlines carry **exact cubic Bézier curves** into STEP export (not tessellated)
+- **Manifold (mesh):** text outlines **facet at the mesh level-of-detail** (same as other curves in preview)
+
+Both backends produce watertight emboss/deboss geometry; the difference is export fidelity. As with any `Shape2D`, composition with booleans and offset is backend-agnostic — the same code works on both.
+
 ---
 
 ## Wiring a part into a runnable app
