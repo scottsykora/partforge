@@ -8,8 +8,9 @@
 //     cache hashes normalized args;
 //   - default compound-op compositions — a backend only overrides one when it has
 //     a reason to (Manifold's boredCylinder hashes atomically for its solid cache);
-//   - a KernelCapabilityError stub for toSTEP / shape2d when the backend lacks that
-//     capability (OCCT can't do shape2d; Manifold can't do toSTEP).
+//   - a KernelCapabilityError stub for toSTEP / shape2d when a backend lacks that
+//     capability (Manifold can't do toSTEP; both backends now define shape2d, so
+//     that stub is dead in practice — kept as a safety net for a future backend).
 // The per-Solid twin of this layer is addSugar() in solid-sugar.js.
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";

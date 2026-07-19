@@ -11,8 +11,11 @@ const ringArea = (p) => {
   return a / 2;
 };
 
-// Ray-cast point-in-polygon (even-odd). ring: [[x,y],…].
-function pointInRing([px, py], ring) {
+// Ray-cast point-in-polygon (even-odd). ring: [[x,y],…]. Exported (in addition to
+// its use below) for the OCCT backend's containment-based outer/hole classification
+// — see occt-backend.js's drawingRegionRings for why sign-based classification
+// (this module's own convention, below) doesn't hold for replicad's SVG output.
+export function pointInRing([px, py], ring) {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const [xi, yi] = ring[i], [xj, yj] = ring[j];
