@@ -112,6 +112,21 @@ describe("attachCutawayControls", () => {
     expect(actions.hidden).toBe(true);
   });
 
+  test("handle reset returns focus from a contextual action to the primary button", () => {
+    const { viewer, button, handle } = setup();
+    const actions = button.nextElementSibling;
+    const [flip] = actions.querySelectorAll("button");
+    button.click();
+    flip.focus();
+    expect(document.activeElement).toBe(flip);
+
+    handle.reset();
+
+    expect(viewer.cutawayEnabled()).toBe(false);
+    expect(actions.hidden).toBe(true);
+    expect(document.activeElement).toBe(button);
+  });
+
   test("Escape disables cutaway only from the canvas or cutaway buttons", () => {
     const { viewer, button } = setup();
     const [flip, reset] = button.nextElementSibling.querySelectorAll("button");

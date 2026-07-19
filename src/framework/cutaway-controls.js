@@ -74,6 +74,9 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}) {
   let detached = false;
   function disable() {
     if (detached) return;
+    if (actions.contains(document.activeElement)) {
+      button.focus({ preventScroll: true });
+    }
     viewer.setCutawayEnabled(false);
     sync();
   }
@@ -90,9 +93,6 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}) {
   const onEscape = (event) => {
     if (event.key !== "Escape" || !viewer.cutawayEnabled()) return;
     event.preventDefault();
-    if (actions.contains(document.activeElement)) {
-      button.focus({ preventScroll: true });
-    }
     disable();
   };
   const onCanvasPointerDown = () => canvas.focus({ preventScroll: true });
