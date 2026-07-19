@@ -45,10 +45,12 @@ export function createHatchMaterial({ color, opacity, theme }) {
           distanceToLine
         );
         gl_FragColor = vec4(mix(uBase, uInk, stripe), uOpacity);
+        #include <colorspace_fragment>
       }
     `,
     transparent: opacity < 1,
     depthWrite: opacity >= 1,
+    forceSinglePass: true,
   });
 
   material.userData.setHatch = ({ spacing, size }) => {

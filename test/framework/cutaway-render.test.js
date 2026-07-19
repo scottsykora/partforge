@@ -76,6 +76,15 @@ describe("createHatchMaterial", () => {
     expect(material.fragmentShader).toContain("(vUv.x + vUv.y) * uScale");
     expect(material.fragmentShader).toContain("fwidth(coordinate)");
     expect(material.fragmentShader).toContain("mix(uBase, uInk, stripe)");
+    expect(material.fragmentShader).toMatch(
+      /gl_FragColor\s*=.*;[\s\S]*#include <colorspace_fragment>/,
+    );
+  });
+
+  test("renders a double-sided transparent hatch in one draw", () => {
+    const material = createHatchMaterial({ color: 0x336699, opacity: 0.65, theme: "dark" });
+
+    expect(material.forceSinglePass).toBe(true);
   });
 
   test("updates hatch scale and theme without replacing uniform colors", () => {
