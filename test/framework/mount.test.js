@@ -9,6 +9,7 @@ const fakeViewers = [];
 vi.mock("../../src/framework/viewer.js", () => ({
   createViewer: vi.fn(() => {
     const built = new Set();
+    let cutawayOn = false;
     const v = {
       domElement: document.createElement("div"),
       showAssembly: vi.fn(),
@@ -25,6 +26,16 @@ vi.mock("../../src/framework/viewer.js", () => ({
       camera: {},
       _subMeshes: {},
       flashPoint: vi.fn(),
+      cutawaySupported: vi.fn(() => true),
+      cutawayEnabled: vi.fn(() => cutawayOn),
+      setCutawayEnabled: vi.fn((on) => {
+        cutawayOn = on;
+        return true;
+      }),
+      flipCutaway: vi.fn(),
+      resetCutaway: vi.fn(),
+      isWorldPointVisible: vi.fn(() => true),
+      registerCutawayMaterial: vi.fn(() => vi.fn()),
       dispose: vi.fn(),
     };
     fakeViewers.push(v);
@@ -75,12 +86,17 @@ function makeElements() {
     status: { status: mk(), busy: mk(), phase: mk() },
     tabs: mk(),
     exports: { stl: mk("button"), step: mk("button"), threeMf: mk("button") },
-    chrome: { pause: mk("button"), reframe: mk("button"), theme: mk("button") },
+    chrome: {
+      pause: mk("button"),
+      reframe: mk("button"),
+      theme: mk("button"),
+      cutaway: mk("button"),
+    },
   };
   document.body.append(els.viewer, els.controls, els.tabs,
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
-    els.chrome.pause, els.chrome.reframe, els.chrome.theme);
+    els.chrome.pause, els.chrome.reframe, els.chrome.theme, els.chrome.cutaway);
   return els;
 }
 
@@ -105,6 +121,90 @@ test("ready resolves after the first successful build; no getElementById with fu
   expect(spy).not.toHaveBeenCalled();
   finishFirstBuild(workers);
   return expect(runtime.ready).resolves.toBeUndefined();
+});
+
+test("full element refs wire cutaway without getElementById lookup", () => {
+  const spy = vi.spyOn(document, "getElementById");
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+
+  mount(makePart(), { createWorker, elements: els });
+  els.chrome.cutaway.click();
+
+  expect(spy).not.toHaveBeenCalled();
+  expect(fakeViewers[0].setCutawayEnabled).toHaveBeenCalledWith(true);
+});
+
+test("legacy host page resolves the #cutaway fallback", () => {
+  document.body.innerHTML = `
+    <div id="app"></div><div id="controls"></div>
+    <div id="status"></div><div id="busy"><div id="phase"></div></div>
+    <div id="part"></div>
+    <button id="download"></button><button id="download-step"></button>
+    <button id="cutaway"></button>`;
+  const { createWorker } = makeWorkers();
+
+  mount(makePart(), { createWorker });
+  document.getElementById("cutaway").click();
+
+  expect(fakeViewers[0].setCutawayEnabled).toHaveBeenCalledWith(true);
+});
+
+test("cutaway UI interactions never dispatch geometry worker jobs", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: els });
+  finishFirstBuild(workers);
+  workers.manifold.postMessage.mockClear();
+  workers.occt.postMessage.mockClear();
+
+  els.chrome.cutaway.click();
+  const [flip, reset] = els.chrome.cutaway.nextElementSibling.querySelectorAll("button");
+  flip.click();
+  reset.click();
+
+  expect(workers.manifold.postMessage).not.toHaveBeenCalled();
+  expect(workers.occt.postMessage).not.toHaveBeenCalled();
+});
+
+test("switching views disables cutaway and resets its control UI immediately", () => {
+  const part = makePart();
+  part.views.other = { label: "Other" };
+  part.parts.body.views = ["main", "other"];
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(part, { createWorker, elements: els });
+  finishFirstBuild(workers);
+  els.chrome.cutaway.click();
+  const actions = els.chrome.cutaway.nextElementSibling;
+  expect(els.chrome.cutaway.getAttribute("aria-pressed")).toBe("true");
+  expect(actions.hidden).toBe(false);
+  fakeViewers[0].setCutawayEnabled.mockClear();
+
+  [...els.tabs.querySelectorAll("button")]
+    .find((button) => button.textContent === "Other")
+    .click();
+
+  expect(fakeViewers[0].setCutawayEnabled).toHaveBeenCalledWith(false);
+  expect(els.chrome.cutaway.getAttribute("aria-pressed")).toBe("false");
+  expect(els.chrome.cutaway.classList.contains("on")).toBe(false);
+  expect(actions.hidden).toBe(true);
+});
+
+test("dispose detaches the cutaway control before disposing the viewer", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  const viewer = fakeViewers[0];
+
+  els.chrome.cutaway.click();
+  expect(viewer.setCutawayEnabled).toHaveBeenCalledWith(true);
+  runtime.dispose();
+  viewer.setCutawayEnabled.mockClear();
+  els.chrome.cutaway.click();
+
+  expect(viewer.setCutawayEnabled).not.toHaveBeenCalled();
+  expect(els.chrome.cutaway.nextElementSibling?.classList.contains("pf-cutaway-actions")).not.toBe(true);
 });
 
 test("ready rejects when the first build errors", () => {

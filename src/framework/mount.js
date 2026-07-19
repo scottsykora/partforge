@@ -2,6 +2,7 @@ import "./app.css"; // shared chrome styles — every part-app gets them via mou
 import { triggerDownload, downloadParts } from "./download.js";
 import { createViewer } from "./viewer.js";
 import { attachViewerControls } from "./viewer-controls.js";
+import { attachCutawayControls } from "./cutaway-controls.js";
 import { loadCamera } from "./view-state.js";
 import { buildControls } from "./controls.js";
 import { relevantParamKeys } from "./param-deps.js";
@@ -53,10 +54,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
       pause: elements.chrome?.pause ?? byId("pause"),
       reframe: elements.chrome?.reframe ?? byId("reframe"),
       theme: elements.chrome?.theme ?? byId("theme"),
+      cutaway: elements.chrome?.cutaway ?? byId("cutaway"),
     },
   };
 
   const viewer = createViewer(els.viewer, part);
+  const cutawayChrome = attachCutawayControls(viewer, {
+    cutaway: els.chrome.cutaway,
+  });
   const hover = attachHoverLabels(viewer, { part }); // always-on hover inspection (no-op on touch-only devices)
   const ui = createStatusUi({ ...els.status, exports: [els.exports.stl, els.exports.step, els.exports.threeMf] });
 
@@ -77,7 +82,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
   // View tabs (generated from part.views) + live params. A tab switch shows the
   // cached assembly instantly if it's current, else auto-builds what's missing.
   const tabsCtl = createViewTabs(els.tabs, part, {
-    onChange: () => { refreshView(); updateRelevance(); loop.kick(); },
+    onChange: () => { cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); },
   });
   const view = () => tabsCtl.current();
   const params = { ...part.defaults };
@@ -302,6 +307,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
     els.exports.step?.removeEventListener("click", onStepClick);
     els.exports.threeMf?.removeEventListener("click", on3mfClick);
     chrome.detach();
+    cutawayChrome.detach();
     tabsCtl.detach();
     panel.dispose();
     dbg?.detach();
