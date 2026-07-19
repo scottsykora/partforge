@@ -101,3 +101,11 @@ test("real font (Roboto) 'O' extrudes to a solid with a real hole (genus 1)", ()
   const solid = k.extrude({ profile: k.text2d("O", { font: robotoBytes, size: 10 }), h: 1 });
   expect(solid.genus()).toBe(1);
 });
+
+// The zero-config path: no { font } at all. This must NOT depend on the
+// beforeAll `{ fonts: { test } }` declaration above — it exercises resolveFont's
+// font == null branch, which should lazily parse+memoize the framework's bundled
+// default (vendored Roboto), not throw "no font — configure a default font".
+test("text2d works with the bundled default font (no { font })", () => {
+  expect(k.text2d("A", { size: 5 }).area()).toBeGreaterThan(0);
+});

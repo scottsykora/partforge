@@ -16,6 +16,7 @@ import opentype from "opentype.js";
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
 import { textGlyphs } from "./text2d.js";
+import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
 
 export function finishKernel(k) {
   // Compound default: bored-through cylinder (tool overshoots 2 mm each end for
@@ -60,7 +61,16 @@ export function finishKernel(k) {
   };
   const resolveFont = (font) => {
     if (font == null) {
-      if (!k._defaultFont) throw new Error("text2d: no font — pass { font } (bytes or a declared name) or configure a default font");
+      // Lazily parse + memoize the framework's bundled default (vendored Roboto,
+      // SIL OFL 1.1 — see fonts/Roboto-LICENSE.txt) so k.text2d works with zero
+      // setup when { font } is omitted. Slice to the exact byte range rather than
+      // handing opentype the raw .buffer — DEFAULT_FONT_BYTES is a Uint8Array and,
+      // while it spans its own freshly-allocated buffer today (byteOffset 0), slicing
+      // guards against that ever changing.
+      if (!k._defaultFont) {
+        const { buffer, byteOffset, byteLength } = DEFAULT_FONT_BYTES;
+        k._defaultFont = opentype.parse(buffer.slice(byteOffset, byteOffset + byteLength));
+      }
       return k._defaultFont;
     }
     if (typeof font === "string") {
