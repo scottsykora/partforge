@@ -675,17 +675,20 @@ Implementation rules:
 - flip toggles a boolean and calls planeFromPose without changing position or
   quaternion.
 - reset recomputes from current bounds and camera.
-- setEnabled(false) clears the idle timer, hides the gizmo/sets, unregisters
-  clipping from auxiliary materials, and sets renderer.localClippingEnabled to
-  false.
+- setEnabled(false) clears the idle timer, hides the gizmo/sets, restores each
+  auxiliary material's exact borrowed clippingPlanes reference, and restores
+  the renderer.localClippingEnabled value captured by the successful enable.
+  Disabling before a successful enable leaves renderer state untouched.
 - setEnabled(true), hover/focus, and onPoseChange call showActive(), which resets
   an 800 ms timeout that fades the plane through gizmo.setActiveAppearance(false).
 - Pass showActive as the gizmo's onActivity callback so pointer hover, canvas
   focus, and a successful handle press restore the active appearance even when
   the plane pose has not moved.
-- registerClippableMaterial tracks materials in a Set and returns an unregister
-  function. Synchronization sets clippingPlanes to [plane] while enabled and
-  null while disabled, then sets needsUpdate when the array length changes.
+- registerClippableMaterial tracks ref-counted entries containing each
+  material's exact original clippingPlanes reference and returns an unregister
+  function. Synchronization temporarily sets clippingPlanes to [plane] while
+  enabled, restores the borrowed reference while disabled/finally unregistered,
+  and sets needsUpdate only when the assigned array identity changes.
 - isPointVisible returns true while disabled and otherwise delegates to
   pointSurvivesPlane.
 - updateForCamera delegates to the gizmo.

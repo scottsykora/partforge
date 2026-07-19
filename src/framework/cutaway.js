@@ -54,6 +54,7 @@ export function createCutaway({
   let theme = "dark";
   let pose = null;
   let cancelIdle = null;
+  let previousLocalClippingEnabled;
   let disposed = false;
 
   function selected(name) {
@@ -88,25 +89,29 @@ export function createCutaway({
       : () => clearTimeout(scheduled);
   }
 
-  function syncAuxiliaryMaterial(material) {
+  function setMaterialClippingPlanes(material, clippingPlanes) {
+    if (material.clippingPlanes === clippingPlanes) return;
+    material.clippingPlanes = clippingPlanes;
+    material.needsUpdate = true;
+  }
+
+  function syncAuxiliaryMaterial(material, entry) {
     if (enabled) {
       if (
         !Array.isArray(material.clippingPlanes)
         || material.clippingPlanes.length !== 1
         || material.clippingPlanes[0] !== plane
       ) {
-        material.clippingPlanes = [plane];
-        material.needsUpdate = true;
+        setMaterialClippingPlanes(material, [plane]);
       }
-    } else if (material.clippingPlanes != null) {
-      material.clippingPlanes = null;
-      material.needsUpdate = true;
+    } else {
+      setMaterialClippingPlanes(material, entry.originalClippingPlanes);
     }
   }
 
   function syncAuxiliaryMaterials() {
-    for (const material of auxiliaryMaterials.keys()) {
-      syncAuxiliaryMaterial(material);
+    for (const [material, entry] of auxiliaryMaterials) {
+      syncAuxiliaryMaterial(material, entry);
     }
   }
 
@@ -180,6 +185,7 @@ export function createCutaway({
 
   function disable() {
     cancelIdleFade();
+    if (!enabled) return true;
     enabled = false;
     gizmo.setVisible(false);
     for (const { renderSet } of renderSets.values()) {
@@ -187,7 +193,8 @@ export function createCutaway({
       renderSet.setEnabled(false);
     }
     syncAuxiliaryMaterials();
-    renderer.localClippingEnabled = false;
+    renderer.localClippingEnabled = previousLocalClippingEnabled;
+    previousLocalClippingEnabled = undefined;
     return true;
   }
 
@@ -200,6 +207,7 @@ export function createCutaway({
     if (!bounds) return false;
 
     const initialPose = initialCutawayPose(bounds, camera);
+    previousLocalClippingEnabled = renderer.localClippingEnabled;
     enabled = true;
     flipped = false;
     applyPose(initialPose);
@@ -251,22 +259,29 @@ export function createCutaway({
 
   function registerClippableMaterial(material) {
     if (disposed || !material) return () => {};
-    auxiliaryMaterials.set(material, (auxiliaryMaterials.get(material) ?? 0) + 1);
-    syncAuxiliaryMaterial(material);
+    let entry = auxiliaryMaterials.get(material);
+    if (entry) {
+      entry.count += 1;
+    } else {
+      entry = {
+        count: 1,
+        originalClippingPlanes: material.clippingPlanes,
+      };
+      auxiliaryMaterials.set(material, entry);
+    }
+    syncAuxiliaryMaterial(material, entry);
     let registered = true;
     return () => {
       if (!registered) return;
       registered = false;
-      const remaining = (auxiliaryMaterials.get(material) ?? 1) - 1;
-      if (remaining > 0) {
-        auxiliaryMaterials.set(material, remaining);
+      const current = auxiliaryMaterials.get(material);
+      if (!current) return;
+      current.count -= 1;
+      if (current.count > 0) {
         return;
       }
       auxiliaryMaterials.delete(material);
-      if (material.clippingPlanes != null) {
-        material.clippingPlanes = null;
-        material.needsUpdate = true;
-      }
+      setMaterialClippingPlanes(material, current.originalClippingPlanes);
     };
   }
 

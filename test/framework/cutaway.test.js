@@ -32,8 +32,14 @@ function makeSchedule() {
   return { schedule, entries };
 }
 
-function createFixture({ stencil = true, box, schedule: providedSchedule } = {}) {
+function createFixture({
+  stencil = true,
+  box,
+  schedule: providedSchedule,
+  localClippingEnabled = false,
+} = {}) {
   const renderer = makeRenderer(stencil);
+  renderer.localClippingEnabled = localClippingEnabled;
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1_000);
   camera.position.set(0, 0, 20);
@@ -142,6 +148,40 @@ test("empty bounds refuse activation without changing materials or scheduling fa
   expect(mesh.material).toBe(material);
   expect(fixture.timer.entries).toHaveLength(0);
   expect(findGizmo(fixture.scene).visible).toBe(false);
+});
+
+test("restores a borrowed renderer clipping flag after an enabled session", () => {
+  const fixture = createFixture({ localClippingEnabled: true });
+
+  expect(fixture.controller.setEnabled(true)).toBe(true);
+  expect(fixture.renderer.localClippingEnabled).toBe(true);
+  expect(fixture.controller.setEnabled(false)).toBe(true);
+  expect(fixture.renderer.localClippingEnabled).toBe(true);
+
+  expect(fixture.controller.setEnabled(true)).toBe(true);
+  fixture.controller.dispose();
+  expect(fixture.renderer.localClippingEnabled).toBe(true);
+});
+
+test("disable and dispose without activation leave the renderer clipping flag untouched", () => {
+  const disabled = createFixture({ localClippingEnabled: true });
+  expect(disabled.controller.setEnabled(false)).toBe(true);
+  expect(disabled.renderer.localClippingEnabled).toBe(true);
+
+  const disposed = createFixture({ localClippingEnabled: true });
+  disposed.controller.dispose();
+  expect(disposed.renderer.localClippingEnabled).toBe(true);
+});
+
+test("repeated enable does not overwrite the renderer clipping snapshot", () => {
+  const fixture = createFixture({ localClippingEnabled: true });
+
+  expect(fixture.controller.setEnabled(true)).toBe(true);
+  fixture.renderer.localClippingEnabled = false;
+  expect(fixture.controller.setEnabled(true)).toBe(true);
+  expect(fixture.controller.setEnabled(false)).toBe(true);
+
+  expect(fixture.renderer.localClippingEnabled).toBe(true);
 });
 
 test("enable sections visible subparts at a centered camera-facing plane", () => {
@@ -282,30 +322,75 @@ test("theme refresh replaces active clipped colors and preserves exact originals
   expect(edgeLines.material).toBe(edgeMaterial);
 });
 
-test("auxiliary material registration tracks state and stable Plane identity", () => {
+test("auxiliary material registration preserves borrowed clipping state across sessions", () => {
   const fixture = createFixture();
   const material = new THREE.MeshBasicMaterial();
+  const foreignPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), -3);
+  const originalClippingPlanes = [foreignPlane];
+  material.clippingPlanes = originalClippingPlanes;
   const initialVersion = material.version;
   const unregister = fixture.controller.registerClippableMaterial(material);
   const duplicateUnregister = fixture.controller.registerClippableMaterial(material);
-  expect(material.clippingPlanes).toBeNull();
+  expect(material.clippingPlanes).toBe(originalClippingPlanes);
   expect(material.version).toBe(initialVersion);
 
   fixture.controller.setEnabled(true);
   const plane = material.clippingPlanes[0];
+  expect(material.clippingPlanes).not.toBe(originalClippingPlanes);
+  expect(plane).not.toBe(foreignPlane);
   const activeVersion = material.version;
   fixture.controller.flip();
   fixture.controller.reset();
   expect(material.clippingPlanes).toEqual([plane]);
   expect(material.version).toBe(activeVersion);
 
+  fixture.controller.setEnabled(false);
+  expect(material.clippingPlanes).toBe(originalClippingPlanes);
+  expect(material.version).toBe(activeVersion + 1);
+  fixture.controller.setEnabled(true);
+  expect(material.clippingPlanes).toEqual([plane]);
+  expect(material.version).toBe(activeVersion + 2);
+
   duplicateUnregister();
   expect(material.clippingPlanes).toEqual([plane]);
+  expect(material.version).toBe(activeVersion + 2);
   unregister();
-  expect(material.clippingPlanes).toBeNull();
-  expect(material.version).toBe(activeVersion + 1);
+  expect(material.clippingPlanes).toBe(originalClippingPlanes);
+  expect(material.version).toBe(activeVersion + 3);
   unregister();
-  expect(material.version).toBe(activeVersion + 1);
+  expect(material.clippingPlanes).toBe(originalClippingPlanes);
+  expect(material.version).toBe(activeVersion + 3);
+});
+
+test.each([null, []])(
+  "dispose restores an exact %s auxiliary clipping value",
+  (originalClippingPlanes) => {
+    const fixture = createFixture();
+    const material = new THREE.MeshBasicMaterial();
+    material.clippingPlanes = originalClippingPlanes;
+    fixture.controller.registerClippableMaterial(material);
+    fixture.controller.setEnabled(true);
+
+    expect(material.clippingPlanes).not.toBe(originalClippingPlanes);
+    fixture.controller.dispose();
+
+    expect(material.clippingPlanes).toBe(originalClippingPlanes);
+  },
+);
+
+test("failed activation preserves renderer and auxiliary clipping state", () => {
+  const originalClippingPlanes = [new THREE.Plane()];
+  const fixture = createFixture({
+    box: new THREE.Box3(),
+    localClippingEnabled: true,
+  });
+  const material = new THREE.MeshBasicMaterial();
+  material.clippingPlanes = originalClippingPlanes;
+  fixture.controller.registerClippableMaterial(material);
+
+  expect(fixture.controller.setEnabled(true)).toBe(false);
+  expect(fixture.renderer.localClippingEnabled).toBe(true);
+  expect(material.clippingPlanes).toBe(originalClippingPlanes);
 });
 
 test("updateForCamera delegates observable screen scaling to the gizmo", () => {
