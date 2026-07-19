@@ -9,7 +9,7 @@ import {
   signedAngleAroundAxis,
 } from "../../src/framework/cutaway-math.js";
 
-test("initial pose centers the plane, faces the camera, and sizes it to the box", () => {
+test("initial pose centers the plane, points away from the camera, and sizes it to the box", () => {
   const box = new THREE.Box3(
     new THREE.Vector3(-5, -10, -15),
     new THREE.Vector3(5, 10, 15),
@@ -26,13 +26,13 @@ test("initial pose centers the plane, faces the camera, and sizes it to the box"
   expect(pose.position.toArray()).toEqual([0, 0, 0]);
   expect(normal.x).toBeCloseTo(0);
   expect(normal.y).toBeCloseTo(0);
-  expect(normal.z).toBeCloseTo(1);
+  expect(normal.z).toBeCloseTo(-1);
   expect(pose.size).toBeCloseTo(diagonal * 1.25);
   expect(pose.size).toBeGreaterThan(diagonal);
   expect(pose.hatchSpacing).toBe(hatchSpacingForDiagonal(diagonal));
 });
 
-test("plane pose keeps the negative side and flip reverses it", () => {
+test("plane pose keeps the positive side and flip reverses it", () => {
   const plane = new THREE.Plane();
   const normal = new THREE.Vector3();
   const position = new THREE.Vector3(0, 0, 2);
@@ -40,16 +40,16 @@ test("plane pose keeps the negative side and flip reverses it", () => {
 
   expect(planeFromPose(plane, normal, position, quaternion, false)).toBe(plane);
   expect(normal.toArray()).toEqual([0, 0, 1]);
-  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 1))).toBe(true);
-  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 3))).toBe(false);
-  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 2 + 0.5e-6))).toBe(true);
+  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 1))).toBe(false);
+  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 3))).toBe(true);
+  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 2 - 0.5e-6))).toBe(true);
 
   planeFromPose(plane, normal, position, quaternion, true);
   expect(normal.x).toBeCloseTo(0);
   expect(normal.y).toBeCloseTo(0);
   expect(normal.z).toBeCloseTo(-1);
-  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 1))).toBe(false);
-  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 3))).toBe(true);
+  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 1))).toBe(true);
+  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 3))).toBe(false);
 });
 
 test("hatch spacing scales with the diagonal and clamps to useful limits", () => {
@@ -69,6 +69,14 @@ test("axis parameter finds the closest point and rejects parallel rays", () => {
   expect(axisParameterFromRay(ray, origin, direction)).toBeCloseTo(5);
   expect(axisParameterFromRay(
     new THREE.Ray(new THREE.Vector3(), new THREE.Vector3(0, 1, 0)),
+    origin,
+    direction,
+  )).toBeNull();
+  expect(axisParameterFromRay(
+    new THREE.Ray(
+      new THREE.Vector3(),
+      new THREE.Vector3(5e-4, 1, 0).normalize(),
+    ),
     origin,
     direction,
   )).toBeNull();

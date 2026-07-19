@@ -5,7 +5,7 @@ const MIN_HATCH_MM = 0.5;
 const MAX_HATCH_MM = 12;
 const HATCHES_ACROSS_DIAGONAL = 24;
 const POINT_EPSILON = 1e-6;
-const PARALLEL_EPSILON = 1e-8;
+const PARALLEL_EPSILON = 1e-6;
 
 export function hatchSpacingForDiagonal(diagonal) {
   return THREE.MathUtils.clamp(
@@ -18,7 +18,7 @@ export function hatchSpacingForDiagonal(diagonal) {
 export function initialCutawayPose(box, camera) {
   const position = box.getCenter(new THREE.Vector3());
   const diagonal = Math.max(box.getSize(new THREE.Vector3()).length(), 1);
-  const normal = camera.getWorldDirection(new THREE.Vector3()).negate().normalize();
+  const normal = camera.getWorldDirection(new THREE.Vector3()).normalize();
   const quaternion = new THREE.Quaternion().setFromUnitVectors(
     PLANE_LOCAL_NORMAL,
     normal,
@@ -39,7 +39,8 @@ export function planeFromPose(plane, normalTarget, position, quaternion, flipped
 }
 
 export function pointSurvivesPlane(plane, point, epsilon = POINT_EPSILON) {
-  return plane.distanceToPoint(point) <= epsilon;
+  // three.js clipping retains the nonnegative side of a THREE.Plane.
+  return plane.distanceToPoint(point) >= -epsilon;
 }
 
 export function axisParameterFromRay(ray, axisOrigin, axisDirection) {

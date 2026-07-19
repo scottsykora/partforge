@@ -61,7 +61,7 @@ import {
   signedAngleAroundAxis,
 } from "../../src/framework/cutaway-math.js";
 
-test("initial pose is centred, camera-facing, and sized from the assembly", () => {
+test("initial pose is centred, points away from the camera, and is sized from the assembly", () => {
   const box = new THREE.Box3(
     new THREE.Vector3(-5, -10, -15),
     new THREE.Vector3(5, 10, 15)
@@ -73,23 +73,23 @@ test("initial pose is centred, camera-facing, and sized from the assembly", () =
 
   const pose = initialCutawayPose(box, camera);
   expect(pose.position.toArray()).toEqual([0, 0, 0]);
-  expect(new THREE.Vector3(0, 0, 1).applyQuaternion(pose.quaternion).z).toBeCloseTo(1);
+  expect(new THREE.Vector3(0, 0, 1).applyQuaternion(pose.quaternion).z).toBeCloseTo(-1);
   expect(pose.size).toBeGreaterThan(box.getSize(new THREE.Vector3()).length());
 });
 
-test("plane pose clips the camera-facing half and flip reverses it", () => {
+test("plane pose keeps the positive side and flip reverses it", () => {
   const position = new THREE.Vector3(0, 0, 2);
   const quaternion = new THREE.Quaternion();
   const normal = new THREE.Vector3();
   const plane = new THREE.Plane();
 
   planeFromPose(plane, normal, position, quaternion, false);
-  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 1))).toBe(true);
-  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 3))).toBe(false);
-
-  planeFromPose(plane, normal, position, quaternion, true);
   expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 1))).toBe(false);
   expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 3))).toBe(true);
+
+  planeFromPose(plane, normal, position, quaternion, true);
+  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 1))).toBe(true);
+  expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 3))).toBe(false);
 });
 
 test("hatch spacing scales with the part and clamps at both ends", () => {
@@ -108,6 +108,14 @@ test("axisParameterFromRay finds movement along the normal axis", () => {
     new THREE.Vector3(0, 0, 0),
     new THREE.Vector3(0, 1, 0)
   )).toBeCloseTo(5);
+  expect(axisParameterFromRay(
+    new THREE.Ray(
+      new THREE.Vector3(),
+      new THREE.Vector3(5e-4, 1, 0).normalize()
+    ),
+    new THREE.Vector3(),
+    new THREE.Vector3(0, 1, 0)
+  )).toBeNull();
 });
 
 test("signedAngleAroundAxis preserves direction", () => {
@@ -139,6 +147,7 @@ const MIN_HATCH_MM = 0.5;
 const MAX_HATCH_MM = 12;
 const HATCHES_ACROSS_DIAGONAL = 24;
 const POINT_EPSILON = 1e-6;
+const PARALLEL_EPSILON = 1e-6;
 
 export function hatchSpacingForDiagonal(diagonal) {
   return THREE.MathUtils.clamp(
@@ -151,7 +160,7 @@ export function hatchSpacingForDiagonal(diagonal) {
 export function initialCutawayPose(box, camera) {
   const position = box.getCenter(new THREE.Vector3());
   const diagonal = Math.max(box.getSize(new THREE.Vector3()).length(), 1);
-  const normal = camera.getWorldDirection(new THREE.Vector3()).negate().normalize();
+  const normal = camera.getWorldDirection(new THREE.Vector3()).normalize();
   const quaternion = new THREE.Quaternion().setFromUnitVectors(PLANE_LOCAL_NORMAL, normal);
   return {
     position,
@@ -168,7 +177,8 @@ export function planeFromPose(plane, normalTarget, position, quaternion, flipped
 }
 
 export function pointSurvivesPlane(plane, point, epsilon = POINT_EPSILON) {
-  return plane.distanceToPoint(point) <= epsilon;
+  // three.js clipping retains the nonnegative side of a THREE.Plane.
+  return plane.distanceToPoint(point) >= -epsilon;
 }
 
 export function axisParameterFromRay(ray, axisOrigin, axisDirection) {
@@ -178,7 +188,7 @@ export function axisParameterFromRay(ray, axisOrigin, axisDirection) {
   const d = ray.direction.dot(w0);
   const e = axis.dot(w0);
   const denominator = 1 - b * b;
-  if (Math.abs(denominator) < 1e-6) return null;
+  if (Math.abs(denominator) < PARALLEL_EPSILON) return null;
   return (e - b * d) / denominator;
 }
 
