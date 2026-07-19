@@ -22,6 +22,8 @@ export default defineConfig(({ command }) => ({
         filletedBox: "filleted-box.html",
         planter: "planter.html",
         facetedVase: "faceted-vase.html",
+        nameplate: "nameplate.html",
+        bracket: "bracket.html",
       },
     },
   },

@@ -1,0 +1,67 @@
+// Demo part — a lettered nameplate. Showcases k.text2d (the vector-text feature):
+// two lines of text with counters and curves (P A R T F O R G E, digits) resolved to
+// exact curve regions, then either raised above (emboss) or cut into (deboss) a
+// rounded plate. The plate itself is a Shape2D rounded-rectangle, so the part also
+// exercises shape2d + the extrude/boolean path. Open /nameplate.html after `npm run dev`.
+import { roundedRectPolygon } from "partforge/geometry";
+
+const LABEL = "PARTFORGE\nv0.20";
+
+export default {
+  meta: { title: "Nameplate", units: "mm", background: 0x15181d },
+  parameters: [
+    {
+      id: "text",
+      title: "Lettering",
+      description: "The text is a two-line label (`PARTFORGE` over `v0.20`). It is resolved to exact glyph curves — counters in **A R O G** and the **0** stay open — and sized by cap height.",
+      advanced: [
+        { key: "size", label: "Cap height", unit: "mm", min: 4, max: 16, step: 0.5,
+          description: "Height of the uppercase letters. The second line scales with it." },
+        { key: "depth", label: "Relief depth", unit: "mm", min: 0.4, max: 3, step: 0.1,
+          description: "How far the lettering is raised above (emboss) or recessed into (engrave) the plate face." },
+      ],
+    },
+    {
+      id: "plate",
+      title: "Plate",
+      description: "A rounded-rectangle backing plate, sized automatically from the text bounding box plus the border.",
+      advanced: [
+        { key: "margin", label: "Border", unit: "mm", min: 2, max: 12, step: 0.5,
+          description: "Clear space between the lettering and the plate edge." },
+        { key: "corner", label: "Corner radius", unit: "mm", min: 0, max: 10, step: 0.5,
+          description: "Rounding on the plate corners (clamped so it never exceeds half the shorter side)." },
+        { key: "thickness", label: "Thickness", unit: "mm", min: 1.5, max: 8, step: 0.5,
+          description: "Plate thickness." },
+      ],
+    },
+    {
+      id: "style",
+      title: "Style",
+      toggles: [
+        { key: "engrave", label: "Engrave (recessed)", on: 1,
+          description: "Cut the lettering into the top face instead of raising it above the plate." },
+      ],
+    },
+  ],
+  defaults: { size: 8, depth: 1.2, margin: 4, corner: 3, thickness: 3, engrave: 0 },
+  parts: {
+    plate: {
+      label: "Nameplate",
+      views: ["plate"],
+      export: { name: "nameplate" },
+      build: (k, p) => {
+        const text = k.text2d(LABEL, { size: p.size, align: "center", valign: "middle", lineHeight: p.size * 1.7 });
+        const bb = text.boundingBox();
+        const w = (bb.max[0] - bb.min[0]) + 2 * p.margin;
+        const h = (bb.max[1] - bb.min[1]) + 2 * p.margin;
+        const corner = Math.max(0, Math.min(p.corner, Math.min(w, h) / 2 - 0.5));
+        const plate = k.extrude({ profile: k.shape2d(roundedRectPolygon(w, h, corner)), h: p.thickness }).label("Plate");
+        const relief = k.extrude({ profile: text, h: p.depth });
+        return p.engrave
+          ? plate.cut(relief.translate([0, 0, p.thickness - p.depth]))
+          : plate.union(relief.translate([0, 0, p.thickness]).label("Lettering"));
+      },
+    },
+  },
+  views: { plate: { label: "Nameplate" } },
+};
