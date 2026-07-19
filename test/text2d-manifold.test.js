@@ -76,6 +76,20 @@ test("unknown declared font throws a clear error", () => {
   expect(() => k.text2d("H", { font: "nope", size: 5 })).toThrow(/font/i);
 });
 
+// Regression: a font preloaded via bootManifoldKernel({ fonts }) as an OFFSET
+// Uint8Array view (byteOffset>0, common for a Node Buffer-pooled fs.readFileSync)
+// must be sliced to its exact byte range before opentype.parse. The old inline
+// `src.buffer` handed opentype the whole backing buffer → "Unsupported OpenType
+// signature". bootManifoldKernel now routes {fonts} through resolveFonts, which
+// slices correctly.
+test("bootManifoldKernel preloads a font passed as an offset view (no byteOffset corruption)", async () => {
+  const bytes = new Uint8Array(fontBytes);
+  const big = new Uint8Array(bytes.length + 40); big.set(bytes, 20);
+  const view = big.subarray(20, 20 + bytes.length);              // byteOffset 20
+  const k2 = await bootManifoldKernel({ fonts: { off: view } });
+  expect(k2.text2d("H", { font: "off", size: 5 }).area()).toBeGreaterThan(0);
+});
+
 // Real vendored font, curvy glyphs — the synth 'O' above is rectilinear, so its
 // containment classification (flatten-to-endpoints, see text2d.js groupContours)
 // could pass even with a subtly wrong algorithm. A real 'O' with actual bezier

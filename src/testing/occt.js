@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
 import { createOcctKernel } from "../framework/geometry/occt-backend.js";
+import { resolveFonts } from "../framework/fonts.js";
 
 export async function bootOcctKernel({ fonts } = {}) {
   const require = createRequire(import.meta.url);
@@ -16,9 +17,6 @@ export async function bootOcctKernel({ fonts } = {}) {
   replicad.setOC(OC);
   const kernel = createOcctKernel(replicad);
   if (fonts) { const opentype = (await import("opentype.js")).default;
-    for (const [name, src] of Object.entries(fonts)) {
-      const buf = ArrayBuffer.isView(src) ? src.buffer : src;
-      kernel._fonts.set(name, opentype.parse(buf));
-    } }
+    for (const [name, buf] of await resolveFonts(fonts)) kernel._fonts.set(name, opentype.parse(buf)); }
   return kernel;
 }
