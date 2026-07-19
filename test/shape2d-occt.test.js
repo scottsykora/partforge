@@ -106,3 +106,33 @@ test("revolve of a Shape2D builds a positive-volume solid", () => {
   const prof = k.shape2d([[2, 0], [6, 0], [6, 8], [2, 8]]);
   expect(k.revolve({ profile: prof, degrees: 360 }).volume()).toBeGreaterThan(0);
 });
+
+test("offset grows/insets and extrudes to the expected volume", () => {
+  const grown = k.extrude({ profile: k.shape2d(SQ(0,0,10)).offset(1, { corners: "sharp" }), h: 4 });
+  expect(grown.volume()).toBeCloseTo(144 * 4, -1);       // 12x12x4 (sharp corners = exact square)
+});
+
+test("offset of a curved Shape2D stays exact → STEP has a B_SPLINE", async () => {
+  const KAPPA = 0.5522847498307936, R = 5, k4 = R * KAPPA;
+  const circle = pathProfile([R, 0])
+    .cubicTo([0, R], [R, k4], [k4, R]).cubicTo([-R, 0], [-k4, R], [-R, k4])
+    .cubicTo([0, -R], [-R, -k4], [-k4, -R]).cubicTo([R, 0], [k4, -R], [R, -k4]).close();
+  const step = await stepText(k.extrude({ profile: k.shape2d(circle).offset(1), h: 3 }));
+  expect(step).toMatch(/B_SPLINE/);
+});
+
+test("collapse throws immediately (OCCT)", () => {
+  expect(() => k.shape2d(SQ(0, 0, 10)).offset(-6)).toThrow("Shape2D.offset: offset collapses the shape");
+});
+
+test("offset+extrude volume is close to Manifold (parity)", () => {
+  // 10x10 square, +1 sharp offset → 12x12; both backends should agree closely.
+  const v = k.extrude({ profile: k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "sharp" }), h: 4 }).volume();
+  expect(v).toBeCloseTo(144 * 4, -1);
+});
+
+test("chamfer is a true 45° bevel — area 142, identical to Manifold", () => {
+  // Manifold pins the same 142 (single-chord round == OCCT bevel); this is the
+  // cross-backend parity that the F3 follow-up (true-bevel Manifold chamfer) added.
+  expect(k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "chamfer" }).area()).toBeCloseTo(142, 3);
+});

@@ -21,3 +21,10 @@ test("Object and array args hash canonically", () => {
   const h2 = h("shape2d", { holes: "none", outer: "pts" });
   expect(h1).toBe(h2);  // keys sorted alphabetically before hashing
 });
+
+test("offset2d hash is param-sensitive", () => {
+  const a = "aaa";
+  expect(h("offset2d", a, 1, "round", 116)).toBe(h("offset2d", a, 1, "round", 116));
+  expect(h("offset2d", a, 1, "round", 116)).not.toBe(h("offset2d", a, 2, "round", 116));
+  expect(h("offset2d", a, 1, "round", 116)).not.toBe(h("offset2d", a, 1, "sharp", 116));
+});

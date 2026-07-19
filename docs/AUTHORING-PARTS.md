@@ -488,7 +488,15 @@ const plate = k.shape2d(roundedRectPolygon(40, 24, 4))
 k.extrude({ profile: plate, h: 3 });
 ```
 
+```js
+// A 0.2 mm printer clearance around a bore, then a 2 mm wall inset:
+const bore  = k.shape2d(circleProfile(3)).offset(0.2);            // looser
+const wall  = k.shape2d(outer).offset(-2, { corners: "sharp" });  // inset, mitered
+```
+
 (This achieves the same geometry as building the profiles separately and using `k.extrude({ profile: { outer, holes }, h })`, but the Shape2D path is more idiomatic for complex 2-D operations.)
+
+`Shape2D.offset(delta, {corners})` grows (`delta>0`) or insets (`delta<0`) a shape with round/chamfer/sharp corners — curve-preserving on OCCT, faceted at mesh LOD on Manifold; it throws if the offset collapses the shape. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.)
 
 ---
 

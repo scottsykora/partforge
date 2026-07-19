@@ -71,3 +71,60 @@ test("intersect of disjoint shapes is empty; simple() throws", () => {
 test("shape2d rejects an invalid profile", () => {
   expect(() => k.shape2d([[0, 0], [1, 0]])).toThrow(/≥3 points|profile/);
 });
+
+test("offset grows a square by delta on every side (round corners add quarter-circles)", () => {
+  const s = k.shape2d(SQ(0, 0, 10)).offset(1);           // 10x10 + perimeter*1 + 4 quarter-circles
+  expect(s.area()).toBeCloseTo(100 + 40 + Math.PI, 1);   // 100 + 4*10*1 + π*1²
+});
+
+test("negative offset insets a square to 8x8", () => {
+  expect(k.shape2d(SQ(0, 0, 10)).offset(-1).area()).toBeCloseTo(64, 1); // inset convex corners stay sharp → 8x8
+});
+
+test("corner styles differ at convex right angles (sharp > round > chamfer)", () => {
+  // chamfer is a true 45° bevel (a single-chord round join): at a right-angle
+  // corner it cuts a triangle of area d²/2 per corner, so total = 100 + 40 + 4·0.5
+  // = 142 — smaller than round, and identical to OCCT's `bevel` (verified 142.0000
+  // on both backends).
+  const sharp = k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "sharp" }).area();
+  const round = k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "round" }).area();
+  const cham  = k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "chamfer" }).area();
+  expect(sharp).toBeGreaterThan(round);
+  expect(round).toBeGreaterThan(cham);
+  expect(cham).toBeCloseTo(142, 4);       // exact 45° bevel — matches OCCT
+});
+
+test("acute (<90°) corners: chamfer stays a valid bevel (2-facet approximation)", () => {
+  // At a 60° interior corner Clipper2 emits 2 chords (ceil(120°turn/90°)), so Manifold's
+  // chamfer bulges ~0.4% beyond OCCT's single-chord bevel (Manifold ≈235.46 vs OCCT ≈234.50).
+  // It's still a bevel — smaller than round, larger than nothing — just not float-exact to OCCT.
+  const tri = [[-10, -5.7735], [10, -5.7735], [0, 11.547]];   // ~equilateral, side 20
+  const cham = k.shape2d(tri).offset(1, { corners: "chamfer" }).area();
+  const round = k.shape2d(tri).offset(1, { corners: "round" }).area();
+  const sharp = k.shape2d(tri).offset(1, { corners: "sharp" }).area();
+  expect(cham).toBeLessThan(round);
+  expect(round).toBeLessThan(sharp);
+});
+
+test("offset of a circle scales the radius", () => {
+  const a = k.shape2d(circleProfile(5)).offset(1).area();
+  expect(a).toBeCloseTo(Math.PI * 36, 0);                // π(5+1)²  (faceted → loose)
+});
+
+test("collapse throws immediately", () => {
+  expect(() => k.shape2d(SQ(0, 0, 10)).offset(-6)).toThrow("Shape2D.offset: offset collapses the shape");
+});
+
+test("offset validates delta and corners", () => {
+  expect(() => k.shape2d(SQ(0, 0, 10)).offset(NaN)).toThrow("Shape2D.offset: delta must be a finite number");
+  expect(() => k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "bevel" }))
+    .toThrow('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
+});
+
+test("offset is content-hash cached (hit on repeat)", () => {
+  k.beginSubPart("off"); k.resetCacheStats();
+  const one = () => k.shape2d(SQ(0, 0, 10)).offset(1).area();
+  one(); const before = k.cacheStats().hits; one();
+  expect(k.cacheStats().hits).toBeGreaterThan(before);
+  k.endSubPart();
+});
