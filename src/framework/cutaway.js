@@ -165,12 +165,6 @@ export function createCutaway({
   function updateGeometry(name, geometry) {
     const entry = renderSets.get(name);
     if (!entry || disposed) return false;
-    if (!enabled) {
-      entry.renderSet.refreshSourceMaterial(
-        entry.mesh.material,
-        entry.edgeLines?.material,
-      );
-    }
     entry.renderSet.setGeometry(geometry);
     return true;
   }
@@ -244,7 +238,10 @@ export function createCutaway({
     if (disposed) return false;
     theme = mode;
     gizmo.setTheme(mode);
-    for (const { renderSet } of renderSets.values()) renderSet.setTheme(mode);
+    for (const { renderSet } of renderSets.values()) {
+      renderSet.refreshSourceMaterial();
+      renderSet.setTheme(mode);
+    }
     return true;
   }
 

@@ -297,6 +297,58 @@ describe("createSectionRenderSet", () => {
     expect(renderSet.cap.material.depthWrite).toBe(false);
   });
 
+  test("refreshes active clipped clones from tracked originals and restores exact sources", () => {
+    const { material, mesh, edgeMaterial, edgeLines, plane, renderSet } = createFixture();
+    renderSet.setEnabled(true);
+    const oldClippedMesh = mesh.material;
+    const oldClippedEdge = edgeLines.material;
+    const oldMeshDispose = vi.spyOn(oldClippedMesh, "dispose");
+    const oldEdgeDispose = vi.spyOn(oldClippedEdge, "dispose");
+    const meshOrder = mesh.renderOrder;
+    const edgeOrder = edgeLines.renderOrder;
+    material.color.set(0x22c55e);
+    edgeMaterial.color.set(0xf97316);
+
+    expect(renderSet.refreshSourceMaterial()).toBe(true);
+
+    expect(oldMeshDispose).toHaveBeenCalledOnce();
+    expect(oldEdgeDispose).toHaveBeenCalledOnce();
+    expect(mesh.material).not.toBe(oldClippedMesh);
+    expect(mesh.material.color.getHex()).toBe(0x22c55e);
+    expect(mesh.material.clippingPlanes).toEqual([plane]);
+    expect(edgeLines.material).not.toBe(oldClippedEdge);
+    expect(edgeLines.material.color.getHex()).toBe(0xf97316);
+    expect(edgeLines.material.clippingPlanes).toEqual([plane]);
+    expect(mesh.renderOrder).toBe(meshOrder);
+    expect(edgeLines.renderOrder).toBe(edgeOrder);
+    expect(renderSet.back.visible).toBe(true);
+    expect(renderSet.front.visible).toBe(true);
+    expect(renderSet.cap.visible).toBe(true);
+
+    renderSet.setEnabled(false);
+    expect(mesh.material).toBe(material);
+    expect(edgeLines.material).toBe(edgeMaterial);
+  });
+
+  test("never adopts its active owned clones as source originals", () => {
+    const { material, mesh, edgeMaterial, edgeLines, renderSet } = createFixture();
+    renderSet.setEnabled(true);
+    const ownedMeshClone = mesh.material;
+    const ownedEdgeClone = edgeLines.material;
+    material.color.set(0x84cc16);
+    edgeMaterial.color.set(0x0ea5e9);
+
+    renderSet.refreshSourceMaterial(mesh.material, edgeLines.material);
+    renderSet.setEnabled(false);
+
+    expect(mesh.material).toBe(material);
+    expect(edgeLines.material).toBe(edgeMaterial);
+    expect(mesh.material).not.toBe(ownedMeshClone);
+    expect(edgeLines.material).not.toBe(ownedEdgeClone);
+    expect(material.color.getHex()).toBe(0x84cc16);
+    expect(edgeMaterial.color.getHex()).toBe(0x0ea5e9);
+  });
+
   test("removes helpers and disposes only owned materials, idempotently", () => {
     const fixture = createFixture();
     const {

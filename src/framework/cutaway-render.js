@@ -246,21 +246,27 @@ export function createSectionRenderSet({
   }
 
   function refreshSourceMaterial(
-    meshMaterial = mesh.material,
-    lineMaterial = edgeLines?.material,
+    meshMaterial = originalMeshMaterial,
+    lineMaterial = originalEdgeMaterial,
   ) {
-    if (disposed || enabled) return false;
+    if (disposed) return false;
 
+    const nextMeshMaterial = meshMaterial === clippedMeshMaterial
+      ? originalMeshMaterial
+      : meshMaterial;
+    const nextLineMaterial = lineMaterial === clippedEdgeMaterial
+      ? originalEdgeMaterial
+      : lineMaterial;
     disposeClipped(clippedMeshMaterial);
     disposeClipped(clippedEdgeMaterial);
-    originalMeshMaterial = meshMaterial;
-    originalEdgeMaterial = lineMaterial;
-    clippedMeshMaterial = cloneClipped(meshMaterial, plane, ownedMaterials);
+    originalMeshMaterial = nextMeshMaterial;
+    originalEdgeMaterial = nextLineMaterial;
+    clippedMeshMaterial = cloneClipped(nextMeshMaterial, plane, ownedMaterials);
     clippedEdgeMaterial = edgeLines
-      ? cloneClipped(lineMaterial, plane, ownedMaterials)
+      ? cloneClipped(nextLineMaterial, plane, ownedMaterials)
       : null;
 
-    const source = firstMaterial(meshMaterial);
+    const source = firstMaterial(nextMeshMaterial);
     capMaterial.uniforms.uBase.value.copy(source?.color ?? new THREE.Color(0x9fb4cc));
     capMaterial.uniforms.uOpacity.value = source?.opacity ?? 1;
     capMaterial.opacity = source?.opacity ?? 1;
@@ -270,6 +276,14 @@ export function createSectionRenderSet({
     backMaterial.transparent = capMaterial.transparent;
     frontMaterial.transparent = capMaterial.transparent;
     if (clippedEdgeMaterial && capMaterial.transparent) makeTransparent(clippedEdgeMaterial);
+
+    if (enabled) {
+      mesh.material = clippedMeshMaterial;
+      if (edgeLines) edgeLines.material = clippedEdgeMaterial;
+    } else {
+      mesh.material = originalMeshMaterial;
+      if (edgeLines) edgeLines.material = originalEdgeMaterial;
+    }
     return true;
   }
 

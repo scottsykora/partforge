@@ -696,7 +696,11 @@ Implementation rules:
 When a source mesh material changes or a geometry regeneration updates display
 state, the render set must refresh its clipped clone and cap tint without
 losing the original material reference. Add refreshSourceMaterial() to the
-render-set API and test color plus opacity propagation.
+render-set API and test color plus opacity propagation. The refresh defaults to
+the internally tracked source materials, hot-swaps and disposes only owned
+clipped clones when active, and still restores the exact sources on disable.
+Theme changes invoke this refresh after source colors change. Geometry-only
+updates replace stencil geometry without recloning or disposing materials.
 
 ### Step 5: Run focused controller tests
 

@@ -234,28 +234,52 @@ test("geometry replacement is shared by stencil passes and remains caller-owned"
   expect(replacementDispose).not.toHaveBeenCalled();
 });
 
-test("geometry updates refresh changed source materials while disabled", () => {
+test("geometry-only updates preserve prepared clipped materials without disposal", () => {
   const fixture = createFixture();
   const { mesh, edgeLines } = addSubpart(fixture);
   const replacementGeometry = new THREE.SphereGeometry(2);
-  const replacementMaterial = new THREE.MeshStandardMaterial({
-    color: 0x22c55e,
-    opacity: 0.45,
-    transparent: true,
-    depthWrite: false,
-  });
-  const replacementEdgeMaterial = new THREE.LineBasicMaterial({ color: 0xf8fafc });
-  mesh.material = replacementMaterial;
-  edgeLines.material = replacementEdgeMaterial;
+  fixture.controller.setEnabled(true);
+  const preparedMeshMaterial = mesh.material;
+  const preparedEdgeMaterial = edgeLines.material;
+  const meshDispose = vi.spyOn(preparedMeshMaterial, "dispose");
+  const edgeDispose = vi.spyOn(preparedEdgeMaterial, "dispose");
+  fixture.controller.setEnabled(false);
 
   fixture.controller.updateGeometry("body", replacementGeometry);
   fixture.controller.setEnabled(true);
 
-  expect(findCap(fixture.scene).material.uniforms.uBase.value.getHex()).toBe(0x22c55e);
-  expect(findCap(fixture.scene).material.uniforms.uOpacity.value).toBe(0.45);
+  expect(mesh.material).toBe(preparedMeshMaterial);
+  expect(edgeLines.material).toBe(preparedEdgeMaterial);
+  expect(mesh.children.map((entry) => entry.geometry)).toEqual([
+    replacementGeometry,
+    replacementGeometry,
+  ]);
+  expect(meshDispose).not.toHaveBeenCalled();
+  expect(edgeDispose).not.toHaveBeenCalled();
+});
+
+test("theme refresh replaces active clipped colors and preserves exact originals", () => {
+  const fixture = createFixture();
+  const { mesh, material, edgeLines, edgeMaterial } = addSubpart(fixture);
+  fixture.controller.setEnabled(true);
+  const oldClippedMesh = mesh.material;
+  const oldClippedEdge = edgeLines.material;
+  const oldMeshDispose = vi.spyOn(oldClippedMesh, "dispose");
+  const oldEdgeDispose = vi.spyOn(oldClippedEdge, "dispose");
+  material.color.set(0x16a34a);
+  edgeMaterial.color.set(0xf8fafc);
+
+  fixture.controller.setTheme("light");
+
+  expect(oldMeshDispose).toHaveBeenCalledOnce();
+  expect(oldEdgeDispose).toHaveBeenCalledOnce();
+  expect(mesh.material).not.toBe(oldClippedMesh);
+  expect(mesh.material.color.getHex()).toBe(0x16a34a);
+  expect(edgeLines.material).not.toBe(oldClippedEdge);
+  expect(edgeLines.material.color.getHex()).toBe(0xf8fafc);
   fixture.controller.setEnabled(false);
-  expect(mesh.material).toBe(replacementMaterial);
-  expect(edgeLines.material).toBe(replacementEdgeMaterial);
+  expect(mesh.material).toBe(material);
+  expect(edgeLines.material).toBe(edgeMaterial);
 });
 
 test("auxiliary material registration tracks state and stable Plane identity", () => {
