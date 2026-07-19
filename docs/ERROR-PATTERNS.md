@@ -248,6 +248,12 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
   inset. Realistic clearances (fractions of a mm) and wall insets up to the
   narrowest feature never trip this.
 
+## curve-fill-resolved-hole-uncontained
+
+- **Symptom:** `curve-fill: resolved hole has no containing outer`
+- **Cause:** paper.js returned an unexpected or numerically degenerate path topology for the supplied font outline; the resolver refuses to attach the hole to an arbitrary outer.
+- **Fix:** reduce or normalize degenerate font contours, confirm the correct CFF/TrueType fill rule was selected, and add the glyph as a focused `curve-fill.test.js` regression before changing resolver tolerances.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

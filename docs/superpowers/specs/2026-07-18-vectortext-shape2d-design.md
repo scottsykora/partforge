@@ -117,10 +117,34 @@ k.text2d(string, {
   `L`=`lineTo`, `Q`=quadratic → elevate to cubic (`c1=p0+⅔(q−p0)`, `c2=p1+⅔(q−p1)`)
   → `cubicTo`, `C`=`cubicTo`, `Z`=close. (`pathProfile` already exists.)
 - A glyph has one or more closed contours; counters (`O A e 8 …`) are holes. Font
-  winding conventions are inconsistent (TrueType vs CFF), so classify contours
-  into `{outer, holes}` by **geometric containment** (reuse the region-nesting
-  logic from `shape2d-regions.js`), not by winding sign — then build the per-glyph
-  `Shape2D`.
+  winding conventions are inconsistent and overlapping/self-intersecting contours
+  occur in real fonts, so contours are not trusted as already-simple, correctly-
+  wound rings. Instead `resolveCurveFill` (`src/framework/geometry/curve-fill.js`)
+  resolves each glyph's raw contours into simple `{outer,holes}` curve regions:
+  1. `resolveCrossings()` each contour individually (splits self-intersections
+     into simple sub-paths, still exact cubic curves);
+  2. build a private-scope Paper `CompoundPath` from all the resulting simple
+     sub-paths, with `fillRule` set per the font format (below);
+  3. `unite(self)` the compound path against itself — this normalizes overlaps
+     and crossings under the chosen fill rule into simple, correctly-nested
+     paths, still as curves (no flattening).
+  4. Group the resulting simple paths into `{outer,holes}` while they are still
+     Paper curve geometry — largest-area path's orientation picks the "outer"
+     winding sense, opposite-wound paths are assigned to the smallest containing
+     outer by `Path#contains(interiorPoint)`. This grouping never reduces curves
+     to endpoint-only polygon rings; it only converts to the framework's
+     `pathProfile` contour format after `{outer,holes}` grouping is complete.
+- **Fill rule is chosen by font table format, not inferred from winding order:**
+  TrueType (`glyf`) and CFF2 outlines use nonzero; CFF (Type 1/"CFF " table,
+  i.e. CFF1) outlines use even-odd. `fontFillRule(font)` in `text2d.js` selects
+  the rule once per font and passes it into `resolveCurveFill`.
+- **Dependency:** `paper/dist/paper-core.js` — the DOM-free Paper.js core (never
+  the bare `paper` package, which resolves to `paper-full` and pulls in
+  PaperScript/canvas). The resolver owns a private `PaperScope` it sets up and
+  clears itself; it never touches the package-global `paper.project`, which may
+  belong to another consumer in the same worker. The dependency exists solely
+  to resolve curve overlap/self-intersection topology (crossings, winding,
+  containment) — it is not used for text layout, which stays in `text2d.js`.
 
 ## Caching
 
