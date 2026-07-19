@@ -166,6 +166,23 @@ export function createOcctKernel(replicad) {
       cut:       (o) => wrapShape2d(drawing.clone().cut(liftDrawing(o)._drawing.clone())),
       cutAll:    (os) => wrapShape2d(os.map(liftDrawing).reduce((acc, t) => acc.cut(t._drawing.clone()), drawing.clone())),
       intersect: (o) => wrapShape2d(drawing.clone().intersect(liftDrawing(o)._drawing.clone())),
+      // corners map onto replicad's Offset2DConfig.lineJoinType; "chamfer" → "bevel" —
+      // NOTE this is NOT the same geometry as Manifold's "chamfer" (Clipper2 Square join,
+      // which circumscribes the round arc and so is LARGER than round at a convex corner).
+      // OCCT's "bevel" is a traditional 45° corner cut and is SMALLER than round. Same
+      // corner *name* on both backends, different corner *geometry* — see KERNEL-CONTRACT.
+      offset: (delta, { corners = "round" } = {}) => {
+        const lineJoinType = { round: "round", chamfer: "bevel", sharp: "miter" }[corners];
+        if (!lineJoinType) throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
+        if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
+        const result = drawing.clone().offset(delta, { lineJoinType });   // clone — replicad consumes the operand
+        // Collapse doesn't throw and Drawing has no public `blueprints` array (that's on
+        // Blueprints/CompoundBlueprint, not Drawing) — replicad instead returns a Drawing
+        // whose private `innerShape` is null (confirmed by probe). That's the collapse signal.
+        if (!result || !result.innerShape)
+          throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
+        return wrapShape2d(result);
+      },
       area: () => regionsArea(toRegions()),                 // no native Drawing area → derive from materialized regions
       boundingBox: () => { const b = drawing.boundingBox; return { min: [b.bounds[0][0], b.bounds[0][1]], max: [b.bounds[1][0], b.bounds[1][1]] }; },
       toRegions,
