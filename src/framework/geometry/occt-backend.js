@@ -4,6 +4,8 @@
 import { toEdgeFinder } from "./edge-selector.js";
 import { toFaceFinder } from "./face-selector.js";
 import { addSugar } from "./solid-sugar.js";
+import { addShape2dSugar } from "./shape2d-sugar.js";
+import { assembleRegions, svgPathToRings, regionsArea, pointInRing, ringArea } from "./shape2d-regions.js";
 import { finishKernel } from "./kernel-front.js";
 import { createOcctRepair } from "./occt-repair.js";
 import { classifyFaceGroups } from "./feature-attribution.js";
@@ -36,6 +38,7 @@ export function createOcctKernel(replicad) {
       [...cloneLabels(labels), ...tools.flatMap((t) => cloneLabels(t._labels ?? []))]
     ),
     intersect: (t) => wrap(shape.intersect(t._s), [...cloneLabels(labels), ...cloneLabels(t._labels ?? [])]),
+    union: (t) => wrap(shape.fuse(t._s), [...cloneLabels(labels), ...cloneLabels(t._labels ?? [])]),
     clone: () => wrap(shape.clone(), cloneLabels(labels)),
     boundingBox: () => {
       const [min, max] = shape.boundingBox.bounds; // addSugar derives center/size
@@ -106,6 +109,71 @@ export function createOcctKernel(replicad) {
     return pen.close();
   };
 
+  // Region (outer + holes) -> Drawing, exactly like extrude's former inline region
+  // path: draw the outer contour, then .cut() each hole Drawing out of it.
+  const SHAPE2D_SEGS = 64;   // materialization LOD for toRegions() discretization
+  const drawingFromProfile = (profile) => {
+    const { outer, holes } = normalizeProfile(profile);
+    let region = contourDrawing(outer);
+    for (const hole of holes) region = region.cut(contourDrawing(hole));
+    return region;
+  };
+  const liftDrawing = (x) => (x && x._shape2d ? x : shape2d(x));
+  // Materialize a replicad Drawing into flat rings ready for the shared
+  // assembleRegions (which buckets outer/hole by ring winding SIGN). TWO
+  // corrections here, both confirmed against real replicad output rather than
+  // guessed (see task-4-report.md's probe results):
+  //
+  // 1. toSVGPathD() renders in SVG's y-down convention, so every coordinate is
+  //    negated back to model space.
+  // 2. Drawing.toSVGPaths() nests 0-2 levels deep depending on the result shape,
+  //    INCONSISTENTLY — e.g. a single interior hole nests as
+  //    [[outerD, holeD]], but two disjoint holes built via sequential .cut()
+  //    calls (cutAll) come back as a flat [outerD, hole1D, hole2D] with no
+  //    grouping at all. So which array position is "the outer" can't be read off
+  //    the nesting shape. Worse: unlike Manifold's CrossSection.toPolygons()
+  //    (outer CCW/positive, hole CW/negative), replicad emits EVERY loop of a
+  //    region — outer or hole — with the same rotational sense, so ring winding
+  //    carries no outer/hole signal either (verified: an interior hole in a
+  //    20x20 square, classified by sign alone, came back as 2 disjoint "outer"
+  //    regions summing 400+36 instead of one region netting 364).
+  //    The one signal that IS reliable is geometric containment DEPTH: classify
+  //    each ring by how many OTHER rings contain it (even-odd nesting), then
+  //    force each ring's winding to match its depth parity ABSOLUTELY — even depth
+  //    is an outer (CCW / positive area), odd depth is a hole (CW / negative area).
+  //    Setting the orientation absolutely (rather than reversing relative to the
+  //    emitted sense) is what makes this winding-agnostic: a CW-wound cut tool
+  //    makes replicad emit the hole loop with the opposite sense, and a relative
+  //    reversal would double-flip it back to a positive area — misbucketing the
+  //    hole as a second outer (409/2-regions/0-holes instead of 391/1/1).
+  const drawingRegionRings = (drawing) => {
+    const rings = drawing.toSVGPaths().flat(Infinity)
+      .flatMap((d) => svgPathToRings(d, SHAPE2D_SEGS))
+      .map((ring) => ring.map(([x, y]) => [x, -y]));
+    const containedBy = rings.map((r, i) =>
+      rings.reduce((n, other, j) => (i !== j && pointInRing(r[0], other) ? n + 1 : n), 0));
+    return rings.map((r, i) => {
+      const wantOuter = containedBy[i] % 2 === 0;                 // even depth = outer
+      return (ringArea(r) >= 0) === wantOuter ? r : r.slice().reverse();
+    });
+  };
+  const wrapShape2d = (drawing) => {
+    const toRegions = () => assembleRegions(drawingRegionRings(drawing));
+    return addShape2dSugar({
+      _drawing: drawing,
+      _shape2d: true,
+      union:     (o) => wrapShape2d(drawing.clone().fuse(liftDrawing(o)._drawing.clone())),
+      cut:       (o) => wrapShape2d(drawing.clone().cut(liftDrawing(o)._drawing.clone())),
+      cutAll:    (os) => wrapShape2d(os.map(liftDrawing).reduce((acc, t) => acc.cut(t._drawing.clone()), drawing.clone())),
+      intersect: (o) => wrapShape2d(drawing.clone().intersect(liftDrawing(o)._drawing.clone())),
+      area: () => regionsArea(toRegions()),                 // no native Drawing area → derive from materialized regions
+      boundingBox: () => { const b = drawing.boundingBox; return { min: [b.bounds[0][0], b.bounds[0][1]], max: [b.bounds[1][0], b.bounds[1][1]] }; },
+      toRegions,
+      clone: () => wrapShape2d(drawing.clone()),
+    });
+  };
+  const shape2d = (profile) => (profile && profile._shape2d ? profile : wrapShape2d(drawingFromProfile(profile)));
+
   // extrude a 2-D polygon from z=0 (arguments validated by the kernel front)
   const prism = (pts, h, { twist = 0, scaleTop = 1 } = {}) => {
     const sketch = contourDrawing(pts).sketchOnPlane("XY");
@@ -117,15 +185,17 @@ export function createOcctKernel(replicad) {
   };
 
   // revolve a lathe profile [[r,z],…] around the Z axis (degrees defaults to 360)
-  const revolve = (pts, { degrees = 360 } = {}) =>
-    wrap(contourDrawing(pts).sketchOnPlane("XZ").revolve([0, 0, 1], { angle: degrees }));
+  const revolve = (pts, { degrees = 360 } = {}) => {
+    const region = pts && pts._shape2d ? pts._drawing.clone() : contourDrawing(pts);
+    return wrap(region.sketchOnPlane("XZ").revolve([0, 0, 1], { angle: degrees }));
+  };
 
   // extrude a polygon-with-holes region from z=0: cut each hole Drawing out of the outer
   // Drawing (winding-agnostic 2-D boolean), sketch it, then extrude (twist/taper via cfg).
+  // A Shape2D `profile` (already a Drawing, possibly multi-region) extrudes directly off
+  // its own `_drawing` (cloned — replicad booleans/extrude consume their operand).
   const extrude = (profile, h, { twist = 0, scaleTop = 1 } = {}) => {
-    const { outer, holes } = normalizeProfile(profile);
-    let region = contourDrawing(outer);
-    for (const hole of holes) region = region.cut(contourDrawing(hole));
+    const region = profile && profile._shape2d ? profile._drawing.clone() : drawingFromProfile(profile);
     const sketch = region.sketchOnPlane("XY");
     if (twist === 0 && scaleTop === 1) return wrap(sketch.extrude(h));
     const cfg = {};
@@ -184,6 +254,7 @@ export function createOcctKernel(replicad) {
       solids.map((s) => s._s).reduce((a, b) => a.fuse(b)),
       solids.flatMap((s) => cloneLabels(s._labels ?? []))
     ),
+    shape2d,
     toSTEP: (named) => exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._s }))).arrayBuffer(),
   });
 }

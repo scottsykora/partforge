@@ -46,6 +46,12 @@ test("intersect of disjoint solids is empty (volume 0) without throwing", () => 
   expect(a.intersect(b).volume()).toBeCloseTo(0, 5);
 });
 
+test("Solid.union(other) fuses like k.union([a, b])", () => {
+  const mk = () => k.box({ min: [0, 0, 0], max: [10, 10, 10] });
+  const mk2 = () => k.box({ min: [5, 5, 0], max: [15, 15, 10] });
+  expect(mk().union(mk2()).volume()).toBeCloseTo(k.union([mk(), mk2()]).volume(), 3);
+});
+
 test("assemblyOverlaps runs on OCCT — clean for disjoint parts, flags a real overlap", () => {
   // Adding intersect to OCCT flips measure.js's canIntersect gate, so this overlap path now
   // runs on the OCCT kernel for the first time. Guard that it behaves: no throw on disjoint.

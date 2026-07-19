@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
-import { CONTRACT_VERSION, KERNEL_OPS, KERNEL_OPTIONAL_OPS, OCCT_ONLY_OPS, SOLID_OPS, SOLID_OPTIONAL_OPS } from "../src/framework/geometry/kernel.js";
+import { CONTRACT_VERSION, KERNEL_OPS, KERNEL_OPTIONAL_OPS, OCCT_ONLY_OPS, SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS } from "../src/framework/geometry/kernel.js";
 import * as polygon from "../src/framework/geometry/polygon.js";
 
 let k;
@@ -34,6 +34,12 @@ test("Manifold solid exposes no op the contract doesn't document", () => {
   expect(publicKeys(k.box({ min: [0, 0, 0], max: [1, 1, 1] })).filter((key) => !documented.has(key))).toEqual([]);
 });
 
+test("Shape2D exposes exactly the documented method surface", () => {
+  const documented = new Set(SHAPE2D_OPS);
+  const shape = k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]);
+  expect(publicKeys(shape).filter((key) => !documented.has(key))).toEqual([]);
+});
+
 // The prose half of the contract (docs/KERNEL-CONTRACT.md) must not drift from the
 // machine-checked half: its version header mirrors CONTRACT_VERSION, and every op and
 // 2-D helper the code exports must at least be named in the doc.
@@ -44,7 +50,7 @@ test("KERNEL-CONTRACT.md's version header matches CONTRACT_VERSION", () => {
 });
 
 test("KERNEL-CONTRACT.md names every contract op", () => {
-  const ops = [...KERNEL_OPS, ...KERNEL_OPTIONAL_OPS, ...SOLID_OPS, ...SOLID_OPTIONAL_OPS, ...OCCT_ONLY_OPS];
+  const ops = [...KERNEL_OPS, ...KERNEL_OPTIONAL_OPS, ...SOLID_OPS, ...SOLID_OPTIONAL_OPS, ...OCCT_ONLY_OPS, ...SHAPE2D_OPS];
   expect(ops.filter((op) => !new RegExp(`\\b${op}\\b`).test(doc))).toEqual([]);
 });
 

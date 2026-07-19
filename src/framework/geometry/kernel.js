@@ -19,7 +19,7 @@ export const CONTRACT_VERSION = 1;
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
-  "loft", "sweep", "helixSweptTube", "union", "toSTEP",
+  "loft", "sweep", "helixSweptTube", "union", "shape2d", "toSTEP",
 ];
 
 // Backend-optional kernel ops: the Manifold cache brackets + WASM lifetime hooks.
@@ -30,7 +30,7 @@ export const KERNEL_OPTIONAL_OPS = [
 
 // Ops every Solid must implement (including the sugar addSugar() attaches).
 export const SOLID_OPS = [
-  "cut", "cutAll", "intersect", "clone", "label", "boundingBox", "volume",
+  "cut", "cutAll", "intersect", "union", "clone", "label", "boundingBox", "volume",
   "translate", "rotate", "rotateX", "rotateY", "rotateZ", "rotateAbout", "along", "at",
   "mirror", "scale", "toMesh", "toSTL", "toIndexedMesh",
   "fillet", "chamfer", "shell",
@@ -39,6 +39,11 @@ export const SOLID_OPS = [
 // Backend-optional Solid queries: Manifold mesh-topology numbers (measure.js
 // guards with `typeof`); OCCT has no cheap equivalent.
 export const SOLID_OPTIONAL_OPS = ["genus", "isEmpty"];
+
+// Public methods every Shape2D exposes (2-D boolean value; contract-linted).
+export const SHAPE2D_OPS = [
+  "union", "cut", "cutAll", "intersect", "area", "boundingBox", "toRegions", "simple", "clone",
+];
 
 // Solid ops only OCCT implements natively. Single source of truth: probe.js routes
 // a part to OCCT when its build uses one of these, and the Manifold backend
@@ -51,6 +56,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(tool: Solid) => Solid} cut
  * @property {(tools: Solid[]) => Solid} cutAll      batch subtract (backend-optimized)
  * @property {(other: Solid) => Solid} intersect     boolean intersection (both backends)
+ * @property {(other: Solid) => Solid} union         boolean union with one other solid (n-ary: k.union([...]))
  * @property {() => Solid} clone   independent copy (replicad consumes solids on transform)
  * @property {(name: string) => Solid} label   name this solid's surface for hover/pick feature attribution (survives transforms + booleans; same name on several solids merges into one feature)
  * @property {() => {min:number[],max:number[],center:number[],size:number[]}} boundingBox   axis-aligned bounds (query)
@@ -75,6 +81,17 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {() => number} [genus]     through-hole count (Manifold only)
  * @property {() => boolean} [isEmpty]  no geometry at all (Manifold only)
  *
+ * @typedef {Object} Shape2D  An opaque 2-D boolean value (both backends: Manifold wraps a CrossSection, OCCT a replicad Drawing). `_`-prefixed keys are backend internals.
+ * @property {(other: Shape2D|number[][]) => Shape2D} union
+ * @property {(other: Shape2D|number[][]) => Shape2D} cut
+ * @property {(others: (Shape2D|number[][])[]) => Shape2D} cutAll   batch subtract
+ * @property {(other: Shape2D|number[][]) => Shape2D} intersect
+ * @property {() => number} area   net area (outers minus holes), mm²
+ * @property {() => {min:number[],max:number[]}} boundingBox   axis-aligned 2-D bounds
+ * @property {() => {outer:number[][],holes:number[][][]}[]} toRegions   materialize into region arrays (assembleRegions)
+ * @property {() => {outer:number[][],holes:number[][][]}} simple   toRegions(), unwrapped — throws unless exactly 1 region
+ * @property {() => Shape2D} clone   independent handle
+ *
  * @typedef {Object} GeometryKernel
  * @property {(o:{r?:number,d?:number,r1?:number,r2?:number,d1?:number,d2?:number,h:number,center?:boolean}) => Solid} cylinder   canonical: {r|d,h} straight, {r1,r2,h}|{d1,d2,h} cone; legacy (rBottom,rTop,h,opts) accepted until contract v2
  * @property {(o:{od:number,h:number,bore:number}) => Solid} boredCylinder   compound: bored-through cylinder (one cache node)
@@ -87,6 +104,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(o:{profile:number[][],degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z; legacy (points,opts) accepted until v2
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union
+ * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|Shape2D) => Shape2D} shape2d   2-D boolean value (both backends: Manifold wraps a CrossSection, OCCT a replicad Drawing)
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)
  * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (Manifold only)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)

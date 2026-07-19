@@ -43,8 +43,16 @@ to its pen method (exact); Manifold flattens at the shared mesh LOD (add
 **`[[r,z],…]` point arrays and throw an opaque "not iterable" on a contour**
 **object; (b) quadratic/spline/ellipse segments; (c) SVG path-string parser.**
 
-**F2 — 2-D booleans** (`union` / `intersect` / `subtract` on profiles), on top
-of F1. Backend-split like the rest of the kernel:
+**F2 — 2-D booleans** — SHIPPED (v0.18.0, PR #52) as the `Shape2D` value:
+`k.shape2d(profile).union/.cut/.cutAll/.intersect(...)`, feeds extrude/revolve,
+materializes via `.toRegions()/.simple()/.area()/.boundingBox()`, content-hash
+cached, curve-preserving on OCCT. Also aligned 3-D `Solid.union(other)`. Built on
+the native backend booleans (Manifold `CrossSection` / OCCT `Drawing`) — no
+dependency (martinez unnecessary). Follow-ups: multi-level hole nesting in
+`assembleRegions`; empty-shape `boundingBox()` guard; `prism`+Shape2D.
+
+_(original plan, on top
+of F1. Backend-split like the rest of the kernel:_
 - OCCT: replicad Drawing `fuse`/`cut`/`intersect` → exact, curve-preserving.
 - Manifold: a polyline clipper (martinez-polygon-clipping — pure JS, maintained,
   emits multipolygons-with-holes) on flattened polylines at LOD.

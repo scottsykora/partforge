@@ -5,6 +5,8 @@ import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
 import { addSugar } from "./solid-sugar.js";
+import { addShape2dSugar } from "./shape2d-sugar.js";
+import { assembleRegions } from "./shape2d-regions.js";
 import { finishKernel } from "./kernel-front.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
@@ -49,6 +51,43 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return { value: wrap(m, hash), pin: m, dispose: () => m.delete?.() };
   });
 
+  // 2-D cross-section value. Mirrors wrap()/cached(): booleans route through the
+  // solid cache (dispose frees the CrossSection); operands fold by _hash.
+  const cachedCS = (hash, computeCS) => cache.lookup(hash, () => {
+    const cs = computeCS();                     // already T()-tracked
+    return { value: wrapShape2d(cs, hash), pin: cs, dispose: () => cs.delete?.() };
+  });
+  const liftCS = (x) => (x && x._shape2d ? x : shape2d(x));
+  const wrapShape2d = (cs, hash) => addShape2dSugar({
+    _cs: cs,
+    _shape2d: true,
+    _hash: hash,
+    union:     (o) => { const t = liftCS(o); return cachedCS(h("union2d", hash, t._hash), () => T(cs.add(t._cs))); },
+    cut:       (o) => { const t = liftCS(o); return cachedCS(h("cut2d", hash, t._hash), () => T(cs.subtract(t._cs))); },
+    cutAll:    (os) => {
+      if (os.length === 0) return wrapShape2d(cs, hash);            // identity — no new WASM / cache entry (avoids double-free)
+      const ts = os.map(liftCS);
+      // The reducer's inner T() already tracks every step (incl. the final) — no
+      // outer T() around the reduce, or the result lands in `tracked` twice and
+      // cleanup() double-frees it. os is non-empty here, so the seed cs is never
+      // returned; the result is always a fresh subtract, never aliasing the input.
+      return cachedCS(h("cutAll2d", hash, ts.map((t) => t._hash)), () => ts.reduce((acc, t) => T(acc.subtract(t._cs)), cs));
+    },
+    intersect: (o) => { const t = liftCS(o); return cachedCS(h("intersect2d", hash, t._hash), () => T(cs.intersect(t._cs))); },
+    area: () => cs.area(),
+    boundingBox: () => { const r = cs.bounds(); return { min: [r.min[0], r.min[1]], max: [r.max[0], r.max[1]] }; },
+    toRegions: () => assembleRegions(cs.toPolygons()),
+    clone: () => wrapShape2d(cs, hash),
+  });
+  const shape2d = (profile) => {
+    if (profile && profile._shape2d) return profile;                // idempotent
+    const hash = h("shape2d", profile, segs);
+    return cachedCS(hash, () => {
+      const { outer, holes } = tessellateProfile(profile, segs);
+      return T(CrossSection.ofPolygons([outer, ...holes], "EvenOdd"));
+    });
+  };
+
   // Copy the mesh out into JS-owned arrays (so it survives cleanup) and free the
   // transient mesh handle.
   function meshOut(m, asStl) {
@@ -82,6 +121,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)),
       () => T(m.subtract(unionRaw(tools.map((t) => t._m))))),
     intersect: (t) => cached(h("intersect", hash, t._hash), () => T(m.intersect(t._m))),
+    union: (t) => cached(h("union", [hash, t._hash]), () => unionRaw([m, t._m])),
     clone: () => wrap(m, hash),
     // Name this solid's surface for hover/pick feature attribution. asOriginal()
     // stamps a fresh originalID that survives transforms and booleans, so every
@@ -152,14 +192,21 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       }),
     // Polygon-with-holes extrude in one op: even/odd fill turns the extra contours into
     // holes regardless of their winding (outer + holes, no per-hole boolean cut).
-    extrude: (profile, height, { twist = 0, scaleTop = 1 } = {}) =>
-      cached(h("extrude", profile, height, twist, scaleTop, segs), () => {
-        const { outer, holes } = tessellateProfile(profile, segs);
-        const cs = T(CrossSection.ofPolygons([outer, ...holes], "EvenOdd"));
+    // A Shape2D `profile` (already a CrossSection, possibly multi-region) extrudes
+    // directly off its own `_cs` — no re-tessellation — and folds into the cache
+    // key by `_hash` like any other solid operand.
+    extrude: (profile, height, { twist = 0, scaleTop = 1 } = {}) => {
+      const shape = profile && profile._shape2d ? profile : null;
+      return cached(h("extrude", shape ? shape._hash : profile, height, twist, scaleTop, segs), () => {
+        const cs = shape ? shape._cs : (() => {
+          const { outer, holes } = tessellateProfile(profile, segs);
+          return T(CrossSection.ofPolygons([outer, ...holes], "EvenOdd"));
+        })();
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
         const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
         return T(cs.extrude(height, nDiv, twist, [scaleTop, scaleTop]));
-      }),
+      });
+    },
     // Ring loft: hand-meshed via the shared ring-mesh helpers (helix-tube recipe).
     // Cached atomically; the hash folds every ring's points/z/rotate/scale and the opts.
     loft: (rings, opts = {}) => cached(h("loft", rings, opts), () => T(loftMesh(wasm, rings, opts))),
@@ -169,9 +216,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // (closed/cornerRadius) so a shape change is a fresh node and an identical rebuild hits.
     sweep: (profile, path, opts = {}) => cached(h("sweep", profile, path, opts), () => T(sweepMesh(wasm, profile, path, opts))),
     helixSweptTube: (o) => cached(h("helixSweptTube", o, tube), () => T(helixTube(wasm, { ...o, ...tube }))),
-    revolve: (pts, { degrees = 360 } = {}) =>
-      cached(h("revolve", pts, degrees, segs), () => T(Manifold.revolve([pts], segs, degrees))),
+    revolve: (pts, { degrees = 360 } = {}) => {
+      if (pts && pts._shape2d)
+        return cached(h("revolve", pts._hash, degrees, segs), () => T(pts._cs.revolve(segs, degrees)));
+      return cached(h("revolve", pts, degrees, segs), () => T(Manifold.revolve([pts], segs, degrees)));
+    },
     union: (solids) => cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
+    shape2d,
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
     cacheStats: () => cache.stats(),
