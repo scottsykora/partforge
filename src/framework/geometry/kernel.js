@@ -19,7 +19,7 @@ export const CONTRACT_VERSION = 1;
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
-  "loft", "sweep", "helixSweptTube", "union", "toSTEP",
+  "loft", "sweep", "helixSweptTube", "union", "shape2d", "toSTEP",
 ];
 
 // Backend-optional kernel ops: the Manifold cache brackets + WASM lifetime hooks.
@@ -39,6 +39,11 @@ export const SOLID_OPS = [
 // Backend-optional Solid queries: Manifold mesh-topology numbers (measure.js
 // guards with `typeof`); OCCT has no cheap equivalent.
 export const SOLID_OPTIONAL_OPS = ["genus", "isEmpty"];
+
+// Public methods every Shape2D exposes (2-D boolean value; contract-linted).
+export const SHAPE2D_OPS = [
+  "union", "cut", "cutAll", "intersect", "area", "boundingBox", "toRegions", "simple", "clone",
+];
 
 // Solid ops only OCCT implements natively. Single source of truth: probe.js routes
 // a part to OCCT when its build uses one of these, and the Manifold backend
@@ -76,6 +81,17 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {() => number} [genus]     through-hole count (Manifold only)
  * @property {() => boolean} [isEmpty]  no geometry at all (Manifold only)
  *
+ * @typedef {Object} Shape2D  An opaque 2-D boolean value (Manifold only). `_`-prefixed keys are backend internals.
+ * @property {(other: Shape2D|number[][]) => Shape2D} union
+ * @property {(other: Shape2D|number[][]) => Shape2D} cut
+ * @property {(others: (Shape2D|number[][])[]) => Shape2D} cutAll   batch subtract
+ * @property {(other: Shape2D|number[][]) => Shape2D} intersect
+ * @property {() => number} area   net area (outers minus holes), mm²
+ * @property {() => {min:number[],max:number[]}} boundingBox   axis-aligned 2-D bounds
+ * @property {() => {outer:number[][],holes:number[][][]}[]} toRegions   materialize into region arrays (assembleRegions)
+ * @property {() => {outer:number[][],holes:number[][][]}} simple   toRegions(), unwrapped — throws unless exactly 1 region
+ * @property {() => Shape2D} clone   independent handle
+ *
  * @typedef {Object} GeometryKernel
  * @property {(o:{r?:number,d?:number,r1?:number,r2?:number,d1?:number,d2?:number,h:number,center?:boolean}) => Solid} cylinder   canonical: {r|d,h} straight, {r1,r2,h}|{d1,d2,h} cone; legacy (rBottom,rTop,h,opts) accepted until contract v2
  * @property {(o:{od:number,h:number,bore:number}) => Solid} boredCylinder   compound: bored-through cylinder (one cache node)
@@ -88,6 +104,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(o:{profile:number[][],degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z; legacy (points,opts) accepted until v2
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union
+ * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|Shape2D) => Shape2D} shape2d   2-D boolean value (Manifold only; wraps a CrossSection)
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)
  * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (Manifold only)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)

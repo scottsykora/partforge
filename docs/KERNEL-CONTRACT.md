@@ -176,7 +176,7 @@ above. All ops return a `Solid`.
 | `sphere({r\|d})` | Sphere centered at the origin; bare `sphere(r)` stays valid. |
 | `box({size, center?})` · `box({min, max})` | Axis-aligned box: `{size:[x,y,z]}` centered in X/Y with base at z = 0 (`center: true` also centers Z), or explicit `[x,y,z]` `{min, max}` corners. |
 | `prism({points, h, twist?, scaleTop?})` | Extrude one CCW contour (point list or arc profile) from z = 0. `twist` = total degrees over the height; `scaleTop` = uniform top scale (1 straight, 0 → apex). |
-| `extrude({profile, h, twist?, scaleTop?})` | Same, for a polygon-with-holes region — `profile` is `{outer, holes?}` (bare contour = outer only) — in one op, no per-hole boolean. |
+| `extrude({profile, h, twist?, scaleTop?})` | Same, for a polygon-with-holes region — `profile` is `{outer, holes?}` (bare contour = outer only) — in one op, no per-hole boolean. `profile` may also be a `Shape2D` (Manifold only; see below). |
 | `revolve({profile, degrees?})` | Revolve a lathe profile `[[r, z], …]` (r ≥ 0) about Z; `degrees` < 360 gives a capped partial revolve. Default 360. |
 | `loft({rings, ruled?, closed?})` | Stack polygon cross-sections (per-ring `z`/`rotate`/`scale`, equal vertex counts) with ruled walls and capped ends. Must self-correct a fully inverted result (CW rings / descending z) to an outward solid. |
 | `sweep({profile, path, closed?, cornerRadius?, ruled?, smooth?})` | Sweep a fixed CCW profile along a polyline with a rotation-minimizing frame; sharp mitered corners, or `cornerRadius` fillets; capped ends. |
@@ -239,6 +239,32 @@ fillet failures are not monotonic in the radius, so per-edge retry would converg
 garbage). A failing chamfer instead binary-searches the largest valid distance. A
 conforming B-rep kernel must degrade this way — a fillet request must never brick the
 build, and authors should expect all-or-nothing filleting per call, not per edge.
+
+## Shape2D (2-D booleans)
+
+`k.shape2d(profile)` (`KERNEL_OPS`) lifts a point list, `{outer,
+holes?}` region, or arc/curve contour into a `Shape2D` — an opaque 2-D boolean
+value wrapping a Manifold `CrossSection`. Idempotent: `shape2d(x)` returns `x`
+unchanged if `x` is already a `Shape2D`. Every method returns a fresh
+content-hash-cached value (same caching/dispose discipline as `Solid`); `_`-prefixed
+keys are backend internals. Normative signatures: `kernel.js`'s `@typedef
+Shape2D`; the full public surface is `SHAPE2D_OPS`. **Manifold-only**: like
+`toSTEP` in reverse, the OCCT backend gets a `shape2d` stub (via `kernel-front.js`)
+that throws `KernelCapabilityError` — the key exists on every backend (contract
+parity), but calling it requires Manifold.
+
+| Op | Contract |
+|---|---|
+| `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). |
+| `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². |
+| `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds (no `center`/`size`, unlike `Solid.boundingBox`). |
+| `toRegions()` | Materialize into `{outer, holes}[]` region arrays (`assembleRegions`); a boolean result may be several disjoint regions. |
+| `simple()` | `toRegions()` unwrapped — throws unless the result is exactly one region. |
+| `clone()` | Independent handle. |
+
+A `Shape2D` may be passed directly as the `profile` to `extrude` — the Manifold
+backend extrudes its `CrossSection` directly (no re-tessellation), including any
+holes it already carries.
 
 ## The 2-D helper library
 
