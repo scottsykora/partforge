@@ -59,7 +59,20 @@ export function textGlyphs(font, string, { size = 10, align = "center", valign =
   const lines = string.split("\n");
   // 1) lay out each line in font-unit x, collect glyph region specs + line width (mm)
   const laid = lines.map((line) => {
-    const glyphs = font.stringToGlyphs(line);
+    // One glyph per input character via font.charToGlyph, NOT font.stringToGlyphs.
+    // stringToGlyphs runs opentype.js's bidi/GSUB text-shaping engine (ligatures,
+    // and — unconditionally, regardless of the `features` option — ccmp glyph
+    // composition). That engine eagerly instantiates a lookup method for every
+    // subtable in play and throws for lookup types it hasn't implemented (e.g.
+    // "lookupType 6 - substFormat: 2", class-based chaining contextual
+    // substitution) even when the actual input never matches that subtable's
+    // coverage. Real-world fonts commonly carry such lookups in their ccmp
+    // feature (e.g. the bundled Roboto, for accent composition), so
+    // stringToGlyphs throws on almost any 2+ character string against them —
+    // this is a per-character CAD label generator, not a typesetting engine, so
+    // literal glyph-per-character mapping (no ligatures/substitution) is exactly
+    // the semantics wanted here anyway.
+    const glyphs = Array.from(line).map((ch) => font.charToGlyph(ch));
     let penX = 0; const specs = [];
     glyphs.forEach((g, i) => {
       if (i > 0) penX += kern(glyphs[i - 1], g);

@@ -65,3 +65,20 @@ test("OCCT empirically subtracts the counter as a real hole (winding-insensitive
   // were NOT subtracted, oSolid.volume() would equal the full block instead.
   expect(oSolid.volume()).toBeLessThan(blockVolume * 0.85);
 });
+
+// Backend integration against the bundled Roboto default (no { font }): region/hole
+// topology matches the Manifold result for the same glyph, the extrusion volume is
+// self-consistent (area * h), and the curved glyph outline survives OCCT's exact
+// B-rep pipeline all the way to STEP as a B_SPLINE entity (not tessellated first).
+test("Roboto B has two counters and keeps B_SPLINE edges in STEP", async () => {
+  const shape = k.text2d("B", { size: 10, align: "left", valign: "baseline" });
+  const regions = shape.toRegions();
+  expect(regions).toHaveLength(1);
+  expect(regions[0].holes).toHaveLength(2);
+  const solid = k.extrude({ profile: shape, h: 2 });
+  expect(solid.volume()).toBeGreaterThan(0);
+  expect(Math.abs(solid.volume() - shape.area() * 2) / solid.volume()).toBeLessThan(0.01);
+  const step = await k.toSTEP([{ name: "B", solid }]);
+  const text = new TextDecoder().decode(step);
+  expect(text).toMatch(/B_SPLINE/);
+});

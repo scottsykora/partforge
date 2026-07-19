@@ -109,3 +109,32 @@ test("real font (Roboto) 'O' extrudes to a solid with a real hole (genus 1)", ()
 test("text2d works with the bundled default font (no { font })", () => {
   expect(k.text2d("A", { size: 5 }).area()).toBeGreaterThan(0);
 });
+
+// Regression: the bundled Roboto default's `ccmp` GSUB feature (used for accent
+// composition) includes a lookupType-6/substFormat-2 (class-based chaining
+// context) subtable, which opentype.js's stringToGlyphs/Bidi engine does not
+// implement and throws for — unconditionally, for ANY 2+ character string,
+// regardless of whether that specific substitution ever applies. text2d must
+// resolve glyphs one-per-character (font.charToGlyph), not via stringToGlyphs,
+// so ordinary multi-character labels with the real default font don't crash.
+test("multi-character text with the bundled default font does not throw (ccmp/GSUB bypass)", () => {
+  expect(k.text2d("Hello", { size: 10 }).area()).toBeGreaterThan(0);
+});
+
+// Broad topology check against the bundled Roboto default (no { font } — real
+// glyphs, not the synth fixtures above): region count (disjoint material islands,
+// e.g. 'i' has a separate dot) and total counter (hole) count across all regions,
+// plus that the resolved Shape2D extrudes to a solid whose volume matches area * h.
+test("real glyphs materialize with the correct regions and counters", () => {
+  // [glyph, disjoint material regions, total counters]
+  const cases = [["O", 1, 1], ["B", 1, 2], ["8", 1, 2], ["A", 1, 1], ["i", 2, 0]];
+  for (const [ch, expectedRegions, expectedHoles] of cases) {
+    const shape = k.text2d(ch, { size: 10, align: "left", valign: "baseline" });
+    const regions = shape.toRegions();
+    expect(regions, ch).toHaveLength(expectedRegions);
+    expect(regions.reduce((n, r) => n + r.holes.length, 0), ch).toBe(expectedHoles);
+    expect(shape.area(), ch).toBeGreaterThan(0);
+    const solid = k.extrude({ profile: shape, h: 2 });
+    expect(solid.volume(), ch).toBeCloseTo(shape.area() * 2, 2);
+  }
+});
