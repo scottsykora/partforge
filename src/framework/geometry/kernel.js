@@ -81,7 +81,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {() => number} [genus]     through-hole count (Manifold only)
  * @property {() => boolean} [isEmpty]  no geometry at all (Manifold only)
  *
- * @typedef {Object} Shape2D  An opaque 2-D boolean value (Manifold only). `_`-prefixed keys are backend internals.
+ * @typedef {Object} Shape2D  An opaque 2-D boolean value (both backends: Manifold wraps a CrossSection, OCCT a replicad Drawing). `_`-prefixed keys are backend internals.
  * @property {(other: Shape2D|number[][]) => Shape2D} union
  * @property {(other: Shape2D|number[][]) => Shape2D} cut
  * @property {(others: (Shape2D|number[][])[]) => Shape2D} cutAll   batch subtract
@@ -104,7 +104,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(o:{profile:number[][],degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z; legacy (points,opts) accepted until v2
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union
- * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|Shape2D) => Shape2D} shape2d   2-D boolean value (Manifold only; wraps a CrossSection)
+ * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|Shape2D) => Shape2D} shape2d   2-D boolean value (both backends: Manifold wraps a CrossSection, OCCT a replicad Drawing)
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)
  * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (Manifold only)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)

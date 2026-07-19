@@ -5,7 +5,7 @@ import { toEdgeFinder } from "./edge-selector.js";
 import { toFaceFinder } from "./face-selector.js";
 import { addSugar } from "./solid-sugar.js";
 import { addShape2dSugar } from "./shape2d-sugar.js";
-import { assembleRegions, svgPathToRings, regionsArea, pointInRing } from "./shape2d-regions.js";
+import { assembleRegions, svgPathToRings, regionsArea, pointInRing, ringArea } from "./shape2d-regions.js";
 import { finishKernel } from "./kernel-front.js";
 import { createOcctRepair } from "./occt-repair.js";
 import { classifyFaceGroups } from "./feature-attribution.js";
@@ -137,17 +137,25 @@ export function createOcctKernel(replicad) {
   //    carries no outer/hole signal either (verified: an interior hole in a
   //    20x20 square, classified by sign alone, came back as 2 disjoint "outer"
   //    regions summing 400+36 instead of one region netting 364).
-  //    The one signal that IS reliable is geometric containment: classify each
-  //    ring by how many OTHER rings contain it (even-odd nesting depth), then
-  //    reverse the winding of the odd-depth (hole) rings so the shared
-  //    assembleRegions' sign convention buckets them correctly.
+  //    The one signal that IS reliable is geometric containment DEPTH: classify
+  //    each ring by how many OTHER rings contain it (even-odd nesting), then
+  //    force each ring's winding to match its depth parity ABSOLUTELY — even depth
+  //    is an outer (CCW / positive area), odd depth is a hole (CW / negative area).
+  //    Setting the orientation absolutely (rather than reversing relative to the
+  //    emitted sense) is what makes this winding-agnostic: a CW-wound cut tool
+  //    makes replicad emit the hole loop with the opposite sense, and a relative
+  //    reversal would double-flip it back to a positive area — misbucketing the
+  //    hole as a second outer (409/2-regions/0-holes instead of 391/1/1).
   const drawingRegionRings = (drawing) => {
     const rings = drawing.toSVGPaths().flat(Infinity)
       .flatMap((d) => svgPathToRings(d, SHAPE2D_SEGS))
       .map((ring) => ring.map(([x, y]) => [x, -y]));
     const containedBy = rings.map((r, i) =>
       rings.reduce((n, other, j) => (i !== j && pointInRing(r[0], other) ? n + 1 : n), 0));
-    return rings.map((r, i) => (containedBy[i] % 2 === 1 ? r.slice().reverse() : r));
+    return rings.map((r, i) => {
+      const wantOuter = containedBy[i] % 2 === 0;                 // even depth = outer
+      return (ringArea(r) >= 0) === wantOuter ? r : r.slice().reverse();
+    });
   };
   const wrapShape2d = (drawing) => {
     const toRegions = () => assembleRegions(drawingRegionRings(drawing));

@@ -176,7 +176,7 @@ above. All ops return a `Solid`.
 | `sphere({r\|d})` | Sphere centered at the origin; bare `sphere(r)` stays valid. |
 | `box({size, center?})` · `box({min, max})` | Axis-aligned box: `{size:[x,y,z]}` centered in X/Y with base at z = 0 (`center: true` also centers Z), or explicit `[x,y,z]` `{min, max}` corners. |
 | `prism({points, h, twist?, scaleTop?})` | Extrude one CCW contour (point list or arc profile) from z = 0. `twist` = total degrees over the height; `scaleTop` = uniform top scale (1 straight, 0 → apex). |
-| `extrude({profile, h, twist?, scaleTop?})` | Same, for a polygon-with-holes region — `profile` is `{outer, holes?}` (bare contour = outer only) — in one op, no per-hole boolean. `profile` may also be a `Shape2D` (Manifold only; see below). |
+| `extrude({profile, h, twist?, scaleTop?})` | Same, for a polygon-with-holes region — `profile` is `{outer, holes?}` (bare contour = outer only) — in one op, no per-hole boolean. `profile` may also be a `Shape2D` (see below). |
 | `revolve({profile, degrees?})` | Revolve a lathe profile `[[r, z], …]` (r ≥ 0) about Z; `degrees` < 360 gives a capped partial revolve. Default 360. |
 | `loft({rings, ruled?, closed?})` | Stack polygon cross-sections (per-ring `z`/`rotate`/`scale`, equal vertex counts) with ruled walls and capped ends. Must self-correct a fully inverted result (CW rings / descending z) to an outward solid. |
 | `sweep({profile, path, closed?, cornerRadius?, ruled?, smooth?})` | Sweep a fixed CCW profile along a polyline with a rotation-minimizing frame; sharp mitered corners, or `cornerRadius` fillets; capped ends. |
@@ -244,14 +244,16 @@ build, and authors should expect all-or-nothing filleting per call, not per edge
 
 `k.shape2d(profile)` (`KERNEL_OPS`) lifts a point list, `{outer,
 holes?}` region, or arc/curve contour into a `Shape2D` — an opaque 2-D boolean
-value wrapping a Manifold `CrossSection`. Idempotent: `shape2d(x)` returns `x`
-unchanged if `x` is already a `Shape2D`. Every method returns a fresh
-content-hash-cached value (same caching/dispose discipline as `Solid`); `_`-prefixed
-keys are backend internals. Normative signatures: `kernel.js`'s `@typedef
-Shape2D`; the full public surface is `SHAPE2D_OPS`. **Manifold-only**: like
-`toSTEP` in reverse, the OCCT backend gets a `shape2d` stub (via `kernel-front.js`)
-that throws `KernelCapabilityError` — the key exists on every backend (contract
-parity), but calling it requires Manifold.
+value. Idempotent: `shape2d(x)` returns `x`
+unchanged if `x` is already a `Shape2D`. `_`-prefixed keys are backend internals.
+Normative signatures: `kernel.js`'s `@typedef
+Shape2D`; the full public surface is `SHAPE2D_OPS`. **Both backends implement it**:
+Manifold wraps a `CrossSection` (each method returns a fresh content-hash-cached
+value, same caching/dispose discipline as `Solid`); OCCT wraps a replicad `Drawing`
+(curve-preserving, so a curved boolean survives to exact STEP — no cache, matching
+OCCT's `Solid`). The `kernel-front.js` `KernelCapabilityError` stub for `shape2d` is
+now a dead / future-backend safety net only (both current backends define the op),
+not an OCCT limitation.
 
 | Op | Contract |
 |---|---|
@@ -264,9 +266,9 @@ parity), but calling it requires Manifold.
 
 2-D boolean ops are a **parity-relevant operation**: on OCCT they carry exact circular arcs and Bézier curves; on Manifold they facet curves to mesh LOD. Measure-parity (area, bounding box) holds within the tessellation tolerance as LOD converges — this is not a parity waiver.
 
-A `Shape2D` may be passed directly as the `profile` to `extrude` — the Manifold
-backend extrudes its `CrossSection` directly (no re-tessellation), including any
-holes it already carries.
+A `Shape2D` may be passed directly as the `profile` to `extrude` — Manifold
+extrudes its `CrossSection` directly (no re-tessellation) and OCCT extrudes its
+`Drawing` directly, including any holes it already carries.
 
 ## The 2-D helper library
 

@@ -5,11 +5,14 @@
 // sampleBezier / sampleArc so an OCCT-materialized curve facets like Manifold.
 import { sampleBezier } from "./profile.js";
 
-const ringArea = (p) => {
+// Signed shoelace area of a ring (CCW positive). Exported (in addition to its use
+// below) for the OCCT backend's absolute outer/hole orientation — see
+// occt-backend.js's drawingRegionRings.
+export function ringArea(p) {
   let a = 0;
   for (let i = 0; i < p.length; i++) { const [x1, y1] = p[i], [x2, y2] = p[(i + 1) % p.length]; a += x1 * y2 - x2 * y1; }
   return a / 2;
-};
+}
 
 // Ray-cast point-in-polygon (even-odd). ring: [[x,y],…]. Exported (in addition to
 // its use below) for the OCCT backend's containment-based outer/hole classification

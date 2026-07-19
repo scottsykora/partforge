@@ -72,6 +72,15 @@ test("cutAll: two disjoint interior holes nest under one outer region", () => {
   expect(regions[0].holes).toHaveLength(2);
 });
 
+test("a CW-wound hole materializes correctly (winding-agnostic classification)", () => {
+  const cwHole = [[3, 3], [3, 6], [6, 6], [6, 3]];               // clockwise
+  const s = k.shape2d([[0,0],[20,0],[20,20],[0,20]]).cut(cwHole);
+  expect(s.area()).toBeCloseTo(400 - 9, 3);                       // 391, not 409
+  const regions = s.toRegions();
+  expect(regions).toHaveLength(1);
+  expect(regions[0].holes).toHaveLength(1);
+});
+
 test("cutAll: empty list is a safe identity", () => {
   const id = k.shape2d(SQ(0, 0, 10)).cutAll([]);
   expect(id.area()).toBeCloseTo(100, 4);
