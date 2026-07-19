@@ -31,11 +31,6 @@ function glyphContours(glyph, font) {
   return contours;
 }
 
-// OpenType glyf and CFF2 use nonzero winding. CFF1 Type 2 CharStrings use even-odd.
-// Synthetic opentype.Font fixtures have neither table and follow the TrueType default.
-export const fontFillRule = (font) =>
-  font.tables?.cff && !font.tables?.cff2 ? "evenodd" : "nonzero";
-
 // Translate a pathProfile contour by (dx,dy) and scale by s (about origin, post-translate order: scale then translate).
 const xform = (contour, s, dx, dy) => {
   const T = ([x, y]) => [x * s + dx, y * s + dy];
@@ -54,7 +49,10 @@ export function textGlyphs(font, string, { size = 10, align = "center", valign =
   const s = size / capHeightUnits(font);                        // font units → mm (cap height)
   const lineAdv = (lineHeight ?? (font.ascender - font.descender) / upm * size * 1.0);
   const kern = (a, b) => { if (!kerning || !a || !b) return 0; try { return font.getKerningValue(a, b); } catch { return 0; } };
-  const fillRule = fontFillRule(font);
+  // Every OpenType outline format — TrueType (glyf) and PostScript (CFF/CFF2) — is filled
+  // with the NONZERO winding rule (the glyf / Type 2 charstring imaging model). even-odd is
+  // not an OpenType fill rule; the resolver keeps it only as a general capability.
+  const fillRule = "nonzero";
 
   const lines = string.split("\n");
   // 1) lay out each line in font-unit x, collect glyph region specs + line width (mm)

@@ -570,7 +570,7 @@ Reference a font by name: `k.text2d("text", { font: "heading" })`. Omit the `fon
 
 Both backends produce watertight emboss/deboss geometry; the difference is export fidelity. As with any `Shape2D`, composition with booleans and offset is backend-agnostic — the same code works on both.
 
-**Overlapping / self-intersecting glyph outlines:** real font outlines aren't always simple, correctly-nested contours — counters can overlap or self-intersect. Before glyphs become curve regions, the framework resolves each glyph's raw contours according to the font format's fill rule (nonzero for TrueType/CFF2, even-odd for CFF1), so composite/overlapping outlines still produce a single correct `{outer, holes}` shape per glyph. This resolution stays curve-exact — it never flattens beziers to polygons — so the OCCT/Manifold split above still holds.
+**Overlapping / self-intersecting glyph outlines:** real font outlines aren't always simple, correctly-nested contours — counters can overlap or self-intersect. Before glyphs become curve regions, the framework resolves each glyph's raw contours with the nonzero winding rule (how all OpenType outlines — TrueType and CFF alike — are filled), so composite/overlapping outlines still produce a single correct `{outer, holes}` shape per glyph. This resolution stays curve-exact — it never flattens beziers to polygons — so the OCCT/Manifold split above still holds.
 
 ---
 

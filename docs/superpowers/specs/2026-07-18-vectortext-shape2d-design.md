@@ -134,10 +134,13 @@ k.text2d(string, {
      outer by `Path#contains(interiorPoint)`. This grouping never reduces curves
      to endpoint-only polygon rings; it only converts to the framework's
      `pathProfile` contour format after `{outer,holes}` grouping is complete.
-- **Fill rule is chosen by font table format, not inferred from winding order:**
-  TrueType (`glyf`) and CFF2 outlines use nonzero; CFF (Type 1/"CFF " table,
-  i.e. CFF1) outlines use even-odd. `fontFillRule(font)` in `text2d.js` selects
-  the rule once per font and passes it into `resolveCurveFill`.
+- **Fill rule is nonzero for all OpenType outlines.** Every OpenType outline
+  format — TrueType (`glyf`) and PostScript (`CFF`/`CFF2`) — is filled with the
+  nonzero winding rule (the glyf / Type 2 charstring imaging model); even-odd is
+  not an OpenType fill rule. `text2d` passes `"nonzero"` into `resolveCurveFill`.
+  The resolver still accepts a `fillRule` option (even-odd remains a general
+  capability, exercised by `curve-fill.test.js`), but text rendering never
+  selects it.
 - **Dependency:** `paper/dist/paper-core.js` — the DOM-free Paper.js core (never
   the bare `paper` package, which resolves to `paper-full` and pulls in
   PaperScript/canvas). The resolver owns a private `PaperScope` it sets up and
