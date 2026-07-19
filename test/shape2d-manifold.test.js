@@ -94,6 +94,18 @@ test("corner styles differ at convex right angles (sharp > round > chamfer)", ()
   expect(cham).toBeCloseTo(142, 4);       // exact 45° bevel — matches OCCT
 });
 
+test("acute (<90°) corners: chamfer stays a valid bevel (2-facet approximation)", () => {
+  // At a 60° interior corner Clipper2 emits 2 chords (ceil(120°turn/90°)), so Manifold's
+  // chamfer bulges ~0.4% beyond OCCT's single-chord bevel (Manifold ≈235.46 vs OCCT ≈234.50).
+  // It's still a bevel — smaller than round, larger than nothing — just not float-exact to OCCT.
+  const tri = [[-10, -5.7735], [10, -5.7735], [0, 11.547]];   // ~equilateral, side 20
+  const cham = k.shape2d(tri).offset(1, { corners: "chamfer" }).area();
+  const round = k.shape2d(tri).offset(1, { corners: "round" }).area();
+  const sharp = k.shape2d(tri).offset(1, { corners: "sharp" }).area();
+  expect(cham).toBeLessThan(round);
+  expect(round).toBeLessThan(sharp);
+});
+
 test("offset of a circle scales the radius", () => {
   const a = k.shape2d(circleProfile(5)).offset(1).area();
   expect(a).toBeCloseTo(Math.PI * 36, 0);                // π(5+1)²  (faceted → loose)

@@ -166,11 +166,11 @@ export function createOcctKernel(replicad) {
       cut:       (o) => wrapShape2d(drawing.clone().cut(liftDrawing(o)._drawing.clone())),
       cutAll:    (os) => wrapShape2d(os.map(liftDrawing).reduce((acc, t) => acc.cut(t._drawing.clone()), drawing.clone())),
       intersect: (o) => wrapShape2d(drawing.clone().intersect(liftDrawing(o)._drawing.clone())),
-      // corners map onto replicad's Offset2DConfig.lineJoinType; "chamfer" → "bevel" —
-      // NOTE this is NOT the same geometry as Manifold's "chamfer" (Clipper2 Square join,
-      // which circumscribes the round arc and so is LARGER than round at a convex corner).
-      // OCCT's "bevel" is a traditional 45° corner cut and is SMALLER than round. Same
-      // corner *name* on both backends, different corner *geometry* — see KERNEL-CONTRACT.
+      // corners map onto replicad's Offset2DConfig.lineJoinType; "chamfer" → "bevel", a
+      // true 45° corner cut (a straight chord). Manifold now matches this via a
+      // single-chord Round join (see manifold-backend offset) — the two agree to float
+      // precision for convex corners with interior angle ≥ 90°; at acute (<90°) corners
+      // Manifold uses a 2-facet approximation that departs slightly. See KERNEL-CONTRACT.
       offset: (delta, { corners = "round" } = {}) => {
         const lineJoinType = { round: "round", chamfer: "bevel", sharp: "miter" }[corners];
         if (!lineJoinType) throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');

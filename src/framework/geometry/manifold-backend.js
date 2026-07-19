@@ -79,10 +79,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
       if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
       // chamfer is a true 45° bevel — Clipper2 has no bevel join, but a Round join
-      // forced to a single chord per corner (circularSegments=4 → 1 segment per 90°
-      // corner) IS the bevel: round's tangent points are exactly the bevel's
-      // endpoints. This matches OCCT's `bevel` to float precision (square 142.0000,
-      // pentagon 298.920). round = arc at mesh LOD; sharp = miter.
+      // forced to a single chord per corner (circularSegments=4 → 1 segment per corner
+      // whose turn ≤ 90°, i.e. interior angle ≥ 90°) IS the bevel: round's tangent points
+      // are exactly the bevel's endpoints. Matches OCCT's `bevel` to float precision for
+      // interior angle ≥ 90° (square 142.0000, pentagon 298.920). At acute (<90°) convex
+      // corners Clipper2 emits 2 chords (ceil(turn/90°)), so Manifold bulges ~0.4% beyond
+      // OCCT's single-chord bevel there. round = arc at mesh LOD; sharp = miter.
       const [joinType, cseg] = corners === "sharp" ? ["Miter", nSeg]
         : corners === "chamfer" ? ["Round", 4]
         : ["Round", nSeg];
