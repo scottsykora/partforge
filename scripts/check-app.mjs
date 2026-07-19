@@ -217,6 +217,7 @@ try {
 
   if (cutaway) {
     const viewport = page.viewportSize();
+    await checkCompactLayout(601);
     await checkCompactLayout(390);
     await checkCompactLayout(320);
     if (viewport) await page.setViewportSize(viewport);
