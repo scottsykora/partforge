@@ -46,6 +46,7 @@
     "manifold-3d": "^3.5.1",
     "marked": "^18.0.5",
     "opentype.js": "^2.0.0",
+    "paper": "^0.12.18",
     "pngjs": "^7.0.0",
     "replicad": "^0.23.1",
     "replicad-opencascadejs": "^0.23.0",
