@@ -85,13 +85,22 @@ Reuses F2's `Shape2D` machinery entirely:
 
 - `delta` must be a finite number; `corners` must be `"round" | "chamfer" |
   "sharp"` — reuse `offsetPolygon`'s exact message wording for the corner error.
-- An inset that collapses the shape yields an **empty** `Shape2D` (the native offset
-  returns empty geometry); `.simple()`/`extrude` then throw F2's existing
-  empty-shape error. No separate "collapse" error (that is the pure
-  `offsetPolygon`'s concern; the native op simply produces empty geometry).
-- Loud, greppable messages; ERROR-PATTERNS entry only if a genuinely new literal
-  is introduced (the corner-style error may already be covered by `offsetPolygon`'s
-  entry — reuse it).
+- **Collapse throws immediately.** An inset (or otherwise) that offsets the shape
+  away to nothing throws a clear, greppable error at the `.offset()` call —
+  `Shape2D.offset: offset collapses the shape (reduce |delta|)` — rather than
+  returning an empty `Shape2D` that fails later. Rationale (Scott): an
+  agent/LLM debugging a build gets the cause at the offending call, not a
+  downstream "empty shape" symptom. Detection of the empty native result:
+  - **Manifold:** after `cs.offset(...)`, `result.numContour() === 0` (or
+    `area() === 0`) → throw.
+  - **OCCT:** after `drawing.offset(...)`, detect the empty `Drawing` and throw.
+    **Verify at impl time** what replicad returns for a collapsing offset — an
+    empty `Drawing` (`blueprints.length === 0` / null `innerShape`), a throw, or
+    a degenerate shape — and gate on whichever it is. This is the one integration
+    unknown; the implementer confirms it against a real collapse fixture.
+- Loud, greppable messages; add an ERROR-PATTERNS entry for the new
+  `Shape2D.offset: offset collapses the shape` literal (the corner-style error
+  reuses `offsetPolygon`'s existing entry).
 
 ## Lint / surface
 
@@ -108,7 +117,8 @@ Reuses F2's `Shape2D` machinery entirely:
 - `round` vs `chamfer` vs `sharp` give different convex-corner areas (round >
   chamfer, sharp ≥ round at right-angle corners);
 - offset a `circleProfile` by +d → area ≈ π(r+d)²;
-- inset-to-empty → `.area()` ≈ 0 / `.simple()` throws the empty-shape error;
+- inset-to-empty (e.g. a 10 mm square offset by −6) → `.offset()` throws
+  `Shape2D.offset: offset collapses the shape`;
 - cache hit on a repeated offset (stats).
 
 **OCCT integration (`bootOcctKernel`, own file, no Manifold co-boot):**
