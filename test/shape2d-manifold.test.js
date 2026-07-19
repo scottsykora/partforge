@@ -61,3 +61,13 @@ test("revolve of a Shape2D lathe profile builds a sane solid", () => {
   const v = k.revolve({ profile: prof, degrees: 360 }).volume();
   expect(v).toBeCloseTo(Math.PI * (6 * 6 - 2 * 2) * 8, -1);   // annular ring volume
 });
+
+test("intersect of disjoint shapes is empty; simple() throws", () => {
+  const s = k.shape2d([[0,0],[1,0],[1,1],[0,1]]).intersect([[10,10],[11,10],[11,11],[10,11]]);
+  expect(s.area()).toBeCloseTo(0, 6);
+  expect(() => s.simple()).toThrow("Shape2D.simple");
+});
+
+test("shape2d rejects an invalid profile", () => {
+  expect(() => k.shape2d([[0, 0], [1, 0]])).toThrow(/≥3 points|profile/);
+});

@@ -474,6 +474,22 @@ const hole = k.cylinder({ r: 2, h: 20 }).translate([20, 0, 0]);
 body = body.cutAll(circularPattern(hole, 8, { axis: "Z" }));   // 8 bolt holes on a 40mm circle
 ```
 
+## 2-D booleans
+
+`k.shape2d(profile)` lifts a point list, arc profile, or region into a `Shape2D` — an opaque 2-D boolean value. You can then compose booleans, and feed the result directly to `extrude` or `revolve` without materializing intermediate regions. The same `content-hash caching` discipline applies: identical arguments produce identical geometry.
+
+**Shape2D booleans are a build-time operation** (not `derive()`), and the curve semantics differ between backends: on OCCT the result carries exact circular arcs and Bézier curves into STEP export; on Manifold the curves facet to mesh LOD.
+
+```js
+// Keyhole plate: union a disc onto a rect, punch a slot, extrude.
+const plate = k.shape2d(roundedRectPolygon(40, 24, 4))
+  .union(circleProfile(8))
+  .cut(slotPolygon(16, 3));
+k.extrude({ profile: plate, h: 3 });
+```
+
+(This achieves the same geometry as building the profiles separately and using `k.extrude({ profile: { outer, holes }, h })`, but the Shape2D path is more idiomatic for complex 2-D operations.)
+
 ---
 
 ## Wiring a part into a runnable app

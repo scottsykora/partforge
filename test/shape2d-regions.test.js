@@ -53,3 +53,7 @@ test("svgPathToRings elevates a quadratic Q to a cubic and samples it", () => {
 test("svgPathToRings throws on an unsupported (e.g. relative) command", () => {
   expect(() => svgPathToRings("m0,0 l10,0", 32)).toThrow("unsupported SVG command");
 });
+
+test("svgPathToRings throws (not infinite-loops) on a coordinate immediately after Z", () => {
+  expect(() => svgPathToRings("M0,0 L1,1 Z 5,5", 32)).toThrow("coordinate before or after a command");
+});

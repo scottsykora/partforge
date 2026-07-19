@@ -262,6 +262,8 @@ parity), but calling it requires Manifold.
 | `simple()` | `toRegions()` unwrapped — throws unless the result is exactly one region. |
 | `clone()` | Independent handle. |
 
+2-D boolean ops are a **parity-relevant operation**: on OCCT they carry exact circular arcs and Bézier curves; on Manifold they facet curves to mesh LOD. Measure-parity (area, bounding box) holds within the tessellation tolerance as LOD converges — this is not a parity waiver.
+
 A `Shape2D` may be passed directly as the `profile` to `extrude` — the Manifold
 backend extrudes its `CrossSection` directly (no re-tessellation), including any
 holes it already carries.

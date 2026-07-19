@@ -233,6 +233,12 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 - **Cause:** A cubic segment is missing `c1` or `c2`, or a control point is not a finite `[x,y]` (e.g. `NaN`, wrong length).
 - **Fix:** Provide both control points as finite `[x,y]`. A cubic Bézier needs two controls between the previous point and `to`.
 
+## shape2d-simple-not-single-region
+
+- **Symptom:** `Shape2D.simple: result has N regions, not 1 (use toRegions())`
+- **Cause:** `.simple()` was called on a boolean result that is empty or split into multiple disjoint regions (e.g. `intersect` of disjoint shapes, or a `cut` that severs a shape in two).
+- **Fix:** Use `.toRegions()` to get the array, or adjust the operands so the result is a single connected region. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "2-D booleans".
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

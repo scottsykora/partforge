@@ -123,8 +123,8 @@ export function svgPathToRings(d, segs) {
       const rx = num(), ry = num(), rot = num(), large = num(), sweep = num(), end = pt();
       for (const p of sampleSvgArc(cur, rx, ry, rot, large, sweep, end, segs)) ring.push(p); cur = end;
     }
-    else if (cmd === "Z") { pushRing(); }
-    else throw new Error("svgPathToRings: coordinate before any command");
+    else if (cmd === "Z") { pushRing(); cmd = null; }
+    else throw new Error("svgPathToRings: coordinate before or after a command");
   }
   pushRing();
   return rings;
