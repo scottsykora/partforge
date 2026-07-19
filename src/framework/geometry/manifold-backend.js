@@ -64,8 +64,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     _hash: hash,
     union:     (o) => { const t = liftCS(o); return cachedCS(h("union2d", hash, t._hash), () => T(cs.add(t._cs))); },
     cut:       (o) => { const t = liftCS(o); return cachedCS(h("cut2d", hash, t._hash), () => T(cs.subtract(t._cs))); },
-    cutAll:    (os) => { const ts = os.map(liftCS); return cachedCS(h("cutAll2d", hash, ts.map((t) => t._hash)),
-                 () => T(ts.reduce((acc, t) => T(acc.subtract(t._cs)), cs))); },
+    cutAll:    (os) => {
+      if (os.length === 0) return wrapShape2d(cs, hash);            // identity — no new WASM / cache entry (avoids double-free)
+      const ts = os.map(liftCS);
+      // The reducer's inner T() already tracks every step (incl. the final) — no
+      // outer T() around the reduce, or the result lands in `tracked` twice and
+      // cleanup() double-frees it. os is non-empty here, so the seed cs is never
+      // returned; the result is always a fresh subtract, never aliasing the input.
+      return cachedCS(h("cutAll2d", hash, ts.map((t) => t._hash)), () => ts.reduce((acc, t) => T(acc.subtract(t._cs)), cs));
+    },
     intersect: (o) => { const t = liftCS(o); return cachedCS(h("intersect2d", hash, t._hash), () => T(cs.intersect(t._cs))); },
     area: () => cs.area(),
     boundingBox: () => { const r = cs.bounds(); return { min: [r.min[0], r.min[1]], max: [r.max[0], r.max[1]] }; },

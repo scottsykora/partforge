@@ -47,3 +47,11 @@ test("curve operand: cut a circleProfile hole from a square", () => {
   const s = k.shape2d(SQ(-10, -10, 20)).cut(circleProfile(5));
   expect(s.area()).toBeCloseTo(400 - Math.PI * 25, 0);   // faceted → loose tol
 });
+
+test("cutAll subtracts several tools; empty list is a safe identity (no double-free)", () => {
+  const s = k.shape2d(SQ(0, 0, 20)).cutAll([SQ(2, 2, 4), SQ(12, 12, 4)]);
+  expect(s.area()).toBeCloseTo(400 - 16 - 16, 3);
+  const id = k.shape2d(SQ(0, 0, 10)).cutAll([]);   // must survive cleanup()/eviction unscathed
+  expect(id.area()).toBeCloseTo(100, 4);
+  k.cleanup();                                       // would throw "already deleted" on the aliasing bug
+});
