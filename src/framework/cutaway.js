@@ -53,6 +53,7 @@ export function createCutaway({
   let flipped = false;
   let theme = "dark";
   let pose = null;
+  let viewportSize = null;
   let cancelIdle = null;
   let previousLocalClippingEnabled;
   let disposed = false;
@@ -161,6 +162,9 @@ export function createCutaway({
     });
     renderSets.set(name, { renderSet, mesh, edgeLines, order });
     renderSet.setTheme(theme);
+    if (viewportSize) {
+      renderSet.setViewportSize(viewportSize.width, viewportSize.height);
+    }
     applyCapPose(renderSet);
     renderSet.setVisible(enabled && selected(name));
     renderSet.setEnabled(enabled);
@@ -253,6 +257,15 @@ export function createCutaway({
     return true;
   }
 
+  function setViewportSize(width, height) {
+    if (disposed) return false;
+    viewportSize = { width, height };
+    for (const { renderSet } of renderSets.values()) {
+      renderSet.setViewportSize(width, height);
+    }
+    return true;
+  }
+
   function isPointVisible(point) {
     return !enabled || pointSurvivesPlane(plane, point);
   }
@@ -286,7 +299,7 @@ export function createCutaway({
   }
 
   function updateForCamera() {
-    if (!disposed) gizmo.updateForCamera();
+    if (enabled && !disposed) gizmo.updateForCamera();
   }
 
   function dispose() {
@@ -310,6 +323,7 @@ export function createCutaway({
     reset,
     flip,
     setTheme,
+    setViewportSize,
     isPointVisible,
     registerClippableMaterial,
     updateForCamera,

@@ -3,6 +3,7 @@ import {
   axisParameterFromRay,
   signedAngleAroundAxis,
 } from "./cutaway-math.js";
+import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 
 const THEMES = {
   dark: {
@@ -28,7 +29,7 @@ const SCREEN_ROTATION_RADIANS_PER_PIXEL = Math.PI / 240;
 const SCREEN_AXIS_EPSILON_SQ = 1e-8;
 // Reserve the visually shared center for the end-on translation handle.
 const TRANSLATE_CENTER_RADIUS_PX = 22;
-const GIZMO_RENDER_ORDER = 3_000_000;
+const GIZMO_RENDER_ORDER = CUTAWAY_OVERLAY_RENDER_ORDER + 1;
 
 export function createCutawayGizmo({
   scene,

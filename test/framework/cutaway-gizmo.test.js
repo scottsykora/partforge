@@ -4,6 +4,7 @@ import * as THREE from "three";
 
 import { createCutawayGizmo } from "../../src/framework/cutaway-gizmo.js";
 import { initialCutawayPose } from "../../src/framework/cutaway-math.js";
+import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../../src/framework/cutaway-render.js";
 
 const fixtures = [];
 
@@ -122,12 +123,12 @@ test("visible controls overlay section draws while the translucent fill remains 
     expect(handle.material.transparent).toBe(true);
     expect(handle.material.depthTest).toBe(false);
     expect(handle.material.depthWrite).toBe(false);
-    expect(handle.renderOrder).toBeGreaterThan(2_000_000);
+    expect(handle.renderOrder).toBeGreaterThan(CUTAWAY_OVERLAY_RENDER_ORDER);
   }
   expect(gizmo.border.material.transparent).toBe(true);
   expect(gizmo.border.material.depthTest).toBe(false);
   expect(gizmo.border.material.depthWrite).toBe(false);
-  expect(gizmo.border.renderOrder).toBeGreaterThan(2_000_000);
+  expect(gizmo.border.renderOrder).toBeGreaterThan(CUTAWAY_OVERLAY_RENDER_ORDER);
   expect(gizmo.fill.material.depthTest).toBe(true);
   expect(gizmo.fill.material.depthWrite).toBe(false);
 });

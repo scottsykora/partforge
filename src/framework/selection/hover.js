@@ -44,7 +44,8 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
   const unregisterCutaway = viewer.registerCutawayMaterial?.(material) ?? (() => {});
-  const overlay = new THREE.Mesh(new THREE.BufferGeometry(), material);
+  let emptyOverlayGeometry = new THREE.BufferGeometry();
+  const overlay = new THREE.Mesh(emptyOverlayGeometry, material);
   overlay.visible = false;
   overlay.renderOrder = CUTAWAY_OVERLAY_RENDER_ORDER;
   let overlayParent = null;
@@ -76,6 +77,8 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
       }
       let g = byId.get(hit.feature.id);
       if (!g) { g = featureSubset(hit.mesh.geometry, hit.feature.id); byId.set(hit.feature.id, g); }
+      emptyOverlayGeometry?.dispose();
+      emptyOverlayGeometry = null;
       overlay.geometry = g;
       if (overlayParent !== hit.mesh.parent) { hit.mesh.parent.add(overlay); overlayParent = hit.mesh.parent; }
       overlay.visible = true;
@@ -90,6 +93,7 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
   }
 
   let pending = null; // latest pointer position; one raycast per scheduled frame
+  let frameScheduled = false;
   let down = false;
   let detached = false;
 
@@ -97,10 +101,11 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
     if (detached) return;
     if (ev.pointerType === "touch") return;
     if (down) return;
-    const had = pending;
     pending = { x: ev.clientX, y: ev.clientY };
-    if (had) return; // a frame is already scheduled
+    if (frameScheduled) return;
+    frameScheduled = true;
     schedule(() => {
+      frameScheduled = false;
       const p = pending;
       pending = null;
       if (detached || !p || down) return;
@@ -108,9 +113,9 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
       if (hit) show(hit, p.x, p.y); else hide();
     });
   }
-  const onDown = () => { down = true; hide(); };
+  const onDown = () => { down = true; pending = null; hide(); };
   const onUp = () => { down = false; };
-  const onLeave = () => hide();
+  const onLeave = () => { pending = null; hide(); };
 
   viewer.domElement.addEventListener("pointermove", onMove);
   viewer.domElement.addEventListener("pointerdown", onDown);
@@ -130,6 +135,8 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
       overlayParent?.remove(overlay);
       for (const { byId } of subsets.values()) for (const g of byId.values()) g.dispose();
       subsets.clear();
+      emptyOverlayGeometry?.dispose();
+      emptyOverlayGeometry = null;
       unregisterCutaway();
       material.dispose();
     },

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, test, vi } from "vitest";
 import * as THREE from "three";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 
 import { createCutaway } from "../../src/framework/cutaway.js";
 
@@ -93,7 +94,8 @@ function addSubpart(fixture, name = "body", options = {}) {
   });
   const mesh = new THREE.Mesh(geometry, material);
   const edgeGeometry = new THREE.EdgesGeometry(geometry);
-  const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x111111 });
+  const edgeMaterial = options.edgeMaterial
+    ?? new THREE.LineBasicMaterial({ color: 0x111111 });
   const edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
   fixture.scene.add(mesh, edgeLines);
   fixture.controller.setSubpart(name, mesh, edgeLines);
@@ -298,6 +300,22 @@ test("geometry-only updates preserve prepared clipped materials without disposal
   expect(edgeDispose).not.toHaveBeenCalled();
 });
 
+test("viewport size updates prepared cutaway LineMaterial clones", () => {
+  const fixture = createFixture();
+  const edgeMaterial = new LineMaterial({ color: 0x111111, linewidth: 1 });
+  edgeMaterial.resolution.set(1, 1);
+  const { edgeLines } = addSubpart(fixture, "body", { edgeMaterial });
+
+  expect(fixture.controller.setViewportSize).toBeTypeOf("function");
+  fixture.controller.setViewportSize(640, 480);
+  fixture.controller.setEnabled(true);
+  expect(edgeLines.material).not.toBe(edgeMaterial);
+  expect(edgeLines.material.resolution.toArray()).toEqual([640, 480]);
+
+  fixture.controller.setViewportSize(900, 700);
+  expect(edgeLines.material.resolution.toArray()).toEqual([900, 700]);
+});
+
 test("theme refresh replaces active clipped colors and preserves exact originals", () => {
   const fixture = createFixture();
   const { mesh, material, edgeLines, edgeMaterial } = addSubpart(fixture);
@@ -406,6 +424,24 @@ test("updateForCamera delegates observable screen scaling to the gizmo", () => {
   fixture.controller.updateForCamera();
 
   expect(handleRoot.scale.x).toBeGreaterThan(nearScale);
+});
+
+test("updateForCamera skips viewport work while the cutaway is disabled", () => {
+  const fixture = createFixture();
+  const getViewport = vi.spyOn(fixture.domElement, "getBoundingClientRect");
+
+  fixture.controller.updateForCamera();
+  expect(getViewport).not.toHaveBeenCalled();
+
+  fixture.controller.setEnabled(true);
+  getViewport.mockClear();
+  fixture.controller.updateForCamera();
+  expect(getViewport).toHaveBeenCalledOnce();
+
+  fixture.controller.setEnabled(false);
+  getViewport.mockClear();
+  fixture.controller.updateForCamera();
+  expect(getViewport).not.toHaveBeenCalled();
 });
 
 test("active appearance schedules an 800ms fade and disable cancels it", () => {
@@ -553,6 +589,7 @@ test("viewer supplies visible transformed meshes as world-space cutaway bounds",
     flip: vi.fn(),
     reset: vi.fn(),
     setTheme: vi.fn(),
+    setViewportSize: vi.fn(),
     isPointVisible: vi.fn(() => true),
     registerClippableMaterial: vi.fn(),
     updateForCamera: vi.fn(),

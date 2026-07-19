@@ -130,3 +130,49 @@ test("a queued hover frame has no effect after detach", () => {
   expect(document.getElementById("pf-hover-tip")).toBeNull();
   expect(viewer._group.children).toEqual([viewer._subMeshes.one]);
 });
+
+test("pointerleave invalidates a queued hover frame", () => {
+  const viewer = makeViewer();
+  let runFrame;
+  const hover = attachHoverLabels(viewer, {
+    part,
+    schedule: (callback) => { runFrame = callback; },
+  });
+
+  move(viewer.domElement, 100, 100);
+  viewer.domElement.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+  runFrame();
+
+  expect(document.getElementById("pf-hover-tip").classList.contains("show")).toBe(false);
+  expect(viewer._group.children).toEqual([viewer._subMeshes.one]);
+  hover.detach();
+});
+
+test("a quick pointerdown and pointerup invalidates a queued hover frame", () => {
+  const viewer = makeViewer();
+  let runFrame;
+  const hover = attachHoverLabels(viewer, {
+    part,
+    schedule: (callback) => { runFrame = callback; },
+  });
+
+  move(viewer.domElement, 100, 100);
+  viewer.domElement.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  viewer.domElement.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  runFrame();
+
+  expect(document.getElementById("pf-hover-tip").classList.contains("show")).toBe(false);
+  expect(viewer._group.children).toEqual([viewer._subMeshes.one]);
+  hover.detach();
+});
+
+test("detach disposes the initial empty overlay geometry before any hover", () => {
+  const viewer = makeViewer();
+  const disposeGeometry = vi.spyOn(THREE.BufferGeometry.prototype, "dispose");
+  const hover = attachHoverLabels(viewer, { part, schedule: sync });
+
+  hover.detach();
+
+  expect(disposeGeometry).toHaveBeenCalledTimes(1);
+  disposeGeometry.mockRestore();
+});

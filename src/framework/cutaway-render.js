@@ -104,6 +104,14 @@ function makeTransparent(material) {
   material.needsUpdate = true;
 }
 
+function setLineResolution(material, width, height) {
+  if (Array.isArray(material)) {
+    for (const entry of material) setLineResolution(entry, width, height);
+    return;
+  }
+  if (material?.isLineMaterial) material.resolution.set(width, height);
+}
+
 export function createSectionRenderSet({
   scene,
   mesh,
@@ -117,6 +125,7 @@ export function createSectionRenderSet({
   const originalMeshOrder = mesh.renderOrder;
   const originalEdgeOrder = edgeLines?.renderOrder;
   const ownedMaterials = new Set();
+  let viewportSize = null;
 
   let clippedMeshMaterial = cloneClipped(originalMeshMaterial, plane, ownedMaterials);
   let clippedEdgeMaterial = edgeLines
@@ -236,6 +245,12 @@ export function createSectionRenderSet({
     capMaterial.userData.setTheme(mode);
   }
 
+  function setViewportSize(width, height) {
+    if (disposed) return;
+    viewportSize = { width, height };
+    setLineResolution(clippedEdgeMaterial, width, height);
+  }
+
   function disposeClipped(material) {
     if (Array.isArray(material)) {
       for (const entry of material) disposeClipped(entry);
@@ -266,6 +281,13 @@ export function createSectionRenderSet({
     clippedEdgeMaterial = edgeLines
       ? cloneClipped(nextLineMaterial, plane, ownedMaterials)
       : null;
+    if (viewportSize) {
+      setLineResolution(
+        clippedEdgeMaterial,
+        viewportSize.width,
+        viewportSize.height,
+      );
+    }
 
     const source = firstMaterial(nextMeshMaterial);
     capMaterial.uniforms.uBase.value.copy(source?.color ?? new THREE.Color(0x9fb4cc));
@@ -306,6 +328,7 @@ export function createSectionRenderSet({
     setGeometry,
     setCapPose,
     setTheme,
+    setViewportSize,
     refreshSourceMaterial,
     dispose,
   };
