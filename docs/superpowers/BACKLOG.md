@@ -62,7 +62,12 @@ of F1. Backend-split like the rest of the kernel:_
 - Open: martinez dependency stance (depend / vendor / hand-roll) — now scoped to
   the Manifold path only; OCCT gets booleans free from replicad. Lean: vendor.
 
-**F3 — Curve-native offset** — evolve `offsetPolygon` to curves, backend-split:
+**F3 — Curve-native offset** — SHIPPED (v0.19.0, PR #53, stacked on F2 #52) as
+`Shape2D.offset(delta, {corners, segs?})`: native offset on both backends
+(Manifold `CrossSection.offset` / OCCT `Drawing.offset`), round/chamfer/sharp
+corners, curve-preserving on OCCT, collapse throws immediately. `round`/`sharp`
+identical cross-backend; `chamfer` differs (documented). Pure `offsetPolygon`
+helper untouched. Original plan was:
 - OCCT: replicad Drawing `.offset()` → exact curve offset.
 - Manifold: flatten + today's polyline `offsetPolygon` at LOD.
 - Subtlety: `offsetPolygon` is currently a *pure main-thread helper* (planter's
