@@ -81,17 +81,17 @@ test("negative offset insets a square to 8x8", () => {
   expect(k.shape2d(SQ(0, 0, 10)).offset(-1).area()).toBeCloseTo(64, 1); // inset convex corners stay sharp → 8x8
 });
 
-test("corner styles differ at convex right angles (sharp > chamfer > round)", () => {
-  // Clipper2's "Square" join (our "chamfer") is not a 45°-bevel cut from the
-  // sharp/miter corner — it circumscribes the round arc with a flat segment
-  // tangent to it, perpendicular to the corner bisector. That flat segment sits
-  // strictly outside the arc, so at a convex corner chamfer area > round area
-  // (closed form: 4 corners * per-corner 2(√2−1)d² = 8(√2−1) = 3.3137 at d=1).
+test("corner styles differ at convex right angles (sharp > round > chamfer)", () => {
+  // chamfer is a true 45° bevel (a single-chord round join): at a right-angle
+  // corner it cuts a triangle of area d²/2 per corner, so total = 100 + 40 + 4·0.5
+  // = 142 — smaller than round, and identical to OCCT's `bevel` (verified 142.0000
+  // on both backends).
   const sharp = k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "sharp" }).area();
   const round = k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "round" }).area();
   const cham  = k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "chamfer" }).area();
-  expect(sharp).toBeGreaterThan(cham);
-  expect(cham).toBeGreaterThan(round);
+  expect(sharp).toBeGreaterThan(round);
+  expect(round).toBeGreaterThan(cham);
+  expect(cham).toBeCloseTo(142, 4);       // exact 45° bevel — matches OCCT
 });
 
 test("offset of a circle scales the radius", () => {

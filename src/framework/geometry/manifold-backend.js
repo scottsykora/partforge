@@ -75,11 +75,19 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     intersect: (o) => { const t = liftCS(o); return cachedCS(h("intersect2d", hash, t._hash), () => T(cs.intersect(t._cs))); },
     offset: (delta, { corners = "round", segs: nSeg = segs } = {}) => {
-      const joinType = { round: "Round", chamfer: "Square", sharp: "Miter" }[corners];
-      if (!joinType) throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
+      if (!["round", "chamfer", "sharp"].includes(corners))
+        throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
       if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
-      return cachedCS(h("offset2d", hash, delta, corners, nSeg), () => {
-        const out = T(cs.offset(delta, joinType, 2, nSeg));       // miterLimit 2 (Clipper2 default)
+      // chamfer is a true 45° bevel — Clipper2 has no bevel join, but a Round join
+      // forced to a single chord per corner (circularSegments=4 → 1 segment per 90°
+      // corner) IS the bevel: round's tangent points are exactly the bevel's
+      // endpoints. This matches OCCT's `bevel` to float precision (square 142.0000,
+      // pentagon 298.920). round = arc at mesh LOD; sharp = miter.
+      const [joinType, cseg] = corners === "sharp" ? ["Miter", nSeg]
+        : corners === "chamfer" ? ["Round", 4]
+        : ["Round", nSeg];
+      return cachedCS(h("offset2d", hash, delta, corners, cseg), () => {
+        const out = T(cs.offset(delta, joinType, 2, cseg));       // miterLimit 2 (Clipper2 default)
         if (out.numContour() === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
         return out;
       });

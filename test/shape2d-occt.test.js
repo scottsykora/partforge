@@ -130,3 +130,9 @@ test("offset+extrude volume is close to Manifold (parity)", () => {
   const v = k.extrude({ profile: k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "sharp" }), h: 4 }).volume();
   expect(v).toBeCloseTo(144 * 4, -1);
 });
+
+test("chamfer is a true 45° bevel — area 142, identical to Manifold", () => {
+  // Manifold pins the same 142 (single-chord round == OCCT bevel); this is the
+  // cross-backend parity that the F3 follow-up (true-bevel Manifold chamfer) added.
+  expect(k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "chamfer" }).area()).toBeCloseTo(142, 3);
+});
