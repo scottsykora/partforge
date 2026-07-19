@@ -515,9 +515,9 @@ const wall  = k.shape2d(outer).offset(-2, { corners: "sharp" });  // inset, mite
 - `string` — the text to render
 - `size` — **cap height in mm** (the design-height of capital letters like "H"); the layout engine scales the font to this height
 - `font` — optional font name (declared in the part's `fonts` field, below); omit it to use the bundled default (Roboto)
-- `align` — horizontal alignment: `"left"` (default), `"center"`, or `"right"`
-- `valign` — vertical alignment: `"baseline"` (default), `"top"`, `"middle"`, or `"bottom"`
-- `lineHeight` — line spacing multiplier (default 1.2); used for multi-line text
+- `align` — horizontal alignment: `"center"` (default), `"left"`, or `"right"`
+- `valign` — vertical alignment: `"middle"` (default), `"baseline"`, `"top"`, or `"bottom"`. The defaults (`center`/`middle`) place the text block's centre at the origin, so `.at([x, y])` / `plate.cut(text)` compose without extra translation
+- `lineHeight` — distance between baselines in **mm** for multi-line text; omit for a font-metrics default (≈ `(ascender − descender)/em × size`)
 - `tracking` — letter spacing in mm (default 0); positive widens, negative tightens
 - `kerning` — boolean, enable pair-wise kerning (default true)
 
@@ -559,7 +559,7 @@ fonts: {
 - **URL:** a string — the framework fetches it (CORS must allow it)
 - **Inline bytes:** an `ArrayBuffer` or `Uint8Array` — useful for generated or embedded fonts
 
-Reference a font by name: `k.text2d("text", { font: "heading" })`. Omit the `font` option to use the bundled **Roboto** default (light weight, available in the package).
+Reference a font by name: `k.text2d("text", { font: "heading" })`. Omit the `font` option to use the bundled **Roboto** (Regular, SIL OFL 1.1) default.
 
 **Build-time & curve semantics:**
 
