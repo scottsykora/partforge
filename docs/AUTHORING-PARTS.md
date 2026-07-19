@@ -44,6 +44,7 @@ export default {
   meta: { title, units, background? },     // title string; units e.g. "mm"; background = 0xRRGGBB scene colour
   parameters,                              // the control-panel schema (array of sections — see below)
   defaults,                                // flat { paramKey: value } — seeds params + control values
+  fonts?,                                  // { name: source } — fonts a part's k.text2d() needs; framework preloads before build (see below)
   derive?,                                 // (p) => d, or { group: (p, d) => {…}, … } — dependent values computed once per build
   parts: {                                 // named sub-parts; each builds ONE solid
     <name>: {
@@ -82,6 +83,13 @@ export default {
 - `enabled(p)` gates a conditional sub-part (e.g. only present when a feature is on).
 - A view's sub-parts are derived, never hard-coded: those whose `views` include the view
   and whose `enabled(p)` is true.
+- `fonts` declares the outline fonts a part's `k.text2d()` calls need, as `{ name: source
+  }` — a source is inline bytes, a URL string, or a thunk (e.g. a Vite `import('./x.ttf')`,
+  which resolves to `{ default: url }`). The framework resolves and parses these into
+  `kernel._fonts` **before** the synchronous `build` runs, so `k.text2d(str, { font: name
+  })` can look the font up by name. See `src/framework/fonts.js` (`resolveFonts`) and
+  `k.text2d` in `docs/KERNEL-CONTRACT.md` for the full contract; fuller authoring guidance
+  (recommended font sourcing, licensing notes) lands in a follow-up pass.
 
 ---
 

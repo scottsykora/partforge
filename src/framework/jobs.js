@@ -1,5 +1,6 @@
 import { meshTo3MF } from "./geometry/threemf.js";
 import { resolveDerived } from "./derive.js";
+import { resolveFonts } from "./fonts.js";
 
 // Names of the sub-parts a view shows: declared in the view and enabled for these
 // params. Order follows Object.keys(part.parts) (definition order).
@@ -56,6 +57,14 @@ export async function handle(kernel, part, msg, post) {
   const exportName = (name) => part.parts[name].export?.name ?? name;
 
   try {
+    // Preload any part-declared fonts into the kernel before building — once per
+    // font name; a lazy dynamic import because this is async context (unlike the
+    // synchronous kernel-front), so it doesn't cost sync callers anything.
+    if (part.fonts && kernel._fonts) {
+      const opentype = (await import("opentype.js")).default;
+      const bufs = await resolveFonts(part.fonts);
+      for (const [name, buf] of bufs) if (!kernel._fonts.has(name)) kernel._fonts.set(name, opentype.parse(buf));
+    }
     // Inside the try so a throwing derive posts an error the UI can show,
     // instead of killing the worker turn silently (an endless spinner).
     const { p, d } = resolveParams(part, msg.params);
