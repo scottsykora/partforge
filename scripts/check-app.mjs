@@ -36,6 +36,8 @@ page.on("worker", (w) => w.on("console", (m) => { if (m.type() === "error") erro
 
 let booted = false;
 let hovered = false;
+let cutaway = false;
+let cutawayControl = "missing";
 try {
   await page.goto(url, { waitUntil: "load", timeout: 30000 });
   await page.waitForFunction(
@@ -54,6 +56,17 @@ try {
       if (await page.locator("#pf-hover-tip.show").count()) { hovered = true; break; }
     }
   }
+
+  const cutawayButton = page.locator("#cutaway");
+  if (await cutawayButton.count()) {
+    cutawayControl = await cutawayButton.isDisabled() ? "disabled" : "ready";
+    if (cutawayControl === "ready") {
+      await cutawayButton.click();
+      cutaway = await cutawayButton.getAttribute("aria-pressed") === "true";
+      cutawayControl = cutaway ? "enabled" : "not pressed";
+      await sleep(200);
+    }
+  }
 } catch { /* report below */ }
 const status = await page.$eval("#status", (e) => e.textContent).catch(() => "(no #status)");
 
@@ -61,6 +74,7 @@ await browser.close();
 if (!process.argv.includes("--keep")) vite.kill("SIGTERM");
 
 console.log(`check ${url}`);
-console.log(`  booted: ${booted}   hovered: ${hovered}   status: ${JSON.stringify(status)}   errors: ${errors.length}`);
+console.log(`  booted: ${booted}   hovered: ${hovered}   cutaway: ${cutaway}   status: ${JSON.stringify(status)}   errors: ${errors.length}`);
+if (!cutaway) console.log(`  cutaway control: ${cutawayControl}`);
 for (const e of errors.slice(0, 10)) console.log("    - " + e.split("\n")[0]);
-process.exit(booted && hovered ? 0 : 1);
+process.exit(booted && hovered && cutaway ? 0 : 1);
