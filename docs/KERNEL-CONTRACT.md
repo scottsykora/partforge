@@ -182,6 +182,7 @@ above. All ops return a `Solid`.
 | `sweep({profile, path, closed?, cornerRadius?, ruled?, smooth?})` | Sweep a fixed CCW profile along a polyline with a rotation-minimizing frame; sharp mitered corners, or `cornerRadius` fillets; capped ends. |
 | `helixSweptTube({pathR, profileR, pitch, turns, z0, lefthand})` | Circle of radius `profileR` swept along a helix (e.g. a rope groove). |
 | `union(solids[])` | Boolean union of one or more solids. |
+| `text2d(string, {size, font?, align?, valign?, lineHeight?, tracking?, kerning?})` | Outline-font text → `Shape2D`. `size` = cap height (mm). `font` = declared name / inline bytes / default. Build-time; curve-exact on OCCT, faceted on Manifold. |
 | `toSTEP(named[])` | `[{name, solid}]` → `Promise<ArrayBuffer>` of a STEP assembly. B-rep class only. |
 
 **Backend-divergent options** (a portable part must treat these as declared here):
