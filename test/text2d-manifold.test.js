@@ -53,6 +53,17 @@ test("inline font bytes work without declaration", () => {
   expect(k.text2d("I", { font: fontBytes, size: 4 }).area()).toBeGreaterThan(0);
 });
 
+// Regression: an inline font passed as a Uint8Array VIEW with byteOffset>0 (common for
+// Node Buffer-pooled small files) must parse from its exact byte range, not the whole
+// backing buffer. A whole-buffer parse would throw "Unsupported OpenType signature".
+test("inline font as an offset Uint8Array view parses (byteOffset > 0)", () => {
+  const src = new Uint8Array(fontBytes);
+  const padded = new Uint8Array(src.length + 100);
+  padded.set(src, 50);
+  const view = padded.subarray(50, 50 + src.length);  // byteOffset 50, exact length
+  expect(k.text2d("I", { font: view, size: 4 }).area()).toBeGreaterThan(0);
+});
+
 test("text2d is content-hash cached (hit on repeat)", () => {
   k.beginSubPart("t"); k.resetCacheStats();
   const one = () => k.text2d("HI", { font: "test", size: 5 }).area();

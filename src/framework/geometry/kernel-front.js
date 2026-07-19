@@ -46,8 +46,18 @@ export function finishKernel(k) {
   // needed: text2d builds k.shape2d(glyphContours)+union, and the Shape2D hash keys
   // on the actual glyph coordinates — a different font → different geometry →
   // different cache entry, automatically.
-  const byteCache = new WeakMap();                              // ArrayBuffer → parsed font
-  const parseBytes = (buf) => { let f = byteCache.get(buf); if (!f) { f = opentype.parse(buf); byteCache.set(buf, f); } return f; };
+  const byteCache = new WeakMap();                              // original view/buffer → parsed font
+  const parseBytes = (arg) => {
+    let f = byteCache.get(arg);
+    if (!f) {
+      // Key on the ORIGINAL arg (stable identity for the cache), but parse the view's
+      // EXACT byte range — arg.buffer alone spans the whole (possibly pooled) backing
+      // buffer, which would feed opentype garbage for a byteOffset>0 view.
+      const buf = ArrayBuffer.isView(arg) ? arg.buffer.slice(arg.byteOffset, arg.byteOffset + arg.byteLength) : arg;
+      f = opentype.parse(buf); byteCache.set(arg, f);
+    }
+    return f;
+  };
   const resolveFont = (font) => {
     if (font == null) {
       if (!k._defaultFont) throw new Error("text2d: no font — pass { font } (bytes or a declared name) or configure a default font");
@@ -58,7 +68,7 @@ export function finishKernel(k) {
       if (!f) throw new Error(`text2d: unknown font "${font}" — declare it in the part's \`fonts\` field`);
       return f;
     }
-    return parseBytes(ArrayBuffer.isView(font) ? font.buffer : font);
+    return parseBytes(font);
   };
   k.text2d = (string, opts = {}) => {
     const { font, size = 10, align = "center", valign = "middle", lineHeight, tracking = 0, kerning = true } = opts;

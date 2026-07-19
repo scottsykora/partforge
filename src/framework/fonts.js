@@ -7,7 +7,9 @@ const cache = new Map(); // source (string|object) → Promise<ArrayBuffer>
 
 function toBuffer(v) {
   if (v instanceof ArrayBuffer) return v;
-  if (ArrayBuffer.isView(v)) return v.buffer;
+  // A view may not span its whole backing buffer — slice to its exact range (Node Buffer
+  // pooling makes byteOffset>0 common for small files; v.buffer alone would be garbage).
+  if (ArrayBuffer.isView(v)) return v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength);
   return null;
 }
 
