@@ -325,13 +325,19 @@ In `src/framework/geometry/kernel-front.js`, add the import and, inside `finishK
 ```js
 import opentype from "opentype.js";
 import { textGlyphs } from "./text2d.js";
-import { h } from "./solid-hash.js";
 ```
 ```js
   // 2-D text as a Shape2D. Backend-agnostic: builds per-glyph Shape2Ds and unions
   // them. Fonts come from k._fonts (framework-preloaded by name) or inline bytes.
   k._fonts ??= new Map();
-  const parseCache = new Map();                                 // content-hash → parsed font (inline bytes)
+  // Parse inline bytes once per buffer, keyed by the buffer's own IDENTITY (a stable
+  // import yields the same ArrayBuffer each build). WeakMap-by-buffer avoids the
+  // wrong-font bug a byteLength key would cause. No separate text2d cache/fontId is
+  // needed: text2d builds k.shape2d(glyphContours)+union, and the Shape2D hash keys
+  // on the actual glyph coordinates — a different font → different geometry →
+  // different cache entry, automatically.
+  const byteCache = new WeakMap();                              // ArrayBuffer → parsed font
+  const parseBytes = (buf) => { let f = byteCache.get(buf); if (!f) { f = opentype.parse(buf); byteCache.set(buf, f); } return f; };
   const resolveFont = (font) => {
     if (font == null) {
       if (!k._defaultFont) throw new Error("text2d: no font — pass { font } (bytes or a declared name) or configure a default font");
@@ -342,13 +348,8 @@ import { h } from "./solid-hash.js";
       if (!f) throw new Error(`text2d: unknown font "${font}" — declare it in the part's \`fonts\` field`);
       return f;
     }
-    const buf = ArrayBuffer.isView(font) ? font.buffer : font;  // bytes → parse (memoized)
-    const key = h("font", buf.byteLength);                      // cheap identity; good enough per-build
-    let f = parseCache.get(key);
-    if (!f) { f = opentype.parse(buf); parseCache.set(key, f); }
-    return f;
+    return parseBytes(ArrayBuffer.isView(font) ? font.buffer : font);
   };
-  const fontId = (font) => (typeof font === "string" ? font : font == null ? "default" : `bytes:${(ArrayBuffer.isView(font) ? font.byteLength : font.byteLength)}`);
   k.text2d = (string, opts = {}) => {
     const { font, size = 10, align = "center", valign = "middle", lineHeight, tracking = 0, kerning = true } = opts;
     const parsed = resolveFont(font);
