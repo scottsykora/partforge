@@ -336,8 +336,19 @@ import { textGlyphs } from "./text2d.js";
   // needed: text2d builds k.shape2d(glyphContours)+union, and the Shape2D hash keys
   // on the actual glyph coordinates — a different font → different geometry →
   // different cache entry, automatically.
-  const byteCache = new WeakMap();                              // ArrayBuffer → parsed font
-  const parseBytes = (buf) => { let f = byteCache.get(buf); if (!f) { f = opentype.parse(buf); byteCache.set(buf, f); } return f; };
+  // Parse inline bytes once, keyed by the caller's ORIGINAL arg identity (view or
+  // ArrayBuffer — stable across builds). Parse the view's exact range: a view may not
+  // span its backing buffer (Node Buffer pooling → byteOffset>0), so slicing is required;
+  // but we key on the original arg (not the sliced copy) so the cache still memoizes.
+  const byteCache = new WeakMap();                              // original view/buffer → parsed font
+  const parseBytes = (arg) => {
+    let f = byteCache.get(arg);
+    if (!f) {
+      const buf = ArrayBuffer.isView(arg) ? arg.buffer.slice(arg.byteOffset, arg.byteOffset + arg.byteLength) : arg;
+      f = opentype.parse(buf); byteCache.set(arg, f);
+    }
+    return f;
+  };
   const resolveFont = (font) => {
     if (font == null) {
       if (!k._defaultFont) throw new Error("text2d: no font — pass { font } (bytes or a declared name) or configure a default font");
@@ -348,7 +359,7 @@ import { textGlyphs } from "./text2d.js";
       if (!f) throw new Error(`text2d: unknown font "${font}" — declare it in the part's \`fonts\` field`);
       return f;
     }
-    return parseBytes(ArrayBuffer.isView(font) ? font.buffer : font);
+    return parseBytes(font);
   };
   k.text2d = (string, opts = {}) => {
     const { font, size = 10, align = "center", valign = "middle", lineHeight, tracking = 0, kerning = true } = opts;
@@ -366,17 +377,18 @@ In `src/framework/geometry/kernel.js`, add `"text2d"` to `KERNEL_OPS` (after `"u
 ```markdown
 | `text2d(string, {size, font?, align?, valign?, lineHeight?, tracking?, kerning?})` | Outline-font text → `Shape2D`. `size` = cap height (mm). `font` = declared name / inline bytes / default. Build-time; curve-exact on OCCT, faceted on Manifold. |
 ```
-In `src/testing/manifold.js`, extend `bootManifoldKernel` to accept `{ fonts }` and preload them (parse each and set `kernel._fonts`):
+In `src/testing/manifold.js`, extend `bootManifoldKernel` to accept `{ fonts }` and
+preload them via `resolveFonts` (which normalizes + correctly slices views — do NOT
+re-implement `src.buffer`, which drops a view's byteOffset and corrupts small fonts):
 ```js
+import { resolveFonts } from "../framework/fonts.js";
+// …
 export async function bootManifoldKernel({ quality = "preview", fonts } = {}) {
   const wasm = await Module();
   wasm.setup();
   const kernel = createManifoldKernel(wasm, { quality });
   if (fonts) { const opentype = (await import("opentype.js")).default;
-    for (const [name, src] of Object.entries(fonts)) {
-      const buf = ArrayBuffer.isView(src) ? src.buffer : src;
-      kernel._fonts.set(name, opentype.parse(buf));
-    } }
+    for (const [name, buf] of await resolveFonts(fonts)) kernel._fonts.set(name, opentype.parse(buf)); }
   return kernel;
 }
 ```
@@ -464,7 +476,10 @@ const cache = new Map();   // source (string|object) → Promise<ArrayBuffer>
 
 function toBuffer(v) {
   if (v instanceof ArrayBuffer) return v;
-  if (ArrayBuffer.isView(v)) return v.buffer;
+  // A view (Uint8Array/Buffer) may not span its whole backing buffer — slice to its
+  // exact range. Node's Buffer pooling makes byteOffset>0 common for small files, so
+  // returning v.buffer would hand opentype garbage bytes.
+  if (ArrayBuffer.isView(v)) return v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength);
   return null;
 }
 
