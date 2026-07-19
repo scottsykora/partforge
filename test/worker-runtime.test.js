@@ -13,7 +13,10 @@ afterEach(() => { delete globalThis.self; delete globalThis.postMessage; });
 
 function bootFakeWorker(name) {
   const posts = [];
-  globalThis.self = { name };
+  // Real WorkerGlobalScope exposes `self.navigator`; paper.js (pulled into the worker
+  // module graph by text2d → curve-fill) reads `self.navigator.userAgent` for its
+  // browser/OS detection, so the fake worker must provide it too.
+  globalThis.self = { name, navigator: { userAgent: "node" } };
   globalThis.postMessage = (m) => posts.push(m);
   runWorker(part);
   return posts;

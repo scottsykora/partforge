@@ -19,7 +19,7 @@ export const CONTRACT_VERSION = 1;
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
-  "loft", "sweep", "helixSweptTube", "union", "shape2d", "toSTEP",
+  "loft", "sweep", "helixSweptTube", "union", "shape2d", "text2d", "toSTEP",
 ];
 
 // Backend-optional kernel ops: the Manifold cache brackets + WASM lifetime hooks.

@@ -81,3 +81,13 @@ booleans, offset/expand/contract, curved paths, linear/rotate extrude, and the
 - `shape.extrude({h})` sugar method (currently `k.extrude({profile: shape, h})`).
 - OCCT `Shape2D.boundingBox()` reads replicad-internal `innerShape`; a replicad
   upgrade renaming it would break collapse detection (guarded by a test).
+
+## vectorText curve-resolver follow-ups (from final review, 2026-07-19)
+- **Lazy-init the paper.js PaperScope** in `curve-fill.js` (currently a module-level `new
+  PaperScope()` runs on every geometry-worker load, pulling paper-core ~193KB gz into the
+  kernel-front chunk even for text-free parts). Initialize on first `resolveCurveFill` call.
+- **Multi-level hole nesting** in `assembleRegions` (pre-existing, shared by both backends): an
+  island-inside-a-counter surfaces as a spurious extra top-level region; net area stays correct,
+  degrades safely. Rarely hit by Latin CAD labels. Fix if a glyph/shape needs true nesting.
+- **CFF font coverage:** no `.otf` (CFF/CFF2) font is in-repo, so real CFF-glyph rendering is
+  unexercised by tests. Add a small CFF test font if CFF support needs a regression guard.

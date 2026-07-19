@@ -5,8 +5,9 @@ import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
 import { createOcctKernel } from "../framework/geometry/occt-backend.js";
+import { resolveFonts } from "../framework/fonts.js";
 
-export async function bootOcctKernel() {
+export async function bootOcctKernel({ fonts } = {}) {
   const require = createRequire(import.meta.url);
   globalThis.require = globalThis.require ?? require;
   globalThis.__dirname = globalThis.__dirname ?? path.dirname(fileURLToPath(import.meta.url));
@@ -14,5 +15,8 @@ export async function bootOcctKernel() {
   const OC = await init({ wasmBinary: fs.readFileSync(require.resolve("replicad-opencascadejs/src/replicad_single.wasm")) });
   const replicad = await import("replicad");
   replicad.setOC(OC);
-  return createOcctKernel(replicad);
+  const kernel = createOcctKernel(replicad);
+  if (fonts) { const opentype = (await import("opentype.js")).default;
+    for (const [name, buf] of await resolveFonts(fonts)) kernel._fonts.set(name, opentype.parse(buf)); }
+  return kernel;
 }

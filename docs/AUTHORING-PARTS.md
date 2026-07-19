@@ -44,6 +44,7 @@ export default {
   meta: { title, units, background? },     // title string; units e.g. "mm"; background = 0xRRGGBB scene colour
   parameters,                              // the control-panel schema (array of sections — see below)
   defaults,                                // flat { paramKey: value } — seeds params + control values
+  fonts?,                                  // { name: source } — fonts a part's k.text2d() needs; framework preloads before build (see below)
   derive?,                                 // (p) => d, or { group: (p, d) => {…}, … } — dependent values computed once per build
   parts: {                                 // named sub-parts; each builds ONE solid
     <name>: {
@@ -82,6 +83,13 @@ export default {
 - `enabled(p)` gates a conditional sub-part (e.g. only present when a feature is on).
 - A view's sub-parts are derived, never hard-coded: those whose `views` include the view
   and whose `enabled(p)` is true.
+- `fonts` declares the outline fonts a part's `k.text2d()` calls need, as `{ name: source
+  }` — a source is inline bytes, a URL string, or a thunk (e.g. a Vite `import('./x.ttf')`,
+  which resolves to `{ default: url }`). The framework resolves and parses these into
+  `kernel._fonts` **before** the synchronous `build` runs, so `k.text2d(str, { font: name
+  })` can look the font up by name. See `src/framework/fonts.js` (`resolveFonts`) and
+  `k.text2d` in `docs/KERNEL-CONTRACT.md` for the full contract; fuller authoring guidance
+  (recommended font sourcing, licensing notes) lands in a follow-up pass.
 
 ---
 
@@ -497,6 +505,72 @@ const wall  = k.shape2d(outer).offset(-2, { corners: "sharp" });  // inset, mite
 (This achieves the same geometry as building the profiles separately and using `k.extrude({ profile: { outer, holes }, h })`, but the Shape2D path is more idiomatic for complex 2-D operations.)
 
 `Shape2D.offset(delta, {corners})` grows (`delta>0`) or insets (`delta<0`) a shape with round/chamfer/sharp corners — curve-preserving on OCCT, faceted at mesh LOD on Manifold; it throws if the offset collapses the shape. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.)
+
+## Text (`text2d`)
+
+`k.text2d(string, { size, font?, align?, valign?, lineHeight?, tracking?, kerning? })` renders outline-font text as a `Shape2D` — a 2-D boolean you can compose with other shapes (union / cut / offset) and extrude into 3-D geometry.
+
+**Parameters:**
+
+- `string` — the text to render
+- `size` — **cap height in mm** (the design-height of capital letters like "H"); the layout engine scales the font to this height
+- `font` — optional font name (declared in the part's `fonts` field, below); omit it to use the bundled default (Roboto)
+- `align` — horizontal alignment: `"center"` (default), `"left"`, or `"right"`
+- `valign` — vertical alignment: `"middle"` (default), `"baseline"`, `"top"`, or `"bottom"`. The defaults (`center`/`middle`) place the text block's centre at the origin, so `.at([x, y])` / `plate.cut(text)` compose without extra translation
+- `lineHeight` — distance between baselines in **mm** for multi-line text; omit for a font-metrics default (≈ `(ascender − descender)/em × size`)
+- `tracking` — letter spacing in mm (default 0); positive widens, negative tightens
+- `kerning` — boolean, enable pair-wise kerning (default true)
+
+**Shape2D composition:**
+
+Like any `Shape2D`, the result composes with booleans and offset — you can union it onto a face, cut it out as a depression, expand it with `offset()`, or combine multiple text shapes:
+
+```js
+// Emboss text onto a plate
+const baseplate = k.extrude({ profile: roundedRectPolygon(100, 60, 4), h: 5 });
+const emboss = k.text2d("v2.0", { size: 8 }).offset(0.2);  // 0.2 mm relief
+const part = baseplate.cut(k.extrude({ profile: emboss, h: 1 }));
+
+// Deboss text into a lid
+const lid = k.extrude({ profile: circleProfile(40), h: 3 });
+const deboss = k.text2d("PART-042", { size: 6 });
+const carved = lid.cut(k.extrude({ profile: deboss, h: 0.5 }));
+
+// Extrude text as a solid letters
+const raised = k.extrude({ profile: k.text2d("LOGO", { size: 10, align: "center" }), h: 2 });
+
+// Multi-line label with tight tracking
+const label = k.text2d("YEAR 2025\nSERIES A", { size: 4, align: "center", tracking: -0.1 });
+```
+
+**Font sourcing (the `fonts` PartDefinition field):**
+
+Declare fonts in your part definition's optional `fonts` object — a map of font names to sources. The framework resolves and parses these before `build()` runs, so `k.text2d(str, { font: name })` can look them up synchronously:
+
+```js
+fonts: {
+  heading: () => import("./fonts/Raleway-Bold.ttf"),    // bundle via Vite dynamic import
+  label: "https://cdn.example.com/fonts/Courier-Prime.ttf",  // URL fetch
+  default: new Uint8Array([...])                             // inline bytes (rare)
+},
+```
+
+- **Dynamic import:** `() => import("./path/to/font.ttf")` — Vite bundles the font; resolves to `{ default: url }` at runtime
+- **URL:** a string — the framework fetches it (CORS must allow it)
+- **Inline bytes:** an `ArrayBuffer` or `Uint8Array` — useful for generated or embedded fonts
+
+Reference a font by name: `k.text2d("text", { font: "heading" })`. Omit the `font` option to use the bundled **Roboto** (Regular, SIL OFL 1.1) default.
+
+**Build-time & curve semantics:**
+
+`text2d` is a **build-time operation** (not `derive()`), and **the curve representation differs by backend:**
+
+- **OCCT (B-rep):** text outlines carry **exact cubic Bézier curves** into STEP export (not tessellated)
+- **Manifold (mesh):** text outlines **facet at the mesh level-of-detail** (same as other curves in preview)
+
+Both backends produce watertight emboss/deboss geometry; the difference is export fidelity. As with any `Shape2D`, composition with booleans and offset is backend-agnostic — the same code works on both.
+
+**Overlapping / self-intersecting glyph outlines:** real font outlines aren't always simple, correctly-nested contours — counters can overlap or self-intersect. Before glyphs become curve regions, the framework resolves each glyph's raw contours with the nonzero winding rule (how all OpenType outlines — TrueType and CFF alike — are filled), so composite/overlapping outlines still produce a single correct `{outer, holes}` shape per glyph. This resolution stays curve-exact — it never flattens beziers to polygons — so the OCCT/Manifold split above still holds.
 
 ---
 
