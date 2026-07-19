@@ -28,6 +28,7 @@ const SCREEN_ROTATION_RADIANS_PER_PIXEL = Math.PI / 240;
 const SCREEN_AXIS_EPSILON_SQ = 1e-8;
 // Reserve the visually shared center for the end-on translation handle.
 const TRANSLATE_CENTER_RADIUS_PX = 22;
+const GIZMO_RENDER_ORDER = 3_000_000;
 
 export function createCutawayGizmo({
   scene,
@@ -48,6 +49,7 @@ export function createCutawayGizmo({
       color: 0x65bff5,
       opacity: 0.18,
       transparent: true,
+      depthTest: true,
       depthWrite: false,
       side: THREE.DoubleSide,
     }),
@@ -65,25 +67,45 @@ export function createCutawayGizmo({
     color: 0xa8dcff,
     opacity: 1,
     transparent: true,
+    depthTest: false,
+    depthWrite: false,
   });
   const border = new THREE.LineLoop(borderGeometry, borderMaterial);
+  border.renderOrder = GIZMO_RENDER_ORDER;
   geometries.add(borderGeometry);
   materials.add(borderMaterial);
 
   const handleRoot = new THREE.Group();
-  const translateMaterial = new THREE.MeshBasicMaterial({ color: 0x36d399 });
-  const rotateXMaterial = new THREE.MeshBasicMaterial({ color: 0xff6b7a });
-  const rotateYMaterial = new THREE.MeshBasicMaterial({ color: 0x5aa9ff });
+  const translateMaterial = new THREE.MeshBasicMaterial({
+    color: 0x36d399,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const rotateXMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff6b7a,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const rotateYMaterial = new THREE.MeshBasicMaterial({
+    color: 0x5aa9ff,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
   materials.add(translateMaterial);
   materials.add(rotateXMaterial);
   materials.add(rotateYMaterial);
 
   const shaftGeometry = new THREE.CylinderGeometry(0.025, 0.025, 0.58, 12);
   const shaft = new THREE.Mesh(shaftGeometry, translateMaterial);
+  shaft.renderOrder = GIZMO_RENDER_ORDER;
   shaft.rotation.x = Math.PI / 2;
   shaft.position.z = 0.29;
   const coneGeometry = new THREE.ConeGeometry(0.075, 0.2, 16);
   const cone = new THREE.Mesh(coneGeometry, translateMaterial);
+  cone.renderOrder = GIZMO_RENDER_ORDER;
   cone.rotation.x = Math.PI / 2;
   cone.position.z = 0.68;
   geometries.add(shaftGeometry);
@@ -91,9 +113,11 @@ export function createCutawayGizmo({
 
   const ringXGeometry = new THREE.TorusGeometry(0.42, 0.015, 8, 64);
   const ringX = new THREE.Mesh(ringXGeometry, rotateXMaterial);
+  ringX.renderOrder = GIZMO_RENDER_ORDER;
   ringX.rotation.y = Math.PI / 2;
   const ringYGeometry = new THREE.TorusGeometry(0.42, 0.015, 8, 64);
   const ringY = new THREE.Mesh(ringYGeometry, rotateYMaterial);
+  ringY.renderOrder = GIZMO_RENDER_ORDER;
   ringY.rotation.x = Math.PI / 2;
   geometries.add(ringXGeometry);
   geometries.add(ringYGeometry);
@@ -224,6 +248,7 @@ export function createCutawayGizmo({
     if (rect.width <= 0 || rect.height <= 0) return null;
     const projected = point.clone().project(camera);
     if (![projected.x, projected.y, projected.z].every(Number.isFinite)) return null;
+    if (projected.z < -1 || projected.z > 1) return null;
     const client = new THREE.Vector2(
       rect.left + (projected.x + 1) * 0.5 * rect.width,
       rect.top + (1 - projected.y) * 0.5 * rect.height,
@@ -419,11 +444,15 @@ export function createCutawayGizmo({
       return Math.abs(camera.top - camera.bottom) / Math.max(camera.zoom, 1e-6) / height;
     }
     const forward = camera.getWorldDirection(new THREE.Vector3());
+    const cameraPosition = camera.getWorldPosition(new THREE.Vector3());
     const depth = Math.max(
-      Math.abs(position.clone().sub(camera.position).dot(forward)),
+      Math.abs(position.clone().sub(cameraPosition).dot(forward)),
       camera.near || 1e-3,
     );
-    return 2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / height;
+    const effectiveFov = camera.getEffectiveFOV();
+    return 2 * depth
+      * Math.tan(THREE.MathUtils.degToRad(effectiveFov) / 2)
+      / height;
   }
 
   function updateForCamera() {

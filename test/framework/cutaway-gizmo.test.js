@@ -111,6 +111,27 @@ test("exposes enlarged hit proxies tagged with the three exact handle names", ()
   }
 });
 
+test("visible controls overlay section draws while the translucent fill remains depth-tested", () => {
+  const { gizmo } = createFixture();
+  const visibleHandles = gizmo.handleRoot.children.filter(
+    (child) => child.material?.opacity !== 0,
+  );
+
+  expect(visibleHandles).toHaveLength(4);
+  for (const handle of visibleHandles) {
+    expect(handle.material.transparent).toBe(true);
+    expect(handle.material.depthTest).toBe(false);
+    expect(handle.material.depthWrite).toBe(false);
+    expect(handle.renderOrder).toBeGreaterThan(2_000_000);
+  }
+  expect(gizmo.border.material.transparent).toBe(true);
+  expect(gizmo.border.material.depthTest).toBe(false);
+  expect(gizmo.border.material.depthWrite).toBe(false);
+  expect(gizmo.border.renderOrder).toBeGreaterThan(2_000_000);
+  expect(gizmo.fill.material.depthTest).toBe(true);
+  expect(gizmo.fill.material.depthWrite).toBe(false);
+});
+
 test("active appearance makes the plane prominent and idle appearance leaves it subtle", () => {
   const { gizmo } = createFixture();
 
@@ -185,6 +206,41 @@ test("updateForCamera preserves plane size while scaling handles for camera dist
 
   expect(gizmo.handleRoot.scale.x).toBeGreaterThan(nearScale);
   expect(gizmo.fill.scale.toArray()).toEqual([20, 20, 20]);
+});
+
+test("perspective scaling uses parented world position and effective zoomed FOV", () => {
+  const { camera, domElement, gizmo } = createFixture();
+  const cameraParent = new THREE.Group();
+  cameraParent.position.z = 40;
+  cameraParent.add(camera);
+  cameraParent.updateWorldMatrix(true, true);
+  gizmo.setPose({
+    position: new THREE.Vector3(),
+    quaternion: new THREE.Quaternion(),
+    size: 100,
+  });
+
+  const expectedScale = () => {
+    const rect = domElement.getBoundingClientRect();
+    const worldPosition = camera.getWorldPosition(new THREE.Vector3());
+    const forward = camera.getWorldDirection(new THREE.Vector3());
+    const depth = Math.abs(gizmo.group.position.clone().sub(worldPosition).dot(forward));
+    return 2 * depth
+      * Math.tan(THREE.MathUtils.degToRad(camera.getEffectiveFOV()) / 2)
+      / rect.height
+      * 72;
+  };
+
+  gizmo.updateForCamera();
+  const unzoomedScale = gizmo.handleRoot.scale.x;
+  expect(unzoomedScale).toBeCloseTo(expectedScale());
+
+  camera.zoom = 2;
+  camera.updateProjectionMatrix();
+  gizmo.updateForCamera();
+
+  expect(gizmo.handleRoot.scale.x).toBeCloseTo(expectedScale());
+  expect(gizmo.handleRoot.scale.x).toBeLessThan(unzoomedScale);
 });
 
 test("pointer cancellation restores the exact orbit state and releases capture", () => {
@@ -317,6 +373,22 @@ test("real center hit prioritizes production-pose translation over edge-on rings
   const changed = onPoseChange.mock.calls[0][0];
   expect(changed.position.distanceTo(pose.position)).toBeGreaterThan(0.01);
   expect(Math.abs(changed.quaternion.dot(pose.quaternion))).toBeCloseTo(1);
+});
+
+test("center outside the camera clip volume cannot claim semantic translation", () => {
+  const { domElement, onPoseChange, orbitControls, gizmo } = createFixture();
+  gizmo.setPose({
+    position: new THREE.Vector3(0, 0, 30),
+    quaternion: new THREE.Quaternion(),
+    size: 10,
+  });
+
+  pointer(domElement, "pointerdown", { x: 100, y: 100 });
+  pointer(domElement, "pointermove", { x: 100, y: 80 });
+
+  expect(onPoseChange).not.toHaveBeenCalled();
+  expect(orbitControls.enabled).toBe(true);
+  expect(domElement.setPointerCapture).not.toHaveBeenCalled();
 });
 
 test("real vertical ring-arm hit rotates local X in the production pose", () => {
