@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import * as THREE from "three";
 
 import { createCutawayGizmo } from "../../src/framework/cutaway-gizmo.js";
+import { initialCutawayPose } from "../../src/framework/cutaway-math.js";
 
 const fixtures = [];
 
@@ -61,6 +62,16 @@ function pointer(domElement, type, { x = 100, y = 100, pointerId = 7 } = {}) {
     button: 0,
     bubbles: true,
   }));
+}
+
+function setProductionPose(fixture) {
+  const box = new THREE.Box3(
+    new THREE.Vector3(-5, -4, -3),
+    new THREE.Vector3(5, 4, 3),
+  );
+  const pose = initialCutawayPose(box, fixture.camera);
+  fixture.gizmo.setPose(pose);
+  return pose;
 }
 
 test("setPose applies the plane pose and size while visibility remains controllable", () => {
@@ -194,6 +205,24 @@ test("camera-parallel normal dragging falls back to smooth screen-space movement
   expect(Number.isFinite(secondZ)).toBe(true);
 });
 
+test("off-center translation stays useful with the production camera-facing pose", () => {
+  const fixture = createFixture({ pickHandle: () => "translate" });
+  const { domElement, onPoseChange } = fixture;
+  const pose = setProductionPose(fixture);
+  const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(pose.quaternion);
+
+  pointer(domElement, "pointerdown", { x: 112, y: 100 });
+  pointer(domElement, "pointermove", { x: 112, y: 80 });
+
+  expect(onPoseChange).toHaveBeenCalledOnce();
+  const movement = onPoseChange.mock.calls[0][0].position
+    .clone()
+    .sub(pose.position)
+    .dot(normal);
+  expect(Number.isFinite(movement)).toBe(true);
+  expect(Math.abs(movement)).toBeGreaterThan(0.01);
+});
+
 test("rotation dragging emits a finite normalized quaternion", () => {
   const { camera, domElement, onPoseChange, gizmo } = createFixture({
     pickHandle: () => "rotate-x",
@@ -215,6 +244,24 @@ test("rotation dragging emits a finite normalized quaternion", () => {
   expect(quaternion.toArray().every(Number.isFinite)).toBe(true);
   expect(quaternion.length()).toBeCloseTo(1);
   expect(Math.abs(quaternion.x)).toBeGreaterThan(0);
+});
+
+test.each([
+  ["rotate-x", { x: 100, y: 75 }, { x: 100, y: 115 }],
+  ["rotate-y", { x: 125, y: 100 }, { x: 85, y: 100 }],
+])("%s rotates from the production camera-facing pose", (handle, down, move) => {
+  const fixture = createFixture({ pickHandle: () => handle });
+  const { domElement, onPoseChange } = fixture;
+  const pose = setProductionPose(fixture);
+
+  pointer(domElement, "pointerdown", down);
+  pointer(domElement, "pointermove", move);
+
+  expect(onPoseChange).toHaveBeenCalledOnce();
+  const quaternion = onPoseChange.mock.calls[0][0].quaternion;
+  expect(quaternion.toArray().every(Number.isFinite)).toBe(true);
+  expect(quaternion.length()).toBeCloseTo(1);
+  expect(Math.abs(quaternion.dot(pose.quaternion))).toBeLessThan(0.999_999);
 });
 
 test("dispose ends a drag, removes listeners and scene objects, and disposes owned resources once", () => {

@@ -21,6 +21,12 @@ const THEMES = {
   },
 };
 
+const TRANSLATION_SCREEN_ALIGNMENT = 0.9;
+const ROTATION_SCREEN_ALIGNMENT = 0.15;
+// A 120 px perpendicular drag rotates the plane by 90 degrees.
+const SCREEN_ROTATION_RADIANS_PER_PIXEL = Math.PI / 240;
+const SCREEN_AXIS_EPSILON_SQ = 1e-8;
+
 export function createCutawayGizmo({
   scene,
   camera,
@@ -192,6 +198,36 @@ export function createCutawayGizmo({
     });
   }
 
+  function viewDirectionAt(position) {
+    if (camera.isPerspectiveCamera) {
+      const cameraPosition = camera.getWorldPosition(new THREE.Vector3());
+      const direction = position.clone().sub(cameraPosition);
+      if (direction.lengthSq() > 1e-12) return direction.normalize();
+    }
+    return camera.getWorldDirection(new THREE.Vector3()).normalize();
+  }
+
+  function projectToClient(point) {
+    const rect = domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const projected = point.clone().project(camera);
+    if (![projected.x, projected.y, projected.z].every(Number.isFinite)) return null;
+    return new THREE.Vector2(
+      rect.left + (projected.x + 1) * 0.5 * rect.width,
+      rect.top + (1 - projected.y) * 0.5 * rect.height,
+    );
+  }
+
+  function screenRotationDirection(center, axis) {
+    const centerClient = projectToClient(center);
+    const axisClient = projectToClient(center.clone().add(axis));
+    if (!centerClient || !axisClient) return null;
+    const screenAxis = axisClient.sub(centerClient);
+    if (screenAxis.lengthSq() < SCREEN_AXIS_EPSILON_SQ) return null;
+    screenAxis.normalize();
+    return new THREE.Vector2(-screenAxis.y, screenAxis.x);
+  }
+
   function onPointerDown(event) {
     if (disposed || drag || !group.visible || (event.button != null && event.button !== 0)) return;
     const ray = rayFromEvent(event);
@@ -207,30 +243,48 @@ export function createCutawayGizmo({
         ? new THREE.Vector3(0, 1, 0)
         : new THREE.Vector3(0, 0, 1);
     const axis = localAxis.applyQuaternion(startQuaternion).normalize();
+    const viewDirection = viewDirectionAt(startPosition);
+    const alignment = Math.abs(axis.dot(viewDirection));
     const nextDrag = {
       pointerId: event.pointerId,
       handle,
       orbitEnabled: orbitControls?.enabled,
       startPosition,
       startQuaternion,
+      startClientX: event.clientX,
       startClientY: event.clientY,
       unitsPerPixel: worldUnitsPerPixelAt(startPosition),
       axis,
+      mode: null,
       startParameter: null,
       rotationPlane: null,
       startRadial: null,
+      screenRotationDirection: null,
     };
 
     if (handle === "translate") {
       nextDrag.startParameter = axisParameterFromRay(ray, startPosition, axis);
+      nextDrag.mode = alignment > TRANSLATION_SCREEN_ALIGNMENT
+        || nextDrag.startParameter == null
+        ? "screen-translate"
+        : "axis-translate";
     } else {
-      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(axis, startPosition);
-      const point = ray.intersectPlane(plane, new THREE.Vector3());
-      if (!point) return;
-      const radial = point.sub(startPosition);
-      if (radial.lengthSq() < 1e-12) return;
-      nextDrag.rotationPlane = plane;
-      nextDrag.startRadial = radial.normalize();
+      const useScreenRotation = alignment < ROTATION_SCREEN_ALIGNMENT;
+      if (!useScreenRotation) {
+        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(axis, startPosition);
+        const point = ray.intersectPlane(plane, new THREE.Vector3());
+        const radial = point?.sub(startPosition);
+        if (radial && radial.lengthSq() >= 1e-12) {
+          nextDrag.mode = "plane-rotate";
+          nextDrag.rotationPlane = plane;
+          nextDrag.startRadial = radial.normalize();
+        }
+      }
+      if (nextDrag.mode !== "plane-rotate") {
+        nextDrag.screenRotationDirection = screenRotationDirection(startPosition, axis);
+        if (!nextDrag.screenRotationDirection) return;
+        nextDrag.mode = "screen-rotate";
+      }
     }
 
     drag = nextDrag;
@@ -245,13 +299,32 @@ export function createCutawayGizmo({
     if (!ray) return;
 
     if (drag.handle === "translate") {
-      const parameter = axisParameterFromRay(ray, drag.startPosition, drag.axis);
-      const delta = drag.startParameter != null && parameter != null
-        ? parameter - drag.startParameter
-        : (drag.startClientY - event.clientY) * drag.unitsPerPixel;
+      let delta;
+      if (drag.mode === "screen-translate") {
+        delta = (drag.startClientY - event.clientY) * drag.unitsPerPixel;
+      } else {
+        const parameter = axisParameterFromRay(ray, drag.startPosition, drag.axis);
+        if (parameter == null) return;
+        delta = parameter - drag.startParameter;
+      }
       if (!Number.isFinite(delta)) return;
       group.position.copy(drag.startPosition).addScaledVector(drag.axis, delta);
       group.quaternion.copy(drag.startQuaternion);
+      notifyPose();
+      return;
+    }
+
+    if (drag.mode === "screen-rotate") {
+      const pointerDelta = new THREE.Vector2(
+        event.clientX - drag.startClientX,
+        event.clientY - drag.startClientY,
+      );
+      const angle = pointerDelta.dot(drag.screenRotationDirection)
+        * SCREEN_ROTATION_RADIANS_PER_PIXEL;
+      if (!Number.isFinite(angle)) return;
+      const delta = new THREE.Quaternion().setFromAxisAngle(drag.axis, angle);
+      group.quaternion.copy(delta.multiply(drag.startQuaternion)).normalize();
+      group.position.copy(drag.startPosition);
       notifyPose();
       return;
     }

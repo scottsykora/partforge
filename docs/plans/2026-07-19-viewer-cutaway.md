@@ -477,6 +477,13 @@ Also test that a synthetic pointercancel while dragging restores
 orbitControls.enabled and releases capture. Inject a pickHandle callback in the
 test so the event path does not depend on pixel-perfect raycasting.
 
+Add production-pose interaction coverage by creating the gizmo pose with
+initialCutawayPose(box, camera), where the camera looks at the box center. An
+off-center normal-handle press followed by a 20 px vertical drag must produce
+material movement along the plane normal. Independently drag the local-X and
+local-Y rotation handles in their useful screen directions and require each to
+emit a finite, normalized quaternion different from the initial pose.
+
 ### Step 2: Verify the tests fail
 
 ~~~bash
@@ -510,19 +517,37 @@ On pointerdown:
 1. Raycast only the invisible hit meshes, unless the injected pickHandle test
    hook returns a handle.
 2. Capture the pointer and save the starting position/quaternion.
-3. For translate, save the world normal and axisParameterFromRay result.
-4. For rotation, save the selected world axis, intersect the pointer ray with a
-   plane normal to that axis through the gizmo center, and save the normalized
-   radial vector.
-5. Set orbitControls.enabled to false, preserving its prior value.
+3. Compute the view direction from the camera to the gizmo center (or the
+   camera world direction for an orthographic camera) and select one stable
+   drag mode for the entire gesture.
+4. For translation, use axisParameterFromRay only when the world normal is not
+   nearly camera-aligned. When `abs(dot(axis, viewDirection)) > 0.9`, or the
+   analytic setup is singular, save client Y and world-units-per-pixel for a
+   screen-depth fallback.
+5. For rotation, use the ray/plane radial-vector method only when its plane is
+   not edge-on. When `abs(dot(axis, viewDirection)) < 0.15`, or the analytic
+   setup cannot produce a radial, project the gizmo center and center plus the
+   world axis to client pixels. Normalize that screen axis, save its
+   perpendicular, and use a fixed radians-per-pixel sensitivity.
+6. Set orbitControls.enabled to false, preserving its prior value.
 
 On pointermove:
 
-- Translate by the difference between current and starting axis parameters.
-- Rotate by signedAngleAroundAxis from the saved radial vector to the current
-  radial vector. Premultiply the starting quaternion by a world-axis rotation.
+- In analytic translation mode, translate by the difference between current
+  and starting axis parameters. In screen-depth mode, map upward client-Y
+  movement to positive motion along the saved world axis using the saved
+  world-units-per-pixel value.
+- In analytic rotation mode, rotate by signedAngleAroundAxis from the saved
+  radial vector to the current radial vector. In screen mode, project pointer
+  displacement onto the saved perpendicular and multiply by the fixed angular
+  sensitivity. Premultiply the starting quaternion by the resulting world-axis
+  rotation in either case.
 - Copy the new pose into group.position/group.quaternion and call onPoseChange
   with cloned values.
+
+Client projection must use the DOM element rect and invert NDC Y. Reject zero
+projected axes, failed intersections, and non-finite values without changing
+the pose or switching modes mid-gesture.
 
 On every end/cancel/blur path, release capture and restore the prior
 orbitControls.enabled value.
