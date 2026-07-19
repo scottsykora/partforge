@@ -3,7 +3,7 @@
 // so uppercase letters are `size` mm tall, in math (y-up, CCW) coordinates. The
 // kernel's text2d maps these to k.shape2d and unions them. No WASM, no DOM.
 import { pathProfile } from "./polygon.js";
-import { pointInRing } from "./shape2d-regions.js";
+import { resolveCurveFill } from "./curve-fill.js";
 
 const capHeightUnits = (font) =>
   font.tables?.os2?.sCapHeight || font.charToGlyph("H").getBoundingBox().y2 || font.unitsPerEm * 0.7;
@@ -31,30 +31,10 @@ function glyphContours(glyph, font) {
   return contours;
 }
 
-// Coarse-flatten a pathProfile contour to a ring for containment testing only.
-function flatten(contour) {
-  const ring = [contour.start.slice()];
-  for (const s of contour.segments) ring.push(s.to.slice());   // controls omitted — endpoints suffice for inside/outside
-  return ring;
-}
-
-// Group a glyph's contours into {outer, holes} by even-odd containment depth
-// (font winding is unreliable). Returns region specs referencing the ORIGINAL
-// curve contours.
-function groupContours(contours) {
-  const rings = contours.map(flatten);
-  const depth = rings.map((r, i) =>
-    rings.reduce((n, o, j) => (i !== j && pointInRing(r[0], o) ? n + 1 : n), 0));
-  const regions = [];
-  contours.forEach((c, i) => { if (depth[i] % 2 === 0) regions.push({ outer: c, holes: [], _i: i }); });
-  contours.forEach((c, i) => {
-    if (depth[i] % 2 === 1) {                            // hole → nearest containing outer
-      const home = regions.find((rg) => pointInRing(rings[i][0], rings[rg._i]));
-      (home ?? regions[0])?.holes.push(c);
-    }
-  });
-  return regions.map(({ outer, holes }) => ({ outer, holes }));
-}
+// OpenType glyf and CFF2 use nonzero winding. CFF1 Type 2 CharStrings use even-odd.
+// Synthetic opentype.Font fixtures have neither table and follow the TrueType default.
+export const fontFillRule = (font) =>
+  font.tables?.cff && !font.tables?.cff2 ? "evenodd" : "nonzero";
 
 // Translate a pathProfile contour by (dx,dy) and scale by s (about origin, post-translate order: scale then translate).
 const xform = (contour, s, dx, dy) => {
@@ -74,6 +54,7 @@ export function textGlyphs(font, string, { size = 10, align = "center", valign =
   const s = size / capHeightUnits(font);                        // font units → mm (cap height)
   const lineAdv = (lineHeight ?? (font.ascender - font.descender) / upm * size * 1.0);
   const kern = (a, b) => { if (!kerning || !a || !b) return 0; try { return font.getKerningValue(a, b); } catch { return 0; } };
+  const fillRule = fontFillRule(font);
 
   const lines = string.split("\n");
   // 1) lay out each line in font-unit x, collect glyph region specs + line width (mm)
@@ -82,7 +63,7 @@ export function textGlyphs(font, string, { size = 10, align = "center", valign =
     let penX = 0; const specs = [];
     glyphs.forEach((g, i) => {
       if (i > 0) penX += kern(glyphs[i - 1], g);
-      for (const region of groupContours(glyphContours(g, font)))
+      for (const region of resolveCurveFill(glyphContours(g, font), { fillRule }))
         specs.push({ region, penX });                          // remember this glyph's pen origin (font units)
       penX += g.advanceWidth + (tracking / s);                  // tracking is mm → font units
     });

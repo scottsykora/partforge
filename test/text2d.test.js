@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import opentype from "opentype.js";
-import { textGlyphs } from "../src/framework/geometry/text2d.js";
+import { fontFillRule, textGlyphs } from "../src/framework/geometry/text2d.js";
+import { DEFAULT_FONT_BYTES } from "../src/framework/geometry/fonts/default-font.js";
 
 function synthFont() {
   const g = (name, unicode, adv, draw) => {
@@ -60,6 +61,20 @@ test("tracking widens letter spacing", () => {
   const tight = bbox(textGlyphs(font, "HH", { size: 5, tracking: 0 })).w;
   const loose = bbox(textGlyphs(font, "HH", { size: 5, tracking: 2 })).w;
   expect(loose).toBeGreaterThan(tight + 1.5);
+});
+
+test("selects the OpenType outline fill rule", () => {
+  expect(fontFillRule({ tables: {} })).toBe("nonzero");                 // TrueType / synthetic
+  expect(fontFillRule({ tables: { cff: {} } })).toBe("evenodd");      // CFF1
+  expect(fontFillRule({ tables: { cff2: {} } })).toBe("nonzero");     // CFF2
+});
+
+test("real Roboto B resolves to one region with two counters", () => {
+  const { buffer, byteOffset, byteLength } = DEFAULT_FONT_BYTES;
+  const roboto = opentype.parse(buffer.slice(byteOffset, byteOffset + byteLength));
+  const regions = textGlyphs(roboto, "B", { size: 10, align: "left", valign: "baseline" });
+  expect(regions.length).toBe(1);
+  expect(regions[0].holes.length).toBe(2);
 });
 
 test("quadratic glyph commands elevate to cubic contours", () => {
