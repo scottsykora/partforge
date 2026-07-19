@@ -567,39 +567,46 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Default bundled font
+### Task 5: Default bundled font (Roboto)
 
 **Files:**
-- Add: a permissive-licensed outline font under `src/framework/geometry/fonts/` (e.g. `default.ttf`) + its license file
-- Modify: `src/framework/geometry/kernel-front.js` (parse + set `k._defaultFont` — via a lazily-imported bundled module) OR set it at each backend boot
+- Create: `src/framework/geometry/fonts/default-font.js` (base64-decoded `Uint8Array` of the TTF)
+- Modify: `src/framework/geometry/kernel-front.js` (parse + set `k._defaultFont`)
 - Test: `test/text2d-manifold.test.js` (a "default font when omitted" case)
 
-**ASSET NOTE (read first):** this task needs a real `.ttf` binary. Obtain it from an
-npm font package that ships a TTF under a permissive license (OFL/Apache) — e.g. add
-a dep like `@fontsource/roboto` (TTFs under `node_modules/@fontsource/roboto/files/`)
-or vendor a single subsetted TTF + its `LICENSE`. If a font binary genuinely cannot
-be added in this environment, STOP and report — the core feature (Tasks 1–4, BYO
-fonts) ships without it; the default is a zero-config convenience.
+**ASSET — already in the repo.** The font is vendored (done during planning):
+`src/framework/geometry/fonts/Roboto-Regular.ttf` (Roboto, **SIL OFL 1.1** — the
+current Roboto license; note: not Apache 2.0) with `Roboto-LICENSE.txt` beside it.
+opentype.js parses it (verified: 1326 glyphs, `os2.sCapHeight` present). No download
+needed.
 
-- [ ] **Step 1: Add the font + license**
+- [ ] **Step 1: Generate the sync bytes module**
 
-Add the chosen `.ttf` (ASCII/Latin subset preferred for size) under
-`src/framework/geometry/fonts/default.ttf` and its `LICENSE` beside it. Record the
-font name + license in the report.
-
-- [ ] **Step 2: Wire it as the default (bundle bytes synchronously)**
-
-Provide the font bytes to `finishKernel` synchronously. Since Vite serves a plain
-`.ttf` import as a URL, bundle the bytes as a base64/`Uint8Array` module (a tiny
-generated `default-font.js` exporting the bytes) so `k._defaultFont` can be parsed
-without async. In `kernel-front.js`, lazily parse + memoize on first defaulted call:
+Vite serves a plain `.ttf` import as a URL (async), so bundle the bytes as a
+synchronously-importable module. Run a small one-off to base64-encode the vendored
+TTF into `src/framework/geometry/fonts/default-font.js`:
 ```js
-import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";  // Uint8Array (base64-decoded at import)
-// …in resolveFont(), the font==null branch:
+// scripts-style one-liner (Node): read the ttf, write a base64 module
+import { readFileSync, writeFileSync } from "node:fs";
+const b64 = readFileSync("src/framework/geometry/fonts/Roboto-Regular.ttf").toString("base64");
+writeFileSync("src/framework/geometry/fonts/default-font.js",
+  `// Generated from Roboto-Regular.ttf (SIL OFL 1.1 — see Roboto-LICENSE.txt). Do not edit.\n` +
+  `const B64 = "${b64}";\n` +
+  `export const DEFAULT_FONT_BYTES = Uint8Array.from(atob(B64), (c) => c.charCodeAt(0));\n`);
+```
+(`atob` exists in Node 24, workers, and browsers. Keep the raw `.ttf` + license for
+provenance; the `.js` is what's imported.)
+
+- [ ] **Step 2: Wire it as the default**
+
+In `kernel-front.js`, import the bytes and lazily parse+memoize in the `font == null`
+branch of `resolveFont` (replacing the "no default" throw):
+```js
+import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
+// …in resolveFont(), the font == null branch:
 if (!k._defaultFont) k._defaultFont = opentype.parse(DEFAULT_FONT_BYTES.buffer);
 return k._defaultFont;
 ```
-(Generate `default-font.js` from the `.ttf` with a small script; commit both. Keep the raw `.ttf` for provenance.)
 
 - [ ] **Step 3: Test the default path**
 
