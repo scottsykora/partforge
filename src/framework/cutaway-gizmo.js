@@ -26,6 +26,8 @@ const ROTATION_SCREEN_ALIGNMENT = 0.15;
 // A 120 px perpendicular drag rotates the plane by 90 degrees.
 const SCREEN_ROTATION_RADIANS_PER_PIXEL = Math.PI / 240;
 const SCREEN_AXIS_EPSILON_SQ = 1e-8;
+// Reserve the visually shared center for the end-on translation handle.
+const TRANSLATE_CENTER_RADIUS_PX = 22;
 
 export function createCutawayGizmo({
   scene,
@@ -107,11 +109,11 @@ export function createCutawayGizmo({
   translateHit.rotation.x = Math.PI / 2;
   translateHit.position.z = 0.38;
   translateHit.userData.cutawayHandle = "translate";
-  const rotateXHitGeometry = new THREE.TorusGeometry(0.42, 0.07, 8, 48);
+  const rotateXHitGeometry = new THREE.TorusGeometry(0.42, 0.12, 8, 48);
   const rotateXHit = new THREE.Mesh(rotateXHitGeometry, hitMaterial);
   rotateXHit.rotation.y = Math.PI / 2;
   rotateXHit.userData.cutawayHandle = "rotate-x";
-  const rotateYHitGeometry = new THREE.TorusGeometry(0.42, 0.07, 8, 48);
+  const rotateYHitGeometry = new THREE.TorusGeometry(0.42, 0.12, 8, 48);
   const rotateYHit = new THREE.Mesh(rotateYHitGeometry, hitMaterial);
   rotateYHit.rotation.x = Math.PI / 2;
   rotateYHit.userData.cutawayHandle = "rotate-y";
@@ -161,6 +163,15 @@ export function createCutawayGizmo({
 
   function pick(event, ray) {
     if (pickHandle) return resolveHandle(pickHandle(event, handles, ray));
+    const center = projectToClient(group.position);
+    if (center) {
+      const dx = event.clientX - center.x;
+      const dy = event.clientY - center.y;
+      if (Number.isFinite(dx) && Number.isFinite(dy)
+        && Math.hypot(dx, dy) <= TRANSLATE_CENTER_RADIUS_PX) {
+        return "translate";
+      }
+    }
     group.updateWorldMatrix(true, true);
     const intersection = raycaster.intersectObjects(hitProxies, false)[0];
     return resolveHandle(intersection);
@@ -212,10 +223,11 @@ export function createCutawayGizmo({
     if (rect.width <= 0 || rect.height <= 0) return null;
     const projected = point.clone().project(camera);
     if (![projected.x, projected.y, projected.z].every(Number.isFinite)) return null;
-    return new THREE.Vector2(
+    const client = new THREE.Vector2(
       rect.left + (projected.x + 1) * 0.5 * rect.width,
       rect.top + (1 - projected.y) * 0.5 * rect.height,
     );
+    return Number.isFinite(client.x) && Number.isFinite(client.y) ? client : null;
   }
 
   function screenRotationDirection(center, axis) {

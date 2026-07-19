@@ -74,6 +74,15 @@ function setProductionPose(fixture) {
   return pose;
 }
 
+function clientPoint(fixture, worldPoint) {
+  const rect = fixture.domElement.getBoundingClientRect();
+  const projected = worldPoint.clone().project(fixture.camera);
+  return {
+    x: rect.left + (projected.x + 1) * 0.5 * rect.width,
+    y: rect.top + (1 - projected.y) * 0.5 * rect.height,
+  };
+}
+
 test("setPose applies the plane pose and size while visibility remains controllable", () => {
   const { gizmo } = createFixture();
   const position = new THREE.Vector3(1, 2, 3);
@@ -262,6 +271,72 @@ test.each([
   expect(quaternion.toArray().every(Number.isFinite)).toBe(true);
   expect(quaternion.length()).toBeCloseTo(1);
   expect(Math.abs(quaternion.dot(pose.quaternion))).toBeLessThan(0.999_999);
+});
+
+test("real center hit prioritizes production-pose translation over edge-on rings", () => {
+  const fixture = createFixture();
+  const { domElement, onPoseChange, gizmo } = fixture;
+  const pose = setProductionPose(fixture);
+  gizmo.updateForCamera();
+  const center = clientPoint(fixture, pose.position);
+
+  pointer(domElement, "pointerdown", center);
+  pointer(domElement, "pointermove", { x: center.x, y: center.y - 20 });
+
+  expect(onPoseChange).toHaveBeenCalledOnce();
+  const changed = onPoseChange.mock.calls[0][0];
+  expect(changed.position.distanceTo(pose.position)).toBeGreaterThan(0.01);
+  expect(Math.abs(changed.quaternion.dot(pose.quaternion))).toBeCloseTo(1);
+});
+
+test("real vertical ring-arm hit rotates local X in the production pose", () => {
+  const fixture = createFixture();
+  const { domElement, onPoseChange, gizmo } = fixture;
+  const pose = setProductionPose(fixture);
+  gizmo.updateForCamera();
+  const center = clientPoint(fixture, pose.position);
+
+  pointer(domElement, "pointerdown", { x: center.x, y: center.y - 30 });
+  pointer(domElement, "pointermove", { x: center.x, y: center.y - 10 });
+
+  expect(onPoseChange).toHaveBeenCalledOnce();
+  const changed = onPoseChange.mock.calls[0][0];
+  expect(Math.abs(changed.quaternion.dot(pose.quaternion))).toBeLessThan(0.999_999);
+  expect(changed.position.distanceTo(pose.position)).toBeCloseTo(0);
+});
+
+test("real horizontal ring-arm hit rotates local Y in the production pose", () => {
+  const fixture = createFixture();
+  const { domElement, onPoseChange, gizmo } = fixture;
+  const pose = setProductionPose(fixture);
+  gizmo.updateForCamera();
+  const center = clientPoint(fixture, pose.position);
+
+  pointer(domElement, "pointerdown", { x: center.x + 30, y: center.y });
+  pointer(domElement, "pointermove", { x: center.x + 10, y: center.y });
+
+  expect(onPoseChange).toHaveBeenCalledOnce();
+  const changed = onPoseChange.mock.calls[0][0];
+  expect(Math.abs(changed.quaternion.dot(pose.quaternion))).toBeLessThan(0.999_999);
+  expect(changed.position.distanceTo(pose.position)).toBeCloseTo(0);
+});
+
+test("ring proxy provides a touch-friendly band at the intended apparent scale", () => {
+  const fixture = createFixture();
+  const { camera, domElement, gizmo } = fixture;
+  setProductionPose(fixture);
+  gizmo.updateForCamera();
+  const rect = domElement.getBoundingClientRect();
+  const distance = camera.position.distanceTo(gizmo.group.position);
+  const worldUnitsPerPixel = 2 * distance
+    * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
+    / rect.height;
+  const bandCssPixels = 2 * gizmo.handles.rotateX.geometry.parameters.tube
+    * gizmo.handleRoot.scale.x
+    / worldUnitsPerPixel;
+
+  expect(bandCssPixels).toBeGreaterThanOrEqual(16);
+  expect(bandCssPixels).toBeLessThanOrEqual(18);
 });
 
 test("dispose ends a drag, removes listeners and scene objects, and disposes owned resources once", () => {

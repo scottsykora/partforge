@@ -484,6 +484,13 @@ material movement along the plane normal. Independently drag the local-X and
 local-Y rotation handles in their useful screen directions and require each to
 emit a finite, normalized quaternion different from the initial pose.
 
+Run a second production-pose interaction group without the injected pick hook
+to cover the actual hit proxies. A pointer at the projected gizmo center must
+select translation and preserve the starting quaternion. Pointers on the
+vertical and horizontal ring arms, about 30 CSS px from center at the intended
+72 px handle scale, must select local-X and local-Y rotation respectively.
+Assert the enlarged ring-proxy band is approximately 16–18 CSS px thick.
+
 ### Step 2: Verify the tests fail
 
 ~~~bash
@@ -505,7 +512,9 @@ createCutawayGizmo must build one Group containing:
 Tag each hit mesh with userData.cutawayHandle. Scale the plane, ring radii,
 visible line widths, and hit regions from pose.size. Keep the visible handles a
 stable apparent size by updating their scale from camera distance in an
-updateForCamera() method called by the viewer render loop.
+updateForCamera() method called by the viewer render loop. Use a ring hit-proxy
+tube radius of about 0.12 local units, giving a touch-friendly band near 17 CSS
+px at the intended 72 px apparent handle scale.
 
 ### Step 4: Implement direct manipulation
 
@@ -514,8 +523,10 @@ lostpointercapture, pointerleave, and window blur.
 
 On pointerdown:
 
-1. Raycast only the invisible hit meshes, unless the injected pickHandle test
-   hook returns a handle.
+1. Honor the injected pickHandle test hook first. On the real path, project the
+   gizmo center into client coordinates and reserve a documented 22 CSS px disk
+   for translation so the two edge-on ring proxies cannot steal the end-on
+   normal handle. Outside that disk, raycast only the invisible hit meshes.
 2. Capture the pointer and save the starting position/quaternion.
 3. Compute the view direction from the camera to the gizmo center (or the
    camera world direction for an orthographic camera) and select one stable
