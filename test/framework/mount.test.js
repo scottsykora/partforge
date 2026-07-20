@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const fakeViewers = [];
+const fakeTooltips = [];
 vi.mock("../../src/framework/viewer.js", () => ({
   createViewer: vi.fn(() => {
     const built = new Set();
@@ -57,8 +58,38 @@ vi.mock("../../src/framework/pick-request/index.js", () => ({
   createPickRequestClient: vi.fn(() => ({ detach: vi.fn() })),
 }));
 
+vi.mock("../../src/framework/tooltip.js", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    createTooltipPresenter: vi.fn(() => {
+      const presenter = {
+        showPointer: vi.fn(() => Symbol("pointer")),
+        showAnchor: vi.fn(() => Symbol("anchor")),
+        hide: vi.fn(),
+        dispose: vi.fn(),
+      };
+      fakeTooltips.push(presenter);
+      return presenter;
+    }),
+  };
+});
+
+vi.mock("../../src/framework/cutaway-controls.js", async (importOriginal) => {
+  const real = await importOriginal();
+  return { ...real, attachCutawayControls: vi.fn(real.attachCutawayControls) };
+});
+
+vi.mock("../../src/framework/viewer-controls.js", async (importOriginal) => {
+  const real = await importOriginal();
+  return { ...real, attachViewerControls: vi.fn(real.attachViewerControls) };
+});
+
 import { mount } from "../../src/framework/mount.js";
 import { attachPicker, attachPickToggle, attachHoverLabels } from "../../src/framework/selection/index.js";
+import { attachCutawayControls } from "../../src/framework/cutaway-controls.js";
+import { attachViewerControls } from "../../src/framework/viewer-controls.js";
+import { createTooltipPresenter } from "../../src/framework/tooltip.js";
 
 const makePart = () => ({
   meta: { title: "Test Part", backend: "manifold" }, // pinned backend: no probe run
@@ -110,6 +141,7 @@ beforeEach(() => {
   localStorage.clear();
   document.body.innerHTML = "";
   fakeViewers.length = 0;
+  fakeTooltips.length = 0;
   vi.clearAllMocks();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -121,6 +153,55 @@ test("ready resolves after the first successful build; no getElementById with fu
   expect(spy).not.toHaveBeenCalled();
   finishFirstBuild(workers);
   return expect(runtime.ready).resolves.toBeUndefined();
+});
+
+test("mount creates one tooltip presenter and shares it with every viewer consumer", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const part = makePart();
+
+  mount(part, { createWorker, elements: els });
+
+  expect(createTooltipPresenter).toHaveBeenCalledOnce();
+  const tooltip = fakeTooltips[0];
+  const viewer = fakeViewers[0];
+  expect(attachCutawayControls).toHaveBeenCalledWith(
+    viewer,
+    { cutaway: els.chrome.cutaway },
+    { tooltip },
+  );
+  expect(attachHoverLabels).toHaveBeenCalledWith(viewer, { part, tooltip });
+  expect(attachViewerControls).toHaveBeenCalledWith(viewer, els.chrome, { tooltip });
+});
+
+test("mount detaches tooltip consumers before disposing the shared presenter once", () => {
+  const order = [];
+  const cutaway = { reset: vi.fn(), detach: vi.fn(() => order.push("cutaway")) };
+  const hover = { detach: vi.fn(() => order.push("hover")) };
+  const chrome = { detach: vi.fn(() => order.push("chrome")) };
+  const tooltip = {
+    showPointer: vi.fn(), showAnchor: vi.fn(), hide: vi.fn(),
+    dispose: vi.fn(() => order.push("tooltip")),
+  };
+  attachCutawayControls.mockImplementationOnce(() => cutaway);
+  attachHoverLabels.mockImplementationOnce(() => hover);
+  attachViewerControls.mockImplementationOnce(() => chrome);
+  createTooltipPresenter.mockImplementationOnce(() => tooltip);
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+  fakeViewers[0].dispose.mockImplementationOnce(() => order.push("viewer"));
+
+  runtime.dispose();
+  runtime.dispose();
+
+  expect(cutaway.detach).toHaveBeenCalledOnce();
+  expect(hover.detach).toHaveBeenCalledOnce();
+  expect(chrome.detach).toHaveBeenCalledOnce();
+  expect(tooltip.dispose).toHaveBeenCalledOnce();
+  expect(order.indexOf("tooltip")).toBeGreaterThan(order.indexOf("cutaway"));
+  expect(order.indexOf("tooltip")).toBeGreaterThan(order.indexOf("hover"));
+  expect(order.indexOf("tooltip")).toBeGreaterThan(order.indexOf("chrome"));
+  expect(order.indexOf("tooltip")).toBeLessThan(order.indexOf("viewer"));
 });
 
 test("full element refs wire cutaway without getElementById lookup", () => {

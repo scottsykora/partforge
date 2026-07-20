@@ -3,6 +3,7 @@ import { triggerDownload, downloadParts } from "./download.js";
 import { createViewer } from "./viewer.js";
 import { attachViewerControls } from "./viewer-controls.js";
 import { attachCutawayControls } from "./cutaway-controls.js";
+import { createTooltipPresenter } from "./tooltip.js";
 import { loadCamera } from "./view-state.js";
 import { buildControls } from "./controls.js";
 import { relevantParamKeys } from "./param-deps.js";
@@ -59,10 +60,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
   };
 
   const viewer = createViewer(els.viewer, part);
+  const tooltip = createTooltipPresenter();
   const cutawayChrome = attachCutawayControls(viewer, {
     cutaway: els.chrome.cutaway,
-  });
-  const hover = attachHoverLabels(viewer, { part }); // always-on hover inspection (no-op on touch-only devices)
+  }, { tooltip });
+  const hover = attachHoverLabels(viewer, { part, tooltip }); // always-on hover inspection (no-op on touch-only devices)
   const ui = createStatusUi({ ...els.status, exports: [els.exports.stl, els.exports.step, els.exports.threeMf] });
 
   // ?backend=occt|manifold forces the backend; otherwise it's detected per part.
@@ -287,7 +289,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
   els.exports.threeMf?.addEventListener("click", on3mfClick);
 
   // Optional host-page viewer chrome (pause / reframe / theme) + camera persistence.
-  const chrome = attachViewerControls(viewer, els.chrome);
+  const chrome = attachViewerControls(viewer, els.chrome, { tooltip });
 
   // Full teardown of everything this mount created. Idempotent. A disposed runtime
   // can never surface a late build result (workers are terminated, the loop is
@@ -308,6 +310,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
     els.exports.threeMf?.removeEventListener("click", on3mfClick);
     chrome.detach();
     cutawayChrome.detach();
+    tooltip.dispose();
     tabsCtl.detach();
     panel.dispose();
     dbg?.detach();

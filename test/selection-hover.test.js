@@ -2,6 +2,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import * as THREE from "three";
 import { attachHoverLabels } from "../src/framework/selection/hover.js";
+import { createTooltipPresenter } from "../src/framework/tooltip.js";
 
 const part = { parts: { one: { label: "Planter", views: ["v"] } }, views: { v: {} } };
 const sync = (cb) => cb(); // run raycasts synchronously in tests
@@ -50,7 +51,98 @@ function makeViewer({ featured = true, handleHover = false } = {}) {
 
 const move = (el, x, y) => el.dispatchEvent(new PointerEvent("pointermove", { clientX: x, clientY: y, bubbles: true }));
 
-afterEach(() => { document.body.innerHTML = ""; });
+afterEach(() => {
+  document.body.innerHTML = "";
+  vi.unstubAllGlobals();
+});
+
+function makeTooltip() {
+  return {
+    showPointer: vi.fn(() => Symbol("feature tooltip")),
+    hide: vi.fn(),
+    dispose: vi.fn(),
+  };
+}
+
+test("an injected presenter receives feature content and pointer coordinates", () => {
+  const viewer = makeViewer();
+  const tooltip = makeTooltip();
+  const hover = attachHoverLabels(viewer, { part, schedule: sync, tooltip });
+
+  move(viewer.domElement, 100, 100);
+
+  expect(tooltip.showPointer).toHaveBeenCalledWith(
+    { title: "Drainage hole", subtitle: "Planter" },
+    100,
+    100,
+  );
+  hover.detach();
+  expect(tooltip.dispose).not.toHaveBeenCalled();
+});
+
+test("an injected presenter receives unlabeled sub-part content", () => {
+  const viewer = makeViewer({ featured: false });
+  const tooltip = makeTooltip();
+  const hover = attachHoverLabels(viewer, { part, schedule: sync, tooltip });
+
+  move(viewer.domElement, 100, 100);
+
+  expect(tooltip.showPointer).toHaveBeenCalledWith(
+    { title: "Planter", subtitle: "" },
+    100,
+    100,
+  );
+  hover.detach();
+});
+
+test("hide and detach use only the token returned for feature hover", () => {
+  const viewer = makeViewer();
+  const token = Symbol("owned feature tooltip");
+  const tooltip = makeTooltip();
+  tooltip.showPointer.mockReturnValue(token);
+  const hover = attachHoverLabels(viewer, { part, schedule: sync, tooltip });
+
+  move(viewer.domElement, 100, 100);
+  move(viewer.domElement, 1, 1);
+  expect(tooltip.hide).toHaveBeenCalledOnce();
+  expect(tooltip.hide).toHaveBeenCalledWith(token);
+
+  hover.detach();
+  expect(tooltip.hide).toHaveBeenCalledOnce();
+  expect(tooltip.dispose).not.toHaveBeenCalled();
+});
+
+test("detach cannot hide a newer presentation from another tooltip consumer", () => {
+  const viewer = makeViewer();
+  const tooltip = createTooltipPresenter();
+  const hover = attachHoverLabels(viewer, { part, schedule: sync, tooltip });
+
+  move(viewer.domElement, 100, 100);
+  const anchor = document.createElement("button");
+  document.body.appendChild(anchor);
+  tooltip.showAnchor({ title: "Re-frame model" }, anchor);
+
+  hover.detach();
+
+  const tip = document.getElementById("pf-hover-tip");
+  expect(tip.classList.contains("show")).toBe(true);
+  expect(tip.querySelector("b").textContent).toBe("Re-frame model");
+  tooltip.dispose();
+});
+
+test("touch-only standalone and injected usage are inert", () => {
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false })));
+  const viewer = makeViewer();
+  const tooltip = makeTooltip();
+
+  const injected = attachHoverLabels(viewer, { part, tooltip });
+  const standalone = attachHoverLabels(viewer, { part });
+  injected.detach();
+  standalone.detach();
+
+  expect(tooltip.dispose).not.toHaveBeenCalled();
+  expect(document.getElementById("pf-hover-tip")).toBeNull();
+});
 
 test("hovering a labeled feature shows 'feature · sub-part' and a highlight overlay", () => {
   const viewer = makeViewer();
