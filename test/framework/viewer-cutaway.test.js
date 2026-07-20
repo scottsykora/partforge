@@ -53,6 +53,7 @@ function createFakeCutaway() {
     setViewportSize: vi.fn(),
     isPointVisible: vi.fn(() => true),
     registerClippableMaterial: vi.fn(),
+    onHandleHoverChange: vi.fn(),
     updateForCamera: vi.fn(),
     renderOverlay: vi.fn((renderer, camera) => {
       if (!cutaway.isEnabled) return false;
@@ -186,6 +187,23 @@ test("viewer forwards the exact feature-edge color for each cutaway theme", () =
 
   viewer.setTheme("light");
   expect(state.cutaway.setTheme).toHaveBeenLastCalledWith("light", 0x33414f);
+
+  viewer.dispose();
+});
+
+test("viewer delegates cutaway handle hover subscriptions without exposing the gizmo", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+  const listener = vi.fn();
+  const unsubscribe = vi.fn();
+  state.cutaway.onHandleHoverChange.mockReturnValue(unsubscribe);
+
+  expect(viewer.onCutawayHandleHover(listener)).toBe(unsubscribe);
+  expect(state.cutaway.onHandleHoverChange).toHaveBeenCalledOnce();
+  expect(state.cutaway.onHandleHoverChange).toHaveBeenCalledWith(listener);
+  expect(viewer.gizmo).toBeUndefined();
 
   viewer.dispose();
 });

@@ -123,6 +123,15 @@ function findCaps(scene) {
   );
 }
 
+function movePointer(element, x = 100, y = 100) {
+  element.dispatchEvent(new PointerEvent("pointermove", {
+    clientX: x,
+    clientY: y,
+    pointerId: 1,
+    pointerType: "mouse",
+  }));
+}
+
 describe("createCutaway capability", () => {
   test.each([
     [true, true],
@@ -148,6 +157,61 @@ describe("createCutaway capability", () => {
     expect(fixture.renderer.localClippingEnabled).toBe(false);
     expect(findGizmo(fixture.scene).visible).toBe(false);
   });
+});
+
+test("handle hover subscriptions start at null, forward transitions, and unsubscribe", () => {
+  const fixture = createFixture();
+  const listener = vi.fn();
+  const unsubscribe = fixture.controller.onHandleHoverChange(listener);
+
+  expect(listener).toHaveBeenCalledOnce();
+  expect(listener).toHaveBeenLastCalledWith(null);
+
+  fixture.controller.setEnabled(true);
+  movePointer(fixture.domElement);
+  movePointer(fixture.domElement);
+  movePointer(fixture.domElement, 1, 1);
+
+  expect(listener.mock.calls.map(([handle]) => handle)).toEqual([
+    null,
+    "translate",
+    null,
+  ]);
+
+  unsubscribe();
+  unsubscribe();
+  movePointer(fixture.domElement);
+  expect(listener).toHaveBeenCalledTimes(3);
+});
+
+test("disabling and disposing publish null and reject late subscriptions safely", () => {
+  const fixture = createFixture();
+  const listener = vi.fn();
+  fixture.controller.onHandleHoverChange(listener);
+  fixture.controller.setEnabled(true);
+  movePointer(fixture.domElement);
+
+  fixture.controller.setEnabled(false);
+  expect(listener).toHaveBeenLastCalledWith(null);
+
+  fixture.controller.setEnabled(true);
+  movePointer(fixture.domElement);
+  fixture.controller.dispose();
+  expect(listener.mock.calls.map(([handle]) => handle)).toEqual([
+    null,
+    "translate",
+    null,
+    "translate",
+    null,
+  ]);
+
+  const lateListener = vi.fn();
+  const lateUnsubscribe = fixture.controller.onHandleHoverChange(lateListener);
+  expect(lateListener).not.toHaveBeenCalled();
+  expect(() => {
+    lateUnsubscribe();
+    lateUnsubscribe();
+  }).not.toThrow();
 });
 
 test("empty bounds refuse activation without changing materials or scheduling fade", () => {

@@ -352,6 +352,7 @@ export function createViewer(container, part) {
     resetCutaway: cutaway.reset,
     isWorldPointVisible: cutaway.isPointVisible,
     registerCutawayMaterial: cutaway.registerClippableMaterial,
+    onCutawayHandleHover: cutaway.onHandleHoverChange,
     dispose,
   };
 }

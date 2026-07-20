@@ -94,28 +94,45 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
 
   let pending = null; // latest pointer position; one raycast per scheduled frame
   let frameScheduled = false;
+  let workVersion = 0;
   let down = false;
   let detached = false;
+  let suppressed = false;
+
+  function invalidatePendingWork() {
+    pending = null;
+    frameScheduled = false;
+    workVersion += 1;
+  }
+
+  const unsubscribeHandleHover = viewer.onCutawayHandleHover?.((handle) => {
+    suppressed = handle != null;
+    if (!suppressed) return;
+    invalidatePendingWork();
+    hide();
+  }) ?? (() => {});
 
   function onMove(ev) {
     if (detached) return;
     if (ev.pointerType === "touch") return;
-    if (down) return;
+    if (down || suppressed) return;
     pending = { x: ev.clientX, y: ev.clientY };
     if (frameScheduled) return;
     frameScheduled = true;
+    const scheduledVersion = workVersion;
     schedule(() => {
+      if (scheduledVersion !== workVersion) return;
       frameScheduled = false;
       const p = pending;
       pending = null;
-      if (detached || !p || down) return;
+      if (detached || !p || down || suppressed) return;
       const hit = raycastViewer(viewer, p.x, p.y);
       if (hit) show(hit, p.x, p.y); else hide();
     });
   }
-  const onDown = () => { down = true; pending = null; hide(); };
+  const onDown = () => { down = true; invalidatePendingWork(); hide(); };
   const onUp = () => { down = false; };
-  const onLeave = () => { pending = null; hide(); };
+  const onLeave = () => { invalidatePendingWork(); hide(); };
 
   viewer.domElement.addEventListener("pointermove", onMove);
   viewer.domElement.addEventListener("pointerdown", onDown);
@@ -126,7 +143,8 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
     detach: () => {
       if (detached) return;
       detached = true;
-      pending = null;
+      invalidatePendingWork();
+      unsubscribeHandleHover();
       viewer.domElement.removeEventListener("pointermove", onMove);
       viewer.domElement.removeEventListener("pointerdown", onDown);
       viewer.domElement.removeEventListener("pointerup", onUp);

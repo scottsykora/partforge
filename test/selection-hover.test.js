@@ -6,7 +6,7 @@ import { attachHoverLabels } from "../src/framework/selection/hover.js";
 const part = { parts: { one: { label: "Planter", views: ["v"] } }, views: { v: {} } };
 const sync = (cb) => cb(); // run raycasts synchronously in tests
 
-function makeViewer({ featured = true } = {}) {
+function makeViewer({ featured = true, handleHover = false } = {}) {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
   camera.position.set(0, 0, 10);
   camera.lookAt(0, 0, 0);
@@ -26,7 +26,26 @@ function makeViewer({ featured = true } = {}) {
   const domElement = document.createElement("div");
   domElement.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
   document.body.appendChild(domElement);
-  return { camera, domElement, _subMeshes: { one: mesh }, _group: group };
+  const viewer = { camera, domElement, _subMeshes: { one: mesh }, _group: group };
+  if (handleHover) {
+    const listeners = new Set();
+    const unsubscribe = vi.fn((listener) => listeners.delete(listener));
+    viewer.onCutawayHandleHover = vi.fn((listener) => {
+      listeners.add(listener);
+      listener(null);
+      let subscribed = true;
+      return () => {
+        if (!subscribed) return;
+        subscribed = false;
+        unsubscribe(listener);
+      };
+    });
+    viewer.emitCutawayHandleHover = (handle) => {
+      for (const listener of listeners) listener(handle);
+    };
+    viewer.hoverUnsubscribe = unsubscribe;
+  }
+  return viewer;
 }
 
 const move = (el, x, y) => el.dispatchEvent(new PointerEvent("pointermove", { clientX: x, clientY: y, bubbles: true }));
@@ -175,4 +194,63 @@ test("detach disposes the initial empty overlay geometry before any hover", () =
 
   expect(disposeGeometry).toHaveBeenCalledTimes(1);
   disposeGeometry.mockRestore();
+});
+
+test("cutaway handle ownership immediately hides feature hover and suppresses moves", () => {
+  const viewer = makeViewer({ handleHover: true });
+  const hover = attachHoverLabels(viewer, { part, schedule: sync });
+  move(viewer.domElement, 100, 100);
+  const tip = document.getElementById("pf-hover-tip");
+  const overlay = viewer._group.children.find(
+    (child) => child !== viewer._subMeshes.one,
+  );
+  expect(tip.classList.contains("show")).toBe(true);
+  expect(overlay.visible).toBe(true);
+
+  viewer.emitCutawayHandleHover("translate");
+  expect(tip.classList.contains("show")).toBe(false);
+  expect(overlay.visible).toBe(false);
+
+  move(viewer.domElement, 100, 100);
+  expect(tip.classList.contains("show")).toBe(false);
+  expect(overlay.visible).toBe(false);
+
+  viewer.emitCutawayHandleHover(null);
+  expect(tip.classList.contains("show")).toBe(false);
+  move(viewer.domElement, 100, 100);
+  expect(tip.classList.contains("show")).toBe(true);
+  expect(overlay.visible).toBe(true);
+  hover.detach();
+});
+
+test("cutaway ownership invalidates a queued frame even after ownership clears", () => {
+  const viewer = makeViewer({ handleHover: true });
+  const frames = [];
+  const hover = attachHoverLabels(viewer, {
+    part,
+    schedule: (callback) => frames.push(callback),
+  });
+
+  move(viewer.domElement, 100, 100);
+  viewer.emitCutawayHandleHover("rotate-x");
+  viewer.emitCutawayHandleHover(null);
+  frames[0]();
+  expect(document.getElementById("pf-hover-tip").classList.contains("show")).toBe(false);
+
+  move(viewer.domElement, 100, 100);
+  expect(frames).toHaveLength(2);
+  frames[1]();
+  expect(document.getElementById("pf-hover-tip").classList.contains("show")).toBe(true);
+  hover.detach();
+});
+
+test("detach unsubscribes cutaway ownership once and ignores later emissions", () => {
+  const viewer = makeViewer({ handleHover: true });
+  const hover = attachHoverLabels(viewer, { part, schedule: sync });
+
+  hover.detach();
+  hover.detach();
+  expect(viewer.hoverUnsubscribe).toHaveBeenCalledOnce();
+  expect(() => viewer.emitCutawayHandleHover("rotate-y")).not.toThrow();
+  expect(document.getElementById("pf-hover-tip")).toBeNull();
 });

@@ -60,6 +60,31 @@ export function createCutaway({
   let cancelIdle = null;
   let previousLocalClippingEnabled;
   let disposed = false;
+  let hoveredHandle = null;
+  const handleHoverSubscribers = new Set();
+
+  function publishHandleHover(nextHandle) {
+    const normalized = nextHandle === "translate"
+      || nextHandle === "rotate-x"
+      || nextHandle === "rotate-y"
+      ? nextHandle
+      : null;
+    if (normalized === hoveredHandle) return;
+    hoveredHandle = normalized;
+    for (const listener of handleHoverSubscribers) listener(hoveredHandle);
+  }
+
+  function onHandleHoverChange(listener) {
+    if (disposed || typeof listener !== "function") return () => {};
+    handleHoverSubscribers.add(listener);
+    listener(hoveredHandle);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      handleHoverSubscribers.delete(listener);
+    };
+  }
 
   function selected(name) {
     return selectedNames == null || selectedNames.has(name);
@@ -145,6 +170,7 @@ export function createCutaway({
     orbitControls,
     onPoseChange,
     onActivity: showActive,
+    onHandleHoverChange: publishHandleHover,
   });
   gizmo.setVisible(false);
   gizmo.setTheme(theme);
@@ -196,9 +222,10 @@ export function createCutaway({
 
   function disable() {
     cancelIdleFade();
+    gizmo.setVisible(false);
+    publishHandleHover(null);
     if (!enabled) return true;
     enabled = false;
-    gizmo.setVisible(false);
     for (const { renderSet } of renderSets.values()) {
       renderSet.setVisible(false);
       renderSet.setEnabled(false);
@@ -332,6 +359,8 @@ export function createCutaway({
     renderSets.clear();
     auxiliaryMaterials.clear();
     gizmo.dispose();
+    publishHandleHover(null);
+    handleHoverSubscribers.clear();
     overlayScene.clear();
     capGeometry.dispose();
   }
@@ -351,6 +380,7 @@ export function createCutaway({
     registerClippableMaterial,
     updateForCamera,
     renderOverlay,
+    onHandleHoverChange,
     dispose,
   };
 }
