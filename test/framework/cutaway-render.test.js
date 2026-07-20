@@ -92,7 +92,7 @@ describe("createHatchMaterial", () => {
     );
     expect(material.fragmentShader).toContain("HATCH_LINE_CSS_PX * 0.5");
     expect(material.fragmentShader).toMatch(
-      /smoothstep\(\s*halfLine - antialias,\s*halfLine \+ antialias,\s*distanceToLine\s*\)/,
+      /float stripe = 1\.0 - smoothstep\(\s*halfLine - antialias,\s*halfLine \+ antialias,\s*distanceToLine\s*\);/,
     );
     expect(material.fragmentShader).toContain("mix(uBase, uInk, stripe)");
     expect(material.fragmentShader).toMatch(
