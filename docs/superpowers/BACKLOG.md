@@ -33,10 +33,15 @@ as candidate future work. Each remaining item becomes its own spec/plan under
   that resolves self-intersecting/overlapping glyph outlines keeping beziers;
   bring-your-own fonts (`fonts` field, bundle/URL) + a bundled Roboto default. New
   runtime dep: `paper`.
-- **Shape2D sugar + scission** (v0.21.0) — `shape.extrude({h,…})` / `shape.revolve({…})`
+- **Shape2D sugar + scission** (v0.21.0, PR #59) — `shape.extrude({h,…})` / `shape.revolve({…})`
   sugar for `k.extrude/revolve({profile: shape, …})`, and `shape.regions()` (scission:
   each disjoint region as its own live `Shape2D`). Plus paper.js lazy-init so text-free
   parts don't pay its worker-bundle cost.
+- **`hull` / `hullChain` → `Shape2D`** (v0.22.0) — 2-D convex hull of point
+  lists, curve contours, and `Shape2D`s, returning a `Shape2D`; `hullChain`
+  sweeps the hull over an ordered sequence (≥2 inputs) for capsules, rounded
+  slots, and organic tapers. Pure-JS (monotone chain), no backend/WASM
+  involvement — point/contour inputs hull bit-identically across backends.
 
 The curve thread (F1→F3) + offsetPolygon covers most of JSCAD's geom2 workflow:
 booleans, offset/expand/contract, curved paths, linear/rotate extrude, and the
@@ -51,7 +56,7 @@ booleans, offset/expand/contract, curved paths, linear/rotate extrude, and the
 | 2-D primitives | polygon helpers | ✅ |
 | curved paths (`path2`) | `pathProfile` cubics | ✅ |
 | `extrudeLinear`/`extrudeRotate` | `extrude`/`revolve` (accept `Shape2D`) | ✅ |
-| `hull`/`hullChain` | — | ❌ |
+| `hull`/`hullChain` | `k.hull`/`k.hullChain` | ✅ |
 | `vectorText`/`vectorChar` | `k.text2d` → `Shape2D` | ✅ |
 | `scission` (split disjoint) | `.regions()` (live `Shape2D`s) + `.toRegions()` | ✅ |
 | `align`/`center` | `.boundingBox()`; no align helper | ◑ |
@@ -59,16 +64,12 @@ booleans, offset/expand/contract, curved paths, linear/rotate extrude, and the
 
 ## Candidates — ranked (re-evaluated now that `Shape2D` exists)
 
-1. **`hull` / `hullChain` → `Shape2D`** (medium value, low-ish effort) — **NEXT.**
-   2-D convex hull returning a `Shape2D`; `hullChain` (swept hull over a sequence)
-   gives capsules, rounded slots, organic tapers. Pure-JS, robust. Good quick win,
-   and the last real gap in JSCAD's `geom2` coverage.
-2. **`align` / `center` helpers** (low/low) — position a `Shape2D`/`Solid` by
+1. **`align` / `center` helpers** (low/low) — position a `Shape2D`/`Solid` by
    its bbox (align edges/centers to another or to origin). Small ergonomic win.
-3. **Rounded 3-D primitives** (`roundedCuboid`/`roundedCylinder`/`torus`) —
+2. **Rounded 3-D primitives** (`roundedCuboid`/`roundedCylinder`/`torus`) —
    JSCAD staples; fast rounded boxes on Manifold without OCCT fillet. Independent
-   of the 2-D thread. (Strong alternative to hull if near-term parts are 3-D enclosures.)
-4. **Slice/section a `Solid` → `Shape2D`** — NEW capability `Shape2D` unlocks
+   of the 2-D thread.
+3. **Slice/section a `Solid` → `Shape2D`** — NEW capability `Shape2D` unlocks
    (not from JSCAD): project a 3-D part's silhouette or take a cross-section as a
    2-D `Shape2D` (Manifold `slice`/`project`; replicad section) to boolean/offset/
    re-extrude "the outline of this part".

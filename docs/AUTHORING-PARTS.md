@@ -523,6 +523,19 @@ const wall  = k.shape2d(outer).offset(-2, { corners: "sharp" });  // inset, mite
 
 `Shape2D.offset(delta, {corners})` grows (`delta>0`) or insets (`delta<0`) a shape with round/chamfer/sharp corners — curve-preserving on OCCT, faceted at mesh LOD on Manifold; it throws if the offset collapses the shape. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.)
 
+## Convex hull
+
+`k.hull([a, b, …])` wraps its inputs (Shape2Ds, curve contours, or point lists) in a
+convex `Shape2D`. `k.hullChain([a, b, c, …])` sweeps the hull along an ordered sequence
+(≥2 inputs) — the union of `hull([a,b])`, `hull([b,c])`, … — for capsules, rounded slots,
+and organic tapers. Faceted (curved inputs facet at mesh LOD): the hull is a pure-JS
+monotone-chain computation, never a native backend op.
+
+```js
+const capsule = k.hull([circleProfile(4, [0, 0]), circleProfile(4, [20, 0])]);   // a stadium
+const slot = k.hullChain([circleProfile(3, [0, 0]), circleProfile(3, [15, 0]), circleProfile(2, [25, 5])]);
+```
+
 ## Text (`text2d`)
 
 `k.text2d(string, { size, font?, align?, valign?, lineHeight?, tracking?, kerning? })` renders outline-font text as a `Shape2D` — a 2-D boolean you can compose with other shapes (union / cut / offset) and extrude into 3-D geometry.

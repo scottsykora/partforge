@@ -17,6 +17,7 @@ import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
 import { textGlyphs } from "./text2d.js";
 import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
+import { convexHull, hullPoints } from "./hull.js";
 
 export function finishKernel(k) {
   // Compound default: bored-through cylinder (tool overshoots 2 mm each end for
@@ -86,6 +87,25 @@ export function finishKernel(k) {
     const regions = textGlyphs(parsed, string, { size, align, valign, lineHeight, tracking, kerning });
     if (regions.length === 0) throw new Error("text2d: string produced no glyph geometry (empty or all-whitespace?)");
     return regions.map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+  };
+
+  // Convex hull → Shape2D. Backend-agnostic: pure-JS monotone-chain hull of the inputs'
+  // sampled points, lifted via k.shape2d. Faceted (curved inputs at a fixed LOD).
+  k.hull = (inputs) => {
+    if (!Array.isArray(inputs) || inputs.length === 0)
+      throw new Error("hull: inputs must be a non-empty array");
+    return k.shape2d(convexHull(inputs.flatMap(hullPoints)));
+  };
+  // Swept hull over an ordered sequence (≥2): union of the hull of each consecutive pair.
+  k.hullChain = (inputs) => {
+    if (!Array.isArray(inputs) || inputs.length < 2)
+      throw new Error("hullChain: needs at least 2 inputs");
+    let acc = null;
+    for (let i = 0; i < inputs.length - 1; i++) {
+      const seg = k.hull([inputs[i], inputs[i + 1]]);
+      acc = acc ? acc.union(seg) : seg;
+    }
+    return acc;
   };
 
   return k;

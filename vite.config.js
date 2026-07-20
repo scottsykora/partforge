@@ -24,6 +24,7 @@ export default defineConfig(({ command }) => ({
         facetedVase: "faceted-vase.html",
         nameplate: "nameplate.html",
         bracket: "bracket.html",
+        hullSweep: "hull-sweep.html",
       },
     },
   },
