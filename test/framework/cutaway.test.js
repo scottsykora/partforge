@@ -316,9 +316,10 @@ test("viewport size updates prepared cutaway LineMaterial clones", () => {
   expect(edgeLines.material.resolution.toArray()).toEqual([900, 700]);
 });
 
-test("theme refresh replaces active clipped colors and preserves exact originals", () => {
+test("theme refresh forwards exact feature-edge hatch colors and preserves exact originals", () => {
   const fixture = createFixture();
   const { mesh, material, edgeLines, edgeMaterial } = addSubpart(fixture);
+  const cap = findCap(fixture.scene);
   fixture.controller.setEnabled(true);
   const oldClippedMesh = mesh.material;
   const oldClippedEdge = edgeLines.material;
@@ -327,7 +328,10 @@ test("theme refresh replaces active clipped colors and preserves exact originals
   material.color.set(0x16a34a);
   edgeMaterial.color.set(0xf8fafc);
 
-  fixture.controller.setTheme("light");
+  fixture.controller.setTheme("dark", 0x1c232d);
+  expect(cap.material.uniforms.uInk.value.getHex()).toBe(0x1c232d);
+
+  fixture.controller.setTheme("light", 0x33414f);
 
   expect(oldMeshDispose).toHaveBeenCalledOnce();
   expect(oldEdgeDispose).toHaveBeenCalledOnce();
@@ -335,6 +339,7 @@ test("theme refresh replaces active clipped colors and preserves exact originals
   expect(mesh.material.color.getHex()).toBe(0x16a34a);
   expect(edgeLines.material).not.toBe(oldClippedEdge);
   expect(edgeLines.material.color.getHex()).toBe(0xf8fafc);
+  expect(cap.material.uniforms.uInk.value.getHex()).toBe(0x33414f);
   fixture.controller.setEnabled(false);
   expect(mesh.material).toBe(material);
   expect(edgeLines.material).toBe(edgeMaterial);

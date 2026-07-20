@@ -117,3 +117,18 @@ test("viewer forwards every viewport resize to cutaway edge materials", () => {
 
   viewer.dispose();
 });
+
+test("viewer forwards the exact feature-edge color for each cutaway theme", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+
+  viewer.setTheme("dark");
+  expect(state.cutaway.setTheme).toHaveBeenLastCalledWith("dark", 0x1c232d);
+
+  viewer.setTheme("light");
+  expect(state.cutaway.setTheme).toHaveBeenLastCalledWith("light", 0x33414f);
+
+  viewer.dispose();
+});

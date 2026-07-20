@@ -52,6 +52,7 @@ export function createCutaway({
   let enabled = false;
   let flipped = false;
   let theme = "dark";
+  let hatchInk = 0x1c232d;
   let pose = null;
   let viewportSize = null;
   let cancelIdle = null;
@@ -161,7 +162,7 @@ export function createCutaway({
       order,
     });
     renderSets.set(name, { renderSet, mesh, edgeLines, order });
-    renderSet.setTheme(theme);
+    renderSet.setHatchInk(hatchInk);
     if (viewportSize) {
       renderSet.setViewportSize(viewportSize.width, viewportSize.height);
     }
@@ -246,13 +247,14 @@ export function createCutaway({
     return true;
   }
 
-  function setTheme(mode) {
+  function setTheme(mode, edgeColor) {
     if (disposed) return false;
     theme = mode;
+    if (edgeColor != null) hatchInk = edgeColor;
     gizmo.setTheme(mode);
     for (const { renderSet } of renderSets.values()) {
       renderSet.refreshSourceMaterial();
-      renderSet.setTheme(mode);
+      renderSet.setHatchInk(hatchInk);
     }
     return true;
   }

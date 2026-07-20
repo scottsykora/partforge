@@ -63,7 +63,7 @@ describe("createHatchMaterial", () => {
     const material = createHatchMaterial({
       color: 0x336699,
       opacity: 0.65,
-      theme: "dark",
+      inkColor: 0x1c232d,
     });
 
     expect(material).toBeInstanceOf(THREE.ShaderMaterial);
@@ -82,22 +82,31 @@ describe("createHatchMaterial", () => {
   });
 
   test("renders a double-sided transparent hatch in one draw", () => {
-    const material = createHatchMaterial({ color: 0x336699, opacity: 0.65, theme: "dark" });
+    const material = createHatchMaterial({
+      color: 0x336699,
+      opacity: 0.65,
+      inkColor: 0x1c232d,
+    });
 
     expect(material.forceSinglePass).toBe(true);
   });
 
-  test("updates hatch scale and theme without replacing uniform colors", () => {
-    const material = createHatchMaterial({ color: 0xabcdef, opacity: 1, theme: "dark" });
+  test("updates hatch scale and ink color without replacing uniform colors", () => {
+    const material = createHatchMaterial({
+      color: 0xabcdef,
+      opacity: 1,
+      inkColor: 0x1c232d,
+    });
     const ink = material.uniforms.uInk.value;
-    const darkInk = ink.getHex();
+
+    expect(ink.getHex()).toBe(0x1c232d);
 
     material.userData.setHatch({ spacing: 2.5, size: 40 });
-    material.userData.setTheme("light");
+    material.userData.setInkColor(0x33414f);
 
-    expect(material.uniforms.uScale.value).toBe(16);
+    expect(material.uniforms.uScale.value).toBe(80);
     expect(material.uniforms.uInk.value).toBe(ink);
-    expect(material.uniforms.uInk.value.getHex()).not.toBe(darkInk);
+    expect(ink.getHex()).toBe(0x33414f);
     expect(material.transparent).toBe(false);
     expect(material.depthWrite).toBe(true);
   });
@@ -204,7 +213,7 @@ describe("createSectionRenderSet", () => {
     expect(renderSet.cap.quaternion.equals(quaternion)).toBe(true);
     expect(renderSet.cap.quaternion).not.toBe(quaternion);
     expect(renderSet.cap.scale.toArray()).toEqual([48, 48, 48]);
-    expect(renderSet.cap.material.uniforms.uScale.value).toBe(16);
+    expect(renderSet.cap.material.uniforms.uScale.value).toBe(80);
   });
 
   test("keeps every cap isolated before all clipped surfaces and edge lines", () => {
@@ -226,15 +235,14 @@ describe("createSectionRenderSet", () => {
     expect(first.mesh.renderOrder).toBeLessThan(second.edgeLines.renderOrder);
   });
 
-  test("updates cap theme in place", () => {
+  test("updates cap hatch ink in place", () => {
     const { renderSet } = createFixture();
     const ink = renderSet.cap.material.uniforms.uInk.value;
-    const before = ink.getHex();
 
-    renderSet.setTheme("light");
+    renderSet.setHatchInk(0x33414f);
 
     expect(renderSet.cap.material.uniforms.uInk.value).toBe(ink);
-    expect(ink.getHex()).not.toBe(before);
+    expect(ink.getHex()).toBe(0x33414f);
   });
 
   test("refreshes source color and opacity while preserving exact restoration ownership", () => {

@@ -1,10 +1,5 @@
 import * as THREE from "three";
 
-const HATCH_INK = {
-  dark: 0xf1f5f9,
-  light: 0x17202a,
-};
-
 // Stencil/cap passes for every section are kept below all clipped surfaces.
 // This leaves a large, deterministic ordering range for assemblies while making
 // surface/edge ordering independent of the number of subparts.
@@ -13,11 +8,11 @@ const EDGE_ORDER_BASE = 2_000_000;
 const SECTION_ORDER_STRIDE = 2;
 export const CUTAWAY_OVERLAY_RENDER_ORDER = 3_000_000;
 
-export function createHatchMaterial({ color, opacity, theme }) {
+export function createHatchMaterial({ color, opacity, inkColor = 0x1c232d }) {
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uBase: { value: new THREE.Color(color) },
-      uInk: { value: new THREE.Color(HATCH_INK[theme] ?? HATCH_INK.dark) },
+      uInk: { value: new THREE.Color(inkColor) },
       uOpacity: { value: opacity },
       uScale: { value: 1 },
     },
@@ -55,10 +50,10 @@ export function createHatchMaterial({ color, opacity, theme }) {
   });
 
   material.userData.setHatch = ({ spacing, size }) => {
-    material.uniforms.uScale.value = size / spacing;
+    material.uniforms.uScale.value = size / spacing * 5;
   };
-  material.userData.setTheme = (mode) => {
-    material.uniforms.uInk.value.set(HATCH_INK[mode] ?? HATCH_INK.dark);
+  material.userData.setInkColor = (color) => {
+    material.uniforms.uInk.value.set(color);
   };
 
   return material;
@@ -149,7 +144,6 @@ export function createSectionRenderSet({
   const capMaterial = createHatchMaterial({
     color: sourceMaterial?.color ?? 0x9fb4cc,
     opacity: sourceMaterial?.opacity ?? 1,
-    theme: "dark",
   });
   capMaterial.side = THREE.DoubleSide;
   capMaterial.stencilWrite = true;
@@ -240,9 +234,9 @@ export function createSectionRenderSet({
     capMaterial.userData.setHatch({ spacing, size });
   }
 
-  function setTheme(mode) {
+  function setHatchInk(color) {
     if (disposed) return;
-    capMaterial.userData.setTheme(mode);
+    capMaterial.userData.setInkColor(color);
   }
 
   function setViewportSize(width, height) {
@@ -327,7 +321,7 @@ export function createSectionRenderSet({
     setVisible,
     setGeometry,
     setCapPose,
-    setTheme,
+    setHatchInk,
     setViewportSize,
     refreshSourceMaterial,
     dispose,

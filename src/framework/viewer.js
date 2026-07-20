@@ -239,7 +239,7 @@ export function createViewer(container, part) {
     grid.position.y = floorY; // keep the floor at the bbox bottom across theme swaps
     scene.add(grid);
     lineMaterial.color.set(t.line);
-    cutaway.setTheme(mode);
+    cutaway.setTheme(mode, t.line);
   }
 
   function hideAssembly() {
