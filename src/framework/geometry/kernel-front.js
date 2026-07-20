@@ -99,7 +99,7 @@ export function finishKernel(k) {
   // Swept hull over an ordered sequence (≥2): union of the hull of each consecutive pair.
   k.hullChain = (inputs) => {
     if (!Array.isArray(inputs) || inputs.length < 2)
-      throw new Error("hull: hullChain needs at least 2 inputs");
+      throw new Error("hullChain: needs at least 2 inputs");
     let acc = null;
     for (let i = 0; i < inputs.length - 1; i++) {
       const seg = k.hull([inputs[i], inputs[i + 1]]);
