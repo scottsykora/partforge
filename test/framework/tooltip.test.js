@@ -155,6 +155,24 @@ test("hide conceals a visible tooltip", () => {
   expect(document.getElementById("pf-hover-tip").classList.contains("show")).toBe(false);
 });
 
+test("a stale presentation token cannot hide newer tooltip content", () => {
+  const tooltip = createTooltipPresenter();
+  const anchor = document.createElement("button");
+  const pointerToken = tooltip.showPointer({ title: "Pointer feature" }, 0, 0);
+  const anchorToken = tooltip.showAnchor({ title: "Button action" }, anchor);
+  const element = document.getElementById("pf-hover-tip");
+
+  expect(typeof pointerToken).toBe("symbol");
+  expect(typeof anchorToken).toBe("symbol");
+  expect(anchorToken).not.toBe(pointerToken);
+  tooltip.hide(pointerToken);
+  expect(element.classList.contains("show")).toBe(true);
+  expect(element.querySelector("b").textContent).toBe("Button action");
+
+  tooltip.hide(anchorToken);
+  expect(element.classList.contains("show")).toBe(false);
+});
+
 test("dispose is idempotent and presenter calls become safe no-ops", () => {
   const tooltip = createTooltipPresenter();
 
@@ -181,6 +199,7 @@ test("button tooltips replace the native title and respond to pointer and click"
 
   button.dispatchEvent(new PointerEvent("pointerleave"));
   expect(tooltip.hide).toHaveBeenCalledTimes(1);
+  button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
   button.dispatchEvent(new MouseEvent("click"));
   expect(tooltip.hide).toHaveBeenCalledTimes(2);
 });
@@ -284,18 +303,62 @@ test("detach removes every button tooltip listener", () => {
   expect(tooltip.hide).not.toHaveBeenCalled();
 });
 
-test("detach hides a presented button tooltip exactly once", () => {
+test("detach hides only an active binding and remains idempotent", () => {
+  const activeButton = document.createElement("button");
+  activeButton.setAttribute("aria-label", "Reframe part");
+  const inactiveButton = document.createElement("button");
+  inactiveButton.setAttribute("aria-label", "Pause rotation");
+  const token = Symbol("reframe");
+  const tooltip = { showAnchor: vi.fn(() => token), hide: vi.fn() };
+  const active = attachButtonTooltips(tooltip, [{ element: activeButton }]);
+  const inactive = attachButtonTooltips(tooltip, [{ element: inactiveButton }]);
+  activeButton.dispatchEvent(new FocusEvent("focus"));
+
+  active.detach();
+  active.detach();
+  inactive.detach();
+
+  expect(tooltip.showAnchor).toHaveBeenCalledWith(
+    { title: "Reframe part" },
+    activeButton,
+  );
+  expect(tooltip.hide).toHaveBeenCalledOnce();
+  expect(tooltip.hide).toHaveBeenCalledWith(token);
+});
+
+test("detaching one button binding cannot hide another binding's presentation", () => {
+  const tooltip = createTooltipPresenter();
+  const buttonA = document.createElement("button");
+  buttonA.setAttribute("aria-label", "Button A");
+  const buttonB = document.createElement("button");
+  buttonB.setAttribute("aria-label", "Button B");
+  const bindingA = attachButtonTooltips(tooltip, [{ element: buttonA }]);
+  const bindingB = attachButtonTooltips(tooltip, [{ element: buttonB }]);
+  buttonB.dispatchEvent(new FocusEvent("focus"));
+
+  bindingA.detach();
+
+  const element = document.getElementById("pf-hover-tip");
+  expect(element.classList.contains("show")).toBe(true);
+  expect(element.querySelector("b").textContent).toBe("Button B");
+
+  bindingB.detach();
+  expect(element.classList.contains("show")).toBe(false);
+});
+
+test("button detach cannot hide a newer pointer presentation", () => {
+  const tooltip = createTooltipPresenter();
   const button = document.createElement("button");
-  button.setAttribute("aria-label", "Reframe part");
-  const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
-  const handle = attachButtonTooltips(tooltip, [{ element: button }]);
+  button.setAttribute("aria-label", "Button action");
+  const binding = attachButtonTooltips(tooltip, [{ element: button }]);
   button.dispatchEvent(new FocusEvent("focus"));
+  tooltip.showPointer({ title: "Model feature" }, 20, 30);
 
-  handle.detach();
-  handle.detach();
+  binding.detach();
 
-  expect(tooltip.showAnchor).toHaveBeenCalledWith({ title: "Reframe part" }, button);
-  expect(tooltip.hide).toHaveBeenCalledTimes(1);
+  const element = document.getElementById("pf-hover-tip");
+  expect(element.classList.contains("show")).toBe(true);
+  expect(element.querySelector("b").textContent).toBe("Model feature");
 });
 
 test("tooltip styles apply by class without shifting anchored coordinates", () => {

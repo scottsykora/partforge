@@ -89,6 +89,7 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}, { toolti
     const restoreFocus = actions.contains(document.activeElement);
     viewer.setCutawayEnabled(false);
     sync();
+    tooltipBinding?.hide();
     if (restoreFocus) button.focus({ preventScroll: true });
   }
 

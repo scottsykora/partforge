@@ -1,6 +1,10 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { attachCutawayControls } from "../../src/framework/cutaway-controls.js";
+import {
+  attachButtonTooltips,
+  createTooltipPresenter,
+} from "../../src/framework/tooltip.js";
 
 function fakeViewer({ supported = true } = {}) {
   let enabled = false;
@@ -156,6 +160,24 @@ describe("attachCutawayControls", () => {
     );
   });
 
+  test("handle reset hides the stale tooltip while the primary button keeps focus", () => {
+    const tooltip = createTooltipPresenter();
+    const { viewer, button, handle } = setup({ tooltip });
+    const actions = button.nextElementSibling;
+    button.click();
+    button.focus();
+    const element = document.getElementById("pf-hover-tip");
+    expect(element.querySelector("b").textContent).toBe("Disable cutaway");
+
+    handle.reset();
+
+    expect(viewer.cutawayEnabled()).toBe(false);
+    expect(button.getAttribute("aria-label")).toBe("Enable cutaway");
+    expect(actions.hidden).toBe(true);
+    expect(document.activeElement).toBe(button);
+    expect(element.classList.contains("show")).toBe(false);
+  });
+
   test("Escape disables cutaway only from the canvas or cutaway buttons", () => {
     const { viewer, button } = setup();
     const [flip, reset] = button.nextElementSibling.querySelectorAll("button");
@@ -205,6 +227,41 @@ describe("attachCutawayControls", () => {
       { title: "Enable cutaway" },
       button,
     );
+  });
+
+  test("Escape hides the stale tooltip while the primary button remains hovered", () => {
+    const tooltip = createTooltipPresenter();
+    const { viewer, button } = setup({ tooltip });
+    const actions = button.nextElementSibling;
+    button.click();
+    button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+    const element = document.getElementById("pf-hover-tip");
+    expect(element.querySelector("b").textContent).toBe("Disable cutaway");
+
+    pressEscape(button);
+
+    expect(viewer.cutawayEnabled()).toBe(false);
+    expect(button.getAttribute("aria-label")).toBe("Enable cutaway");
+    expect(actions.hidden).toBe(true);
+    expect(element.classList.contains("show")).toBe(false);
+  });
+
+  test("cutaway reset cannot hide a newer tooltip from another binding", () => {
+    const tooltip = createTooltipPresenter();
+    const { button, handle } = setup({ tooltip });
+    button.click();
+    button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+    const otherButton = document.createElement("button");
+    otherButton.setAttribute("aria-label", "Other control");
+    const otherBinding = attachButtonTooltips(tooltip, [{ element: otherButton }]);
+    handles.push(otherBinding);
+    otherButton.dispatchEvent(new FocusEvent("focus"));
+
+    handle.reset();
+
+    const element = document.getElementById("pf-hover-tip");
+    expect(element.classList.contains("show")).toBe(true);
+    expect(element.querySelector("b").textContent).toBe("Other control");
   });
 
   test("makes the canvas focusable without replacing an existing tabindex", () => {

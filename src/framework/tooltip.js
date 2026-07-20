@@ -12,6 +12,7 @@ export function createTooltipPresenter() {
   element.append(title, subtitle);
   document.body.appendChild(element);
   let disposed = false;
+  let currentToken;
 
   function setContent(content) {
     title.textContent = content.title;
@@ -21,14 +22,19 @@ export function createTooltipPresenter() {
   return {
     showPointer(content, x, y) {
       if (disposed) return;
+      const token = Symbol("tooltip presentation");
+      currentToken = token;
       setContent(content);
       element.style.left = `${x + 14}px`;
       element.style.top = `${y + 14}px`;
       element.classList.remove("pf-tooltip-anchored");
       element.classList.add("show");
+      return token;
     },
     showAnchor(content, anchor) {
       if (disposed) return;
+      const token = Symbol("tooltip presentation");
+      currentToken = token;
       setContent(content);
       element.style.left = `${VIEWPORT_MARGIN}px`;
       element.style.top = `${VIEWPORT_MARGIN}px`;
@@ -50,14 +56,18 @@ export function createTooltipPresenter() {
       const top = fitsBelow ? belowTop : rect.top - ANCHOR_GAP - height;
       element.style.left = `${left}px`;
       element.style.top = `${top}px`;
+      return token;
     },
-    hide() {
+    hide(token) {
       if (disposed) return;
+      if (token !== undefined && token !== currentToken) return;
+      currentToken = undefined;
       element.classList.remove("show");
     },
     dispose() {
       if (disposed) return;
       disposed = true;
+      currentToken = undefined;
       element.remove();
     },
   };
@@ -83,18 +93,26 @@ export function attachButtonTooltips(tooltip, entries) {
     }
     element.removeAttribute("title");
 
+    let presentationToken;
+    let hasPresented = false;
     const show = () => {
       const label = entry.getLabel?.()
         ?? element.getAttribute("aria-label")
         ?? originalTitle.value
         ?? "";
-      tooltip.showAnchor({ title: label }, element);
+      presentationToken = tooltip.showAnchor({ title: label }, element);
+      hasPresented = true;
     };
     const onPointerEnter = (event) => {
       if (event.pointerType === "touch") return;
       show();
     };
-    const hide = () => tooltip.hide();
+    const hide = () => {
+      if (!hasPresented) return;
+      hasPresented = false;
+      tooltip.hide(presentationToken);
+      presentationToken = undefined;
+    };
     element.addEventListener("pointerenter", onPointerEnter);
     element.addEventListener("pointerleave", hide);
     element.addEventListener("focus", show);
@@ -111,11 +129,15 @@ export function attachButtonTooltips(tooltip, entries) {
   }
 
   let detached = false;
+  const hide = () => {
+    for (const binding of attached) binding.hide();
+  };
   return {
+    hide,
     detach() {
       if (detached) return;
       detached = true;
-      tooltip.hide();
+      hide();
       for (const binding of attached) {
         const {
           element,
