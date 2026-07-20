@@ -5,6 +5,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { createCutaway } from "./cutaway.js";
+import { addViewerLights } from "./viewer-lighting.js";
 
 export function createViewer(container, part) {
   const names = Object.keys(part.parts);
@@ -33,10 +34,7 @@ export function createViewer(container, part) {
   controls.autoRotateSpeed = 1.6;
 
   // --- lights + grid --------------------------------------------------------
-  scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x202024, 1.1));
-  const key = new THREE.DirectionalLight(0xffffff, 1.4);
-  key.position.set(8, 14, 10);
-  scene.add(key);
+  addViewerLights(scene);
   // 1 cm grid (mm units): 300 mm wide, 30 divisions -> 10 mm (1 cm) squares.
   const GRID_SIZE = 300, GRID_DIVS = 30;
   let floorY = 0; // world Y of the grid plane; set to the part's bbox bottom in frameTo
