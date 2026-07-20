@@ -12,7 +12,7 @@
 //     capability (Manifold can't do toSTEP; both backends now define shape2d, so
 //     that stub is dead in practice — kept as a safety net for a future backend).
 // The per-Solid twin of this layer is addSugar() in solid-sugar.js.
-import opentype from "opentype.js";
+import * as opentype from "opentype.js";
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
 import { textGlyphs } from "./text2d.js";
