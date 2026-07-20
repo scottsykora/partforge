@@ -5,13 +5,24 @@
 // `new Worker(new URL("./part-worker.js", import.meta.url), { type:"module", name })`
 // pattern INLINE — Vite only bundles a worker (and its backend chunks) when it sees
 // that literal call, so the framework can't construct it from a passed-in URL.
+function terminateWorkers(workers) {
+  const errors = [];
+  for (const worker of workers) {
+    try { worker.terminate(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new AggregateError(errors, "geometry worker termination failed");
+  }
+}
+
 export function createGeometryService({ createWorker, onMessage }) {
   const manifold = createWorker("manifold");
   let occt;
   try {
     occt = createWorker("occt");
   } catch (error) {
-    try { manifold.terminate(); } catch { /* preserve the worker creation error */ }
+    try { terminateWorkers([manifold]); } catch { /* preserve the worker creation error */ }
     throw error;
   }
   const workers = { manifold, occt };
@@ -22,6 +33,6 @@ export function createGeometryService({ createWorker, onMessage }) {
   // — manifold for preview/STL/3MF, occt for STEP (the caller passes "occt" for that).
   return {
     send: (msg, backend = "manifold") => workers[backend].postMessage(msg),
-    terminate: () => { workers.manifold.terminate(); workers.occt.terminate(); },
+    terminate: () => terminateWorkers([workers.manifold, workers.occt]),
   };
 }
