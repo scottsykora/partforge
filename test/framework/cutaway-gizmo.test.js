@@ -58,9 +58,15 @@ function createFixture(overrides = {}) {
   return fixture;
 }
 
-function pointer(domElement, type, { x = 100, y = 100, pointerId = 7 } = {}) {
+function pointer(domElement, type, {
+  x = 100,
+  y = 100,
+  pointerId = 7,
+  pointerType = "mouse",
+} = {}) {
   domElement.dispatchEvent(new PointerEvent(type, {
     pointerId,
+    pointerType,
     clientX: x,
     clientY: y,
     button: 0,
@@ -88,7 +94,9 @@ function clientPoint(fixture, worldPoint) {
 }
 
 function arcMeshes(gizmo) {
-  const arcRoot = gizmo.handleRoot.children.find((child) => child.isGroup);
+  const arcRoot = gizmo.handleRoot.children.find(
+    (child) => child.getObjectById(gizmo.handles.rotateX.id),
+  );
   return arcRoot?.children ?? [];
 }
 
@@ -339,9 +347,7 @@ test("theme changes the fill, border, and visible handle colors in place", () =>
   const { gizmo } = createFixture();
   const dark = gizmo.fill.material.color.getHex();
   const borderDark = gizmo.border.material.color.getHex();
-  const visibleHandle = gizmo.handleRoot.children.find(
-    (child) => child.material?.opacity !== 0,
-  );
+  const visibleHandle = gizmo.handleVisuals.translate.children[0];
   const handleDark = visibleHandle.material.color.getHex();
 
   gizmo.setTheme("light");
@@ -349,6 +355,143 @@ test("theme changes the fill, border, and visible handle colors in place", () =>
   expect(gizmo.fill.material.color.getHex()).not.toBe(dark);
   expect(gizmo.border.material.color.getHex()).not.toBe(borderDark);
   expect(visibleHandle.material.color.getHex()).not.toBe(handleDark);
+});
+
+test("passive hover publishes only transitions and emphasizes one stable visual at a time", () => {
+  let picked = "translate";
+  const onHandleHoverChange = vi.fn();
+  const { domElement, gizmo } = createFixture({
+    onHandleHoverChange,
+    pickHandle: () => picked,
+  });
+  gizmo.setActiveAppearance(false);
+
+  const translateMaterial = gizmo.handleVisuals.translate.children[0].material;
+  const translateBase = translateMaterial.color.clone();
+  pointer(domElement, "pointermove");
+
+  expect(onHandleHoverChange).toHaveBeenCalledTimes(1);
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith("translate");
+  expect(gizmo.handleVisuals.translate.scale.toArray()).toEqual([1.12, 1.12, 1.12]);
+  expect(gizmo.handleVisuals.rotateX.scale.toArray()).toEqual([1, 1, 1]);
+  expect(gizmo.handleVisuals.rotateY.scale.toArray()).toEqual([1, 1, 1]);
+  expect(translateMaterial.color.r).toBeGreaterThan(translateBase.r);
+  expect(translateMaterial.color.g).toBeGreaterThan(translateBase.g);
+  expect(translateMaterial.color.b).toBeGreaterThan(translateBase.b);
+  expect(translateMaterial.opacity).toBe(1);
+  for (const proxy of Object.values(gizmo.handles)) {
+    expect(proxy.scale.toArray()).toEqual([1, 1, 1]);
+  }
+
+  pointer(domElement, "pointermove");
+  expect(onHandleHoverChange).toHaveBeenCalledTimes(1);
+
+  picked = "rotate-x";
+  pointer(domElement, "pointermove");
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith("rotate-x");
+  expect(gizmo.handleVisuals.translate.scale.toArray()).toEqual([1, 1, 1]);
+  expect(gizmo.handleVisuals.rotateX.scale.toArray()).toEqual([1.12, 1.12, 1.12]);
+  expect(translateMaterial.color.getHex()).toBe(translateBase.getHex());
+
+  picked = null;
+  pointer(domElement, "pointermove");
+  expect(onHandleHoverChange.mock.calls.map(([handle]) => handle)).toEqual([
+    "translate",
+    "rotate-x",
+    null,
+  ]);
+  for (const visual of Object.values(gizmo.handleVisuals)) {
+    expect(visual.scale.toArray()).toEqual([1, 1, 1]);
+  }
+
+  picked = "rotate-y";
+  pointer(domElement, "pointermove", { pointerType: "touch" });
+  expect(onHandleHoverChange).toHaveBeenCalledTimes(3);
+});
+
+test("press emphasizes without a prior move and locks hover until the next passive move", () => {
+  let picked = "translate";
+  const onHandleHoverChange = vi.fn();
+  const { domElement, gizmo } = createFixture({
+    onHandleHoverChange,
+    pickHandle: () => picked,
+  });
+
+  pointer(domElement, "pointerdown");
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith("translate");
+  expect(gizmo.handleVisuals.translate.scale.x).toBe(1.12);
+
+  picked = "rotate-x";
+  pointer(domElement, "pointermove", { x: 110 });
+  expect(onHandleHoverChange).toHaveBeenCalledTimes(1);
+  expect(gizmo.handleVisuals.translate.scale.x).toBe(1.12);
+  expect(gizmo.handleVisuals.rotateX.scale.x).toBe(1);
+
+  pointer(domElement, "pointerup", { x: 110 });
+  domElement.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 7 }));
+  expect(onHandleHoverChange).toHaveBeenCalledTimes(1);
+  expect(gizmo.handleVisuals.translate.scale.x).toBe(1.12);
+
+  pointer(domElement, "pointermove", { x: 110 });
+  expect(onHandleHoverChange.mock.calls.map(([handle]) => handle)).toEqual([
+    "translate",
+    "rotate-x",
+  ]);
+  expect(gizmo.handleVisuals.rotateX.scale.x).toBe(1.12);
+
+  picked = null;
+  pointer(domElement, "pointermove", { x: 120 });
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith(null);
+});
+
+test.each([
+  ["pointerleave", false],
+  ["pointercancel", true],
+  ["lostpointercapture", true],
+  ["blur", false],
+  ["hide", false],
+  ["dispose", false],
+])("%s clears published hover state", (action, startDrag) => {
+  const onHandleHoverChange = vi.fn();
+  const { domElement, gizmo } = createFixture({
+    onHandleHoverChange,
+    pickHandle: () => "translate",
+  });
+  if (startDrag) pointer(domElement, "pointerdown");
+  else pointer(domElement, "pointermove");
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith("translate");
+
+  if (action === "blur") window.dispatchEvent(new Event("blur"));
+  else if (action === "hide") gizmo.setVisible(false);
+  else if (action === "dispose") gizmo.dispose();
+  else domElement.dispatchEvent(new PointerEvent(action, { pointerId: 7 }));
+
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith(null);
+  expect(gizmo.handleVisuals.translate.scale.toArray()).toEqual([1, 1, 1]);
+});
+
+test("theme and active appearance changes preserve the hovered advantage", () => {
+  const { domElement, gizmo } = createFixture({
+    pickHandle: () => "rotate-y",
+  });
+  pointer(domElement, "pointermove");
+
+  gizmo.setActiveAppearance(false);
+  gizmo.setTheme("light");
+  const hoveredMaterial = gizmo.handleVisuals.rotateY.material;
+  const normalMaterial = gizmo.handleVisuals.rotateX.material;
+  const lightRotateY = new THREE.Color(0x1769aa);
+  expect(hoveredMaterial.opacity).toBe(1);
+  expect(normalMaterial.opacity).toBe(0.48);
+  expect(hoveredMaterial.color.r).toBeGreaterThan(lightRotateY.r);
+  expect(hoveredMaterial.color.g).toBeGreaterThan(lightRotateY.g);
+  expect(hoveredMaterial.color.b).toBeGreaterThan(lightRotateY.b);
+  expect(gizmo.handleVisuals.rotateY.scale.x).toBe(1.12);
+
+  gizmo.setActiveAppearance(true);
+  expect(hoveredMaterial.opacity).toBe(1);
+  expect(gizmo.handleVisuals.rotateY.scale.x).toBe(1.12);
+  expect(gizmo.handleVisuals.rotateX.scale.x).toBe(1);
 });
 
 test("updateForCamera preserves plane size while scaling handles for camera distance", () => {

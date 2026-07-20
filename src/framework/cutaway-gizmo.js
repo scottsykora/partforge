@@ -33,6 +33,9 @@ const GIZMO_RENDER_ORDER = CUTAWAY_OVERLAY_RENDER_ORDER + 1;
 const GHOST_OFFSET_FACTOR = 0.001;
 const MIN_GHOST_OFFSET = 0.01;
 const MAX_GHOST_OFFSET = 0.25;
+const HANDLE_HOVER_SCALE = 1.12;
+const HANDLE_HOVER_WHITE_MIX = 0.28;
+const WHITE = new THREE.Color(0xffffff);
 
 export function createCutawayGizmo({
   scene,
@@ -42,6 +45,7 @@ export function createCutawayGizmo({
   orbitControls,
   onPoseChange = () => {},
   onActivity = () => {},
+  onHandleHoverChange = () => {},
   pickHandle,
 }) {
   const group = new THREE.Group();
@@ -81,6 +85,7 @@ export function createCutawayGizmo({
   materials.add(borderMaterial);
 
   const handleRoot = new THREE.Group();
+  const translateVisualRoot = new THREE.Group();
   const arcRoot = new THREE.Group();
   const translateMaterial = new THREE.MeshBasicMaterial({
     color: 0x36d399,
@@ -177,8 +182,9 @@ export function createCutawayGizmo({
   geometries.add(rotateXHitGeometry);
   geometries.add(rotateYHitGeometry);
 
+  translateVisualRoot.add(shaft, cone);
   arcRoot.add(ringX, ringY, rotateXHit, rotateYHit);
-  handleRoot.add(shaft, cone, translateHit, arcRoot);
+  handleRoot.add(translateVisualRoot, translateHit, arcRoot);
   group.add(fill, border);
   scene.add(group);
   overlayScene.add(handleRoot);
@@ -188,11 +194,24 @@ export function createCutawayGizmo({
     rotateX: rotateXHit,
     rotateY: rotateYHit,
   };
+  const handleVisuals = {
+    translate: translateVisualRoot,
+    rotateX: ringX,
+    rotateY: ringY,
+  };
+  const handleAppearance = {
+    translate: { visual: translateVisualRoot, material: translateMaterial },
+    "rotate-x": { visual: ringX, material: rotateXMaterial },
+    "rotate-y": { visual: ringY, material: rotateYMaterial },
+  };
 
   let disposed = false;
   let poseSize = 1;
   let flipped = false;
   let drag = null;
+  let hoveredHandle = null;
+  let activeAppearance = true;
+  let themeMode = "dark";
   const raycaster = new THREE.Raycaster();
   const hitProxies = Object.values(handles);
 
@@ -206,10 +225,16 @@ export function createCutawayGizmo({
     return raycaster.ray;
   }
 
+  function normalizeHandle(handle) {
+    return handle === "translate" || handle === "rotate-x" || handle === "rotate-y"
+      ? handle
+      : null;
+  }
+
   function resolveHandle(picked) {
-    if (typeof picked === "string") return picked;
+    if (typeof picked === "string") return normalizeHandle(picked);
     const object = picked?.object ?? picked;
-    return object?.userData?.cutawayHandle ?? null;
+    return normalizeHandle(object?.userData?.cutawayHandle);
   }
 
   function pick(event, ray) {
@@ -250,6 +275,36 @@ export function createCutawayGizmo({
     drag = null;
     if (orbitControls) orbitControls.enabled = ending.orbitEnabled;
     safeRelease(ending.pointerId);
+  }
+
+  function updateAppearance() {
+    const theme = THEMES[themeMode] ?? THEMES.dark;
+    fill.material.color.set(theme.fill);
+    fill.material.opacity = activeAppearance ? 0.18 : 0.055;
+    borderMaterial.color.set(theme.border);
+    borderMaterial.opacity = activeAppearance ? 1 : 0.72;
+
+    for (const [handle, { visual, material }] of Object.entries(handleAppearance)) {
+      const hovered = handle === hoveredHandle;
+      const themeKey = handle === "rotate-x"
+        ? "rotateX"
+        : handle === "rotate-y"
+          ? "rotateY"
+          : "translate";
+      material.color.set(theme[themeKey]);
+      if (hovered) material.color.lerp(WHITE, HANDLE_HOVER_WHITE_MIX);
+      material.transparent = true;
+      material.opacity = hovered ? 1 : activeAppearance ? 1 : 0.48;
+      visual.scale.setScalar(hovered ? HANDLE_HOVER_SCALE : 1);
+    }
+  }
+
+  function setHoveredHandle(handle) {
+    const normalized = normalizeHandle(handle);
+    if (normalized === hoveredHandle) return;
+    hoveredHandle = normalized;
+    updateAppearance();
+    onHandleHoverChange(normalized);
   }
 
   function notifyPose() {
@@ -356,6 +411,7 @@ export function createCutawayGizmo({
       }
     }
 
+    setHoveredHandle(handle);
     onActivity();
     drag = nextDrag;
     if (orbitControls) orbitControls.enabled = false;
@@ -365,7 +421,14 @@ export function createCutawayGizmo({
 
   function onPointerMove(event) {
     if (!disposed && group.visible) onActivity();
-    if (!drag || event.pointerId !== drag.pointerId) return;
+    if (!drag) {
+      if (disposed || !group.visible || event.pointerType === "touch") return;
+      const ray = rayFromEvent(event);
+      if (!ray) return;
+      setHoveredHandle(pick(event, ray));
+      return;
+    }
+    if (event.pointerId !== drag.pointerId) return;
     const ray = rayFromEvent(event);
     if (!ray) return;
 
@@ -416,9 +479,31 @@ export function createCutawayGizmo({
     notifyPose();
   }
 
-  function onPointerEnd(event) {
+  function onPointerUp(event) {
     if (!drag || (event.pointerId != null && event.pointerId !== drag.pointerId)) return;
     endDrag();
+  }
+
+  function onPointerCancel(event) {
+    if (drag && event.pointerId != null && event.pointerId !== drag.pointerId) return;
+    endDrag();
+    setHoveredHandle(null);
+  }
+
+  function onLostPointerCapture(event) {
+    if (!drag || (event.pointerId != null && event.pointerId !== drag.pointerId)) return;
+    endDrag();
+    setHoveredHandle(null);
+  }
+
+  function onPointerLeave(event) {
+    if (!drag || event.pointerId == null || event.pointerId === drag.pointerId) endDrag();
+    setHoveredHandle(null);
+  }
+
+  function onWindowBlur() {
+    endDrag();
+    setHoveredHandle(null);
   }
 
   function onPassiveActivity() {
@@ -430,11 +515,11 @@ export function createCutawayGizmo({
     [domElement, "pointermove", onPointerMove],
     [domElement, "pointerenter", onPassiveActivity],
     [domElement, "focus", onPassiveActivity],
-    [domElement, "pointerup", onPointerEnd],
-    [domElement, "pointercancel", onPointerEnd],
-    [domElement, "lostpointercapture", onPointerEnd],
-    [domElement, "pointerleave", onPointerEnd],
-    [window, "blur", onPointerEnd],
+    [domElement, "pointerup", onPointerUp],
+    [domElement, "pointercancel", onPointerCancel],
+    [domElement, "lostpointercapture", onLostPointerCapture],
+    [domElement, "pointerleave", onPointerLeave],
+    [window, "blur", onWindowBlur],
   ];
   for (const [target, type, listener] of listeners) {
     target.addEventListener(type, listener);
@@ -469,27 +554,22 @@ export function createCutawayGizmo({
   }
 
   function setVisible(on) {
-    if (!on) endDrag();
+    if (!on) {
+      endDrag();
+      setHoveredHandle(null);
+    }
     group.visible = Boolean(on);
     handleRoot.visible = Boolean(on);
   }
 
   function setActiveAppearance(active) {
-    fill.material.opacity = active ? 0.18 : 0.055;
-    borderMaterial.opacity = active ? 1 : 0.72;
-    for (const material of [translateMaterial, rotateXMaterial, rotateYMaterial]) {
-      material.transparent = true;
-      material.opacity = active ? 1 : 0.48;
-    }
+    activeAppearance = Boolean(active);
+    updateAppearance();
   }
 
   function setTheme(mode) {
-    const theme = THEMES[mode] ?? THEMES.dark;
-    fill.material.color.set(theme.fill);
-    borderMaterial.color.set(theme.border);
-    translateMaterial.color.set(theme.translate);
-    rotateXMaterial.color.set(theme.rotateX);
-    rotateYMaterial.color.set(theme.rotateY);
+    themeMode = THEMES[mode] ? mode : "dark";
+    updateAppearance();
   }
 
   function worldUnitsPerPixelAt(position) {
@@ -522,6 +602,7 @@ export function createCutawayGizmo({
   function dispose() {
     if (disposed) return;
     endDrag();
+    setHoveredHandle(null);
     disposed = true;
     for (const [target, type, listener] of listeners) {
       target.removeEventListener(type, listener);
@@ -537,6 +618,7 @@ export function createCutawayGizmo({
     fill,
     border,
     handles,
+    handleVisuals,
     handleRoot,
     setPose,
     setFlipped,
