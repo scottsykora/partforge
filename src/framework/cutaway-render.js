@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
-export const HATCH_PERIOD_CSS_PX = 10;
-export const HATCH_LINE_CSS_PX = 2;
+export const HATCH_PERIOD_CSS_PX = 5;
+export const HATCH_LINE_CSS_PX = 1;
 
 // Stencil/cap passes for every section are kept below all clipped surfaces.
 // This leaves a large, deterministic ordering range for assemblies while making
