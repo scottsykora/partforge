@@ -30,6 +30,8 @@ export function createTooltipPresenter() {
     showAnchor(content, anchor) {
       if (disposed) return;
       setContent(content);
+      element.style.left = `${VIEWPORT_MARGIN}px`;
+      element.style.top = `${VIEWPORT_MARGIN}px`;
       element.classList.add("pf-tooltip-anchored", "show");
       const tooltipRect = element.getBoundingClientRect();
       const rect = anchor.getBoundingClientRect();

@@ -68,6 +68,38 @@ test("showAnchor clamps a measured tooltip inside the right viewport edge", () =
   expect(element.style.top).toBe("48px");
 });
 
+test("showAnchor normalizes stale pointer placement before measuring", () => {
+  vi.stubGlobal("innerWidth", 320);
+  vi.stubGlobal("innerHeight", 200);
+  const tooltip = createTooltipPresenter();
+  const element = document.getElementById("pf-hover-tip");
+  tooltip.showPointer({ title: "Pointer feature" }, 300, 50);
+  expect(element.style.left).toBe("314px");
+  expect(element.style.top).toBe("64px");
+
+  let measuredAt;
+  element.getBoundingClientRect = vi.fn(() => {
+    measuredAt = { left: element.style.left, top: element.style.top };
+    const width = element.style.left === "314px" ? 40 : 120;
+    return { width, height: 24 };
+  });
+  const anchor = document.createElement("button");
+  anchor.getBoundingClientRect = () => ({
+    left: 290,
+    right: 310,
+    top: 20,
+    bottom: 40,
+  });
+
+  tooltip.showAnchor({ title: "Reset view" }, anchor);
+
+  expect(measuredAt).toEqual({ left: "8px", top: "8px" });
+  expect(element.querySelector("b").textContent).toBe("Reset view");
+  expect(element.classList.contains("show")).toBe(true);
+  expect(element.style.left).toBe("192px");
+  expect(element.style.top).toBe("48px");
+});
+
 test("showAnchor flips a measured tooltip above the bottom viewport edge", () => {
   vi.stubGlobal("innerWidth", 320);
   vi.stubGlobal("innerHeight", 200);
