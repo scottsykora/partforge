@@ -60,8 +60,33 @@ export function createCutaway({
   let cancelIdle = null;
   let previousLocalClippingEnabled;
   let disposed = false;
+  let disabling = false;
   let hoveredHandle = null;
   const handleHoverSubscribers = new Set();
+  const pendingHandlePublications = [];
+  let publishingHandleHover = false;
+
+  function reportHandleHoverError(error) {
+    try {
+      console.error("Cutaway handle hover subscriber failed", error);
+    } catch {
+      // Reporting must not let application callbacks interrupt controller work.
+    }
+  }
+
+  function drainHandleHoverPublications() {
+    while (pendingHandlePublications.length > 0) {
+      const publication = pendingHandlePublications.shift();
+      for (const record of publication.subscribers) {
+        if (!record.active) continue;
+        try {
+          record.listener(publication.handle);
+        } catch (error) {
+          reportHandleHoverError(error);
+        }
+      }
+    }
+  }
 
   function publishHandleHover(nextHandle) {
     const normalized = nextHandle === "translate"
@@ -71,19 +96,41 @@ export function createCutaway({
       : null;
     if (normalized === hoveredHandle) return;
     hoveredHandle = normalized;
-    for (const listener of handleHoverSubscribers) listener(hoveredHandle);
+    pendingHandlePublications.push({
+      handle: normalized,
+      subscribers: [...handleHoverSubscribers],
+    });
+    if (publishingHandleHover) return;
+
+    publishingHandleHover = true;
+    try {
+      drainHandleHoverPublications();
+    } finally {
+      publishingHandleHover = false;
+    }
   }
 
   function onHandleHoverChange(listener) {
     if (disposed || typeof listener !== "function") return () => {};
-    handleHoverSubscribers.add(listener);
-    listener(hoveredHandle);
-    let subscribed = true;
+    const record = { listener, active: true };
+    handleHoverSubscribers.add(record);
+    try {
+      listener(hoveredHandle);
+    } catch (error) {
+      record.active = false;
+      handleHoverSubscribers.delete(record);
+      throw error;
+    }
     return () => {
-      if (!subscribed) return;
-      subscribed = false;
-      handleHoverSubscribers.delete(listener);
+      if (!record.active) return;
+      record.active = false;
+      handleHoverSubscribers.delete(record);
     };
+  }
+
+  function clearHandleHoverSubscribers() {
+    for (const record of handleHoverSubscribers) record.active = false;
+    handleHoverSubscribers.clear();
   }
 
   function selected(name) {
@@ -221,23 +268,44 @@ export function createCutaway({
   }
 
   function disable() {
-    cancelIdleFade();
-    gizmo.setVisible(false);
-    publishHandleHover(null);
-    if (!enabled) return true;
+    if (disabling) return true;
+    disabling = true;
+    let firstError = null;
+    const attempt = (callback) => {
+      try {
+        callback();
+      } catch (error) {
+        firstError ??= error;
+      }
+    };
+    const wasEnabled = enabled;
     enabled = false;
-    for (const { renderSet } of renderSets.values()) {
-      renderSet.setVisible(false);
-      renderSet.setEnabled(false);
+    try {
+      attempt(cancelIdleFade);
+      attempt(() => gizmo.setVisible(false));
+      publishHandleHover(null);
+      if (wasEnabled) {
+        for (const { renderSet } of renderSets.values()) {
+          attempt(() => renderSet.setVisible(false));
+          attempt(() => renderSet.setEnabled(false));
+        }
+        for (const [material, entry] of auxiliaryMaterials) {
+          attempt(() => syncAuxiliaryMaterial(material, entry));
+        }
+        attempt(() => {
+          renderer.localClippingEnabled = previousLocalClippingEnabled;
+        });
+        previousLocalClippingEnabled = undefined;
+      }
+    } finally {
+      disabling = false;
     }
-    syncAuxiliaryMaterials();
-    renderer.localClippingEnabled = previousLocalClippingEnabled;
-    previousLocalClippingEnabled = undefined;
+    if (firstError) throw firstError;
     return true;
   }
 
   function setEnabled(on) {
-    if (disposed) return false;
+    if (disposed || disabling) return false;
     if (!on) return disable();
     if (enabled) return true;
     if (!supported) return false;
@@ -353,16 +421,31 @@ export function createCutaway({
 
   function dispose() {
     if (disposed) return;
-    disable();
     disposed = true;
-    for (const { renderSet } of renderSets.values()) renderSet.dispose();
+    let firstError = null;
+    const attempt = (callback) => {
+      try {
+        callback();
+      } catch (error) {
+        firstError ??= error;
+      }
+    };
+    attempt(disable);
+    for (const { renderSet } of renderSets.values()) {
+      attempt(() => renderSet.dispose());
+    }
     renderSets.clear();
+    for (const [material, entry] of auxiliaryMaterials) {
+      attempt(() => setMaterialClippingPlanes(material, entry.originalClippingPlanes));
+    }
     auxiliaryMaterials.clear();
-    gizmo.dispose();
+    attempt(() => gizmo.dispose());
     publishHandleHover(null);
-    handleHoverSubscribers.clear();
-    overlayScene.clear();
-    capGeometry.dispose();
+    drainHandleHoverPublications();
+    clearHandleHoverSubscribers();
+    attempt(() => overlayScene.clear());
+    attempt(() => capGeometry.dispose());
+    if (firstError) throw firstError;
   }
 
   return {

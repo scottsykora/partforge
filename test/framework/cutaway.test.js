@@ -214,6 +214,156 @@ test("disabling and disposing publish null and reject late subscriptions safely"
   }).not.toThrow();
 });
 
+test("a throwing initial handle subscriber is rolled back", () => {
+  const fixture = createFixture();
+  const throwing = vi.fn(() => { throw new Error("initial delivery failed"); });
+
+  expect(() => fixture.controller.onHandleHoverChange(throwing))
+    .toThrow("initial delivery failed");
+
+  const healthy = vi.fn();
+  fixture.controller.onHandleHoverChange(healthy);
+  fixture.controller.setEnabled(true);
+  movePointer(fixture.domElement);
+
+  expect(throwing).toHaveBeenCalledOnce();
+  expect(healthy.mock.calls.map(([handle]) => handle)).toEqual([null, "translate"]);
+});
+
+test("a throwing handle subscriber is reported without blocking later subscribers", () => {
+  const fixture = createFixture();
+  const reported = vi.spyOn(console, "error").mockImplementation(() => {});
+  const throwing = vi.fn((handle) => {
+    if (handle) throw new Error("transition delivery failed");
+  });
+  const healthy = vi.fn();
+  fixture.controller.onHandleHoverChange(throwing);
+  fixture.controller.onHandleHoverChange(healthy);
+
+  fixture.controller.setEnabled(true);
+  expect(() => movePointer(fixture.domElement)).not.toThrow();
+
+  expect(healthy).toHaveBeenLastCalledWith("translate");
+  expect(reported).toHaveBeenCalledWith(
+    "Cutaway handle hover subscriber failed",
+    expect.any(Error),
+  );
+  reported.mockRestore();
+});
+
+test("a subscriber added during fanout receives only its immediate current delivery", () => {
+  const fixture = createFixture();
+  const late = vi.fn();
+  fixture.controller.onHandleHoverChange((handle) => {
+    if (handle === "translate") fixture.controller.onHandleHoverChange(late);
+  });
+
+  fixture.controller.setEnabled(true);
+  movePointer(fixture.domElement);
+
+  expect(late).toHaveBeenCalledOnce();
+  expect(late).toHaveBeenCalledWith("translate");
+});
+
+test("unsubscribing a later subscriber during fanout skips its snapshot turn", () => {
+  const fixture = createFixture();
+  const later = vi.fn();
+  let unsubscribeLater;
+  fixture.controller.onHandleHoverChange((handle) => {
+    if (handle === "translate") unsubscribeLater();
+  });
+  unsubscribeLater = fixture.controller.onHandleHoverChange(later);
+
+  fixture.controller.setEnabled(true);
+  movePointer(fixture.domElement);
+
+  expect(later.mock.calls.map(([handle]) => handle)).toEqual([null]);
+});
+
+test("throwing final subscribers cannot interrupt disable or dispose cleanup", () => {
+  const disableFixture = createFixture();
+  const disabledPart = addSubpart(disableFixture);
+  disableFixture.controller.setEnabled(true);
+  movePointer(disableFixture.domElement);
+  const disableError = vi.spyOn(console, "error").mockImplementation(() => {});
+  disableFixture.controller.onHandleHoverChange((handle) => {
+    if (handle == null) throw new Error("disable delivery failed");
+  });
+
+  expect(() => disableFixture.controller.setEnabled(false)).not.toThrow();
+  expect(disableFixture.controller.isEnabled).toBe(false);
+  expect(disableFixture.renderer.localClippingEnabled).toBe(false);
+  expect(disabledPart.mesh.material).toBe(disabledPart.material);
+  expect(findGizmo(disableFixture.scene).visible).toBe(false);
+
+  const disposeFixture = createFixture();
+  disposeFixture.controller.setEnabled(true);
+  disposeFixture.controller.renderOverlay(disposeFixture.renderer, disposeFixture.camera);
+  movePointer(disposeFixture.domElement);
+  const handleRoot = disposeFixture.renderer.render.mock.calls[0][0].children[0];
+  const resources = new Set();
+  handleRoot.traverse((object) => {
+    if (object.geometry) resources.add(object.geometry);
+    if (object.material) resources.add(object.material);
+  });
+  const disposals = [...resources].map((resource) => vi.spyOn(resource, "dispose"));
+  disposeFixture.controller.onHandleHoverChange((handle) => {
+    if (handle == null) throw new Error("dispose delivery failed");
+  });
+
+  expect(() => disposeFixture.controller.dispose()).not.toThrow();
+  expect(disposeFixture.controller.isEnabled).toBe(false);
+  expect(handleRoot.parent).toBeNull();
+  for (const dispose of disposals) expect(dispose).toHaveBeenCalledOnce();
+  expect(disableError).toHaveBeenCalledTimes(2);
+  disableError.mockRestore();
+});
+
+test("reentrant dispose from final hover delivery does not double-dispose resources", () => {
+  const fixture = createFixture();
+  addSubpart(fixture);
+  fixture.controller.setEnabled(true);
+  fixture.controller.renderOverlay(fixture.renderer, fixture.camera);
+  movePointer(fixture.domElement);
+  const handleRoot = fixture.renderer.render.mock.calls[0][0].children[0];
+  const resources = new Set();
+  handleRoot.traverse((object) => {
+    if (object.geometry) resources.add(object.geometry);
+    if (object.material) resources.add(object.material);
+  });
+  const disposals = [...resources].map((resource) => vi.spyOn(resource, "dispose"));
+  const capDispose = vi.spyOn(findCap(fixture.scene).geometry, "dispose");
+  fixture.controller.onHandleHoverChange((handle) => {
+    if (handle == null) fixture.controller.dispose();
+  });
+
+  fixture.controller.dispose();
+
+  expect(handleRoot.parent).toBeNull();
+  for (const dispose of disposals) expect(dispose).toHaveBeenCalledOnce();
+  expect(capDispose).toHaveBeenCalledOnce();
+});
+
+test("dispose during hover fanout still delivers final null before clearing subscribers", () => {
+  const fixture = createFixture();
+  const disposing = vi.fn((handle) => {
+    if (handle === "translate") fixture.controller.dispose();
+  });
+  const later = vi.fn();
+  fixture.controller.onHandleHoverChange(disposing);
+  fixture.controller.onHandleHoverChange(later);
+  fixture.controller.setEnabled(true);
+
+  movePointer(fixture.domElement);
+
+  expect(disposing.mock.calls.map(([handle]) => handle)).toEqual([
+    null,
+    "translate",
+    null,
+  ]);
+  expect(later.mock.calls.map(([handle]) => handle)).toEqual([null, null]);
+});
+
 test("empty bounds refuse activation without changing materials or scheduling fade", () => {
   const fixture = createFixture({ box: new THREE.Box3() });
   const { mesh, material } = addSubpart(fixture);
