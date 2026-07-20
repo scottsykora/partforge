@@ -1,19 +1,8 @@
 import * as THREE from "three";
 
 const PLANE_LOCAL_NORMAL = new THREE.Vector3(0, 0, 1);
-const MIN_HATCH_MM = 0.5;
-const MAX_HATCH_MM = 12;
-const HATCHES_ACROSS_DIAGONAL = 24;
 const POINT_EPSILON = 1e-6;
 const PARALLEL_EPSILON = 1e-6;
-
-export function hatchSpacingForDiagonal(diagonal) {
-  return THREE.MathUtils.clamp(
-    diagonal / HATCHES_ACROSS_DIAGONAL,
-    MIN_HATCH_MM,
-    MAX_HATCH_MM,
-  );
-}
 
 export function initialCutawayPose(box, camera) {
   const position = box.getCenter(new THREE.Vector3());
@@ -28,7 +17,6 @@ export function initialCutawayPose(box, camera) {
     position,
     quaternion,
     size: diagonal * 1.25,
-    hatchSpacing: hatchSpacingForDiagonal(diagonal),
   };
 }
 

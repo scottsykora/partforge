@@ -71,7 +71,6 @@ export function createCutaway({
       position: pose.position,
       quaternion: pose.quaternion,
       size: pose.size,
-      spacing: pose.hatchSpacing,
     });
   }
 
@@ -124,7 +123,6 @@ export function createCutaway({
       position: nextPose.position.clone(),
       quaternion: nextPose.quaternion.clone(),
       size: nextPose.size,
-      hatchSpacing: nextPose.hatchSpacing ?? pose?.hatchSpacing ?? 1,
     };
     if (resetFlip) flipped = false;
     planeFromPose(plane, planeNormal, pose.position, pose.quaternion, flipped);

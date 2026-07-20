@@ -17,7 +17,6 @@ export function createHatchMaterial({ color, opacity, inkColor }) {
       uBase: { value: new THREE.Color(color) },
       uInk: { value: new THREE.Color(inkColor) },
       uOpacity: { value: opacity },
-      uScale: { value: 1 },
       uPixelRatio: { value: 1 },
     },
     vertexShader: `
@@ -55,9 +54,6 @@ export function createHatchMaterial({ color, opacity, inkColor }) {
     forceSinglePass: true,
   });
 
-  material.userData.setHatch = ({ spacing, size }) => {
-    material.uniforms.uScale.value = size / spacing * HATCH_PERIOD_CSS_PX;
-  };
   material.userData.setScreenScale = (pixelRatio) => {
     material.uniforms.uPixelRatio.value = Number.isFinite(pixelRatio) && pixelRatio > 0
       ? pixelRatio
@@ -239,12 +235,11 @@ export function createSectionRenderSet({
     front.geometry = geometry;
   }
 
-  function setCapPose({ position, quaternion, size, spacing }) {
+  function setCapPose({ position, quaternion, size }) {
     if (disposed) return;
     cap.position.copy(position);
     cap.quaternion.copy(quaternion);
     cap.scale.setScalar(size);
-    capMaterial.userData.setHatch({ spacing, size });
   }
 
   function setHatchInk(color) {

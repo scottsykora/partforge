@@ -2,7 +2,6 @@ import { expect, test } from "vitest";
 import * as THREE from "three";
 import {
   axisParameterFromRay,
-  hatchSpacingForDiagonal,
   initialCutawayPose,
   planeFromPose,
   pointSurvivesPlane,
@@ -29,7 +28,7 @@ test("initial pose centers the plane, points away from the camera, and sizes it 
   expect(normal.z).toBeCloseTo(-1);
   expect(pose.size).toBeCloseTo(diagonal * 1.25);
   expect(pose.size).toBeGreaterThan(diagonal);
-  expect(pose.hatchSpacing).toBe(hatchSpacingForDiagonal(diagonal));
+  expect(pose).not.toHaveProperty("hatchSpacing");
 });
 
 test("plane pose keeps the positive side and flip reverses it", () => {
@@ -50,12 +49,6 @@ test("plane pose keeps the positive side and flip reverses it", () => {
   expect(normal.z).toBeCloseTo(-1);
   expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 1))).toBe(true);
   expect(pointSurvivesPlane(plane, new THREE.Vector3(0, 0, 3))).toBe(false);
-});
-
-test("hatch spacing scales with the diagonal and clamps to useful limits", () => {
-  expect(hatchSpacingForDiagonal(1)).toBe(0.5);
-  expect(hatchSpacingForDiagonal(120)).toBe(5);
-  expect(hatchSpacingForDiagonal(10_000)).toBe(12);
 });
 
 test("axis parameter finds the closest point and rejects parallel rays", () => {

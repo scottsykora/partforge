@@ -474,6 +474,27 @@ test("viewport screen scale is retained for existing, replacement, and future ca
   )).toEqual([1, 1]);
 });
 
+test("enable, flip, and reset preserve screen-space hatch sizing without model density state", () => {
+  const fixture = createFixture();
+  addSubpart(fixture);
+  fixture.controller.setViewportSize(640, 480, 2);
+
+  fixture.controller.setEnabled(true);
+  const cap = findCap(fixture.scene);
+  expect(cap.material.uniforms.uPixelRatio.value).toBe(2);
+  expect(cap.material.uniforms.uScale).toBeUndefined();
+  expect(cap.material.userData.setHatch).toBeUndefined();
+
+  fixture.controller.flip();
+  expect(cap.material.uniforms.uPixelRatio.value).toBe(2);
+  expect(cap.material.uniforms.uScale).toBeUndefined();
+
+  fixture.controller.reset();
+  expect(cap.material.uniforms.uPixelRatio.value).toBe(2);
+  expect(cap.material.uniforms.uScale).toBeUndefined();
+  expect(cap.material.userData.setHatch).toBeUndefined();
+});
+
 test("theme refresh forwards exact feature-edge hatch colors and preserves exact originals", () => {
   const fixture = createFixture();
   const { mesh, material, edgeLines, edgeMaterial } = addSubpart(fixture);

@@ -78,8 +78,9 @@ describe("createHatchMaterial", () => {
     expect(material).toBeInstanceOf(THREE.ShaderMaterial);
     expect(material.uniforms.uBase.value.getHex()).toBe(0x336699);
     expect(material.uniforms.uOpacity.value).toBe(0.65);
-    expect(material.uniforms.uScale.value).toBe(1);
+    expect(material.uniforms.uScale).toBeUndefined();
     expect(material.uniforms.uPixelRatio.value).toBe(1);
+    expect(material.userData.setHatch).toBeUndefined();
     expect(material.transparent).toBe(true);
     expect(material.depthWrite).toBe(false);
     expect(material.vertexShader).not.toContain("vUv");
@@ -153,7 +154,7 @@ describe("createHatchMaterial", () => {
     expect(material.forceSinglePass).toBe(true);
   });
 
-  test("updates hatch scale and ink color without replacing uniform colors", () => {
+  test("updates hatch ink color without replacing the uniform color", () => {
     const material = createHatchMaterial({
       color: 0xabcdef,
       opacity: 1,
@@ -163,10 +164,8 @@ describe("createHatchMaterial", () => {
 
     expect(ink.getHex()).toBe(0x1c232d);
 
-    material.userData.setHatch({ spacing: 2.5, size: 40 });
     material.userData.setInkColor(0x33414f);
 
-    expect(material.uniforms.uScale.value).toBe(80);
     expect(material.uniforms.uInk.value).toBe(ink);
     expect(ink.getHex()).toBe(0x33414f);
     expect(material.transparent).toBe(false);
@@ -267,12 +266,13 @@ describe("createSectionRenderSet", () => {
     expect(renderSet.front.geometry).toBe(replacement);
   });
 
-  test("copies the cap pose, scales it, and updates hatch density", () => {
+  test("copies and scales the cap pose without changing screen-space hatch sizing", () => {
     const { scene, capGeometry, renderSet } = createFixture();
     const position = new THREE.Vector3(7, 8, 9);
     const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.3, 0.6, 0.2));
 
-    renderSet.setCapPose({ position, quaternion, size: 48, spacing: 3 });
+    renderSet.setViewportSize(640, 480, 2);
+    renderSet.setCapPose({ position, quaternion, size: 48 });
 
     expect(renderSet.cap.parent).toBe(scene);
     expect(renderSet.cap.geometry).toBe(capGeometry);
@@ -281,7 +281,9 @@ describe("createSectionRenderSet", () => {
     expect(renderSet.cap.quaternion.equals(quaternion)).toBe(true);
     expect(renderSet.cap.quaternion).not.toBe(quaternion);
     expect(renderSet.cap.scale.toArray()).toEqual([48, 48, 48]);
-    expect(renderSet.cap.material.uniforms.uScale.value).toBe(80);
+    expect(renderSet.cap.material.uniforms.uPixelRatio.value).toBe(2);
+    expect(renderSet.cap.material.uniforms.uScale).toBeUndefined();
+    expect(renderSet.cap.material.userData.setHatch).toBeUndefined();
   });
 
   test("keeps every cap isolated before all clipped surfaces and edge lines", () => {
