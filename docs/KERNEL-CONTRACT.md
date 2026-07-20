@@ -183,6 +183,8 @@ above. All ops return a `Solid`.
 | `helixSweptTube({pathR, profileR, pitch, turns, z0, lefthand})` | Circle of radius `profileR` swept along a helix (e.g. a rope groove). |
 | `union(solids[])` | Boolean union of one or more solids. |
 | `text2d(string, {size, font?, align?, valign?, lineHeight?, tracking?, kerning?})` | Outline-font text → `Shape2D`. `size` = cap height (mm). `font` = declared name / inline bytes / default. Build-time; curve-exact on OCCT, faceted on Manifold. |
+| `hull(inputs[])` | Convex hull of all inputs (each a `Shape2D`, a curve contour, or an `[[x,y],…]` point list) → a convex `Shape2D`. Backend-agnostic: a pure-JS monotone-chain hull over the inputs' sampled points (curved inputs tessellated at a fixed LOD), lifted via `shape2d` — identical output on both backends. Throws on an empty input array or a degenerate (collinear/point-count < 3) hull. |
+| `hullChain(inputs[])` | Swept hull over an ordered sequence of ≥2 inputs (same input forms as `hull`): the union of `hull([inᵢ, inᵢ₊₁])` for each consecutive pair — e.g. a tapered link connecting a row of circles. Throws with fewer than 2 inputs. |
 | `toSTEP(named[])` | `[{name, solid}]` → `Promise<ArrayBuffer>` of a STEP assembly. B-rep class only. |
 
 **Backend-divergent options** (a portable part must treat these as declared here):

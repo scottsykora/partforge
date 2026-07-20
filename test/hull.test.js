@@ -26,6 +26,12 @@ describe("convexHull", () => {
   it("throws on collinear points (no 2-D region)", () => {
     expect(() => convexHull([[0, 0], [1, 1], [2, 2], [3, 3]])).toThrow(/collinear|hull/);
   });
+
+  it("is deterministic for point/contour inputs (backend-independent)", () => {
+    const inA = convexHull(hullPoints([[0, 0], [10, 0], [5, 8], [3, 3]]));
+    const inB = convexHull(hullPoints([[0, 0], [10, 0], [5, 8], [3, 3]]));
+    expect(inA).toEqual(inB);
+  });
 });
 
 describe("hullPoints", () => {

@@ -19,7 +19,7 @@ export const CONTRACT_VERSION = 1;
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
-  "loft", "sweep", "helixSweptTube", "union", "shape2d", "text2d", "toSTEP",
+  "loft", "sweep", "helixSweptTube", "union", "shape2d", "text2d", "hull", "hullChain", "toSTEP",
 ];
 
 // Backend-optional kernel ops: the Manifold cache brackets + WASM lifetime hooks.
@@ -106,6 +106,8 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(solids:Solid[]) => Solid} union
  * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|Shape2D) => Shape2D} shape2d   2-D boolean value (both backends: Manifold wraps a CrossSection, OCCT a replicad Drawing)
+ * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hull   convex hull of all inputs → a convex Shape2D (faceted; pure-JS monotone chain)
+ * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hullChain   swept hull over an ordered sequence (≥2): union of hull([inᵢ,inᵢ₊₁])
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)
  * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (Manifold only)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)
