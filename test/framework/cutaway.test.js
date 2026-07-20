@@ -18,8 +18,11 @@ function makeRenderer(stencil = true) {
     : vi.fn(() => ({ stencil }));
   return {
     localClippingEnabled: false,
+    autoClear: true,
     getContext: vi.fn(() => ({ getContextAttributes })),
     getContextAttributes,
+    clearDepth: vi.fn(),
+    render: vi.fn(),
   };
 }
 
@@ -175,6 +178,73 @@ test("disable and dispose without activation leave the renderer clipping flag un
   const disposed = createFixture({ localClippingEnabled: true });
   disposed.controller.dispose();
   expect(disposed.renderer.localClippingEnabled).toBe(true);
+});
+
+test("renderOverlay does nothing while disabled or disposed", () => {
+  const fixture = createFixture();
+
+  expect(fixture.controller.renderOverlay(fixture.renderer, fixture.camera)).toBe(false);
+  expect(fixture.renderer.clearDepth).not.toHaveBeenCalled();
+  expect(fixture.renderer.render).not.toHaveBeenCalled();
+
+  fixture.controller.dispose();
+
+  expect(fixture.controller.renderOverlay(fixture.renderer, fixture.camera)).toBe(false);
+  expect(fixture.renderer.clearDepth).not.toHaveBeenCalled();
+  expect(fixture.renderer.render).not.toHaveBeenCalled();
+});
+
+test.each([true, false])("renderOverlay clears only depth, renders the handle scene, and restores autoClear=%s", (autoClear) => {
+  const fixture = createFixture();
+  fixture.controller.setEnabled(true);
+  fixture.renderer.autoClear = autoClear;
+  const calls = [];
+  fixture.renderer.clearDepth.mockImplementation(() => calls.push("clearDepth"));
+  fixture.renderer.render.mockImplementation((scene, camera) => calls.push({ scene, camera }));
+
+  expect(fixture.controller.renderOverlay(fixture.renderer, fixture.camera)).toBe(true);
+
+  expect(calls[0]).toBe("clearDepth");
+  expect(calls[1].camera).toBe(fixture.camera);
+  expect(calls[1].scene).toBeInstanceOf(THREE.Scene);
+  expect(calls[1].scene).not.toBe(fixture.scene);
+  expect(calls[1].scene.children).toHaveLength(1);
+  expect(calls[1].scene.children[0].isGroup).toBe(true);
+  expect(fixture.renderer.autoClear).toBe(autoClear);
+  expect(findGizmo(fixture.scene).children.some((child) => child.isGroup)).toBe(false);
+});
+
+test("renderOverlay restores autoClear and propagates a renderer failure", () => {
+  const fixture = createFixture();
+  fixture.controller.setEnabled(true);
+  fixture.renderer.autoClear = true;
+  fixture.renderer.render.mockImplementation(() => { throw new Error("overlay failed"); });
+
+  expect(() => fixture.controller.renderOverlay(fixture.renderer, fixture.camera))
+    .toThrow("overlay failed");
+  expect(fixture.renderer.clearDepth).toHaveBeenCalledOnce();
+  expect(fixture.renderer.autoClear).toBe(true);
+});
+
+test("dispose empties the owned overlay scene and disposes handle resources only once", () => {
+  const fixture = createFixture();
+  fixture.controller.setEnabled(true);
+  fixture.controller.renderOverlay(fixture.renderer, fixture.camera);
+  const overlayScene = fixture.renderer.render.mock.calls[0][0];
+  const handleRoot = overlayScene.children[0];
+  const resources = new Set();
+  handleRoot.traverse((object) => {
+    if (object.geometry) resources.add(object.geometry);
+    if (object.material) resources.add(object.material);
+  });
+  const disposals = [...resources].map((resource) => vi.spyOn(resource, "dispose"));
+
+  fixture.controller.dispose();
+  fixture.controller.dispose();
+
+  expect(overlayScene.children).toHaveLength(0);
+  expect(handleRoot.parent).toBeNull();
+  for (const dispose of disposals) expect(dispose).toHaveBeenCalledOnce();
 });
 
 test("repeated enable does not overwrite the renderer clipping snapshot", () => {
@@ -474,8 +544,9 @@ test("failed activation preserves renderer and auxiliary clipping state", () => 
 test("updateForCamera delegates observable screen scaling to the gizmo", () => {
   const fixture = createFixture();
   fixture.controller.setEnabled(true);
-  const gizmo = findGizmo(fixture.scene);
-  const handleRoot = gizmo.children.find((child) => child.isGroup);
+  fixture.controller.renderOverlay(fixture.renderer, fixture.camera);
+  const overlayScene = fixture.renderer.render.mock.calls[0][0];
+  const handleRoot = overlayScene.children[0];
   fixture.controller.updateForCamera();
   const nearScale = handleRoot.scale.x;
 

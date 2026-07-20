@@ -16,13 +16,14 @@ vi.mock("three", async (importOriginal) => {
     constructor() {
       this.domElement = document.createElement("canvas");
       this.localClippingEnabled = false;
+      this.calls = [];
       state.renderer = this;
     }
     getContext() { return { getContextAttributes: () => ({ stencil: true }) }; }
     setPixelRatio() {}
     setSize() {}
     setAnimationLoop(callback) { this.animationLoop = callback; }
-    render() {}
+    render(scene, camera) { this.calls.push({ type: "main", scene, camera }); }
     dispose() {}
   }
   return { ...actual, WebGLRenderer: FakeRenderer };
@@ -38,7 +39,7 @@ vi.mock("../../src/framework/cutaway.js", () => ({
 import { createViewer } from "../../src/framework/viewer.js";
 
 function createFakeCutaway() {
-  return {
+  const cutaway = {
     isSupported: true,
     isEnabled: false,
     setSubpart: vi.fn(),
@@ -52,8 +53,14 @@ function createFakeCutaway() {
     isPointVisible: vi.fn(() => true),
     registerClippableMaterial: vi.fn(),
     updateForCamera: vi.fn(),
+    renderOverlay: vi.fn((renderer, camera) => {
+      if (!cutaway.isEnabled) return false;
+      renderer.calls.push({ type: "overlay", camera });
+      return true;
+    }),
     dispose: vi.fn(),
   };
+  return cutaway;
 }
 
 function createContainer(width = 400, height = 300) {
@@ -96,6 +103,36 @@ test("viewer skips per-frame cutaway camera updates while cutaway is disabled", 
   state.renderer.animationLoop();
   expect(state.cutaway.updateForCamera).toHaveBeenCalledOnce();
 
+  viewer.dispose();
+});
+
+test("viewer renders the main scene before the enabled cutaway handle overlay", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+  state.cutaway.isEnabled = true;
+
+  state.renderer.animationLoop();
+
+  expect(state.renderer.calls.map((call) => call.type)).toEqual(["main", "overlay"]);
+  expect(state.cutaway.renderOverlay).toHaveBeenCalledWith(
+    state.renderer,
+    state.renderer.calls[0].camera,
+  );
+  viewer.dispose();
+});
+
+test("viewer renders only the main scene when cutaway is disabled", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+
+  state.renderer.animationLoop();
+
+  expect(state.renderer.calls.map((call) => call.type)).toEqual(["main"]);
+  expect(state.cutaway.renderOverlay).toHaveBeenCalledOnce();
   viewer.dispose();
 });
 

@@ -15,6 +15,7 @@ afterEach(() => {
 
 function createFixture(overrides = {}) {
   const scene = new THREE.Scene();
+  const overlayScene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1_000);
   camera.position.set(0, 0, 20);
   camera.lookAt(0, 0, 0);
@@ -37,6 +38,7 @@ function createFixture(overrides = {}) {
   const onPoseChange = vi.fn();
   const gizmo = createCutawayGizmo({
     scene,
+    overlayScene,
     camera,
     domElement,
     orbitControls,
@@ -45,6 +47,7 @@ function createFixture(overrides = {}) {
   });
   const fixture = {
     scene,
+    overlayScene,
     camera,
     domElement,
     orbitControls,
@@ -119,6 +122,37 @@ test("setPose applies the plane pose and size while visibility remains controlla
   expect(gizmo.group.visible).toBe(true);
 });
 
+test("mounts the ghost plane in the main scene and all visible and hit handles in one overlay scene", () => {
+  const { scene, overlayScene, gizmo } = createFixture();
+
+  expect(gizmo.group.parent).toBe(scene);
+  expect(gizmo.fill.parent).toBe(gizmo.group);
+  expect(gizmo.border.parent).toBe(gizmo.group);
+  expect(gizmo.handleRoot.parent).toBe(overlayScene);
+  expect(gizmo.group.getObjectById(gizmo.handleRoot.id)).toBeUndefined();
+
+  const overlayMeshes = [];
+  gizmo.handleRoot.traverse((object) => {
+    if (object.isMesh) overlayMeshes.push(object);
+  });
+  expect(overlayMeshes).toHaveLength(7);
+  expect(overlayMeshes).toEqual(expect.arrayContaining(Object.values(gizmo.handles)));
+  for (const mesh of overlayMeshes) {
+    let root = mesh;
+    while (root.parent) root = root.parent;
+    expect(root).toBe(overlayScene);
+  }
+
+  const position = new THREE.Vector3(2, 3, 4);
+  const quaternion = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 1, 0),
+    Math.PI / 4,
+  );
+  gizmo.setPose({ position, quaternion, size: 20 });
+  expect(gizmo.handleRoot.position.toArray()).toEqual(position.toArray());
+  expect(gizmo.handleRoot.quaternion.toArray()).toEqual(quaternion.toArray());
+});
+
 test("exposes enlarged hit proxies tagged with the three exact handle names", () => {
   const { gizmo } = createFixture();
 
@@ -178,6 +212,7 @@ test.each([
   });
   gizmo.setFlipped(flipped);
   gizmo.group.updateWorldMatrix(true, true);
+  gizmo.handleRoot.updateWorldMatrix(true, true);
   const radius = gizmo.handles.rotateY.geometry.parameters.radius
     * gizmo.handleRoot.scale.x;
   const rays = [
@@ -232,7 +267,7 @@ test.each([
   expect(gizmo.border.position.z).toBeCloseTo(expectedOffset);
 });
 
-test("visible controls overlay section draws while the translucent fill remains depth-tested", () => {
+test("visible controls share overlay depth while the translucent fill remains depth-tested", () => {
   const { gizmo } = createFixture();
   const visibleHandles = [];
   gizmo.handleRoot.traverse((child) => {
@@ -242,9 +277,11 @@ test("visible controls overlay section draws while the translucent fill remains 
   expect(visibleHandles).toHaveLength(4);
   for (const handle of visibleHandles) {
     expect(handle.material.transparent).toBe(true);
-    expect(handle.material.depthTest).toBe(false);
-    expect(handle.material.depthWrite).toBe(false);
-    expect(handle.renderOrder).toBeGreaterThan(CUTAWAY_OVERLAY_RENDER_ORDER);
+    expect(handle.material.depthTest).toBe(true);
+    expect(handle.material.depthWrite).toBe(true);
+    expect(handle.renderOrder).toBe(0);
+    expect(handle.parent === gizmo.handleRoot || handle.parent?.parent === gizmo.handleRoot)
+      .toBe(true);
   }
   expect(gizmo.border.material.transparent).toBe(true);
   expect(gizmo.border.material.depthTest).toBe(false);
@@ -565,13 +602,15 @@ test("ring proxy provides a touch-friendly band at the intended apparent scale",
 
 test("dispose ends a drag, removes listeners and scene objects, and disposes owned resources once", () => {
   const pickHandle = vi.fn(() => "translate");
-  const { scene, domElement, orbitControls, gizmo } = createFixture({ pickHandle });
+  const { domElement, orbitControls, gizmo } = createFixture({ pickHandle });
   const geometries = new Set();
   const materials = new Set();
-  gizmo.group.traverse((object) => {
-    if (object.geometry) geometries.add(object.geometry);
-    if (object.material) materials.add(object.material);
-  });
+  for (const root of [gizmo.group, gizmo.handleRoot]) {
+    root.traverse((object) => {
+      if (object.geometry) geometries.add(object.geometry);
+      if (object.material) materials.add(object.material);
+    });
+  }
   const geometryDisposals = [...geometries].map((resource) => vi.spyOn(resource, "dispose"));
   const materialDisposals = [...materials].map((resource) => vi.spyOn(resource, "dispose"));
 
@@ -581,6 +620,7 @@ test("dispose ends a drag, removes listeners and scene objects, and disposes own
   gizmo.dispose();
 
   expect(gizmo.group.parent).toBeNull();
+  expect(gizmo.handleRoot.parent).toBeNull();
   expect(orbitControls.enabled).toBe(true);
   expect(domElement.releasePointerCapture).toHaveBeenCalledWith(7);
   for (const dispose of [...geometryDisposals, ...materialDisposals]) {

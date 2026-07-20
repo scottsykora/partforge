@@ -36,6 +36,7 @@ const MAX_GHOST_OFFSET = 0.25;
 
 export function createCutawayGizmo({
   scene,
+  overlayScene,
   camera,
   domElement,
   orbitControls,
@@ -84,20 +85,20 @@ export function createCutawayGizmo({
   const translateMaterial = new THREE.MeshBasicMaterial({
     color: 0x36d399,
     transparent: true,
-    depthTest: false,
-    depthWrite: false,
+    depthTest: true,
+    depthWrite: true,
   });
   const rotateXMaterial = new THREE.MeshBasicMaterial({
     color: 0xff6b7a,
     transparent: true,
-    depthTest: false,
-    depthWrite: false,
+    depthTest: true,
+    depthWrite: true,
   });
   const rotateYMaterial = new THREE.MeshBasicMaterial({
     color: 0x5aa9ff,
     transparent: true,
-    depthTest: false,
-    depthWrite: false,
+    depthTest: true,
+    depthWrite: true,
   });
   materials.add(translateMaterial);
   materials.add(rotateXMaterial);
@@ -105,12 +106,10 @@ export function createCutawayGizmo({
 
   const shaftGeometry = new THREE.CylinderGeometry(0.025, 0.025, 0.58, 12);
   const shaft = new THREE.Mesh(shaftGeometry, translateMaterial);
-  shaft.renderOrder = GIZMO_RENDER_ORDER;
   shaft.rotation.x = Math.PI / 2;
   shaft.position.z = 0.29;
   const coneGeometry = new THREE.ConeGeometry(0.075, 0.2, 16);
   const cone = new THREE.Mesh(coneGeometry, translateMaterial);
-  cone.renderOrder = GIZMO_RENDER_ORDER;
   cone.rotation.x = Math.PI / 2;
   cone.position.z = 0.68;
   geometries.add(shaftGeometry);
@@ -124,7 +123,6 @@ export function createCutawayGizmo({
     Math.PI,
   );
   const ringX = new THREE.Mesh(ringXGeometry, rotateXMaterial);
-  ringX.renderOrder = GIZMO_RENDER_ORDER;
   ringX.quaternion
     .setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2)
     .multiply(new THREE.Quaternion().setFromAxisAngle(
@@ -139,7 +137,6 @@ export function createCutawayGizmo({
     Math.PI,
   );
   const ringY = new THREE.Mesh(ringYGeometry, rotateYMaterial);
-  ringY.renderOrder = GIZMO_RENDER_ORDER;
   ringY.rotation.x = -Math.PI / 2;
   geometries.add(ringXGeometry);
   geometries.add(ringYGeometry);
@@ -182,8 +179,9 @@ export function createCutawayGizmo({
 
   arcRoot.add(ringX, ringY, rotateXHit, rotateYHit);
   handleRoot.add(shaft, cone, translateHit, arcRoot);
-  group.add(fill, border, handleRoot);
+  group.add(fill, border);
   scene.add(group);
+  overlayScene.add(handleRoot);
 
   const handles = {
     translate: translateHit,
@@ -225,7 +223,7 @@ export function createCutawayGizmo({
         return "translate";
       }
     }
-    group.updateWorldMatrix(true, true);
+    handleRoot.updateWorldMatrix(true, true);
     const intersection = raycaster.intersectObjects(hitProxies, false)[0];
     return resolveHandle(intersection);
   }
@@ -260,6 +258,11 @@ export function createCutawayGizmo({
       quaternion: group.quaternion.clone(),
       size: poseSize,
     });
+  }
+
+  function syncHandleTransform() {
+    handleRoot.position.copy(group.position);
+    handleRoot.quaternion.copy(group.quaternion);
   }
 
   function viewDirectionAt(position) {
@@ -378,6 +381,7 @@ export function createCutawayGizmo({
       if (!Number.isFinite(delta)) return;
       group.position.copy(drag.startPosition).addScaledVector(drag.axis, delta);
       group.quaternion.copy(drag.startQuaternion);
+      syncHandleTransform();
       notifyPose();
       return;
     }
@@ -393,6 +397,7 @@ export function createCutawayGizmo({
       const delta = new THREE.Quaternion().setFromAxisAngle(drag.axis, angle);
       group.quaternion.copy(delta.multiply(drag.startQuaternion)).normalize();
       group.position.copy(drag.startPosition);
+      syncHandleTransform();
       notifyPose();
       return;
     }
@@ -407,6 +412,7 @@ export function createCutawayGizmo({
     const delta = new THREE.Quaternion().setFromAxisAngle(drag.axis, angle);
     group.quaternion.copy(delta.multiply(drag.startQuaternion)).normalize();
     group.position.copy(drag.startPosition);
+    syncHandleTransform();
     notifyPose();
   }
 
@@ -437,6 +443,7 @@ export function createCutawayGizmo({
   function setPose({ position, quaternion, size }) {
     group.position.copy(position);
     group.quaternion.copy(quaternion);
+    syncHandleTransform();
     poseSize = size;
     fill.scale.setScalar(size);
     border.scale.setScalar(size);
@@ -464,6 +471,7 @@ export function createCutawayGizmo({
   function setVisible(on) {
     if (!on) endDrag();
     group.visible = Boolean(on);
+    handleRoot.visible = Boolean(on);
   }
 
   function setActiveAppearance(active) {
@@ -519,6 +527,7 @@ export function createCutawayGizmo({
       target.removeEventListener(type, listener);
     }
     scene.remove(group);
+    overlayScene.remove(handleRoot);
     for (const geometry of geometries) geometry.dispose();
     for (const material of materials) material.dispose();
   }

@@ -46,6 +46,7 @@ export function createCutaway({
   const plane = new THREE.Plane();
   const planeNormal = new THREE.Vector3();
   const capGeometry = new THREE.PlaneGeometry(1, 1);
+  const overlayScene = new THREE.Scene();
   const renderSets = new Map();
   const auxiliaryMaterials = new Map();
   let selectedNames = null;
@@ -140,6 +141,7 @@ export function createCutaway({
 
   const gizmo = createCutawayGizmo({
     scene,
+    overlayScene,
     camera,
     domElement,
     orbitControls,
@@ -307,6 +309,19 @@ export function createCutaway({
     if (enabled && !disposed) gizmo.updateForCamera();
   }
 
+  function renderOverlay(targetRenderer, targetCamera) {
+    if (!enabled || disposed) return false;
+    const previousAutoClear = targetRenderer.autoClear;
+    try {
+      targetRenderer.autoClear = false;
+      targetRenderer.clearDepth();
+      targetRenderer.render(overlayScene, targetCamera);
+    } finally {
+      targetRenderer.autoClear = previousAutoClear;
+    }
+    return true;
+  }
+
   function dispose() {
     if (disposed) return;
     disable();
@@ -315,6 +330,7 @@ export function createCutaway({
     renderSets.clear();
     auxiliaryMaterials.clear();
     gizmo.dispose();
+    overlayScene.clear();
     capGeometry.dispose();
   }
 
@@ -332,6 +348,7 @@ export function createCutaway({
     isPointVisible,
     registerClippableMaterial,
     updateForCamera,
+    renderOverlay,
     dispose,
   };
 }

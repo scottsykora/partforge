@@ -268,6 +268,7 @@ export function createViewer(container, part) {
     controls.update();
     if (cutaway.isEnabled) cutaway.updateForCamera();
     renderer.render(scene, camera);
+    cutaway.renderOverlay(renderer, camera);
   });
 
   // --- camera state (read/write for persistence; mount.js owns storage) -------
