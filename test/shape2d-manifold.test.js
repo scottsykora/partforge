@@ -152,3 +152,7 @@ test("Shape2D.regions() splits disjoint regions into separate live Shape2Ds", ()
   for (const r of regions) { expect(r._shape2d).toBe(true); expect(r.area()).toBeCloseTo(100, 3); }
   expect(regions[0].union(regions[1]).area()).toBeCloseTo(200, 3);   // re-composable
 });
+
+test("Shape2D.extrude with no h throws the kernel's required-arg error (not silent garbage)", () => {
+  expect(() => k.shape2d(SQ(0, 0, 10)).extrude({})).toThrow(/h is required/);
+});

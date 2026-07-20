@@ -12,8 +12,11 @@ export function addShape2dSugar(s, { shape2d, extrude, revolve }) {
   // .regions() → scission: each disjoint region as its own live Shape2D (booleanable further).
   s.regions = () => s.toRegions().map((r) => shape2d(r));
   // .extrude({ h, twist?, scaleTop? }) / .revolve({ degrees? }) → Solid. Sugar for
-  // k.extrude({ profile: shape, … }) / k.revolve({ profile: shape, … }).
-  s.extrude = ({ h, twist, scaleTop } = {}) => extrude(s, h, { twist, scaleTop });
-  s.revolve = ({ degrees } = {}) => revolve(s, { degrees });
+  // k.extrude({ profile: shape, … }) / k.revolve({ profile: shape, … }). Passed as an
+  // options object (not positional) so the kernel op's key/required-arg validation still
+  // fires — e.g. a missing `h` throws "extrude: h is required" rather than silently
+  // producing empty geometry.
+  s.extrude = ({ h, twist, scaleTop } = {}) => extrude({ profile: s, h, twist, scaleTop });
+  s.revolve = ({ degrees } = {}) => revolve({ profile: s, degrees });
   return s;
 }
