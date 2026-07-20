@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createGeometryService } from "../src/framework/geometry-service.js";
 
 function fakeWorkers() {
@@ -40,4 +40,56 @@ test("terminate() terminates both workers", () => {
   const s = createGeometryService({ createWorker, onMessage: () => {} });
   s.terminate();
   expect(terminated.sort()).toEqual(["manifold", "occt"]);
+});
+
+test("terminate() still terminates occt when manifold termination throws", () => {
+  const manifoldError = new Error("manifold termination failed");
+  const workers = {
+    manifold: { terminate: vi.fn(() => { throw manifoldError; }) },
+    occt: { terminate: vi.fn() },
+  };
+  const service = createGeometryService({
+    createWorker: (name) => workers[name],
+    onMessage: vi.fn(),
+  });
+
+  expect(() => service.terminate()).toThrow(manifoldError);
+  expect(workers.manifold.terminate).toHaveBeenCalledOnce();
+  expect(workers.occt.terminate).toHaveBeenCalledOnce();
+});
+
+test("terminate() reports every worker termination error after attempting both", () => {
+  const manifoldError = new Error("manifold termination failed");
+  const occtError = new Error("occt termination failed");
+  const workers = {
+    manifold: { terminate: vi.fn(() => { throw manifoldError; }) },
+    occt: { terminate: vi.fn(() => { throw occtError; }) },
+  };
+  const service = createGeometryService({
+    createWorker: (name) => workers[name],
+    onMessage: vi.fn(),
+  });
+
+  let thrown;
+  try { service.terminate(); } catch (error) { thrown = error; }
+
+  expect(workers.manifold.terminate).toHaveBeenCalledOnce();
+  expect(workers.occt.terminate).toHaveBeenCalledOnce();
+  expect(thrown).toBeInstanceOf(AggregateError);
+  expect(thrown.errors).toEqual([manifoldError, occtError]);
+});
+
+test("a manifold worker is terminated when occt worker creation throws", () => {
+  const manifold = { terminate: vi.fn(), onmessage: null };
+  const onMessage = vi.fn();
+  const createWorker = vi.fn((name) => {
+    if (name === "manifold") return manifold;
+    throw new Error("occt unavailable");
+  });
+
+  expect(() => createGeometryService({ createWorker, onMessage }))
+    .toThrow("occt unavailable");
+
+  expect(manifold.terminate).toHaveBeenCalledOnce();
+  expect(manifold.onmessage).toBeNull();
 });

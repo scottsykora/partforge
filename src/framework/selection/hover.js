@@ -3,9 +3,22 @@
 // surface. Feature names come from Solid.label() in the part's build, carried
 // per-triangle in the mesh payload (geometry.userData.featureIds/features).
 import * as THREE from "three";
+import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../cutaway-render.js";
+import { createTooltipPresenter } from "../tooltip.js";
 import { raycastViewer } from "./raycast.js";
 
 const HIGHLIGHT = 0x4da3ff;
+
+function runCleanupSteps(steps) {
+  const errors = [];
+  for (const step of steps) {
+    try { step(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new AggregateError(errors, "feature hover cleanup failed");
+  }
+}
 
 // Extract the subset of a non-indexed geometry belonging to one feature id.
 function featureSubset(geometry, featureId) {
@@ -26,25 +39,27 @@ function featureSubset(geometry, featureId) {
   return g;
 }
 
-export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnimationFrame(cb) }) {
+export function attachHoverLabels(
+  viewer,
+  { part, schedule = (cb) => requestAnimationFrame(cb), tooltip } = {},
+) {
   // Hover is a mouse idiom — skip entirely on touch-only devices.
   if (globalThis.matchMedia && !matchMedia("(hover: hover)").matches) return { detach: () => {} };
 
-  const tip = document.createElement("div");
-  tip.id = "pf-hover-tip";
-  const feat = document.createElement("b");
-  const sub = document.createElement("span");
-  sub.className = "pf-hover-sub";
-  tip.append(feat, sub);
-  document.body.appendChild(tip);
+  const ownsTooltip = !tooltip;
+  const tooltipPresenter = tooltip ?? createTooltipPresenter();
+  let presentationToken;
+  let hasPresented = false;
 
   const material = new THREE.MeshBasicMaterial({
     color: HIGHLIGHT, transparent: true, opacity: 0.35,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
-  const overlay = new THREE.Mesh(new THREE.BufferGeometry(), material);
+  const unregisterCutaway = viewer.registerCutawayMaterial?.(material) ?? (() => {});
+  let emptyOverlayGeometry = new THREE.BufferGeometry();
+  const overlay = new THREE.Mesh(emptyOverlayGeometry, material);
   overlay.visible = false;
-  overlay.renderOrder = 2;
+  overlay.renderOrder = CUTAWAY_OVERLAY_RENDER_ORDER;
   let overlayParent = null;
   // Subset cache per sub-part: rebuilt when the sub-part's geometry object changes
   // (i.e. after a regenerate) — keyed on the geometry instance.
@@ -56,15 +71,30 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
     overlay.visible = false;
   }
 
+  function showHighlight(hit, geometry) {
+    emptyOverlayGeometry?.dispose();
+    emptyOverlayGeometry = null;
+    overlay.geometry = geometry;
+    if (overlayParent !== hit.mesh.parent) {
+      hit.mesh.parent.add(overlay);
+      overlayParent = hit.mesh.parent;
+    }
+    overlay.visible = true;
+  }
+
   function hide() {
-    tip.classList.remove("show");
+    if (hasPresented) {
+      hasPresented = false;
+      tooltipPresenter.hide(presentationToken);
+      presentationToken = undefined;
+    }
     clearHighlight();
   }
 
   function show(hit, x, y) {
+    let content;
     if (hit.feature) {
-      feat.textContent = hit.feature.label;
-      sub.textContent = subLabel(hit.subPart);
+      content = { title: hit.feature.label, subtitle: subLabel(hit.subPart) };
       const cached = subsets.get(hit.subPart);
       let byId = cached?.geo === hit.mesh.geometry ? cached.byId : null;
       if (!byId) {
@@ -74,39 +104,61 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
       }
       let g = byId.get(hit.feature.id);
       if (!g) { g = featureSubset(hit.mesh.geometry, hit.feature.id); byId.set(hit.feature.id, g); }
-      overlay.geometry = g;
-      if (overlayParent !== hit.mesh.parent) { hit.mesh.parent.add(overlay); overlayParent = hit.mesh.parent; }
-      overlay.visible = true;
+      showHighlight(hit, g);
     } else {
-      feat.textContent = subLabel(hit.subPart);
-      sub.textContent = "";
-      clearHighlight();
+      content = { title: subLabel(hit.subPart), subtitle: "" };
+      showHighlight(hit, hit.mesh.geometry);
     }
-    tip.style.left = `${x + 14}px`;
-    tip.style.top = `${y + 14}px`;
-    tip.classList.add("show");
+    if (hasPresented) {
+      hasPresented = false;
+      tooltipPresenter.hide(presentationToken);
+      presentationToken = undefined;
+    }
+    presentationToken = tooltipPresenter.showPointer(content, x, y);
+    hasPresented = true;
   }
 
   let pending = null; // latest pointer position; one raycast per scheduled frame
+  let frameScheduled = false;
+  let workVersion = 0;
   let down = false;
+  let detached = false;
+  let suppressed = false;
+
+  function invalidatePendingWork() {
+    pending = null;
+    frameScheduled = false;
+    workVersion += 1;
+  }
+
+  const unsubscribeHandleHover = viewer.onCutawayHandleHover?.((handle) => {
+    suppressed = handle != null;
+    if (!suppressed) return;
+    invalidatePendingWork();
+    hide();
+  }) ?? (() => {});
 
   function onMove(ev) {
+    if (detached) return;
     if (ev.pointerType === "touch") return;
-    if (down) return;
-    const had = pending;
+    if (down || suppressed) return;
     pending = { x: ev.clientX, y: ev.clientY };
-    if (had) return; // a frame is already scheduled
+    if (frameScheduled) return;
+    frameScheduled = true;
+    const scheduledVersion = workVersion;
     schedule(() => {
+      if (scheduledVersion !== workVersion) return;
+      frameScheduled = false;
       const p = pending;
       pending = null;
-      if (!p || down) return;
+      if (detached || !p || down || suppressed) return;
       const hit = raycastViewer(viewer, p.x, p.y);
       if (hit) show(hit, p.x, p.y); else hide();
     });
   }
-  const onDown = () => { down = true; hide(); };
+  const onDown = () => { down = true; invalidatePendingWork(); hide(); };
   const onUp = () => { down = false; };
-  const onLeave = () => hide();
+  const onLeave = () => { invalidatePendingWork(); hide(); };
 
   viewer.domElement.addEventListener("pointermove", onMove);
   viewer.domElement.addEventListener("pointerdown", onDown);
@@ -115,14 +167,28 @@ export function attachHoverLabels(viewer, { part, schedule = (cb) => requestAnim
 
   return {
     detach: () => {
-      viewer.domElement.removeEventListener("pointermove", onMove);
-      viewer.domElement.removeEventListener("pointerdown", onDown);
-      viewer.domElement.removeEventListener("pointerup", onUp);
-      viewer.domElement.removeEventListener("pointerleave", onLeave);
-      tip.remove();
-      overlayParent?.remove(overlay);
-      for (const { byId } of subsets.values()) for (const g of byId.values()) g.dispose();
-      material.dispose();
+      if (detached) return;
+      detached = true;
+      invalidatePendingWork();
+      const subsetGeometries = [...subsets.values()]
+        .flatMap(({ byId }) => [...byId.values()]);
+      const initialGeometry = emptyOverlayGeometry;
+      emptyOverlayGeometry = null;
+      runCleanupSteps([
+        unsubscribeHandleHover,
+        () => viewer.domElement.removeEventListener("pointermove", onMove),
+        () => viewer.domElement.removeEventListener("pointerdown", onDown),
+        () => viewer.domElement.removeEventListener("pointerup", onUp),
+        () => viewer.domElement.removeEventListener("pointerleave", onLeave),
+        hide,
+        () => overlayParent?.remove(overlay),
+        ...subsetGeometries.map((geometry) => () => geometry.dispose()),
+        () => subsets.clear(),
+        () => initialGeometry?.dispose(),
+        unregisterCutaway,
+        () => material.dispose(),
+        () => { if (ownsTooltip) tooltipPresenter.dispose(); },
+      ]);
     },
   };
 }

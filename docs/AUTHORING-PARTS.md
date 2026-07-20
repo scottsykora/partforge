@@ -608,10 +608,32 @@ stylesheet). `mount` looks up these element IDs:
 | `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
-| `#viewbar` with `#pause` / `#reframe` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#viewbar` with `#pause` / `#reframe` / `#cutaway` / `#theme` | optional viewer controls (omit any you don't want) |
 
 Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two workers are spawned from your one worker entry
 (`name` = `"manifold"` for preview/STL/3MF, `"occt"` for STEP — handled for you).
+
+`#cutaway` is optional viewer chrome. When present, it toggles an interactive
+section plane whose exposed faces are hatched; changing views resets it. Cutaway
+is viewer-only and never changes STL, STEP, or 3MF exports. Hosts that omit the
+button get no cutaway UI.
+
+Programmatic hosts can provide the same optional control without relying on an
+ID by passing it beside the other chrome references:
+
+```js
+mount(part, {
+  createWorker,
+  elements: {
+    chrome: {
+      pause,
+      reframe,
+      cutaway,
+      theme,
+    },
+  },
+});
+```
 
 > Production deploy compiles only the pages listed in `build.rollupOptions.input`
 > (currently the landing gallery + the demo part pages). Other root `*.html` files are

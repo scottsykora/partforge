@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import * as THREE from "three";
 import { raycastViewer, featureAt } from "../src/framework/selection/raycast.js";
 
-function makeViewer() {
+function makeViewer({ isWorldPointVisible } = {}) {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
   camera.position.set(0, 0, 10);
   camera.lookAt(0, 0, 0);
@@ -20,7 +20,13 @@ function makeViewer() {
   const domElement = document.createElement("div");
   domElement.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
   document.body.appendChild(domElement);
-  return { camera, domElement, _subMeshes: { one: mesh }, flashPoint: () => {} };
+  return {
+    camera,
+    domElement,
+    _subMeshes: { one: mesh },
+    flashPoint: () => {},
+    ...(isWorldPointVisible ? { isWorldPointVisible } : {}),
+  };
 }
 
 test("raycastViewer resolves subPart, triangle, local point, and feature", () => {
@@ -47,4 +53,17 @@ test("invisible meshes are not hit", () => {
   const viewer = makeViewer();
   viewer._subMeshes.one.visible = false;
   expect(raycastViewer(viewer, 100, 100)).toBeNull();
+});
+
+test("raycast skips a clipped front hit and returns the retained back hit", () => {
+  const viewer = makeViewer({ isWorldPointVisible: (point) => point.z < 0 });
+  viewer._subMeshes.one.material.side = THREE.DoubleSide;
+  const hit = raycastViewer(viewer, 100, 100);
+  expect(hit).not.toBeNull();
+  expect(hit.pointWorld.z).toBeCloseTo(-2, 4);
+});
+
+test("raycast behavior is unchanged without a visibility predicate", () => {
+  const viewer = makeViewer();
+  expect(raycastViewer(viewer, 100, 100).pointWorld.z).toBeCloseTo(2, 4);
 });
