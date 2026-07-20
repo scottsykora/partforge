@@ -529,7 +529,6 @@ export function createCutawayGizmo({
     border,
     handles,
     handleRoot,
-    arcRoot,
     setPose,
     setFlipped,
     setVisible,
