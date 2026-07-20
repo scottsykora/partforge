@@ -40,6 +40,88 @@ test("theme button toggles the page theme and the scene", () => {
   expect(viewer.setTheme).toHaveBeenLastCalledWith("light");
 });
 
+test("buttons expose exact state-aware accessible labels", () => {
+  const viewer = fakeViewer();
+  const chrome = attachViewerControls(viewer, els);
+  handles.push(chrome);
+
+  expect(els.pause.getAttribute("aria-label")).toBe("Pause rotation");
+  expect(els.reframe.getAttribute("aria-label")).toBe("Re-frame model");
+  expect(els.theme.getAttribute("aria-label")).toBe("Switch to light mode");
+
+  els.pause.click();
+  els.theme.click();
+
+  expect(els.pause.getAttribute("aria-label")).toBe("Resume rotation");
+  expect(els.theme.getAttribute("aria-label")).toBe("Switch to dark mode");
+});
+
+test("shared tooltips cover every viewer button and read current action labels", () => {
+  const viewer = fakeViewer();
+  const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
+  const chrome = attachViewerControls(viewer, els, { tooltip });
+  handles.push(chrome);
+
+  for (const button of [els.pause, els.reframe, els.theme]) {
+    expect(button.hasAttribute("title")).toBe(false);
+    button.dispatchEvent(new FocusEvent("focus"));
+  }
+  expect(tooltip.showAnchor).toHaveBeenNthCalledWith(
+    1,
+    { title: "Pause rotation" },
+    els.pause,
+  );
+  expect(tooltip.showAnchor).toHaveBeenNthCalledWith(
+    2,
+    { title: "Re-frame model" },
+    els.reframe,
+  );
+  expect(tooltip.showAnchor).toHaveBeenNthCalledWith(
+    3,
+    { title: "Switch to light mode" },
+    els.theme,
+  );
+
+  els.pause.click();
+  els.theme.click();
+  els.pause.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  els.theme.dispatchEvent(new FocusEvent("focus"));
+  expect(tooltip.showAnchor).toHaveBeenNthCalledWith(
+    4,
+    { title: "Resume rotation" },
+    els.pause,
+  );
+  expect(tooltip.showAnchor).toHaveBeenNthCalledWith(
+    5,
+    { title: "Switch to dark mode" },
+    els.theme,
+  );
+});
+
+test("custom tooltip detach restores original attributes and removes its listeners", () => {
+  const viewer = fakeViewer();
+  const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
+  els.pause.setAttribute("title", "Host pause title");
+  els.pause.setAttribute("aria-label", "Host pause label");
+  const chrome = attachViewerControls(viewer, els, { tooltip });
+  handles.push(chrome);
+
+  expect(els.pause.hasAttribute("title")).toBe(false);
+  expect(els.pause.getAttribute("aria-label")).toBe("Pause rotation");
+  chrome.detach();
+  tooltip.showAnchor.mockClear();
+  tooltip.hide.mockClear();
+
+  expect(els.pause.getAttribute("title")).toBe("Host pause title");
+  expect(els.pause.getAttribute("aria-label")).toBe("Host pause label");
+  els.pause.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  els.pause.dispatchEvent(new FocusEvent("focus"));
+  els.pause.dispatchEvent(new PointerEvent("pointerleave"));
+  els.pause.dispatchEvent(new FocusEvent("blur"));
+  expect(tooltip.showAnchor).not.toHaveBeenCalled();
+  expect(tooltip.hide).not.toHaveBeenCalled();
+});
+
 test("reframe button re-fits the camera", () => {
   const viewer = fakeViewer();
   const chrome = attachViewerControls(viewer, els);
@@ -51,6 +133,9 @@ test("reframe button re-fits the camera", () => {
 test("missing buttons are a no-op", () => {
   const viewer = fakeViewer();
   expect(() => handles.push(attachViewerControls(viewer, {}))).not.toThrow();
+  expect(() => handles.push(attachViewerControls(viewer, {}, {
+    tooltip: { showAnchor: vi.fn(), hide: vi.fn() },
+  }))).not.toThrow();
 });
 
 test("detach() removes button and pagehide listeners", () => {

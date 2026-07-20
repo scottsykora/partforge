@@ -1,7 +1,10 @@
+import { attachButtonTooltips } from "./tooltip.js";
+
 const UNSUPPORTED_TITLE = "Cutaway requires a stencil-capable WebGL context";
 const BUTTON_ATTRIBUTES = [
   "type",
   "aria-pressed",
+  "aria-label",
   "title",
   "disabled",
   "aria-description",
@@ -14,6 +17,7 @@ function actionButton(label, title) {
   button.type = "button";
   button.textContent = label;
   button.title = title;
+  button.setAttribute("aria-label", title);
   return button;
 }
 
@@ -33,7 +37,7 @@ function restoreAttributes(element, attributes) {
 
 // Wire the optional cutaway button to the viewer and create its contextual
 // actions. Hosts that omit the primary button opt out of all DOM behavior.
-export function attachCutawayControls(viewer, { cutaway: button } = {}) {
+export function attachCutawayControls(viewer, { cutaway: button } = {}, { tooltip } = {}) {
   if (!button) return { reset: noop, detach: noop };
 
   const canvas = viewer.domElement;
@@ -46,27 +50,35 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}) {
   const hostButtonDisabled = button.disabled;
   const hostButtonOn = button.classList.contains("on");
 
-  button.type = "button";
-  button.setAttribute("aria-pressed", "false");
-  if (!button.hasAttribute("title")) button.title = "Toggle cutaway view";
-
-  const supported = viewer.cutawaySupported();
-  if (!supported) {
-    button.disabled = true;
-    button.title = UNSUPPORTED_TITLE;
-    button.setAttribute("aria-description", UNSUPPORTED_TITLE);
-  }
-
   const actions = document.createElement("span");
   actions.className = "pf-cutaway-actions";
   const flipButton = actionButton("Flip", "Flip cutaway direction");
   const resetButton = actionButton("Reset", "Reset cutaway plane");
   actions.append(flipButton, resetButton);
+  const tooltipBinding = tooltip
+    ? attachButtonTooltips(tooltip, [button, flipButton, resetButton].map((element) => ({ element })))
+    : null;
+
+  button.type = "button";
+  button.setAttribute("aria-pressed", "false");
+  if (!tooltip && !button.hasAttribute("title")) button.title = "Toggle cutaway view";
+
+  const supported = viewer.cutawaySupported();
+  if (!supported) {
+    button.disabled = true;
+    if (!tooltip) button.title = UNSUPPORTED_TITLE;
+    button.setAttribute("aria-description", UNSUPPORTED_TITLE);
+  }
+
   button.after(actions);
 
   function sync() {
     const enabled = supported && viewer.cutawayEnabled();
     button.setAttribute("aria-pressed", String(enabled));
+    button.setAttribute(
+      "aria-label",
+      supported ? (enabled ? "Disable cutaway" : "Enable cutaway") : UNSUPPORTED_TITLE,
+    );
     button.classList.toggle("on", enabled);
     actions.hidden = !enabled;
   }
@@ -120,6 +132,7 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}) {
       canvas.removeEventListener("pointerdown", onCanvasPointerDown);
       if (addedCanvasTabIndex) canvas.removeAttribute("tabindex");
       if (addedCanvasLabel) canvas.removeAttribute("aria-label");
+      tooltipBinding?.detach();
       actions.remove();
       restoreAttributes(button, hostButtonAttributes);
       button.disabled = hostButtonDisabled;

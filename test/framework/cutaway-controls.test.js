@@ -21,7 +21,11 @@ function setup(options) {
   const viewer = fakeViewer(options);
   const button = document.createElement("button");
   document.body.append(viewer.domElement, button);
-  const handle = attachCutawayControls(viewer, { cutaway: button });
+  const handle = attachCutawayControls(
+    viewer,
+    { cutaway: button },
+    options?.tooltip ? { tooltip: options.tooltip } : undefined,
+  );
   handles.push(handle);
   return { viewer, button, handle };
 }
@@ -49,6 +53,7 @@ describe("attachCutawayControls", () => {
 
     expect(button.type).toBe("button");
     expect(button.title).toBe("Toggle cutaway view");
+    expect(button.getAttribute("aria-label")).toBe("Enable cutaway");
     expect(button.getAttribute("aria-pressed")).toBe("false");
     expect(button.classList.contains("on")).toBe(false);
 
@@ -56,11 +61,13 @@ describe("attachCutawayControls", () => {
     expect(viewer.setCutawayEnabled).toHaveBeenLastCalledWith(true);
     expect(button.getAttribute("aria-pressed")).toBe("true");
     expect(button.classList.contains("on")).toBe(true);
+    expect(button.getAttribute("aria-label")).toBe("Disable cutaway");
 
     button.click();
     expect(viewer.setCutawayEnabled).toHaveBeenLastCalledWith(false);
     expect(button.getAttribute("aria-pressed")).toBe("false");
     expect(button.classList.contains("on")).toBe(false);
+    expect(button.getAttribute("aria-label")).toBe("Enable cutaway");
   });
 
   test("preserves a host-provided title", () => {
@@ -83,6 +90,8 @@ describe("attachCutawayControls", () => {
     expect(actions.hidden).toBe(true);
     expect(flip.textContent).toBe("Flip");
     expect(reset.textContent).toBe("Reset");
+    expect(flip.getAttribute("aria-label")).toBe("Flip cutaway direction");
+    expect(reset.getAttribute("aria-label")).toBe("Reset cutaway plane");
 
     button.click();
     expect(actions.hidden).toBe(false);
@@ -210,6 +219,9 @@ describe("attachCutawayControls", () => {
 
     expect(button.disabled).toBe(true);
     expect(button.title).toBe("Cutaway requires a stencil-capable WebGL context");
+    expect(button.getAttribute("aria-label")).toBe(
+      "Cutaway requires a stencil-capable WebGL context",
+    );
     expect(button.getAttribute("aria-description")).toBe(
       "Cutaway requires a stencil-capable WebGL context",
     );
@@ -218,15 +230,83 @@ describe("attachCutawayControls", () => {
     expect(viewer.setCutawayEnabled).not.toHaveBeenCalled();
   });
 
+  test("shared tooltips cover primary, Flip, and Reset with current action labels", () => {
+    const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
+    const { button } = setup({ tooltip });
+    const [flip, reset] = button.nextElementSibling.querySelectorAll("button");
+
+    for (const control of [button, flip, reset]) {
+      expect(control.hasAttribute("title")).toBe(false);
+      control.dispatchEvent(new FocusEvent("focus"));
+    }
+    expect(tooltip.showAnchor).toHaveBeenNthCalledWith(
+      1,
+      { title: "Enable cutaway" },
+      button,
+    );
+    expect(tooltip.showAnchor).toHaveBeenNthCalledWith(
+      2,
+      { title: "Flip cutaway direction" },
+      flip,
+    );
+    expect(tooltip.showAnchor).toHaveBeenNthCalledWith(
+      3,
+      { title: "Reset cutaway plane" },
+      reset,
+    );
+
+    button.click();
+    button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+    expect(tooltip.showAnchor).toHaveBeenNthCalledWith(
+      4,
+      { title: "Disable cutaway" },
+      button,
+    );
+  });
+
+  test("custom tooltip detach restores host attributes and removes all tooltip listeners", () => {
+    const viewer = fakeViewer();
+    const button = document.createElement("button");
+    button.setAttribute("title", "Host cutaway title");
+    button.setAttribute("aria-label", "Host cutaway label");
+    document.body.append(viewer.domElement, button);
+    const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
+    const handle = attachCutawayControls(viewer, { cutaway: button }, { tooltip });
+    handles.push(handle);
+    const [flip, reset] = button.nextElementSibling.querySelectorAll("button");
+
+    expect(button.hasAttribute("title")).toBe(false);
+    expect(button.getAttribute("aria-label")).toBe("Enable cutaway");
+    handle.detach();
+    tooltip.showAnchor.mockClear();
+    tooltip.hide.mockClear();
+
+    expect(button.getAttribute("title")).toBe("Host cutaway title");
+    expect(button.getAttribute("aria-label")).toBe("Host cutaway label");
+    for (const control of [button, flip, reset]) {
+      control.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+      control.dispatchEvent(new FocusEvent("focus"));
+      control.dispatchEvent(new PointerEvent("pointerleave"));
+      control.dispatchEvent(new FocusEvent("blur"));
+    }
+    expect(tooltip.showAnchor).not.toHaveBeenCalled();
+    expect(tooltip.hide).not.toHaveBeenCalled();
+  });
+
   test("missing primary button returns safe no-op methods", () => {
     const viewer = fakeViewer();
     viewer.domElement.setAttribute("tabindex", "-1");
     const handle = attachCutawayControls(viewer, {});
+    const tooltipHandle = attachCutawayControls(viewer, {}, {
+      tooltip: { showAnchor: vi.fn(), hide: vi.fn() },
+    });
 
     expect(() => {
       handle.reset();
       handle.detach();
       handle.detach();
+      tooltipHandle.reset();
+      tooltipHandle.detach();
     }).not.toThrow();
     expect(viewer.setCutawayEnabled).not.toHaveBeenCalled();
     expect(viewer.domElement.getAttribute("tabindex")).toBe("-1");
