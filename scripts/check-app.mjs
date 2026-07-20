@@ -3,8 +3,11 @@
 // with no console/worker errors. Catches WASM/worker/wiring failures that a passing
 // build and unit tests miss.
 //
-//   node scripts/check-app.mjs [entry.html] [--keep]
+//   node scripts/check-app.mjs [entry.html] [--keep] [--allow-no-cutaway]
 //   (entry defaults to demo.html)
+//
+// `--allow-no-cutaway` accepts only pages without #cutaway; a present but
+// unusable cutaway control still fails.
 //
 // Set CHECK_PORT to run on a port other than 5179. Normal runs terminate Vite's
 // detached process group before exiting. `--keep` intentionally leaves it running,
