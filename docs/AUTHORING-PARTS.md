@@ -504,9 +504,14 @@ body = body.cutAll(circularPattern(hole, 8, { axis: "Z" }));   // 8 bolt holes o
 // Keyhole plate: union a disc onto a rect, punch a slot, extrude.
 const plate = k.shape2d(roundedRectPolygon(40, 24, 4))
   .union(circleProfile(8))
-  .cut(slotPolygon(16, 3));
-k.extrude({ profile: plate, h: 3 });
+  .cut(slotPolygon(16, 3))
+  .extrude({ h: 3 });   // sugar for k.extrude({ profile: …, h: 3 }); .revolve({ degrees }) too
 ```
+
+A `Shape2D` also carries `.extrude({ h, twist?, scaleTop? })` and `.revolve({ degrees? })`
+sugar (equivalent to the `k.extrude`/`k.revolve` forms), and `.regions()` — scission, which
+returns each disjoint region as its own live `Shape2D` (vs `.toRegions()`, which returns raw
+`{outer, holes}` data).
 
 ```js
 // A 0.2 mm printer clearance around a bore, then a 2 mm wall inset:

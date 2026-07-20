@@ -98,7 +98,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     boundingBox: () => { const r = cs.bounds(); return { min: [r.min[0], r.min[1]], max: [r.max[0], r.max[1]] }; },
     toRegions: () => assembleRegions(cs.toPolygons()),
     clone: () => wrapShape2d(cs, hash),
-  });
+  }, { shape2d, extrude: kernel.extrude, revolve: kernel.revolve });
   const shape2d = (profile) => {
     if (profile && profile._shape2d) return profile;                // idempotent
     const hash = h("shape2d", profile, segs);
@@ -184,7 +184,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     toIndexedMesh: () => indexedMeshOut(m),
   });
 
-  return finishKernel({
+  const kernel = finishKernel({
     cylinder: (rb, rt, h2, { center = false } = {}) =>
       wrap(T(Manifold.cylinder(h2, rb, rt, segs, center)), h("cylinder", rb, rt, h2, center, segs)),
     // Compound op: hashed ATOMICALLY from its own args, so it is a single cache
@@ -251,6 +251,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // still pins (they must survive for the next build to resume from them).
     cleanup: () => { for (const o of tracked) if (!cache.isPinned(o)) o.delete?.(); tracked.length = 0; },
   });
+  return kernel;
 }
 
 // Build a non-indexed mesh with normals that are smooth within a single original

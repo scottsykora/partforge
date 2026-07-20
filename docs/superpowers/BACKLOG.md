@@ -27,6 +27,16 @@ as candidate future work. Each remaining item becomes its own spec/plan under
   convex corners with interior angle ≥ 90°** (Manifold uses a single-chord Round
   join; ~0.4% bulge only at acute <90° corners); round/sharp exact at every
   angle. Collapse throws immediately.
+- **vectorText → `Shape2D`** (v0.20.0, PR #54) — `k.text2d(string, opts)` renders
+  outline-font text as a `Shape2D` (emboss/deboss, offset for clearance, extrude to
+  raised letters). Curve-exact via a paper.js nonzero fill resolver (`curve-fill.js`)
+  that resolves self-intersecting/overlapping glyph outlines keeping beziers;
+  bring-your-own fonts (`fonts` field, bundle/URL) + a bundled Roboto default. New
+  runtime dep: `paper`.
+- **Shape2D sugar + scission** (v0.21.0) — `shape.extrude({h,…})` / `shape.revolve({…})`
+  sugar for `k.extrude/revolve({profile: shape, …})`, and `shape.regions()` (scission:
+  each disjoint region as its own live `Shape2D`). Plus paper.js lazy-init so text-free
+  parts don't pay its worker-bundle cost.
 
 The curve thread (F1→F3) + offsetPolygon covers most of JSCAD's geom2 workflow:
 booleans, offset/expand/contract, curved paths, linear/rotate extrude, and the
@@ -42,30 +52,23 @@ booleans, offset/expand/contract, curved paths, linear/rotate extrude, and the
 | curved paths (`path2`) | `pathProfile` cubics | ✅ |
 | `extrudeLinear`/`extrudeRotate` | `extrude`/`revolve` (accept `Shape2D`) | ✅ |
 | `hull`/`hullChain` | — | ❌ |
-| `vectorText`/`vectorChar` | — | ❌ |
-| `scission` (split disjoint) | `.toRegions()` (materializes only) | ◑ |
+| `vectorText`/`vectorChar` | `k.text2d` → `Shape2D` | ✅ |
+| `scission` (split disjoint) | `.regions()` (live `Shape2D`s) + `.toRegions()` | ✅ |
 | `align`/`center` | `.boundingBox()`; no align helper | ◑ |
 | rounded 3-D primitives (`roundedCuboid`/`roundedCylinder`/`torus`) | — | ❌ |
 
 ## Candidates — ranked (re-evaluated now that `Shape2D` exists)
 
-1. **`vectorText` → `Shape2D`** (high value, high effort) — **NEXT (in
-   brainstorming).** Text becomes a `Shape2D` you can boolean into a plate
-   (emboss/deboss), offset for print clearance, and extrude to raised letters —
-   the practical payoff of the whole 2-D thread (labels, part numbers, logos).
-   Cost: a font parser + a bundled font (outline font, e.g. opentype-style; or a
-   single-line/Hershey font for engraving).
-2. **`hull` / `hullChain` → `Shape2D`** (medium value, low-ish effort) — 2-D
-   convex hull returning a `Shape2D`; `hullChain` (swept hull over a sequence)
-   gives capsules, rounded slots, organic tapers. Pure-JS, robust. Good quick win.
-3. **`align` / `center` helpers** (low/low) — position a `Shape2D`/`Solid` by
+1. **`hull` / `hullChain` → `Shape2D`** (medium value, low-ish effort) — **NEXT.**
+   2-D convex hull returning a `Shape2D`; `hullChain` (swept hull over a sequence)
+   gives capsules, rounded slots, organic tapers. Pure-JS, robust. Good quick win,
+   and the last real gap in JSCAD's `geom2` coverage.
+2. **`align` / `center` helpers** (low/low) — position a `Shape2D`/`Solid` by
    its bbox (align edges/centers to another or to origin). Small ergonomic win.
-4. **`.regions()` / scission** (low effort) — split a multi-region `Shape2D`
-   into separate live `Shape2D`s (we already compute them in `.toRegions()`).
-5. **Rounded 3-D primitives** (`roundedCuboid`/`roundedCylinder`/`torus`) —
+3. **Rounded 3-D primitives** (`roundedCuboid`/`roundedCylinder`/`torus`) —
    JSCAD staples; fast rounded boxes on Manifold without OCCT fillet. Independent
-   of the 2-D thread.
-6. **Slice/section a `Solid` → `Shape2D`** — NEW capability `Shape2D` unlocks
+   of the 2-D thread. (Strong alternative to hull if near-term parts are 3-D enclosures.)
+4. **Slice/section a `Solid` → `Shape2D`** — NEW capability `Shape2D` unlocks
    (not from JSCAD): project a 3-D part's silhouette or take a cross-section as a
    2-D `Shape2D` (Manifold `slice`/`project`; replicad section) to boolean/offset/
    re-extrude "the outline of this part".
@@ -78,14 +81,14 @@ booleans, offset/expand/contract, curved paths, linear/rotate extrude, and the
 - Empty-shape `boundingBox()` guard (both backends return a garbage/undefined
   sentinel on a fully-cancelled shape).
 - F1: quadratic/spline/ellipse segments; SVG-path-string parser.
-- `shape.extrude({h})` sugar method (currently `k.extrude({profile: shape, h})`).
+- ~~`shape.extrude({h})` sugar method~~ — **done (v0.21.0)**; also `shape.revolve({degrees})` and `shape.regions()` (scission).
 - OCCT `Shape2D.boundingBox()` reads replicad-internal `innerShape`; a replicad
   upgrade renaming it would break collapse detection (guarded by a test).
 
 ## vectorText curve-resolver follow-ups (from final review, 2026-07-19)
-- **Lazy-init the paper.js PaperScope** in `curve-fill.js` (currently a module-level `new
-  PaperScope()` runs on every geometry-worker load, pulling paper-core ~193KB gz into the
-  kernel-front chunk even for text-free parts). Initialize on first `resolveCurveFill` call.
+- ~~**Lazy-init the paper.js PaperScope**~~ — **done (v0.21.0)**: `curve-fill.js` builds its
+  private scope on first `resolveCurveFill` call, so text-free parts don't pay paper-core's
+  setup on worker load.
 - **Multi-level hole nesting** in `assembleRegions` (pre-existing, shared by both backends): an
   island-inside-a-counter surfaces as a spurious extra top-level region; net area stays correct,
   degrades safely. Rarely hit by Latin CAD labels. Fix if a glyph/shape needs true nesting.

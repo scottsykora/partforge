@@ -264,6 +264,9 @@ not an OCCT limitation.
 | `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds (no `center`/`size`, unlike `Solid.boundingBox`). |
 | `toRegions()` | Materialize into `{outer, holes}[]` region arrays (`assembleRegions`); a boolean result may be several disjoint regions. |
 | `simple()` | `toRegions()` unwrapped — throws unless the result is exactly one region. |
+| `regions()` | Scission: each disjoint region as its own live `Shape2D[]` (each further boolean-able), vs `toRegions()` which returns raw `{outer, holes}` data. |
+| `extrude({h, twist?, scaleTop?})` | Sugar for `k.extrude({profile: this, …})` → `Solid`. |
+| `revolve({degrees?})` | Sugar for `k.revolve({profile: this, …})` → `Solid`. |
 | `clone()` | Independent handle. |
 
 On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **for convex corners with interior angle ≥ 90°** (the common case: rectangles, hexagons, rounded-rects, pentagons, …). `chamfer` is a true 45° bevel — a straight chord across the corner — matching OCCT to float precision there (a 10×10 square offset +1 gives 142.0 on both; a pentagon 298.920 on both). Manifold has no native bevel join, so it renders `chamfer` as a Round join forced to a single chord per corner (`circularSegments=4`). **At acute (<90° interior) convex corners** — triangles, star points, V-notches — Clipper2 emits 2 chords rather than 1, so Manifold's chamfer bulges ~0.4% beyond OCCT's single-chord bevel (e.g. an equilateral triangle: Manifold 235.46 vs OCCT 234.50). `round` and `sharp` are exact across backends at every angle; prefer them, or accept the small acute-corner difference on `chamfer`.

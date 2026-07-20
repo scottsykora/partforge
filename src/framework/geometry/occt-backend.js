@@ -189,7 +189,7 @@ export function createOcctKernel(replicad) {
       boundingBox: () => { const b = drawing.boundingBox; return { min: [b.bounds[0][0], b.bounds[0][1]], max: [b.bounds[1][0], b.bounds[1][1]] }; },
       toRegions,
       clone: () => wrapShape2d(drawing.clone()),
-    });
+    }, { shape2d, extrude: kernel.extrude, revolve: kernel.revolve });
   };
   const shape2d = (profile) => (profile && profile._shape2d ? profile : wrapShape2d(drawingFromProfile(profile)));
 
@@ -265,7 +265,7 @@ export function createOcctKernel(replicad) {
     return wrap(genericSweep(profile, spine, { frenet: true }));
   };
 
-  return finishKernel({
+  const kernel = finishKernel({
     cylinder, // boredCylinder: the kernel front's default composition is exactly right here
     box: (min, max) => wrap(makeBox(min, max)), prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube,
     sphere: (r) => wrap(makeSphere(r)),
@@ -276,4 +276,5 @@ export function createOcctKernel(replicad) {
     shape2d,
     toSTEP: (named) => exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._s }))).arrayBuffer(),
   });
+  return kernel;
 }

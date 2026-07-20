@@ -9,12 +9,16 @@
 //   4. unite(self) to normalize overlaps and crossings into simple paths.
 import paper from "paper/dist/paper-core.js";
 
-// Never use paper's package-global project: another consumer in the same worker may import
-// paper too. This resolver owns and clears only this private, headless scope.
-const scope = new paper.PaperScope();
-scope.setup(new scope.Size(1, 1));
+// Lazy, private PaperScope: built on first use (not at module load), so parts that never
+// call k.text2d don't pull paper-core's setup onto the geometry worker. Never paper's
+// package-global project — another consumer in the same worker may import paper too.
+let _scope = null;
+function paperScope() {
+  if (!_scope) { _scope = new paper.PaperScope(); _scope.setup(new _scope.Size(1, 1)); }
+  return _scope;
+}
 
-function toPaperPath(contour) {
+function toPaperPath(scope, contour) {
   const path = new scope.Path({ insert: false });
   path.moveTo(new scope.Point(contour.start[0], contour.start[1]));
   for (const s of contour.segments) {
@@ -67,10 +71,11 @@ export function resolveCurveFill(contours, { fillRule = "nonzero" } = {}) {
   if (fillRule !== "nonzero" && fillRule !== "evenodd")
     throw new Error('curve-fill: fillRule must be "nonzero" or "evenodd"');
   if (!contours || contours.length === 0) return [];
+  const scope = paperScope();
   try {
     const simple = [];
     for (const ct of contours) {
-      const resolved = toPaperPath(ct).resolveCrossings();
+      const resolved = toPaperPath(scope, ct).resolveCrossings();
       const kids = resolved.className === "CompoundPath" ? resolved.children : [resolved];
       for (const k of kids) if (k.segments && k.segments.length >= 2) simple.push(k.clone({ insert: false }));
     }

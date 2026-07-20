@@ -136,3 +136,27 @@ test("chamfer is a true 45° bevel — area 142, identical to Manifold", () => {
   // cross-backend parity that the F3 follow-up (true-bevel Manifold chamfer) added.
   expect(k.shape2d(SQ(0, 0, 10)).offset(1, { corners: "chamfer" }).area()).toBeCloseTo(142, 3);
 });
+
+// --- Shape2D sugar (extrude / revolve / regions) ---
+
+test("Shape2D.extrude({h}) equals k.extrude({profile, h})", () => {
+  const viaSugar = k.shape2d(SQ(0, 0, 10)).extrude({ h: 4 });
+  const viaKernel = k.extrude({ profile: k.shape2d(SQ(0, 0, 10)), h: 4 });
+  expect(viaSugar.volume()).toBeCloseTo(400, -1);
+  expect(viaSugar.volume()).toBeCloseTo(viaKernel.volume(), -1);
+});
+
+test("Shape2D.revolve({degrees}) equals k.revolve({profile})", () => {
+  const viaSugar = k.shape2d(SQ(5, 0, 4)).revolve({ degrees: 360 });   // offset from the axis
+  const viaKernel = k.revolve({ profile: k.shape2d(SQ(5, 0, 4)), degrees: 360 });
+  expect(viaSugar.volume()).toBeGreaterThan(0);
+  expect(viaSugar.volume()).toBeCloseTo(viaKernel.volume(), -1);
+});
+
+test("Shape2D.regions() splits disjoint regions into separate live Shape2Ds", () => {
+  const disjoint = k.shape2d(SQ(0, 0, 10)).union(SQ(20, 0, 10));   // two separated squares
+  const regions = disjoint.regions();
+  expect(regions.length).toBe(2);
+  for (const r of regions) { expect(r._shape2d).toBe(true); expect(r.area()).toBeCloseTo(100, 1); }
+  expect(regions[0].union(regions[1]).area()).toBeCloseTo(200, 1);   // re-composable
+});
