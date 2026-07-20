@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import * as THREE from "three";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 
 import {
   HATCH_LINE_CSS_PX,
@@ -8,7 +9,11 @@ import {
   createSectionRenderSet,
 } from "../../src/framework/cutaway-render.js";
 
-function createFixture({ order = 0, inkColor = 0x2468ac } = {}) {
+function createFixture({
+  order = 0,
+  inkColor = 0x2468ac,
+  edgeMaterial: providedEdgeMaterial,
+} = {}) {
   const scene = new THREE.Scene();
   const parent = new THREE.Group();
   parent.position.set(4, 5, 6);
@@ -30,7 +35,8 @@ function createFixture({ order = 0, inkColor = 0x2468ac } = {}) {
   parent.add(mesh);
 
   const edgeGeometry = new THREE.EdgesGeometry(geometry);
-  const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x111111 });
+  const edgeMaterial = providedEdgeMaterial
+    ?? new THREE.LineBasicMaterial({ color: 0x111111 });
   const edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
   edgeLines.renderOrder = 23;
   parent.add(edgeLines);
@@ -305,6 +311,31 @@ describe("createSectionRenderSet", () => {
 
     expect(renderSet.cap.material.uniforms.uInk.value).toBe(ink);
     expect(ink.getHex()).toBe(0x33414f);
+  });
+
+  test("updates and retains viewport resolution and screen scale across material refresh", () => {
+    const edgeMaterial = new LineMaterial({ color: 0x111111, linewidth: 1 });
+    const { edgeLines, renderSet } = createFixture({ edgeMaterial });
+    renderSet.setEnabled(true);
+
+    renderSet.setViewportSize(640, 480, 2);
+
+    expect(edgeLines.material.resolution.toArray()).toEqual([640, 480]);
+    expect(renderSet.cap.material.uniforms.uPixelRatio.value).toBe(2);
+
+    renderSet.setViewportSize(900, 700, 1.5);
+    expect(edgeLines.material.resolution.toArray()).toEqual([900, 700]);
+    expect(renderSet.cap.material.uniforms.uPixelRatio.value).toBe(1.5);
+
+    const replacement = new LineMaterial({ color: 0x222222, linewidth: 2 });
+    renderSet.refreshSourceMaterial(undefined, replacement);
+
+    expect(edgeLines.material.resolution.toArray()).toEqual([900, 700]);
+    expect(renderSet.cap.material.uniforms.uPixelRatio.value).toBe(1.5);
+
+    renderSet.setViewportSize(320, 240, 0);
+    expect(edgeLines.material.resolution.toArray()).toEqual([320, 240]);
+    expect(renderSet.cap.material.uniforms.uPixelRatio.value).toBe(1);
   });
 
   test("refreshes source color and opacity while preserving exact restoration ownership", () => {

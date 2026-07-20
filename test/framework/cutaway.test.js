@@ -117,6 +117,12 @@ function findCap(scene) {
   return scene.children.find((child) => child.isMesh && child.material?.isShaderMaterial);
 }
 
+function findCaps(scene) {
+  return scene.children.filter(
+    (child) => child.isMesh && child.material?.isShaderMaterial,
+  );
+}
+
 describe("createCutaway capability", () => {
   test.each([
     [true, true],
@@ -431,6 +437,43 @@ test("viewport size updates prepared cutaway LineMaterial clones", () => {
   expect(edgeLines.material.resolution.toArray()).toEqual([900, 700]);
 });
 
+test("viewport screen scale is retained for existing, replacement, and future caps", () => {
+  const fixture = createFixture();
+  fixture.controller.setViewportSize(640, 480, 2);
+
+  const first = addSubpart(fixture, "body");
+  expect(findCaps(fixture.scene)).toHaveLength(1);
+  expect(findCap(fixture.scene).material.uniforms.uPixelRatio.value).toBe(2);
+
+  fixture.controller.setViewportSize(900, 700, 1.5);
+  expect(findCap(fixture.scene).material.uniforms.uPixelRatio.value).toBe(1.5);
+
+  const replacementMesh = new THREE.Mesh(
+    first.geometry,
+    new THREE.MeshStandardMaterial({ color: 0xabcdef }),
+  );
+  const replacementLines = new THREE.LineSegments(
+    first.edgeGeometry,
+    new THREE.LineBasicMaterial({ color: 0x222222 }),
+  );
+  fixture.scene.add(replacementMesh, replacementLines);
+  fixture.controller.setSubpart("body", replacementMesh, replacementLines);
+
+  expect(findCaps(fixture.scene)).toHaveLength(1);
+  expect(findCap(fixture.scene).material.uniforms.uPixelRatio.value).toBe(1.5);
+
+  addSubpart(fixture, "detail");
+  expect(findCaps(fixture.scene)).toHaveLength(2);
+  expect(findCaps(fixture.scene).map(
+    (cap) => cap.material.uniforms.uPixelRatio.value,
+  )).toEqual([1.5, 1.5]);
+
+  fixture.controller.setViewportSize(320, 240, Number.NaN);
+  expect(findCaps(fixture.scene).map(
+    (cap) => cap.material.uniforms.uPixelRatio.value,
+  )).toEqual([1, 1]);
+});
+
 test("theme refresh forwards exact feature-edge hatch colors and preserves exact originals", () => {
   const fixture = createFixture();
   const { mesh, material, edgeLines, edgeMaterial } = addSubpart(fixture);
@@ -706,7 +749,8 @@ test("viewer supplies visible transformed meshes as world-space cutaway bounds",
       this.localClippingEnabled = false;
     }
     getContext() { return { getContextAttributes: () => ({ stencil: true }) }; }
-    setPixelRatio() {}
+    setPixelRatio(value) { this.pixelRatio = value; }
+    getPixelRatio() { return this.pixelRatio; }
     setSize() {}
     setAnimationLoop(callback) { this.animationLoop = callback; }
     render() {}

@@ -168,7 +168,11 @@ export function createCutaway({
     });
     renderSets.set(name, { renderSet, mesh, edgeLines, order });
     if (viewportSize) {
-      renderSet.setViewportSize(viewportSize.width, viewportSize.height);
+      renderSet.setViewportSize(
+        viewportSize.width,
+        viewportSize.height,
+        viewportSize.pixelRatio,
+      );
     }
     applyCapPose(renderSet);
     renderSet.setVisible(enabled && selected(name));
@@ -264,11 +268,11 @@ export function createCutaway({
     return true;
   }
 
-  function setViewportSize(width, height) {
+  function setViewportSize(width, height, pixelRatio = 1) {
     if (disposed) return false;
-    viewportSize = { width, height };
+    viewportSize = { width, height, pixelRatio };
     for (const { renderSet } of renderSets.values()) {
-      renderSet.setViewportSize(width, height);
+      renderSet.setViewportSize(width, height, pixelRatio);
     }
     return true;
   }

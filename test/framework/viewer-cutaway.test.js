@@ -20,7 +20,8 @@ vi.mock("three", async (importOriginal) => {
       state.renderer = this;
     }
     getContext() { return { getContextAttributes: () => ({ stencil: true }) }; }
-    setPixelRatio() {}
+    setPixelRatio(value) { this.pixelRatio = value; }
+    getPixelRatio() { return this.pixelRatio; }
     setSize() {}
     setAnimationLoop(callback) { this.animationLoop = callback; }
     render(scene, camera) { this.calls.push({ type: "main", scene, camera }); }
@@ -87,6 +88,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.ResizeObserver = OriginalResizeObserver;
+  vi.unstubAllGlobals();
   document.body.innerHTML = "";
 });
 
@@ -148,6 +150,7 @@ test("viewer injects its initial feature-edge color into cutaway", () => {
 });
 
 test("viewer forwards every viewport resize to cutaway edge materials", () => {
+  vi.stubGlobal("devicePixelRatio", 2);
   let width = 400;
   let height = 300;
   const container = document.createElement("div");
@@ -161,12 +164,13 @@ test("viewer forwards every viewport resize to cutaway edge materials", () => {
     parts: { body: {} },
   });
 
-  expect(state.cutaway.setViewportSize).toHaveBeenLastCalledWith(400, 300);
+  expect(state.renderer.getPixelRatio()).toBe(2);
+  expect(state.cutaway.setViewportSize).toHaveBeenLastCalledWith(400, 300, 2);
 
   width = 900;
   height = 700;
   state.resize();
-  expect(state.cutaway.setViewportSize).toHaveBeenLastCalledWith(900, 700);
+  expect(state.cutaway.setViewportSize).toHaveBeenLastCalledWith(900, 700, 2);
 
   viewer.dispose();
 });

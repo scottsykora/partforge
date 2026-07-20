@@ -252,10 +252,11 @@ export function createSectionRenderSet({
     capMaterial.userData.setInkColor(color);
   }
 
-  function setViewportSize(width, height) {
+  function setViewportSize(width, height, pixelRatio = 1) {
     if (disposed) return;
-    viewportSize = { width, height };
+    viewportSize = { width, height, pixelRatio };
     setLineResolution(clippedEdgeMaterial, width, height);
+    capMaterial.userData.setScreenScale(pixelRatio);
   }
 
   function disposeClipped(material) {

@@ -257,7 +257,7 @@ export function createViewer(container, part) {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     lineMaterial.resolution.set(w, h); // fat lines need the viewport size for px width
-    cutaway.setViewportSize(w, h);
+    cutaway.setViewportSize(w, h, renderer.getPixelRatio());
   }
   const ro = new ResizeObserver(resize);
   ro.observe(container);
