@@ -1,9 +1,9 @@
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 8;
 
-export function createTooltipPresenter() {
+export function createTooltipPresenter({ id = "pf-hover-tip" } = {}) {
   const element = document.createElement("div");
-  element.id = "pf-hover-tip";
+  if (id != null && id !== "") element.id = id;
   element.className = "pf-hover-tip";
 
   const title = document.createElement("b");
@@ -93,9 +93,14 @@ export function attachButtonTooltips(tooltip, entries) {
     }
     element.removeAttribute("title");
 
+    let hovered = false;
+    let focused = false;
+    let touchActivation = false;
+    let dismissed = false;
     let presentationToken;
     let hasPresented = false;
-    const show = () => {
+    const showIfNeeded = () => {
+      if (hasPresented || dismissed || touchActivation || (!hovered && !focused)) return;
       const label = entry.getLabel?.()
         ?? element.getAttribute("aria-label")
         ?? originalTitle.value
@@ -105,32 +110,77 @@ export function attachButtonTooltips(tooltip, entries) {
     };
     const onPointerEnter = (event) => {
       if (event.pointerType === "touch") return;
-      show();
+      hovered = true;
+      dismissed = false;
+      showIfNeeded();
     };
-    const hide = () => {
+    const hidePresentation = () => {
       if (!hasPresented) return;
       hasPresented = false;
       tooltip.hide(presentationToken);
       presentationToken = undefined;
     };
+    const syncVisibility = () => {
+      if (dismissed || (!hovered && !focused)) hidePresentation();
+      else showIfNeeded();
+    };
+    const onPointerLeave = (event) => {
+      if (event.pointerType === "touch") return;
+      hovered = false;
+      syncVisibility();
+    };
+    const onPointerDown = (event) => {
+      if (event.pointerType !== "touch") return;
+      touchActivation = true;
+      dismissed = true;
+      hidePresentation();
+    };
+    const onPointerCancel = (event) => {
+      if (event.pointerType !== "touch") return;
+      touchActivation = false;
+      dismissed = true;
+      hidePresentation();
+    };
+    const onFocus = () => {
+      focused = true;
+      if (touchActivation) return;
+      dismissed = false;
+      showIfNeeded();
+    };
+    const onBlur = () => {
+      focused = false;
+      touchActivation = false;
+      syncVisibility();
+    };
+    const dismiss = () => {
+      dismissed = true;
+      touchActivation = false;
+      hidePresentation();
+    };
     element.addEventListener("pointerenter", onPointerEnter);
-    element.addEventListener("pointerleave", hide);
-    element.addEventListener("focus", show);
-    element.addEventListener("blur", hide);
-    element.addEventListener("click", hide);
+    element.addEventListener("pointerleave", onPointerLeave);
+    element.addEventListener("pointerdown", onPointerDown);
+    element.addEventListener("pointercancel", onPointerCancel);
+    element.addEventListener("focus", onFocus);
+    element.addEventListener("blur", onBlur);
+    element.addEventListener("click", dismiss);
     attached.push({
       element,
       originalTitle,
       originalAriaLabel,
       onPointerEnter,
-      show,
-      hide,
+      onPointerLeave,
+      onPointerDown,
+      onPointerCancel,
+      onFocus,
+      onBlur,
+      dismiss,
     });
   }
 
   let detached = false;
   const hide = () => {
-    for (const binding of attached) binding.hide();
+    for (const binding of attached) binding.dismiss();
   };
   return {
     hide,
@@ -144,14 +194,20 @@ export function attachButtonTooltips(tooltip, entries) {
           originalTitle,
           originalAriaLabel,
           onPointerEnter,
-          show,
-          hide,
+          onPointerLeave,
+          onPointerDown,
+          onPointerCancel,
+          onFocus,
+          onBlur,
+          dismiss,
         } = binding;
         element.removeEventListener("pointerenter", onPointerEnter);
-        element.removeEventListener("pointerleave", hide);
-        element.removeEventListener("focus", show);
-        element.removeEventListener("blur", hide);
-        element.removeEventListener("click", hide);
+        element.removeEventListener("pointerleave", onPointerLeave);
+        element.removeEventListener("pointerdown", onPointerDown);
+        element.removeEventListener("pointercancel", onPointerCancel);
+        element.removeEventListener("focus", onFocus);
+        element.removeEventListener("blur", onBlur);
+        element.removeEventListener("click", dismiss);
         if (originalTitle.present) element.setAttribute("title", originalTitle.value);
         else element.removeAttribute("title");
         if (originalAriaLabel.present) {

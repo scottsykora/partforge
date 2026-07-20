@@ -160,9 +160,10 @@ test("mount creates one tooltip presenter and shares it with every viewer consum
   const { createWorker } = makeWorkers();
   const part = makePart();
 
-  mount(part, { createWorker, elements: els });
+  const runtime = mount(part, { createWorker, elements: els });
 
   expect(createTooltipPresenter).toHaveBeenCalledOnce();
+  expect(createTooltipPresenter).toHaveBeenCalledWith({ id: null });
   const tooltip = fakeTooltips[0];
   const viewer = fakeViewers[0];
   expect(attachCutawayControls).toHaveBeenCalledWith(
@@ -172,6 +173,7 @@ test("mount creates one tooltip presenter and shares it with every viewer consum
   );
   expect(attachHoverLabels).toHaveBeenCalledWith(viewer, { part, tooltip });
   expect(attachViewerControls).toHaveBeenCalledWith(viewer, els.chrome, { tooltip });
+  runtime.dispose();
 });
 
 test("mount detaches tooltip consumers before disposing the shared presenter once", () => {
@@ -202,6 +204,63 @@ test("mount detaches tooltip consumers before disposing the shared presenter onc
   expect(order.indexOf("tooltip")).toBeGreaterThan(order.indexOf("hover"));
   expect(order.indexOf("tooltip")).toBeGreaterThan(order.indexOf("chrome"));
   expect(order.indexOf("tooltip")).toBeLessThan(order.indexOf("viewer"));
+});
+
+test("construction failure unwinds every resource acquired before worker creation", () => {
+  const cutaway = { reset: vi.fn(), detach: vi.fn() };
+  const hover = { detach: vi.fn() };
+  const tooltip = {
+    showPointer: vi.fn(), showAnchor: vi.fn(), hide: vi.fn(), dispose: vi.fn(),
+  };
+  attachCutawayControls.mockImplementationOnce(() => cutaway);
+  attachHoverLabels.mockImplementationOnce(() => hover);
+  createTooltipPresenter.mockImplementationOnce(() => tooltip);
+  const manifold = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null };
+  const createWorker = vi.fn((name) => {
+    if (name === "manifold") return manifold;
+    throw new Error("occt worker failed");
+  });
+  const els = makeElements();
+
+  expect(() => mount(makePart(), { createWorker, elements: els }))
+    .toThrow("occt worker failed");
+
+  expect(manifold.terminate).toHaveBeenCalledOnce();
+  expect(hover.detach).toHaveBeenCalledOnce();
+  expect(cutaway.detach).toHaveBeenCalledOnce();
+  expect(tooltip.dispose).toHaveBeenCalledOnce();
+  expect(fakeViewers[0].dispose).toHaveBeenCalledOnce();
+  expect(els.tabs.children.length).toBe(0);
+  expect(els.status.status.textContent).toBe("");
+});
+
+test("dispose reports a detach error only after all other resources are released", () => {
+  const detachError = new Error("hover detach failed");
+  const cutaway = { reset: vi.fn(), detach: vi.fn() };
+  const hover = { detach: vi.fn(() => { throw detachError; }) };
+  const chrome = { detach: vi.fn() };
+  const tooltip = {
+    showPointer: vi.fn(), showAnchor: vi.fn(), hide: vi.fn(), dispose: vi.fn(),
+  };
+  attachCutawayControls.mockImplementationOnce(() => cutaway);
+  attachHoverLabels.mockImplementationOnce(() => hover);
+  attachViewerControls.mockImplementationOnce(() => chrome);
+  createTooltipPresenter.mockImplementationOnce(() => tooltip);
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+
+  expect(() => runtime.dispose()).toThrow(detachError);
+
+  expect(chrome.detach).toHaveBeenCalledOnce();
+  expect(cutaway.detach).toHaveBeenCalledOnce();
+  expect(tooltip.dispose).toHaveBeenCalledOnce();
+  expect(workers.manifold.terminate).toHaveBeenCalledOnce();
+  expect(workers.occt.terminate).toHaveBeenCalledOnce();
+  expect(els.controls.children.length).toBe(0);
+  expect(els.tabs.children.length).toBe(0);
+  expect(fakeViewers[0].dispose).toHaveBeenCalledOnce();
+  expect(() => runtime.dispose()).not.toThrow();
 });
 
 test("full element refs wire cutaway without getElementById lookup", () => {

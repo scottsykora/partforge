@@ -185,6 +185,25 @@ test("dispose is idempotent and presenter calls become safe no-ops", () => {
   expect(document.getElementById("pf-hover-tip")).toBeNull();
 });
 
+test("ID-less presenters are independent and never create duplicate global IDs", () => {
+  const first = createTooltipPresenter({ id: null });
+  const second = createTooltipPresenter({ id: null });
+  const elements = [...document.querySelectorAll(".pf-hover-tip")];
+
+  expect(elements).toHaveLength(2);
+  expect(document.querySelectorAll("#pf-hover-tip")).toHaveLength(0);
+  first.showPointer({ title: "First feature" }, 10, 20);
+  second.showPointer({ title: "Second feature" }, 30, 40);
+  expect(elements[0].querySelector("b").textContent).toBe("First feature");
+  expect(elements[1].querySelector("b").textContent).toBe("Second feature");
+
+  first.dispose();
+  expect(document.querySelectorAll(".pf-hover-tip")).toHaveLength(1);
+  expect(elements[1].isConnected).toBe(true);
+  expect(elements[1].classList.contains("show")).toBe(true);
+  second.dispose();
+});
+
 test("button tooltips replace the native title and respond to pointer and click", () => {
   const button = document.createElement("button");
   button.title = "Reset view";
@@ -226,6 +245,82 @@ test("button tooltips ignore touch pointer entry", () => {
   button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "touch" }));
 
   expect(tooltip.showAnchor).not.toHaveBeenCalled();
+});
+
+test("touch activation never shows a tooltip through its synthetic focus and click", () => {
+  const button = document.createElement("button");
+  button.title = "Reframe part";
+  const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
+  attachButtonTooltips(tooltip, [{ element: button }]);
+
+  button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "touch" }));
+  button.dispatchEvent(new PointerEvent("pointerdown", { pointerType: "touch" }));
+  button.dispatchEvent(new FocusEvent("focus"));
+  button.dispatchEvent(new PointerEvent("pointerup", { pointerType: "touch" }));
+  button.dispatchEvent(new MouseEvent("click"));
+
+  expect(tooltip.showAnchor).not.toHaveBeenCalled();
+});
+
+test("mouse hover remains presented when focus begins before pointerleave", () => {
+  const button = document.createElement("button");
+  button.title = "Reframe part";
+  const token = Symbol("button tooltip");
+  const tooltip = { showAnchor: vi.fn(() => token), hide: vi.fn() };
+  attachButtonTooltips(tooltip, [{ element: button }]);
+
+  button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  button.dispatchEvent(new FocusEvent("focus"));
+  button.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+  expect(tooltip.hide).not.toHaveBeenCalled();
+
+  button.dispatchEvent(new FocusEvent("blur"));
+  expect(tooltip.showAnchor).toHaveBeenCalledOnce();
+  expect(tooltip.hide).toHaveBeenCalledWith(token);
+});
+
+test("keyboard focus remains presented when hover begins before blur", () => {
+  const button = document.createElement("button");
+  button.title = "Reframe part";
+  const token = Symbol("button tooltip");
+  const tooltip = { showAnchor: vi.fn(() => token), hide: vi.fn() };
+  attachButtonTooltips(tooltip, [{ element: button }]);
+
+  button.dispatchEvent(new FocusEvent("focus"));
+  button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  button.dispatchEvent(new FocusEvent("blur"));
+  expect(tooltip.hide).not.toHaveBeenCalled();
+
+  button.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+  expect(tooltip.showAnchor).toHaveBeenCalledOnce();
+  expect(tooltip.hide).toHaveBeenCalledWith(token);
+});
+
+test("click dismisses current reasons until a new entry presents again", () => {
+  const button = document.createElement("button");
+  button.title = "Reframe part";
+  const firstToken = Symbol("first");
+  const secondToken = Symbol("second");
+  const tooltip = {
+    showAnchor: vi.fn()
+      .mockReturnValueOnce(firstToken)
+      .mockReturnValueOnce(secondToken),
+    hide: vi.fn(),
+  };
+  attachButtonTooltips(tooltip, [{ element: button }]);
+
+  button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  button.dispatchEvent(new FocusEvent("focus"));
+  button.dispatchEvent(new MouseEvent("click"));
+  expect(tooltip.hide).toHaveBeenCalledWith(firstToken);
+
+  button.dispatchEvent(new FocusEvent("blur"));
+  expect(tooltip.showAnchor).toHaveBeenCalledOnce();
+  button.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+  button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  expect(tooltip.showAnchor).toHaveBeenCalledTimes(2);
+  button.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+  expect(tooltip.hide).toHaveBeenLastCalledWith(secondToken);
 });
 
 test("button tooltip labels are read at show time", () => {
@@ -294,6 +389,8 @@ test("detach removes every button tooltip listener", () => {
   tooltip.hide.mockClear();
 
   button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  button.dispatchEvent(new PointerEvent("pointerdown", { pointerType: "touch" }));
+  button.dispatchEvent(new PointerEvent("pointercancel", { pointerType: "touch" }));
   button.dispatchEvent(new PointerEvent("pointerleave"));
   button.dispatchEvent(new FocusEvent("focus"));
   button.dispatchEvent(new FocusEvent("blur"));

@@ -6,7 +6,15 @@
 // pattern INLINE — Vite only bundles a worker (and its backend chunks) when it sees
 // that literal call, so the framework can't construct it from a passed-in URL.
 export function createGeometryService({ createWorker, onMessage }) {
-  const workers = { manifold: createWorker("manifold"), occt: createWorker("occt") };
+  const manifold = createWorker("manifold");
+  let occt;
+  try {
+    occt = createWorker("occt");
+  } catch (error) {
+    try { manifold.terminate(); } catch { /* preserve the worker creation error */ }
+    throw error;
+  }
+  const workers = { manifold, occt };
   workers.manifold.onmessage = onMessage;
   workers.occt.onmessage = onMessage;
   // Post a job to the chosen backend's worker. The message's own `type` says what to
