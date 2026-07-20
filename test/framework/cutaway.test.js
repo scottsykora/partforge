@@ -6,6 +6,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { createCutaway } from "../../src/framework/cutaway.js";
 
 const controllers = [];
+const CENTER_HANDLE = "rotate-y";
 
 afterEach(() => {
   for (const controller of controllers.splice(0)) controller.dispose?.();
@@ -174,7 +175,7 @@ test("handle hover subscriptions start at null, forward transitions, and unsubsc
 
   expect(listener.mock.calls.map(([handle]) => handle)).toEqual([
     null,
-    "translate",
+    CENTER_HANDLE,
     null,
   ]);
 
@@ -199,9 +200,9 @@ test("disabling and disposing publish null and reject late subscriptions safely"
   fixture.controller.dispose();
   expect(listener.mock.calls.map(([handle]) => handle)).toEqual([
     null,
-    "translate",
+    CENTER_HANDLE,
     null,
-    "translate",
+    CENTER_HANDLE,
     null,
   ]);
 
@@ -227,7 +228,7 @@ test("a throwing initial handle subscriber is rolled back", () => {
   movePointer(fixture.domElement);
 
   expect(throwing).toHaveBeenCalledOnce();
-  expect(healthy.mock.calls.map(([handle]) => handle)).toEqual([null, "translate"]);
+  expect(healthy.mock.calls.map(([handle]) => handle)).toEqual([null, CENTER_HANDLE]);
 });
 
 test("a throwing handle subscriber is reported without blocking later subscribers", () => {
@@ -243,7 +244,7 @@ test("a throwing handle subscriber is reported without blocking later subscriber
   fixture.controller.setEnabled(true);
   expect(() => movePointer(fixture.domElement)).not.toThrow();
 
-  expect(healthy).toHaveBeenLastCalledWith("translate");
+  expect(healthy).toHaveBeenLastCalledWith(CENTER_HANDLE);
   expect(reported).toHaveBeenCalledWith(
     "Cutaway handle hover subscriber failed",
     expect.any(Error),
@@ -255,14 +256,14 @@ test("a subscriber added during fanout receives only its immediate current deliv
   const fixture = createFixture();
   const late = vi.fn();
   fixture.controller.onHandleHoverChange((handle) => {
-    if (handle === "translate") fixture.controller.onHandleHoverChange(late);
+    if (handle === CENTER_HANDLE) fixture.controller.onHandleHoverChange(late);
   });
 
   fixture.controller.setEnabled(true);
   movePointer(fixture.domElement);
 
   expect(late).toHaveBeenCalledOnce();
-  expect(late).toHaveBeenCalledWith("translate");
+  expect(late).toHaveBeenCalledWith(CENTER_HANDLE);
 });
 
 test("unsubscribing a later subscriber during fanout skips its snapshot turn", () => {
@@ -270,7 +271,7 @@ test("unsubscribing a later subscriber during fanout skips its snapshot turn", (
   const later = vi.fn();
   let unsubscribeLater;
   fixture.controller.onHandleHoverChange((handle) => {
-    if (handle === "translate") unsubscribeLater();
+    if (handle === CENTER_HANDLE) unsubscribeLater();
   });
   unsubscribeLater = fixture.controller.onHandleHoverChange(later);
 
@@ -347,7 +348,7 @@ test("reentrant dispose from final hover delivery does not double-dispose resour
 test("dispose during hover fanout still delivers final null before clearing subscribers", () => {
   const fixture = createFixture();
   const disposing = vi.fn((handle) => {
-    if (handle === "translate") fixture.controller.dispose();
+    if (handle === CENTER_HANDLE) fixture.controller.dispose();
   });
   const later = vi.fn();
   fixture.controller.onHandleHoverChange(disposing);
@@ -358,7 +359,7 @@ test("dispose during hover fanout still delivers final null before clearing subs
 
   expect(disposing.mock.calls.map(([handle]) => handle)).toEqual([
     null,
-    "translate",
+    CENTER_HANDLE,
     null,
   ]);
   expect(later.mock.calls.map(([handle]) => handle)).toEqual([null, null]);
