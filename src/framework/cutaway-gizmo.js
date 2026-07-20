@@ -33,7 +33,7 @@ const GIZMO_RENDER_ORDER = CUTAWAY_OVERLAY_RENDER_ORDER + 1;
 const GHOST_OFFSET_FACTOR = 0.001;
 const MIN_GHOST_OFFSET = 0.01;
 const MAX_GHOST_OFFSET = 0.25;
-const HANDLE_HOVER_SCALE = 1.12;
+const HANDLE_HOVER_THICKNESS = 1.6;
 const HANDLE_HOVER_WHITE_MIX = 0.28;
 const WHITE = new THREE.Color(0xffffff);
 
@@ -110,15 +110,28 @@ export function createCutawayGizmo({
   materials.add(rotateYMaterial);
 
   const shaftGeometry = new THREE.CylinderGeometry(0.025, 0.025, 0.58, 12);
+  const shaftHoverGeometry = new THREE.CylinderGeometry(
+    0.025 * HANDLE_HOVER_THICKNESS,
+    0.025 * HANDLE_HOVER_THICKNESS,
+    0.58,
+    12,
+  );
   const shaft = new THREE.Mesh(shaftGeometry, translateMaterial);
   shaft.rotation.x = Math.PI / 2;
   shaft.position.z = 0.29;
   const coneGeometry = new THREE.ConeGeometry(0.075, 0.2, 16);
+  const coneHoverGeometry = new THREE.ConeGeometry(
+    0.075 * HANDLE_HOVER_THICKNESS,
+    0.2,
+    16,
+  );
   const cone = new THREE.Mesh(coneGeometry, translateMaterial);
   cone.rotation.x = Math.PI / 2;
   cone.position.z = 0.68;
   geometries.add(shaftGeometry);
+  geometries.add(shaftHoverGeometry);
   geometries.add(coneGeometry);
+  geometries.add(coneHoverGeometry);
 
   const ringXGeometry = new THREE.TorusGeometry(
     0.42,
@@ -128,6 +141,13 @@ export function createCutawayGizmo({
     Math.PI,
   );
   const ringX = new THREE.Mesh(ringXGeometry, rotateXMaterial);
+  const ringXHoverGeometry = new THREE.TorusGeometry(
+    0.42,
+    0.015 * HANDLE_HOVER_THICKNESS,
+    8,
+    64,
+    Math.PI,
+  );
   ringX.quaternion
     .setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2)
     .multiply(new THREE.Quaternion().setFromAxisAngle(
@@ -142,9 +162,18 @@ export function createCutawayGizmo({
     Math.PI,
   );
   const ringY = new THREE.Mesh(ringYGeometry, rotateYMaterial);
+  const ringYHoverGeometry = new THREE.TorusGeometry(
+    0.42,
+    0.015 * HANDLE_HOVER_THICKNESS,
+    8,
+    64,
+    Math.PI,
+  );
   ringY.rotation.x = -Math.PI / 2;
   geometries.add(ringXGeometry);
+  geometries.add(ringXHoverGeometry);
   geometries.add(ringYGeometry);
+  geometries.add(ringYHoverGeometry);
 
   const hitMaterial = new THREE.MeshBasicMaterial({
     color: 0xffffff,
@@ -200,9 +229,28 @@ export function createCutawayGizmo({
     rotateY: ringY,
   };
   const handleAppearance = {
-    translate: { visual: translateVisualRoot, material: translateMaterial },
-    "rotate-x": { visual: ringX, material: rotateXMaterial },
-    "rotate-y": { visual: ringY, material: rotateYMaterial },
+    translate: {
+      visual: translateVisualRoot,
+      material: translateMaterial,
+      geometryPairs: [
+        { mesh: shaft, normal: shaftGeometry, hovered: shaftHoverGeometry },
+        { mesh: cone, normal: coneGeometry, hovered: coneHoverGeometry },
+      ],
+    },
+    "rotate-x": {
+      visual: ringX,
+      material: rotateXMaterial,
+      geometryPairs: [
+        { mesh: ringX, normal: ringXGeometry, hovered: ringXHoverGeometry },
+      ],
+    },
+    "rotate-y": {
+      visual: ringY,
+      material: rotateYMaterial,
+      geometryPairs: [
+        { mesh: ringY, normal: ringYGeometry, hovered: ringYHoverGeometry },
+      ],
+    },
   };
 
   let disposed = false;
@@ -284,7 +332,7 @@ export function createCutawayGizmo({
     borderMaterial.color.set(theme.border);
     borderMaterial.opacity = activeAppearance ? 1 : 0.72;
 
-    for (const [handle, { visual, material }] of Object.entries(handleAppearance)) {
+    for (const [handle, { visual, material, geometryPairs }] of Object.entries(handleAppearance)) {
       const hovered = handle === hoveredHandle;
       const themeKey = handle === "rotate-x"
         ? "rotateX"
@@ -295,7 +343,10 @@ export function createCutawayGizmo({
       if (hovered) material.color.lerp(WHITE, HANDLE_HOVER_WHITE_MIX);
       material.transparent = true;
       material.opacity = hovered ? 1 : activeAppearance ? 1 : 0.48;
-      visual.scale.setScalar(hovered ? HANDLE_HOVER_SCALE : 1);
+      visual.scale.setScalar(1);
+      for (const pair of geometryPairs) {
+        pair.mesh.geometry = hovered ? pair.hovered : pair.normal;
+      }
     }
   }
 

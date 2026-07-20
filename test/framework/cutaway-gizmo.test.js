@@ -119,6 +119,29 @@ function sampledCenterlineZ(gizmo, mesh) {
   });
 }
 
+function handleThickness(gizmo, handle) {
+  if (handle === "translate") {
+    return gizmo.handleVisuals.translate.children[0].geometry.parameters.radiusTop;
+  }
+  return gizmo.handleVisuals[handle].geometry.parameters.tube;
+}
+
+function expectOnlyHandleThickened(gizmo, hoveredHandle) {
+  const baseThickness = {
+    translate: 0.025,
+    rotateX: 0.015,
+    rotateY: 0.015,
+  };
+  for (const [handle, visual] of Object.entries(gizmo.handleVisuals)) {
+    expect(visual.scale.toArray()).toEqual([1, 1, 1]);
+    if (handle === hoveredHandle) {
+      expect(handleThickness(gizmo, handle)).toBeGreaterThan(baseThickness[handle]);
+    } else {
+      expect(handleThickness(gizmo, handle)).toBe(baseThickness[handle]);
+    }
+  }
+}
+
 test("setPose applies the plane pose and size while visibility remains controllable", () => {
   const { gizmo } = createFixture();
   const position = new THREE.Vector3(1, 2, 3);
@@ -377,9 +400,9 @@ test("passive hover publishes only transitions and emphasizes one stable visual 
 
   expect(onHandleHoverChange).toHaveBeenCalledTimes(1);
   expect(onHandleHoverChange).toHaveBeenLastCalledWith("translate");
-  expect(gizmo.handleVisuals.translate.scale.toArray()).toEqual([1.12, 1.12, 1.12]);
-  expect(gizmo.handleVisuals.rotateX.scale.toArray()).toEqual([1, 1, 1]);
-  expect(gizmo.handleVisuals.rotateY.scale.toArray()).toEqual([1, 1, 1]);
+  expectOnlyHandleThickened(gizmo, "translate");
+  expect(gizmo.handleVisuals.translate.children[0].geometry.parameters.height).toBe(0.58);
+  expect(gizmo.handleVisuals.translate.children[1].geometry.parameters.height).toBe(0.2);
   expect(translateMaterial.color.r).toBeGreaterThan(translateBase.r);
   expect(translateMaterial.color.g).toBeGreaterThan(translateBase.g);
   expect(translateMaterial.color.b).toBeGreaterThan(translateBase.b);
@@ -394,8 +417,8 @@ test("passive hover publishes only transitions and emphasizes one stable visual 
   picked = "rotate-x";
   pointer(domElement, "pointermove");
   expect(onHandleHoverChange).toHaveBeenLastCalledWith("rotate-x");
-  expect(gizmo.handleVisuals.translate.scale.toArray()).toEqual([1, 1, 1]);
-  expect(gizmo.handleVisuals.rotateX.scale.toArray()).toEqual([1.12, 1.12, 1.12]);
+  expectOnlyHandleThickened(gizmo, "rotateX");
+  expect(gizmo.handleVisuals.rotateX.geometry.parameters.radius).toBe(0.42);
   expect(translateMaterial.color.getHex()).toBe(translateBase.getHex());
 
   picked = null;
@@ -405,9 +428,7 @@ test("passive hover publishes only transitions and emphasizes one stable visual 
     "rotate-x",
     null,
   ]);
-  for (const visual of Object.values(gizmo.handleVisuals)) {
-    expect(visual.scale.toArray()).toEqual([1, 1, 1]);
-  }
+  expectOnlyHandleThickened(gizmo, null);
 
   picked = "rotate-y";
   pointer(domElement, "pointermove", { pointerType: "touch" });
@@ -426,7 +447,7 @@ test("passive hover uses the real priority pick path at the projected gizmo cent
 
   expect(onHandleHoverChange).toHaveBeenCalledOnce();
   expect(onHandleHoverChange).toHaveBeenLastCalledWith("translate");
-  expect(fixture.gizmo.handleVisuals.translate.scale.x).toBe(1.12);
+  expectOnlyHandleThickened(fixture.gizmo, "translate");
 });
 
 test("press emphasizes without a prior move and locks hover until the next passive move", () => {
@@ -439,25 +460,24 @@ test("press emphasizes without a prior move and locks hover until the next passi
 
   pointer(domElement, "pointerdown");
   expect(onHandleHoverChange).toHaveBeenLastCalledWith("translate");
-  expect(gizmo.handleVisuals.translate.scale.x).toBe(1.12);
+  expectOnlyHandleThickened(gizmo, "translate");
 
   picked = "rotate-x";
   pointer(domElement, "pointermove", { x: 110 });
   expect(onHandleHoverChange).toHaveBeenCalledTimes(1);
-  expect(gizmo.handleVisuals.translate.scale.x).toBe(1.12);
-  expect(gizmo.handleVisuals.rotateX.scale.x).toBe(1);
+  expectOnlyHandleThickened(gizmo, "translate");
 
   pointer(domElement, "pointerup", { x: 110 });
   domElement.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 7 }));
   expect(onHandleHoverChange).toHaveBeenCalledTimes(1);
-  expect(gizmo.handleVisuals.translate.scale.x).toBe(1.12);
+  expectOnlyHandleThickened(gizmo, "translate");
 
   pointer(domElement, "pointermove", { x: 110 });
   expect(onHandleHoverChange.mock.calls.map(([handle]) => handle)).toEqual([
     "translate",
     "rotate-x",
   ]);
-  expect(gizmo.handleVisuals.rotateX.scale.x).toBe(1.12);
+  expectOnlyHandleThickened(gizmo, "rotateX");
 
   picked = null;
   pointer(domElement, "pointermove", { x: 120 });
@@ -478,7 +498,7 @@ test("an unrelated pointer leaving does not clear or end the active drag", () =>
   expect(onHandleHoverChange.mock.calls.map(([handle]) => handle)).toEqual([
     "translate",
   ]);
-  expect(gizmo.handleVisuals.translate.scale.toArray()).toEqual([1.12, 1.12, 1.12]);
+  expectOnlyHandleThickened(gizmo, "translate");
 
   pointer(domElement, "pointermove", { pointerId: 1, y: 90 });
   expect(onPoseChange).toHaveBeenCalledOnce();
@@ -507,7 +527,7 @@ test.each([
   else domElement.dispatchEvent(new PointerEvent(action, { pointerId: 7 }));
 
   expect(onHandleHoverChange).toHaveBeenLastCalledWith(null);
-  expect(gizmo.handleVisuals.translate.scale.toArray()).toEqual([1, 1, 1]);
+  expectOnlyHandleThickened(gizmo, null);
 });
 
 test("theme and active appearance changes preserve the hovered advantage", () => {
@@ -526,12 +546,11 @@ test("theme and active appearance changes preserve the hovered advantage", () =>
   expect(hoveredMaterial.color.r).toBeGreaterThan(lightRotateY.r);
   expect(hoveredMaterial.color.g).toBeGreaterThan(lightRotateY.g);
   expect(hoveredMaterial.color.b).toBeGreaterThan(lightRotateY.b);
-  expect(gizmo.handleVisuals.rotateY.scale.x).toBe(1.12);
+  expectOnlyHandleThickened(gizmo, "rotateY");
 
   gizmo.setActiveAppearance(true);
   expect(hoveredMaterial.opacity).toBe(1);
-  expect(gizmo.handleVisuals.rotateY.scale.x).toBe(1.12);
-  expect(gizmo.handleVisuals.rotateX.scale.x).toBe(1);
+  expectOnlyHandleThickened(gizmo, "rotateY");
 });
 
 test("updateForCamera preserves plane size while scaling handles for camera distance", () => {
@@ -618,7 +637,7 @@ test("a gizmo press is handled before earlier-registered OrbitControls", () => {
 
   expect(orbitStart).not.toHaveBeenCalled();
   expect(orbitControls.enabled).toBe(false);
-  expect(gizmo.handleVisuals.translate.scale.x).toBe(1.12);
+  expectOnlyHandleThickened(gizmo, "translate");
 
   window.dispatchEvent(new Event("blur"));
   document.dispatchEvent(new PointerEvent("pointermove", {

@@ -71,6 +71,17 @@ export function attachHoverLabels(
     overlay.visible = false;
   }
 
+  function showHighlight(hit, geometry) {
+    emptyOverlayGeometry?.dispose();
+    emptyOverlayGeometry = null;
+    overlay.geometry = geometry;
+    if (overlayParent !== hit.mesh.parent) {
+      hit.mesh.parent.add(overlay);
+      overlayParent = hit.mesh.parent;
+    }
+    overlay.visible = true;
+  }
+
   function hide() {
     if (hasPresented) {
       hasPresented = false;
@@ -93,14 +104,10 @@ export function attachHoverLabels(
       }
       let g = byId.get(hit.feature.id);
       if (!g) { g = featureSubset(hit.mesh.geometry, hit.feature.id); byId.set(hit.feature.id, g); }
-      emptyOverlayGeometry?.dispose();
-      emptyOverlayGeometry = null;
-      overlay.geometry = g;
-      if (overlayParent !== hit.mesh.parent) { hit.mesh.parent.add(overlay); overlayParent = hit.mesh.parent; }
-      overlay.visible = true;
+      showHighlight(hit, g);
     } else {
       content = { title: subLabel(hit.subPart), subtitle: "" };
-      clearHighlight();
+      showHighlight(hit, hit.mesh.geometry);
     }
     if (hasPresented) {
       hasPresented = false;

@@ -205,16 +205,21 @@ test("hovering a labeled feature shows 'feature · sub-part' and a highlight ove
   h.detach();
 });
 
-test("hovering unlabeled geometry shows only the sub-part label, no overlay", () => {
+test("hovering unlabeled geometry highlights the whole sub-part", () => {
   const viewer = makeViewer({ featured: false });
+  const sourceGeometry = viewer._subMeshes.one.geometry;
+  const disposeSourceGeometry = vi.spyOn(sourceGeometry, "dispose");
   const h = attachHoverLabels(viewer, { part, schedule: sync });
   move(viewer.domElement, 100, 100);
   const tip = document.getElementById("pf-hover-tip");
   expect(tip.classList.contains("show")).toBe(true);
   expect(tip.querySelector("b").textContent).toBe("Planter");
   const overlay = viewer._subMeshes.one.parent.children.find((c) => c !== viewer._subMeshes.one && c.visible);
-  expect(overlay).toBeUndefined();
+  expect(overlay).toBeDefined();
+  expect(overlay.geometry).toBe(sourceGeometry);
   h.detach();
+  expect(disposeSourceGeometry).not.toHaveBeenCalled();
+  disposeSourceGeometry.mockRestore();
 });
 
 test("a miss hides the tooltip and overlay", () => {
