@@ -223,7 +223,7 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 #pf-hover-tip,
 .pf-hover-tip {
   position: fixed; z-index: 30; pointer-events: none; display: none;
-  padding: 4px 9px; border-radius: 8px; max-width: 260px;
+  padding: 4px 9px; border-radius: 8px; max-width: min(260px, calc(100vw - 16px));
   background: var(--pf-surface); border: 1px solid var(--pf-border);
   color: var(--pf-text-strong); font-size: 12px; line-height: 1.35;
   box-shadow: 0 2px 4px -2px rgb(0 0 0 / .15);

@@ -68,6 +68,28 @@ test("showAnchor clamps a measured tooltip inside the right viewport edge", () =
   expect(element.style.top).toBe("48px");
 });
 
+test("showAnchor fits a viewport-width tooltip between narrow-screen margins", () => {
+  vi.stubGlobal("innerWidth", 200);
+  vi.stubGlobal("innerHeight", 200);
+  const tooltip = createTooltipPresenter();
+  const element = document.getElementById("pf-hover-tip");
+  const measuredWidth = 200 - 16;
+  element.getBoundingClientRect = () => ({ width: measuredWidth, height: 24 });
+  const anchor = document.createElement("button");
+  anchor.getBoundingClientRect = () => ({
+    left: 180,
+    right: 196,
+    top: 20,
+    bottom: 40,
+  });
+
+  tooltip.showAnchor({ title: "A long valid button label" }, anchor);
+
+  const left = Number.parseFloat(element.style.left);
+  expect(left).toBe(8);
+  expect(left + measuredWidth).toBe(192);
+});
+
 test("showAnchor normalizes stale pointer placement before measuring", () => {
   vi.stubGlobal("innerWidth", 320);
   vi.stubGlobal("innerHeight", 200);
@@ -274,6 +296,21 @@ test("tooltip styles apply by class without shifting anchored coordinates", () =
   expect(computed.position).toBe("fixed");
   expect(computed.display).toBe("block");
   expect(computed.transform).toBe("");
+
+  style.remove();
+});
+
+test("tooltip max width preserves both viewport margins on narrow screens", () => {
+  const style = document.createElement("style");
+  style.textContent = readFileSync("src/framework/app.css", "utf8");
+  const element = document.createElement("div");
+  element.className = "pf-hover-tip";
+  document.head.appendChild(style);
+  document.body.appendChild(element);
+
+  expect(style.textContent).toContain(
+    "max-width: min(260px, calc(100vw - 16px))",
+  );
 
   style.remove();
 });
