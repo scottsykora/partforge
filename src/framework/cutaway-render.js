@@ -1,5 +1,7 @@
 import * as THREE from "three";
 
+const HATCH_DENSITY_MULTIPLIER = 5;
+
 // Stencil/cap passes for every section are kept below all clipped surfaces.
 // This leaves a large, deterministic ordering range for assemblies while making
 // surface/edge ordering independent of the number of subparts.
@@ -8,7 +10,7 @@ const EDGE_ORDER_BASE = 2_000_000;
 const SECTION_ORDER_STRIDE = 2;
 export const CUTAWAY_OVERLAY_RENDER_ORDER = 3_000_000;
 
-export function createHatchMaterial({ color, opacity, inkColor = 0x1c232d }) {
+export function createHatchMaterial({ color, opacity, inkColor }) {
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uBase: { value: new THREE.Color(color) },
@@ -50,7 +52,7 @@ export function createHatchMaterial({ color, opacity, inkColor = 0x1c232d }) {
   });
 
   material.userData.setHatch = ({ spacing, size }) => {
-    material.uniforms.uScale.value = size / spacing * 5;
+    material.uniforms.uScale.value = size / spacing * HATCH_DENSITY_MULTIPLIER;
   };
   material.userData.setInkColor = (color) => {
     material.uniforms.uInk.value.set(color);
@@ -114,6 +116,7 @@ export function createSectionRenderSet({
   plane,
   capGeometry,
   order,
+  inkColor,
 }) {
   let originalMeshMaterial = mesh.material;
   let originalEdgeMaterial = edgeLines?.material;
@@ -144,6 +147,7 @@ export function createSectionRenderSet({
   const capMaterial = createHatchMaterial({
     color: sourceMaterial?.color ?? 0x9fb4cc,
     opacity: sourceMaterial?.opacity ?? 1,
+    inkColor,
   });
   capMaterial.side = THREE.DoubleSide;
   capMaterial.stencilWrite = true;

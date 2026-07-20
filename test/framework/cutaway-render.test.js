@@ -6,7 +6,7 @@ import {
   createSectionRenderSet,
 } from "../../src/framework/cutaway-render.js";
 
-function createFixture({ order = 0 } = {}) {
+function createFixture({ order = 0, inkColor = 0x2468ac } = {}) {
   const scene = new THREE.Scene();
   const parent = new THREE.Group();
   parent.position.set(4, 5, 6);
@@ -42,6 +42,7 @@ function createFixture({ order = 0 } = {}) {
     plane,
     capGeometry,
     order,
+    inkColor,
   });
 
   return {
@@ -113,6 +114,12 @@ describe("createHatchMaterial", () => {
 });
 
 describe("createSectionRenderSet", () => {
+  test("initializes the cap with its explicitly injected ink color", () => {
+    const { renderSet } = createFixture({ inkColor: 0x2468ac });
+
+    expect(renderSet.cap.material.uniforms.uInk.value.getHex()).toBe(0x2468ac);
+  });
+
   test("configures isolated increment, decrement, and cap stencil passes", () => {
     const { renderSet } = createFixture();
 

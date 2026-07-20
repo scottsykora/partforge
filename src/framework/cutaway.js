@@ -31,6 +31,7 @@ export function createCutaway({
   orbitControls,
   domElement,
   getBounds,
+  edgeColor,
   schedule = defaultSchedule,
 }) {
   let supported = false;
@@ -52,7 +53,7 @@ export function createCutaway({
   let enabled = false;
   let flipped = false;
   let theme = "dark";
-  let hatchInk = 0x1c232d;
+  let hatchInk = edgeColor;
   let pose = null;
   let viewportSize = null;
   let cancelIdle = null;
@@ -160,9 +161,9 @@ export function createCutaway({
       plane,
       capGeometry,
       order,
+      inkColor: hatchInk,
     });
     renderSets.set(name, { renderSet, mesh, edgeLines, order });
-    renderSet.setHatchInk(hatchInk);
     if (viewportSize) {
       renderSet.setViewportSize(viewportSize.width, viewportSize.height);
     }

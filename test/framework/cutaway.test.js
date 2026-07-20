@@ -38,6 +38,7 @@ function createFixture({
   box,
   schedule: providedSchedule,
   localClippingEnabled = false,
+  edgeColor = 0x1c232d,
 } = {}) {
   const renderer = makeRenderer(stencil);
   renderer.localClippingEnabled = localClippingEnabled;
@@ -70,6 +71,7 @@ function createFixture({
     domElement,
     getBounds: () => bounds,
     schedule: providedSchedule ?? timer.schedule,
+    edgeColor,
   });
   controllers.push(controller);
   return {
@@ -343,6 +345,14 @@ test("theme refresh forwards exact feature-edge hatch colors and preserves exact
   fixture.controller.setEnabled(false);
   expect(mesh.material).toBe(material);
   expect(edgeLines.material).toBe(edgeMaterial);
+});
+
+test("uses the explicitly injected initial edge color for the first subpart", () => {
+  const fixture = createFixture({ edgeColor: 0x2468ac });
+
+  addSubpart(fixture);
+
+  expect(findCap(fixture.scene).material.uniforms.uInk.value.getHex()).toBe(0x2468ac);
 });
 
 test("retains the feature-edge hatch color for future and replacement subparts", () => {

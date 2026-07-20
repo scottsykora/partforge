@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   cutaway: null,
+  cutawayOptions: null,
   renderer: null,
   resize: null,
 }));
@@ -28,7 +29,10 @@ vi.mock("three", async (importOriginal) => {
 });
 
 vi.mock("../../src/framework/cutaway.js", () => ({
-  createCutaway: vi.fn(() => state.cutaway),
+  createCutaway: vi.fn((options) => {
+    state.cutawayOptions = options;
+    return state.cutaway;
+  }),
 }));
 
 import { createViewer } from "../../src/framework/viewer.js";
@@ -64,6 +68,7 @@ function createContainer(width = 400, height = 300) {
 
 beforeEach(() => {
   state.cutaway = createFakeCutaway();
+  state.cutawayOptions = null;
   state.renderer = null;
   state.resize = null;
   globalThis.ResizeObserver = class {
@@ -90,6 +95,17 @@ test("viewer skips per-frame cutaway camera updates while cutaway is disabled", 
   state.cutaway.isEnabled = true;
   state.renderer.animationLoop();
   expect(state.cutaway.updateForCamera).toHaveBeenCalledOnce();
+
+  viewer.dispose();
+});
+
+test("viewer injects its initial feature-edge color into cutaway", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+
+  expect(state.cutawayOptions.edgeColor).toBe(0x1c232d);
 
   viewer.dispose();
 });

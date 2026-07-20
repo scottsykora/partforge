@@ -87,7 +87,7 @@ export function createViewer(container, part) {
 
   // CAD-style feature edge lines (anti-aliased "fat" lines), one per sub-part.
   const EDGE_ANGLE = 35; // deg — OCCT fallback threshold (Manifold supplies seam-aware edges)
-  const lineMaterial = new LineMaterial({ color: 0x1c232d, linewidth: 1.0 }); // ~10% lighter, 1 px
+  const lineMaterial = new LineMaterial({ color: THEME.dark.line, linewidth: 1.0 }); // ~10% lighter, 1 px
   lineMaterial.resolution.set(1, 1); // real size set by resize() below
   const subLines = Object.fromEntries(
     names.map((n) => [n, new LineSegments2(new LineSegmentsGeometry(), lineMaterial)])
@@ -117,6 +117,7 @@ export function createViewer(container, part) {
     orbitControls: controls,
     domElement: renderer.domElement,
     getBounds: getVisibleWorldBounds,
+    edgeColor: THEME.dark.line,
   });
   for (const name of names) {
     cutaway.setSubpart(name, subMesh[name], subLines[name]);
