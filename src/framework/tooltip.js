@@ -1,6 +1,11 @@
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 8;
 
+function throwCollected(errors, message) {
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, message);
+}
+
 export function createTooltipPresenter({ id = "pf-hover-tip" } = {}) {
   const element = document.createElement("div");
   if (id != null && id !== "") element.id = id;
@@ -12,62 +17,89 @@ export function createTooltipPresenter({ id = "pf-hover-tip" } = {}) {
   element.append(title, subtitle);
   document.body.appendChild(element);
   let disposed = false;
-  let currentToken;
+  const claims = [];
 
   function setContent(content) {
     title.textContent = content.title;
     subtitle.textContent = content.subtitle ?? "";
   }
 
+  function measureVisible(content, anchored) {
+    setContent(content);
+    element.style.left = `${VIEWPORT_MARGIN}px`;
+    element.style.top = `${VIEWPORT_MARGIN}px`;
+    element.classList.toggle("pf-tooltip-anchored", anchored);
+    element.classList.add("show");
+    const rect = element.getBoundingClientRect();
+    return {
+      width: Math.max(0, rect.width || 0),
+      height: Math.max(0, rect.height || 0),
+    };
+  }
+
+  function renderClaim(claim) {
+    const viewportWidth = Math.max(0, globalThis.innerWidth || 0);
+    const viewportHeight = Math.max(0, globalThis.innerHeight || 0);
+    const { width, height } = measureVisible(claim.content, claim.kind === "anchor");
+    const maxLeft = Math.max(
+      VIEWPORT_MARGIN,
+      viewportWidth - VIEWPORT_MARGIN - width,
+    );
+
+    if (claim.kind === "pointer") {
+      const maxTop = Math.max(
+        VIEWPORT_MARGIN,
+        viewportHeight - VIEWPORT_MARGIN - height,
+      );
+      element.style.left = `${Math.min(Math.max(claim.x + 14, VIEWPORT_MARGIN), maxLeft)}px`;
+      element.style.top = `${Math.min(Math.max(claim.y + 14, VIEWPORT_MARGIN), maxTop)}px`;
+      return;
+    }
+
+    const rect = claim.anchor.getBoundingClientRect();
+    const centeredLeft = (rect.left + rect.right - width) / 2;
+    element.style.left = `${Math.min(Math.max(centeredLeft, VIEWPORT_MARGIN), maxLeft)}px`;
+    const belowTop = rect.bottom + ANCHOR_GAP;
+    const fitsBelow = belowTop + height <= viewportHeight - VIEWPORT_MARGIN;
+    const top = fitsBelow
+      ? Math.max(VIEWPORT_MARGIN, belowTop)
+      : Math.max(VIEWPORT_MARGIN, rect.top - ANCHOR_GAP - height);
+    element.style.top = `${top}px`;
+  }
+
+  function addClaim(claim) {
+    const token = Symbol("tooltip presentation");
+    claims.push({ ...claim, token });
+    renderClaim(claims.at(-1));
+    return token;
+  }
+
   return {
     showPointer(content, x, y) {
       if (disposed) return;
-      const token = Symbol("tooltip presentation");
-      currentToken = token;
-      setContent(content);
-      element.style.left = `${x + 14}px`;
-      element.style.top = `${y + 14}px`;
-      element.classList.remove("pf-tooltip-anchored");
-      element.classList.add("show");
-      return token;
+      return addClaim({ kind: "pointer", content, x, y });
     },
     showAnchor(content, anchor) {
       if (disposed) return;
-      const token = Symbol("tooltip presentation");
-      currentToken = token;
-      setContent(content);
-      element.style.left = `${VIEWPORT_MARGIN}px`;
-      element.style.top = `${VIEWPORT_MARGIN}px`;
-      element.classList.add("pf-tooltip-anchored", "show");
-      const tooltipRect = element.getBoundingClientRect();
-      const rect = anchor.getBoundingClientRect();
-      const width = Math.max(0, tooltipRect.width || 0);
-      const height = Math.max(0, tooltipRect.height || 0);
-      const viewportWidth = Math.max(0, globalThis.innerWidth || 0);
-      const viewportHeight = Math.max(0, globalThis.innerHeight || 0);
-      const centeredLeft = (rect.left + rect.right - width) / 2;
-      const maxLeft = Math.max(
-        VIEWPORT_MARGIN,
-        viewportWidth - VIEWPORT_MARGIN - width,
-      );
-      const left = Math.min(Math.max(centeredLeft, VIEWPORT_MARGIN), maxLeft);
-      const belowTop = rect.bottom + ANCHOR_GAP;
-      const fitsBelow = belowTop + height <= viewportHeight - VIEWPORT_MARGIN;
-      const top = fitsBelow ? belowTop : rect.top - ANCHOR_GAP - height;
-      element.style.left = `${left}px`;
-      element.style.top = `${top}px`;
-      return token;
+      return addClaim({ kind: "anchor", content, anchor });
     },
     hide(token) {
       if (disposed) return;
-      if (token !== undefined && token !== currentToken) return;
-      currentToken = undefined;
-      element.classList.remove("show");
+      const index = token === undefined
+        ? claims.length - 1
+        : claims.findIndex((claim) => claim.token === token);
+      if (index < 0) return;
+      const wasActive = index === claims.length - 1;
+      claims.splice(index, 1);
+      if (!wasActive) return;
+      const next = claims.at(-1);
+      if (next) renderClaim(next);
+      else element.classList.remove("show");
     },
     dispose() {
       if (disposed) return;
       disposed = true;
-      currentToken = undefined;
+      claims.length = 0;
       element.remove();
     },
   };
@@ -99,8 +131,12 @@ export function attachButtonTooltips(tooltip, entries) {
     let dismissed = false;
     let presentationToken;
     let hasPresented = false;
+    const isUnavailable = () => (
+      element.disabled
+      || element.getAttribute("aria-disabled")?.toLowerCase() === "true"
+    );
     const showIfNeeded = () => {
-      if (hasPresented || dismissed || touchActivation || (!hovered && !focused)) return;
+      if (hasPresented || dismissed || touchActivation || isUnavailable() || (!hovered && !focused)) return;
       const label = entry.getLabel?.()
         ?? element.getAttribute("aria-label")
         ?? originalTitle.value
@@ -116,12 +152,13 @@ export function attachButtonTooltips(tooltip, entries) {
     };
     const hidePresentation = () => {
       if (!hasPresented) return;
+      const token = presentationToken;
       hasPresented = false;
-      tooltip.hide(presentationToken);
       presentationToken = undefined;
+      tooltip.hide(token);
     };
     const syncVisibility = () => {
-      if (dismissed || (!hovered && !focused)) hidePresentation();
+      if (dismissed || isUnavailable() || (!hovered && !focused)) hidePresentation();
       else showIfNeeded();
     };
     const onPointerLeave = (event) => {
@@ -175,19 +212,38 @@ export function attachButtonTooltips(tooltip, entries) {
       onFocus,
       onBlur,
       dismiss,
+      syncVisibility,
     });
   }
 
   let detached = false;
+  const runAll = (operation) => {
+    const errors = [];
+    for (const binding of attached) {
+      try { operation(binding); } catch (error) { errors.push(error); }
+    }
+    return errors;
+  };
   const hide = () => {
-    for (const binding of attached) binding.dismiss();
+    if (detached) return;
+    throwCollected(
+      runAll((binding) => binding.dismiss()),
+      "button tooltip hide failed",
+    );
   };
   return {
     hide,
+    sync() {
+      if (detached) return;
+      throwCollected(
+        runAll((binding) => binding.syncVisibility()),
+        "button tooltip sync failed",
+      );
+    },
     detach() {
       if (detached) return;
       detached = true;
-      hide();
+      const errors = runAll((binding) => binding.dismiss());
       for (const binding of attached) {
         const {
           element,
@@ -201,21 +257,26 @@ export function attachButtonTooltips(tooltip, entries) {
           onBlur,
           dismiss,
         } = binding;
-        element.removeEventListener("pointerenter", onPointerEnter);
-        element.removeEventListener("pointerleave", onPointerLeave);
-        element.removeEventListener("pointerdown", onPointerDown);
-        element.removeEventListener("pointercancel", onPointerCancel);
-        element.removeEventListener("focus", onFocus);
-        element.removeEventListener("blur", onBlur);
-        element.removeEventListener("click", dismiss);
-        if (originalTitle.present) element.setAttribute("title", originalTitle.value);
-        else element.removeAttribute("title");
-        if (originalAriaLabel.present) {
-          element.setAttribute("aria-label", originalAriaLabel.value);
-        } else {
-          element.removeAttribute("aria-label");
+        try {
+          element.removeEventListener("pointerenter", onPointerEnter);
+          element.removeEventListener("pointerleave", onPointerLeave);
+          element.removeEventListener("pointerdown", onPointerDown);
+          element.removeEventListener("pointercancel", onPointerCancel);
+          element.removeEventListener("focus", onFocus);
+          element.removeEventListener("blur", onBlur);
+          element.removeEventListener("click", dismiss);
+          if (originalTitle.present) element.setAttribute("title", originalTitle.value);
+          else element.removeAttribute("title");
+          if (originalAriaLabel.present) {
+            element.setAttribute("aria-label", originalAriaLabel.value);
+          } else {
+            element.removeAttribute("aria-label");
+          }
+        } catch (error) {
+          errors.push(error);
         }
       }
+      throwCollected(errors, "button tooltip detach failed");
     },
   };
 }

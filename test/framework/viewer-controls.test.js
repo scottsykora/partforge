@@ -3,6 +3,7 @@
 // refs and returning a detach() for mount dispose.
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { attachViewerControls } from "../../src/framework/viewer-controls.js";
+import { createTooltipPresenter } from "../../src/framework/tooltip.js";
 
 function fakeViewer() {
   return {
@@ -120,6 +121,22 @@ test("custom tooltip detach restores original attributes and removes its listene
   els.pause.dispatchEvent(new FocusEvent("blur"));
   expect(tooltip.showAnchor).not.toHaveBeenCalled();
   expect(tooltip.hide).not.toHaveBeenCalled();
+});
+
+test("viewer state sync hides a tooltip whose control became disabled", () => {
+  const viewer = fakeViewer();
+  const tooltip = createTooltipPresenter();
+  const chrome = attachViewerControls(viewer, els, { tooltip });
+  handles.push(chrome);
+  els.pause.dispatchEvent(new FocusEvent("focus"));
+  const element = document.getElementById("pf-hover-tip");
+  expect(element.classList.contains("show")).toBe(true);
+
+  els.pause.disabled = true;
+  els.theme.click();
+
+  expect(element.classList.contains("show")).toBe(false);
+  tooltip.dispose();
 });
 
 test("reframe button re-fits the camera", () => {

@@ -81,6 +81,7 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}, { toolti
     );
     button.classList.toggle("on", enabled);
     actions.hidden = !enabled;
+    tooltipBinding?.sync();
   }
 
   let detached = false;

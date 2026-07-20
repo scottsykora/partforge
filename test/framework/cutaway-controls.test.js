@@ -327,6 +327,31 @@ describe("attachCutawayControls", () => {
     expect(viewer.setCutawayEnabled).not.toHaveBeenCalled();
   });
 
+  test("unsupported cutaway never presents a shared tooltip", () => {
+    const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
+    const { button } = setup({ supported: false, tooltip });
+
+    button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+    button.dispatchEvent(new FocusEvent("focus"));
+
+    expect(tooltip.showAnchor).not.toHaveBeenCalled();
+  });
+
+  test("cutaway state sync hides a tooltip whose control became aria-disabled", () => {
+    const tooltip = createTooltipPresenter();
+    const { button } = setup({ tooltip });
+    const [, reset] = button.nextElementSibling.querySelectorAll("button");
+    button.dispatchEvent(new FocusEvent("focus"));
+    const element = document.getElementById("pf-hover-tip");
+    expect(element.classList.contains("show")).toBe(true);
+
+    button.setAttribute("aria-disabled", "true");
+    reset.click();
+
+    expect(element.classList.contains("show")).toBe(false);
+    tooltip.dispose();
+  });
+
   test("shared tooltips cover primary, Flip, and Reset with current action labels", () => {
     const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
     const { button } = setup({ tooltip });

@@ -2,7 +2,10 @@
 import { afterEach, expect, test, vi } from "vitest";
 import * as THREE from "three";
 import { attachHoverLabels } from "../src/framework/selection/hover.js";
-import { createTooltipPresenter } from "../src/framework/tooltip.js";
+import {
+  attachButtonTooltips,
+  createTooltipPresenter,
+} from "../src/framework/tooltip.js";
 
 const part = { parts: { one: { label: "Planter", views: ["v"] } }, views: { v: {} } };
 const sync = (cb) => cb(); // run raycasts synchronously in tests
@@ -127,6 +130,49 @@ test("detach cannot hide a newer presentation from another tooltip consumer", ()
   const tip = document.getElementById("pf-hover-tip");
   expect(tip.classList.contains("show")).toBe(true);
   expect(tip.querySelector("b").textContent).toBe("Re-frame model");
+  tooltip.dispose();
+});
+
+test("feature hover restores a focused control when the pointer misses", () => {
+  const viewer = makeViewer();
+  const tooltip = createTooltipPresenter();
+  const button = document.createElement("button");
+  button.setAttribute("aria-label", "Focused control");
+  document.body.appendChild(button);
+  const binding = attachButtonTooltips(tooltip, [{ element: button }]);
+  const hover = attachHoverLabels(viewer, { part, schedule: sync, tooltip });
+  button.dispatchEvent(new FocusEvent("focus"));
+
+  move(viewer.domElement, 100, 100);
+  move(viewer.domElement, 1, 1);
+
+  const tip = document.getElementById("pf-hover-tip");
+  expect(tip.classList.contains("show")).toBe(true);
+  expect(tip.querySelector("b").textContent).toBe("Focused control");
+  hover.detach();
+  binding.detach();
+  tooltip.dispose();
+});
+
+test("repeated feature moves replace their claim before restoring a focused control", () => {
+  const viewer = makeViewer();
+  const tooltip = createTooltipPresenter();
+  const button = document.createElement("button");
+  button.setAttribute("aria-label", "Focused control");
+  document.body.appendChild(button);
+  const binding = attachButtonTooltips(tooltip, [{ element: button }]);
+  const hover = attachHoverLabels(viewer, { part, schedule: sync, tooltip });
+  button.dispatchEvent(new FocusEvent("focus"));
+
+  move(viewer.domElement, 100, 100);
+  move(viewer.domElement, 110, 100);
+  move(viewer.domElement, 1, 1);
+
+  const tip = document.getElementById("pf-hover-tip");
+  expect(tip.classList.contains("show")).toBe(true);
+  expect(tip.querySelector("b").textContent).toBe("Focused control");
+  hover.detach();
+  binding.detach();
   tooltip.dispose();
 });
 

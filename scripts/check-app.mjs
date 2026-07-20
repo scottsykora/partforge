@@ -194,7 +194,7 @@ try {
     for (const [fx, fy] of [[0.5, 0.5], [0.4, 0.45], [0.6, 0.55], [0.5, 0.35]]) {
       await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
       await sleep(120);
-      if (await page.locator(".pf-hover-tip.show").count()) { hovered = true; break; }
+      if (await page.locator(".pf-hover-tip.show:not(.pf-tooltip-anchored)").count()) { hovered = true; break; }
     }
   }
 

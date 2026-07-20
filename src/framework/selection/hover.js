@@ -91,6 +91,11 @@ export function attachHoverLabels(
       content = { title: subLabel(hit.subPart), subtitle: "" };
       clearHighlight();
     }
+    if (hasPresented) {
+      hasPresented = false;
+      tooltipPresenter.hide(presentationToken);
+      presentationToken = undefined;
+    }
     presentationToken = tooltipPresenter.showPointer(content, x, y);
     hasPresented = true;
   }

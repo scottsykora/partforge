@@ -31,6 +31,19 @@ test("showPointer creates and positions the shared tooltip", () => {
   expect(element.classList.contains("pf-tooltip-anchored")).toBe(false);
 });
 
+test("showPointer keeps a measured tooltip inside every viewport margin", () => {
+  vi.stubGlobal("innerWidth", 200);
+  vi.stubGlobal("innerHeight", 100);
+  const tooltip = createTooltipPresenter();
+  const element = document.getElementById("pf-hover-tip");
+  element.getBoundingClientRect = vi.fn(() => ({ width: 50, height: 20 }));
+
+  tooltip.showPointer({ title: "Feature" }, 198, 98);
+
+  expect(element.style.left).toBe("142px");
+  expect(element.style.top).toBe("72px");
+});
+
 test("showAnchor positions below the anchor center", () => {
   const tooltip = createTooltipPresenter();
   const anchor = document.createElement("button");
@@ -96,13 +109,13 @@ test("showAnchor normalizes stale pointer placement before measuring", () => {
   const tooltip = createTooltipPresenter();
   const element = document.getElementById("pf-hover-tip");
   tooltip.showPointer({ title: "Pointer feature" }, 300, 50);
-  expect(element.style.left).toBe("314px");
+  expect(element.style.left).toBe("312px");
   expect(element.style.top).toBe("64px");
 
   let measuredAt;
   element.getBoundingClientRect = vi.fn(() => {
     measuredAt = { left: element.style.left, top: element.style.top };
-    const width = element.style.left === "314px" ? 40 : 120;
+    const width = element.style.left === "312px" ? 40 : 120;
     return { width, height: 24 };
   });
   const anchor = document.createElement("button");
@@ -146,6 +159,25 @@ test("showAnchor flips a measured tooltip above the bottom viewport edge", () =>
   expect(element.style.top).toBe("140px");
 });
 
+test("showAnchor clamps an above fallback to the top viewport margin", () => {
+  vi.stubGlobal("innerWidth", 320);
+  vi.stubGlobal("innerHeight", 80);
+  const tooltip = createTooltipPresenter();
+  const element = document.getElementById("pf-hover-tip");
+  element.getBoundingClientRect = vi.fn(() => ({ width: 80, height: 60 }));
+  const anchor = document.createElement("button");
+  anchor.getBoundingClientRect = () => ({
+    left: 100,
+    right: 140,
+    top: 20,
+    bottom: 40,
+  });
+
+  tooltip.showAnchor({ title: "Reset view" }, anchor);
+
+  expect(element.style.top).toBe("8px");
+});
+
 test("hide conceals a visible tooltip", () => {
   const tooltip = createTooltipPresenter();
   tooltip.showPointer({ title: "Feature" }, 0, 0);
@@ -171,6 +203,45 @@ test("a stale presentation token cannot hide newer tooltip content", () => {
 
   tooltip.hide(anchorToken);
   expect(element.classList.contains("show")).toBe(false);
+});
+
+test("hiding the active claim restores the prior tooltip presentation", () => {
+  const tooltip = createTooltipPresenter();
+  const anchor = document.createElement("button");
+  const pointerToken = tooltip.showPointer({ title: "Pointer feature" }, 0, 0);
+  const anchorToken = tooltip.showAnchor({ title: "Button action" }, anchor);
+  const element = document.getElementById("pf-hover-tip");
+
+  tooltip.hide(anchorToken);
+  expect(element.classList.contains("show")).toBe(true);
+  expect(element.querySelector("b").textContent).toBe("Pointer feature");
+  expect(element.classList.contains("pf-tooltip-anchored")).toBe(false);
+
+  tooltip.hide(pointerToken);
+  expect(element.classList.contains("show")).toBe(false);
+});
+
+test("a focused tooltip is restored after another button stops hovering", () => {
+  const tooltip = createTooltipPresenter();
+  const focusedButton = document.createElement("button");
+  focusedButton.setAttribute("aria-label", "Focused action");
+  const hoveredButton = document.createElement("button");
+  hoveredButton.setAttribute("aria-label", "Hovered action");
+  document.body.append(focusedButton, hoveredButton);
+  const binding = attachButtonTooltips(tooltip, [
+    { element: focusedButton },
+    { element: hoveredButton },
+  ]);
+
+  focusedButton.dispatchEvent(new FocusEvent("focus"));
+  hoveredButton.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  hoveredButton.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+
+  const element = document.getElementById("pf-hover-tip");
+  expect(element.classList.contains("show")).toBe(true);
+  expect(element.querySelector("b").textContent).toBe("Focused action");
+  binding.detach();
+  tooltip.dispose();
 });
 
 test("dispose is idempotent and presenter calls become safe no-ops", () => {
@@ -245,6 +316,54 @@ test("button tooltips ignore touch pointer entry", () => {
   button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "touch" }));
 
   expect(tooltip.showAnchor).not.toHaveBeenCalled();
+});
+
+test("disabled and aria-disabled buttons never present tooltips", () => {
+  const disabled = document.createElement("button");
+  disabled.disabled = true;
+  disabled.setAttribute("aria-label", "Disabled action");
+  const ariaDisabled = document.createElement("button");
+  ariaDisabled.setAttribute("aria-disabled", "true");
+  ariaDisabled.setAttribute("aria-label", "ARIA-disabled action");
+  const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
+  attachButtonTooltips(tooltip, [
+    { element: disabled },
+    { element: ariaDisabled },
+  ]);
+
+  for (const button of [disabled, ariaDisabled]) {
+    button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+    button.dispatchEvent(new FocusEvent("focus"));
+  }
+
+  expect(tooltip.showAnchor).not.toHaveBeenCalled();
+});
+
+test("sync hides an unavailable active binding and restores it when re-enabled", () => {
+  const button = document.createElement("button");
+  button.setAttribute("aria-label", "Toggle action");
+  const firstToken = Symbol("first");
+  const secondToken = Symbol("second");
+  const tooltip = {
+    showAnchor: vi.fn()
+      .mockReturnValueOnce(firstToken)
+      .mockReturnValueOnce(secondToken),
+    hide: vi.fn(),
+  };
+  const binding = attachButtonTooltips(tooltip, [{ element: button }]);
+  button.dispatchEvent(new FocusEvent("focus"));
+
+  button.setAttribute("aria-disabled", "true");
+  binding.sync();
+  expect(tooltip.hide).toHaveBeenCalledWith(firstToken);
+
+  button.removeAttribute("aria-disabled");
+  binding.sync();
+  expect(tooltip.showAnchor).toHaveBeenCalledTimes(2);
+  expect(tooltip.showAnchor).toHaveBeenLastCalledWith(
+    { title: "Toggle action" },
+    button,
+  );
 });
 
 test("touch activation never shows a tooltip through its synthetic focus and click", () => {
@@ -398,6 +517,84 @@ test("detach removes every button tooltip listener", () => {
 
   expect(tooltip.showAnchor).not.toHaveBeenCalled();
   expect(tooltip.hide).not.toHaveBeenCalled();
+});
+
+test("hide attempts every active binding before reporting collected errors", () => {
+  const first = document.createElement("button");
+  first.setAttribute("aria-label", "First action");
+  const second = document.createElement("button");
+  second.setAttribute("aria-label", "Second action");
+  const firstToken = Symbol("first");
+  const secondToken = Symbol("second");
+  const firstError = new Error("first hide failed");
+  const secondError = new Error("second hide failed");
+  const tooltip = {
+    showAnchor: vi.fn()
+      .mockReturnValueOnce(firstToken)
+      .mockReturnValueOnce(secondToken),
+    hide: vi.fn((token) => {
+      throw token === firstToken ? firstError : secondError;
+    }),
+  };
+  const binding = attachButtonTooltips(tooltip, [
+    { element: first },
+    { element: second },
+  ]);
+  first.dispatchEvent(new FocusEvent("focus"));
+  second.dispatchEvent(new FocusEvent("focus"));
+
+  let thrown;
+  try { binding.hide(); } catch (error) { thrown = error; }
+
+  expect(tooltip.hide).toHaveBeenCalledTimes(2);
+  expect(thrown).toBeInstanceOf(AggregateError);
+  expect(thrown.errors).toEqual([firstError, secondError]);
+});
+
+test("detach restores every binding before reporting collected hide errors", () => {
+  const first = document.createElement("button");
+  first.setAttribute("title", "First host title");
+  const second = document.createElement("button");
+  second.setAttribute("title", "Second host title");
+  second.setAttribute("aria-label", "Second host label");
+  const firstError = new Error("first hide failed");
+  const secondError = new Error("second hide failed");
+  const tooltip = {
+    showAnchor: vi.fn()
+      .mockReturnValueOnce(Symbol("first"))
+      .mockReturnValueOnce(Symbol("second")),
+    hide: vi.fn()
+      .mockImplementationOnce(() => { throw firstError; })
+      .mockImplementationOnce(() => { throw secondError; }),
+  };
+  const binding = attachButtonTooltips(tooltip, [
+    { element: first },
+    { element: second },
+  ]);
+  first.dispatchEvent(new FocusEvent("focus"));
+  second.dispatchEvent(new FocusEvent("focus"));
+
+  let thrown;
+  try { binding.detach(); } catch (error) { thrown = error; }
+
+  expect(thrown).toBeInstanceOf(AggregateError);
+  expect(thrown.errors).toEqual([firstError, secondError]);
+  expect(first.getAttribute("title")).toBe("First host title");
+  expect(first.hasAttribute("aria-label")).toBe(false);
+  expect(second.getAttribute("title")).toBe("Second host title");
+  expect(second.getAttribute("aria-label")).toBe("Second host label");
+
+  tooltip.showAnchor.mockClear();
+  tooltip.hide.mockClear();
+  for (const button of [first, second]) {
+    button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+    button.dispatchEvent(new FocusEvent("focus"));
+    button.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+    button.dispatchEvent(new FocusEvent("blur"));
+  }
+  expect(tooltip.showAnchor).not.toHaveBeenCalled();
+  expect(tooltip.hide).not.toHaveBeenCalled();
+  expect(() => binding.detach()).not.toThrow();
 });
 
 test("detach hides only an active binding and remains idempotent", () => {

@@ -28,6 +28,7 @@ export function attachViewerControls(
       if (!tooltip) themeBtn.title = label;
     }
     saveTheme(mode);
+    tooltipBinding?.sync();
   }
   applyTheme(theme);
   const onThemeClick = () => applyTheme(theme === "light" ? "dark" : "light");
@@ -42,6 +43,7 @@ export function attachViewerControls(
     const label = rotating ? "Pause rotation" : "Resume rotation";
     pauseBtn.setAttribute("aria-label", label);
     if (!tooltip) pauseBtn.title = label;
+    tooltipBinding?.sync();
   };
   syncPause();
   const onPauseClick = () => {
