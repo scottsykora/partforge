@@ -199,8 +199,14 @@ test.each([true, false])("renderOverlay clears only depth, renders the handle sc
   fixture.controller.setEnabled(true);
   fixture.renderer.autoClear = autoClear;
   const calls = [];
-  fixture.renderer.clearDepth.mockImplementation(() => calls.push("clearDepth"));
-  fixture.renderer.render.mockImplementation((scene, camera) => calls.push({ scene, camera }));
+  fixture.renderer.clearDepth.mockImplementation(() => {
+    expect(fixture.renderer.autoClear).toBe(false);
+    calls.push("clearDepth");
+  });
+  fixture.renderer.render.mockImplementation((scene, camera) => {
+    expect(fixture.renderer.autoClear).toBe(false);
+    calls.push({ scene, camera });
+  });
 
   expect(fixture.controller.renderOverlay(fixture.renderer, fixture.camera)).toBe(true);
 
@@ -214,16 +220,22 @@ test.each([true, false])("renderOverlay clears only depth, renders the handle sc
   expect(findGizmo(fixture.scene).children.some((child) => child.isGroup)).toBe(false);
 });
 
-test("renderOverlay restores autoClear and propagates a renderer failure", () => {
+test.each([true, false])("renderOverlay restores autoClear=%s and propagates a renderer failure", (autoClear) => {
   const fixture = createFixture();
   fixture.controller.setEnabled(true);
-  fixture.renderer.autoClear = true;
-  fixture.renderer.render.mockImplementation(() => { throw new Error("overlay failed"); });
+  fixture.renderer.autoClear = autoClear;
+  fixture.renderer.clearDepth.mockImplementation(() => {
+    expect(fixture.renderer.autoClear).toBe(false);
+  });
+  fixture.renderer.render.mockImplementation(() => {
+    expect(fixture.renderer.autoClear).toBe(false);
+    throw new Error("overlay failed");
+  });
 
   expect(() => fixture.controller.renderOverlay(fixture.renderer, fixture.camera))
     .toThrow("overlay failed");
   expect(fixture.renderer.clearDepth).toHaveBeenCalledOnce();
-  expect(fixture.renderer.autoClear).toBe(true);
+  expect(fixture.renderer.autoClear).toBe(autoClear);
 });
 
 test("dispose empties the owned overlay scene and disposes handle resources only once", () => {

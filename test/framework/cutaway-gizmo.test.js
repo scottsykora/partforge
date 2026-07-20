@@ -118,8 +118,10 @@ test("setPose applies the plane pose and size while visibility remains controlla
   expect(gizmo.fill.scale.toArray()).toEqual([12, 12, 12]);
   gizmo.setVisible(false);
   expect(gizmo.group.visible).toBe(false);
+  expect(gizmo.handleRoot.visible).toBe(false);
   gizmo.setVisible(true);
   expect(gizmo.group.visible).toBe(true);
+  expect(gizmo.handleRoot.visible).toBe(true);
 });
 
 test("mounts the ghost plane in the main scene and all visible and hit handles in one overlay scene", () => {
