@@ -226,6 +226,37 @@ test("flip reverses point visibility without moving the geometric plane", () => 
   expect(plane.coplanarPoint(new THREE.Vector3()).distanceTo(before)).toBeLessThan(1e-9);
 });
 
+test("enable, flip, and reset synchronize the visual-only ghost offset without moving the plane pose", () => {
+  const fixture = createFixture();
+  const auxiliary = new THREE.MeshBasicMaterial();
+  fixture.controller.registerClippableMaterial(auxiliary);
+
+  fixture.controller.setEnabled(true);
+
+  const plane = auxiliary.clippingPlanes[0];
+  const gizmo = findGizmo(fixture.scene);
+  const fill = gizmo.children.find((child) => child.isMesh);
+  const border = gizmo.children.find((child) => child.isLineLoop);
+  const groupPosition = gizmo.position.clone();
+  const planePoint = plane.coplanarPoint(new THREE.Vector3());
+  expect(fill.position.z).toBeLessThan(0);
+  expect(border.position.z).toBe(fill.position.z);
+
+  fixture.controller.flip();
+
+  expect(fill.position.z).toBeGreaterThan(0);
+  expect(border.position.z).toBe(fill.position.z);
+  expect(gizmo.position.toArray()).toEqual(groupPosition.toArray());
+  expect(plane.coplanarPoint(new THREE.Vector3()).distanceTo(planePoint)).toBeLessThan(1e-9);
+
+  fixture.controller.reset();
+
+  expect(fill.position.z).toBeLessThan(0);
+  expect(border.position.z).toBe(fill.position.z);
+  expect(gizmo.position.toArray()).toEqual(groupPosition.toArray());
+  expect(plane.coplanarPoint(new THREE.Vector3()).distanceTo(planePoint)).toBeLessThan(1e-9);
+});
+
 test("reset recomputes the pose from changed world bounds and camera", () => {
   const fixture = createFixture();
   fixture.controller.setEnabled(true);

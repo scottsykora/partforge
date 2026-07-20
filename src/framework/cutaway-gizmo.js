@@ -30,6 +30,9 @@ const SCREEN_AXIS_EPSILON_SQ = 1e-8;
 // Reserve the visually shared center for the end-on translation handle.
 const TRANSLATE_CENTER_RADIUS_PX = 22;
 const GIZMO_RENDER_ORDER = CUTAWAY_OVERLAY_RENDER_ORDER + 1;
+const GHOST_OFFSET_FACTOR = 0.001;
+const MIN_GHOST_OFFSET = 0.01;
+const MAX_GHOST_OFFSET = 0.25;
 
 export function createCutawayGizmo({
   scene,
@@ -77,6 +80,7 @@ export function createCutawayGizmo({
   materials.add(borderMaterial);
 
   const handleRoot = new THREE.Group();
+  const arcRoot = new THREE.Group();
   const translateMaterial = new THREE.MeshBasicMaterial({
     color: 0x36d399,
     transparent: true,
@@ -112,14 +116,31 @@ export function createCutawayGizmo({
   geometries.add(shaftGeometry);
   geometries.add(coneGeometry);
 
-  const ringXGeometry = new THREE.TorusGeometry(0.42, 0.015, 8, 64);
+  const ringXGeometry = new THREE.TorusGeometry(
+    0.42,
+    0.015,
+    8,
+    64,
+    Math.PI,
+  );
   const ringX = new THREE.Mesh(ringXGeometry, rotateXMaterial);
   ringX.renderOrder = GIZMO_RENDER_ORDER;
-  ringX.rotation.y = Math.PI / 2;
-  const ringYGeometry = new THREE.TorusGeometry(0.42, 0.015, 8, 64);
+  ringX.quaternion
+    .setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2)
+    .multiply(new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      Math.PI / 2,
+    ));
+  const ringYGeometry = new THREE.TorusGeometry(
+    0.42,
+    0.015,
+    8,
+    64,
+    Math.PI,
+  );
   const ringY = new THREE.Mesh(ringYGeometry, rotateYMaterial);
   ringY.renderOrder = GIZMO_RENDER_ORDER;
-  ringY.rotation.x = Math.PI / 2;
+  ringY.rotation.x = -Math.PI / 2;
   geometries.add(ringXGeometry);
   geometries.add(ringYGeometry);
 
@@ -135,27 +156,32 @@ export function createCutawayGizmo({
   translateHit.rotation.x = Math.PI / 2;
   translateHit.position.z = 0.38;
   translateHit.userData.cutawayHandle = "translate";
-  const rotateXHitGeometry = new THREE.TorusGeometry(0.42, 0.12, 8, 48);
+  const rotateXHitGeometry = new THREE.TorusGeometry(
+    0.42,
+    0.12,
+    8,
+    48,
+    Math.PI,
+  );
   const rotateXHit = new THREE.Mesh(rotateXHitGeometry, hitMaterial);
-  rotateXHit.rotation.y = Math.PI / 2;
+  rotateXHit.quaternion.copy(ringX.quaternion);
   rotateXHit.userData.cutawayHandle = "rotate-x";
-  const rotateYHitGeometry = new THREE.TorusGeometry(0.42, 0.12, 8, 48);
+  const rotateYHitGeometry = new THREE.TorusGeometry(
+    0.42,
+    0.12,
+    8,
+    48,
+    Math.PI,
+  );
   const rotateYHit = new THREE.Mesh(rotateYHitGeometry, hitMaterial);
-  rotateYHit.rotation.x = Math.PI / 2;
+  rotateYHit.quaternion.copy(ringY.quaternion);
   rotateYHit.userData.cutawayHandle = "rotate-y";
   geometries.add(translateHitGeometry);
   geometries.add(rotateXHitGeometry);
   geometries.add(rotateYHitGeometry);
 
-  handleRoot.add(
-    shaft,
-    cone,
-    ringX,
-    ringY,
-    translateHit,
-    rotateXHit,
-    rotateYHit,
-  );
+  arcRoot.add(ringX, ringY, rotateXHit, rotateYHit);
+  handleRoot.add(shaft, cone, translateHit, arcRoot);
   group.add(fill, border, handleRoot);
   scene.add(group);
 
@@ -167,6 +193,7 @@ export function createCutawayGizmo({
 
   let disposed = false;
   let poseSize = 1;
+  let flipped = false;
   let drag = null;
   const raycaster = new THREE.Raycaster();
   const hitProxies = Object.values(handles);
@@ -414,6 +441,24 @@ export function createCutawayGizmo({
     fill.scale.setScalar(size);
     border.scale.setScalar(size);
     handleRoot.scale.setScalar(size * 0.15);
+    updateEmptySideVisuals();
+  }
+
+  function updateEmptySideVisuals() {
+    const emptySideSign = flipped ? 1 : -1;
+    const ghostOffset = THREE.MathUtils.clamp(
+      poseSize * GHOST_OFFSET_FACTOR,
+      MIN_GHOST_OFFSET,
+      MAX_GHOST_OFFSET,
+    );
+    fill.position.z = emptySideSign * ghostOffset;
+    border.position.z = emptySideSign * ghostOffset;
+    arcRoot.rotation.x = flipped ? Math.PI : 0;
+  }
+
+  function setFlipped(nextFlipped) {
+    flipped = Boolean(nextFlipped);
+    updateEmptySideVisuals();
   }
 
   function setVisible(on) {
@@ -484,7 +529,9 @@ export function createCutawayGizmo({
     border,
     handles,
     handleRoot,
+    arcRoot,
     setPose,
+    setFlipped,
     setVisible,
     setActiveAppearance,
     setTheme,

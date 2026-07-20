@@ -84,6 +84,25 @@ function clientPoint(fixture, worldPoint) {
   };
 }
 
+function arcMeshes(gizmo) {
+  const arcRoot = gizmo.handleRoot.children.find((child) => child.isGroup);
+  return arcRoot?.children ?? [];
+}
+
+function sampledCenterlineZ(gizmo, mesh) {
+  const { radius, arc } = mesh.geometry.parameters;
+  gizmo.group.updateWorldMatrix(true, true);
+  return [0.1, 0.5, 0.9].map((fraction) => {
+    const theta = arc * fraction;
+    const worldPoint = mesh.localToWorld(new THREE.Vector3(
+      radius * Math.cos(theta),
+      radius * Math.sin(theta),
+      0,
+    ));
+    return gizmo.group.worldToLocal(worldPoint).z;
+  });
+}
+
 test("setPose applies the plane pose and size while visibility remains controllable", () => {
   const { gizmo } = createFixture();
   const position = new THREE.Vector3(1, 2, 3);
@@ -112,11 +131,113 @@ test("exposes enlarged hit proxies tagged with the three exact handle names", ()
   }
 });
 
+test("uses real half-torus geometry for both visible rotation arcs and hit proxies", () => {
+  const { gizmo } = createFixture();
+  const arcs = arcMeshes(gizmo);
+  const visibleArcs = arcs.filter((mesh) => mesh.material?.opacity !== 0);
+  const hitArcs = arcs.filter((mesh) => mesh.userData.cutawayHandle?.startsWith("rotate"));
+
+  expect(arcs).toHaveLength(4);
+  expect(visibleArcs).toHaveLength(2);
+  expect(hitArcs).toHaveLength(2);
+  for (const arc of [...visibleArcs, ...hitArcs]) {
+    expect(arc.geometry).toBeInstanceOf(THREE.TorusGeometry);
+    expect(arc.geometry.parameters.arc).toBe(Math.PI);
+  }
+});
+
+test("mirrors visual and hit arc centerlines between the clipped-away half spaces", () => {
+  const { gizmo } = createFixture();
+  const arcs = arcMeshes(gizmo);
+
+  expect(gizmo.setFlipped).toBeTypeOf("function");
+  if (typeof gizmo.setFlipped !== "function") return;
+  expect(arcs).toHaveLength(4);
+  for (const arc of arcs) {
+    expect(sampledCenterlineZ(gizmo, arc).every((z) => z < 0)).toBe(true);
+  }
+
+  gizmo.setFlipped(true);
+
+  for (const arc of arcs) {
+    expect(sampledCenterlineZ(gizmo, arc).every((z) => z > 0)).toBe(true);
+  }
+});
+
+test.each([
+  [false, -1],
+  [true, 1],
+])("only the visible %s-flipped half of a rotation proxy raycasts", (flipped, visibleSign) => {
+  const { gizmo } = createFixture();
+  expect(gizmo.setFlipped).toBeTypeOf("function");
+  if (typeof gizmo.setFlipped !== "function") return;
+  gizmo.setPose({
+    position: new THREE.Vector3(),
+    quaternion: new THREE.Quaternion(),
+    size: 10,
+  });
+  gizmo.setFlipped(flipped);
+  gizmo.group.updateWorldMatrix(true, true);
+  const radius = gizmo.handles.rotateY.geometry.parameters.radius
+    * gizmo.handleRoot.scale.x;
+  const rays = [
+    {
+      handle: gizmo.handles.rotateX,
+      originAt: (z) => new THREE.Vector3(5, 0, z),
+      direction: new THREE.Vector3(-1, 0, 0),
+    },
+    {
+      handle: gizmo.handles.rotateY,
+      originAt: (z) => new THREE.Vector3(0, 5, z),
+      direction: new THREE.Vector3(0, -1, 0),
+    },
+  ];
+
+  for (const { handle, originAt, direction } of rays) {
+    const intersectionsAt = (z) => new THREE.Raycaster(
+      originAt(z),
+      direction,
+    ).intersectObject(handle, false);
+    expect(intersectionsAt(visibleSign * radius).length).toBeGreaterThan(0);
+    expect(intersectionsAt(-visibleSign * radius)).toHaveLength(0);
+  }
+});
+
+test.each([
+  [1, 0.01],
+  [100, 0.1],
+  [1_000, 0.25],
+])("offsets only the ghost plane toward the empty side for size %s", (size, expectedOffset) => {
+  const { gizmo } = createFixture();
+  const position = new THREE.Vector3(1, 2, 3);
+  const quaternion = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 1, 0),
+    Math.PI / 3,
+  );
+
+  gizmo.setPose({ position, quaternion, size });
+
+  expect(gizmo.group.position.toArray()).toEqual(position.toArray());
+  expect(gizmo.group.quaternion.toArray()).toEqual(quaternion.toArray());
+  expect(gizmo.fill.position.z).toBeCloseTo(-expectedOffset);
+  expect(gizmo.border.position.z).toBeCloseTo(-expectedOffset);
+  expect(gizmo.setFlipped).toBeTypeOf("function");
+  if (typeof gizmo.setFlipped !== "function") return;
+
+  gizmo.setFlipped(true);
+
+  expect(gizmo.group.position.toArray()).toEqual(position.toArray());
+  expect(gizmo.group.quaternion.toArray()).toEqual(quaternion.toArray());
+  expect(gizmo.fill.position.z).toBeCloseTo(expectedOffset);
+  expect(gizmo.border.position.z).toBeCloseTo(expectedOffset);
+});
+
 test("visible controls overlay section draws while the translucent fill remains depth-tested", () => {
   const { gizmo } = createFixture();
-  const visibleHandles = gizmo.handleRoot.children.filter(
-    (child) => child.material?.opacity !== 0,
-  );
+  const visibleHandles = [];
+  gizmo.handleRoot.traverse((child) => {
+    if (child.isMesh && child.material?.opacity !== 0) visibleHandles.push(child);
+  });
 
   expect(visibleHandles).toHaveLength(4);
   for (const handle of visibleHandles) {

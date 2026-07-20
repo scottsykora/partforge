@@ -128,6 +128,7 @@ export function createCutaway({
     if (resetFlip) flipped = false;
     planeFromPose(plane, planeNormal, pose.position, pose.quaternion, flipped);
     for (const { renderSet } of renderSets.values()) applyCapPose(renderSet);
+    gizmo.setFlipped(flipped);
     gizmo.setPose(pose);
     if (activeAppearance) showActive();
   }
@@ -244,6 +245,7 @@ export function createCutaway({
     if (!enabled || disposed || !pose) return false;
     flipped = !flipped;
     planeFromPose(plane, planeNormal, pose.position, pose.quaternion, flipped);
+    gizmo.setFlipped(flipped);
     showActive();
     return true;
   }
