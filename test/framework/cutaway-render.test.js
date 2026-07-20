@@ -80,10 +80,20 @@ describe("createHatchMaterial", () => {
     expect(material.fragmentShader).not.toContain("vUv");
     expect(material.fragmentShader).toContain("uniform float uPixelRatio");
     expect(material.fragmentShader).toContain(
-      "gl_FragCoord.xy / max(uPixelRatio, 1.0)",
+      "gl_FragCoord.xy / uPixelRatio",
     );
     expect(material.fragmentShader).toContain("normalize(vec2(1.0, 1.0))");
     expect(material.fragmentShader).toContain("fwidth(axisPixel)");
+    expect(material.fragmentShader).toContain(
+      "mod(axisPixel, HATCH_PERIOD_CSS_PX)",
+    );
+    expect(material.fragmentShader).toContain(
+      "min(wrapped, HATCH_PERIOD_CSS_PX - wrapped)",
+    );
+    expect(material.fragmentShader).toContain("HATCH_LINE_CSS_PX * 0.5");
+    expect(material.fragmentShader).toMatch(
+      /smoothstep\(\s*halfLine - antialias,\s*halfLine \+ antialias,\s*distanceToLine\s*\)/,
+    );
     expect(material.fragmentShader).toContain("mix(uBase, uInk, stripe)");
     expect(material.fragmentShader).toMatch(
       /gl_FragColor\s*=.*;[\s\S]*#include <colorspace_fragment>/,
@@ -109,6 +119,7 @@ describe("createHatchMaterial", () => {
 
   test.each([
     [2, 2],
+    [0.5, 0.5],
     [0, 1],
     [-1, 1],
     [Number.NaN, 1],

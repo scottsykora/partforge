@@ -35,7 +35,7 @@ export function createHatchMaterial({ color, opacity, inkColor }) {
       const float HATCH_LINE_CSS_PX = ${HATCH_LINE_CSS_PX.toFixed(1)};
 
       void main() {
-        vec2 cssPixel = gl_FragCoord.xy / max(uPixelRatio, 1.0);
+        vec2 cssPixel = gl_FragCoord.xy / uPixelRatio;
         float axisPixel = dot(cssPixel, normalize(vec2(1.0, 1.0)));
         float wrapped = mod(axisPixel, HATCH_PERIOD_CSS_PX);
         float distanceToLine = min(wrapped, HATCH_PERIOD_CSS_PX - wrapped);
