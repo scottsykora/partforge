@@ -136,6 +136,26 @@ describe("attachCutawayControls", () => {
     expect(document.activeElement).toBe(button);
   });
 
+  test("handle reset focuses with the updated cutaway action tooltip", () => {
+    const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
+    const { viewer, button, handle } = setup({ tooltip });
+    const actions = button.nextElementSibling;
+    const [flip] = actions.querySelectorAll("button");
+    button.click();
+    flip.focus();
+
+    handle.reset();
+
+    expect(viewer.cutawayEnabled()).toBe(false);
+    expect(button.getAttribute("aria-label")).toBe("Enable cutaway");
+    expect(actions.hidden).toBe(true);
+    expect(document.activeElement).toBe(button);
+    expect(tooltip.showAnchor).toHaveBeenLastCalledWith(
+      { title: "Enable cutaway" },
+      button,
+    );
+  });
+
   test("Escape disables cutaway only from the canvas or cutaway buttons", () => {
     const { viewer, button } = setup();
     const [flip, reset] = button.nextElementSibling.querySelectorAll("button");
@@ -152,7 +172,7 @@ describe("attachCutawayControls", () => {
     expect(viewer.cutawayEnabled()).toBe(true);
   });
 
-  test("Escape returns focus to the primary button before hiding its actions", () => {
+  test("Escape returns focus to the primary button after hiding its actions", () => {
     const { viewer, button } = setup();
     const actions = button.nextElementSibling;
     const [flip] = actions.querySelectorAll("button");
@@ -165,6 +185,26 @@ describe("attachCutawayControls", () => {
     expect(viewer.cutawayEnabled()).toBe(false);
     expect(actions.hidden).toBe(true);
     expect(document.activeElement).toBe(button);
+  });
+
+  test("Escape focuses with the updated cutaway action tooltip", () => {
+    const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
+    const { viewer, button } = setup({ tooltip });
+    const actions = button.nextElementSibling;
+    const [, reset] = actions.querySelectorAll("button");
+    button.click();
+    reset.focus();
+
+    pressEscape(reset);
+
+    expect(viewer.cutawayEnabled()).toBe(false);
+    expect(button.getAttribute("aria-label")).toBe("Enable cutaway");
+    expect(actions.hidden).toBe(true);
+    expect(document.activeElement).toBe(button);
+    expect(tooltip.showAnchor).toHaveBeenLastCalledWith(
+      { title: "Enable cutaway" },
+      button,
+    );
   });
 
   test("makes the canvas focusable without replacing an existing tabindex", () => {

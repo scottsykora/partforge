@@ -284,6 +284,20 @@ test("detach removes every button tooltip listener", () => {
   expect(tooltip.hide).not.toHaveBeenCalled();
 });
 
+test("detach hides a presented button tooltip exactly once", () => {
+  const button = document.createElement("button");
+  button.setAttribute("aria-label", "Reframe part");
+  const tooltip = { showAnchor: vi.fn(), hide: vi.fn() };
+  const handle = attachButtonTooltips(tooltip, [{ element: button }]);
+  button.dispatchEvent(new FocusEvent("focus"));
+
+  handle.detach();
+  handle.detach();
+
+  expect(tooltip.showAnchor).toHaveBeenCalledWith({ title: "Reframe part" }, button);
+  expect(tooltip.hide).toHaveBeenCalledTimes(1);
+});
+
 test("tooltip styles apply by class without shifting anchored coordinates", () => {
   const style = document.createElement("style");
   style.textContent = readFileSync("src/framework/app.css", "utf8");

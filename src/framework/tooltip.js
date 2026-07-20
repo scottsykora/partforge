@@ -115,6 +115,7 @@ export function attachButtonTooltips(tooltip, entries) {
     detach() {
       if (detached) return;
       detached = true;
+      tooltip.hide();
       for (const binding of attached) {
         const {
           element,

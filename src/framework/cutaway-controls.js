@@ -86,11 +86,10 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}, { toolti
   let detached = false;
   function disable() {
     if (detached) return;
-    if (actions.contains(document.activeElement)) {
-      button.focus({ preventScroll: true });
-    }
+    const restoreFocus = actions.contains(document.activeElement);
     viewer.setCutawayEnabled(false);
     sync();
+    if (restoreFocus) button.focus({ preventScroll: true });
   }
 
   const onToggle = () => {
