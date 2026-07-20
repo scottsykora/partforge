@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, test, vi } from "vitest";
 import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 import { createCutawayGizmo } from "../../src/framework/cutaway-gizmo.js";
 import { initialCutawayPose } from "../../src/framework/cutaway-math.js";
@@ -9,11 +10,15 @@ import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../../src/framework/cutaway-render
 const fixtures = [];
 
 afterEach(() => {
-  for (const fixture of fixtures.splice(0)) fixture.gizmo.dispose();
+  for (const fixture of fixtures.splice(0)) {
+    fixture.gizmo.dispose();
+    fixture.orbitControls.dispose?.();
+  }
   document.body.innerHTML = "";
 });
 
 function createFixture(overrides = {}) {
+  const { createOrbitControls, ...gizmoOverrides } = overrides;
   const scene = new THREE.Scene();
   const overlayScene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1_000);
@@ -34,7 +39,7 @@ function createFixture(overrides = {}) {
   domElement.releasePointerCapture = vi.fn();
   document.body.appendChild(domElement);
 
-  const orbitControls = { enabled: true };
+  const orbitControls = createOrbitControls?.(camera, domElement) ?? { enabled: true };
   const onPoseChange = vi.fn();
   const gizmo = createCutawayGizmo({
     scene,
@@ -43,7 +48,7 @@ function createFixture(overrides = {}) {
     domElement,
     orbitControls,
     onPoseChange,
-    ...overrides,
+    ...gizmoOverrides,
   });
   const fixture = {
     scene,
@@ -409,6 +414,21 @@ test("passive hover publishes only transitions and emphasizes one stable visual 
   expect(onHandleHoverChange).toHaveBeenCalledTimes(3);
 });
 
+test("passive hover uses the real priority pick path at the projected gizmo center", () => {
+  const onHandleHoverChange = vi.fn();
+  const fixture = createFixture({ onHandleHoverChange });
+  const pose = setProductionPose(fixture);
+  fixture.gizmo.setFlipped(true);
+  fixture.gizmo.updateForCamera();
+  const center = clientPoint(fixture, pose.position);
+
+  pointer(fixture.domElement, "pointermove", center);
+
+  expect(onHandleHoverChange).toHaveBeenCalledOnce();
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith("translate");
+  expect(fixture.gizmo.handleVisuals.translate.scale.x).toBe(1.12);
+});
+
 test("press emphasizes without a prior move and locks hover until the next passive move", () => {
   let picked = "translate";
   const onHandleHoverChange = vi.fn();
@@ -579,6 +599,57 @@ test("pointer cancellation restores the exact orbit state and releases capture",
   pointer(domElement, "pointercancel");
   expect(orbitControls.enabled).toBe(true);
   expect(domElement.releasePointerCapture).toHaveBeenCalledWith(7);
+});
+
+test("a gizmo press is handled before earlier-registered OrbitControls", () => {
+  const orbitStart = vi.fn();
+  const fixture = createFixture({
+    createOrbitControls: (camera, domElement) => {
+      const controls = new OrbitControls(camera, domElement);
+      controls.addEventListener("start", orbitStart);
+      return controls;
+    },
+    pickHandle: () => "translate",
+  });
+  const { camera, domElement, gizmo, orbitControls } = fixture;
+  const cameraBefore = camera.position.clone();
+
+  pointer(domElement, "pointerdown");
+
+  expect(orbitStart).not.toHaveBeenCalled();
+  expect(orbitControls.enabled).toBe(false);
+  expect(gizmo.handleVisuals.translate.scale.x).toBe(1.12);
+
+  window.dispatchEvent(new Event("blur"));
+  document.dispatchEvent(new PointerEvent("pointermove", {
+    pointerId: 7,
+    pointerType: "mouse",
+    clientX: 160,
+    clientY: 140,
+    buttons: 1,
+    bubbles: true,
+  }));
+
+  expect(orbitControls.enabled).toBe(true);
+  expect(camera.position.toArray()).toEqual(cameraBefore.toArray());
+});
+
+test("a gizmo miss still reaches earlier-registered OrbitControls", () => {
+  const orbitStart = vi.fn();
+  const { domElement, orbitControls } = createFixture({
+    createOrbitControls: (camera, element) => {
+      const controls = new OrbitControls(camera, element);
+      controls.addEventListener("start", orbitStart);
+      return controls;
+    },
+    pickHandle: () => null,
+  });
+
+  pointer(domElement, "pointerdown");
+
+  expect(orbitStart).toHaveBeenCalledOnce();
+  expect(orbitControls.enabled).toBe(true);
+  pointer(domElement, "pointerup");
 });
 
 test("normal-axis dragging emits a finite translated pose", () => {
@@ -763,6 +834,47 @@ test("ring proxy provides a touch-friendly band at the intended apparent scale",
 
   expect(bandCssPixels).toBeGreaterThanOrEqual(16);
   expect(bandCssPixels).toBeLessThanOrEqual(18);
+});
+
+test("dispose completes cleanup when the final hover callback throws", () => {
+  const pickHandle = vi.fn(() => "translate");
+  let gizmo;
+  const fixture = createFixture({
+    pickHandle,
+    onHandleHoverChange: (handle) => {
+      if (handle === null) throw new Error("hover cleanup failed");
+    },
+  });
+  ({ gizmo } = fixture);
+  const geometryDispose = vi.spyOn(gizmo.fill.geometry, "dispose");
+  pointer(fixture.domElement, "pointermove");
+
+  expect(() => gizmo.dispose()).toThrow("hover cleanup failed");
+
+  expect(gizmo.group.parent).toBeNull();
+  expect(gizmo.handleRoot.parent).toBeNull();
+  expect(geometryDispose).toHaveBeenCalledOnce();
+  pointer(fixture.domElement, "pointerdown");
+  expect(pickHandle).toHaveBeenCalledOnce();
+});
+
+test("a reentrant final hover callback cannot dispose resources twice", () => {
+  let gizmo;
+  const fixture = createFixture({
+    pickHandle: () => "translate",
+    onHandleHoverChange: (handle) => {
+      if (handle === null) gizmo.dispose();
+    },
+  });
+  ({ gizmo } = fixture);
+  const geometryDispose = vi.spyOn(gizmo.fill.geometry, "dispose");
+  pointer(fixture.domElement, "pointermove");
+
+  gizmo.dispose();
+
+  expect(geometryDispose).toHaveBeenCalledOnce();
+  expect(gizmo.group.parent).toBeNull();
+  expect(gizmo.handleRoot.parent).toBeNull();
 });
 
 test("dispose ends a drag, removes listeners and scene objects, and disposes owned resources once", () => {

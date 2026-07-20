@@ -512,7 +512,7 @@ export function createCutawayGizmo({
   }
 
   const listeners = [
-    [domElement, "pointerdown", onPointerDown],
+    [domElement, "pointerdown", onPointerDown, { capture: true }],
     [domElement, "pointermove", onPointerMove],
     [domElement, "pointerenter", onPassiveActivity],
     [domElement, "focus", onPassiveActivity],
@@ -522,8 +522,8 @@ export function createCutawayGizmo({
     [domElement, "pointerleave", onPointerLeave],
     [window, "blur", onWindowBlur],
   ];
-  for (const [target, type, listener] of listeners) {
-    target.addEventListener(type, listener);
+  for (const [target, type, listener, options] of listeners) {
+    target.addEventListener(type, listener, options);
   }
 
   function setPose({ position, quaternion, size }) {
@@ -602,16 +602,19 @@ export function createCutawayGizmo({
 
   function dispose() {
     if (disposed) return;
-    endDrag();
-    setHoveredHandle(null);
     disposed = true;
-    for (const [target, type, listener] of listeners) {
-      target.removeEventListener(type, listener);
+    try {
+      endDrag();
+      setHoveredHandle(null);
+    } finally {
+      for (const [target, type, listener, options] of listeners) {
+        target.removeEventListener(type, listener, options);
+      }
+      scene.remove(group);
+      overlayScene.remove(handleRoot);
+      for (const geometry of geometries) geometry.dispose();
+      for (const material of materials) material.dispose();
     }
-    scene.remove(group);
-    overlayScene.remove(handleRoot);
-    for (const geometry of geometries) geometry.dispose();
-    for (const material of materials) material.dispose();
   }
 
   return {
