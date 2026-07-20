@@ -345,6 +345,20 @@ test("theme refresh forwards exact feature-edge hatch colors and preserves exact
   expect(edgeLines.material).toBe(edgeMaterial);
 });
 
+test("retains the feature-edge hatch color for future and replacement subparts", () => {
+  const fixture = createFixture();
+  fixture.controller.setTheme("light", 0x33414f);
+
+  addSubpart(fixture);
+  const firstCap = findCap(fixture.scene);
+  expect(firstCap.material.uniforms.uInk.value.getHex()).toBe(0x33414f);
+
+  addSubpart(fixture);
+  const replacementCap = findCap(fixture.scene);
+  expect(replacementCap).not.toBe(firstCap);
+  expect(replacementCap.material.uniforms.uInk.value.getHex()).toBe(0x33414f);
+});
+
 test("auxiliary material registration preserves borrowed clipping state across sessions", () => {
   const fixture = createFixture();
   const material = new THREE.MeshBasicMaterial();
