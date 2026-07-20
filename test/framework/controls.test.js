@@ -69,6 +69,62 @@ test("buildControls renders a preset-section toggle that updates params + fires 
   expect(params.show_motor).toBe(0);
 });
 
+test("buildControls renders live single-line and multiline string controls", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { title: "Spacer", label: "Line one\nLine two" };
+  let dirty = 0;
+  const sec = { id: "copy", title: "Copy", advanced: [
+    { key: "title", label: "Title", control: "text" },
+    { key: "label", label: "Label", control: "textarea" },
+  ] };
+
+  buildControls(root, [sec], params, () => dirty++);
+
+  const title = root.querySelector('input[type="text"]');
+  const label = root.querySelector("textarea");
+  expect(title?.value).toBe("Spacer");
+  expect(label?.value).toBe("Line one\nLine two");
+
+  title.value = "Bracket";
+  title.dispatchEvent(new Event("input"));
+  label.value = "Upper\nLower\n";
+  label.dispatchEvent(new Event("input"));
+
+  expect(params).toMatchObject({ title: "Bracket", label: "Upper\nLower\n" });
+  expect(dirty).toBe(2);
+});
+
+test("text edits select Custom and presets resynchronize string controls", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { title: "Stock", label: "First\nPreset" };
+  let dirty = 0;
+  const sec = { id: "copy", title: "Copy", presets: {
+    First: { title: "Stock", label: "First\nPreset" },
+    Second: { title: "Revised", label: "Second\nPreset" },
+  }, advanced: [
+    { key: "title", label: "Title", control: "text" },
+    { key: "label", label: "Label", control: "textarea" },
+  ] };
+
+  buildControls(root, [sec], params, () => dirty++);
+  const preset = root.querySelector("select.preset");
+  const title = root.querySelector('input[type="text"]');
+  const label = root.querySelector("textarea");
+
+  title.value = "Custom title";
+  title.dispatchEvent(new Event("input"));
+  expect(preset.value).toBe("Custom");
+
+  preset.value = "Second";
+  preset.dispatchEvent(new Event("change"));
+  expect(params).toMatchObject({ title: "Revised", label: "Second\nPreset" });
+  expect(title.value).toBe("Revised");
+  expect(label.value).toBe("Second\nPreset");
+  expect(dirty).toBe(2);
+});
+
 test("buildControls omits hidden advanced control from the DOM", () => {
   document.body.innerHTML = '<div id="root"></div>';
   const root = document.getElementById("root");
