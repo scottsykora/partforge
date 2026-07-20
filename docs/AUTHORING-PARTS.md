@@ -316,24 +316,36 @@ changing any of them is a fresh cache node while an identical rebuild is a hit.
 `parameters` is an **array of sections**; the framework builds the panel from it and
 binds each control to a key in `defaults`. Two section kinds:
 
-**Preset + sliders section:**
+**Preset + controls section:**
 
 ```js
 {
   id: "body",
   title: "Body",
   presets: { M3: { od: 8, bore: 3.4, h: 10 }, M5: { od: 12, bore: 5.4, h: 16 } }, // name → param overrides
-  advanced: [                                  // sliders revealed under "Advanced"
+  advanced: [                                  // controls revealed under "Advanced"
     { key: "od",   label: "Outer diameter", unit: "mm", min: 4, max: 40, step: 0.5 },
     { key: "bore", label: "Bore",           unit: "mm", min: 1, max: 30, step: 0.1, control: "number" },
+    { key: "title", label: "Title", control: "text" },
+    { key: "label", label: "Label", control: "textarea" },
   ],
 }
 ```
 
-Each slider/feature control shows an **editable number box** beside it — drag the
+Numeric slider/feature controls show an **editable number box** beside them — drag the
 slider or type an exact value (finer than `step` is allowed; typed values clamp to
-`[min, max]`). Optional `control` per parameter: omit it (or `"slider"`) for a slider
-+ box; `"number"` for a box only (no slider — handy for precise or wide-range values).
+`[min, max]`). Optional `control` per parameter chooses the input:
+
+- omit it (or use `"slider"`) for a slider + number box;
+- `"number"` for a number box only (handy for precise or wide-range values);
+- `"text"` for a single-line string field;
+- `"textarea"` for a multiline string field whose line breaks are preserved.
+
+Text fields update `params` live on every edit, so the existing rebuild loop previews
+the new string immediately. Give every text key a string value in `defaults`; empty
+strings are valid control values, while the part's build function decides whether its
+geometry supports them. Editing any control in a preset section selects `Custom`, and
+choosing a preset updates both numeric and text fields.
 
 **Feature-toggle section** (checkbox enables a feature + reveals its sliders; `0` = off):
 

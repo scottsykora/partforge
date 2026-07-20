@@ -113,6 +113,8 @@ function el(tag, className, text) {
 // One parameter control bound to params[def.key]. `def.control`:
 //   "slider" (default) — range slider + an editable number box (drag OR type)
 //   "number"           — number box only (no slider)
+//   "text"             — single-line text field
+//   "textarea"         — multiline text field
 // The box accepts exact values (finer than `step`); typed values clamp to
 // [min, max] on commit (blur/Enter). Returns { wrap, sync }.
 function makeSlider(def, params, onChange, info) {
@@ -172,6 +174,34 @@ function makeSlider(def, params, onChange, info) {
   };
   return { wrap, sync };
 }
+
+function makeTextControl(def, params, onChange, info) {
+  const multiline = def.control === "textarea";
+  const wrap = el("div", "slider");
+  const row = el("div", "row");
+  const label = el("label", "", def.label);
+  attachInfo(label, def.description, info);
+  row.append(label);
+  wrap.append(row);
+
+  const field = document.createElement(multiline ? "textarea" : "input");
+  if (!multiline) field.type = "text";
+  field.className = "text-input";
+  field.value = String(params[def.key] ?? "");
+  field.addEventListener("input", () => {
+    params[def.key] = field.value;
+    onChange?.();
+  });
+  wrap.append(field);
+
+  const sync = () => { field.value = String(params[def.key] ?? ""); };
+  return { wrap, sync };
+}
+
+const makeParameterControl = (def, params, onChange, info) =>
+  def.control === "text" || def.control === "textarea"
+    ? makeTextControl(def, params, onChange, info)
+    : makeSlider(def, params, onChange, info);
 
 // A collapsible "Advanced ▾" block. Returns { adv, toggle }.
 function advancedBlock() {
@@ -242,7 +272,7 @@ function buildPresetSection(section, sec, params, onDirty, register, info) {
   if (advanced.length) {
     const { adv, toggle } = advancedBlock();
     for (const def of advanced) {
-      const s = makeSlider(def, params, () => { if (preset) preset.value = "Custom"; onDirty?.(); }, info);
+      const s = makeParameterControl(def, params, () => { if (preset) preset.value = "Custom"; onDirty?.(); }, info);
       adv.append(s.wrap);
       syncs[def.key] = s.sync;
       register(def.key, s.wrap);
@@ -281,7 +311,7 @@ function buildFeatureSection(section, sec, params, onDirty, register, info) {
     const group = el("div", "feat-group");
     const syncs = [];
     for (const def of feat.sliders.filter((d) => !d.hidden)) {
-      const s = makeSlider(def, params, onDirty, info);
+      const s = makeParameterControl(def, params, onDirty, info);
       group.append(s.wrap);
       syncs.push(s.sync);
       register(def.key, s.wrap);

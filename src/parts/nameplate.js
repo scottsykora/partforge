@@ -5,16 +5,16 @@
 // exercises shape2d + the extrude/boolean path. Open /nameplate.html after `npm run dev`.
 import { roundedRectPolygon } from "partforge/geometry";
 
-const LABEL = "PARTFORGE\nv0.20";
-
 export default {
   meta: { title: "Nameplate", units: "mm", background: 0x15181d },
   parameters: [
     {
       id: "text",
       title: "Lettering",
-      description: "The text is a two-line label (`PARTFORGE` over `v0.20`). It is resolved to exact glyph curves — counters in **A R O G** and the **0** stay open — and sized by cap height.",
+      description: "Editable text resolved to exact glyph curves, with open counters and sizing based on cap height.",
       advanced: [
+        { key: "label", label: "Text", control: "textarea",
+          description: "The text rendered on the nameplate. Line breaks create multiple lines." },
         { key: "size", label: "Cap height", unit: "mm", min: 4, max: 16, step: 0.5,
           description: "Height of the uppercase letters. The second line scales with it." },
         { key: "depth", label: "Relief depth", unit: "mm", min: 0.4, max: 3, step: 0.1,
@@ -45,14 +45,14 @@ export default {
       ],
     },
   ],
-  defaults: { size: 8, depth: 1.2, stroke: 0, margin: 4, corner: 3, thickness: 3, engrave: 0 },
+  defaults: { label: "PARTFORGE\nv0.20", size: 8, depth: 1.2, stroke: 0, margin: 4, corner: 3, thickness: 3, engrave: 0 },
   parts: {
     plate: {
       label: "Nameplate",
       views: ["plate"],
       export: { name: "nameplate" },
       build: (k, p) => {
-        let text = k.text2d(LABEL, { size: p.size, align: "center", valign: "middle", lineHeight: p.size * 1.7 });
+        let text = k.text2d(p.label, { size: p.size, align: "center", valign: "middle", lineHeight: p.size * 1.7 });
         // Shape2D offset on the lettering: grow (>0, bolder) or shrink (<0, thinner). Guard
         // against a shrink that collapses thin strokes — keep the un-offset letters if so.
         if (p.stroke !== 0) {

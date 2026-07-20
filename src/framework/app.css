@@ -81,6 +81,14 @@ select.preset {
 .row .num::-webkit-outer-spin-button, .row .num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .row .num { -moz-appearance: textfield; }
 .row .unit { font-family: var(--pf-mono); color: var(--pf-muted); font-size: 10px; }
+.text-input {
+  display: block; width: 100%; font: 12px/1.4 var(--pf-mono);
+  background: var(--pf-input-bg); color: var(--pf-text-strong);
+  border: 1px solid var(--pf-border); border-radius: 6px; padding: 6px 8px;
+}
+textarea.text-input { min-height: 64px; resize: vertical; }
+.text-input:focus { outline: none; border-color: var(--pf-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 
 /* crafted range slider — hairline track + CAD-blue handle (the panel's signature control) */
 input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; margin: 0; background: transparent; cursor: pointer; }

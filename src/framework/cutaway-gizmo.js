@@ -287,6 +287,11 @@ export function createCutawayGizmo({
 
   function pick(event, ray) {
     if (pickHandle) return resolveHandle(pickHandle(event, handles, ray));
+    handleRoot.updateWorldMatrix(true, true);
+    const intersection = raycaster.intersectObjects(hitProxies, false)[0];
+    const intersectedHandle = resolveHandle(intersection);
+    if (intersectedHandle) return intersectedHandle;
+
     const center = projectToClient(group.position);
     if (center) {
       const dx = event.clientX - center.x;
@@ -296,9 +301,7 @@ export function createCutawayGizmo({
         return "translate";
       }
     }
-    handleRoot.updateWorldMatrix(true, true);
-    const intersection = raycaster.intersectObjects(hitProxies, false)[0];
-    return resolveHandle(intersection);
+    return null;
   }
 
   function safeCapture(pointerId) {
