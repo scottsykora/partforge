@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Embed test — mount lifecycle contract (0.12.0)</title>
+    <!-- Dev-only smoke harness for the 0.12.0 embedding contract. Unlike planter.html,
+         NO legacy global IDs are used (#app/#controls/etc. don't exist here) — everything
+         is passed via the `elements` option, proving mount() has no hidden document
+         queries. `npm run dev`, then open /embed-test.html. -->
+    <style>
+      /* Deliberately NOT a full-window layout: the viewer lives in a resizable pane so
+         container-based sizing (ResizeObserver) is visibly exercised. */
+      body { margin: 0; display: grid; grid-template-columns: 1fr 340px; height: 100vh; font: 13px ui-monospace, monospace; }
+      #stage { position: relative; resize: horizontal; overflow: hidden; min-width: 300px; border-right: 2px solid #444; }
+      #pf-viewer { position: absolute; inset: 0; }
+      #side { padding: 10px; overflow-y: auto; background: #1b1e24; color: #dde; }
+      #side h2 { font-size: 13px; margin: 12px 0 4px; }
+      #pf-tabs button { margin-right: 4px; }
+      #log { white-space: pre-wrap; background: #12141a; padding: 6px; border-radius: 4px; min-height: 8em; max-height: 18em; overflow-y: auto; }
+      #log .pick { color: #7fd07f; }
+      #log .build { color: #7fb3d0; }
+      #log .life { color: #d0b37f; }
+      #pf-busy:not(.show) { display: none; } /* framework toggles .show; hide otherwise */
+      button { cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><div id="pf-viewer"></div></div>
+    <div id="side">
+      <button id="btn-mount">Mount</button>
+      <button id="btn-dispose">Dispose</button>
+      <button id="btn-cycle">Dispose+Remount ×5</button>
+      <div class="seg" id="pf-tabs"></div>
+      <h2>Event log</h2>
+      <div id="log"></div>
+      <h2>Status</h2>
+      <div id="pf-status">—</div>
+      <div id="pf-busy"><span id="pf-phase"></span></div>
+      <h2>Controls</h2>
+      <div id="pf-controls"></div>
+      <h2>Export</h2>
+      <button id="pf-stl" disabled>STL</button>
+      <button id="pf-step" disabled>STEP</button>
+      <h2>Chrome</h2>
+      <button id="pf-pause">⏸</button>
+      <button id="pf-reframe">⛶</button>
+      <button id="pf-theme">◐</button>
+    </div>
+    <script type="module" src="/src/app-embed-test.js"></script>
+  </body>
+</html>
