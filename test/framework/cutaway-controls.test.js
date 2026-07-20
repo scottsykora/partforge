@@ -488,6 +488,49 @@ describe("attachCutawayControls", () => {
     expect(viewer.setCutawayEnabled).not.toHaveBeenCalled();
   });
 
+  test("detach completes control cleanup before rethrowing a tooltip failure", () => {
+    const viewer = fakeViewer();
+    const button = document.createElement("button");
+    button.setAttribute("type", "submit");
+    button.setAttribute("aria-pressed", "mixed");
+    button.setAttribute("aria-label", "Host cutaway label");
+    button.setAttribute("title", "Host cutaway title");
+    document.body.append(viewer.domElement, button);
+    const tooltipError = new Error("tooltip detach failed");
+    const tooltip = {
+      showAnchor: vi.fn(() => Symbol("cutaway tooltip")),
+      hide: vi.fn(() => { throw tooltipError; }),
+    };
+    const handle = attachCutawayControls(viewer, { cutaway: button }, { tooltip });
+    handles.push(handle);
+    const actions = button.nextElementSibling;
+    const [flip] = actions.querySelectorAll("button");
+    const focus = vi.spyOn(viewer.domElement, "focus");
+    button.dispatchEvent(new FocusEvent("focus"));
+    viewer.setCutawayEnabled.mockClear();
+
+    let thrown;
+    try { handle.detach(); } catch (error) { thrown = error; }
+
+    expect(thrown).toBe(tooltipError);
+    expect(actions.isConnected).toBe(false);
+    expect(button.getAttribute("type")).toBe("submit");
+    expect(button.getAttribute("aria-pressed")).toBe("mixed");
+    expect(button.getAttribute("aria-label")).toBe("Host cutaway label");
+    expect(button.getAttribute("title")).toBe("Host cutaway title");
+    expect(viewer.domElement.hasAttribute("tabindex")).toBe(false);
+    expect(viewer.domElement.hasAttribute("aria-label")).toBe(false);
+
+    button.click();
+    flip.click();
+    pressEscape(viewer.domElement);
+    viewer.domElement.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    expect(viewer.setCutawayEnabled).not.toHaveBeenCalled();
+    expect(viewer.flipCutaway).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
+    expect(() => handle.detach()).not.toThrow();
+  });
+
   test("detach restores absent primary attributes and allows a clean remount", () => {
     const unsupported = fakeViewer({ supported: false });
     const button = document.createElement("button");

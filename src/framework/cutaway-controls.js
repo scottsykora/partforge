@@ -12,6 +12,17 @@ const BUTTON_ATTRIBUTES = [
 
 const noop = () => {};
 
+function runCleanupSteps(steps) {
+  const errors = [];
+  for (const step of steps) {
+    try { step(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new AggregateError(errors, "cutaway control cleanup failed");
+  }
+}
+
 function actionButton(label, title) {
   const button = document.createElement("button");
   button.type = "button";
@@ -124,20 +135,21 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}, { toolti
     detach() {
       if (detached) return;
       detached = true;
-      button.removeEventListener("click", onToggle);
-      flipButton.removeEventListener("click", onFlip);
-      resetButton.removeEventListener("click", onReset);
-      for (const element of [canvas, button, flipButton, resetButton]) {
-        element.removeEventListener("keydown", onEscape);
-      }
-      canvas.removeEventListener("pointerdown", onCanvasPointerDown);
-      if (addedCanvasTabIndex) canvas.removeAttribute("tabindex");
-      if (addedCanvasLabel) canvas.removeAttribute("aria-label");
-      tooltipBinding?.detach();
-      actions.remove();
-      restoreAttributes(button, hostButtonAttributes);
-      button.disabled = hostButtonDisabled;
-      button.classList.toggle("on", hostButtonOn);
+      runCleanupSteps([
+        () => button.removeEventListener("click", onToggle),
+        () => flipButton.removeEventListener("click", onFlip),
+        () => resetButton.removeEventListener("click", onReset),
+        ...[canvas, button, flipButton, resetButton]
+          .map((element) => () => element.removeEventListener("keydown", onEscape)),
+        () => canvas.removeEventListener("pointerdown", onCanvasPointerDown),
+        () => { if (addedCanvasTabIndex) canvas.removeAttribute("tabindex"); },
+        () => { if (addedCanvasLabel) canvas.removeAttribute("aria-label"); },
+        () => tooltipBinding?.detach(),
+        () => actions.remove(),
+        () => restoreAttributes(button, hostButtonAttributes),
+        () => { button.disabled = hostButtonDisabled; },
+        () => button.classList.toggle("on", hostButtonOn),
+      ]);
     },
   };
 }

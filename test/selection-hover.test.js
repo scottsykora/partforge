@@ -271,6 +271,41 @@ test("hover overlay material follows cutaway clipping until detach", () => {
   expect(disposeSubset).toHaveBeenCalledTimes(1);
 });
 
+test("detach completes hover cleanup before reporting aggregated failures", () => {
+  const viewer = makeViewer();
+  const hideError = new Error("tooltip hide failed");
+  const unregisterError = new Error("cutaway unregister failed");
+  const unregister = vi.fn(() => { throw unregisterError; });
+  viewer.registerCutawayMaterial = vi.fn(() => unregister);
+  const tooltip = makeTooltip();
+  tooltip.hide.mockImplementation(() => { throw hideError; });
+  const removeEventListener = vi.spyOn(viewer.domElement, "removeEventListener");
+  const hover = attachHoverLabels(viewer, { part, schedule: sync, tooltip });
+  const material = viewer.registerCutawayMaterial.mock.calls[0][0];
+  const disposeMaterial = vi.spyOn(material, "dispose");
+
+  move(viewer.domElement, 100, 100);
+  const overlay = viewer._group.children.find(
+    (child) => child !== viewer._subMeshes.one,
+  );
+  const disposeGeometry = vi.spyOn(overlay.geometry, "dispose");
+
+  let thrown;
+  try { hover.detach(); } catch (error) { thrown = error; }
+
+  expect(thrown).toBeInstanceOf(AggregateError);
+  expect(thrown.errors).toEqual([hideError, unregisterError]);
+  expect(viewer._group.children).toEqual([viewer._subMeshes.one]);
+  expect(disposeGeometry).toHaveBeenCalledTimes(1);
+  expect(disposeMaterial).toHaveBeenCalledTimes(1);
+  expect(unregister).toHaveBeenCalledTimes(1);
+  for (const type of ["pointermove", "pointerdown", "pointerup", "pointerleave"]) {
+    expect(removeEventListener).toHaveBeenCalledWith(type, expect.any(Function));
+  }
+  expect(tooltip.dispose).not.toHaveBeenCalled();
+  expect(() => hover.detach()).not.toThrow();
+});
+
 test("a queued hover frame has no effect after detach", () => {
   const viewer = makeViewer();
   let runFrame;

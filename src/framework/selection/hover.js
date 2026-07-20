@@ -9,6 +9,17 @@ import { raycastViewer } from "./raycast.js";
 
 const HIGHLIGHT = 0x4da3ff;
 
+function runCleanupSteps(steps) {
+  const errors = [];
+  for (const step of steps) {
+    try { step(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new AggregateError(errors, "feature hover cleanup failed");
+  }
+}
+
 // Extract the subset of a non-indexed geometry belonging to one feature id.
 function featureSubset(geometry, featureId) {
   const { featureIds } = geometry.userData;
@@ -152,20 +163,25 @@ export function attachHoverLabels(
       if (detached) return;
       detached = true;
       invalidatePendingWork();
-      unsubscribeHandleHover();
-      viewer.domElement.removeEventListener("pointermove", onMove);
-      viewer.domElement.removeEventListener("pointerdown", onDown);
-      viewer.domElement.removeEventListener("pointerup", onUp);
-      viewer.domElement.removeEventListener("pointerleave", onLeave);
-      hide();
-      overlayParent?.remove(overlay);
-      for (const { byId } of subsets.values()) for (const g of byId.values()) g.dispose();
-      subsets.clear();
-      emptyOverlayGeometry?.dispose();
+      const subsetGeometries = [...subsets.values()]
+        .flatMap(({ byId }) => [...byId.values()]);
+      const initialGeometry = emptyOverlayGeometry;
       emptyOverlayGeometry = null;
-      unregisterCutaway();
-      material.dispose();
-      if (ownsTooltip) tooltipPresenter.dispose();
+      runCleanupSteps([
+        unsubscribeHandleHover,
+        () => viewer.domElement.removeEventListener("pointermove", onMove),
+        () => viewer.domElement.removeEventListener("pointerdown", onDown),
+        () => viewer.domElement.removeEventListener("pointerup", onUp),
+        () => viewer.domElement.removeEventListener("pointerleave", onLeave),
+        hide,
+        () => overlayParent?.remove(overlay),
+        ...subsetGeometries.map((geometry) => () => geometry.dispose()),
+        () => subsets.clear(),
+        () => initialGeometry?.dispose(),
+        unregisterCutaway,
+        () => material.dispose(),
+        () => { if (ownsTooltip) tooltipPresenter.dispose(); },
+      ]);
     },
   };
 }
