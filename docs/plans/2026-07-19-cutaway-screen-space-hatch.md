@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Render the cutaway hatch as a fixed 45-degree, 5-CSS-logical-pixel screen-space pattern with an approximately 1-CSS-logical-pixel line at every zoom level and display density. These CSS logical pixels are macOS point-like units normalized by `devicePixelRatio`.
+**Goal:** Render the cutaway hatch as a fixed 45-degree, 5-CSS-logical-pixel screen-space pattern with an approximately 1-CSS-logical-pixel line at every zoom level and display density. These CSS logical pixels are macOS point-like units normalized by the renderer's effective pixel ratio. The viewer derives that ratio from raw `devicePixelRatio` and caps it at `2`.
 
-**Architecture:** Replace the cap shader's UV/model-scale coordinate with `gl_FragCoord` normalized by renderer pixel ratio. Propagate pixel ratio through the existing viewer resize and cutaway viewport path, retain it for current/future/replacement render sets, and remove the obsolete diagonal-derived model-space hatch spacing from cutaway poses.
+**Architecture:** Replace the cap shader's UV/model-scale coordinate with `gl_FragCoord` normalized by the effective ratio returned from `renderer.getPixelRatio()`, not raw `devicePixelRatio`. Propagate that capped ratio through the existing viewer resize and cutaway viewport path, retain it for current/future/replacement render sets, and remove the obsolete diagonal-derived model-space hatch spacing from cutaway poses.
 
 **Tech Stack:** JavaScript ESM, Three.js `ShaderMaterial`, Vitest, Vite, Playwright Chromium smoke checks.
 
@@ -43,7 +43,7 @@ for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, undefined]) 
 }
 ```
 
-Assert the shader encodes a 5-CSS-logical-pixel period and 1-CSS-logical-pixel line, preferably through exported JS constants interpolated into the shader so the production value and test share one source of truth. Treat CSS logical pixels as macOS point-like units and normalize them by `devicePixelRatio`.
+Assert the shader encodes a 5-CSS-logical-pixel period and 1-CSS-logical-pixel line, preferably through exported JS constants interpolated into the shader so the production value and test share one source of truth. Treat CSS logical pixels as macOS point-like units and normalize them by the effective renderer ratio, which is derived from raw `devicePixelRatio` and capped at `2`.
 
 **Step 2: Run the focused test to verify RED**
 
@@ -72,7 +72,7 @@ uniform float uPixelRatio;
 const float HATCH_PERIOD_CSS_PX = 5.0;
 const float HATCH_LINE_CSS_PX = 1.0;
 
-vec2 cssPixel = gl_FragCoord.xy / max(uPixelRatio, 1.0);
+vec2 cssPixel = gl_FragCoord.xy / uPixelRatio;
 float axisPixel = dot(cssPixel, normalize(vec2(1.0, 1.0)));
 float wrapped = mod(axisPixel, HATCH_PERIOD_CSS_PX);
 float distanceToLine = min(wrapped, HATCH_PERIOD_CSS_PX - wrapped);
@@ -142,7 +142,9 @@ Assert the resize path forwards it:
 expect(state.cutaway.setViewportSize).toHaveBeenLastCalledWith(400, 300, 2);
 ```
 
-Stub `devicePixelRatio` deterministically in the test setup and restore it afterward.
+Stub raw `devicePixelRatio` to `3` deterministically, assert that the renderer's
+effective `getPixelRatio()` value is capped at `2`, and assert both initial and
+subsequent cutaway viewport calls receive `2`. Restore the global afterward.
 
 In `cutaway-render.test.js`, extend the viewport test:
 
@@ -349,7 +351,7 @@ Expected: each command exits 0; application pages report `cutaway: true`, the te
 Use the local planter page and verify:
 
 1. Enable cutaway in light mode and capture the hatch at the framed view.
-2. Zoom substantially in and out; the repeat remains 5 CSS logical pixels and the line remains approximately 1 CSS logical pixel (macOS point-like units normalized by `devicePixelRatio`).
+2. Zoom substantially in and out; the repeat remains 5 CSS logical pixels and the line remains approximately 1 CSS logical pixel (macOS point-like units normalized by the renderer's effective, capped pixel ratio).
 3. Orbit, translate, and rotate the cut plane; the hatch remains fixed at 45 degrees in screen space.
 4. Switch to dark mode; only the feature-edge-derived ink changes, not size or angle.
 5. Confirm the console remains free of errors and plane interaction does not trigger geometry regeneration.

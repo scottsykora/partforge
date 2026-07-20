@@ -150,7 +150,7 @@ test("viewer injects its initial feature-edge color into cutaway", () => {
 });
 
 test("viewer forwards every viewport resize to cutaway edge materials", () => {
-  vi.stubGlobal("devicePixelRatio", 2);
+  vi.stubGlobal("devicePixelRatio", 3);
   let width = 400;
   let height = 300;
   const container = document.createElement("div");

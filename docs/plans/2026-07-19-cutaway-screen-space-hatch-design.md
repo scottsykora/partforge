@@ -5,9 +5,10 @@
 Keep the cutaway hatch visually stable while the user zooms, orbits, translates,
 or rotates the section plane. The hatch should remain fixed at 45 degrees in
 screen space, repeat every 5 CSS logical pixels, and use an approximately 1
-CSS-logical-pixel line. These are macOS point-like units normalized by
-`devicePixelRatio`. Its ink continues to match the viewer's theme-specific
-feature-edge color.
+CSS-logical-pixel line. These are macOS point-like units normalized by the
+renderer's effective pixel ratio. The viewer derives that ratio from the raw
+`devicePixelRatio` and caps it at `2`. Hatch ink continues to match the viewer's
+theme-specific feature-edge color.
 
 An explicit cut-face outline is not part of this change.
 
@@ -15,9 +16,10 @@ An explicit cut-face outline is not part of this change.
 
 The cap shader will derive its hatch coordinate from `gl_FragCoord` instead of
 the cap plane's UVs. It will normalize framebuffer coordinates by the renderer's
-pixel ratio before projecting them onto a normalized 45-degree axis. This makes
-the period and line width CSS-pixel values on both standard and high-density
-displays.
+effective pixel ratio from `renderer.getPixelRatio()` before projecting them
+onto a normalized 45-degree axis. Using the effective capped value, rather than
+the raw device value, makes the period and line width CSS-logical-pixel values
+correct even when `devicePixelRatio` exceeds `2`.
 
 The shader will use a fixed 5-CSS-logical-pixel period and
 1-CSS-logical-pixel line-width uniforms or constants and derivative-based
