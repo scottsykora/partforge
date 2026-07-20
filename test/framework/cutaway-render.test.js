@@ -107,8 +107,8 @@ describe("createHatchMaterial", () => {
       inkColor: 0x1c232d,
     });
 
-    expect(HATCH_PERIOD_CSS_PX).toBe(5);
-    expect(HATCH_LINE_CSS_PX).toBe(1);
+    expect(HATCH_PERIOD_CSS_PX).toBe(10);
+    expect(HATCH_LINE_CSS_PX).toBe(2);
     expect(material.fragmentShader).toContain(
       `const float HATCH_PERIOD_CSS_PX = ${HATCH_PERIOD_CSS_PX.toFixed(1)};`,
     );
@@ -160,7 +160,7 @@ describe("createHatchMaterial", () => {
     material.userData.setHatch({ spacing: 2.5, size: 40 });
     material.userData.setInkColor(0x33414f);
 
-    expect(material.uniforms.uScale.value).toBe(80);
+    expect(material.uniforms.uScale.value).toBe(160);
     expect(material.uniforms.uInk.value).toBe(ink);
     expect(ink.getHex()).toBe(0x33414f);
     expect(material.transparent).toBe(false);
@@ -275,7 +275,7 @@ describe("createSectionRenderSet", () => {
     expect(renderSet.cap.quaternion.equals(quaternion)).toBe(true);
     expect(renderSet.cap.quaternion).not.toBe(quaternion);
     expect(renderSet.cap.scale.toArray()).toEqual([48, 48, 48]);
-    expect(renderSet.cap.material.uniforms.uScale.value).toBe(80);
+    expect(renderSet.cap.material.uniforms.uScale.value).toBe(160);
   });
 
   test("keeps every cap isolated before all clipped surfaces and edge lines", () => {

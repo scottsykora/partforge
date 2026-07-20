@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Render the cutaway hatch as a fixed 45-degree, 5 CSS-pixel screen-space pattern with an approximately 1 CSS-pixel line at every zoom level and display density.
+**Goal:** Render the cutaway hatch as a fixed 45-degree, 10-CSS-logical-pixel screen-space pattern with an approximately 2-CSS-logical-pixel line at every zoom level and display density. These CSS logical pixels are macOS point-like units normalized by `devicePixelRatio`.
 
 **Architecture:** Replace the cap shader's UV/model-scale coordinate with `gl_FragCoord` normalized by renderer pixel ratio. Propagate pixel ratio through the existing viewer resize and cutaway viewport path, retain it for current/future/replacement render sets, and remove the obsolete diagonal-derived model-space hatch spacing from cutaway poses.
 
@@ -43,7 +43,7 @@ for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, undefined]) 
 }
 ```
 
-Assert the shader encodes a 5 CSS-pixel period and 1 CSS-pixel line, preferably through exported JS constants interpolated into the shader so the production value and test share one source of truth.
+Assert the shader encodes a 10-CSS-logical-pixel period and 2-CSS-logical-pixel line, preferably through exported JS constants interpolated into the shader so the production value and test share one source of truth. Treat CSS logical pixels as macOS point-like units and normalize them by `devicePixelRatio`.
 
 **Step 2: Run the focused test to verify RED**
 
@@ -61,16 +61,16 @@ Expected: failures because the shader still uses `vUv`, `uScale`, and `setHatch`
 In `src/framework/cutaway-render.js`, replace the model-space density constant with:
 
 ```js
-export const HATCH_PERIOD_CSS_PX = 5;
-export const HATCH_LINE_CSS_PX = 1;
+export const HATCH_PERIOD_CSS_PX = 10;
+export const HATCH_LINE_CSS_PX = 2;
 ```
 
 Remove the UV varying and emit only projected position from the vertex shader. The fragment shader should follow this structure:
 
 ```glsl
 uniform float uPixelRatio;
-const float HATCH_PERIOD_CSS_PX = 5.0;
-const float HATCH_LINE_CSS_PX = 1.0;
+const float HATCH_PERIOD_CSS_PX = 10.0;
+const float HATCH_LINE_CSS_PX = 2.0;
 
 vec2 cssPixel = gl_FragCoord.xy / max(uPixelRatio, 1.0);
 float axisPixel = dot(cssPixel, normalize(vec2(1.0, 1.0)));
@@ -349,7 +349,7 @@ Expected: each command exits 0; application pages report `cutaway: true`, the te
 Use the local planter page and verify:
 
 1. Enable cutaway in light mode and capture the hatch at the framed view.
-2. Zoom substantially in and out; the repeat remains 5 CSS pixels and the line remains approximately 1 CSS pixel.
+2. Zoom substantially in and out; the repeat remains 10 CSS logical pixels and the line remains approximately 2 CSS logical pixels (macOS point-like units normalized by `devicePixelRatio`).
 3. Orbit, translate, and rotate the cut plane; the hatch remains fixed at 45 degrees in screen space.
 4. Switch to dark mode; only the feature-edge-derived ink changes, not size or angle.
 5. Confirm the console remains free of errors and plane interaction does not trigger geometry regeneration.

@@ -4,8 +4,10 @@
 
 Keep the cutaway hatch visually stable while the user zooms, orbits, translates,
 or rotates the section plane. The hatch should remain fixed at 45 degrees in
-screen space, repeat every 5 CSS pixels, and use an approximately 1 CSS-pixel
-line. Its ink continues to match the viewer's theme-specific feature-edge color.
+screen space, repeat every 10 CSS logical pixels, and use an approximately 2
+CSS-logical-pixel line. These are macOS point-like units normalized by
+`devicePixelRatio`. Its ink continues to match the viewer's theme-specific
+feature-edge color.
 
 An explicit cut-face outline is not part of this change.
 
@@ -17,9 +19,10 @@ pixel ratio before projecting them onto a normalized 45-degree axis. This makes
 the period and line width CSS-pixel values on both standard and high-density
 displays.
 
-The shader will use fixed 5-pixel period and 1-pixel line-width uniforms or
-constants and derivative-based antialiasing. Zoom, camera orientation, cut-plane
-pose, model size, and cap size will not participate in hatch sizing or phase.
+The shader will use a fixed 10-CSS-logical-pixel period and
+2-CSS-logical-pixel line-width uniforms or constants and derivative-based
+antialiasing. Zoom, camera orientation, cut-plane pose, model size, and cap size
+will not participate in hatch sizing or phase.
 
 The existing theme flow remains responsible for the hatch ink. Dark and light
 themes continue to use the same colors as the viewer's feature edges.
@@ -53,8 +56,8 @@ part geometry. Disabled and disposed cutaway behavior remains unchanged.
 Automated tests will prove that:
 
 - the shader uses `gl_FragCoord` and no longer depends on cap UV/model scale;
-- the hatch period is 5 CSS pixels and the line width is approximately 1 CSS
-  pixel;
+- the hatch period is 10 CSS logical pixels and the line width is approximately
+  2 CSS logical pixels;
 - renderer pixel ratio is normalized and can update in place;
 - existing, future, and replacement render sets receive retained screen-space
   settings;
