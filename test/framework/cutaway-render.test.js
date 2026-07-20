@@ -2,6 +2,8 @@ import { describe, expect, test, vi } from "vitest";
 import * as THREE from "three";
 
 import {
+  HATCH_LINE_CSS_PX,
+  HATCH_PERIOD_CSS_PX,
   createHatchMaterial,
   createSectionRenderSet,
 } from "../../src/framework/cutaway-render.js";
@@ -60,7 +62,7 @@ function createFixture({ order = 0, inkColor = 0x2468ac } = {}) {
 }
 
 describe("createHatchMaterial", () => {
-  test("creates a UV-based antialiased 45-degree hatch shader", () => {
+  test("creates a screen-space antialiased 45-degree hatch shader", () => {
     const material = createHatchMaterial({
       color: 0x336699,
       opacity: 0.65,
@@ -71,15 +73,57 @@ describe("createHatchMaterial", () => {
     expect(material.uniforms.uBase.value.getHex()).toBe(0x336699);
     expect(material.uniforms.uOpacity.value).toBe(0.65);
     expect(material.uniforms.uScale.value).toBe(1);
+    expect(material.uniforms.uPixelRatio.value).toBe(1);
     expect(material.transparent).toBe(true);
     expect(material.depthWrite).toBe(false);
-    expect(material.vertexShader).toContain("vUv = uv");
-    expect(material.fragmentShader).toContain("(vUv.x + vUv.y) * uScale");
-    expect(material.fragmentShader).toContain("fwidth(coordinate)");
+    expect(material.vertexShader).not.toContain("vUv");
+    expect(material.fragmentShader).not.toContain("vUv");
+    expect(material.fragmentShader).toContain("uniform float uPixelRatio");
+    expect(material.fragmentShader).toContain(
+      "gl_FragCoord.xy / max(uPixelRatio, 1.0)",
+    );
+    expect(material.fragmentShader).toContain("normalize(vec2(1.0, 1.0))");
+    expect(material.fragmentShader).toContain("fwidth(axisPixel)");
     expect(material.fragmentShader).toContain("mix(uBase, uInk, stripe)");
     expect(material.fragmentShader).toMatch(
       /gl_FragColor\s*=.*;[\s\S]*#include <colorspace_fragment>/,
     );
+  });
+
+  test("defines exact CSS-pixel hatch dimensions from exported constants", () => {
+    const material = createHatchMaterial({
+      color: 0x336699,
+      opacity: 1,
+      inkColor: 0x1c232d,
+    });
+
+    expect(HATCH_PERIOD_CSS_PX).toBe(5);
+    expect(HATCH_LINE_CSS_PX).toBe(1);
+    expect(material.fragmentShader).toContain(
+      `const float HATCH_PERIOD_CSS_PX = ${HATCH_PERIOD_CSS_PX.toFixed(1)};`,
+    );
+    expect(material.fragmentShader).toContain(
+      `const float HATCH_LINE_CSS_PX = ${HATCH_LINE_CSS_PX.toFixed(1)};`,
+    );
+  });
+
+  test.each([
+    [2, 2],
+    [0, 1],
+    [-1, 1],
+    [Number.NaN, 1],
+    [Number.POSITIVE_INFINITY, 1],
+    [undefined, 1],
+  ])("sanitizes screen scale %s to %s", (pixelRatio, expected) => {
+    const material = createHatchMaterial({
+      color: 0x336699,
+      opacity: 1,
+      inkColor: 0x1c232d,
+    });
+
+    material.userData.setScreenScale(pixelRatio);
+
+    expect(material.uniforms.uPixelRatio.value).toBe(expected);
   });
 
   test("renders a double-sided transparent hatch in one draw", () => {

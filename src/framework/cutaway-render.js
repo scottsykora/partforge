@@ -1,6 +1,7 @@
 import * as THREE from "three";
 
-const HATCH_DENSITY_MULTIPLIER = 5;
+export const HATCH_PERIOD_CSS_PX = 5;
+export const HATCH_LINE_CSS_PX = 1;
 
 // Stencil/cap passes for every section are kept below all clipped surfaces.
 // This leaves a large, deterministic ordering range for assemblies while making
@@ -17,29 +18,32 @@ export function createHatchMaterial({ color, opacity, inkColor }) {
       uInk: { value: new THREE.Color(inkColor) },
       uOpacity: { value: opacity },
       uScale: { value: 1 },
+      uPixelRatio: { value: 1 },
     },
     vertexShader: `
-      varying vec2 vUv;
-
       void main() {
-        vUv = uv;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
     fragmentShader: `
-      varying vec2 vUv;
       uniform vec3 uBase;
       uniform vec3 uInk;
       uniform float uOpacity;
-      uniform float uScale;
+      uniform float uPixelRatio;
+
+      const float HATCH_PERIOD_CSS_PX = ${HATCH_PERIOD_CSS_PX.toFixed(1)};
+      const float HATCH_LINE_CSS_PX = ${HATCH_LINE_CSS_PX.toFixed(1)};
 
       void main() {
-        float coordinate = (vUv.x + vUv.y) * uScale;
-        float distanceToLine = abs(fract(coordinate) - 0.5);
-        float antialias = max(fwidth(coordinate), 0.001);
+        vec2 cssPixel = gl_FragCoord.xy / max(uPixelRatio, 1.0);
+        float axisPixel = dot(cssPixel, normalize(vec2(1.0, 1.0)));
+        float wrapped = mod(axisPixel, HATCH_PERIOD_CSS_PX);
+        float distanceToLine = min(wrapped, HATCH_PERIOD_CSS_PX - wrapped);
+        float halfLine = HATCH_LINE_CSS_PX * 0.5;
+        float antialias = max(fwidth(axisPixel), 0.001);
         float stripe = 1.0 - smoothstep(
-          0.08 - antialias,
-          0.08 + antialias,
+          halfLine - antialias,
+          halfLine + antialias,
           distanceToLine
         );
         gl_FragColor = vec4(mix(uBase, uInk, stripe), uOpacity);
@@ -52,7 +56,12 @@ export function createHatchMaterial({ color, opacity, inkColor }) {
   });
 
   material.userData.setHatch = ({ spacing, size }) => {
-    material.uniforms.uScale.value = size / spacing * HATCH_DENSITY_MULTIPLIER;
+    material.uniforms.uScale.value = size / spacing * HATCH_PERIOD_CSS_PX;
+  };
+  material.userData.setScreenScale = (pixelRatio) => {
+    material.uniforms.uPixelRatio.value = Number.isFinite(pixelRatio) && pixelRatio > 0
+      ? pixelRatio
+      : 1;
   };
   material.userData.setInkColor = (color) => {
     material.uniforms.uInk.value.set(color);
