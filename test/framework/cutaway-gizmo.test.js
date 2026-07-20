@@ -444,6 +444,26 @@ test("press emphasizes without a prior move and locks hover until the next passi
   expect(onHandleHoverChange).toHaveBeenLastCalledWith(null);
 });
 
+test("an unrelated pointer leaving does not clear or end the active drag", () => {
+  const onHandleHoverChange = vi.fn();
+  const { domElement, gizmo, onPoseChange, orbitControls } = createFixture({
+    onHandleHoverChange,
+    pickHandle: () => "translate",
+  });
+
+  pointer(domElement, "pointerdown", { pointerId: 1 });
+  pointer(domElement, "pointerleave", { pointerId: 2 });
+
+  expect(orbitControls.enabled).toBe(false);
+  expect(onHandleHoverChange.mock.calls.map(([handle]) => handle)).toEqual([
+    "translate",
+  ]);
+  expect(gizmo.handleVisuals.translate.scale.toArray()).toEqual([1.12, 1.12, 1.12]);
+
+  pointer(domElement, "pointermove", { pointerId: 1, y: 90 });
+  expect(onPoseChange).toHaveBeenCalledOnce();
+});
+
 test.each([
   ["pointerleave", false],
   ["pointercancel", true],

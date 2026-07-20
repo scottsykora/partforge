@@ -497,7 +497,8 @@ export function createCutawayGizmo({
   }
 
   function onPointerLeave(event) {
-    if (!drag || event.pointerId == null || event.pointerId === drag.pointerId) endDrag();
+    if (drag && event.pointerId != null && event.pointerId !== drag.pointerId) return;
+    endDrag();
     setHoveredHandle(null);
   }
 
