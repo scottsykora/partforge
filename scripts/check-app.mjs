@@ -30,6 +30,7 @@ const entry = process.argv.find((a, i) => i >= 2 && !a.startsWith("--")) || "dem
 const PORT = Number(process.env.CHECK_PORT) || 5179;
 const url = `http://localhost:${PORT}/${entry}`;
 const keepServer = process.argv.includes("--keep");
+const allowNoCutaway = process.argv.includes("--allow-no-cutaway");
 const viteBin = fileURLToPath(new URL("../node_modules/vite/bin/vite.js", import.meta.url));
 
 let vite;
@@ -262,4 +263,5 @@ console.log(`  booted: ${booted}   hovered: ${hovered}   cutaway: ${cutaway}   s
 if (!cutaway) console.log(`  cutaway control: ${cutawayControl}`);
 if (keepServer && vite?.pid) console.log(`  vite: kept running (pid ${vite.pid})`);
 for (const e of errors.slice(0, 10)) console.log("    - " + e.split("\n")[0]);
-process.exit(booted && hovered && cutaway && errors.length === 0 ? 0 : 1);
+const cutawaySatisfied = cutaway || (allowNoCutaway && cutawayControl === "missing");
+process.exit(booted && hovered && cutawaySatisfied && errors.length === 0 ? 0 : 1);
