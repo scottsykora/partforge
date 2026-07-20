@@ -10,6 +10,7 @@ import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../../src/framework/cutaway-render
 const fixtures = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const fixture of fixtures.splice(0)) {
     fixture.gizmo.dispose();
     fixture.orbitControls.dispose?.();
@@ -773,20 +774,51 @@ test.each([
   expect(Math.abs(quaternion.dot(pose.quaternion))).toBeLessThan(0.999_999);
 });
 
-test("real center hit prioritizes production-pose translation over edge-on rings", () => {
-  const fixture = createFixture();
-  const { domElement, onPoseChange, gizmo } = fixture;
+test("real center hover follows the nearest production-pose proxy", () => {
+  const onHandleHoverChange = vi.fn();
+  const fixture = createFixture({ onHandleHoverChange });
+  const { domElement, gizmo } = fixture;
   const pose = setProductionPose(fixture);
   gizmo.updateForCamera();
   const center = clientPoint(fixture, pose.position);
 
-  pointer(domElement, "pointerdown", center);
-  pointer(domElement, "pointermove", { x: center.x, y: center.y - 20 });
+  pointer(domElement, "pointermove", center);
 
-  expect(onPoseChange).toHaveBeenCalledOnce();
-  const changed = onPoseChange.mock.calls[0][0];
-  expect(changed.position.distanceTo(pose.position)).toBeGreaterThan(0.01);
-  expect(Math.abs(changed.quaternion.dot(pose.quaternion))).toBeCloseTo(1);
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith("rotate-y");
+});
+
+test("a real proxy intersection wins before the center translation fallback", () => {
+  const onHandleHoverChange = vi.fn();
+  const fixture = createFixture({ onHandleHoverChange });
+  const { domElement, onPoseChange, gizmo } = fixture;
+  const pose = setProductionPose(fixture);
+  gizmo.updateForCamera();
+  const center = clientPoint(fixture, pose.position);
+  const intersectObjects = vi.spyOn(THREE.Raycaster.prototype, "intersectObjects")
+    .mockReturnValue([{ object: gizmo.handles.rotateY }]);
+
+  pointer(domElement, "pointermove", center);
+
+  expect(intersectObjects).toHaveBeenCalled();
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith("rotate-y");
+  expect(onPoseChange).not.toHaveBeenCalled();
+
+  intersectObjects.mockReturnValue([]);
+  pointer(domElement, "pointermove", center);
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith("translate");
+});
+
+test("the inner edge of a real rotation band is not masked by center translation", () => {
+  const onHandleHoverChange = vi.fn();
+  const fixture = createFixture({ onHandleHoverChange });
+  const { domElement, gizmo } = fixture;
+  const pose = setProductionPose(fixture);
+  gizmo.updateForCamera();
+  const center = clientPoint(fixture, pose.position);
+
+  pointer(domElement, "pointermove", { x: center.x, y: center.y - 22 });
+
+  expect(onHandleHoverChange).toHaveBeenLastCalledWith("rotate-x");
 });
 
 test("center outside the camera clip volume cannot claim semantic translation", () => {
