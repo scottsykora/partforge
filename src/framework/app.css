@@ -234,7 +234,6 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 .pf-hover-tip .pf-hover-sub { color: var(--pf-muted); font-size: 11px; margin-left: 7px; }
 #pf-hover-tip .pf-hover-sub:empty,
 .pf-hover-tip .pf-hover-sub:empty { display: none; }
-.pf-hover-tip.pf-tooltip-anchored { transform: translateX(-50%); }
 
 /* request-a-pick: agent prompt banner, floated top-centre well below the part tabs,
    laid out like a chat message (avatar + text). Slides/fades in when shown; themed. */

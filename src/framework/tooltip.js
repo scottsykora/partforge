@@ -1,3 +1,6 @@
+const VIEWPORT_MARGIN = 8;
+const ANCHOR_GAP = 8;
+
 export function createTooltipPresenter() {
   const element = document.createElement("div");
   element.id = "pf-hover-tip";
@@ -27,10 +30,24 @@ export function createTooltipPresenter() {
     showAnchor(content, anchor) {
       if (disposed) return;
       setContent(content);
-      const rect = anchor.getBoundingClientRect();
-      element.style.left = `${(rect.left + rect.right) / 2}px`;
-      element.style.top = `${rect.bottom + 8}px`;
       element.classList.add("pf-tooltip-anchored", "show");
+      const tooltipRect = element.getBoundingClientRect();
+      const rect = anchor.getBoundingClientRect();
+      const width = Math.max(0, tooltipRect.width || 0);
+      const height = Math.max(0, tooltipRect.height || 0);
+      const viewportWidth = Math.max(0, globalThis.innerWidth || 0);
+      const viewportHeight = Math.max(0, globalThis.innerHeight || 0);
+      const centeredLeft = (rect.left + rect.right - width) / 2;
+      const maxLeft = Math.max(
+        VIEWPORT_MARGIN,
+        viewportWidth - VIEWPORT_MARGIN - width,
+      );
+      const left = Math.min(Math.max(centeredLeft, VIEWPORT_MARGIN), maxLeft);
+      const belowTop = rect.bottom + ANCHOR_GAP;
+      const fitsBelow = belowTop + height <= viewportHeight - VIEWPORT_MARGIN;
+      const top = fitsBelow ? belowTop : rect.top - ANCHOR_GAP - height;
+      element.style.left = `${left}px`;
+      element.style.top = `${top}px`;
     },
     hide() {
       if (disposed) return;

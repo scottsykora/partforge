@@ -6,7 +6,10 @@ import {
   createTooltipPresenter,
 } from "../../src/framework/tooltip.js";
 
-afterEach(() => { document.body.innerHTML = ""; });
+afterEach(() => {
+  document.body.innerHTML = "";
+  vi.unstubAllGlobals();
+});
 
 test("showPointer creates and positions the shared tooltip", () => {
   const tooltip = createTooltipPresenter();
@@ -42,6 +45,51 @@ test("showAnchor positions below the anchor center", () => {
   expect(element.style.top).toBe("80px");
   expect(element.classList.contains("pf-tooltip-anchored")).toBe(true);
   expect(element.classList.contains("show")).toBe(true);
+});
+
+test("showAnchor clamps a measured tooltip inside the right viewport edge", () => {
+  vi.stubGlobal("innerWidth", 320);
+  vi.stubGlobal("innerHeight", 200);
+  const tooltip = createTooltipPresenter();
+  const element = document.getElementById("pf-hover-tip");
+  element.getBoundingClientRect = vi.fn(() => ({ width: 100, height: 30 }));
+  const anchor = document.createElement("button");
+  anchor.getBoundingClientRect = () => ({
+    left: 290,
+    right: 310,
+    top: 20,
+    bottom: 40,
+  });
+
+  tooltip.showAnchor({ title: "Reset view" }, anchor);
+
+  expect(element.getBoundingClientRect).toHaveBeenCalledTimes(1);
+  expect(element.style.left).toBe("212px");
+  expect(element.style.top).toBe("48px");
+});
+
+test("showAnchor flips a measured tooltip above the bottom viewport edge", () => {
+  vi.stubGlobal("innerWidth", 320);
+  vi.stubGlobal("innerHeight", 200);
+  const tooltip = createTooltipPresenter();
+  const element = document.getElementById("pf-hover-tip");
+  element.getBoundingClientRect = vi.fn(() => {
+    expect(element.classList.contains("show")).toBe(true);
+    expect(element.querySelector("b").textContent).toBe("Reset view");
+    return { width: 80, height: 32 };
+  });
+  const anchor = document.createElement("button");
+  anchor.getBoundingClientRect = () => ({
+    left: 100,
+    right: 120,
+    top: 180,
+    bottom: 196,
+  });
+
+  tooltip.showAnchor({ title: "Reset view" }, anchor);
+
+  expect(element.style.left).toBe("70px");
+  expect(element.style.top).toBe("140px");
 });
 
 test("hide conceals a visible tooltip", () => {
@@ -182,7 +230,7 @@ test("detach removes every button tooltip listener", () => {
   expect(tooltip.hide).not.toHaveBeenCalled();
 });
 
-test("tooltip styles apply by class and center anchored tooltips", () => {
+test("tooltip styles apply by class without shifting anchored coordinates", () => {
   const style = document.createElement("style");
   style.textContent = readFileSync("src/framework/app.css", "utf8");
   const element = document.createElement("div");
@@ -193,7 +241,28 @@ test("tooltip styles apply by class and center anchored tooltips", () => {
   const computed = getComputedStyle(element);
   expect(computed.position).toBe("fixed");
   expect(computed.display).toBe("block");
-  expect(computed.transform).toBe("translateX(-50%)");
+  expect(computed.transform).toBe("");
+
+  style.remove();
+});
+
+test("legacy ID-only tooltip keeps display and subtitle styling", () => {
+  const style = document.createElement("style");
+  style.textContent = readFileSync("src/framework/app.css", "utf8");
+  const element = document.createElement("div");
+  element.id = "pf-hover-tip";
+  element.className = "show";
+  const subtitle = document.createElement("span");
+  subtitle.className = "pf-hover-sub";
+  subtitle.textContent = "Planter";
+  element.appendChild(subtitle);
+  document.head.appendChild(style);
+  document.body.appendChild(element);
+
+  expect(getComputedStyle(element).display).toBe("block");
+  const subtitleStyle = getComputedStyle(subtitle);
+  expect(subtitleStyle.fontSize).toBe("11px");
+  expect(subtitleStyle.marginLeft).toBe("7px");
 
   style.remove();
 });
