@@ -19,6 +19,12 @@ import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
 import { createPickRequestClient } from "./pick-request/index.js";
 
+// The mount handle, factored out so its shape is unit-testable without booting
+// the full mount() pipeline (WASM + workers + DOM).
+export function makeHandle({ ready, dispose, viewer }) {
+  return { ready, dispose, captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames) };
+}
+
 function createCleanupStack() {
   const cleanups = [];
   let disposed = false;
@@ -351,7 +357,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
       cleanup.dispose();
     }
 
-    return { ready, dispose };
+    return makeHandle({ ready, dispose, viewer });
   } catch (error) {
     try {
       cleanup.dispose();
