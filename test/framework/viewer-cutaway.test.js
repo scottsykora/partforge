@@ -207,3 +207,26 @@ test("viewer delegates cutaway handle hover subscriptions without exposing the g
 
   viewer.dispose();
 });
+
+test("captureCanonicalViews returns [] after dispose instead of touching the torn-down renderer", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+  // Give the assembly real, visible geometry so the world bounds are non-empty —
+  // otherwise captureCanonicalViews would already short-circuit on the "nothing
+  // visible" empty-scene path, and the test would pass whether or not the
+  // disposed guard exists. With a non-empty box, the pre-dispose path would
+  // reach into the (incompletely faked) WebGLRenderer and throw; only the
+  // disposed guard makes the post-dispose call a safe no-op.
+  viewer.setSubGeometry("body", {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    triangles: 1,
+  });
+  viewer.showAssembly(["body"], { frame: true });
+
+  viewer.dispose();
+
+  expect(viewer.captureCanonicalViews(["iso"])).toEqual([]);
+});

@@ -15,7 +15,7 @@ import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
 export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds }) {
   const views = (viewNames?.length ? viewNames : ["iso", "front", "top"])
     .filter((v) => CANONICAL_VIEWS.includes(v))
-    .slice(0, 6);
+    .slice(0, CANONICAL_VIEWS.length);
   const before = liveCamera.position.clone();
   const gridWasVisible = grid?.visible;
   if (grid) grid.visible = false;
@@ -317,6 +317,7 @@ export function createViewer(container, part) {
   // Render the canonical camera angles offscreen, framed to whatever is visible,
   // without disturbing the user's live view. Returns [{ view, dataUrl }].
   function captureCanonicalViews(viewNames) {
+    if (disposed) return [];
     const box = getVisibleWorldBounds();
     if (!box || box.isEmpty()) return [];
     const center = box.getCenter(new THREE.Vector3()).toArray();
@@ -392,6 +393,7 @@ export function createViewer(container, part) {
     lineMaterial.dispose();
     grid.geometry.dispose();
     grid.material.dispose();
+    _rt?.dispose();
     renderer.dispose();
     renderer.domElement.remove();
   }
