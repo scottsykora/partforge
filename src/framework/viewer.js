@@ -6,6 +6,29 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { createCutaway } from "./cutaway.js";
 import { addViewerLights } from "./viewer-lighting.js";
+import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
+
+// Render a set of canonical views without disturbing the live camera/canvas.
+// `renderer.renderOffscreen(pose)` does the GL work (temp camera → offscreen
+// target → readback → JPEG data URL); injected so this is unit-testable without
+// a GL context. The grid is hidden for the whole synchronous pass and restored.
+export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds }) {
+  const views = (viewNames?.length ? viewNames : ["iso", "front", "top"])
+    .filter((v) => CANONICAL_VIEWS.includes(v))
+    .slice(0, 6);
+  const before = liveCamera.position.clone();
+  const gridWasVisible = grid?.visible;
+  if (grid) grid.visible = false;
+  try {
+    return views.map((view) => ({
+      view,
+      dataUrl: renderer.renderOffscreen(cameraPoseForView(view, bounds)),
+    }));
+  } finally {
+    if (grid) grid.visible = gridWasVisible;
+    liveCamera.position.copy(before); // belt-and-suspenders: never leak camera state
+  }
+}
 
 export function createViewer(container, part) {
   const names = Object.keys(part.parts);
@@ -261,6 +284,52 @@ export function createViewer(container, part) {
   ro.observe(container);
   resize();
 
+  // --- offscreen canonical-view capture -------------------------------------
+  // Offscreen render of the shared scene from an arbitrary pose → JPEG data URL.
+  // A separate WebGLRenderTarget + temp camera means the visible canvas and the
+  // live `camera` are never touched. WebGL pixels are bottom-up, so flip on encode.
+  const _rtSize = 512;
+  let _rt = null;
+  function renderOffscreen({ position, up, target }) {
+    _rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize);
+    const cam = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    cam.position.set(position[0], position[1], position[2]);
+    cam.up.set(up[0], up[1], up[2]);
+    cam.lookAt(target[0], target[1], target[2]);
+    renderer.setRenderTarget(_rt);
+    renderer.render(scene, cam);
+    const buf = new Uint8Array(_rtSize * _rtSize * 4);
+    renderer.readRenderTargetPixels(_rt, 0, 0, _rtSize, _rtSize, buf);
+    renderer.setRenderTarget(null);
+    const canvas = document.createElement("canvas");
+    canvas.width = _rtSize; canvas.height = _rtSize;
+    const ctx = canvas.getContext("2d");
+    const img = ctx.createImageData(_rtSize, _rtSize);
+    // flip rows (GL origin is bottom-left)
+    for (let y = 0; y < _rtSize; y++) {
+      const src = (_rtSize - 1 - y) * _rtSize * 4;
+      img.data.set(buf.subarray(src, src + _rtSize * 4), y * _rtSize * 4);
+    }
+    ctx.putImageData(img, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.8);
+  }
+
+  // Render the canonical camera angles offscreen, framed to whatever is visible,
+  // without disturbing the user's live view. Returns [{ view, dataUrl }].
+  function captureCanonicalViews(viewNames) {
+    const box = getVisibleWorldBounds();
+    if (!box || box.isEmpty()) return [];
+    const center = box.getCenter(new THREE.Vector3()).toArray();
+    const size = box.getSize(new THREE.Vector3());
+    const radius = Math.max(size.x, size.y, size.z) / 2 || 10;
+    return captureViewsFromScene(viewNames, {
+      renderer: { renderOffscreen },
+      liveCamera: camera,
+      grid,
+      bounds: { center, radius },
+    });
+  }
+
   // --- render loop ----------------------------------------------------------
   renderer.setAnimationLoop(() => {
     controls.update();
@@ -334,6 +403,7 @@ export function createViewer(container, part) {
     hasSubMesh,
     subTriangles,
     frame,
+    captureCanonicalViews,
     setAutoRotate,
     setTheme,
     getCameraState,
