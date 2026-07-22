@@ -1,6 +1,8 @@
 import { meshTo3MF } from "./geometry/threemf.js";
 import { resolveDerived } from "./derive.js";
 import { resolveFonts } from "./fonts.js";
+import { measure } from "../testing/measure.js";
+import { verify } from "../testing/verify.js";
 
 // Names of the sub-parts a view shows: declared in the view and enabled for these
 // params. Order follows Object.keys(part.parts) (definition order).
@@ -113,6 +115,18 @@ export async function handle(kernel, part, msg, post) {
       onProgress("writing 3MF file");
       const data = meshTo3MF(meshes);
       post({ type: "download", data, filename: `${msg.view}.3mf`, mime: "model/3mf" }, [bufferOf(data)]);
+    } else if (msg.type === "inspect") {
+      // Full geometric oracle for the current view: solid facts (volume/genus/
+      // watertight), mesh facts, overlaps, and gap distances, plus the part's
+      // structural + declared verify gates. Runs against the worker's live kernel
+      // — the main thread only has mesh arrays, so this can only happen here.
+      // measure/verify build their own solids via buildView and are cleaned up by
+      // the `finally` below.
+      const report = {
+        measure: measure(kernel, part, msg.view, msg.params ?? {}, { minWall: true }),
+        verify: verify(kernel, part, { view: msg.view }),
+      };
+      post({ type: "report", ...report });
     }
   } catch (err) {
     if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt" });
