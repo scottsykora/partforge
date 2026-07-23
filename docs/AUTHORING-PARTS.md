@@ -872,7 +872,8 @@ facts `measure` already reports — `holes` (through-bores / genus), `volume`,
 and aggregate axis-aligned `{min,max}` corner positions — where the geometry sits, vs
 `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
-`volume`, `overlaps`, plus the pair-wise `contacts` / `clearance` below.
+`volume`, `overlaps`, `centerOfMass`, `boundsMin`, `boundsMax`, plus the pair-wise
+`contacts` / `clearance` below.
 
 Passing these checks does **not** prove structural strength, fatigue life, stability,
 manufacturing tolerance stack-up, regulatory compliance, or safe real-world use.
