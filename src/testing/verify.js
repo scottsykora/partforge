@@ -25,6 +25,12 @@ export const SUBPART_METRICS = {
     hint: "triangle count is out of range — tessellation quality or feature count changed unexpectedly" },
   bbox: { kind: "gate", extract: (s) => s.bbox,
     hint: "bounding box is out of range — check the governing dimensions and the part's orientation" },
+  centerOfMass: { kind: "gate", extract: (s) => s.centerOfMass,
+    hint: "center of mass is outside the expected region — mass is distributed differently than intended; check feature placement or a mis-scaled sub-part" },
+  boundsMin: { kind: "gate", extract: (s) => s.bounds?.min,
+    hint: "the low corner is out of range — the part is positioned or oriented differently than expected" },
+  boundsMax: { kind: "gate", extract: (s) => s.bounds?.max,
+    hint: "the high corner is out of range — the part is positioned or oriented differently than expected" },
   minWall: { kind: "warn", extract: (s) => s.minWall,
     hint: "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
     pattern: "minwall-sliver-triangles",
@@ -38,6 +44,12 @@ export const VIEW_METRICS = {
   overlaps: { kind: "gate", extract: (r) => r.overlaps.length,
     hint: "sub-parts interpenetrate near the reported location — adjust placement or add clearance in derive()",
     locate: (r) => r.overlaps[0]?.location ?? null },
+  centerOfMass: { kind: "gate", extract: (r) => r.aggregate.centerOfMass,
+    hint: "the assembly's center of mass is outside the expected region — a sub-part is mis-placed or mis-scaled" },
+  boundsMin: { kind: "gate", extract: (r) => r.aggregate.bounds?.min,
+    hint: "the assembly's low corner is out of range — check placement or orientation" },
+  boundsMax: { kind: "gate", extract: (r) => r.aggregate.bounds?.max,
+    hint: "the assembly's high corner is out of range — check placement or orientation" },
 };
 
 // An expectation is a bare expression (string/number/boolean) or { expr, hint }.

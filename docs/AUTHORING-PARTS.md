@@ -868,8 +868,12 @@ verify: {
 **What the profile gives you:** a hard **bed-fit** gate (the view bbox must fit `bed`)
 and a **min-wall** warning. **What `expect` gives you:** per-sub-part assertions on the
 facts `measure` already reports — `holes` (through-bores / genus), `volume`,
-`surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`; and `_view` assertions
-`bbox`, `volume`, `overlaps`, plus the pair-wise `contacts` / `clearance` below.
+`surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`, `bounds` (per-sub-part
+and aggregate axis-aligned `{min,max}` corner positions — where the geometry sits, vs
+`bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
+centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
+`volume`, `overlaps`, `centerOfMass`, `boundsMin`, `boundsMax`, plus the pair-wise
+`contacts` / `clearance` below.
 
 Passing these checks does **not** prove structural strength, fatigue life, stability,
 manufacturing tolerance stack-up, regulatory compliance, or safe real-world use.
@@ -880,8 +884,16 @@ unverified.
 
 **Assertion DSL:** a bare number means equality (`holes: 1`); `">=n"`, `"<=n"`, `">n"`,
 `"<n"`, or a range `"a..b"`; an optional unit suffix `mm`/`cm`/`mm3`/`cm3`; and for
-`bbox`, a componentwise vector `"<=[x,y,z]"` / `">=[x,y,z]"` where `*` skips an axis.
-The parser is strict — a malformed assertion fails loudly.
+`bbox`, `centerOfMass`, `boundsMin`, `boundsMax`, a componentwise vector `"<=[x,y,z]"` /
+`">=[x,y,z]"` where `*` skips an axis. The parser is strict — a malformed assertion
+fails loudly.
+
+```js
+verify: { expect: {
+  stand: { boundsMin: ">=[0,0,0]", centerOfMass: "<=[*,*,25]" },   // sits in +octant, mass kept low
+  _view: { boundsMax: "<=[220,220,250]" },                          // whole assembly fits the bed
+} }
+```
 
 **Gates vs. warnings:** exact facts are **gates** (a failure sets a non-zero exit code);
 `minWall` is computed (a ray/shot wall-thickness measurement) and reported as a
