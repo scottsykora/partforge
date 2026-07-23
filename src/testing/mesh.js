@@ -12,6 +12,31 @@ export function meshVolume(positions, indices) {
   }
   return Math.abs(V);
 }
+// Volume-weighted centroid (uniform-density center of mass) of a triangle mesh,
+// via the same signed-tetrahedron decomposition as meshVolume. `indices` is
+// optional: omit for a flat soup (3 verts/triangle). Returns [x,y,z], or null when
+// the mesh encloses ~no volume (open/degenerate), where a centroid is undefined.
+// Signed V (not abs) is used so the winding sign cancels in C/V.
+export function meshCentroid(positions, indices) {
+  const n = indices ? indices.length : positions.length / 3;
+  let V = 0, cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < n; i += 3) {
+    const a = (indices ? indices[i] : i) * 3, b = (indices ? indices[i + 1] : i + 1) * 3, c = (indices ? indices[i + 2] : i + 2) * 3;
+    const ax = positions[a], ay = positions[a + 1], az = positions[a + 2];
+    const bx = positions[b], by = positions[b + 1], bz = positions[b + 2];
+    const dx = positions[c], dy = positions[c + 1], dz = positions[c + 2];
+    // signed volume of tetra (origin, a, b, c) = a · (b × c) / 6
+    const v = (ax * (by * dz - bz * dy) - ay * (bx * dz - bz * dx) + az * (bx * dy - by * dx)) / 6;
+    V += v;
+    // tetra centroid = (0 + a + b + c) / 4, weighted by its signed volume
+    cx += v * (ax + bx + dx) / 4;
+    cy += v * (ay + by + dy) / 4;
+    cz += v * (az + bz + dz) / 4;
+  }
+  if (Math.abs(V) < 1e-9) return null;
+  return [cx / V, cy / V, cz / V];
+}
+
 export function bboxSize(positions) {
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < positions.length; i += 3) for (let a = 0; a < 3; a++) {
