@@ -35,6 +35,33 @@ supplies it via `framework/app.css`, imported by `mount`).
 
 ---
 
+## Before geometry: state the engineering intent
+
+For a decorative or low-consequence part, a short dimensional description may be
+enough. For anything that mates with another object, carries load, or could cause harm
+if it fails, write down the engineering intent **before** writing `build`:
+
+- the coordinate frame, origin, and named datums;
+- the allowed envelope and the interfaces that must align (mating faces, axes, hole
+  patterns, fits, clearances, and tolerances);
+- the manufacturing process and material assumptions;
+- load cases, support regions, intended load paths, and safety factors when structural
+  behavior matters;
+- numbered acceptance claims with units and thresholds; and
+- unresolved assumptions that need the user or an engineer to answer.
+
+This may live in the task/specification, a companion design note, or comments next to
+the part — partforge does not prescribe a blueprint schema yet. Do not silently invent
+missing loads, material properties, tolerances, or safety factors. Ask, or record the
+property as unverified.
+
+Treat user/specification acceptance claims as **higher authority** than agent-authored
+geometry and checks. An agent may add conservative checks, but must not delete a claim
+or loosen its threshold merely to make a failing design pass; changing the contract
+requires explicit approval.
+
+---
+
 ## The `PartDefinition` contract
 
 A part is a default-exported object. Full shape (optional fields marked `?`):
@@ -744,7 +771,9 @@ empty/degenerate results; `holes` is the informative topology number.)
 
 `render` writes one PNG per angle (`iso`, `front`, `top` by default; choose with
 `--views iso,front`, output dir with `--out`) to `render/`. The view defaults to
-the part's first declared view.
+the part's first declared view. Treat renders as complementary evidence, not a ruler:
+use several views for complex parts and the interactive viewer's cutaway for hidden
+interfaces, but rely on `measure` / `verify` for dimensions, contact, and clearance.
 
 The `measure` function is also exported for vitest (boot a Manifold kernel as in
 "Testing a part", then `measure(kernel, part, "<view>")`):
@@ -797,6 +826,12 @@ JSON is pretty-printed across multiple lines) for robust machine parsing. With
 so even if a later `verify` throw crashes the run the file is there — it just
 lacks the `verify` key.
 
+**Fresh-evidence rule.** A passing report is evidence only for the source, parameters,
+view, backend, and framework version that produced it. Any relevant edit makes the old
+result stale. Before reporting a part complete, run `measure` / `verify` again on the
+current source and inspect current renders where visual requirements remain. Do not cite
+a command that ran before the last geometry or expectation change as evidence.
+
 **Part-authored hints.** Any `verify.expect` metric accepts `{ expr, hint }` in
 place of a bare expression — use it to name the governing parameter:
 
@@ -813,8 +848,8 @@ verify: {
 ## Self-verification (the `verify` block)
 
 A part can declare how it should be checked, co-located with its schema, so
-`partforge measure` (and vitest) can prove it is both **printable** and **correct**.
-Add an optional top-level `verify` block:
+`partforge measure` (and vitest) can enforce selected **geometric**, **assembly**, and
+**DFM** properties. Add an optional top-level `verify` block:
 
 ```js
 verify: {
@@ -835,6 +870,13 @@ and a **min-wall** warning. **What `expect` gives you:** per-sub-part assertions
 facts `measure` already reports — `holes` (through-bores / genus), `volume`,
 `surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`; and `_view` assertions
 `bbox`, `volume`, `overlaps`, plus the pair-wise `contacts` / `clearance` below.
+
+Passing these checks does **not** prove structural strength, fatigue life, stability,
+manufacturing tolerance stack-up, regulatory compliance, or safe real-world use.
+Load-bearing or safety-relevant parts need appropriate analytical/simulation evidence
+(for example FEA with declared materials, loads, supports, and safety factors) plus
+qualified human review. If no such evidence exists, say that physical performance is
+unverified.
 
 **Assertion DSL:** a bare number means equality (`holes: 1`); `">=n"`, `"<=n"`, `">n"`,
 `"<n"`, or a range `"a..b"`; an optional unit suffix `mm`/`cm`/`mm3`/`cm3`; and for
@@ -914,6 +956,12 @@ test("part is printable and correct", () => {
 Checks run across the **default config plus every preset** (or your `cases` list); a
 preset that changes only parameters no on-screen sub-part reads is deduplicated, so
 coverage is cheap.
+
+When an agent authors both geometry and `verify`, the check is useful feedback but not
+an independent oracle. Preserve externally supplied acceptance claims verbatim (ideally
+with stable IDs in the surrounding specification), and test boundary/tolerance cases in
+addition to friendly defaults and presets. A repair should change the design, not relax
+the requirement that exposed the failure.
 
 ---
 
