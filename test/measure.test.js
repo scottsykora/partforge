@@ -87,11 +87,13 @@ test("gapThreshold is configurable", () => {
   expect(measure(k, gapPart, "v", { gap: 0.7 }, { gapThreshold: 1 }).nearMisses).toHaveLength(1);
 });
 
+// Deliberately UNEQUAL volumes so the aggregate CoM test distinguishes a
+// volume-weighted mean from a plain average of the sub-part centroids.
 const twoBoxPart = {
   meta: { title: "TwoBox", units: "mm" }, defaults: {},
   parts: {
     a: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 10] }) },        // vol 1000, com [5,5,5]
-    b: { views: ["v"], build: (kk) => kk.box({ min: [30, 0, 0], max: [40, 10, 10] }) },        // vol 1000, com [35,5,5]
+    b: { views: ["v"], build: (kk) => kk.box({ min: [30, 0, 0], max: [50, 20, 20] }) },        // vol 8000, com [40,10,10]
   },
   views: { v: { label: "V" } },
 };
@@ -116,9 +118,10 @@ test("measure reports per-sub-part centerOfMass", () => {
 test("aggregate bounds spans all sub-parts and centerOfMass is volume-weighted", () => {
   const r = measure(k, twoBoxPart, "v");
   expect(r.aggregate.bounds.min[0]).toBeCloseTo(0, 3);
-  expect(r.aggregate.bounds.max[0]).toBeCloseTo(40, 3);
-  // equal volumes at x=5 and x=35 → aggregate com x = 20
-  expect(r.aggregate.centerOfMass[0]).toBeCloseTo(20, 1);
-  expect(r.aggregate.centerOfMass[1]).toBeCloseTo(5, 1);
-  expect(r.aggregate.centerOfMass[2]).toBeCloseTo(5, 1);
+  expect(r.aggregate.bounds.max[0]).toBeCloseTo(50, 3);
+  // (1000·[5,5,5] + 8000·[40,10,10]) / 9000 ≈ [36.11, 9.44, 9.44] — a plain
+  // average would give [22.5, 7.5, 7.5], so this catches a dropped volume weight.
+  expect(r.aggregate.centerOfMass[0]).toBeCloseTo(36.11, 1);
+  expect(r.aggregate.centerOfMass[1]).toBeCloseTo(9.44, 1);
+  expect(r.aggregate.centerOfMass[2]).toBeCloseTo(9.44, 1);
 });
