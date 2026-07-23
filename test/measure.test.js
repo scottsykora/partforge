@@ -86,3 +86,39 @@ test("gapThreshold is configurable", () => {
   expect(measure(k, gapPart, "v", { gap: 0.7 }).nearMisses).toEqual([]);
   expect(measure(k, gapPart, "v", { gap: 0.7 }, { gapThreshold: 1 }).nearMisses).toHaveLength(1);
 });
+
+const twoBoxPart = {
+  meta: { title: "TwoBox", units: "mm" }, defaults: {},
+  parts: {
+    a: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 10] }) },        // vol 1000, com [5,5,5]
+    b: { views: ["v"], build: (kk) => kk.box({ min: [30, 0, 0], max: [40, 10, 10] }) },        // vol 1000, com [35,5,5]
+  },
+  views: { v: { label: "V" } },
+};
+
+test("measure reports per-sub-part bounds {min,max}", () => {
+  const s = measure(k, boxPart, "v").subparts[0];         // boxPart is [0,0,0]..[10,20,5]
+  expect(s.bounds.min[0]).toBeCloseTo(0, 3);
+  expect(s.bounds.min[1]).toBeCloseTo(0, 3);
+  expect(s.bounds.min[2]).toBeCloseTo(0, 3);
+  expect(s.bounds.max[0]).toBeCloseTo(10, 3);
+  expect(s.bounds.max[1]).toBeCloseTo(20, 3);
+  expect(s.bounds.max[2]).toBeCloseTo(5, 3);
+});
+
+test("measure reports per-sub-part centerOfMass", () => {
+  const s = measure(k, boxPart, "v").subparts[0];
+  expect(s.centerOfMass[0]).toBeCloseTo(5, 2);
+  expect(s.centerOfMass[1]).toBeCloseTo(10, 2);
+  expect(s.centerOfMass[2]).toBeCloseTo(2.5, 2);
+});
+
+test("aggregate bounds spans all sub-parts and centerOfMass is volume-weighted", () => {
+  const r = measure(k, twoBoxPart, "v");
+  expect(r.aggregate.bounds.min[0]).toBeCloseTo(0, 3);
+  expect(r.aggregate.bounds.max[0]).toBeCloseTo(40, 3);
+  // equal volumes at x=5 and x=35 → aggregate com x = 20
+  expect(r.aggregate.centerOfMass[0]).toBeCloseTo(20, 1);
+  expect(r.aggregate.centerOfMass[1]).toBeCloseTo(5, 1);
+  expect(r.aggregate.centerOfMass[2]).toBeCloseTo(5, 1);
+});

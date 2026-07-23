@@ -46,3 +46,15 @@ test("gaps/nearMisses populate on OCCT (mesh-based, no Solid.intersect)", () => 
   expect(r.nearMisses[0].distance).toBeCloseTo(0.2, 3);
   expect(r.nearMisses[0].at[0]).toBeCloseTo(10.1, 2);
 });
+
+test("OCCT: measure reports bounds and centerOfMass", () => {
+  const s = measure(k, boxPart, "v").subparts[0];   // reuse this file's boxPart (a [0,0,0]-based box)
+  expect(Array.isArray(s.bounds.min)).toBe(true);
+  expect(Array.isArray(s.bounds.max)).toBe(true);
+  expect(s.centerOfMass).toHaveLength(3);
+  // centroid lies inside the bounds on every axis
+  for (let i = 0; i < 3; i++) {
+    expect(s.centerOfMass[i]).toBeGreaterThanOrEqual(s.bounds.min[i] - 1e-6);
+    expect(s.centerOfMass[i]).toBeLessThanOrEqual(s.bounds.max[i] + 1e-6);
+  }
+});

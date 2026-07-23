@@ -1,7 +1,7 @@
 import { buildView } from "./build.js";
 import { assemblyOverlaps } from "../framework/assembly.js";
 import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
-import { bounds, meshArea } from "./mesh.js";
+import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall } from "./min-wall.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
@@ -26,6 +26,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     return {
       name,
       bbox: size(b),
+      bounds: { min: b.min, max: b.max },
+      centerOfMass: meshCentroid(mesh.positions, mesh.indices),
       volume: solid.volume(),
       surfaceArea: meshArea(mesh.positions, mesh.indices),
       triangleCount: mesh.triangles,
@@ -54,8 +56,16 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     (g) => g.distance > CONTACT_EPS && g.distance < gapThreshold && !overlapping.has(pairKey(g.a, g.b)),
   );
 
+  const ub = subparts.length ? unionBounds(subBounds) : { min: [0, 0, 0], max: [0, 0, 0] };
+  const weighted = subparts.filter((s) => s.centerOfMass !== null);
+  const totalVol = weighted.reduce((a, s) => a + s.volume, 0);
+  const aggCom = weighted.length && Math.abs(totalVol) > 1e-9
+    ? [0, 1, 2].map((i) => weighted.reduce((a, s) => a + s.volume * s.centerOfMass[i], 0) / totalVol)
+    : null;
   const aggregate = {
-    bbox: subparts.length ? size(unionBounds(subBounds)) : [0, 0, 0],
+    bbox: size(ub),
+    bounds: { min: ub.min, max: ub.max },
+    centerOfMass: aggCom,
     volume: subparts.reduce((a, s) => a + s.volume, 0),
     surfaceArea: subparts.reduce((a, s) => a + s.surfaceArea, 0),
     triangleCount: subparts.reduce((a, s) => a + s.triangleCount, 0),
