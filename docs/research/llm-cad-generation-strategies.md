@@ -10,10 +10,13 @@ were actively refuted by verifiers and are excluded.*
 
 The headline: **the biggest wins come from the feedback loop around the LLM, not
 the LLM itself.** partforge's `measure`/`verify`/`render` CLI is already the right
-architecture; the gaps this survey exposes are tracked as issues
+architecture. The survey's original first three gaps were tracked as issues
 [#27](https://github.com/scottsykora/partforge/issues/27),
 [#28](https://github.com/scottsykora/partforge/issues/28), and
-[#29](https://github.com/scottsykora/partforge/issues/29).
+[#29](https://github.com/scottsykora/partforge/issues/29); structured diagnostics,
+the symptom-indexed pattern library, and near-miss/contact/clearance checks have since
+landed. The remaining frontier is preserving requirement authority and extending the
+loop from geometric validity to explicit physical assumptions and engineering evidence.
 
 ---
 
@@ -34,7 +37,8 @@ architecture; the gaps this survey exposes are tracked as issues
 - **Error message quality is itself a lever**: structured
   `(ErrorCause, ErrorLocation, CorrectiveAction)` triples cut average retries
   2.62 → 1.86 and lifted success 81.5% → 100%. **[single-source]**
-  ([2508.01031](https://arxiv.org/html/2508.01031v5)) → issue #27
+  ([2508.01031](https://arxiv.org/html/2508.01031v5)) → implemented in partforge's
+  diagnostics contract
 - The cad-khana project (build123d) reaches the same design from practice: the
   bottleneck is feedback, not code generation — emit a `diagnostics.json`
   (interference, clearance, wall thickness, overhangs) on every build, and turn
@@ -55,7 +59,10 @@ architecture; the gaps this survey exposes are tracked as issues
   parts. **[single-source]** ([2603.26512](https://arxiv.org/pdf/2603.26512))
 - Dense views help: going from the usual 4–6 renders to **21 calibrated views
   including close-ups and x-ray section cuts** raised GPT-5.5's requirement-pass
-  19.4% → 29.3% (Hephaestus-CCX). **[single-source]**
+  19.4% → 29.3% (Hephaestus-CCX). But its full ablation found 7 views sometimes
+  matched or beat 21 on simpler/exterior-dominated parts: target close-ups and section
+  views at hidden or high-risk interfaces instead of maximizing image count blindly.
+  **[single-source]**
 - The strongest visual-feedback pattern is not "here's a render, fix it" but
   **structured self-verification** (CADCodeVerify): the VLM derives 2–5 binary
   validation questions from the original request, answers them against 4 renders
@@ -67,7 +74,8 @@ architecture; the gaps this survey exposes are tracked as issues
   parts, and incomplete boolean unions**. A quadcopter frame scored F1 0.963 /
   IoU 0.985, passed all checks, and was unmanufacturable — arms didn't meet the
   hub. Numeric near-contact checks must catch what renders can't.
-  **[single-source]** ([2603.26512](https://arxiv.org/pdf/2603.26512)) → issue #29
+  **[single-source]** ([2603.26512](https://arxiv.org/pdf/2603.26512)) → implemented
+  as near-miss reporting plus `contacts` / `clearance` gates
 
 ## 3. Target a representation the model knows; design the DSL for statelessness and named references
 
@@ -107,7 +115,8 @@ custom framework the in-context findings matter more:
   ~155 method entries plus **25 error→solution patterns** substituted for
   fine-tuning entirely. **[single-source]**
   ([2603.26512](https://arxiv.org/pdf/2603.26512),
-  [2508.01031](https://arxiv.org/html/2508.01031v5)) → issue #28
+  [2508.01031](https://arxiv.org/html/2508.01031v5)) → implemented as
+  `ERROR-PATTERNS.md` and its grep-first agent rule
 - Doc-RAG also raises *ambition*: with searchable version-correct API docs, an
   agent used ~5× more complex modeling operations while making *fewer* errors
   (Blender 4.4 KB study). **[single-source]**
@@ -140,33 +149,66 @@ custom framework the in-context findings matter more:
   and advanced features relative to basic geometry. **[verified]**
   ([2605.18430](https://arxiv.org/abs/2605.18430))
 
+## 6. Physical structures need an explicit engineering contract and an external oracle
+
+- Hephaestus-CCX's blueprint records **datums, envelopes, interfaces, materials, load
+  paths, supports/load selectors, and numbered verification targets before CAD code**.
+  Its deterministic controller owns execution, measurement, validation, and FEA while
+  the model owns design and repair. This is the clearest current pattern for preventing
+  a plausible-looking solid from standing in for an engineering model. **[single-source]**
+  ([2605.17448](https://arxiv.org/pdf/2605.17448))
+- Physical parameters must be explicit rather than guessed. LLMPhy decomposes physical
+  reasoning into scene/layout decisions plus identification of continuous parameters
+  such as mass and friction, then uses simulator error to refine them. For CAD, unknown
+  material properties, loads, constraints, tolerances, and safety factors should become
+  stated unknowns or user questions, not silent model assumptions. **[single-source]**
+  ([2411.08027](https://arxiv.org/abs/2411.08027))
+- An agent that writes both an artifact and its tests is not an independent oracle.
+  FEM-Bench evaluates generated scientific tests against a correct implementation and
+  curated wrong implementations; even its best model reached only 73.8% average joint
+  test success. Preserve user/specification criteria separately, and use analytical,
+  simulation, or independently curated checks for physical claims. **[single-source]**
+  ([2512.20732](https://arxiv.org/pdf/2512.20732))
+- ActPlane generalizes the same authority problem to agent harnesses: higher-authority
+  requirements must not be weakenable by the agent they constrain, and a successful
+  check is valid only if it happened after the latest relevant edit. Its ablation also
+  reinforces the value of structured recovery feedback over opaque denial. The useful
+  partforge application is an application-level fresh-evidence gate, not an eBPF
+  dependency. **[single-source]**
+  ([2606.25189](https://arxiv.org/html/2606.25189v2))
+
 ---
 
 ## Implications for partforge
 
 Already aligned with best practice: `partforge measure` with verify gates and
 non-zero exit, canonical-angle `render`, `verify` blocks with min-wall, assembly
-interpenetration checks, declarative build-step vocabulary with named sub-parts,
-request-a-pick for symbolic selection, worked examples as the documentation spine.
+interpenetration and near-miss/contact/clearance checks, structured corrective
+diagnostics, a symptom-indexed error-pattern library, declarative build-step vocabulary
+with named sub-parts, request-a-pick for symbolic selection, and worked examples as the
+documentation spine.
 
 Gaps, in priority order:
 
-1. **Structured, prescriptive diagnostics** — `(cause, location, hint)` on every
-   failed check; surface the min-wall location `measure` already computes but
-   drops. → [#27](https://github.com/scottsykora/partforge/issues/27)
-2. **Error→solution pattern library** — symptom-indexed `docs/ERROR-PATTERNS.md`
-   wired into the agent surface. →
-   [#28](https://github.com/scottsykora/partforge/issues/28)
-3. **Near-miss gap detection** — the documented verifier blind spot; `contacts` /
-   `clearance` gates in `verify.expect`. →
-   [#29](https://github.com/scottsykora/partforge/issues/29)
-4. Richer `render` for complex parts: a section-cut/x-ray view and a close-up of
-   the tightest feature (renders matter most exactly where parts are hardest).
-5. Validation-question loop for visual checks (derive binary questions from the
+1. **Separate acceptance authority from implementation** — preserve stable,
+   user/specification-derived requirement IDs and thresholds outside the repairable
+   geometry/check implementation; an agent may add checks but not weaken the contract.
+2. **Fresh evidence for completion** — bind a passing report to the current source,
+   parameters, view, backend, and framework version; any relevant edit invalidates it.
+   A future `partforge check` command could emit this as one machine-readable bundle.
+3. **Engineering-intent blueprint for physical parts** — state coordinate frame,
+   datums, interfaces/tolerances, material/process assumptions, loads, supports, load
+   paths, safety factors, and unresolved assumptions before geometry.
+4. **Independent physical validation** — for load-bearing/safety-relevant parts,
+   supplement geometric gates with analytical checks or an external FEA adapter and
+   qualified human review; never describe `verify` alone as proof of safety.
+5. Richer, targeted `render` for complex parts: section/x-ray views and close-ups at
+   named interfaces or reported failure locations, with view count driven by complexity.
+6. Validation-question loop for visual checks (derive binary questions from the
    request; feed only failures back) rather than raw "does this look right".
-6. Cap agent repair loops at ~2–3 rounds; for non-trivial parts require a
-   plan/blueprint step before geometry edits.
-7. Keep the vocabulary explicit and named (`along().at()`, `rotateAbout`, named
+7. Cap unguided repair loops at ~2–3 rounds; continue longer only while hard external
+   metrics provide new failure margins and measurable progress.
+8. Keep the vocabulary explicit and named (`along().at()`, `rotateAbout`, named
    sub-parts); resist coordinate-heavy or fluent-chained API additions.
 
 ## Sources
@@ -182,7 +224,10 @@ Primary papers: [2505.06507](https://arxiv.org/pdf/2505.06507) (Text-to-CadQuery
 [2606.20607](https://arxiv.org/pdf/2606.20607) (LLM4CAD-Editor),
 [2310.10508](https://arxiv.org/html/2310.10508v2) (prompting-vs-finetune study),
 [2410.03981](https://arxiv.org/abs/2410.03981) (low-resource DSL survey),
-plus Hephaestus-CCX ([2605.17448](https://arxiv.org/pdf/2605.17448)).
+Hephaestus-CCX ([2605.17448](https://arxiv.org/pdf/2605.17448)),
+[2411.08027](https://arxiv.org/abs/2411.08027) (LLMPhy),
+[2512.20732](https://arxiv.org/pdf/2512.20732) (FEM-Bench), and
+[2606.25189](https://arxiv.org/html/2606.25189v2) (ActPlane).
 Practitioner: [cad-khana](https://github.com/cyberchitta/cad-khana),
 [Zoo/KCL](https://zoo.dev/research/introducing-kcl),
 [Will Patrick — Teaching LLMs how to solid model](https://willpatrick.xyz/technology/2025/04/23/teaching-llms-how-to-solid-model.html),
