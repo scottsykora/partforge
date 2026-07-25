@@ -12,6 +12,7 @@ const TOGGLE_FIELDS = ["key", "label", "on", "hidden", "description"];
 
 const sections = (part) => (Array.isArray(part?.parameters) ? part.parameters : []);
 const arr = (x) => (Array.isArray(x) ? x : []);
+const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 
 // Every (descriptor, path, allowed-fields) triple that owns a parameter key, across
 // all four section kinds. A feature's own `sliders` are collected too, since each
@@ -64,8 +65,11 @@ export const SCHEMA_RULES = [
   {
     id: "control-key-not-in-defaults",
     run: ({ part }) => {
+      // Only skip when `defaults` isn't a plain object at all (missing-defaults
+      // already reports that) — an explicit `defaults: {}` must still be checked,
+      // otherwise every control key in the part is silently unreachable and dead.
+      if (!isPlainObject(part?.defaults)) return [];
       const known = defaultKeys(part);
-      if (known.size === 0) return []; // missing-defaults already reported it
       return collectDescriptors(part)
         .filter(({ d }) => typeof d.key === "string" && !known.has(d.key))
         .map(({ d, path }) => err("control-key-not-in-defaults",
@@ -77,8 +81,10 @@ export const SCHEMA_RULES = [
   {
     id: "preset-key-not-in-defaults",
     run: ({ part }) => {
+      // Same guard as control-key-not-in-defaults: only bail when `defaults` is
+      // entirely absent (or not an object), not merely empty.
+      if (!isPlainObject(part?.defaults)) return [];
       const known = defaultKeys(part);
-      if (known.size === 0) return [];
       const out = [];
       sections(part).forEach((sec, si) => {
         const presets = sec?.presets;
@@ -104,10 +110,13 @@ export const SCHEMA_RULES = [
       const defaults = part?.defaults ?? {};
       return collectDescriptors(part)
         // A slider that shares its key with the feature that owns it (demo.js's
-        // flange_d) isn't an independent value — `defaults[key] === 0` there is the
-        // feature's documented off-sentinel (controls.js sets it on uncheck), not a
-        // slider value out of its own range, so it's exempt from this check.
-        .filter(({ d, featureKey }) => !(featureKey !== undefined && featureKey === d.key))
+        // flange_d) is exempt ONLY when the default is actually the feature's
+        // off-sentinel: controls.js sets `params[feat.key] = 0` on uncheck (and
+        // reads `params[feat.key] > 0` to decide checked state), so `0` there means
+        // "off", not "out of range". Matching keys alone isn't enough — a mistyped
+        // non-zero "on" default (e.g. 999 against an 8..50 slider) is exactly the
+        // authoring mistake this rule exists to catch, and must still warn.
+        .filter(({ d, featureKey }) => !(featureKey !== undefined && featureKey === d.key && defaults[d.key] === 0))
         .filter(({ d }) => typeof d.key === "string"
           && typeof defaults[d.key] === "number"
           && (typeof d.min === "number" || typeof d.max === "number")

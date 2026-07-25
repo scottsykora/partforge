@@ -105,3 +105,33 @@ test("a part with no parameters section produces no schema findings", () => {
   const r = lintPart(part);
   expect(ids(r.errors)).toEqual([]);
 });
+
+test("a feature's own-key slider with the off-sentinel default does not warn", () => {
+  // goodPart() already is exactly this shape: feature "flange_d" owns a slider
+  // keyed "flange_d" (range 8..50), and defaults.flange_d is 0 — controls.js's
+  // documented "feature off" sentinel, not an out-of-range slider value.
+  const r = lintPart(goodPart());
+  expect(ids(r.warnings)).not.toContain("slider-range-excludes-default");
+});
+
+test("a feature's own-key slider with a non-sentinel out-of-range default still warns", () => {
+  // Same shape as demo.js, but the default is a mistyped "on" value (999) rather
+  // than the 0 off-sentinel — matching keys alone must not exempt this from the
+  // range check, since it's exactly the authoring mistake the rule exists to catch.
+  const part = goodPart();
+  part.defaults.flange_d = 999; // slider range is min:8 max:50
+  const r = lintPart(part);
+  expect(ids(r.warnings)).toContain("slider-range-excludes-default");
+  expect(find(r, "slider-range-excludes-default").path).toBe("parameters[0].features[0].sliders[0]");
+});
+
+test("an explicit empty defaults still gets its control keys checked", () => {
+  // missing-defaults (shape rule) only fires when `defaults` isn't a plain object;
+  // an explicit `defaults: {}` passes that check but must not silently exempt
+  // control-key-not-in-defaults, or a real control key with no matching default
+  // goes unreported forever.
+  const part = goodPart();
+  part.defaults = {};
+  const r = lintPart(part);
+  expect(ids(r.errors)).toContain("control-key-not-in-defaults");
+});
