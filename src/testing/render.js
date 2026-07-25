@@ -5,11 +5,22 @@ import { bounds } from "./mesh.js";
 
 // Canonical view directions in MODEL space (Z-up). `dir` is the direction from
 // the part centre toward the camera; `up` is the camera up vector.
-const ANGLES = {
-  iso:   { dir: [1, 1, 1],  up: [0, 0, 1] },
-  front: { dir: [0, -1, 0], up: [0, 0, 1] },
-  top:   { dir: [0, 0, 1],  up: [0, 1, 0] },
+//
+// The same seven cameras as the viewer's framework/view-angles.js, which states
+// them in the viewer's Y-up WORLD space (the pivot rotates the Z-up model into
+// it). The two tables are related by model (x, y, z) → world (x, z, -y), and
+// test/render-angles.test.js holds them to that — an agent asking for `left`
+// through the CLI and through the browser must be shown the same face.
+export const RENDER_ANGLES = {
+  iso:    { dir: [1, -1, 1], up: [0, 0, 1] },
+  front:  { dir: [0, -1, 0], up: [0, 0, 1] },
+  back:   { dir: [0, 1, 0],  up: [0, 0, 1] },
+  top:    { dir: [0, 0, 1],  up: [0, 1, 0] },
+  bottom: { dir: [0, 0, -1], up: [0, -1, 0] },
+  left:   { dir: [-1, 0, 0], up: [0, 0, 1] },
+  right:  { dir: [1, 0, 0],  up: [0, 0, 1] },
 };
+export const RENDER_VIEWS = Object.keys(RENDER_ANGLES);
 
 const slug = (s) => String(s).toLowerCase().replace(/\s+/g, "-");
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -40,7 +51,6 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
   const radius = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 || 5;
 
   const bg = [0x15, 0x18, 0x1d], base = [0x9f, 0xb4, 0xcc], edgeColor = [0x1c, 0x23, 0x2d];
-  const light = norm([0.4, 0.5, 0.8]); // world-space key direction (toward the light)
   const ambient = 0.35, diffuse = 0.75;
   const bias = radius * 0.02;           // edge depth bias so visible edges win ties
 
@@ -49,10 +59,16 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
   const written = [];
 
   for (const angle of views) {
-    const a = ANGLES[angle];
-    if (!a) throw new Error(`unknown angle "${angle}" (use: ${Object.keys(ANGLES).join(", ")})`);
+    const a = RENDER_ANGLES[angle];
+    if (!a) throw new Error(`unknown angle "${angle}" (use: ${RENDER_VIEWS.join(", ")})`);
     // orthographic camera basis: zc toward camera, xc right, yc up
     const zc = norm(a.dir), xc = norm(cross(a.up, zc)), yc = cross(zc, xc);
+    // Key direction (toward the light), placed over the viewer's shoulder — up and to
+    // the right of the view axis — so every angle is lit and shaded. A world-fixed key
+    // would leave whichever face the camera happens to be looking at in flat ambient:
+    // that is what made `bottom` a featureless disc, and the browser viewer's offscreen
+    // captures had the same bug (framework/viewer-lighting.js captureLightPoses).
+    const light = norm([0, 1, 2].map((i) => zc[i] + 0.45 * xc[i] + 0.75 * yc[i]));
     const ppu = Math.min(W, H) / (2 * radius * 1.25); // pixels per mm (uniform; margin)
     const project = (p) => {
       const r = sub(p, center);
