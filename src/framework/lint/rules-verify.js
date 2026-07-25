@@ -90,7 +90,11 @@ function checkContacts(contacts, names, path) {
       return;
     }
     out.push(...checkSameName(pair[0], pair[1], pairPath));
-    out.push(...checkPairNames(pair[0], pair[1], names, pairPath));
+    // `requirePair` (verify.js:41) checks the same-name case first and throws
+    // before ever looking at `part.parts` — so a same-name pair never reaches the
+    // unknown-name check at runtime either. Skip it here too, or an unknown
+    // self-paired name would double-report (once per identical position).
+    if (pair[0] !== pair[1]) out.push(...checkPairNames(pair[0], pair[1], names, pairPath));
   });
   return out;
 }
@@ -111,7 +115,9 @@ function checkClearance(clearance, names, path) {
       continue;
     }
     out.push(...checkSameName(pair[0], pair[1], pairPath));
-    out.push(...checkPairNames(pair[0], pair[1], names, pairPath));
+    // Same short-circuit as `checkContacts` above: a same-name pair never reaches
+    // the unknown-name check at runtime (or here), so it can't double-report.
+    if (pair[0] !== pair[1]) out.push(...checkPairNames(pair[0], pair[1], names, pairPath));
   }
   return out;
 }
@@ -137,6 +143,38 @@ function checkClearanceExprs(clearance, path) {
     }
   }
   return out;
+}
+
+// Static walk of `resolveProfile`'s (dfm-profiles.js) `base` chain, mirroring its
+// exact throw conditions at every level: a string not in `PROFILES` ("unknown
+// process profile"), or — recursively — a bad `base` nested inside a `base`
+// object. A falsy `base` resolves to `{}` at runtime (`spec.base ? … : {}`) and
+// is never reached, so it's left alone here too. `seen` records every `base`
+// value already visited so a self-referential or cyclic chain (`base.base ===
+// base`) cannot recurse forever — `lintPart` must always terminate. `depth` is a
+// second, cheap belt-and-suspenders cap for the same reason.
+function checkProcessSpec(spec, path, valid, seen, depth = 0) {
+  if (depth > 50) return []; // pathological chain — bail rather than hang
+  if (typeof spec === "string") {
+    if (valid.includes(spec)) return [];
+    const hint = suggest(spec, valid);
+    return [err("verify-unknown-process",
+      `\`${path}\` names "${spec}", which is not a known DFM profile`,
+      `Use one of: ${valid.join(", ")}${hint ? ` — did you mean "${hint}"?` : ""}, or pass an inline profile object such as \`{ bed: [220, 220, 250], minWall: 1.2 }\`.`,
+      path)];
+  }
+  if (spec && typeof spec === "object") {
+    if (!spec.base) return []; // no base (or a falsy one) — nothing further to resolve
+    if (seen.has(spec.base)) return []; // already visited — self-referential/cyclic, stop
+    seen.add(spec.base);
+    return checkProcessSpec(spec.base, `${path}.base`, valid, seen, depth + 1);
+  }
+  // Anything else truthy (number, boolean, …) is what resolveProfile's final
+  // branch throws "invalid process profile" for.
+  return [err("verify-unknown-process",
+    `\`${path}\` is not a valid DFM profile: ${describe(spec)}`,
+    `Use one of: ${valid.join(", ")}, or an inline profile object such as \`{ bed: [220, 220, 250], minWall: 1.2 }\`.`,
+    path)];
 }
 
 export const VERIFY_RULES = [
@@ -238,15 +276,12 @@ export const VERIFY_RULES = [
     id: "verify-unknown-process",
     run: ({ part }) => {
       const process = part?.verify?.process;
+      // verify.js:163-164 — `profileSpec ?? part.verify?.process` then
+      // `profileSpec ? resolveProfile(profileSpec) : null` — an absent or null
+      // `process` is never passed to `resolveProfile`, so it can't throw.
       if (process === undefined || process === null) return [];
-      if (typeof process === "object") return []; // an inline { bed, minWall, clearance } profile
       const valid = Object.keys(PROFILES);
-      if (valid.includes(process)) return [];
-      const hint = suggest(String(process), valid);
-      return [err("verify-unknown-process",
-        `\`verify.process\` names "${process}", which is not a known DFM profile`,
-        `Use one of: ${valid.join(", ")}${hint ? ` — did you mean "${hint}"?` : ""}, or pass an inline profile object such as \`{ bed: [220, 220, 250], minWall: 1.2 }\`.`,
-        "verify.process")];
+      return checkProcessSpec(process, "verify.process", valid, new Set());
     },
   },
 ];

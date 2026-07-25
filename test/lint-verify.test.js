@@ -72,6 +72,26 @@ test("an inline process object is accepted", () => {
   expect(ids(r.errors)).not.toContain("verify-unknown-process");
 });
 
+test("an inline process object with an unknown base is an error", () => {
+  const r = lintPart(partWith({ process: { base: "fdm-unobtanium" }, expect: {} }));
+  expect(ids(r.errors)).toContain("verify-unknown-process");
+});
+
+test("a nested unknown base (base of a base) is an error", () => {
+  const r = lintPart(partWith({ process: { base: { base: "nope" } }, expect: {} }));
+  expect(ids(r.errors)).toContain("verify-unknown-process");
+});
+
+test("an inline process object with a valid base is accepted", () => {
+  const r = lintPart(partWith({ process: { base: "fdm-pla", minWall: 2 }, expect: {} }));
+  expect(ids(r.errors)).not.toContain("verify-unknown-process");
+});
+
+test("an inline process object with no base is accepted", () => {
+  const r = lintPart(partWith({ process: { bed: [200, 200, 200], minWall: 1.2 }, expect: {} }));
+  expect(ids(r.errors)).not.toContain("verify-unknown-process");
+});
+
 test("the function form of expect is resolved and linted", () => {
   const r = lintPart(partWith({ expect: () => ({ body: { wallThickness: 2 } }) }));
   expect(ids(r.errors)).toContain("verify-unknown-metric");
@@ -161,6 +181,15 @@ test("a clearance key naming the same sub-part twice is an error", () => {
 test("a valid two-different-names contacts pair produces no pair-check findings", () => {
   const r = lintPart(partWithTwoSubparts({ expect: { _view: { contacts: [["lid", "body"]] } } }));
   expect(ids(r.errors)).not.toContain("verify-bad-pair-check");
+});
+
+test("a same-name pair naming an undeclared sub-part produces exactly one finding", () => {
+  // requirePair (verify.js:41) checks the same-name case first and short-circuits,
+  // so at runtime only one error would ever be thrown — not a bad-pair-check plus
+  // two duplicate unknown-subpart findings for the one undeclared name.
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { contacts: [["flange", "flange"]] } } }));
+  expect([...r.errors, ...r.warnings]).toHaveLength(1);
+  expect(ids(r.errors)).toEqual(["verify-bad-pair-check"]);
 });
 
 // --- verify-bad-expr: clearance values are assertions -----------------------
