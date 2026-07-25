@@ -1764,9 +1764,10 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 
-const CLI = new URL("../bin/cli.js", import.meta.url).pathname;
+const CLI = fileURLToPath(new URL("../bin/cli.js", import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "pf-lint-"));
 
 // Write a part module to a temp file and return its path.
@@ -2157,7 +2158,7 @@ import { readdirSync } from "node:fs";
 import { expect, test } from "vitest";
 import { lintPart } from "../src/lint.js";
 
-const files = readdirSync(new URL("../src/parts", import.meta.url).pathname).filter((f) => f.endsWith(".js"));
+const files = readdirSync(fileURLToPath(new URL("../src/parts", import.meta.url))).filter((f) => f.endsWith(".js"));
 
 test("src/parts is not empty (the sweep would pass vacuously otherwise)", () => {
   expect(files.length).toBeGreaterThan(0);
@@ -2193,7 +2194,7 @@ import { dirname, resolve } from "node:path";
 import { expect, test } from "vitest";
 
 const BANNED = ["three", "manifold-3d", "replicad", "replicad-opencascadejs"];
-const ENTRY = new URL("../src/lint.js", import.meta.url).pathname;
+const ENTRY = fileURLToPath(new URL("../src/lint.js", import.meta.url));
 
 // Collect every static import specifier in a module.
 const importsOf = (src) =>
@@ -2440,7 +2441,7 @@ import { readFileSync } from "node:fs";
 
 ```js
 test("every rule id is documented in AUTHORING-PARTS.md", () => {
-  const docs = readFileSync(new URL("../docs/AUTHORING-PARTS.md", import.meta.url).pathname, "utf8");
+  const docs = readFileSync(fileURLToPath(new URL("../docs/AUTHORING-PARTS.md", import.meta.url)), "utf8");
   for (const r of RULES) expect(docs, `${r.id} is missing from the docs`).toContain(r.id);
 });
 ```
