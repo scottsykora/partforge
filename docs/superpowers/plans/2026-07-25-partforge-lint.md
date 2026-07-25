@@ -2250,12 +2250,10 @@ Create `test/lint-registry.test.js`:
 
 ```js
 // The rule registry is the documented catalog. Like test/kernel-contract.test.js, this
-// pins the code to the docs so the two can't drift.
-import { readFileSync } from "node:fs";
+// pins the code to the docs so the two can't drift. The docs-coverage assertion lands
+// in Task 10 with the catalog it checks, so every task in this plan ends green.
 import { expect, test } from "vitest";
 import { RULES } from "../src/lint.js";
-
-const DOCS = readFileSync(new URL("../docs/AUTHORING-PARTS.md", import.meta.url).pathname, "utf8");
 
 test("every rule has a unique id", () => {
   const ids = RULES.map((r) => r.id);
@@ -2270,10 +2268,6 @@ test("every rule exposes a run function", () => {
   for (const r of RULES) expect(typeof r.run, `${r.id} has no run()`).toBe("function");
 });
 
-test("every rule id is documented in AUTHORING-PARTS.md", () => {
-  for (const r of RULES) expect(DOCS, `${r.id} is missing from the docs`).toContain(r.id);
-});
-
 test("the registry covers all four rule groups", () => {
   const ids = RULES.map((r) => r.id);
   for (const id of ["missing-views", "features-requires-sliders", "invalid-op-options", "verify-unknown-metric"]) {
@@ -2286,9 +2280,10 @@ test("the registry covers all four rule groups", () => {
 - [ ] **Step 6: Run it**
 
 Run: `npx vitest run test/lint-registry.test.js`
-Expected: the documentation test FAILS at this point — the rule ids are not in `AUTHORING-PARTS.md` until Task 10. That is intentional: Task 10 makes it pass. Every other test in the file must pass now.
+Expected: PASS, 4 tests.
 
-Leave the failing docs assertion in place; do not weaken it. Note it in your report so the Task 10 implementer knows the test is waiting on them.
+Run: `npx vitest run`
+Expected: the entire suite passes. Every task in this plan ends green.
 
 - [ ] **Step 7: Commit**
 
@@ -2314,9 +2309,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Modify: `AGENTS.md` (CLI command list, around line 40)
 - Modify: `skills/partforge/SKILL.md` (CLI command list)
 - Modify: `package.json` (version)
+- Modify: `test/lint-registry.test.js` (add the docs-coverage assertion)
 
 **Interfaces:**
-- Consumes: the rule ids from Tasks 2, 3, 5, 6; `test/lint-registry.test.js` from Task 9, which gates on this documentation.
+- Consumes: the rule ids from Tasks 2, 3, 5, 6; `test/lint-registry.test.js` from Task 9, which this task extends with the docs-coverage assertion.
 - Produces: `docs/AUTHORING-PARTS.md` contains every rule id; version becomes `0.26.0`.
 
 - [ ] **Step 1: Add the Linting section to AUTHORING-PARTS.md**
@@ -2428,10 +2424,25 @@ In `package.json`, change `"version": "0.25.0"` to `"version": "0.26.0"`. Leave
 `CONTRACT_VERSION` in `src/framework/geometry/kernel.js` at `1` — this release is
 purely additive and changes no kernel contract.
 
-- [ ] **Step 5: Run the registry test, then the whole suite**
+- [ ] **Step 5: Add the docs-coverage assertion to the registry test**
+
+The catalog now exists, so pin it. In `test/lint-registry.test.js`, add the `readFileSync` import and a fifth test. This is what stops a future rule from being added to the registry without a doc entry:
+
+```js
+import { readFileSync } from "node:fs";
+```
+
+```js
+test("every rule id is documented in AUTHORING-PARTS.md", () => {
+  const docs = readFileSync(new URL("../docs/AUTHORING-PARTS.md", import.meta.url).pathname, "utf8");
+  for (const r of RULES) expect(docs, `${r.id} is missing from the docs`).toContain(r.id);
+});
+```
+
+- [ ] **Step 6: Run the registry test, then the whole suite**
 
 Run: `npx vitest run test/lint-registry.test.js`
-Expected: PASS, 5 tests — including the documentation assertion that was failing after Task 9.
+Expected: PASS, 5 tests — including the new documentation assertion. If it fails, a rule id is missing from the catalog you wrote in Step 1; add it there rather than relaxing the test.
 
 Run: `npx vitest run`
 Expected: the entire suite passes.
@@ -2439,7 +2450,7 @@ Expected: the entire suite passes.
 Run: `npm run check`
 Expected: the headless smoke check boots the demo app in real Chromium without console errors. (Requires Playwright's Chromium: `npx playwright install chromium`. If Playwright is unavailable in your environment, say so in your report rather than skipping silently.)
 
-- [ ] **Step 6: Verify the CLI end-to-end by hand**
+- [ ] **Step 7: Verify the CLI end-to-end by hand**
 
 Run: `npx partforge lint src/parts/demo.js`
 Expected: prints `lint: clean` and exits 0.
@@ -2447,10 +2458,10 @@ Expected: prints `lint: clean` and exits 0.
 Run: `npx partforge lint src/parts/planter.js --json`
 Expected: valid JSON with `"ok": true`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add docs/AUTHORING-PARTS.md docs/ERROR-PATTERNS.md AGENTS.md skills/partforge/SKILL.md package.json
+git add docs/AUTHORING-PARTS.md docs/ERROR-PATTERNS.md AGENTS.md skills/partforge/SKILL.md package.json test/lint-registry.test.js
 git commit -m "docs: document partforge lint; release 0.26.0
 
 Adds the Linting section with the finding contract and full rule catalog (which
