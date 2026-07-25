@@ -9,8 +9,9 @@
 import { resolveDerived } from "../derive.js";
 import { warn } from "./finding.js";
 import { SHAPE_RULES } from "./rules-shape.js";
+import { SCHEMA_RULES } from "./rules-schema.js";
 
-export const RULES = [...SHAPE_RULES];
+export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES];
 
 // Every rule runs inside a guard. lintPart is called on a user-facing hosted path
 // (partforge-cloud's sandbox), and a linter that takes down the preview it exists to
