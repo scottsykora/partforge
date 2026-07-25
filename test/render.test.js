@@ -2,7 +2,7 @@ import { beforeAll, afterAll, expect, test } from "vitest";
 import { rmSync, existsSync, statSync, readFileSync } from "node:fs";
 import { PNG } from "pngjs";
 import { bootManifoldKernel } from "../src/testing.js";
-import { renderViews } from "../src/testing/render.js";
+import { renderViews, RENDER_VIEWS } from "../src/testing/render.js";
 import part from "../src/parts/demo.js";
 
 let k;
@@ -26,4 +26,31 @@ test("renderViews writes a valid, non-blank PNG per requested angle", async () =
       if (Math.abs(png.data[i] - bg[0]) > 8 || Math.abs(png.data[i + 1] - bg[1]) > 8 || Math.abs(png.data[i + 2] - bg[2]) > 8) nonBg++;
     expect(nonBg).toBeGreaterThan(100);
   }
+});
+
+// The four angles beyond iso/front/top used to throw "unknown angle" — the reason a
+// consumer inspecting an underside headlessly had nothing to look at.
+test("renderViews handles every canonical angle, and they are not all the same picture", async () => {
+  const files = await renderViews(k, part, "spacer", { views: RENDER_VIEWS, out: OUT, size: [160, 160] });
+  expect(files).toHaveLength(7);
+
+  const pixels = files.map((f) => {
+    const png = PNG.sync.read(readFileSync(f));
+    const bg = [0x15, 0x18, 0x1d];
+    let nonBg = 0;
+    for (let i = 0; i < png.data.length; i += 4)
+      if (Math.abs(png.data[i] - bg[0]) > 8 || Math.abs(png.data[i + 1] - bg[1]) > 8 || Math.abs(png.data[i + 2] - bg[2]) > 8) nonBg++;
+    return { file: f, nonBg, data: png.data.toString("base64") };
+  });
+
+  // every angle actually drew the part
+  for (const p of pixels) expect(p.nonBg, p.file).toBeGreaterThan(100);
+  // and the camera really moved: an end-on view cannot look like a side-on one.
+  // (top vs bottom, or left vs right, are legitimately pixel-identical here — the demo
+  // spacer is a straight bored cylinder, symmetric about both. Asserting those differ
+  // would be testing the part, not the renderer.)
+  const byView = Object.fromEntries(RENDER_VIEWS.map((v, i) => [v, pixels[i].data]));
+  expect(byView.top).not.toBe(byView.front);
+  expect(byView.bottom).not.toBe(byView.left);
+  expect(byView.iso).not.toBe(byView.front);
 });
