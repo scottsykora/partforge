@@ -10,6 +10,14 @@ const unique = (xs) => [...new Set(xs)];
 
 export const BUILD_RULES = [
   {
+    id: "derive-throws",
+    run: ({ deriveError }) => (deriveError ? [
+      err("derive-throws", `derive(p) threw: ${deriveError}`,
+        "derive(p) must return derived values for any parameter set the defaults allow — fix the error so it does not throw. As written, the app is left spinning with no geometry: resolveParams's catch reports the failure but no build ever runs.",
+        "derive"),
+    ] : []),
+  },
+  {
     id: "unknown-kernel-op",
     run: ({ probe }) => unique(probe().issues
       .filter((i) => i.kind === "unknown-op" && i.scope === "kernel").map((i) => i.op))

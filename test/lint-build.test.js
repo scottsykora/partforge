@@ -14,6 +14,25 @@ const partWith = (build, extra = {}) => ({
 const ids = (findings) => findings.map((f) => f.rule);
 const find = (r, rule) => [...r.errors, ...r.warnings].find((f) => f.rule === rule);
 
+test("a throwing derive is an error naming the thrown message", () => {
+  const r = lintPart(partWith((k) => k.cylinder({ r: 5, h: 10 }),
+    { derive: () => { throw new Error("bad derive maths"); } }));
+  expect(ids(r.errors)).toContain("derive-throws");
+  expect(find(r, "derive-throws").message).toContain("bad derive maths");
+  expect(find(r, "derive-throws").path).toBe("derive");
+});
+
+test("a working derive is not flagged as derive-throws", () => {
+  const r = lintPart(partWith((k) => k.cylinder({ r: 5, h: 10 }),
+    { derive: (p) => ({ doubled: (p.r ?? 5) * 2 }) }));
+  expect(ids(r.errors)).not.toContain("derive-throws");
+});
+
+test("a part with no derive at all is not flagged as derive-throws", () => {
+  const r = lintPart(partWith((k) => k.cylinder({ r: 5, h: 10 })));
+  expect(ids(r.errors)).not.toContain("derive-throws");
+});
+
 test("a valid build produces no build findings", () => {
   const r = lintPart(partWith((k) => k.cylinder({ r: 5, h: 10 })));
   expect(ids(r.errors)).toEqual([]);

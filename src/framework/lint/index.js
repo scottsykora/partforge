@@ -35,16 +35,17 @@ export function runRules(rules, ctx) {
 }
 
 // Build the shared context. A throwing derive() must not abort the lint — the
-// `derive-throws` condition is reported by Group 3's build rules, and Groups 1/2/4
-// remain useful without derived values.
+// throw is captured as `deriveError` (for Group 3's `derive-throws` rule) and `d`
+// falls back to {}, so Groups 1/2/4 remain useful without derived values.
 export function lintContext(part, params) {
   const p = { ...(part?.defaults ?? {}), ...(params ?? {}) };
   let d = {};
-  try { d = resolveDerived(part, p) ?? {}; } catch { d = {}; }
+  let deriveError = null;
+  try { d = resolveDerived(part, p) ?? {}; } catch (e) { d = {}; deriveError = e?.message || String(e); }
   let cached = null;
   const probe = () => (cached ??= runValidatingProbe(part, p, d));
   const probeAgain = () => runValidatingProbe(part, p, d);
-  return { part, p, d, probe, probeAgain };
+  return { part, p, d, deriveError, probe, probeAgain };
 }
 
 /**
