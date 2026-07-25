@@ -5,8 +5,34 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { createCutaway } from "./cutaway.js";
-import { addViewerLights } from "./viewer-lighting.js";
+import { addViewerLights, captureLightPoses, createCaptureLights } from "./viewer-lighting.js";
 import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
+
+// three renders into a render target in the LINEAR working colour space: as of r184
+// WebGLRenderer only applies `outputColorSpace` on the canvas path (WebGLPrograms
+// substitutes workingColorSpace whenever a render target is bound), so readback pixels
+// are linear no matter what the target texture's colorSpace says. Writing them straight
+// into a JPEG is what made captured views come back muddy and dark compared to the live
+// canvas. Encode the transfer function ourselves. The 8-bit LUT loses precision only in
+// the deepest shadows, which a quality-0.9 JPEG would not have preserved anyway.
+const SRGB8 = (() => {
+  const table = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) {
+    const l = i / 255;
+    table[i] = Math.round(255 * (l <= 0.0031308 ? 12.92 * l : 1.055 * l ** (1 / 2.4) - 0.055));
+  }
+  return table;
+})();
+
+// Linear RGBA bytes → sRGB, in place. Alpha is a coverage value, not a colour: untouched.
+export function srgbEncodeInPlace(data) {
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = SRGB8[data[i]];
+    data[i + 1] = SRGB8[data[i + 1]];
+    data[i + 2] = SRGB8[data[i + 2]];
+  }
+  return data;
+}
 
 // Render a set of canonical views without disturbing the live camera/canvas.
 // `renderer.renderOffscreen(pose)` does the GL work (temp camera → offscreen
@@ -57,7 +83,7 @@ export function createViewer(container, part) {
   controls.autoRotateSpeed = 1.6;
 
   // --- lights + grid --------------------------------------------------------
-  addViewerLights(scene);
+  const liveLights = addViewerLights(scene);
   // 1 cm grid (mm units): 300 mm wide, 30 divisions -> 10 mm (1 cm) squares.
   const GRID_SIZE = 300, GRID_DIVS = 30;
   let floorY = 0; // world Y of the grid plane; set to the part's bbox bottom in frameTo
@@ -288,19 +314,47 @@ export function createViewer(container, part) {
   // Offscreen render of the shared scene from an arbitrary pose → JPEG data URL.
   // A separate WebGLRenderTarget + temp camera means the visible canvas and the
   // live `camera` are never touched. WebGL pixels are bottom-up, so flip on encode.
-  const _rtSize = 512;
+  //
+  // These captures are read by a model, not shown as a thumbnail (partforge-cloud's
+  // render_part_views tool feeds them straight to the agent), so they are sized and lit
+  // for reading small features: 1024² is the largest square that fits Anthropic's
+  // ~1.15 MP no-downscale budget, 4× MSAA keeps a thin wall from aliasing into noise,
+  // and the light rig follows the camera so no view is a flat silhouette.
+  const _rtSize = 1024;
   let _rt = null;
+  let _capLights = null;
   function renderOffscreen({ position, up, target }) {
-    _rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize);
+    _rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize, { samples: 4 });
+    _capLights = _capLights ?? createCaptureLights();
     const cam = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
     cam.position.set(position[0], position[1], position[2]);
     cam.up.set(up[0], up[1], up[2]);
     cam.lookAt(target[0], target[1], target[2]);
-    renderer.setRenderTarget(_rt);
-    renderer.render(scene, cam);
     const buf = new Uint8Array(_rtSize * _rtSize * 4);
-    renderer.readRenderTargetPixels(_rt, 0, 0, _rtSize, _rtSize, buf);
-    renderer.setRenderTarget(null);
+    // Swap the world-fixed key/fill for the camera-relative pair, for this one render
+    // only. A DirectionalLight aims at its `target`, whose matrixWorld only updates
+    // while it is in the scene graph, so both go in and both come back out.
+    const poses = captureLightPoses({ position, up, target });
+    const { key: capKey, fill: capFill } = _capLights;
+    capKey.position.set(poses.key[0], poses.key[1], poses.key[2]);
+    capFill.position.set(poses.fill[0], poses.fill[1], poses.fill[2]);
+    for (const light of [capKey, capFill]) light.target.position.set(target[0], target[1], target[2]);
+    liveLights.key.visible = false;
+    liveLights.fill.visible = false;
+    scene.add(capKey, capKey.target, capFill, capFill.target);
+    try {
+      renderer.setRenderTarget(_rt);
+      renderer.render(scene, cam);
+      // render() resolves the multisample renderbuffer into the target texture, so this
+      // reads antialiased pixels.
+      renderer.readRenderTargetPixels(_rt, 0, 0, _rtSize, _rtSize, buf);
+    } finally {
+      // Never leave the user's own view unlit or pointed at the offscreen target.
+      renderer.setRenderTarget(null);
+      scene.remove(capKey, capKey.target, capFill, capFill.target);
+      liveLights.key.visible = true;
+      liveLights.fill.visible = true;
+    }
     const canvas = document.createElement("canvas");
     canvas.width = _rtSize; canvas.height = _rtSize;
     const ctx = canvas.getContext("2d");
@@ -310,8 +364,9 @@ export function createViewer(container, part) {
       const src = (_rtSize - 1 - y) * _rtSize * 4;
       img.data.set(buf.subarray(src, src + _rtSize * 4), y * _rtSize * 4);
     }
+    srgbEncodeInPlace(img.data);
     ctx.putImageData(img, 0, 0);
-    return canvas.toDataURL("image/jpeg", 0.8);
+    return canvas.toDataURL("image/jpeg", 0.9);
   }
 
   // Render the canonical camera angles offscreen, framed to whatever is visible,
