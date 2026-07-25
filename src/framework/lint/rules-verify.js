@@ -43,6 +43,18 @@ const describe = (v) => { try { return JSON.stringify(v); } catch { return Strin
 // (a runtime `contacts`/`clearance` entry can contain anything).
 const safeSuggest = (key, valid) => (typeof key === "string" ? suggest(key, valid) : null);
 
+// `requirePair` (verify.js:41) throws before it even looks at `part.parts` when a
+// pair names the same sub-part twice — a pair describes a relationship between two
+// distinct sub-parts, so self-pairs are never legal.
+function checkSameName(a, b, path) {
+  return a === b
+    ? [err("verify-bad-pair-check",
+        `\`${path}\` names the same sub-part twice ("${a}")`,
+        "A pair must name two different sub-parts. Change one side to the other sub-part it should be checked against, or remove the entry if it doesn't describe a real relationship.",
+        path)]
+    : [];
+}
+
 // Both `contacts` pairs and `clearance` keys ultimately name two sub-parts; a name
 // absent from `part.parts` is what the runtime `requirePair` throws for.
 function checkPairNames(a, b, names, path) {
@@ -77,6 +89,7 @@ function checkContacts(contacts, names, path) {
         pairPath));
       return;
     }
+    out.push(...checkSameName(pair[0], pair[1], pairPath));
     out.push(...checkPairNames(pair[0], pair[1], names, pairPath));
   });
   return out;
@@ -97,7 +110,31 @@ function checkClearance(clearance, names, path) {
         pairPath));
       continue;
     }
+    out.push(...checkSameName(pair[0], pair[1], pairPath));
     out.push(...checkPairNames(pair[0], pair[1], names, pairPath));
+  }
+  return out;
+}
+
+// `clearance`'s values genuinely are assertion expressions run through the DSL
+// (verify.js:96), unlike `contacts` (pair arrays with nothing to parse). Mirror
+// verify.js's own normalization — a bare value or an `{ expr, hint }` wrapper,
+// via `normalizeExpectation` (verify.js:91) — using the same `isExpectation` /
+// `exprOf` helpers the scalar-metric loop below uses. Reported under
+// `verify-bad-expr`, not `verify-bad-pair-check`: a malformed key is a pair-naming
+// problem, but a malformed value is an assertion-DSL problem, same as any other
+// metric's expectation.
+function checkClearanceExprs(clearance, path) {
+  if (clearance === undefined || clearance === null || typeof clearance !== "object") return [];
+  const out = [];
+  for (const [key, spec] of Object.entries(clearance)) {
+    try { parseAssertion(exprOf(spec)); }
+    catch (e) {
+      out.push(err("verify-bad-expr",
+        `the expectation for _view.clearance["${key}"] is not a valid assertion: ${e?.message || String(e)}`,
+        "Use the assertion DSL: a bare value for equality, a comparison like `>=3`, a range like `2..5`, or a componentwise vector like `<=[60,60,60]` (with `*` to skip an axis).",
+        `${path}[${JSON.stringify(key)}]`));
+    }
   }
   return out;
 }
@@ -165,8 +202,10 @@ export const VERIFY_RULES = [
       const out = [];
       for (const [target, metricsRaw] of Object.entries(expect)) {
         if (!metricsRaw || typeof metricsRaw !== "object") continue;
-        // contacts/clearance are pair checks, not scalar assertions — validated
-        // separately by verify-bad-pair-check, and excluded here.
+        // `contacts` is pair arrays with no expression to parse, and `clearance`'s
+        // values are keyed by pair name rather than metric name — both are peeled
+        // from this scalar-metric loop. `clearance`'s values are still assertions
+        // though, so they get their own pass (with a pair-shaped path) below.
         const metrics = target === "_view" ? peelPairKeys(metricsRaw) : metricsRaw;
         for (const [metric, spec] of Object.entries(metrics)) {
           try { parseAssertion(exprOf(spec)); }
@@ -178,6 +217,7 @@ export const VERIFY_RULES = [
           }
         }
       }
+      out.push(...checkClearanceExprs(expect?._view?.clearance, "verify.expect._view.clearance"));
       return out;
     },
   },

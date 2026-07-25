@@ -144,6 +144,45 @@ test("lintPart never throws on hostile pair-check input", () => {
   expect(ids(r.errors)).toContain("verify-bad-pair-check");
 });
 
+// --- verify-bad-pair-check: same-name pairs ----------------------------------
+
+test("a contacts pair naming the same sub-part twice is an error", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { contacts: [["lid", "lid"]] } } }));
+  expect(ids(r.errors)).toContain("verify-bad-pair-check");
+  expect(find(r, "verify-bad-pair-check").path).toBe("verify.expect._view.contacts[0]");
+});
+
+test("a clearance key naming the same sub-part twice is an error", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { clearance: { "lid×lid": ">=0.3" } } } }));
+  expect(ids(r.errors)).toContain("verify-bad-pair-check");
+  expect(find(r, "verify-bad-pair-check").path).toBe('verify.expect._view.clearance["lid×lid"]');
+});
+
+test("a valid two-different-names contacts pair produces no pair-check findings", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { contacts: [["lid", "body"]] } } }));
+  expect(ids(r.errors)).not.toContain("verify-bad-pair-check");
+});
+
+// --- verify-bad-expr: clearance values are assertions -----------------------
+
+test("an unparseable clearance value is an error", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { clearance: { "lid×body": ">>> bad" } } } }));
+  expect(ids(r.errors)).toContain("verify-bad-expr");
+  expect(find(r, "verify-bad-expr").path).toBe('verify.expect._view.clearance["lid×body"]');
+});
+
+test("a valid clearance scalar assertion value produces no findings", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { clearance: { "lid×body": ">=0.3" } } } }));
+  expect(ids(r.errors)).toEqual([]);
+});
+
+test("a valid clearance { expr, hint } value produces no findings", () => {
+  const r = lintPart(partWithTwoSubparts({
+    expect: { _view: { clearance: { "lid×body": { expr: ">=0.3", hint: "keep a slip fit" } } } },
+  }));
+  expect(ids(r.errors)).toEqual([]);
+});
+
 // --- resolveExpect is memoized (Finding 2) ----------------------------------
 
 test("a first-call-throwing expect() produces exactly one finding, no cascade", () => {
