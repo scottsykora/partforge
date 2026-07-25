@@ -108,7 +108,10 @@ test("verify.js re-exports the same registry objects", () => {
 
 test("suggest is exported for reuse by the linter", () => {
   expect(suggest("radius", ["r", "d", "h"])).toBe("r");
-  expect(suggest("heigth", ["r", "d", "h", "height"])).toBe("height");
+  // NB: no "h" in `valid` here — suggest()'s prefix rule would match "h" before
+  // edit-distance ever ran ("heigth".startsWith("h")), which is documented,
+  // load-bearing behaviour pinned by test/op-options.test.js.
+  expect(suggest("heigth", ["r", "d", "height"])).toBe("height");
   expect(suggest("zzzz", ["r", "d", "h"])).toBe(null);
 });
 ```
