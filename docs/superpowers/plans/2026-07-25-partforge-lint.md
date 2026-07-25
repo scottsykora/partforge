@@ -2276,7 +2276,7 @@ test("the registry covers all four rule groups", () => {
   for (const id of ["missing-views", "features-requires-sliders", "invalid-op-options", "verify-unknown-metric"]) {
     expect(ids, `registry is missing ${id}`).toContain(id);
   }
-  expect(RULES.length).toBeGreaterThanOrEqual(25);
+  expect(RULES.length).toBeGreaterThanOrEqual(27);
 });
 ```
 
@@ -2382,7 +2382,10 @@ precisely. Everything speculative is a `warning` and never blocks anything.
 `nondeterministic-build` (warning, from diffing two probe runs).
 
 **Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
-`verify-bad-expr`, `verify-unknown-process`, `verify-expect-throws` (all errors).
+`verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,
+`verify-expect-throws` (all errors). Note `_view` also accepts the pair-wise
+`contacts` / `clearance` keys, which are not scalar view metrics; they are
+validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
 
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.
