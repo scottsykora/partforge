@@ -83,6 +83,20 @@ test("an impure build produces differing recordings", () => {
   expect(JSON.stringify(a.calls)).not.toBe(JSON.stringify(b.calls));
 });
 
+test("a handle nested inside an options object records no toJSON op and no unknown-op issue", () => {
+  const build = (k) => k.extrude({ profile: k.shape2d([[0, 0], [1, 0], [1, 1]]), h: 5 });
+  const r = runValidatingProbe(partWith(build), {}, {});
+  expect(r.calls.map((c) => c.op)).not.toContain("toJSON");
+  expect(r.issues.filter((i) => i.kind === "unknown-op")).toEqual([]);
+});
+
+test("determinism holds when a build nests a handle inside an options object", () => {
+  const build = (k) => k.extrude({ profile: k.shape2d([[0, 0], [1, 0], [1, 1]]), h: 5 });
+  const a = runValidatingProbe(partWith(build), {}, {});
+  const b = runValidatingProbe(partWith(build), {}, {});
+  expect(JSON.stringify(a.calls)).toBe(JSON.stringify(b.calls));
+});
+
 // The pre-existing probe API must be untouched — detectBackend and the panel's
 // relevance analysis both depend on it.
 test("createProbeKernel still records op names for backend detection", () => {

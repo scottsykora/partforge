@@ -51,10 +51,16 @@ function makeProbe(onCall) {
     cleanup: () => {},
   };
 
-  // `ignore` keeps the proxy from masquerading as a thenable/internal handle: symbols,
-  // `then` (so it's never await-unwrapped), and `_`-prefixed internals resolve to
-  // undefined rather than a chainable op.
-  const ignore = (key) => typeof key !== "string" || key === "then" || key[0] === "_";
+  // `ignore` keeps the proxy from masquerading as a thenable/internal/serializable
+  // handle: symbols, `then` (so it's never await-unwrapped), `_`-prefixed internals,
+  // and `toJSON` all resolve to undefined rather than a chainable op. `toJSON` matters
+  // because a handle nested inside an options object (the normal calling convention,
+  // e.g. `k.extrude({ profile: someShape, h: 5 })`) isn't caught by the `describe()`
+  // identity check below — that only sees the top-level options object, not the
+  // nested handle — so `JSON.stringify` walks into it and probes for `toJSON` per the
+  // spec. Without this, that probe would be recorded as a real op and then flagged as
+  // an unknown one.
+  const ignore = (key) => typeof key !== "string" || key === "then" || key === "toJSON" || key[0] === "_";
 
   const opProxy = (queries, scope) => new Proxy({}, {
     get(_t, key) {
