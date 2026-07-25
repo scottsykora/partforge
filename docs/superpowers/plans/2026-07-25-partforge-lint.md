@@ -1246,7 +1246,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `runValidatingProbe` and `MAX_PROBE_OPS` from `../geometry/probe.js` (Task 4); `OCCT_ONLY_OPS` from `../geometry/kernel.js`; the context from Task 2.
 - Produces:
-  - `export const BUILD_RULES` with ids `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`, `manifold-backend-uses-occt-op`, `build-runaway`, `nondeterministic-build`.
+  - `export const BUILD_RULES` with ids `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`, `derive-throws`, `manifold-backend-uses-occt-op`, `build-runaway`, `nondeterministic-build`.
   - Context gains `ctx.probe()` — a memoized `runValidatingProbe` result — and `ctx.probeAgain()`, a second independent run used only by the determinism rule.
 
 - [ ] **Step 1: Write the failing test**
@@ -2378,7 +2378,7 @@ precisely. Everything speculative is a `warning` and never blocks anything.
 
 **Kernel API**, found by executing `build()` against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,
-`manifold-backend-uses-occt-op`, `build-runaway` (errors);
+`derive-throws`, `manifold-backend-uses-occt-op`, `build-runaway` (errors);
 `nondeterministic-build` (warning, from diffing two probe runs).
 
 **Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
