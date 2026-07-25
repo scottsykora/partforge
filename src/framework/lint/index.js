@@ -12,7 +12,7 @@ import { SHAPE_RULES } from "./rules-shape.js";
 import { SCHEMA_RULES } from "./rules-schema.js";
 import { runValidatingProbe } from "../geometry/probe.js";
 import { BUILD_RULES } from "./rules-build.js";
-import { VERIFY_RULES } from "./rules-verify.js";
+import { VERIFY_RULES, resolveExpect } from "./rules-verify.js";
 
 export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES];
 
@@ -46,7 +46,13 @@ export function lintContext(part, params) {
   let cached = null;
   const probe = () => (cached ??= runValidatingProbe(part, p, d));
   const probeAgain = () => runValidatingProbe(part, p, d);
-  return { part, p, d, deriveError, probe, probeAgain };
+  // Group 4's several rules all need `verify.expect` resolved; `expect` may be a
+  // user-supplied function, so — same reasoning as `probe` above — resolve it once
+  // per lint pass and share it, rather than letting each rule invoke it again and
+  // risk a cascading double-report from a function that only throws sometimes.
+  let cachedExpect = null;
+  const resolveExpectOnce = () => (cachedExpect ??= resolveExpect(part?.verify, p, d));
+  return { part, p, d, deriveError, probe, probeAgain, resolveExpectOnce };
 }
 
 /**

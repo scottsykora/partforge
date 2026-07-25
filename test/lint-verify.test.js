@@ -11,6 +11,19 @@ const partWith = (verify) => ({
   verify,
 });
 
+// Two sub-parts, for the pair-wise `_view.contacts` / `_view.clearance` checks —
+// `partWith` above only has one sub-part, which can never form a valid pair.
+const partWithTwoSubparts = (verify) => ({
+  meta: { title: "T" },
+  defaults: { h: 10 },
+  parts: {
+    lid: { views: ["main"], build: (k, p) => k.box({ size: [p.h, p.h, p.h] }) },
+    body: { views: ["main"], build: (k, p) => k.box({ size: [p.h, p.h, p.h] }) },
+  },
+  views: { main: { label: "Main" } },
+  verify,
+});
+
 const ids = (findings) => findings.map((f) => f.rule);
 const find = (r, rule) => [...r.errors, ...r.warnings].find((f) => f.rule === rule);
 
@@ -73,4 +86,71 @@ test("a throwing expect function is an error", () => {
 test("the { expr, hint } expectation form is accepted", () => {
   const r = lintPart(partWith({ expect: { body: { volume: { expr: ">=100", hint: "keep it chunky" } } } }));
   expect(ids(r.errors)).toEqual([]);
+});
+
+// --- _view.contacts / _view.clearance ---------------------------------------
+
+test("a well-formed contacts/clearance block produces no findings", () => {
+  const r = lintPart(partWithTwoSubparts({
+    expect: { _view: { overlaps: 0, contacts: [["lid", "body"]], clearance: { "lid×body": ">=0.3" } } },
+  }));
+  expect(ids(r.errors)).toEqual([]);
+});
+
+test("contacts/clearance are not flagged as unknown view metrics or bad expressions", () => {
+  const r = lintPart(partWithTwoSubparts({
+    expect: { _view: { contacts: [["lid", "body"]], clearance: { "lid×body": ">=0.3" } } },
+  }));
+  expect(ids(r.errors)).not.toContain("verify-unknown-metric");
+  expect(ids(r.errors)).not.toContain("verify-bad-expr");
+});
+
+test("a non-array contacts is an error", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { contacts: 5 } } }));
+  expect(ids(r.errors)).toContain("verify-bad-pair-check");
+  expect(find(r, "verify-bad-pair-check").path).toBe("verify.expect._view.contacts");
+});
+
+test("a malformed contacts pair entry is an error", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { contacts: [["lid", "body", "extra"]] } } }));
+  expect(ids(r.errors)).toContain("verify-bad-pair-check");
+  expect(find(r, "verify-bad-pair-check").path).toBe("verify.expect._view.contacts[0]");
+});
+
+test("a clearance key not of the form a×b is an error", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { clearance: { "lid-body": ">=0.3" } } } }));
+  expect(ids(r.errors)).toContain("verify-bad-pair-check");
+  expect(find(r, "verify-bad-pair-check").path).toBe('verify.expect._view.clearance["lid-body"]');
+});
+
+test("an unknown sub-part name inside contacts is reported as verify-unknown-subpart", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { contacts: [["lid", "flange"]] } } }));
+  expect(ids(r.errors)).toContain("verify-unknown-subpart");
+  expect(find(r, "verify-unknown-subpart").path).toBe("verify.expect._view.contacts[0]");
+  expect(ids(r.errors)).not.toContain("verify-bad-pair-check");
+});
+
+test("an unknown sub-part name inside a clearance key is reported as verify-unknown-subpart", () => {
+  const r = lintPart(partWithTwoSubparts({ expect: { _view: { clearance: { "lid×flange": ">=0.3" } } } }));
+  expect(ids(r.errors)).toContain("verify-unknown-subpart");
+  expect(find(r, "verify-unknown-subpart").path).toBe('verify.expect._view.clearance["lid×flange"]');
+});
+
+test("lintPart never throws on hostile pair-check input", () => {
+  const r = lintPart(partWithTwoSubparts({
+    expect: { _view: { contacts: [["lid", 5], null, ["lid"]], clearance: { "lid×body": null, bad: null } } },
+  }));
+  expect(r.ok).toBe(false);
+  expect(ids(r.errors)).toContain("verify-bad-pair-check");
+});
+
+// --- resolveExpect is memoized (Finding 2) ----------------------------------
+
+test("a first-call-throwing expect() produces exactly one finding, no cascade", () => {
+  let calls = 0;
+  const r = lintPart(partWith({
+    expect: () => { calls += 1; if (calls === 1) throw new Error("boom"); return { body: { wallThickness: 2 } }; },
+  }));
+  expect(calls).toBe(1);
+  expect(ids(r.errors)).toEqual(["verify-expect-throws"]);
 });
