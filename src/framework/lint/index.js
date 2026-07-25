@@ -10,8 +10,10 @@ import { resolveDerived } from "../derive.js";
 import { warn } from "./finding.js";
 import { SHAPE_RULES } from "./rules-shape.js";
 import { SCHEMA_RULES } from "./rules-schema.js";
+import { runValidatingProbe } from "../geometry/probe.js";
+import { BUILD_RULES } from "./rules-build.js";
 
-export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES];
+export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES];
 
 // Every rule runs inside a guard. lintPart is called on a user-facing hosted path
 // (partforge-cloud's sandbox), and a linter that takes down the preview it exists to
@@ -39,7 +41,10 @@ export function lintContext(part, params) {
   const p = { ...(part?.defaults ?? {}), ...(params ?? {}) };
   let d = {};
   try { d = resolveDerived(part, p) ?? {}; } catch { d = {}; }
-  return { part, p, d };
+  let cached = null;
+  const probe = () => (cached ??= runValidatingProbe(part, p, d));
+  const probeAgain = () => runValidatingProbe(part, p, d);
+  return { part, p, d, probe, probeAgain };
 }
 
 /**
