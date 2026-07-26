@@ -58,11 +58,17 @@ Three decisions were settled during design and are binding on the plan.
    linter, deleting its drifted shape checks.
 
 2. **Severity: two-tier — errors block, warnings advise.** A finding is
-   `error` **only if the part provably cannot work** — i.e. it names a condition
-   that already fails at runtime today. Errors therefore convert a slow, late,
-   confusing failure into a fast, early, precise one and cannot regress a part
-   that would otherwise have worked. Everything speculative or stylistic is
-   `warning` and rides alongside a successful result.
+   `error` when the part is **provably broken — it cannot behave as authored —
+   whether or not that throws.** Most errors do convert a slow, late, confusing
+   runtime *throw* into a fast, early, precise one. But several error-tier rules
+   (`missing-meta-title`, `part-view-unknown`, `control-key-not-in-defaults`,
+   `preset-key-not-in-defaults`, `verify-unknown-subpart`) catch a defect that
+   never throws at all — a dead control, an empty view, a `verify` expectation
+   silently dropped so its gate never runs — and still earn `error`, because the
+   part quietly doesn't do what its author wrote. `error` therefore *can* fail a
+   part that would previously have built, measured, and verified "clean": that's
+   the fix working, not a regression. Everything speculative or stylistic — lossy
+   but not broken — is `warning` and rides alongside a successful result.
 
 3. **Engine: dynamic module linting, not source-text analysis.** `lintPart`
    operates on an already-imported PartDefinition object, using two engines: a
@@ -207,8 +213,11 @@ human and agent navigation only — nothing parses it.
 
 ## Rule catalog
 
-Severity assignment follows Decision 2 without exception: `error` only where the
-condition already fails at runtime today.
+Severity assignment follows Decision 2 without exception: `error` wherever the
+part is provably broken, whether or not the condition throws at runtime — the
+rule tables below mark each one, and several errors (`missing-meta-title`,
+`part-view-unknown`, `control-key-not-in-defaults`, `preset-key-not-in-defaults`,
+`verify-unknown-subpart`) are exactly the silent, non-throwing kind.
 
 ### Group 1 — definition shape (`rules-shape.js`)
 

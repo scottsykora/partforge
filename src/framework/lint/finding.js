@@ -7,8 +7,14 @@ const make = (severity) => (rule, message, hint, path = "", pattern) => ({
   rule, severity, message, hint, path, ...(pattern ? { pattern } : {}),
 });
 
-// error → the part PROVABLY cannot work; this condition already fails at runtime
-// today, so reporting it early can never block a part that would have built.
+// error → the part is PROVABLY broken: it cannot behave as authored, whether or
+// not that surfaces as a thrown exception. A dead control (control-key-not-in-
+// defaults), a view that renders nothing (part-view-unknown), or a verify
+// expectation that's silently dropped so its gate never runs (verify-unknown-
+// subpart) build/measure/verify cleanly today and still earn error — the defect
+// is real even though nothing throws. Because `measure` gates on this tier, a
+// part with one of these silent defects now exits non-zero where it previously
+// didn't; that's the point, not a regression.
 export const err = make("error");
-// warning → suspicious or lossy, but the part still builds.
+// warning → suspicious or lossy, but the part behaves as authored.
 export const warn = make("warning");

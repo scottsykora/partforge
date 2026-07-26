@@ -825,9 +825,19 @@ on every one, and a stable `pattern` id where an ERROR-PATTERNS.md entry applies
 `defaults.bore`, `parts.spacer.views[0]`, `parameters[0].presets["M3"].od`. Findings
 about the definition as a whole use `""`.
 
-**Severity.** A finding is an `error` only when the part *provably cannot work* — the
-condition already fails at runtime, so lint just reaches it sooner and says it more
-precisely. Everything speculative is a `warning` and never blocks anything.
+**Severity.** A finding is an `error` when the part is *provably broken* — it cannot
+behave as authored — whether or not that shows up as a thrown exception. Some error
+findings do correspond to a runtime throw (`build-throws`, `verify-expect-throws`),
+but others catch **silent** wrongness: `missing-meta-title`, `part-view-unknown`,
+`control-key-not-in-defaults`, `preset-key-not-in-defaults`, and
+`verify-unknown-subpart` all fire on parts that build, measure, and verify cleanly —
+a dead control that's silently unreachable, a view that renders nothing, or a
+`verify` expectation that's silently dropped so its gate never runs. That's still an
+error: the part doesn't do what its author wrote, the failure is just quiet instead
+of loud. Everything speculative or stylistic — lossy but not broken — is a `warning`
+and never blocks anything. Because `measure` runs the error tier as a gate (see
+below), a part with one of these silent defects now exits non-zero where it
+previously didn't; that's the fix working as intended, not a regression.
 
 ### Rule catalog
 
