@@ -28,7 +28,9 @@ function editDistance(a, b) {
 // Prefix match first so long-form names hit their short key (radius→r,
 // height→h, diameter→d), then edit distance ≤ 2 for plain typos. A digit
 // suffix is peeled and re-attached so radius1 hints r1, not r.
-function suggest(key, valid) {
+// Exported so partforge/lint's `unknown-control-field` rule reuses this exact
+// suggester rather than carrying a second copy of the edit-distance logic.
+export function suggest(key, valid) {
   const lk = key.toLowerCase();
   const m = /^([a-z]+)(\d+)$/.exec(lk);
   if (m) for (const v of valid) if (m[1].startsWith(v.toLowerCase()) && valid.includes(v + m[2])) return v + m[2];

@@ -60,4 +60,10 @@ Picks come back **in request order**, each echoing its prompt, so you can map th
 ## Related: debugging failures
 
 If anything fails while you're editing a part, grep `docs/ERROR-PATTERNS.md` for the
-symptom first — its preamble states the full grep-first rule.
+symptom first — its preamble states the full grep-first rule. Before assuming a user's
+click is needed at all, run the static linter — it's instant, needs no live app, and
+catches schema/build mistakes no pick session would explain:
+
+```bash
+partforge lint src/parts/<part>.js
+```

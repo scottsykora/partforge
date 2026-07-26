@@ -3,6 +3,7 @@
 // Each instance lazily imports only its own backend, so OCCT's ~11 MB WASM loads
 // only in the worker that needs it, and only on first use.
 import { handle } from "./jobs.js";
+import { lintPart } from "../lint.js";
 
 async function manifoldKernels() {
   const [{ default: Module }, { createManifoldKernel }] = await Promise.all([
@@ -48,6 +49,14 @@ export function runWorker(part) {
   }
 
   self.onmessage = async (e) => {
+    // Lint is geometry-free by construction, so answer it before touching — or
+    // booting — a kernel. handle() in jobs.js takes an already-booted kernel, and
+    // the branches below await that boot, so routing lint through them would drag
+    // in OCCT's ~11 MB WASM to run a check that never calls the kernel at all.
+    if (e.data?.type === "lint") {
+      postMessage({ type: "lint-report", report: lintPart(part, { params: e.data.params }) });
+      return;
+    }
     let kernel;
     if (backend === "manifold") {
       await booting;

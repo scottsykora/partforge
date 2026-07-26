@@ -115,6 +115,12 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 - **Cause:** A `key` used in the `parameters` schema (slider, feature, or preset override) doesn't exist in `defaults` — every key must, including `hidden` ones.
 - **Fix:** Add the key to `defaults` with a sensible starting value. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Parameters: the control-panel schema".
 
+## features-missing-sliders
+
+- **Symptom:** `Cannot read properties of undefined (reading 'filter')` thrown from the control panel while the app boots, with no geometry ever rendering.
+- **Cause:** A `features` entry in the parameter schema has no `sliders` array — `controls.js` reads `feat.sliders.filter(...)` unguarded. A bare on/off control was put in `features` instead of `toggles`.
+- **Fix:** Move a bare boolean to the section's `toggles` array (`{ key, label, on }`), or give the `features` entry the `sliders` array it requires. `npx partforge lint <part>` catches this statically as `features-requires-sliders`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Parameters: the control-panel schema".
+
 ## dimmed-control-vestigial-param
 
 - **Symptom:** A control renders dimmed (but still editable) and changing it does nothing on screen.

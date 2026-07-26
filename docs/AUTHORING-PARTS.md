@@ -390,6 +390,28 @@ choosing a preset updates both numeric and text fields.
 Every `key` used must exist in `defaults`. `src/parts/demo.js` is the worked example for
 everything below.
 
+**Standalone toggles** (a plain on/off checkbox, no accompanying sliders): add a
+`toggles` array to a preset section — shown below the preset picker, outside the
+Advanced fold, so it stays visible:
+
+```js
+{
+  id: "shape",
+  title: "Shape ops",
+  toggles: [
+    { key: "clip", label: "Clip arms to a disc (intersect)", on: 1,
+      description: "**Intersect** the cross with a circle so the four arm tips are rounded off to a common radius." },
+  ],
+}
+```
+
+Each entry is `{ key, label, on?, hidden?, description? }`: checked sets `key` to `on`
+(default `1`); unchecked sets it to `0`. This is the correct home for a bare boolean —
+a `features` entry *requires* a `sliders` array (the panel reads `feat.sliders.filter(...)`
+unguarded and throws if it's missing), so a feature with nothing to reveal belongs in
+`toggles` instead. `src/parts/bracket.js`'s `clip` toggle (shown above) is the worked
+example.
+
 **Control metadata (optional — on any control def, feature, or section):**
 
 - `description` — a CommonMark string shown in a click-open **ⓘ** popover beside the
@@ -785,6 +807,83 @@ The `measure` function is also exported for vitest (boot a Manifold kernel as in
       expect(r.subparts[0].holes).toBe(1);   // e.g. expects one bore
     });
 
+## Linting
+
+`partforge lint` statically validates a PartDefinition without booting a geometry
+kernel. It runs in milliseconds and catches the authoring mistakes that otherwise
+surface only at runtime — or, worse, not at all.
+
+```bash
+npx partforge lint src/parts/<part>.js [--params '{"h":40}'] [--json] [--out f] [--strict]
+```
+
+Exit 0 when clean, 1 when any **error** finding is present; `--strict` also fails on
+warnings. `partforge measure` runs the error tier automatically before booting a
+kernel — pass `--no-lint` to skip it.
+
+The same check is available programmatically and in the browser:
+
+```js
+import { lintPart } from "partforge/lint";
+const { ok, errors, warnings } = lintPart(part, { params });
+```
+
+`partforge/lint` has **zero runtime dependencies** and never imports a geometry
+kernel or the DOM viewer, so it runs unchanged in Node, a Web Worker, a sandboxed
+iframe, and Deno. A worker also answers `{ type: "lint", params }` with
+`{ type: "lint-report", report }` without booting its kernel.
+
+**Findings** carry the same guarantees as verify's checks — a self-contained `hint`
+on every one, and a stable `pattern` id where an ERROR-PATTERNS.md entry applies:
+
+```js
+{ rule: "features-requires-sliders", severity: "error",
+  message: "section \"flange\" feature 0 has no `sliders` array",
+  hint: "A `features` entry must carry a `sliders` array …",
+  path: "parameters[1].features[0]", pattern: "features-missing-sliders" }
+```
+
+`path` is a JS accessor path rooted at the PartDefinition — `parameters[1].features[0]`,
+`defaults.bore`, `parts.spacer.views[0]`, `parameters[0].presets["M3"].od`. Findings
+about the definition as a whole use `""`.
+
+**Severity.** A finding is an `error` when the part is *provably broken* — it cannot
+behave as authored — whether or not that shows up as a thrown exception. Some error
+findings do correspond to a runtime throw (`build-throws`, `verify-expect-throws`),
+but others catch **silent** wrongness: `missing-meta-title`, `part-view-unknown`,
+`control-key-not-in-defaults`, `preset-key-not-in-defaults`, and
+`verify-unknown-subpart` all fire on parts that build, measure, and verify cleanly —
+a dead control that's silently unreachable, a view that renders nothing, or a
+`verify` expectation that's silently dropped so its gate never runs. That's still an
+error: the part doesn't do what its author wrote, the failure is just quiet instead
+of loud. Everything speculative or stylistic — lossy but not broken — is a `warning`
+and never blocks anything. Because `measure` runs the error tier as a gate (see
+below), a part with one of these silent defects now exits non-zero where it
+previously didn't; that's the fix working as intended, not a regression.
+
+### Rule catalog
+
+**Definition shape** — `missing-meta-title`, `missing-defaults`, `no-buildable-parts`,
+`missing-views`, `part-view-unknown` (all errors); `view-unused` (warning).
+
+**Parameter schema** — `features-requires-sliders`, `control-key-not-in-defaults`,
+`preset-key-not-in-defaults` (errors); `slider-range-excludes-default`,
+`unknown-control-field`, `duplicate-control-key`, `default-not-exposed` (warnings).
+
+**Kernel API**, found by executing `build()` against a geometry-free probe —
+`unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,
+`derive-throws`, `manifold-backend-uses-occt-op`, `build-runaway` (errors);
+`nondeterministic-build` (warning, from diffing two probe runs).
+
+**Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
+`verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,
+`verify-expect-throws` (all errors). Note `_view` also accepts the pair-wise
+`contacts` / `clearance` keys, which are not scalar view metrics; they are
+validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
+
+A rule that itself throws yields an `internal-rule-error` **warning** and the run
+continues: `lintPart` never throws and never blocks a part because of a linter bug.
+
 ### The diagnostics contract (for agents)
 
 `partforge measure <part> --json` / `--out <file>` emits the machine-readable
@@ -817,13 +916,20 @@ JSON to stdout and exits 1:
 ```
 
 `pattern`/`hint` appear when the message matches an ERROR-PATTERNS.md symptom
-string. Exit codes: 0 pass, 1 gate failure or crash — unchanged. Caveat: a throw
-*after* measure output has printed (e.g. an unknown metric in `verify.expect`, or
-a per-case build crash) appends this JSON after the human lines, so stdout is no
-longer pure JSON; prefer `--out` (or parse the trailing JSON object — the crash
-JSON is pretty-printed across multiple lines) for robust machine parsing. With
-`--out` the measure report is written to the file as soon as `measure` succeeds,
-so even if a later `verify` throw crashes the run the file is there — it just
+string. Exit codes: 0 pass, 1 gate failure or crash — unchanged. `measure`'s
+automatic lint pass (see "Linting" above) now catches most of the defects that
+used to surface this way statically, before the kernel boots, so they fail with
+pure JSON up front instead. The caveat narrows but doesn't disappear: lint
+resolves `verify.expect` once against the part's *defaults*, while `verify()`
+itself expands every `verify.cases` entry and re-resolves `expect(p, d)` per
+case — so an expectation that only names a bad metric/subpart for a non-default
+case (see `test/fixtures/unknown-metric-in-case-part.js`) still passes lint
+clean and then throws at runtime, after measure output has printed. That throw
+appends crash JSON after the human lines, so stdout is no longer pure JSON;
+prefer `--out` (or parse the trailing JSON object — the crash JSON is
+pretty-printed across multiple lines) for robust machine parsing. With `--out`
+the measure report is written to the file as soon as `measure` succeeds, so
+even if a later `verify` throw crashes the run the file is there — it just
 lacks the `verify` key.
 
 **Fresh-evidence rule.** A passing report is evidence only for the source, parameters,

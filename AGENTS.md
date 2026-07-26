@@ -41,6 +41,7 @@ node scripts/check-app.mjs demo.html         # smoke-test a specific app entry
 The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
 
 ```bash
+npx partforge lint    src/parts/<part>.js          # static checks, no kernel boot; exits non-zero on errors
 npx partforge measure src/parts/<part>.js [view]   # bbox/volume/holes/watertight + verify gate; exits non-zero on failure
 npx partforge render  src/parts/<part>.js [view]   # canonical-angle PNGs -> render/
 npx partforge pick-serve                           # request-a-pick: agent asks user to click geometry

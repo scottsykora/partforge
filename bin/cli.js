@@ -15,9 +15,10 @@ import { verify } from "../src/testing/verify.js";
 import { renderViews } from "../src/testing/render.js";
 import { createPickServer, requestPicks, formatPickResult } from "../src/framework/pick-request/server.js";
 import { matchPattern } from "../src/testing/error-patterns.js";
+import { lintPart } from "../src/lint.js";
 
 const die = (msg) => { console.error(msg); process.exit(1); };
-const USAGE = "usage: partforge <measure|render|pick-serve|pick> …";
+const USAGE = "usage: partforge <lint|measure|render|pick-serve|pick> …";
 
 // Crash contract (issue #27): with --json, a thrown error becomes structured
 // stdout JSON; either way the message is matched against ERROR-PATTERNS.md and
@@ -59,16 +60,57 @@ async function loadPart(partPath, usage) {
 const bootKernel = (part) => (detectBackend(part) === "occt" ? bootOcctKernel() : bootManifoldKernel());
 
 const commands = {
+  async lint(args) {
+    const usage = "usage: partforge lint <part-module> [--params <json>] [--json] [--out <file>] [--strict]";
+    const { values: flags, positionals: [partPath] } = parse(args, {
+      params: { type: "string" },
+      json: { type: "boolean" },
+      out: { type: "string" },
+      strict: { type: "boolean" },
+    }, usage);
+    try {
+      const part = await loadPart(partPath, usage);
+      const params = flags.params ? JSON.parse(flags.params) : undefined;
+      const report = lintPart(part, { params });
+      if (!flags.json) printLint(report);
+      if (flags.out) {
+        mkdirSync(dirname(resolve(flags.out)), { recursive: true });
+        writeFileSync(flags.out, JSON.stringify(report, null, 2));
+        console.log(`\nwrote ${flags.out}`);
+      }
+      if (flags.json) console.log(JSON.stringify(report, null, 2));
+      process.exit(report.ok && (!flags.strict || report.warnings.length === 0) ? 0 : 1);
+    } catch (e) {
+      crash("lint", e, !!flags.json);
+    }
+  },
+
   async measure(args) {
-    const usage = "usage: partforge measure <part-module> [view] [--process <profile>] [--no-verify] [--json] [--out <file>]";
+    const usage = "usage: partforge measure <part-module> [view] [--process <profile>] [--no-verify] [--no-lint] [--json] [--out <file>]";
     const { values: flags, positionals: [partPath, view] } = parse(args, {
       process: { type: "string" },
       "no-verify": { type: "boolean" },
+      "no-lint": { type: "boolean" },
       json: { type: "boolean" },
       out: { type: "string" },
     }, usage);
     try {
       const part = await loadPart(partPath, usage);
+      // Error-tier lint before the kernel boots: a statically broken part fails in
+      // milliseconds with a precise message rather than after a WASM boot and a
+      // downstream error that doesn't name the cause. Warnings never gate measure.
+      if (!flags["no-lint"]) {
+        const lint = lintPart(part);
+        if (!lint.ok) {
+          if (flags.json) console.log(JSON.stringify({ ok: false, lint }, null, 2));
+          else printLint(lint);
+          if (flags.out) {
+            mkdirSync(dirname(resolve(flags.out)), { recursive: true });
+            writeFileSync(flags.out, JSON.stringify({ ok: false, lint }, null, 2));
+          }
+          process.exit(1);
+        }
+      }
       const kernel = await bootKernel(part);
       const report = measure(kernel, part, view);
       printMeasure(report);
@@ -170,6 +212,19 @@ function printVerify(v) {
   }
   const f = v.failures.length, w = v.warnings.length;
   console.log(`  result: ${f ? `${f} gate failure(s)` : "all gates passed"}${w ? `, ${w} warning(s)` : ""}`);
+}
+
+function printLint(r) {
+  const all = [...r.errors, ...r.warnings];
+  if (all.length === 0) { console.log("lint: clean"); return; }
+  console.log("lint:");
+  for (const f of all) {
+    console.log(`  ${f.severity === "error" ? "✗" : "⚠"} ${f.rule}${f.path ? `  ${f.path}` : ""}`);
+    console.log(`      ${f.message}`);
+    console.log(`      hint: ${f.hint}${f.pattern ? ` (ERROR-PATTERNS.md#${f.pattern})` : ""}`);
+  }
+  const e = r.errors.length, w = r.warnings.length;
+  console.log(`  result: ${e ? `${e} error(s)` : "no errors"}${w ? `, ${w} warning(s)` : ""}`);
 }
 
 const [, , cmd, ...args] = process.argv;

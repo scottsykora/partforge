@@ -1,0 +1,114 @@
+// partforge/lint — static PartDefinition validation. Pure: no I/O, no async, and
+// (load-bearing) an import closure that never reaches three / manifold-3d / replicad,
+// so this runs unchanged in Node, a browser sandbox iframe, and Deno. The purity
+// guarantee is enforced by test/lint-purity.test.js — read it before adding an import.
+//
+// A rule is { id, run(ctx) → Finding[] }, one rule object per finding id, so the
+// registry doubles as the documented rule catalog. Rules are cheap and parts are
+// tiny; clarity beats sharing a walk between rules.
+import { resolveDerived } from "../derive.js";
+import { err, warn } from "./finding.js";
+import { SHAPE_RULES } from "./rules-shape.js";
+import { SCHEMA_RULES } from "./rules-schema.js";
+import { runValidatingProbe } from "../geometry/probe.js";
+import { BUILD_RULES } from "./rules-build.js";
+import { VERIFY_RULES, resolveExpect } from "./rules-verify.js";
+
+export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES];
+
+// Every rule runs inside a guard. lintPart is called on a user-facing hosted path
+// (partforge-cloud's sandbox), and a linter that takes down the preview it exists to
+// protect is worse than no linter — so a throwing rule becomes a WARNING, never an
+// error, and never blocks a part that would otherwise have built.
+export function runRules(rules, ctx) {
+  const out = [];
+  for (const rule of rules) {
+    try {
+      const found = rule.run(ctx);
+      if (Array.isArray(found)) out.push(...found);
+    } catch (e) {
+      out.push(warn("internal-rule-error",
+        `lint rule "${rule.id}" threw: ${e?.message || String(e)}`,
+        "This is a partforge bug rather than a problem with your part; every other rule still ran. Please report it with the part that triggered it."));
+    }
+  }
+  return out;
+}
+
+// Build the shared context. A throwing derive() must not abort the lint — the
+// throw is captured as `deriveError` (for Group 3's `derive-throws` rule) and `d`
+// falls back to {}, so Groups 1/2/4 remain useful without derived values.
+//
+// Building `p` can itself throw — `part.defaults` may be a getter that throws, or
+// `part.defaults` / `params` may be a Proxy whose `ownKeys` trap throws (the spread
+// below walks own keys) — so that construction gets the same never-escapes
+// treatment as derive(): fall back to `{}` rather than let a hostile/broken input
+// take down lintContext (and, by extension, lintPart — see its own guard below).
+// The failure is also captured as `pError`, mirroring `deriveError`, so lintPart
+// can still surface it as a real finding instead of silently linting against an
+// empty `{}` params object as if nothing were wrong.
+export function lintContext(part, params) {
+  let p;
+  let pError = null;
+  try { p = { ...(part?.defaults ?? {}), ...(params ?? {}) }; }
+  catch (e) { p = {}; pError = e?.message || String(e); }
+  let d = {};
+  let deriveError = null;
+  try { d = resolveDerived(part ?? {}, p) ?? {}; } catch (e) { d = {}; deriveError = e?.message || String(e); }
+  let cached = null;
+  const probe = () => (cached ??= runValidatingProbe(part, p, d));
+  const probeAgain = () => runValidatingProbe(part, p, d);
+  // Group 4's several rules all need `verify.expect` resolved; `expect` may be a
+  // user-supplied function, so — same reasoning as `probe` above — resolve it once
+  // per lint pass and share it, rather than letting each rule invoke it again and
+  // risk a cascading double-report from a function that only throws sometimes.
+  let cachedExpect = null;
+  const resolveExpectOnce = () => (cachedExpect ??= resolveExpect(part?.verify, p, d));
+  return { part, p, d, pError, deriveError, probe, probeAgain, resolveExpectOnce };
+}
+
+/**
+ * Lint a PartDefinition. Never throws.
+ * @param {object} part   the default-exported PartDefinition
+ * @param {{params?: object}} [opts]  params layered over part.defaults for the probe pass
+ * @returns {{ok: boolean, errors: object[], warnings: object[]}}
+ */
+export function lintPart(part, opts) {
+  // `opts` is defaulted here, not via `= {}` on the parameter, because a default
+  // parameter only fires on `undefined` — a caller passing `lintPart(part, null)`
+  // (a plausible downstream-harness call) would otherwise throw destructuring
+  // `{ params }` out of `null` before this function's body ever runs.
+  const { params } = opts ?? {};
+  // lintContext already guards its own internals (see its comment above), but it
+  // is user-authored data all the way down — wrap the call itself too, so a
+  // failure mode neither of us has thought of still degrades to a report instead
+  // of an escaping throw. `lintPart` must never throw; that guarantee is a bigger
+  // deal than any one finding.
+  let ctx;
+  try {
+    ctx = lintContext(part, params);
+  } catch (e) {
+    return {
+      ok: false,
+      errors: [err("lint-context-error",
+        `partforge/lint could not build a lint context: ${e?.message || String(e)}`,
+        "This part is too malformed for lint to analyze safely — make sure `defaults`, `params`, and `verify`/`derive` are plain, side-effect-free data rather than throwing getters or hostile Proxies.",
+        "")],
+      warnings: [],
+    };
+  }
+  const findings = runRules(RULES, ctx);
+  // `p` (params merged from `defaults`) failed to build — every rule still ran
+  // against the `{}` fallback (each guarded individually by runRules), but the
+  // part is provably broken independent of whatever those rules happened to
+  // notice, so report it directly rather than relying on incidental fallout.
+  if (ctx.pError) {
+    findings.push(err("lint-context-error",
+      `partforge/lint could not read \`defaults\`/\`params\`: ${ctx.pError}`,
+      "Make sure `defaults` and any `params` passed to lintPart are plain, side-effect-free data rather than a throwing getter or a hostile Proxy.",
+      ""));
+  }
+  const errors = findings.filter((f) => f.severity === "error");
+  const warnings = findings.filter((f) => f.severity === "warning");
+  return { ok: errors.length === 0, errors, warnings };
+}
