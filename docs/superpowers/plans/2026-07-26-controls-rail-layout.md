@@ -607,20 +607,15 @@ Create `src/framework/chrome.css`:
 [data-dragging] .pf-rail,
 [data-key-resizing] .pf-rail { transition: none; }
 
-/* ---- floating chrome, absolute within the stage -------------------------- */
-.pf-float-tabs, .pf-float-viewbar { position: absolute; }
-.pf-float-tabs {
-  top: 12px; left: 50%; transform: translateX(-50%);
-  z-index: 15;
-}
-.pf-float-viewbar {
-  bottom: 12px; right: 12px;
-  z-index: 15;
-  display: flex; gap: 4px; padding: 4px;
-  background: var(--pf-surface); border: 1px solid var(--pf-border);
-  border-radius: var(--pf-radius-pill);
-  box-shadow: var(--pf-shadow-float);
-}
+/* ---- floating chrome: PLACEMENT ONLY, absolute within the stage ----------
+   Deliberately no appearance here. partforge-cloud's sandbox.css re-anchors
+   #viewbar's position with its own rules but inherits the pill's chrome
+   (background/border/radius/shadow) from app.css, so that chrome must live in
+   app.css ungated — not be duplicated into a class the cloud never sets. This
+   file owns where things sit; app.css owns what they look like. */
+.pf-float-tabs, .pf-float-viewbar { position: absolute; z-index: 15; }
+.pf-float-tabs { top: 12px; left: 50%; transform: translateX(-50%); }
+.pf-float-viewbar { bottom: 12px; right: 12px; }
 
 /* ---- stacked layout: no room for a rail beside the viewer ----------------
    The seam is hidden and resize is absent at this width (rail.js also refuses
@@ -672,10 +667,10 @@ Replace the whole `#panel { … }` rule with the same treatment:
 }
 ```
 
-Replace the `#topbar` block (positioning now comes from `.pf-float-tabs`; only the pill's appearance stays):
+Replace the `#topbar` block. **Placement** moves to `.pf-float-tabs`; the pill's **appearance** stays here, ungated:
 
 ```css
-/* part tabs, floated top-centre over the viewer (placement: .pf-float-tabs) */
+/* part tabs (placement: .pf-float-tabs; legacy markup keeps the old float) */
 #topbar:not(.pf-float-tabs) { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 15; }
 #topbar .seg {
   margin: 0; padding: 4px; background: var(--pf-surface); border: 1px solid var(--pf-border);
@@ -685,18 +680,29 @@ Replace the `#topbar` block (positioning now comes from `.pf-float-tabs`; only t
 #topbar .seg button { min-width: 70px; padding: 7px 10px; }
 ```
 
-Replace the `#viewbar` container rule (placement and pill chrome now come from `.pf-float-viewbar`; keep only the legacy fallback plus every `#viewbar button` rule unchanged):
+Replace the `#viewbar` container rule the same way — and note the split matters
+here for a concrete reason. partforge-cloud's `sandbox.css` re-anchors
+`#viewbar`'s *position* (`#viewer #viewbar { position: absolute; bottom: 12px; … }`)
+but sets no `display`/`gap`/`padding`/`background`/`border`/`box-shadow` of its
+own: it inherits all of that from this rule. So the pill's appearance must stay
+ungated on `#viewbar`, or the cloud's viewbar loses its chrome. Only the
+placement gets a `:not()` fallback:
 
 ```css
-/* viewer controls (placement + pill chrome: .pf-float-viewbar) */
-#viewbar:not(.pf-float-viewbar) {
-  position: fixed; top: 12px; right: 12px; z-index: 15;
+/* viewer controls. APPEARANCE is ungated: partforge-cloud re-anchors #viewbar's
+   position in sandbox.css but inherits this pill chrome, so gating it on a class
+   the cloud never sets would strip the editor's viewbar. PLACEMENT comes from
+   .pf-float-viewbar; the :not() keeps legacy markup's old top-right float. */
+#viewbar {
   display: flex; gap: 4px; padding: 4px;
   background: var(--pf-surface); border: 1px solid var(--pf-border);
   border-radius: var(--pf-radius-pill);
   box-shadow: var(--pf-shadow-float);
 }
+#viewbar:not(.pf-float-viewbar) { position: fixed; top: 12px; right: 12px; z-index: 15; }
 ```
+
+Keep every `#viewbar button` rule exactly as it is.
 
 Update `#busy` so it fills the stage rather than the window, and keep the legacy fallback:
 
