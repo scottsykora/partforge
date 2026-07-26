@@ -92,6 +92,16 @@ test("an inline process object with no base is accepted", () => {
   expect(ids(r.errors)).not.toContain("verify-unknown-process");
 });
 
+// verify.js:163-164 — `profileSpec ? resolveProfile(profileSpec) : null` — is a
+// truthiness check, so any falsy `process` (not just undefined/null) is skipped
+// at runtime and never throws. `""`/`0`/`false` must not be flagged either.
+test.each([["", "empty string"], [0, "zero"], [false, "false"]])(
+  "a falsy process (%s: %s) is not an unknown-process error", (process) => {
+    const r = lintPart(partWith({ process, expect: {} }));
+    expect(ids(r.errors)).not.toContain("verify-unknown-process");
+  },
+);
+
 test("the function form of expect is resolved and linted", () => {
   const r = lintPart(partWith({ expect: () => ({ body: { wallThickness: 2 } }) }));
   expect(ids(r.errors)).toContain("verify-unknown-metric");

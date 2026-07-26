@@ -277,9 +277,10 @@ export const VERIFY_RULES = [
     run: ({ part }) => {
       const process = part?.verify?.process;
       // verify.js:163-164 — `profileSpec ?? part.verify?.process` then
-      // `profileSpec ? resolveProfile(profileSpec) : null` — an absent or null
-      // `process` is never passed to `resolveProfile`, so it can't throw.
-      if (process === undefined || process === null) return [];
+      // `profileSpec ? resolveProfile(profileSpec) : null` — that second check is
+      // truthiness, not a null/undefined check, so ANY falsy `process` (undefined,
+      // null, "", 0, false) never reaches `resolveProfile` and can't throw.
+      if (!process) return [];
       const valid = Object.keys(PROFILES);
       return checkProcessSpec(process, "verify.process", valid, new Set());
     },
