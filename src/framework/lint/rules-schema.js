@@ -43,14 +43,35 @@ function collectDescriptors(part) {
 
 const defaultKeys = (part) => new Set(Object.keys(part?.defaults ?? {}));
 
+// Mirrors src/framework/controls.js's own visibility predicates (visibleFeatures /
+// sectionRenders, controls.js:32,36-41) — NOT imported, because controls.js pulls in
+// `marked`/`dompurify` (via markdown.js) for its description popovers, which would
+// break partforge/lint's zero-bare-dependency purity guarantee (test/lint-purity.test.js).
+// `features-requires-sliders` must not flag a `feat.sliders.filter(...)` the panel
+// will never reach: controls.js only iterates `visibleFeatures(sec)` (skipping any
+// feature marked `hidden: true`), and only builds a section at all when
+// `sectionRenders(sec)` is true.
+const visibleFeatures = (sec) => arr(sec?.features).filter((f) => f && !f.hidden);
+function sectionRenders(sec) {
+  if (sec?.hidden) return false;
+  if (sec?.features) return visibleFeatures(sec).length > 0;
+  const hasPresets = sec?.presets && Object.keys(sec.presets).length > 0;
+  return !!hasPresets || arr(sec?.advanced).some((d) => d && !d.hidden) || arr(sec?.toggles).some((t) => t && !t.hidden);
+}
+
 export const SCHEMA_RULES = [
   {
     id: "features-requires-sliders",
     run: ({ part }) => {
       const out = [];
       sections(part).forEach((sec, si) => {
+        // A feature the panel will never reach can't crash it: skip the whole
+        // section when it never renders at all (sectionRenders), and skip any
+        // individual feature the panel skips via `hidden: true` (visibleFeatures'
+        // own filter condition, restated inline rather than built into a Set).
+        if (!sectionRenders(sec)) return;
         arr(sec?.features).forEach((f, i) => {
-          if (f && !Array.isArray(f.sliders)) {
+          if (f && !f.hidden && !Array.isArray(f.sliders)) {
             out.push(err("features-requires-sliders",
               `section "${sec.id ?? si}" feature ${i} has no \`sliders\` array`,
               "A `features` entry must carry a `sliders` array — the control panel reads it unguarded, so a missing one throws \"Cannot read properties of undefined (reading 'filter')\". A bare on/off control belongs in `toggles` instead.",

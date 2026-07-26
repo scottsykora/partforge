@@ -39,6 +39,33 @@ test("a features entry with no sliders is an error", () => {
   expect(find(r, "features-requires-sliders").hint).toMatch(/toggles/);
 });
 
+test("a hidden feature with no sliders is not an error, even if its section still renders", () => {
+  // controls.js only iterates visibleFeatures(sec), which filters out `hidden:
+  // true` — the unguarded feat.sliders.filter(...) the rule protects against is
+  // never reached for a feature the panel skips. Add a second, visible feature
+  // with valid sliders so the section still renders (visibleFeatures.length > 0)
+  // and this isn't conflated with the "whole section doesn't render" case below.
+  const part = goodPart();
+  delete part.parameters[0].features[0].sliders;
+  part.parameters[0].features[0].hidden = true;
+  part.parameters[0].features.push({ key: "vented2", label: "Vented 2", on: 1,
+    sliders: [{ key: "vented2", label: "V2", min: 0, max: 1, step: 1 }] });
+  part.defaults.vented2 = 0;
+  const r = lintPart(part);
+  expect(ids(r.errors)).not.toContain("features-requires-sliders");
+});
+
+test("a sliderless feature inside a section that never renders is not an error", () => {
+  // The section is marked hidden, so controls.js (sectionRenders) never builds it
+  // — not even to iterate its features — so a sliderless feature inside it can
+  // never reach the unguarded feat.sliders.filter(...) the rule protects against.
+  const part = goodPart();
+  delete part.parameters[0].features[0].sliders;
+  part.parameters[0].hidden = true;
+  const r = lintPart(part);
+  expect(ids(r.errors)).not.toContain("features-requires-sliders");
+});
+
 test("a control key absent from defaults is an error", () => {
   const part = goodPart();
   part.parameters[0].advanced[0].key = "diameter";
