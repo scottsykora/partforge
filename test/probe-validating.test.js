@@ -59,6 +59,19 @@ test("a runaway loop trips the op ceiling instead of hanging", () => {
   expect(r.calls.length).toBeLessThanOrEqual(501);
 });
 
+// Query calls (boundingBox/volume/toMesh/toSTL/toIndexedMesh/toSTEP/cleanup) used to
+// bypass onCall's counter entirely — a query-only loop never tripped MAX_PROBE_OPS
+// and hung forever, wedging the CLI and `measure` rather than just a terminable
+// worker. This must be bounded exactly like any other op.
+test("a query-only runaway loop trips the op ceiling instead of hanging", () => {
+  const r = runValidatingProbe(
+    partWith((k) => { const s = k.box({ size: [1, 1, 1] }); let v = 0; for (;;) v += s.volume(); }),
+    {}, {}, { maxOps: 500 },
+  );
+  expect(r.runaway).toBe(true);
+  expect(r.calls.length).toBeLessThanOrEqual(501);
+});
+
 test("MAX_PROBE_OPS is the documented ceiling", () => {
   expect(MAX_PROBE_OPS).toBe(100000);
 });

@@ -62,10 +62,15 @@ function makeProbe(onCall) {
   // an unknown one.
   const ignore = (key) => typeof key !== "string" || key === "then" || key === "toJSON" || key[0] === "_";
 
+  // A query (boundingBox, volume, toMesh, …) must count against `onCall`'s ceiling
+  // exactly like any other op — returning `queries[key]` directly here used to let
+  // every query bypass the counter entirely, so a query-only loop (`for(;;)
+  // s.volume()`) never tripped MAX_PROBE_OPS and hung forever. Wrap it the same
+  // way as the chaining branch below: observe the call, then run the real query.
   const opProxy = (queries, scope) => new Proxy({}, {
     get(_t, key) {
       if (ignore(key)) return undefined;
-      if (key in queries) return queries[key];
+      if (key in queries) return (...args) => { onCall(scope, key, args); return queries[key](...args); };
       return (...args) => { onCall(scope, key, args); return proxy; };
     },
   });
