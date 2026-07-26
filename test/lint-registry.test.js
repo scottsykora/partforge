@@ -1,6 +1,8 @@
 // The rule registry is the documented catalog. Like test/kernel-contract.test.js, this
 // pins the code to the docs so the two can't drift. The docs-coverage assertion lands
 // in Task 10 with the catalog it checks, so every task in this plan ends green.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { RULES } from "../src/lint.js";
 
@@ -23,4 +25,9 @@ test("the registry covers all four rule groups", () => {
     expect(ids, `registry is missing ${id}`).toContain(id);
   }
   expect(RULES.length).toBeGreaterThanOrEqual(27);
+});
+
+test("every rule id is documented in AUTHORING-PARTS.md", () => {
+  const docs = readFileSync(fileURLToPath(new URL("../docs/AUTHORING-PARTS.md", import.meta.url)), "utf8");
+  for (const r of RULES) expect(docs, `${r.id} is missing from the docs`).toContain(r.id);
 });
