@@ -93,7 +93,19 @@ test("CLI measure prints 'near-misses: none' on a clean part", () => {
 });
 
 test("--out writes the measure half even when a later verify throw crashes the run", () => {
-  const err = runFail(["measure", "test/fixtures/unknown-metric-part.js", "--json", "--out", `${OUT}/um.json`]);
+  // unknown-metric-part.js's defect (a bad metric name in a *static* verify.expect)
+  // is now caught statically by the `verify-unknown-metric` lint rule, before the
+  // kernel even boots — so with lint on, `measure` never reaches the late-throw
+  // path this test exists to cover. unknown-metric-in-case-part.js instead makes
+  // `verify.expect` a function of (p, d) that only names the bad metric for a
+  // non-default preset case; the lint gate only resolves `expect` once, against
+  // the part's defaults (see resolveExpectOnce/lintContext), so it sees a clean
+  // `{ holes: 1 }` and passes, while verify() itself still expands every case
+  // (src/testing/cases.js) and re-resolves `expect` per case, hitting the bad
+  // metric name — after measure() has already printed and `--out` has already
+  // been written once. This keeps the test on a real lint-enabled production path
+  // instead of requiring --no-lint.
+  const err = runFail(["measure", "test/fixtures/unknown-metric-in-case-part.js", "--json", "--out", `${OUT}/um.json`]);
   // A throw after printMeasure appends the crash JSON after the human lines, so
   // stdout is not pure JSON — parse the trailing JSON object (pretty-printed).
   const payload = JSON.parse(`${err.stdout}`.match(/\{[\s\S]*\}\s*$/)[0]);
