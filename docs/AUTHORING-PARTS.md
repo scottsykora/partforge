@@ -390,6 +390,28 @@ choosing a preset updates both numeric and text fields.
 Every `key` used must exist in `defaults`. `src/parts/demo.js` is the worked example for
 everything below.
 
+**Standalone toggles** (a plain on/off checkbox, no accompanying sliders): add a
+`toggles` array to a preset section — shown below the preset picker, outside the
+Advanced fold, so it stays visible:
+
+```js
+{
+  id: "shape",
+  title: "Shape ops",
+  toggles: [
+    { key: "clip", label: "Clip arms to a disc (intersect)", on: 1,
+      description: "**Intersect** the cross with a circle so the four arm tips are rounded off to a common radius." },
+  ],
+}
+```
+
+Each entry is `{ key, label, on?, hidden?, description? }`: checked sets `key` to `on`
+(default `1`); unchecked sets it to `0`. This is the correct home for a bare boolean —
+a `features` entry *requires* a `sliders` array (the panel reads `feat.sliders.filter(...)`
+unguarded and throws if it's missing), so a feature with nothing to reveal belongs in
+`toggles` instead. `src/parts/bracket.js`'s `clip` toggle (shown above) is the worked
+example.
+
 **Control metadata (optional — on any control def, feature, or section):**
 
 - `description` — a CommonMark string shown in a click-open **ⓘ** popover beside the
