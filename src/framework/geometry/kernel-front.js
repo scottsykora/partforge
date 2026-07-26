@@ -12,7 +12,16 @@
 //     capability (Manifold can't do toSTEP; both backends now define shape2d, so
 //     that stub is dead in practice — kept as a safety net for a future backend).
 // The per-Solid twin of this layer is addSugar() in solid-sugar.js.
-import * as opentype from "opentype.js";
+// opentype.js 2.x ships no `exports` map: bundlers take its `module` field (real
+// ESM, named `parse`), while Node ESM takes `main` (a UMD/CJS bundle, whose named
+// exports Node cannot statically detect — the namespace holds only `default`).
+// So `import * as opentype` gives a working `.parse` in the browser and `undefined`
+// under Node, which broke every headless text2d build (`opentype.parse is not a
+// function`) while the browser stayed green. Normalize both interop shapes here.
+import * as opentypeNamespace from "opentype.js";
+const opentype = typeof opentypeNamespace.parse === "function"
+  ? opentypeNamespace
+  : (opentypeNamespace.default ?? opentypeNamespace);
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
 import { textGlyphs } from "./text2d.js";
