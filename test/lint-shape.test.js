@@ -80,6 +80,58 @@ test("lintPart never throws, even on garbage input", () => {
   expect(lintPart(null).ok).toBe(false);
 });
 
+// A downstream harness passing a literal `null` for opts (rather than omitting the
+// second argument) must not throw destructuring `{ params }` out of it — see
+// lintPart's own comment on why `opts` is defaulted inside the body.
+test("lintPart(part, null) does not throw and behaves like the one-arg call", () => {
+  const part = goodPart();
+  expect(() => lintPart(part, null)).not.toThrow();
+  expect(lintPart(part, null)).toEqual(lintPart(part));
+});
+
+// `lintPart(null)` has no `derive` at all — it shouldn't manufacture a `derive-throws`
+// finding just because `part.derive` can't be read off a null part.
+test("lintPart(null) reports no spurious derive-throws", () => {
+  expect(lintPart(null).errors.map((f) => f.rule)).not.toContain("derive-throws");
+  expect(lintPart(null).warnings.map((f) => f.rule)).not.toContain("derive-throws");
+});
+
+// A `defaults` getter that throws must not escape lintPart — it must degrade to a
+// well-formed (non-ok) report instead.
+test("a throwing defaults getter does not escape lintPart", () => {
+  const part = goodPart();
+  delete part.defaults;
+  Object.defineProperty(part, "defaults", {
+    get() { throw new Error("defaults boom"); },
+    enumerable: true, configurable: true,
+  });
+  expect(() => lintPart(part)).not.toThrow();
+  const r = lintPart(part);
+  expect(r.ok).toBe(false);
+  expect(ids(r.errors)).toContain("lint-context-error");
+});
+
+// A `defaults` Proxy whose `ownKeys` trap throws (spreading it to build `p` walks
+// its own keys) must not escape lintPart either.
+test("a defaults Proxy with a throwing ownKeys trap does not escape lintPart", () => {
+  const part = goodPart();
+  part.defaults = new Proxy({ h: 10 }, { ownKeys() { throw new Error("ownKeys boom"); } });
+  expect(() => lintPart(part)).not.toThrow();
+  const r = lintPart(part);
+  expect(r.ok).toBe(false);
+  expect(ids(r.errors)).toContain("lint-context-error");
+});
+
+// Same hostile-Proxy case, but on the `params` override passed at the call site.
+test("a params Proxy with a throwing ownKeys trap does not escape lintPart", () => {
+  const part = goodPart();
+  const params = new Proxy({}, { ownKeys() { throw new Error("ownKeys boom"); } });
+  expect(() => lintPart(part, { params })).not.toThrow();
+  const r = lintPart(part, { params });
+  expect(r.ok).toBe(false);
+  expect(ids(r.errors)).toContain("lint-context-error");
+});
+
 test("a rule that throws degrades to an internal-rule-error warning", async () => {
   const { runRules } = await import("../src/framework/lint/index.js");
   const boom = { id: "boom", run() { throw new Error("kaboom"); } };
