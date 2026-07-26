@@ -629,6 +629,17 @@ Create `src/framework/chrome.css`:
   }
   .pf-rail-seam { display: none; }
 }
+
+/* ---- reduced motion -----------------------------------------------------
+   Collapsing the rail slides 288px of layout across the screen — the first
+   layout-scale animation in the framework, and the kind of movement a
+   vestibular-sensitive user actually feels. Honour the preference: the rail
+   still collapses and still resizes, it just arrives instead of travelling.
+   Scoped to what this layout introduces; the pre-existing busy spinner is a
+   state indicator and is left alone. */
+@media (prefers-reduced-motion: reduce) {
+  .pf-rail, .pf-rail-seam > span { transition: none; }
+}
 ```
 
 - [ ] **Step 4: Rework the layout blocks in `app.css`**
