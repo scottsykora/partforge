@@ -2155,6 +2155,7 @@ Create `test/lint-parts.test.js`:
 // caught the nameplate/bracket `features`-without-`sliders` bug before a browser boot.
 // A failure here is a real defect in the part — fix the part, never the linter.
 import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { lintPart } from "../src/lint.js";
 
@@ -2191,6 +2192,7 @@ Create `test/lint-purity.test.js`:
 // and jobs.js. Walk the graph and prove it.
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 
 const BANNED = ["three", "manifold-3d", "replicad", "replicad-opencascadejs"];
