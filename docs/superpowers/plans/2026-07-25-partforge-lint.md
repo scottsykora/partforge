@@ -21,7 +21,7 @@
 - **Units are millimetres** throughout partforge. Not directly relevant here, but do not introduce unit conversions.
 - **Finding shape** is exactly `{ rule, severity, message, hint, path }` plus an optional `pattern`. `hint` is always present and is always a complete corrective sentence.
 - **`path` convention:** a JS accessor path rooted at the PartDefinition with the root omitted — `parameters[1].features[0]`, `defaults.bore`, `parts.spacer.views[0]`, `parameters[0].presets["M3"].od`. Whole-definition findings use `""`.
-- **Version target:** 0.25.0 → **0.26.0** in Task 10. `CONTRACT_VERSION` stays `1`.
+- **Version target:** **0.27.0** in Task 10 (0.25.0 at planning time; main released 0.26.0 and 0.26.1 while this branch was in flight, so it was rebased and re-bumped). `CONTRACT_VERSION` stays `1`.
 - **Commit style:** conventional commits (`feat:`, `test:`, `docs:`, `refactor:`). End every commit message with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
 - **Branch:** all work lands on the existing `partforge-lint` branch. Do not create new branches.
 
@@ -2319,7 +2319,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: the rule ids from Tasks 2, 3, 5, 6; `test/lint-registry.test.js` from Task 9, which this task extends with the docs-coverage assertion.
-- Produces: `docs/AUTHORING-PARTS.md` contains every rule id; version becomes `0.26.0`.
+- Produces: `docs/AUTHORING-PARTS.md` contains every rule id; version becomes `0.27.0`.
 
 - [ ] **Step 1: Add the Linting section to AUTHORING-PARTS.md**
 
@@ -2429,7 +2429,7 @@ whatever formatting that file already uses for the other commands.
 
 - [ ] **Step 4: Bump the version**
 
-In `package.json`, change `"version": "0.25.0"` to `"version": "0.26.0"`. Leave
+In `package.json`, set `"version": "0.27.0"` (0.25.0 at planning time; main reached 0.26.1 in flight). Leave
 `CONTRACT_VERSION` in `src/framework/geometry/kernel.js` at `1` — this release is
 purely additive and changes no kernel contract.
 
@@ -2471,7 +2471,7 @@ Expected: valid JSON with `"ok": true`.
 
 ```bash
 git add docs/AUTHORING-PARTS.md docs/ERROR-PATTERNS.md AGENTS.md skills/partforge/SKILL.md package.json test/lint-registry.test.js
-git commit -m "docs: document partforge lint; release 0.26.0
+git commit -m "docs: document partforge lint; release 0.27.0
 
 Adds the Linting section with the finding contract and full rule catalog (which
 test/lint-registry.test.js pins), an ERROR-PATTERNS entry for the unguarded
@@ -2503,7 +2503,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 | Worker `lint` job | 8 |
 | Error handling: never throws, `internal-rule-error` warning | 2 (implemented + tested) |
 | Testing: per-rule, shipped parts, purity, registry, determinism | 2,3,5,6 + 9 |
-| Docs, ERROR-PATTERNS, AGENTS/SKILL, 0.26.0 | 10 |
+| Docs, ERROR-PATTERNS, AGENTS/SKILL, 0.27.0 | 10 |
 
 No gaps. Two deviations from the spec, both corrections found while reading the code:
 

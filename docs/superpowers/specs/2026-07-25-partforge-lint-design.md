@@ -2,7 +2,10 @@
 
 **Date:** 2026-07-25
 **Status:** approved design, ready for planning
-**Target version:** 0.26.0 (additive; `CONTRACT_VERSION` unchanged at 1)
+**Target version:** 0.27.0 (additive; `CONTRACT_VERSION` unchanged at 1)
+
+> Originally targeted 0.26.0. While this work was in flight, main released 0.26.0 and
+> 0.26.1, so the branch was rebased and re-bumped to 0.27.0.
 
 ## Goal
 
@@ -89,7 +92,7 @@ Three decisions were settled during design and are binding on the plan.
 - No geometric validation. Volume, watertightness, wall thickness, and
   collisions remain `measure`/`verify`'s job. Lint never boots a kernel.
 - No cloud-side code changes. Those are a follow-on pass in the
-  `partforge-cloud` repo, and cannot land until 0.26.0 is published anyway.
+  `partforge-cloud` repo, and cannot land until 0.27.0 is published anyway.
 - No auto-fixing. Findings are advisory text; the linter never rewrites a part.
 
 ## Architecture
@@ -426,7 +429,7 @@ no lint test boots a kernel at all.
   `nondeterministic-build` → `impure-build-stale-preview`.
 - **`AGENTS.md`** and **`skills/partforge/SKILL.md`** — add `npx partforge lint`
   to the CLI command list.
-- **Version:** 0.25.0 → **0.26.0**. Additive throughout: a new export subpath, a
+- **Version:** → **0.27.0** (0.25.0 at design time; main moved to 0.26.1 in flight). Additive throughout: a new export subpath, a
   new CLI command, a new worker job, one internal module extraction.
   `CONTRACT_VERSION` stays 1 — no kernel contract change.
 
