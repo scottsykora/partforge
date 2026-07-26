@@ -9,7 +9,7 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden;
-  font: 13px/1.4 -apple-system, system-ui, sans-serif; }
+  font: 13px/1.4 var(--pf-sans); }
 #app { position: fixed; inset: 0; background: var(--pf-bg); }
 canvas { display: block; }
 
