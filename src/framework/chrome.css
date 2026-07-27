@@ -1,0 +1,140 @@
+/* Reusable chrome LAYOUT for a partforge app: the shell, the viewer column
+   ("stage"), the full-height controls rail, its resize seam, and the two
+   floating pill groups. Appearance of the controls INSIDE the rail stays in
+   app.css; this file is only about where things sit.
+
+   Class-based on purpose. partforge-cloud's sandbox builds its own DOM
+   (#viewer / #pfc-controls) and could never reuse an id-keyed sheet, so the
+   layout is expressed as .pf-* classes and exported standalone as
+   "partforge/chrome.css". app.css keeps :not(.pf-*) fallbacks so legacy
+   id-only markup renders its previous floating look untouched.
+
+   See docs/superpowers/specs/2026-07-26-controls-rail-layout-design.md. */
+
+/* ---- shell: viewer column + rail, side by side --------------------------- */
+.pf-shell {
+  display: flex;
+  /* containing block for the absolutely-positioned seam */
+  position: relative;
+  overflow: hidden;
+}
+
+/* ---- stage: the viewer column, which owns its floating chrome ------------
+   min-width: 0 lets the column shrink past the canvas's intrinsic width, so
+   dragging the rail wider actually narrows the viewer instead of overflowing. */
+.pf-stage {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  background: var(--pf-bg);
+}
+
+/* ---- rail: a full-height right edge, set back from the viewer ------------
+   Square-cornered: it is an edge, not a card. The shadow is INSET on its left
+   side — the viewer casts onto the rail, which is what makes the rail read as
+   set back. An outer shadow would read as floating above the viewer. */
+.pf-rail {
+  flex: none;
+  width: var(--pf-rail-w);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--pf-surface);
+  border-left: 1px solid var(--pf-border);
+  box-shadow: var(--pf-shadow-rail);
+  color: var(--pf-text);
+  /* Discrete changes (toggle, Home/End, double-click) animate; a drag never
+     does — an animated width fights the pointer and costs an extra WebGL
+     buffer reallocation every frame. */
+  transition: width .15s ease;
+}
+.pf-rail[inert] { border-left-width: 0; }
+
+/* Head and foot are flex-fixed rather than sticky, so the scroll container is
+   exactly .pf-rail-body. On a full-height rail the export buttons must never
+   scroll out of reach. */
+.pf-rail-head, .pf-rail-foot { flex: none; }
+.pf-rail-head { padding: 12px var(--pf-rail-pad); border-bottom: 1px solid var(--pf-border); }
+.pf-rail-foot { padding: 12px var(--pf-rail-pad); border-top: 1px solid var(--pf-border); }
+.pf-rail-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ---- resize seam --------------------------------------------------------
+   An OVERLAY, not a flex item. partforge-cloud's seam is a real 12px column
+   because its card is inset from the window with a gutter to live in; this rail
+   is flush against the viewer behind a hairline, so a flex item would open a
+   visible stripe of page background.
+
+   max(0px, …) is what parks the seam flush at the window edge when the rail is
+   collapsed, so a fresh drag can pull it back out. The element is created by
+   rail.js — no host markup declares it. */
+.pf-rail-seam {
+  position: absolute;
+  top: 0; bottom: 0;
+  right: max(0px, calc(var(--pf-rail-w) - 6px));
+  z-index: 20;
+  width: 12px;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: none;
+  cursor: ew-resize;
+}
+/* Collapsed, the only legal direction is left. */
+.pf-rail-seam[data-collapsed] { cursor: w-resize; }
+.pf-rail-seam:focus-visible { outline: none; }
+/* Invisible at rest; the affordance is a short centred pill that appears only
+   on hover, keyboard focus, or during a drag. */
+.pf-rail-seam > span {
+  pointer-events: none;
+  width: 3px; height: 100px; border-radius: 999px;
+  background: transparent;
+  transition: background-color .12s ease;
+}
+.pf-rail-seam:hover > span,
+.pf-rail-seam:focus-visible > span,
+[data-dragging] .pf-rail-seam > span { background: var(--pf-muted); }
+
+/* While dragging, the cursor must stay correct even when the pointer is out
+   over the viewer, and the viewer must not react to it. Pointer capture keeps
+   the events coming; these two rules are the second belt. */
+[data-dragging] { cursor: ew-resize; user-select: none; }
+[data-dragging] .pf-stage { pointer-events: none; }
+[data-dragging] .pf-rail,
+[data-key-resizing] .pf-rail { transition: none; }
+
+/* ---- floating chrome: PLACEMENT ONLY, absolute within the stage ----------
+   Deliberately no appearance here. partforge-cloud's sandbox.css re-anchors
+   #viewbar's position with its own rules but inherits the pill's chrome
+   (background/border/radius/shadow) from app.css, so that chrome must live in
+   app.css ungated — not be duplicated into a class the cloud never sets. This
+   file owns where things sit; app.css owns what they look like. */
+.pf-float-tabs, .pf-float-viewbar { position: absolute; z-index: 15; }
+.pf-float-tabs { top: 12px; left: 50%; transform: translateX(-50%); }
+.pf-float-viewbar { bottom: 12px; right: 12px; }
+
+/* ---- stacked layout: no room for a rail beside the viewer ----------------
+   The seam is hidden and resize is absent at this width (rail.js also refuses
+   to start a drag); the #rail-toggle still collapses and restores. */
+@media (max-width: 719px) {
+  .pf-shell { flex-direction: column; }
+  .pf-rail {
+    width: auto; height: 45vh;
+    border-left: 0; border-top: 1px solid var(--pf-border);
+    box-shadow: none;
+  }
+  .pf-rail-seam { display: none; }
+}
+
+/* ---- reduced motion -----------------------------------------------------
+   Collapsing the rail slides 288px of layout across the screen — the first
+   layout-scale animation in the framework, and the kind of movement a
+   vestibular-sensitive user actually feels. Honour the preference: the rail
+   still collapses and still resizes, it just arrives instead of travelling.
+   Scoped to what this layout introduces; the pre-existing busy spinner is a
+   state indicator and is left alone. */
+@media (prefers-reduced-motion: reduce) {
+  .pf-rail, .pf-rail-seam > span { transition: none; }
+}

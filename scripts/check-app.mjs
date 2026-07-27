@@ -170,6 +170,32 @@ async function checkCompactLayout(width) {
   }
 }
 
+// Wide-layout geometry: the rail is a full-height right edge and the viewer
+// column owns its floating chrome. checkCompactLayout only runs below the 720px
+// breakpoint, where the rail is stacked, so it can't see any of this.
+async function checkRailLayout(width) {
+  await page.setViewportSize({ width, height: 720 });
+  await sleep(50);
+  const result = await page.evaluate(() => {
+    const panel = document.getElementById("panel");
+    const app = document.getElementById("app");
+    const viewbar = document.getElementById("viewbar");
+    if (!panel || !app) return { problems: ["missing #panel or #app"] };
+    const rail = panel.getBoundingClientRect();
+    const stage = app.getBoundingClientRect();
+    const bar = viewbar?.getBoundingClientRect();
+    const problems = [];
+    if (Math.abs(rail.right - window.innerWidth) > 1) problems.push("rail is not flush to the right edge");
+    if (Math.abs(rail.height - window.innerHeight) > 1) problems.push(`rail height ${Math.round(rail.height)} != viewport ${window.innerHeight}`);
+    if (Math.abs(rail.left - stage.right) > 1) problems.push("rail does not sit flush against the viewer column");
+    if (rail.width < 200) problems.push(`rail collapsed unexpectedly (${Math.round(rail.width)}px)`);
+    if (bar && bar.right > stage.right + 1) problems.push("#viewbar escapes the viewer column");
+    if (bar && bar.bottom > stage.bottom + 1) problems.push("#viewbar escapes the viewer column vertically");
+    return { problems };
+  });
+  for (const problem of result.problems) errors.push(`rail layout ${width}px: ${problem}`);
+}
+
 try {
   startVite();
   await waitForVite();
@@ -221,6 +247,8 @@ try {
 
   if (cutaway) {
     const viewport = page.viewportSize();
+    await checkRailLayout(1280);
+    await checkRailLayout(1024);
     await checkCompactLayout(601);
     await checkCompactLayout(390);
     await checkCompactLayout(320);

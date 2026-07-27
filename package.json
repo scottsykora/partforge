@@ -28,7 +28,8 @@
     "./lint": "./src/lint.js",
     "./derive": "./src/framework/derive.js",
     "./testing": "./src/testing.js",
-    "./tokens.css": "./src/framework/tokens.css"
+    "./tokens.css": "./src/framework/tokens.css",
+    "./chrome.css": "./src/framework/chrome.css"
   },
   "bin": {
     "partforge": "./bin/cli.js"
