@@ -196,3 +196,86 @@ test("detach removes the seam and stops responding", () => {
   key(seam, "ArrowLeft");
   expect(railWidth()).toBe(""); // property cleaned up, listener gone
 });
+
+test("Home and End animate the width; arrow keys suppress the transition instead", () => {
+  const { seam, shell, storage } = setup();
+  key(seam, "ArrowRight");
+  expect(shell.hasAttribute("data-pf-key-resizing")).toBe(true);
+  key(seam, "Home");
+  expect(shell.hasAttribute("data-pf-key-resizing")).toBe(false);
+  // Committed immediately, not left for the arrow-key debounce to persist.
+  expect(JSON.parse(storage.read()).width).toBe(RAIL_MIN_WIDTH);
+
+  key(seam, "ArrowLeft");
+  expect(shell.hasAttribute("data-pf-key-resizing")).toBe(true);
+  key(seam, "End");
+  expect(shell.hasAttribute("data-pf-key-resizing")).toBe(false);
+});
+
+test("keyboard resize keeps working after the window shrinks", () => {
+  const { seam, shell } = setup({ shellWidth: 1600 });
+  key(seam, "End");
+  expect(railWidth()).toBe("560px");
+  // Shell reports narrower now; the remembered 560px no longer fits.
+  shell.getBoundingClientRect = () => ({ left: 0, right: 900, width: 900, top: 0, bottom: 720, height: 720 });
+  key(seam, "ArrowRight");
+  expect(railWidth()).toBe("434px"); // clamped to the new 450px max, then stepped by 16
+});
+
+test("arrow keys are no-ops while collapsed; Enter still reopens at the remembered width", () => {
+  const { seam, rail } = setup();
+  key(seam, "ArrowLeft"); // widen away from the default so reopening is distinguishable from the 240px minimum
+  const widened = railWidth();
+  key(seam, "Enter");
+  expect(railWidth()).toBe("0px");
+
+  key(seam, "ArrowLeft");
+  expect(railWidth()).toBe("0px");
+  expect(rail.hasAttribute("inert")).toBe(true);
+  key(seam, "ArrowRight");
+  expect(railWidth()).toBe("0px");
+  expect(rail.hasAttribute("inert")).toBe(true);
+
+  key(seam, "Enter");
+  expect(railWidth()).toBe(widened);
+});
+
+test("modifier-held arrow keys pass through untouched; shift alone still steps", () => {
+  const { seam } = setup();
+  const before = railWidth();
+  key(seam, "ArrowLeft", { metaKey: true });
+  expect(railWidth()).toBe(before);
+  key(seam, "ArrowLeft", { ctrlKey: true });
+  expect(railWidth()).toBe(before);
+  key(seam, "ArrowLeft", { altKey: true });
+  expect(railWidth()).toBe(before);
+  key(seam, "ArrowLeft", { shiftKey: true });
+  expect(railWidth()).toBe(`${RAIL_DEFAULT_WIDTH + 64}px`);
+});
+
+test("detach restores a toggle to its pre-attach label instead of leaving it wired to 'Show controls'", () => {
+  document.body.innerHTML = `
+    <div class="pf-shell">
+      <div class="pf-stage"></div>
+      <div class="pf-rail"></div>
+    </div>`;
+  const shell = document.querySelector(".pf-shell");
+  const rail = document.querySelector(".pf-rail");
+  shell.getBoundingClientRect = () => ({ left: 0, right: 1600, width: 1600, top: 0, bottom: 720, height: 720 });
+  const toggle = document.createElement("button");
+  toggle.textContent = "Controls";
+  toggle.title = "Toggle the controls panel";
+  document.body.append(toggle);
+  const storage = fakeStorage();
+  const handle = attachRail({ rail, shell, toggle, storage });
+
+  expect(toggle.textContent).toBe("⇥"); // attach took over the label
+  expect(toggle.title).toBe("Hide controls");
+
+  handle.detach();
+  expect(toggle.textContent).toBe("Controls");
+  expect(toggle.title).toBe("Toggle the controls panel");
+  expect(toggle.getAttribute("aria-expanded")).toBeNull();
+  expect(toggle.getAttribute("aria-label")).toBeNull();
+  expect(toggle.classList.contains("on")).toBe(false);
+});
