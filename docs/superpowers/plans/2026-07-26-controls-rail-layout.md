@@ -444,7 +444,7 @@ This task must land atomically: the CSS and the markup change together, or nothi
 
 **Interfaces:**
 - Consumes: `--pf-rail-w`, `--pf-rail-pad`, `--pf-radius-pill`, `--pf-shadow-float`, `--pf-shadow-rail` (Task 1).
-- Produces: the classes `.pf-shell`, `.pf-stage`, `.pf-rail`, `.pf-rail-head`, `.pf-rail-body`, `.pf-rail-foot`, `.pf-float-tabs`, `.pf-float-viewbar`, and the `data-dragging` / `data-key-resizing` shell flags that Task 5 sets. `.pf-rail-seam` is styled here but created by Task 5.
+- Produces: the classes `.pf-shell`, `.pf-stage`, `.pf-rail`, `.pf-rail-head`, `.pf-rail-body`, `.pf-rail-foot`, `.pf-float-tabs`, `.pf-float-viewbar`, and the `data-pf-dragging` / `data-pf-key-resizing` shell flags that Task 5 sets. `.pf-rail-seam` is styled here but created by Task 5.
 
 **Why classes, not ids:** partforge-cloud's host builds its own DOM (`#viewer`, `#pfc-controls`) and could never reuse an id-keyed sheet. Legacy id-only markup keeps its old floating look via `:not(.pf-*)` fallbacks in `app.css` — the class is what opts a page into the new layout, so nothing breaks and there are no specificity fights between an id rule and a class rule.
 
@@ -597,15 +597,15 @@ Create `src/framework/chrome.css`:
 }
 .pf-rail-seam:hover > span,
 .pf-rail-seam:focus-visible > span,
-[data-dragging] .pf-rail-seam > span { background: var(--pf-muted); }
+[data-pf-dragging] .pf-rail-seam > span { background: var(--pf-muted); }
 
 /* While dragging, the cursor must stay correct even when the pointer is out
    over the viewer, and the viewer must not react to it. Pointer capture keeps
    the events coming; these two rules are the second belt. */
-[data-dragging] { cursor: ew-resize; user-select: none; }
-[data-dragging] .pf-stage { pointer-events: none; }
-[data-dragging] .pf-rail,
-[data-key-resizing] .pf-rail { transition: none; }
+[data-pf-dragging] { cursor: ew-resize; user-select: none; }
+[data-pf-dragging] .pf-stage { pointer-events: none; }
+[data-pf-dragging] .pf-rail,
+[data-pf-key-resizing] .pf-rail { transition: none; }
 
 /* ---- floating chrome: PLACEMENT ONLY, absolute within the stage ----------
    Deliberately no appearance here. partforge-cloud's sandbox.css re-anchors
@@ -974,7 +974,7 @@ git commit -m "feat(chrome): full-bleed parameter sections in the rail"
 - Test: `test/framework/rail.test.js`
 
 **Interfaces:**
-- Consumes: every export of `rail-state.js` (Task 2); the `.pf-rail-seam` / `[data-dragging]` / `[data-key-resizing]` styling from `chrome.css` (Task 3).
+- Consumes: every export of `rail-state.js` (Task 2); the `.pf-rail-seam` / `[data-pf-dragging]` / `[data-pf-key-resizing]` styling from `chrome.css` (Task 3).
 - Produces: `attachRail({ rail, toggle, shell, storage }) => { detach: () => void }`. `shell` defaults to `rail.parentElement`; `storage` defaults to `globalThis.localStorage`. Returns a no-op `detach` when `rail` is falsy. Task 6 supplies `toggle`.
 
 - [ ] **Step 1: Stub `setPointerCapture` for happy-dom**
@@ -1114,12 +1114,12 @@ test("a drag writes the width live and persists once on pointerup", () => {
   const { seam, shell, storage } = setup();
   seam.getBoundingClientRect = () => ({ left: 1600 - RAIL_DEFAULT_WIDTH - 6, right: 1600 - RAIL_DEFAULT_WIDTH + 6, width: 12 });
   seam.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 1600 - RAIL_DEFAULT_WIDTH }));
-  expect(shell.hasAttribute("data-dragging")).toBe(true);
+  expect(shell.hasAttribute("data-pf-dragging")).toBe(true);
   expect(storage.read()).toBeNull(); // nothing persisted mid-drag
   seam.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 1200 }));
   expect(railWidth()).toBe("400px");
   seam.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: 1200 }));
-  expect(shell.hasAttribute("data-dragging")).toBe(false);
+  expect(shell.hasAttribute("data-pf-dragging")).toBe(false);
   expect(JSON.parse(storage.read())).toEqual({ width: 400, collapsed: false });
 });
 
@@ -1247,7 +1247,7 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   let keyTimer = 0;
   function settleKeys() {
     clearTimeout(keyTimer);
-    shell.removeAttribute("data-key-resizing");
+    shell.removeAttribute("data-pf-key-resizing");
   }
   function commit(next) {
     settleKeys(); // a discrete change interrupting a key repeat animates normally
@@ -1273,10 +1273,10 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     }
     e.preventDefault();
     state = { collapsed: false, width: clampRailWidth(width, shellWidth()) };
-    shell.toggleAttribute("data-key-resizing", true);
+    shell.toggleAttribute("data-pf-key-resizing", true);
     clearTimeout(keyTimer);
     keyTimer = setTimeout(() => {
-      shell.removeAttribute("data-key-resizing");
+      shell.removeAttribute("data-pf-key-resizing");
       writeRailPref(state, storage);
     }, KEY_SETTLE_MS);
     apply();
@@ -1300,18 +1300,18 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     const box = seam.getBoundingClientRect();
     // Where inside the 12px seam the grab landed, so the rail edge doesn't jump.
     grabOffset = e.clientX - (box.left + box.width / 2);
-    shell.toggleAttribute("data-dragging", true);
+    shell.toggleAttribute("data-pf-dragging", true);
   }
   function onPointerMove(e) {
-    if (!shell.hasAttribute("data-dragging")) return;
+    if (!shell.hasAttribute("data-pf-dragging")) return;
     const railX = shellBox().right - (e.clientX - grabOffset);
     state = resolveRailDrag(railX, state, shellWidth());
     apply();
   }
   function onPointerUp(e) {
-    if (!shell.hasAttribute("data-dragging")) return;
+    if (!shell.hasAttribute("data-pf-dragging")) return;
     seam.releasePointerCapture?.(e.pointerId);
-    shell.removeAttribute("data-dragging");
+    shell.removeAttribute("data-pf-dragging");
     apply({ persist: true });
   }
 
@@ -1340,7 +1340,7 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
       toggle?.removeEventListener("click", onToggleClick);
       window.removeEventListener("resize", onResize);
       seam.remove();
-      shell.removeAttribute("data-dragging");
+      shell.removeAttribute("data-pf-dragging");
       rail.removeAttribute("inert");
       root.style.removeProperty("--pf-rail-w");
     },
