@@ -62,7 +62,7 @@ function createCleanupStack() {
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
-export function mount(part, { createWorker, elements = {}, onBuild, onPick,
+export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload,
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
@@ -287,12 +287,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
         }
         case "download-parts":
           ui.hideBusy();
-          downloadParts(data, zipName);
+          downloadParts(data, zipName, onDownload);
           ui.setStatus(`${data.parts.length} part(s) downloaded`);
           break;
         case "download":
           ui.hideBusy();
-          triggerDownload(data.data, data.filename, data.mime);
+          triggerDownload(data.data, data.filename, data.mime, onDownload);
           ui.setStatus(`${data.filename} downloaded`);
           break;
         case "needs-occt":
