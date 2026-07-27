@@ -86,6 +86,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
       reframe: elements.chrome?.reframe ?? byId("reframe"),
       theme: elements.chrome?.theme ?? byId("theme"),
       cutaway: elements.chrome?.cutaway ?? byId("cutaway"),
+      railToggle: elements.chrome?.railToggle ?? byId("rail-toggle"),
     },
   };
 
