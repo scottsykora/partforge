@@ -47,9 +47,16 @@ canvas { display: block; }
    border + padding used to take from both sides. */
 .section {
   padding: 11px var(--pf-rail-pad);
+}
+/* Divider BETWEEN visible sections. `~` walks all preceding siblings, and a
+   relevance-hidden section (.section-hidden, display:none) fails the :not(),
+   so the topmost VISIBLE section never draws a hairline under the rail header.
+   Do not simplify this to `.section:first-child { border-top: 0 }` — that
+   matches DOM position rather than visibility, and leaves a stray divider
+   floating at the top whenever applyRelevance hides the first section. */
+.section:not(.section-hidden) ~ .section:not(.section-hidden) {
   border-top: 1px solid var(--pf-border);
 }
-.section:first-child { border-top: 0; }
 .sec-title {
   font-family: var(--pf-mono); font-size: 10px; font-weight: 600;
   letter-spacing: 0.14em; text-transform: uppercase; color: var(--pf-muted-2); margin-bottom: 9px;

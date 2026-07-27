@@ -191,6 +191,23 @@ async function checkRailLayout(width) {
     if (rail.width < 200) problems.push(`rail collapsed unexpectedly (${Math.round(rail.width)}px)`);
     if (bar && bar.right > stage.right + 1) problems.push("#viewbar escapes the viewer column");
     if (bar && bar.bottom > stage.bottom + 1) problems.push("#viewbar escapes the viewer column vertically");
+
+    // Section divider: hiding the first section via relevance must not leave a
+    // stray hairline under the rail header (see src/framework/app.css .section rule).
+    const sections = [...document.querySelectorAll("#controls .section")];
+    if (sections.length >= 2) {
+      sections[0].classList.add("section-hidden");
+      const firstVisible = sections.find((s) => !s.classList.contains("section-hidden"));
+      const secondVisible = sections.find((s) => s !== firstVisible && !s.classList.contains("section-hidden"));
+      if (firstVisible && getComputedStyle(firstVisible).borderTopWidth !== "0px") {
+        problems.push("first visible section has a stray top divider after relevance hid the DOM-first section");
+      }
+      if (secondVisible && getComputedStyle(secondVisible).borderTopWidth === "0px") {
+        problems.push("section after the first visible one is missing its divider");
+      }
+      sections[0].classList.remove("section-hidden");
+    }
+
     return { problems };
   });
   for (const problem of result.problems) errors.push(`rail layout ${width}px: ${problem}`);
