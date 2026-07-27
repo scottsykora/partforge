@@ -287,3 +287,19 @@ test("Escape closes the popover; after dispose the document listener is gone", (
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   expect(document.body.querySelector(".popover")).toBeNull();
 });
+
+test("sections stay flat siblings so the rail can divide them with hairlines", () => {
+  const root = document.createElement("div");
+  buildControls(root, [presetSec(), featureSec()], { od: 5, secret: 0, flange_d: 16, hf: 0 }, () => {});
+  const sections = [...root.children].filter((el) => el.classList.contains("section"));
+  expect(sections).toHaveLength(2);
+  // No nesting: a full-bleed divider between siblings only reads correctly if
+  // sections really are siblings, not boxes inside boxes.
+  for (const section of sections) {
+    expect(section.querySelector(".section")).toBeNull();
+    expect(section.parentElement).toBe(root);
+  }
+  // The Advanced fold survives — this task changes appearance, not behavior.
+  expect(sections[0].querySelector(".adv-toggle")).not.toBeNull();
+  expect(sections[0].querySelector(".adv.hidden")).not.toBeNull();
+});
