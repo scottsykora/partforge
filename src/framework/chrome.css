@@ -139,6 +139,10 @@
     box-shadow: none;
   }
   .pf-rail-seam { display: none; }
+  /* Collapsed, --pf-rail-w has no effect here (width is auto, height is 45vh),
+     so hide the rail outright — otherwise the toggle's first tap leaves a
+     full-size rail on screen that is inert and unresponsive. */
+  .pf-rail[inert] { display: none; }
 }
 
 /* ---- reduced motion -----------------------------------------------------

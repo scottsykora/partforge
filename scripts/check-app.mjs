@@ -230,6 +230,7 @@ async function checkRailLayout(width) {
   const seam = await page.$(".pf-rail-seam");
   if (!seam) {
     errors.push(`rail layout ${width}px: no .pf-rail-seam to drag`);
+    await resetRail();
     return;
   }
   const box = await seam.boundingBox();
@@ -243,9 +244,23 @@ async function checkRailLayout(width) {
   if (after <= before + 40) {
     errors.push(`rail layout ${width}px: drag did not widen the rail (${Math.round(before)} -> ${Math.round(after)})`);
   }
-  // Leave the rail at its default so later checks and pages start clean.
-  await page.evaluate(() => { try { localStorage.removeItem("partforge:rail"); } catch {} });
-  await page.evaluate(() => document.documentElement.style.setProperty("--pf-rail-w", "288px"));
+  await resetRail();
+}
+
+// Reset through the rail's own API — a dblclick on the seam routes through
+// rail.js's commit(), which resets to the 288px default — so the DOM and
+// rail.js's in-memory `state` agree. The old approach (clear localStorage,
+// poke --pf-rail-w directly) left `state` holding the dragged width, so the
+// next setViewportSize fired a resize -> apply() that overwrote the inline
+// value right back to the stale width; later checks then ran against a
+// widened rail even though the property and storage both looked "clean".
+// Dispatched via evaluate (not a captured element handle) so it also covers
+// the early-return path above, where no seam handle was found.
+async function resetRail() {
+  await page.evaluate(() => {
+    document.querySelector(".pf-rail-seam")?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  });
+  await sleep(50);
 }
 
 try {

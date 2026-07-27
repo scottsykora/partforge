@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { beforeEach, expect, test, vi } from "vitest";
+import { beforeEach, expect, test } from "vitest";
 import { attachRail } from "../../src/framework/rail.js";
 import { RAIL_DEFAULT_WIDTH, RAIL_MIN_WIDTH } from "../../src/framework/rail-state.js";
 
@@ -32,7 +32,6 @@ const key = (seam, k, init = {}) => seam.dispatchEvent(new KeyboardEvent("keydow
 beforeEach(() => {
   document.documentElement.style.removeProperty("--pf-rail-w");
   document.body.innerHTML = "";
-  vi.useRealTimers();
 });
 
 test("creates the seam with separator semantics and the live width", () => {
@@ -124,6 +123,19 @@ test("a drag writes the width live and persists once on pointerup", () => {
   expect(JSON.parse(storage.read())).toEqual({ width: 400, collapsed: false });
 });
 
+test("a drag corrects for where inside the seam the pointer grabbed it", () => {
+  const { seam } = setup();
+  // The other drag test grabs dead-centre on the stubbed seam box, so its
+  // grabOffset is always 0 and never exercises the correction. Grab the left
+  // edge instead (clientX 1306, box centre 1312) for grabOffset -6.
+  seam.getBoundingClientRect = () => ({ left: 1600 - RAIL_DEFAULT_WIDTH - 6, right: 1600 - RAIL_DEFAULT_WIDTH + 6, width: 12 });
+  seam.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 1600 - RAIL_DEFAULT_WIDTH - 6 }));
+  seam.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 1200 }));
+  // Ignoring the offset would read 1600 - 1200 = 400px; folding in grabOffset
+  // -6 moves the rail edge to follow the actual grab point: 394px.
+  expect(railWidth()).toBe("394px");
+});
+
 test("a stored preference is restored on attach", () => {
   document.body.innerHTML = `<div class="pf-shell"><div class="pf-stage"></div><div class="pf-rail"></div></div>`;
   const shell = document.querySelector(".pf-shell");
@@ -154,13 +166,27 @@ test("an optional toggle button collapses and restores, tracking state in its la
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
 });
 
-test("the toggle still works when the seam refuses to drag (stacked layout)", () => {
+test("the toggle still works mid-drag", () => {
   const { toggle, seam } = setup({ withToggle: true });
-  // chrome.css hides the seam below 720px and onPointerDown bails there, so the
-  // toggle is the only affordance left. It must not depend on drag state.
+  // happy-dom's default window.innerWidth (1024) is above RAIL_NARROW_BREAKPOINT,
+  // so this pointerdown actually starts a drag (see the narrow-viewport test
+  // below for the refusal itself). This proves the toggle doesn't depend on
+  // drag state, even while a drag is in progress.
   seam.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 10 }));
   toggle.click();
   expect(railWidth()).toBe("0px");
+});
+
+test("onPointerDown refuses to start a drag in the stacked layout (<720px)", () => {
+  const original = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { value: 600, configurable: true });
+  try {
+    const { shell, seam } = setup();
+    seam.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 10 }));
+    expect(shell.hasAttribute("data-pf-dragging")).toBe(false);
+  } finally {
+    Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
+  }
 });
 
 test("detach removes the seam and stops responding", () => {

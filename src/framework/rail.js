@@ -9,6 +9,13 @@ const KEY_STEP_SHIFT = 64;
 // covers the whole repeat window rather than just the instant of a keydown.
 const KEY_SETTLE_MS = 200;
 
+// Touching the localStorage PROPERTY can throw (opaque origin, blocked site
+// data) — not just its methods. view-state.js guards it the same way; the
+// framework runs in an iframe in production, where this is reachable.
+function safeStorage() {
+  try { return globalThis.localStorage ?? null; } catch { return null; }
+}
+
 // Make the controls rail resizable and collapsible, with partforge-cloud's seam
 // affordance: a 12px hit target holding a pill that is invisible until hover,
 // keyboard focus, or a drag.
@@ -21,13 +28,16 @@ const KEY_SETTLE_MS = 200;
 //
 // Everything is optional. With no rail this returns a no-op, so hosts that lay
 // the framework out themselves (see embed-test.html) are unaffected.
-export function attachRail({ rail, toggle, shell = rail?.parentElement, storage = globalThis.localStorage } = {}) {
+export function attachRail({ rail, toggle, shell = rail?.parentElement, storage = safeStorage() } = {}) {
   if (!rail || !shell) return { detach: () => {} };
 
   const root = document.documentElement;
   const shellBox = () => shell.getBoundingClientRect();
   const shellWidth = () => shellBox().width;
   let state = readRailPref(storage, shellWidth());
+  // Captured before the first apply() mutates the toggle, so detach() can
+  // hand back a plain, unwired button rather than a dead "Show controls" one.
+  const toggleOriginal = toggle ? { text: toggle.textContent, title: toggle.title } : null;
 
   const seam = document.createElement("div");
   seam.className = "pf-rail-seam";
@@ -39,13 +49,19 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   seam.append(document.createElement("span")); // the hover/focus affordance
   rail.before(seam);
 
-  function apply({ persist = false } = {}) {
-    const width = state.collapsed ? 0 : clampRailWidth(state.width, shellWidth());
+  // shellW lets a caller that already measured the shell this frame (the
+  // pointermove handler) thread that width through instead of forcing a
+  // second synchronous layout here — apply() writes --pf-rail-w onto :root
+  // just below, so any un-measured read after that point is a style+layout
+  // flush, not a cached value.
+  function apply({ persist = false, shellW } = {}) {
+    const sw = shellW ?? shellWidth();
+    const width = state.collapsed ? 0 : clampRailWidth(state.width, sw);
     root.style.setProperty("--pf-rail-w", `${width}px`);
     rail.toggleAttribute("inert", state.collapsed);
     seam.toggleAttribute("data-collapsed", state.collapsed);
     seam.setAttribute("aria-valuenow", String(width));
-    seam.setAttribute("aria-valuemax", String(railMaxWidth(shellWidth())));
+    seam.setAttribute("aria-valuemax", String(railMaxWidth(sw)));
     if (toggle) {
       toggle.textContent = state.collapsed ? "⇤" : "⇥";
       const label = state.collapsed ? "Show controls" : "Hide controls";
@@ -74,14 +90,35 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   // ArrowLeft widens a right-hand rail. Arrows clamp at the minimum and never
   // collapse; Enter/Space is the collapse gesture.
   function onKeyDown(e) {
-    const from = state.collapsed ? 0 : state.width;
+    // Cmd/Alt/Ctrl+Arrow are browser/OS reserved (back, tab switch, ...); don't
+    // eat them just because the seam happens to hold focus.
+    if (e.metaKey || e.altKey || e.ctrlKey) return;
+    // Enter/Space is the deliberate reopen gesture (below); arrows must not
+    // also reopen a collapsed rail — that would clamp it to the 240px minimum
+    // and silently discard the remembered width, and "narrower" reopening the
+    // rail at all is backwards.
+    if (state.collapsed && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return;
     const step = e.shiftKey ? KEY_STEP_SHIFT : KEY_STEP;
+    // Re-clamp on READ rather than reconciling state.width on resize: a width
+    // that no longer fits the current shell is still the user's preference and
+    // should come back if the window grows again, so only the transient value
+    // used for this keypress is clamped.
+    const from = state.collapsed ? 0 : clampRailWidth(state.width, shellWidth());
     let width;
     switch (e.key) {
       case "ArrowLeft": width = from + step; break;
       case "ArrowRight": width = from - step; break;
-      case "Home": width = RAIL_MIN_WIDTH; break;
-      case "End": width = railMaxWidth(shellWidth()); break;
+      case "Home": case "End": {
+        e.preventDefault();
+        // Route through commit() — the path onDoubleClick uses — so these
+        // jumps animate. Only a debounced arrow-key repeat (below) suppresses
+        // the width transition.
+        commit({
+          collapsed: false,
+          width: e.key === "Home" ? RAIL_MIN_WIDTH : railMaxWidth(shellWidth()),
+        });
+        return;
+      }
       case "Enter": case " ": e.preventDefault(); toggleCollapsed(); return;
       default: return;
     }
@@ -118,9 +155,15 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   }
   function onPointerMove(e) {
     if (!shell.hasAttribute("data-pf-dragging")) return;
-    const railX = shellBox().right - (e.clientX - grabOffset);
-    state = resolveRailDrag(railX, state, shellWidth());
-    apply();
+    // Measure the shell once per move and thread it through resolveRailDrag
+    // and apply(), instead of re-measuring after apply() has already mutated
+    // :root's style (which would force a synchronous style+layout flush).
+    const box = shellBox();
+    const railX = box.right - (e.clientX - grabOffset);
+    const next = resolveRailDrag(railX, state, box.width);
+    if (next === state) return; // unchanged — skip the redundant DOM writes
+    state = next;
+    apply({ shellW: box.width });
   }
   function onPointerUp(e) {
     if (!shell.hasAttribute("data-pf-dragging")) return;
@@ -157,6 +200,13 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
       shell.removeAttribute("data-pf-dragging");
       rail.removeAttribute("inert");
       root.style.removeProperty("--pf-rail-w");
+      if (toggle) {
+        toggle.textContent = toggleOriginal.text;
+        toggle.title = toggleOriginal.title;
+        toggle.removeAttribute("aria-expanded");
+        toggle.removeAttribute("aria-label");
+        toggle.classList.remove("on");
+      }
     },
   };
 }
