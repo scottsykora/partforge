@@ -70,6 +70,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
     viewer: elements.viewer ?? legacyContainer ?? byId("app"),
     controls: elements.controls ?? legacyControls ?? byId("controls"),
     rail: elements.rail ?? byId("panel"),
+    // No id fallback: attachRail defaults shell to rail.parentElement, which is
+    // right for the standard markup (rail is a direct child of .pf-shell). A
+    // host that wraps its rail in an extra element (e.g. a React layout div)
+    // must pass this explicitly, or the seam ends up positioned against the
+    // wrong ancestor. Left undefined (not null) when unsupplied so rail.js's
+    // own default still applies.
+    shell: elements.shell,
     status: {
       status: elements.status?.status ?? byId("status"),
       busy: elements.status?.busy ?? byId("busy"),
@@ -102,7 +109,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
     cleanup.defer(() => cutawayChrome.detach());
     // Resizable/collapsible controls rail. No-ops when the host lays out the
     // framework itself (no #panel / no elements.rail).
-    const railChrome = attachRail({ rail: els.rail, toggle: els.chrome.railToggle });
+    const railChrome = attachRail({ rail: els.rail, toggle: els.chrome.railToggle, shell: els.shell });
     cleanup.defer(() => railChrome.detach());
     const hover = attachHoverLabels(viewer, { part, tooltip }); // always-on hover inspection (no-op on touch-only devices)
     cleanup.defer(() => hover.detach());

@@ -689,6 +689,7 @@ stylesheet). `mount` looks up these element IDs:
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
 | `#viewbar` with `#pause` / `#reframe` / `#cutaway` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
 | `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#pause`/`#theme` |
 
 Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two
@@ -708,6 +709,30 @@ add markup for it. This isn't decorative — get the head/body/foot split wrong 
 the export buttons scroll away or a tall parameter list pushes them off-screen. See
 `docs/superpowers/specs/2026-07-26-controls-rail-layout-design.md` for why the rail is
 shaped this way (resize/collapse behavior, breakpoints, the design rationale).
+
+**Keyboard (the seam is `role="separator"`, focusable, `tabIndex=0`):**
+
+| Key | Action |
+|---|---|
+| ← | widen the rail 16px (64px with Shift). No-op while collapsed. |
+| → | narrow the rail 16px (64px with Shift), clamped at the 240px minimum — never collapses. No-op while collapsed. |
+| Home | jump to the 240px minimum, animated. Reopens even while collapsed. |
+| End | jump to the clamped maximum (half the shell, capped at 560px), animated. Reopens even while collapsed. |
+| Enter / Space | toggle collapse — collapses if open; reopens at the remembered width if collapsed. |
+| double-click (on the seam) | reset to the 288px default, animated, and opens if collapsed. |
+
+Arrow keys move the **separator**, not the pane — standard `role="separator"`
+semantics, and why ← *widens* a right-hand rail. `Cmd`/`Ctrl`/`Alt` held with an
+arrow key passes through untouched (those are OS/browser-reserved combos, e.g.
+back navigation or window-switching); `Shift` alone still applies the larger
+step. Collapsed, the two arrow keys are deliberate no-ops rather than a reopen
+gesture — reopening would otherwise silently discard the remembered width and
+clamp to the minimum, and "press an arrow, get narrower" reads backwards for a
+rail that's already shut. Home/End and Enter/Space/double-click are exempt from
+that rule and always reopen, since jumping to an explicit width or toggling is
+an unambiguous, deliberate gesture either way. A held arrow-key repeat
+suppresses the 150ms width transition for the whole repeat window (not just one
+keydown), matching what happens during a drag.
 
 Legacy id-only markup (predating this class scheme) still renders: `app.css` keeps
 `:not(.pf-*)` fallbacks (`#app:not(.pf-stage)`, `#panel:not(.pf-rail)`, and
@@ -729,12 +754,14 @@ is viewer-only and never changes STL, STEP, or 3MF exports. Hosts that omit the
 button get no cutaway UI.
 
 Programmatic hosts can provide the same optional controls, including the rail toggle,
-without relying on an ID by passing them beside the other chrome references:
+without relying on an ID by passing them beside the other chrome references — and can
+pass the rail itself as `elements.rail` instead of relying on `#panel`:
 
 ```js
 mount(part, {
   createWorker,
   elements: {
+    rail,
     chrome: {
       pause,
       reframe,
@@ -743,6 +770,22 @@ mount(part, {
       railToggle,
     },
   },
+});
+```
+
+`rail`/`chrome.railToggle` are both optional; a host with no rail markup gets a
+no-op (the resize/collapse behavior below simply doesn't attach). **Constraint:**
+the rail element must be a direct child of the positioned `.pf-shell` — the
+resize seam is created and positioned against `rail.parentElement` by default,
+so an extra wrapper div between them (common in a React layout) puts the seam
+against the wrong ancestor and silently breaks `[data-pf-dragging] .pf-stage`.
+A host that can't make the rail a direct child of `.pf-shell` must also pass
+`elements.shell` pointing at the real positioned ancestor:
+
+```js
+mount(part, {
+  createWorker,
+  elements: { rail, shell, chrome: { railToggle } },
 });
 ```
 

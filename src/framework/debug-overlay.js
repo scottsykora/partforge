@@ -5,8 +5,14 @@
 export function createDebugOverlay({ initialCachingOn = true, onToggle } = {}) {
   const box = document.createElement("div");
   box.id = "pf-debug";
+  // Positioning (top-right, offset by the rail width, zeroed below the rail's
+  // stacked-layout breakpoint) lives in chrome.css's .pf-debug-overlay rule —
+  // an inline `right: calc(...)` can't respond to a media query, and the rail
+  // moves below the viewer under 720px (see chrome.css). Appearance stays
+  // here since this box is dev-only and never exported for a host to skin.
+  box.className = "pf-debug-overlay";
   Object.assign(box.style, {
-    position: "fixed", bottom: "12px", right: "calc(var(--pf-rail-w) + 12px)", zIndex: "9999",
+    zIndex: "9999",
     font: "12px ui-monospace, monospace", background: "rgba(0,0,0,0.7)",
     color: "#e6e6e6", padding: "8px 10px", borderRadius: "6px",
     lineHeight: "1.5", whiteSpace: "pre",

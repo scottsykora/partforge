@@ -95,6 +95,12 @@ describe("readRailPref", () => {
   test("defaults when storage throws", () => {
     expect(readRailPref(fakeStorage({ throws: true }), WIDE)).toEqual({ width: RAIL_DEFAULT_WIDTH, collapsed: false });
   });
+  // The actual production path in a sandboxed iframe: safeStorage() returns
+  // null (not a throwing object) when localStorage is unreachable, and this is
+  // the scenario that motivated the whole try/catch guard.
+  test("defaults when storage is null", () => {
+    expect(readRailPref(null, WIDE)).toEqual({ width: RAIL_DEFAULT_WIDTH, collapsed: false });
+  });
   test("defaults on corrupt JSON", () => {
     expect(readRailPref(fakeStorage({ initial: "{not json" }), WIDE)).toEqual({ width: RAIL_DEFAULT_WIDTH, collapsed: false });
   });
@@ -124,5 +130,10 @@ describe("writeRailPref", () => {
   });
   test("is a no-op when storage throws", () => {
     expect(() => writeRailPref({ width: 320, collapsed: false }, fakeStorage({ throws: true }))).not.toThrow();
+  });
+  // Same production path as readRailPref's null case above: a sandboxed iframe's
+  // safeStorage() hands back null, not a throwing Storage-like object.
+  test("is a no-op when storage is null", () => {
+    expect(() => writeRailPref({ width: 320, collapsed: false }, null)).not.toThrow();
   });
 });

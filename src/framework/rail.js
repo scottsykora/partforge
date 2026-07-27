@@ -29,7 +29,17 @@ function safeStorage() {
 // Everything is optional. With no rail this returns a no-op, so hosts that lay
 // the framework out themselves (see embed-test.html) are unaffected.
 export function attachRail({ rail, toggle, shell = rail?.parentElement, storage = safeStorage() } = {}) {
-  if (!rail || !shell) return { detach: () => {} };
+  if (!rail || !shell) {
+    // No rail to resolve in this document: --pf-rail-w still defaults to 288px
+    // from tokens.css, but nothing is reserving that space, so anything that
+    // reads the token to centre itself against the rail (app.css's
+    // #pf-pick-banner) would otherwise sit 144px off-centre for no reason.
+    // Zero is the truth here — a legacy id-only page or a custom host running
+    // ?pickserver with no #panel/elements.rail hits this path.
+    const root = document.documentElement;
+    root.style.setProperty("--pf-rail-w", "0px");
+    return { detach: () => root.style.removeProperty("--pf-rail-w") };
+  }
 
   const root = document.documentElement;
   const shellBox = () => shell.getBoundingClientRect();
@@ -57,6 +67,14 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   function apply({ persist = false, shellW } = {}) {
     const sw = shellW ?? shellWidth();
     const width = state.collapsed ? 0 : clampRailWidth(state.width, sw);
+    // Written on :root, not the rail/shell, so body-appended overlays (the
+    // pick banner, the ?debug overlay) inherit it — see spec §4.4. This
+    // assumes ONE rail per document: attachRail is written for a single
+    // instance, and mounting two on one page would fight over --pf-rail-w
+    // (both write :root; whichever's detach() runs last wins, clearing the
+    // survivor's width too). README's "multiple mounts" claim is about
+    // multiple mount() calls in general (e.g. cross-fade swaps), which is
+    // fine as long as at most one has a resolvable rail at a time.
     root.style.setProperty("--pf-rail-w", `${width}px`);
     rail.toggleAttribute("inert", state.collapsed);
     seam.toggleAttribute("data-collapsed", state.collapsed);
@@ -74,10 +92,19 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   }
 
   // --- discrete changes: animate, and commit immediately ---
+  // The same "transient, debounced" flag suppresses the width transition for
+  // both a held arrow-key repeat and a window resize (below) — either can
+  // fire several times in a burst, and an animated width would fight the
+  // last one before the previous animation finishes.
   let keyTimer = 0;
   function settleKeys() {
     clearTimeout(keyTimer);
     shell.removeAttribute("data-pf-key-resizing");
+  }
+  function markTransientResize() {
+    shell.toggleAttribute("data-pf-key-resizing", true);
+    clearTimeout(keyTimer);
+    keyTimer = setTimeout(settleKeys, KEY_SETTLE_MS);
   }
   function commit(next) {
     settleKeys(); // a discrete change interrupting a key repeat animates normally
@@ -152,6 +179,17 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     // Where inside the 12px seam the grab landed, so the rail edge doesn't jump.
     grabOffset = e.clientX - (box.left + box.width / 2);
     shell.toggleAttribute("data-pf-dragging", true);
+    // Safety net: setPointerCapture is load-bearing (see above), but it is
+    // still an optional call — if it's unavailable or the browser fails to
+    // honour it, the pointerup can land on the canvas instead of the seam,
+    // onPointerUp never runs, data-pf-dragging is stuck forever, and
+    // chrome.css's [data-pf-dragging] .pf-stage { pointer-events: none } dead-
+    // locks the viewer with no recovery. Also listening on window guarantees
+    // the drag always terminates regardless of where the pointer ends up.
+    // Bound only for the duration of a drag (removed in onPointerUp/detach)
+    // so there is never a permanently-bound window listener.
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
   }
   function onPointerMove(e) {
     if (!shell.hasAttribute("data-pf-dragging")) return;
@@ -166,9 +204,14 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     apply({ shellW: box.width });
   }
   function onPointerUp(e) {
+    // Guards against running end-of-drag logic twice for one gesture: whichever
+    // of the seam's own pointerup and the window safety-net fires first clears
+    // the attribute, so the second (if it fires at all) is a no-op.
     if (!shell.hasAttribute("data-pf-dragging")) return;
     seam.releasePointerCapture?.(e.pointerId);
     shell.removeAttribute("data-pf-dragging");
+    window.removeEventListener("pointerup", onPointerUp);
+    window.removeEventListener("pointercancel", onPointerUp);
     apply({ persist: true });
   }
 
@@ -179,8 +222,14 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   seam.addEventListener("keydown", onKeyDown);
   seam.addEventListener("dblclick", onDoubleClick);
   toggle?.addEventListener("click", onToggleClick);
-  // A window resize can invalidate the clamp (max is half the shell).
-  const onResize = () => apply();
+  // A window resize can invalidate the clamp (max is half the shell). Narrowing
+  // the window with a maxed-out rail can genuinely change --pf-rail-w, and
+  // without suppression that change would animate — fighting the resize with
+  // a trailing 150ms transition and an extra WebGL buffer reallocation.
+  const onResize = () => {
+    markTransientResize();
+    apply();
+  };
   window.addEventListener("resize", onResize);
 
   apply();
@@ -196,6 +245,9 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
       seam.removeEventListener("dblclick", onDoubleClick);
       toggle?.removeEventListener("click", onToggleClick);
       window.removeEventListener("resize", onResize);
+      // In case detach() happens mid-drag, so the safety net doesn't outlive it.
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
       seam.remove();
       shell.removeAttribute("data-pf-dragging");
       rail.removeAttribute("inert");

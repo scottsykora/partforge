@@ -144,7 +144,9 @@ async function checkCompactLayout(width) {
     const viewbar = document.getElementById("viewbar");
     const topbar = document.getElementById("topbar");
     const panel = document.getElementById("panel");
+    const stage = document.getElementById("app");
     const viewRect = viewbar?.getBoundingClientRect();
+    const stageRect = stage?.getBoundingClientRect();
     const intersects = (element) => {
       const rect = element?.getBoundingClientRect();
       return Boolean(viewRect && rect
@@ -160,13 +162,24 @@ async function checkCompactLayout(width) {
     const overflowingActions = [...document.querySelectorAll("#viewbar .pf-cutaway-actions button")]
       .filter((button) => button.scrollWidth > button.clientWidth)
       .map((button) => button.textContent?.trim() || "(unlabelled)");
-    return { overlappingChrome, overflowingActions };
+    // #viewbar is a floating pill anchored to the stage's right edge
+    // (bottom: 12px; right: 12px). At narrow widths a wide pill (extra
+    // buttons, cutaway's Flip/Reset) can overflow the stage's LEFT edge and
+    // get clipped by .pf-shell { overflow: hidden } — nothing previously
+    // asserted horizontal containment.
+    const containment = viewRect && stageRect
+      ? { left: viewRect.left - stageRect.left, right: stageRect.right - viewRect.right }
+      : null;
+    return { overlappingChrome, overflowingActions, containment };
   });
   for (const target of result.overlappingChrome) {
     errors.push(`layout ${width}px: #viewbar overlaps ${target}`);
   }
   if (result.overflowingActions.length) {
     errors.push(`layout ${width}px: cutaway actions overflow (${result.overflowingActions.join(", ")})`);
+  }
+  if (result.containment && result.containment.left < -0.5) {
+    errors.push(`layout ${width}px: #viewbar overflows the stage's left edge by ${Math.round(-result.containment.left)}px`);
   }
 }
 
@@ -254,12 +267,18 @@ async function checkRailLayout(width) {
 // next setViewportSize fired a resize -> apply() that overwrote the inline
 // value right back to the stale width; later checks then ran against a
 // widened rail even though the property and storage both looked "clean".
-// Dispatched via evaluate (not a captured element handle) so it also covers
-// the early-return path above, where no seam handle was found.
+//
+// Uses a real page.mouse.dblclick() rather than a synthetic dblclick event
+// dispatched in page.evaluate: onPointerDown calls e.preventDefault() on the
+// seam's pointerdown, and only a genuine click sequence (pointerdown, up,
+// click, pointerdown, up, click, dblclick) exercises that path — a dispatched
+// MouseEvent("dblclick") skips straight to the last event and never touches it.
 async function resetRail() {
-  await page.evaluate(() => {
-    document.querySelector(".pf-rail-seam")?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-  });
+  const seam = await page.$(".pf-rail-seam");
+  if (!seam) return; // nothing to reset — the caller already recorded the missing-seam error
+  const box = await seam.boundingBox();
+  if (!box) return;
+  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
   await sleep(50);
 }
 

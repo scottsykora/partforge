@@ -25,6 +25,13 @@ canvas { display: block; }
   padding: 14px; color: var(--pf-text);
   box-shadow: var(--pf-shadow-float);
 }
+/* Legacy fallback only: pre-rail markup has a bare <h1>/.sub directly inside
+   #panel, with no .pf-rail-head wrapper, so chrome.css's classed
+   .pf-rail-head h1/.sub rule (the single source of truth for that typography)
+   can't reach it — chrome.css is deliberately id-free (see test/tokens.test.js)
+   so this id-scoped restatement has to live here instead. Classed markup never
+   hits this rule (its h1 is inside .pf-rail-head, already styled by
+   chrome.css); keep the two in sync if the typography ever changes. */
 #panel h1 { font-size: 14px; margin: 0 0 2px; color: var(--pf-text-strong); letter-spacing: -0.01em; }
 #panel .sub {
   font-family: var(--pf-mono); color: var(--pf-muted); font-size: 10px;
@@ -190,6 +197,34 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
+
+/* At very narrow widths the full-size pill (5 icon buttons + cutaway's
+   Flip/Reset, ~314px) is wider than a small phone's viewport minus the
+   stage's 12px margins, and .pf-shell { overflow: hidden } clips the excess
+   off its left edge (caught by scripts/check-app.mjs's containment check).
+   Shrink the pill instead of letting it wrap — a two-row pill would need its
+   own anchoring rework, while shrinking is a pure appearance change. */
+@media (max-width: 360px) {
+  #viewbar { gap: 3px; }
+  #viewbar button { width: 30px; height: 30px; font-size: 13px; }
+  #viewbar .pf-cutaway-actions { gap: 3px; }
+  #viewbar .pf-cutaway-actions button { min-width: 44px; padding: 0 6px; }
+}
+
+/* Legacy id-only markup only: classed markup's viewbar lives inside .pf-stage
+   (bottom-right, see chrome.css's .pf-float-viewbar) so it never meets the
+   top-left floating #panel card. Legacy markup still floats #viewbar top-right
+   and #panel top-left (both `position: fixed`), which collide once the window
+   gets narrow enough — restore the old narrow-width rule that moves #viewbar
+   to bottom-centre and gives #panel room, scoped with :not(.pf-*) so it can't
+   affect the new layout. */
+@media (max-width: 680px) {
+  #panel:not(.pf-rail) { max-height: calc(100vh - 80px); }
+  #viewbar:not(.pf-float-viewbar) {
+    top: auto; right: auto; bottom: 12px; left: 50%;
+    transform: translateX(-50%);
+  }
+}
 
 #busy {
   position: absolute; inset: 0; z-index: 20; pointer-events: none;

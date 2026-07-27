@@ -1,11 +1,21 @@
 // @vitest-environment happy-dom
-import { beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test } from "vitest";
 import { attachRail } from "../../src/framework/rail.js";
 import { RAIL_DEFAULT_WIDTH, RAIL_MIN_WIDTH } from "../../src/framework/rail-state.js";
 
 function fakeStorage() {
   let value = null;
   return { getItem: () => value, setItem: (_k, v) => { value = v; }, read: () => value };
+}
+
+// Every attachRail() a test creates is tracked here so afterEach can detach it —
+// otherwise each test leaves a live `window` resize listener (and, mid-drag,
+// pointerup/pointercancel listeners) bound to DOM that beforeEach is about to
+// discard, accumulating across the whole file.
+let liveHandles = [];
+function track(handle) {
+  liveHandles.push(handle);
+  return handle;
 }
 
 // happy-dom gives every element a zero-size box, so the shell width the state
@@ -22,7 +32,7 @@ function setup({ withToggle = false, shellWidth = 1600 } = {}) {
   const toggle = withToggle ? document.createElement("button") : undefined;
   if (toggle) document.body.append(toggle);
   const storage = fakeStorage();
-  const handle = attachRail({ rail, shell, toggle, storage });
+  const handle = track(attachRail({ rail, shell, toggle, storage }));
   return { shell, rail, toggle, storage, handle, seam: shell.querySelector(".pf-rail-seam") };
 }
 
@@ -32,6 +42,11 @@ const key = (seam, k, init = {}) => seam.dispatchEvent(new KeyboardEvent("keydow
 beforeEach(() => {
   document.documentElement.style.removeProperty("--pf-rail-w");
   document.body.innerHTML = "";
+});
+
+afterEach(() => {
+  for (const handle of liveHandles) handle.detach();
+  liveHandles = [];
 });
 
 test("creates the seam with separator semantics and the live width", () => {
@@ -142,7 +157,7 @@ test("a stored preference is restored on attach", () => {
   shell.getBoundingClientRect = () => ({ left: 0, right: 1600, width: 1600 });
   const storage = fakeStorage();
   storage.setItem("partforge:rail", JSON.stringify({ width: 420, collapsed: false }));
-  attachRail({ rail: document.querySelector(".pf-rail"), shell, storage });
+  track(attachRail({ rail: document.querySelector(".pf-rail"), shell, storage }));
   expect(railWidth()).toBe("420px");
 });
 
@@ -267,7 +282,7 @@ test("detach restores a toggle to its pre-attach label instead of leaving it wir
   toggle.title = "Toggle the controls panel";
   document.body.append(toggle);
   const storage = fakeStorage();
-  const handle = attachRail({ rail, shell, toggle, storage });
+  const handle = track(attachRail({ rail, shell, toggle, storage }));
 
   expect(toggle.textContent).toBe("⇥"); // attach took over the label
   expect(toggle.title).toBe("Hide controls");
