@@ -196,16 +196,28 @@ async function checkRailLayout(width) {
     // stray hairline under the rail header (see src/framework/app.css .section rule).
     const sections = [...document.querySelectorAll("#controls .section")];
     if (sections.length >= 2) {
-      sections[0].classList.add("section-hidden");
-      const firstVisible = sections.find((s) => !s.classList.contains("section-hidden"));
-      const secondVisible = sections.find((s) => s !== firstVisible && !s.classList.contains("section-hidden"));
-      if (firstVisible && getComputedStyle(firstVisible).borderTopWidth !== "0px") {
-        problems.push("first visible section has a stray top divider after relevance hid the DOM-first section");
+      // Natural-state check first, with nothing mutated yet: this is what makes
+      // the guard non-vacuous, since with only two sections the post-hide check
+      // below always leaves exactly one visible section (no "following section"
+      // to inspect). Only meaningful when the first two sections both start
+      // visible; skip it otherwise rather than special-casing a hidden second.
+      const firstHidden = sections[0].classList.contains("section-hidden");
+      const secondHidden = sections[1].classList.contains("section-hidden");
+      if (!firstHidden && !secondHidden) {
+        if (getComputedStyle(sections[0]).borderTopWidth !== "0px") {
+          problems.push("first section has a stray top divider in its natural state");
+        }
+        if (getComputedStyle(sections[1]).borderTopWidth === "0px") {
+          problems.push("second section has no divider in its natural state - divider rule not in effect");
+        }
       }
-      if (secondVisible && getComputedStyle(secondVisible).borderTopWidth === "0px") {
-        problems.push("section after the first visible one is missing its divider");
+
+      if (!firstHidden) sections[0].classList.add("section-hidden");
+      const secondVisible = sections.find((s) => s !== sections[0] && !s.classList.contains("section-hidden"));
+      if (secondVisible && getComputedStyle(secondVisible).borderTopWidth !== "0px") {
+        problems.push("first visible section after the DOM-first one keeps its divider after relevance hid it");
       }
-      sections[0].classList.remove("section-hidden");
+      if (!firstHidden) sections[0].classList.remove("section-hidden");
     }
 
     return { problems };
