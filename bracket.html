@@ -8,38 +8,46 @@
          Shape2D booleans + offset. `npm run dev`, then open /bracket.html. Structural
          markup only — the chrome CSS comes from the framework. See docs/AUTHORING-PARTS.md. -->
   </head>
-  <body>
-    <div id="app"></div>
-
-    <div id="topbar">
-      <div class="seg" id="part"></div>
-    </div>
-
-    <div id="viewbar">
-      <button id="pause" title="Pause rotation">⏸</button>
-      <button id="reframe" title="Reframe">⛶</button>
-      <button id="theme" title="Toggle light/dark">◐</button>
-    </div>
-
-    <div id="panel">
-      <h1>Cross bracket</h1>
-      <p class="sub">Shape2D demo · union · intersect · cut · offset</p>
-
-      <div id="controls"></div>
-
-      <div class="dl">
-        <div class="dl-head">Download</div>
-        <div class="dl-row">
-          <button id="download-step" disabled>STEP</button>
-          <button id="download" disabled>STL</button>
-          <button id="download-3mf" disabled>3MF</button>
-        </div>
+  <body class="pf-shell">
+    <div id="app" class="pf-stage">
+      <div id="topbar" class="pf-float-tabs">
+        <div class="seg" id="part"></div>
       </div>
-      <div id="status">booting kernel…</div>
-      <p class="hint">Drag to orbit · scroll to zoom. Try the Shape ops toggles for intersect &amp; offset.</p>
+
+      <div id="viewbar" class="pf-float-viewbar">
+        <button id="pause" title="Pause rotation">⏸</button>
+        <button id="reframe" title="Reframe">⛶</button>
+        <button id="theme" title="Toggle light/dark">◐</button>
+        <button id="rail-toggle" aria-label="Hide controls"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/></svg></button>
+      </div>
+
+      <div id="busy"><div class="ring"></div><div class="phase" id="phase">booting kernel…</div></div>
     </div>
 
-    <div id="busy"><div class="ring"></div><div class="phase" id="phase">booting kernel…</div></div>
+    <div id="panel" class="pf-rail">
+      <div class="pf-rail-head">
+        <h1>Cross bracket</h1>
+        <p class="sub">Shape2D demo · union · intersect · cut · offset</p>
+      </div>
+
+      <div class="pf-rail-body">
+        <div id="controls"></div>
+      </div>
+
+      <div class="pf-rail-foot">
+        <div class="dl">
+          <div class="dl-head">Download</div>
+          <div class="dl-row">
+            <button id="download-step" disabled>STEP</button>
+            <button id="download" disabled>STL</button>
+            <button id="download-3mf" disabled>3MF</button>
+          </div>
+        </div>
+        <div id="status">booting kernel…</div>
+        <p class="hint">Drag to orbit · scroll to zoom. Try the Shape ops toggles for intersect &amp; offset.</p>
+      </div>
+    </div>
+
     <script type="module" src="/src/app-bracket.js"></script>
   </body>
 </html>

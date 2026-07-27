@@ -99,10 +99,11 @@ const runtime = mount(part, {
   createWorker,
   elements: {
     viewer, controls,                       // canvas host + param-panel host
+    rail,                                   // full-height resizable/collapsible controls rail
     status: { status, busy, phase },        // status chrome
     tabs,                                   // view-tab segmented control
     exports: { stl, step, threeMf },        // export buttons
-    chrome: { pause, reframe, theme },      // viewer buttons
+    chrome: { pause, reframe, theme, railToggle }, // viewer buttons + rail collapse/restore
   },
   onBuild: ({ status, ms, error }) => {},   // per accepted build: "success" | "error"
   onPick: ({ selection, label, prompt, token }) => {}, // programmatic click-to-select
@@ -112,9 +113,20 @@ runtime.dispose();     // stops loops, workers, observers, listeners; frees GPU 
 ```
 
 Every `elements` entry defaults to the legacy global ID (`#app`, `#controls`,
-`#status`/`#busy`/`#phase`, `#part`, `#download`/`#download-step`/`#download-3mf`,
-`#pause`/`#reframe`/`#theme`), so a classic host page needs no changes. The viewer
-sizes from its container via ResizeObserver — no window coupling.
+`#panel` for `rail`, `#status`/`#busy`/`#phase`, `#part`,
+`#download`/`#download-step`/`#download-3mf`,
+`#pause`/`#reframe`/`#theme`/`#rail-toggle`), so a classic host page needs no
+changes. The viewer sizes from its container via ResizeObserver — no window
+coupling.
+
+`rail` is the full-height controls rail introduced by the resizable-panel
+layout (`docs/superpowers/specs/2026-07-26-controls-rail-layout-design.md`);
+`chrome.railToggle` is its optional collapse/restore button. Both are optional
+— a host that lays out the framework itself (no rail markup) gets a no-op.
+The rail's resize seam is positioned against `rail.parentElement` by default,
+so **the rail must be a direct child of the positioned `.pf-shell`** unless
+the host also supplies `elements.shell` to point at the real containing block
+(e.g. when a wrapper div sits between them, as is common in a React layout).
 
 `onPick` arms click-to-select permanently: `label` is the feature label (falling
 back to the sub-part label/name) for compact UI, `prompt` is the LLM-ready

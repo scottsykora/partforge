@@ -1,0 +1,305 @@
+// @vitest-environment happy-dom
+import { afterEach, beforeEach, expect, test } from "vitest";
+import { attachRail } from "../../src/framework/rail.js";
+import { RAIL_DEFAULT_WIDTH, RAIL_MIN_WIDTH } from "../../src/framework/rail-state.js";
+
+// Mirrors the private CHEVRON_RAIL_OPEN/CHEVRON_RAIL_COLLAPSED constants in
+// rail.js (not exported - they're an implementation detail of the toggle
+// icon), so assertions below can check the chevron actually flipped rather
+// than just that some string changed.
+const CHEVRON_RAIL_OPEN = "m8 9 3 3-3 3";
+const CHEVRON_RAIL_COLLAPSED = "m10 15-3-3 3-3";
+const toggleChevronD = (toggle) => toggle.querySelector("svg path:last-child").getAttribute("d");
+
+function fakeStorage() {
+  let value = null;
+  return { getItem: () => value, setItem: (_k, v) => { value = v; }, read: () => value };
+}
+
+// Every attachRail() a test creates is tracked here so afterEach can detach it —
+// otherwise each test leaves a live `window` resize listener (and, mid-drag,
+// pointerup/pointercancel listeners) bound to DOM that beforeEach is about to
+// discard, accumulating across the whole file.
+let liveHandles = [];
+function track(handle) {
+  liveHandles.push(handle);
+  return handle;
+}
+
+// happy-dom gives every element a zero-size box, so the shell width the state
+// machine clamps against has to be stubbed.
+function setup({ withToggle = false, shellWidth = 1600 } = {}) {
+  document.body.innerHTML = `
+    <div class="pf-shell">
+      <div class="pf-stage"></div>
+      <div class="pf-rail"></div>
+    </div>`;
+  const shell = document.querySelector(".pf-shell");
+  const rail = document.querySelector(".pf-rail");
+  shell.getBoundingClientRect = () => ({ left: 0, right: shellWidth, width: shellWidth, top: 0, bottom: 720, height: 720 });
+  const toggle = withToggle ? document.createElement("button") : undefined;
+  if (toggle) document.body.append(toggle);
+  const storage = fakeStorage();
+  const handle = track(attachRail({ rail, shell, toggle, storage }));
+  return { shell, rail, toggle, storage, handle, seam: shell.querySelector(".pf-rail-seam") };
+}
+
+const railWidth = () => document.documentElement.style.getPropertyValue("--pf-rail-w");
+const key = (seam, k, init = {}) => seam.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+
+beforeEach(() => {
+  document.documentElement.style.removeProperty("--pf-rail-w");
+  document.body.innerHTML = "";
+});
+
+afterEach(() => {
+  for (const handle of liveHandles) handle.detach();
+  liveHandles = [];
+});
+
+test("creates the seam with separator semantics and the live width", () => {
+  const { seam } = setup();
+  expect(seam).not.toBeNull();
+  expect(seam.getAttribute("role")).toBe("separator");
+  expect(seam.getAttribute("aria-orientation")).toBe("vertical");
+  expect(seam.getAttribute("aria-label")).toBe("Resize controls");
+  expect(seam.tabIndex).toBe(0);
+  expect(seam.getAttribute("aria-valuenow")).toBe(String(RAIL_DEFAULT_WIDTH));
+  expect(seam.getAttribute("aria-valuemin")).toBe("0");
+  // The affordance pill is a child, not a background on the seam itself.
+  expect(seam.querySelector("span")).not.toBeNull();
+  expect(railWidth()).toBe(`${RAIL_DEFAULT_WIDTH}px`);
+});
+
+test("is a no-op without a rail, so embed hosts are unaffected", () => {
+  expect(() => attachRail({}).detach()).not.toThrow();
+  expect(document.querySelector(".pf-rail-seam")).toBeNull();
+});
+
+test("ArrowLeft widens the rail and ArrowRight narrows it", () => {
+  const { seam } = setup();
+  key(seam, "ArrowLeft");
+  expect(railWidth()).toBe(`${RAIL_DEFAULT_WIDTH + 16}px`);
+  key(seam, "ArrowRight");
+  expect(railWidth()).toBe(`${RAIL_DEFAULT_WIDTH}px`);
+});
+
+test("Shift multiplies the keyboard step", () => {
+  const { seam } = setup();
+  key(seam, "ArrowLeft", { shiftKey: true });
+  expect(railWidth()).toBe(`${RAIL_DEFAULT_WIDTH + 64}px`);
+});
+
+test("Home and End jump to the clamped min and max", () => {
+  const { seam } = setup({ shellWidth: 900 });
+  key(seam, "Home");
+  expect(railWidth()).toBe(`${RAIL_MIN_WIDTH}px`);
+  key(seam, "End");
+  expect(railWidth()).toBe("450px"); // half of a 900px shell
+});
+
+test("arrow keys never collapse — they clamp at the minimum", () => {
+  const { seam, rail } = setup();
+  for (let i = 0; i < 40; i++) key(seam, "ArrowRight");
+  expect(railWidth()).toBe(`${RAIL_MIN_WIDTH}px`);
+  expect(rail.hasAttribute("inert")).toBe(false);
+});
+
+test("Enter collapses: width 0, rail inert, seam still mounted and re-cursored", () => {
+  const { seam, rail, shell } = setup();
+  key(seam, "Enter");
+  expect(railWidth()).toBe("0px");
+  expect(rail.hasAttribute("inert")).toBe(true);
+  expect(seam.hasAttribute("data-collapsed")).toBe(true);
+  expect(seam.getAttribute("aria-valuenow")).toBe("0");
+  // Recovery depends on the seam surviving collapse.
+  expect(shell.contains(seam)).toBe(true);
+});
+
+test("Space toggles back open at the remembered width", () => {
+  const { seam } = setup();
+  key(seam, "ArrowLeft");
+  const widened = railWidth();
+  key(seam, " ");
+  expect(railWidth()).toBe("0px");
+  key(seam, " ");
+  expect(railWidth()).toBe(widened);
+});
+
+test("double-click resets to the default width", () => {
+  const { seam } = setup();
+  key(seam, "ArrowLeft");
+  seam.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  expect(railWidth()).toBe(`${RAIL_DEFAULT_WIDTH}px`);
+});
+
+test("a drag writes the width live and persists once on pointerup", () => {
+  const { seam, shell, storage } = setup();
+  seam.getBoundingClientRect = () => ({ left: 1600 - RAIL_DEFAULT_WIDTH - 6, right: 1600 - RAIL_DEFAULT_WIDTH + 6, width: 12 });
+  seam.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 1600 - RAIL_DEFAULT_WIDTH }));
+  expect(shell.hasAttribute("data-pf-dragging")).toBe(true);
+  expect(storage.read()).toBeNull(); // nothing persisted mid-drag
+  seam.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 1200 }));
+  expect(railWidth()).toBe("400px");
+  seam.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: 1200 }));
+  expect(shell.hasAttribute("data-pf-dragging")).toBe(false);
+  expect(JSON.parse(storage.read())).toEqual({ width: 400, collapsed: false });
+});
+
+test("a drag corrects for where inside the seam the pointer grabbed it", () => {
+  const { seam } = setup();
+  // The other drag test grabs dead-centre on the stubbed seam box, so its
+  // grabOffset is always 0 and never exercises the correction. Grab the left
+  // edge instead (clientX 1306, box centre 1312) for grabOffset -6.
+  seam.getBoundingClientRect = () => ({ left: 1600 - RAIL_DEFAULT_WIDTH - 6, right: 1600 - RAIL_DEFAULT_WIDTH + 6, width: 12 });
+  seam.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 1600 - RAIL_DEFAULT_WIDTH - 6 }));
+  seam.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 1200 }));
+  // Ignoring the offset would read 1600 - 1200 = 400px; folding in grabOffset
+  // -6 moves the rail edge to follow the actual grab point: 394px.
+  expect(railWidth()).toBe("394px");
+});
+
+test("a stored preference is restored on attach", () => {
+  document.body.innerHTML = `<div class="pf-shell"><div class="pf-stage"></div><div class="pf-rail"></div></div>`;
+  const shell = document.querySelector(".pf-shell");
+  shell.getBoundingClientRect = () => ({ left: 0, right: 1600, width: 1600 });
+  const storage = fakeStorage();
+  storage.setItem("partforge:rail", JSON.stringify({ width: 420, collapsed: false }));
+  track(attachRail({ rail: document.querySelector(".pf-rail"), shell, storage }));
+  expect(railWidth()).toBe("420px");
+});
+
+test("an optional toggle button collapses and restores, tracking state in its label", () => {
+  const { toggle, rail } = setup({ withToggle: true });
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(toggle.getAttribute("aria-label")).toBe("Hide controls");
+  expect(toggleChevronD(toggle)).toBe(CHEVRON_RAIL_OPEN);
+
+  toggle.click();
+  expect(rail.hasAttribute("inert")).toBe(true);
+  expect(railWidth()).toBe("0px");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(toggle.getAttribute("aria-label")).toBe("Show controls");
+  expect(toggleChevronD(toggle)).toBe(CHEVRON_RAIL_COLLAPSED);
+  expect(toggle.classList.contains("on")).toBe(true);
+
+  toggle.click();
+  expect(rail.hasAttribute("inert")).toBe(false);
+  expect(railWidth()).toBe(`${RAIL_DEFAULT_WIDTH}px`);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+});
+
+test("the toggle still works mid-drag", () => {
+  const { toggle, seam } = setup({ withToggle: true });
+  // happy-dom's default window.innerWidth (1024) is above RAIL_NARROW_BREAKPOINT,
+  // so this pointerdown actually starts a drag (see the narrow-viewport test
+  // below for the refusal itself). This proves the toggle doesn't depend on
+  // drag state, even while a drag is in progress.
+  seam.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 10 }));
+  toggle.click();
+  expect(railWidth()).toBe("0px");
+});
+
+test("onPointerDown refuses to start a drag in the stacked layout (<720px)", () => {
+  const original = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { value: 600, configurable: true });
+  try {
+    const { shell, seam } = setup();
+    seam.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 10 }));
+    expect(shell.hasAttribute("data-pf-dragging")).toBe(false);
+  } finally {
+    Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
+  }
+});
+
+test("detach removes the seam and stops responding", () => {
+  const { seam, shell, handle } = setup();
+  handle.detach();
+  expect(shell.querySelector(".pf-rail-seam")).toBeNull();
+  key(seam, "ArrowLeft");
+  expect(railWidth()).toBe(""); // property cleaned up, listener gone
+});
+
+test("Home and End animate the width; arrow keys suppress the transition instead", () => {
+  const { seam, shell, storage } = setup();
+  key(seam, "ArrowRight");
+  expect(shell.hasAttribute("data-pf-key-resizing")).toBe(true);
+  key(seam, "Home");
+  expect(shell.hasAttribute("data-pf-key-resizing")).toBe(false);
+  // Committed immediately, not left for the arrow-key debounce to persist.
+  expect(JSON.parse(storage.read()).width).toBe(RAIL_MIN_WIDTH);
+
+  key(seam, "ArrowLeft");
+  expect(shell.hasAttribute("data-pf-key-resizing")).toBe(true);
+  key(seam, "End");
+  expect(shell.hasAttribute("data-pf-key-resizing")).toBe(false);
+});
+
+test("keyboard resize keeps working after the window shrinks", () => {
+  const { seam, shell } = setup({ shellWidth: 1600 });
+  key(seam, "End");
+  expect(railWidth()).toBe("560px");
+  // Shell reports narrower now; the remembered 560px no longer fits.
+  shell.getBoundingClientRect = () => ({ left: 0, right: 900, width: 900, top: 0, bottom: 720, height: 720 });
+  key(seam, "ArrowRight");
+  expect(railWidth()).toBe("434px"); // clamped to the new 450px max, then stepped by 16
+});
+
+test("arrow keys are no-ops while collapsed; Enter still reopens at the remembered width", () => {
+  const { seam, rail } = setup();
+  key(seam, "ArrowLeft"); // widen away from the default so reopening is distinguishable from the 240px minimum
+  const widened = railWidth();
+  key(seam, "Enter");
+  expect(railWidth()).toBe("0px");
+
+  key(seam, "ArrowLeft");
+  expect(railWidth()).toBe("0px");
+  expect(rail.hasAttribute("inert")).toBe(true);
+  key(seam, "ArrowRight");
+  expect(railWidth()).toBe("0px");
+  expect(rail.hasAttribute("inert")).toBe(true);
+
+  key(seam, "Enter");
+  expect(railWidth()).toBe(widened);
+});
+
+test("modifier-held arrow keys pass through untouched; shift alone still steps", () => {
+  const { seam } = setup();
+  const before = railWidth();
+  key(seam, "ArrowLeft", { metaKey: true });
+  expect(railWidth()).toBe(before);
+  key(seam, "ArrowLeft", { ctrlKey: true });
+  expect(railWidth()).toBe(before);
+  key(seam, "ArrowLeft", { altKey: true });
+  expect(railWidth()).toBe(before);
+  key(seam, "ArrowLeft", { shiftKey: true });
+  expect(railWidth()).toBe(`${RAIL_DEFAULT_WIDTH + 64}px`);
+});
+
+test("detach restores a toggle to its pre-attach label instead of leaving it wired to 'Show controls'", () => {
+  document.body.innerHTML = `
+    <div class="pf-shell">
+      <div class="pf-stage"></div>
+      <div class="pf-rail"></div>
+    </div>`;
+  const shell = document.querySelector(".pf-shell");
+  const rail = document.querySelector(".pf-rail");
+  shell.getBoundingClientRect = () => ({ left: 0, right: 1600, width: 1600, top: 0, bottom: 720, height: 720 });
+  const toggle = document.createElement("button");
+  toggle.textContent = "Controls";
+  toggle.title = "Toggle the controls panel";
+  document.body.append(toggle);
+  const storage = fakeStorage();
+  const handle = track(attachRail({ rail, shell, toggle, storage }));
+
+  expect(toggleChevronD(toggle)).toBe(CHEVRON_RAIL_OPEN); // attach took over the content
+  expect(toggle.title).toBe("Hide controls");
+
+  handle.detach();
+  expect(toggle.textContent).toBe("Controls");
+  expect(toggle.querySelector("svg")).toBeNull(); // the icon markup is gone too
+  expect(toggle.title).toBe("Toggle the controls panel");
+  expect(toggle.getAttribute("aria-expanded")).toBeNull();
+  expect(toggle.getAttribute("aria-label")).toBeNull();
+  expect(toggle.classList.contains("on")).toBe(false);
+});

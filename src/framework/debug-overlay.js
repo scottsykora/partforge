@@ -5,8 +5,23 @@
 export function createDebugOverlay({ initialCachingOn = true, onToggle } = {}) {
   const box = document.createElement("div");
   box.id = "pf-debug";
+  // Left edge, below the top tab row: #viewbar is bottom-right and
+  // #pf-pick/#pf-pick-toast are bottom-left, so the top-left corner has no
+  // OTHER fixed element competing for it — but #topbar's tabs are centred in
+  // the stage, and the stage starts flush at the window's left edge, so a top
+  // offset of 12px (matching the tabs') is not actually free of them: at
+  // narrow/medium widths this ~240px-wide box reaches past the stage's
+  // horizontal centre and touches the tabs no matter which top corner it
+  // anchors to (measured — see .superpowers/sdd/debug-overlay-fix.md).
+  // #topbar's pill is a fixed 38px tall regardless of viewport or label width
+  // (12px top + 38px), so clearing it VERTICALLY is what's actually
+  // width-independent: sit below the tabs instead of racing them
+  // horizontally. That also drops any dependency on --pf-rail-w, so no media
+  // query is needed for the stacked layout below 720px.
+  // Positioned inline (not in chrome.css) because this box is dev-only chrome
+  // specific to partforge itself, never exported for a host to skin or reuse.
   Object.assign(box.style, {
-    position: "fixed", bottom: "12px", right: "12px", zIndex: "9999",
+    position: "fixed", top: "58px", left: "12px", zIndex: "9999",
     font: "12px ui-monospace, monospace", background: "rgba(0,0,0,0.7)",
     color: "#e6e6e6", padding: "8px 10px", borderRadius: "6px",
     lineHeight: "1.5", whiteSpace: "pre",

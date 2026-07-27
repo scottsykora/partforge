@@ -144,7 +144,9 @@ async function checkCompactLayout(width) {
     const viewbar = document.getElementById("viewbar");
     const topbar = document.getElementById("topbar");
     const panel = document.getElementById("panel");
+    const stage = document.getElementById("app");
     const viewRect = viewbar?.getBoundingClientRect();
+    const stageRect = stage?.getBoundingClientRect();
     const intersects = (element) => {
       const rect = element?.getBoundingClientRect();
       return Boolean(viewRect && rect
@@ -160,13 +162,154 @@ async function checkCompactLayout(width) {
     const overflowingActions = [...document.querySelectorAll("#viewbar .pf-cutaway-actions button")]
       .filter((button) => button.scrollWidth > button.clientWidth)
       .map((button) => button.textContent?.trim() || "(unlabelled)");
-    return { overlappingChrome, overflowingActions };
+    // #viewbar is a floating pill anchored to the stage's right edge
+    // (bottom: 12px; right: 12px). At narrow widths a wide pill (extra
+    // buttons, cutaway's Flip/Reset) can overflow the stage's LEFT edge and
+    // get clipped by .pf-shell { overflow: hidden } — nothing previously
+    // asserted horizontal containment.
+    const containment = viewRect && stageRect
+      ? { left: viewRect.left - stageRect.left, right: stageRect.right - viewRect.right }
+      : null;
+    return { overlappingChrome, overflowingActions, containment };
   });
   for (const target of result.overlappingChrome) {
     errors.push(`layout ${width}px: #viewbar overlaps ${target}`);
   }
   if (result.overflowingActions.length) {
     errors.push(`layout ${width}px: cutaway actions overflow (${result.overflowingActions.join(", ")})`);
+  }
+  if (result.containment && result.containment.left < -0.5) {
+    errors.push(`layout ${width}px: #viewbar overflows the stage's left edge by ${Math.round(-result.containment.left)}px`);
+  }
+}
+
+// Wide-layout geometry: the rail is a full-height right edge and the viewer
+// column owns its floating chrome. checkCompactLayout only runs below the 720px
+// breakpoint, where the rail is stacked, so it can't see any of this.
+async function checkRailLayout(width) {
+  await page.setViewportSize({ width, height: 720 });
+  await sleep(50);
+  const result = await page.evaluate(() => {
+    const panel = document.getElementById("panel");
+    const app = document.getElementById("app");
+    const viewbar = document.getElementById("viewbar");
+    if (!panel || !app) return { problems: ["missing #panel or #app"] };
+    const rail = panel.getBoundingClientRect();
+    const stage = app.getBoundingClientRect();
+    const bar = viewbar?.getBoundingClientRect();
+    const problems = [];
+    if (Math.abs(rail.right - window.innerWidth) > 1) problems.push("rail is not flush to the right edge");
+    if (Math.abs(rail.height - window.innerHeight) > 1) problems.push(`rail height ${Math.round(rail.height)} != viewport ${window.innerHeight}`);
+    if (Math.abs(rail.left - stage.right) > 1) problems.push("rail does not sit flush against the viewer column");
+    if (rail.width < 200) problems.push(`rail collapsed unexpectedly (${Math.round(rail.width)}px)`);
+    if (bar && bar.right > stage.right + 1) problems.push("#viewbar escapes the viewer column");
+    if (bar && bar.bottom > stage.bottom + 1) problems.push("#viewbar escapes the viewer column vertically");
+
+    // Section divider: hiding the first section via relevance must not leave a
+    // stray hairline under the rail header (see src/framework/app.css .section rule).
+    const sections = [...document.querySelectorAll("#controls .section")];
+    if (sections.length >= 2) {
+      // Natural-state check first, with nothing mutated yet: this is what makes
+      // the guard non-vacuous, since with only two sections the post-hide check
+      // below always leaves exactly one visible section (no "following section"
+      // to inspect). Only meaningful when the first two sections both start
+      // visible; skip it otherwise rather than special-casing a hidden second.
+      const firstHidden = sections[0].classList.contains("section-hidden");
+      const secondHidden = sections[1].classList.contains("section-hidden");
+      if (!firstHidden && !secondHidden) {
+        if (getComputedStyle(sections[0]).borderTopWidth !== "0px") {
+          problems.push("first section has a stray top divider in its natural state");
+        }
+        if (getComputedStyle(sections[1]).borderTopWidth === "0px") {
+          problems.push("second section has no divider in its natural state - divider rule not in effect");
+        }
+      }
+
+      if (!firstHidden) sections[0].classList.add("section-hidden");
+      const secondVisible = sections.find((s) => s !== sections[0] && !s.classList.contains("section-hidden"));
+      if (secondVisible && getComputedStyle(secondVisible).borderTopWidth !== "0px") {
+        problems.push("first visible section after the DOM-first one keeps its divider after relevance hid it");
+      }
+      if (!firstHidden) sections[0].classList.remove("section-hidden");
+    }
+
+    return { problems };
+  });
+  for (const problem of result.problems) errors.push(`rail layout ${width}px: ${problem}`);
+
+  // Drag the seam across the viewer and assert the rail followed. Pointer
+  // capture is what makes this work; without it the pointer reaches the canvas
+  // and the drag dies. happy-dom cannot model this, so it is proven here.
+  const seam = await page.$(".pf-rail-seam");
+  if (!seam) {
+    errors.push(`rail layout ${width}px: no .pf-rail-seam to drag`);
+    await resetRail();
+    return;
+  }
+  const box = await seam.boundingBox();
+  const before = await page.evaluate(() => document.getElementById("panel").getBoundingClientRect().width);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 80, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await sleep(200);
+  const after = await page.evaluate(() => document.getElementById("panel").getBoundingClientRect().width);
+  if (after <= before + 40) {
+    errors.push(`rail layout ${width}px: drag did not widen the rail (${Math.round(before)} -> ${Math.round(after)})`);
+  }
+  await resetRail();
+}
+
+// Reset through the rail's own API — a dblclick on the seam routes through
+// rail.js's commit(), which resets to the 288px default — so the DOM and
+// rail.js's in-memory `state` agree. The old approach (clear localStorage,
+// poke --pf-rail-w directly) left `state` holding the dragged width, so the
+// next setViewportSize fired a resize -> apply() that overwrote the inline
+// value right back to the stale width; later checks then ran against a
+// widened rail even though the property and storage both looked "clean".
+//
+// Uses a real page.mouse.dblclick() rather than a synthetic dblclick event
+// dispatched in page.evaluate: onPointerDown calls e.preventDefault() on the
+// seam's pointerdown, and only a genuine click sequence (pointerdown, up,
+// click, pointerdown, up, click, dblclick) exercises that path — a dispatched
+// MouseEvent("dblclick") skips straight to the last event and never touches it.
+async function resetRail() {
+  const seam = await page.$(".pf-rail-seam");
+  if (!seam) return; // nothing to reset — the caller already recorded the missing-seam error
+  const box = await seam.boundingBox();
+  if (!box) return;
+  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+  await sleep(50);
+}
+
+// The ?debug cache overlay (#pf-debug) is fixed-position dev chrome, wholly
+// separate from the app's own layout. It has been chased around the window's
+// corners more than once, silently colliding with #topbar's floating tabs or
+// #viewbar each time (see docs/superpowers/sdd/debug-overlay-fix.md) with
+// nothing catching it. This is a small dedicated check rather than folding
+// ?debug into the main page load above: the overlay only matters at a couple
+// of widths, and reusing the already-booted page would mean re-navigating
+// (query strings can't be toggled in place) partway through the other checks.
+async function checkDebugOverlay(widths) {
+  await page.goto(`${url}?debug`, { waitUntil: "load", timeout: 30000 });
+  await page.waitForSelector("#pf-debug", { timeout: 10000 });
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: 720 });
+    await sleep(50);
+    const result = await page.evaluate(() => {
+      const rectOf = (id) => document.getElementById(id)?.getBoundingClientRect();
+      const intersects = (a, b) =>
+        Boolean(a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top);
+      const overlay = rectOf("pf-debug");
+      return {
+        hasOverlay: Boolean(overlay),
+        overlapsTopbar: intersects(overlay, rectOf("topbar")),
+        overlapsViewbar: intersects(overlay, rectOf("viewbar")),
+      };
+    });
+    if (!result.hasOverlay) errors.push(`debug overlay ${width}px: #pf-debug missing`);
+    if (result.overlapsTopbar) errors.push(`debug overlay ${width}px: #pf-debug overlaps #topbar`);
+    if (result.overlapsViewbar) errors.push(`debug overlay ${width}px: #pf-debug overlaps #viewbar`);
   }
 }
 
@@ -219,13 +362,21 @@ try {
     }
   }
 
-  if (cutaway) {
+  {
     const viewport = page.viewportSize();
-    await checkCompactLayout(601);
-    await checkCompactLayout(390);
-    await checkCompactLayout(320);
+    await checkRailLayout(1280);
+    await checkRailLayout(1024);
+    if (cutaway) {
+      await checkCompactLayout(601);
+      await checkCompactLayout(390);
+      await checkCompactLayout(320);
+    }
     if (viewport) await page.setViewportSize(viewport);
   }
+  // 390px is below the 720px stacked-layout breakpoint; 850px sits in the
+  // narrower-but-still-side-by-side range where the tabs and a corner overlay
+  // are most likely to collide (see the debug-overlay-fix report).
+  await checkDebugOverlay([390, 850]);
   if (viteState) throw new Error(viteStoppedMessage("dev server stopped during smoke check"));
 } catch (error) {
   errors.push("check: " + errorMessage(error));

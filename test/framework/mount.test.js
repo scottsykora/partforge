@@ -113,7 +113,7 @@ function makeWorkers() {
 function makeElements() {
   const mk = (tag = "div") => document.createElement(tag);
   const els = {
-    viewer: mk(), controls: mk(),
+    viewer: mk(), controls: mk(), rail: mk(),
     status: { status: mk(), busy: mk(), phase: mk() },
     tabs: mk(),
     exports: { stl: mk("button"), step: mk("button"), threeMf: mk("button") },
@@ -122,12 +122,14 @@ function makeElements() {
       reframe: mk("button"),
       theme: mk("button"),
       cutaway: mk("button"),
+      railToggle: mk("button"),
     },
   };
-  document.body.append(els.viewer, els.controls, els.tabs,
+  document.body.append(els.viewer, els.controls, els.rail, els.tabs,
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
-    els.chrome.pause, els.chrome.reframe, els.chrome.theme, els.chrome.cutaway);
+    els.chrome.pause, els.chrome.reframe, els.chrome.theme, els.chrome.cutaway,
+    els.chrome.railToggle);
   return els;
 }
 
@@ -288,6 +290,43 @@ test("legacy host page resolves the #cutaway fallback", () => {
   document.getElementById("cutaway").click();
 
   expect(fakeViewers[0].setCutawayEnabled).toHaveBeenCalledWith(true);
+});
+
+test("legacy host page resolves the #rail-toggle fallback and it collapses the rail", () => {
+  document.body.innerHTML = `
+    <div id="app"></div><div id="controls"></div>
+    <div id="status"></div><div id="busy"><div id="phase"></div></div>
+    <div id="part"></div>
+    <button id="download"></button><button id="download-step"></button>
+    <div id="panel"></div>
+    <button id="rail-toggle"></button>`;
+  const { createWorker } = makeWorkers();
+
+  mount(makePart(), { createWorker });
+  const toggle = document.getElementById("rail-toggle");
+  // attachRail labels the button on attach — proof mount handed it over.
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+  toggle.click();
+  expect(document.getElementById("panel").hasAttribute("inert")).toBe(true);
+  expect(document.documentElement.style.getPropertyValue("--pf-rail-w")).toBe("0px");
+});
+
+test("legacy host page mounts with no #rail-toggle — the rail still attaches without one", () => {
+  document.body.innerHTML = `
+    <div id="app"></div><div id="controls"></div>
+    <div id="status"></div><div id="busy"><div id="phase"></div></div>
+    <div id="part"></div>
+    <button id="download"></button><button id="download-step"></button>
+    <div id="panel"></div>`;
+  // A host driving the rail from its own UI (partforge-cloud hides #theme for
+  // exactly this reason) must not be forced to supply this button.
+  expect(document.getElementById("rail-toggle")).toBeNull();
+  const { createWorker } = makeWorkers();
+
+  expect(() => mount(makePart(), { createWorker })).not.toThrow();
+
+  expect(document.querySelector(".pf-rail-seam")).not.toBeNull();
 });
 
 test("cutaway UI interactions never dispatch geometry worker jobs", () => {

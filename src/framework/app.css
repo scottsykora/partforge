@@ -6,42 +6,63 @@
    accent, shadcn-shaped radii/shadows/focus rings — plain CSS on --pf-*.
    See docs/AUTHORING-PARTS.md. */
 @import "./tokens.css"; /* palette + light overrides; also exported standalone as partforge/tokens.css */
+@import "./chrome.css";  /* reusable layout; also exported as partforge/chrome.css */
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden;
-  font: 13px/1.4 -apple-system, system-ui, sans-serif; }
-#app { position: fixed; inset: 0; background: var(--pf-bg); }
+  font: 13px/1.4 var(--pf-sans); }
+/* Legacy fallback: a page whose markup predates .pf-stage keeps the old
+   full-window viewer. :not() rather than a plain #app rule because an id would
+   outrank .pf-stage's positioning and win the cascade. */
+#app:not(.pf-stage) { position: fixed; inset: 0; background: var(--pf-bg); }
 canvas { display: block; }
 
-#panel {
+/* Legacy fallback: the pre-rail floating card, for markup without .pf-rail. */
+#panel:not(.pf-rail) {
   position: fixed; top: 12px; left: 12px; width: 256px;
   max-height: calc(100vh - 24px); overflow-y: auto; z-index: 10;
   background: var(--pf-surface); border: 1px solid var(--pf-border); border-radius: 16px;
   padding: 14px; color: var(--pf-text);
-  /* shadow-lg, matching the partforge-cloud chat pane so the two floating
-     panes read as siblings (was the smaller shadow-md). */
-  box-shadow: 0 10px 15px -3px rgb(0 0 0 / .1), 0 4px 6px -4px rgb(0 0 0 / .1);
+  box-shadow: var(--pf-shadow-float);
 }
+/* Legacy fallback only: pre-rail markup has a bare <h1>/.sub directly inside
+   #panel, with no .pf-rail-head wrapper, so chrome.css's classed
+   .pf-rail-head h1/.sub rule (the single source of truth for that typography)
+   can't reach it — chrome.css is deliberately id-free (see test/tokens.test.js)
+   so this id-scoped restatement has to live here instead. Classed markup never
+   hits this rule (its h1 is inside .pf-rail-head, already styled by
+   chrome.css); keep the two in sync if the typography ever changes. */
 #panel h1 { font-size: 14px; margin: 0 0 2px; color: var(--pf-text-strong); letter-spacing: -0.01em; }
 #panel .sub {
   font-family: var(--pf-mono); color: var(--pf-muted); font-size: 10px;
   letter-spacing: 0.04em; text-transform: uppercase;
-  margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--pf-border);
+  margin: 2px 0 0;
 }
 
 .seg { display: flex; gap: 2px; margin-bottom: 12px;
-  background: var(--pf-surface-2); border-radius: 10px; padding: 3px; }
+  background: var(--pf-surface-2); border-radius: var(--pf-radius-control); padding: 3px; }
 .seg button {
-  flex: 1; padding: 6px 0; border: 0; border-radius: 8px;
+  flex: 1; padding: 6px 0; border: 0; border-radius: var(--pf-radius-control);
   background: transparent; color: var(--pf-muted); cursor: pointer;
   font-family: var(--pf-mono); font-size: 11px; letter-spacing: 0.02em;
 }
 .seg button:hover { color: var(--pf-text-2); }
 .seg button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
 
+/* Full-bleed rows: the divider spans the rail's whole width while the content
+   sits at the rail's own padding, so each slider gains the ~22px the old box
+   border + padding used to take from both sides. */
 .section {
-  border: 1px solid var(--pf-border); border-radius: 10px; padding: 10px;
-  margin-bottom: 8px; background: var(--pf-surface-2);
+  padding: 11px var(--pf-rail-pad);
+}
+/* Divider BETWEEN visible sections. `~` walks all preceding siblings, and a
+   relevance-hidden section (.section-hidden, display:none) fails the :not(),
+   so the topmost VISIBLE section never draws a hairline under the rail header.
+   Do not simplify this to `.section:first-child { border-top: 0 }` — that
+   matches DOM position rather than visibility, and leaves a stray divider
+   floating at the top whenever applyRelevance hides the first section. */
+.section:not(.section-hidden) ~ .section:not(.section-hidden) {
+  border-top: 1px solid var(--pf-border);
 }
 .sec-title {
   font-family: var(--pf-mono); font-size: 10px; font-weight: 600;
@@ -49,13 +70,13 @@ canvas { display: block; }
 }
 select.preset {
   width: 100%; background: var(--pf-input-bg); color: var(--pf-text-2);
-  border: 1px solid var(--pf-border); border-radius: 8px; padding: 7px 9px;
+  border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); padding: 7px 9px;
   font-family: var(--pf-mono); font-size: 11px;
 }
 .feat { display: flex; align-items: center; gap: 8px; margin: 6px 0;
   color: var(--pf-text-2); cursor: pointer; }
 .feat input { cursor: pointer; accent-color: var(--pf-accent); }
-.feat-group { margin: 2px 0 8px; padding-left: 10px; border-left: 2px solid var(--pf-border); }
+.feat-group { margin: 2px 0 8px; padding-left: 10px; border-left: 1px solid var(--pf-border); }
 .feat-group.hidden { display: none; }
 .adv-toggle {
   margin-top: 8px; padding: 4px 0; width: 100%; border: 0; border-radius: 6px;
@@ -74,7 +95,7 @@ select.preset {
 .row .num {
   width: 54px; text-align: right; font-family: var(--pf-mono); font-size: 12px; font-variant-numeric: tabular-nums;
   background: var(--pf-input-bg); color: var(--pf-text-strong);
-  border: 1px solid var(--pf-border); border-radius: 6px; padding: 3px 6px;
+  border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); padding: 3px 6px;
 }
 .row .num:focus { outline: none; border-color: var(--pf-accent);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
@@ -84,7 +105,7 @@ select.preset {
 .text-input {
   display: block; width: 100%; font: 12px/1.4 var(--pf-mono);
   background: var(--pf-input-bg); color: var(--pf-text-strong);
-  border: 1px solid var(--pf-border); border-radius: 6px; padding: 6px 8px;
+  border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); padding: 6px 8px;
 }
 textarea.text-input { min-height: 64px; resize: vertical; }
 .text-input:focus { outline: none; border-color: var(--pf-accent);
@@ -97,12 +118,12 @@ input[type="range"]::-moz-range-track { height: 3px; border-radius: 2px; backgro
 input[type="range"]::-moz-range-progress { height: 3px; border-radius: 2px; background: var(--pf-accent); }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-top: -5.5px;
-  border-radius: 50%; background: var(--pf-accent); border: 2px solid var(--pf-surface-2); box-shadow: 0 0 0 1px var(--pf-accent);
+  border-radius: 50%; background: var(--pf-accent); border: 2px solid var(--pf-surface); box-shadow: 0 0 0 1px var(--pf-accent);
   transition: box-shadow .12s ease;
 }
 input[type="range"]::-moz-range-thumb {
   width: 14px; height: 14px; border-radius: 50%; background: var(--pf-accent);
-  border: 2px solid var(--pf-surface-2); box-shadow: 0 0 0 1px var(--pf-accent);
+  border: 2px solid var(--pf-surface); box-shadow: 0 0 0 1px var(--pf-accent);
 }
 input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 input[type="range"]:focus-visible { outline: none; }
@@ -110,7 +131,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 5px 
 input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 5px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 
 button.action {
-  width: 100%; margin-top: 8px; padding: 9px; border: 0; border-radius: 8px;
+  width: 100%; margin-top: 8px; padding: 9px; border: 0; border-radius: var(--pf-radius-control);
   background: var(--pf-accent); color: var(--pf-on-accent); font-weight: 500; cursor: pointer;
 }
 button.action:hover:not(:disabled) { background: color-mix(in oklab, var(--pf-accent) 90%, black); }
@@ -125,7 +146,7 @@ button.action:disabled { opacity: .5; cursor: default; }
 }
 .dl-row { display: flex; gap: 6px; }
 .dl-row button {
-  flex: 1; padding: 8px 0; border: 1px solid var(--pf-border); border-radius: 8px;
+  flex: 1; padding: 8px 0; border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control);
   background: transparent; color: var(--pf-text-2);
   font-family: var(--pf-mono); font-weight: 600; font-size: 11px; letter-spacing: 0.06em; cursor: pointer;
 }
@@ -143,28 +164,28 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
 
-/* part tabs, floated top-centre over the viewport */
-#topbar {
-  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-  z-index: 15;
-}
+/* part tabs (placement: .pf-float-tabs; legacy markup keeps the old float) */
+#topbar:not(.pf-float-tabs) { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 15; }
 #topbar .seg {
   margin: 0; padding: 4px; background: var(--pf-surface); border: 1px solid var(--pf-border);
-  border-radius: 14px;
-  box-shadow: 0 4px 6px -1px rgb(0 0 0 / .1), 0 2px 4px -2px rgb(0 0 0 / .1);
+  border-radius: var(--pf-radius-pill);
+  box-shadow: var(--pf-shadow-float);
 }
 #topbar .seg button { min-width: 70px; padding: 7px 10px; }
 
-/* viewer controls, top-right */
+/* viewer controls. APPEARANCE is ungated: partforge-cloud re-anchors #viewbar's
+   position in sandbox.css but inherits this pill chrome, so gating it on a class
+   the cloud never sets would strip the editor's viewbar. PLACEMENT comes from
+   .pf-float-viewbar; the :not() keeps legacy markup's old top-right float. */
 #viewbar {
-  position: fixed; top: 12px; right: 12px; z-index: 15;
   display: flex; gap: 4px; padding: 4px;
   background: var(--pf-surface); border: 1px solid var(--pf-border);
-  border-radius: 14px;
-  box-shadow: 0 4px 6px -1px rgb(0 0 0 / .1), 0 2px 4px -2px rgb(0 0 0 / .1);
+  border-radius: var(--pf-radius-pill);
+  box-shadow: var(--pf-shadow-float);
 }
+#viewbar:not(.pf-float-viewbar) { position: fixed; top: 12px; right: 12px; z-index: 15; }
 #viewbar button {
-  width: 34px; height: 34px; border: 0; border-radius: 10px;
+  width: 34px; height: 34px; border: 0; border-radius: var(--pf-radius-control);
   background: transparent; color: var(--pf-muted-2); cursor: pointer;
   font-size: 15px; line-height: 1;
   display: flex; align-items: center; justify-content: center;
@@ -177,16 +198,36 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
 
+/* At very narrow widths the full-size pill (5 icon buttons + cutaway's
+   Flip/Reset, ~314px) is wider than a small phone's viewport minus the
+   stage's 12px margins, and .pf-shell { overflow: hidden } clips the excess
+   off its left edge (caught by scripts/check-app.mjs's containment check).
+   Shrink the pill instead of letting it wrap — a two-row pill would need its
+   own anchoring rework, while shrinking is a pure appearance change. */
+@media (max-width: 360px) {
+  #viewbar { gap: 3px; }
+  #viewbar button { width: 30px; height: 30px; font-size: 13px; }
+  #viewbar .pf-cutaway-actions { gap: 3px; }
+  #viewbar .pf-cutaway-actions button { min-width: 44px; padding: 0 6px; }
+}
+
+/* Legacy id-only markup only: classed markup's viewbar lives inside .pf-stage
+   (bottom-right, see chrome.css's .pf-float-viewbar) so it never meets the
+   top-left floating #panel card. Legacy markup still floats #viewbar top-right
+   and #panel top-left (both `position: fixed`), which collide once the window
+   gets narrow enough — restore the old narrow-width rule that moves #viewbar
+   to bottom-centre and gives #panel room, scoped with :not(.pf-*) so it can't
+   affect the new layout. */
 @media (max-width: 680px) {
-  #panel { max-height: calc(100vh - 80px); }
-  #viewbar {
+  #panel:not(.pf-rail) { max-height: calc(100vh - 80px); }
+  #viewbar:not(.pf-float-viewbar) {
     top: auto; right: auto; bottom: 12px; left: 50%;
     transform: translateX(-50%);
   }
 }
 
 #busy {
-  position: fixed; inset: 0; z-index: 20; pointer-events: none;
+  position: absolute; inset: 0; z-index: 20; pointer-events: none;
   display: none; flex-direction: column; align-items: center;
   justify-content: center; gap: 14px;
 }
@@ -211,8 +252,8 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 .popover {
   position: fixed; z-index: 50; max-width: 280px; max-height: 50vh; overflow: auto;
   background: var(--pf-surface); color: var(--pf-text); border: 1px solid var(--pf-border);
-  border-radius: 14px; padding: 10px 12px;
-  box-shadow: 0 4px 6px -1px rgb(0 0 0 / .1), 0 2px 4px -2px rgb(0 0 0 / .1);
+  border-radius: var(--pf-radius-pill); padding: 10px 12px;
+  box-shadow: var(--pf-shadow-float);
   font-size: 12px; line-height: 1.5;
 }
 .popover[hidden] { display: none; }
@@ -246,12 +287,12 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 /* request-a-pick: agent prompt banner, floated top-centre well below the part tabs,
    laid out like a chat message (avatar + text). Slides/fades in when shown; themed. */
 #pf-pick-banner {
-  position: fixed; top: 78px; left: 50%; transform: translateX(-50%);
+  position: fixed; top: 78px; left: calc(50% - var(--pf-rail-w) / 2); transform: translateX(-50%);
   z-index: 30; max-width: min(56ch, calc(100vw - 24px));
   padding: 10px 36px 10px 12px;
   background: var(--pf-surface); color: var(--pf-text);
-  border: 1px solid var(--pf-border); border-radius: 14px;
-  box-shadow: 0 4px 6px -1px rgb(0 0 0 / .1), 0 2px 4px -2px rgb(0 0 0 / .1);
+  border: 1px solid var(--pf-border); border-radius: var(--pf-radius-pill);
+  box-shadow: var(--pf-shadow-float);
   font-size: 12px; line-height: 1.45;
   animation: pf-pick-in .18s ease;
 }
@@ -264,6 +305,11 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 #pf-pick-banner .pf-pick-msg { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 #pf-pick-banner .pf-pick-label { color: var(--pf-muted); font-size: 11px; }
 #pf-pick-banner .pf-pick-prompt { color: var(--pf-text-strong); font-weight: 600; }
+/* Below the rail's breakpoint the rail stacks under the viewer, so the stage is
+   full width again and the banner centres on the window. */
+@media (max-width: 719px) {
+  #pf-pick-banner { left: 50%; }
+}
 #pf-pick-close {
   position: absolute; top: 6px; right: 6px; appearance: none;
   width: 20px; height: 20px; padding: 0;
