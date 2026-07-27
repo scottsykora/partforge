@@ -147,19 +147,6 @@
 .pf-float-tabs { top: 12px; left: 50%; transform: translateX(-50%); }
 .pf-float-viewbar { bottom: 12px; right: 12px; }
 
-/* ---- dev-only debug overlay (?debug) --------------------------------------
-   Fixed to the window, not the stage, so it sits above the rail's own corner
-   rather than inside the viewer column. Top-right: the viewbar moved to the
-   BOTTOM of the stage in this redesign, so top-right is free (checked against
-   every other .pf-float-* rule above — .pf-float-tabs is top-CENTRE, not
-   top-right). Offset by the rail width like the viewbar used to be, so it
-   never sits over the rail itself. */
-.pf-debug-overlay {
-  position: fixed;
-  top: 12px;
-  right: calc(var(--pf-rail-w) + 12px);
-}
-
 /* ---- stacked layout: no room for a rail beside the viewer ----------------
    The seam is hidden and resize is absent at this width (rail.js also refuses
    to start a drag); the #rail-toggle still collapses and restores. */
@@ -175,10 +162,6 @@
      so hide the rail outright — otherwise the toggle's first tap leaves a
      full-size rail on screen that is inert and unresponsive. */
   .pf-rail[inert] { display: none; }
-  /* In the stacked layout the rail moves BELOW the viewer, but --pf-rail-w
-     still holds its side-by-side value — zero the offset so the overlay
-     doesn't get pushed in from the right for no reason. */
-  .pf-debug-overlay { right: 12px; }
 }
 
 /* ---- reduced motion -----------------------------------------------------

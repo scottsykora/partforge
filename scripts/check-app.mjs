@@ -282,6 +282,37 @@ async function resetRail() {
   await sleep(50);
 }
 
+// The ?debug cache overlay (#pf-debug) is fixed-position dev chrome, wholly
+// separate from the app's own layout. It has been chased around the window's
+// corners more than once, silently colliding with #topbar's floating tabs or
+// #viewbar each time (see docs/superpowers/sdd/debug-overlay-fix.md) with
+// nothing catching it. This is a small dedicated check rather than folding
+// ?debug into the main page load above: the overlay only matters at a couple
+// of widths, and reusing the already-booted page would mean re-navigating
+// (query strings can't be toggled in place) partway through the other checks.
+async function checkDebugOverlay(widths) {
+  await page.goto(`${url}?debug`, { waitUntil: "load", timeout: 30000 });
+  await page.waitForSelector("#pf-debug", { timeout: 10000 });
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: 720 });
+    await sleep(50);
+    const result = await page.evaluate(() => {
+      const rectOf = (id) => document.getElementById(id)?.getBoundingClientRect();
+      const intersects = (a, b) =>
+        Boolean(a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top);
+      const overlay = rectOf("pf-debug");
+      return {
+        hasOverlay: Boolean(overlay),
+        overlapsTopbar: intersects(overlay, rectOf("topbar")),
+        overlapsViewbar: intersects(overlay, rectOf("viewbar")),
+      };
+    });
+    if (!result.hasOverlay) errors.push(`debug overlay ${width}px: #pf-debug missing`);
+    if (result.overlapsTopbar) errors.push(`debug overlay ${width}px: #pf-debug overlaps #topbar`);
+    if (result.overlapsViewbar) errors.push(`debug overlay ${width}px: #pf-debug overlaps #viewbar`);
+  }
+}
+
 try {
   startVite();
   await waitForVite();
@@ -342,6 +373,10 @@ try {
     }
     if (viewport) await page.setViewportSize(viewport);
   }
+  // 390px is below the 720px stacked-layout breakpoint; 850px sits in the
+  // narrower-but-still-side-by-side range where the tabs and a corner overlay
+  // are most likely to collide (see the debug-overlay-fix report).
+  await checkDebugOverlay([390, 850]);
   if (viteState) throw new Error(viteStoppedMessage("dev server stopped during smoke check"));
 } catch (error) {
   errors.push("check: " + errorMessage(error));
