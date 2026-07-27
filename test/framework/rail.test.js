@@ -3,6 +3,14 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { attachRail } from "../../src/framework/rail.js";
 import { RAIL_DEFAULT_WIDTH, RAIL_MIN_WIDTH } from "../../src/framework/rail-state.js";
 
+// Mirrors the private CHEVRON_RAIL_OPEN/CHEVRON_RAIL_COLLAPSED constants in
+// rail.js (not exported - they're an implementation detail of the toggle
+// icon), so assertions below can check the chevron actually flipped rather
+// than just that some string changed.
+const CHEVRON_RAIL_OPEN = "m8 9 3 3-3 3";
+const CHEVRON_RAIL_COLLAPSED = "m10 15-3-3 3-3";
+const toggleChevronD = (toggle) => toggle.querySelector("svg path:last-child").getAttribute("d");
+
 function fakeStorage() {
   let value = null;
   return { getItem: () => value, setItem: (_k, v) => { value = v; }, read: () => value };
@@ -165,14 +173,14 @@ test("an optional toggle button collapses and restores, tracking state in its la
   const { toggle, rail } = setup({ withToggle: true });
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
   expect(toggle.getAttribute("aria-label")).toBe("Hide controls");
-  expect(toggle.textContent).toBe("⇥");
+  expect(toggleChevronD(toggle)).toBe(CHEVRON_RAIL_OPEN);
 
   toggle.click();
   expect(rail.hasAttribute("inert")).toBe(true);
   expect(railWidth()).toBe("0px");
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   expect(toggle.getAttribute("aria-label")).toBe("Show controls");
-  expect(toggle.textContent).toBe("⇤");
+  expect(toggleChevronD(toggle)).toBe(CHEVRON_RAIL_COLLAPSED);
   expect(toggle.classList.contains("on")).toBe(true);
 
   toggle.click();
@@ -284,11 +292,12 @@ test("detach restores a toggle to its pre-attach label instead of leaving it wir
   const storage = fakeStorage();
   const handle = track(attachRail({ rail, shell, toggle, storage }));
 
-  expect(toggle.textContent).toBe("⇥"); // attach took over the label
+  expect(toggleChevronD(toggle)).toBe(CHEVRON_RAIL_OPEN); // attach took over the content
   expect(toggle.title).toBe("Hide controls");
 
   handle.detach();
   expect(toggle.textContent).toBe("Controls");
+  expect(toggle.querySelector("svg")).toBeNull(); // the icon markup is gone too
   expect(toggle.title).toBe("Toggle the controls panel");
   expect(toggle.getAttribute("aria-expanded")).toBeNull();
   expect(toggle.getAttribute("aria-label")).toBeNull();

@@ -121,6 +121,10 @@
   width: 3px; height: 100px; border-radius: 999px;
   background: transparent;
   transition: background-color .12s ease;
+  /* Nudges only the pill 5px off the divider hairline it otherwise sits flush
+     against — the seam's own 12px hit target stays centred on the boundary
+     (that line is what a user aims at to drag) and must NOT move. */
+  transform: translateX(-5px);
 }
 .pf-rail-seam:hover > span,
 [data-pf-dragging] .pf-rail-seam > span { background: var(--pf-muted); }

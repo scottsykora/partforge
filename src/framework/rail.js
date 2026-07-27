@@ -9,6 +9,53 @@ const KEY_STEP_SHIFT = 64;
 // covers the whole repeat window rather than just the instant of a keydown.
 const KEY_SETTLE_MS = 200;
 
+// lucide v1.25.0 `panel-right-close` / `panel-right-open` node data (ISC
+// licence) - inlined rather than adding an icon-library dependency for two
+// paths. Both icons share the same 18x18 rounded rect and vertical divider at
+// x=15; they differ only in the chevron, so the SVG is built once (below) and
+// only this `d` is swapped on state change.
+const SVG_NS = "http://www.w3.org/2000/svg";
+// panel-right-close: rail OPEN, chevron points right (toward the divider) -
+// clicking pushes the rail shut.
+const CHEVRON_RAIL_OPEN = "m8 9 3 3-3 3";
+// panel-right-open: rail COLLAPSED, chevron points left (away from the
+// divider) - clicking pulls the rail back open.
+const CHEVRON_RAIL_COLLAPSED = "m10 15-3-3 3-3";
+
+// Builds the toggle's icon once; apply() swaps the returned chevron path's
+// `d` between CHEVRON_RAIL_OPEN and CHEVRON_RAIL_COLLAPSED. `stroke="currentColor"`
+// is load-bearing: it's how the icon inherits the button's themed colour and
+// its `.on` active state for free, with no icon-specific CSS anywhere.
+function buildToggleIcon() {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+
+  const rect = document.createElementNS(SVG_NS, "rect");
+  rect.setAttribute("width", "18");
+  rect.setAttribute("height", "18");
+  rect.setAttribute("x", "3");
+  rect.setAttribute("y", "3");
+  rect.setAttribute("rx", "2");
+  svg.append(rect);
+
+  const divider = document.createElementNS(SVG_NS, "path");
+  divider.setAttribute("d", "M15 3v18");
+  svg.append(divider);
+
+  const chevron = document.createElementNS(SVG_NS, "path");
+  svg.append(chevron);
+
+  return { svg, chevron };
+}
+
 // Touching the localStorage PROPERTY can throw (opaque origin, blocked site
 // data) — not just its methods. view-state.js guards it the same way; the
 // framework runs in an iframe in production, where this is reachable.
@@ -47,7 +94,17 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   let state = readRailPref(storage, shellWidth());
   // Captured before the first apply() mutates the toggle, so detach() can
   // hand back a plain, unwired button rather than a dead "Show controls" one.
-  const toggleOriginal = toggle ? { text: toggle.textContent, title: toggle.title } : null;
+  // innerHTML (not textContent) so a host's original content - markup, not
+  // just text - genuinely round-trips; the icon apply() writes is markup too.
+  const toggleOriginal = toggle ? { html: toggle.innerHTML, title: toggle.title } : null;
+  // Built once here rather than inside apply() (which reruns on every resize/
+  // key/drag tick); apply() only ever swaps toggleChevron's `d`.
+  let toggleChevron = null;
+  if (toggle) {
+    const { svg, chevron } = buildToggleIcon();
+    toggle.replaceChildren(svg);
+    toggleChevron = chevron;
+  }
 
   const seam = document.createElement("div");
   seam.className = "pf-rail-seam";
@@ -81,7 +138,7 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     seam.setAttribute("aria-valuenow", String(width));
     seam.setAttribute("aria-valuemax", String(railMaxWidth(sw)));
     if (toggle) {
-      toggle.textContent = state.collapsed ? "⇤" : "⇥";
+      toggleChevron?.setAttribute("d", state.collapsed ? CHEVRON_RAIL_COLLAPSED : CHEVRON_RAIL_OPEN);
       const label = state.collapsed ? "Show controls" : "Hide controls";
       toggle.setAttribute("aria-expanded", String(!state.collapsed));
       toggle.setAttribute("aria-label", label);
@@ -253,7 +310,7 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
       rail.removeAttribute("inert");
       root.style.removeProperty("--pf-rail-w");
       if (toggle) {
-        toggle.textContent = toggleOriginal.text;
+        toggle.innerHTML = toggleOriginal.html;
         toggle.title = toggleOriginal.title;
         toggle.removeAttribute("aria-expanded");
         toggle.removeAttribute("aria-label");
