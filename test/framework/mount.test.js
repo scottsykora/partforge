@@ -312,12 +312,21 @@ test("legacy host page resolves the #rail-toggle fallback and it collapses the r
   expect(document.documentElement.style.getPropertyValue("--pf-rail-w")).toBe("0px");
 });
 
-test("mount works without a #rail-toggle — every chrome control stays optional", () => {
+test("legacy host page mounts with no #rail-toggle — the rail still attaches without one", () => {
+  document.body.innerHTML = `
+    <div id="app"></div><div id="controls"></div>
+    <div id="status"></div><div id="busy"><div id="phase"></div></div>
+    <div id="part"></div>
+    <button id="download"></button><button id="download-step"></button>
+    <div id="panel"></div>`;
   // A host driving the rail from its own UI (partforge-cloud hides #theme for
   // exactly this reason) must not be forced to supply this button.
-  const els = makeElements();
+  expect(document.getElementById("rail-toggle")).toBeNull();
   const { createWorker } = makeWorkers();
-  expect(() => mount(makePart(), { createWorker, elements: els })).not.toThrow();
+
+  expect(() => mount(makePart(), { createWorker })).not.toThrow();
+
+  expect(document.querySelector(".pf-rail-seam")).not.toBeNull();
 });
 
 test("cutaway UI interactions never dispatch geometry worker jobs", () => {
