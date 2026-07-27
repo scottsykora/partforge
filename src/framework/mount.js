@@ -3,6 +3,7 @@ import { triggerDownload, downloadParts } from "./download.js";
 import { createViewer } from "./viewer.js";
 import { attachViewerControls } from "./viewer-controls.js";
 import { attachCutawayControls } from "./cutaway-controls.js";
+import { attachRail } from "./rail.js";
 import { createTooltipPresenter } from "./tooltip.js";
 import { loadCamera } from "./view-state.js";
 import { buildControls } from "./controls.js";
@@ -68,6 +69,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
   const els = {
     viewer: elements.viewer ?? legacyContainer ?? byId("app"),
     controls: elements.controls ?? legacyControls ?? byId("controls"),
+    rail: elements.rail ?? byId("panel"),
     status: {
       status: elements.status?.status ?? byId("status"),
       busy: elements.status?.busy ?? byId("busy"),
@@ -97,6 +99,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick,
       cutaway: els.chrome.cutaway,
     }, { tooltip });
     cleanup.defer(() => cutawayChrome.detach());
+    // Resizable/collapsible controls rail. No-ops when the host lays out the
+    // framework itself (no #panel / no elements.rail).
+    const railChrome = attachRail({ rail: els.rail, toggle: els.chrome.railToggle });
+    cleanup.defer(() => railChrome.detach());
     const hover = attachHoverLabels(viewer, { part, tooltip }); // always-on hover inspection (no-op on touch-only devices)
     cleanup.defer(() => hover.detach());
     const ui = createStatusUi({ ...els.status, exports: [els.exports.stl, els.exports.step, els.exports.threeMf] });

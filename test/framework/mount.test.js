@@ -113,7 +113,7 @@ function makeWorkers() {
 function makeElements() {
   const mk = (tag = "div") => document.createElement(tag);
   const els = {
-    viewer: mk(), controls: mk(),
+    viewer: mk(), controls: mk(), rail: mk(),
     status: { status: mk(), busy: mk(), phase: mk() },
     tabs: mk(),
     exports: { stl: mk("button"), step: mk("button"), threeMf: mk("button") },
@@ -124,7 +124,7 @@ function makeElements() {
       cutaway: mk("button"),
     },
   };
-  document.body.append(els.viewer, els.controls, els.tabs,
+  document.body.append(els.viewer, els.controls, els.rail, els.tabs,
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
     els.chrome.pause, els.chrome.reframe, els.chrome.theme, els.chrome.cutaway);

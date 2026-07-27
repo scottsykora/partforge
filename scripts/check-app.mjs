@@ -223,6 +223,29 @@ async function checkRailLayout(width) {
     return { problems };
   });
   for (const problem of result.problems) errors.push(`rail layout ${width}px: ${problem}`);
+
+  // Drag the seam across the viewer and assert the rail followed. Pointer
+  // capture is what makes this work; without it the pointer reaches the canvas
+  // and the drag dies. happy-dom cannot model this, so it is proven here.
+  const seam = await page.$(".pf-rail-seam");
+  if (!seam) {
+    errors.push(`rail layout ${width}px: no .pf-rail-seam to drag`);
+    return;
+  }
+  const box = await seam.boundingBox();
+  const before = await page.evaluate(() => document.getElementById("panel").getBoundingClientRect().width);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 80, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await sleep(200);
+  const after = await page.evaluate(() => document.getElementById("panel").getBoundingClientRect().width);
+  if (after <= before + 40) {
+    errors.push(`rail layout ${width}px: drag did not widen the rail (${Math.round(before)} -> ${Math.round(after)})`);
+  }
+  // Leave the rail at its default so later checks and pages start clean.
+  await page.evaluate(() => { try { localStorage.removeItem("partforge:rail"); } catch {} });
+  await page.evaluate(() => document.documentElement.style.setProperty("--pf-rail-w", "288px"));
 }
 
 try {

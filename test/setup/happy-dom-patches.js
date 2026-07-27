@@ -31,3 +31,13 @@ if (typeof document !== "undefined") {
     }
   }
 }
+
+// happy-dom does not implement the Pointer Capture API. The rail's drag path
+// calls it, so stub it to a no-op — this makes the pointer path EXERCISED, not
+// proven. Proof lives in scripts/check-app.mjs, which drags for real in
+// Chromium (no headless DOM models an iframe consuming pointer events).
+if (typeof Element !== "undefined") {
+  Element.prototype.setPointerCapture ??= function () {};
+  Element.prototype.releasePointerCapture ??= function () {};
+  Element.prototype.hasPointerCapture ??= function () { return false; };
+}
