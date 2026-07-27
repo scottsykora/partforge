@@ -245,13 +245,15 @@ try {
     }
   }
 
-  if (cutaway) {
+  {
     const viewport = page.viewportSize();
     await checkRailLayout(1280);
     await checkRailLayout(1024);
-    await checkCompactLayout(601);
-    await checkCompactLayout(390);
-    await checkCompactLayout(320);
+    if (cutaway) {
+      await checkCompactLayout(601);
+      await checkCompactLayout(390);
+      await checkCompactLayout(320);
+    }
     if (viewport) await page.setViewportSize(viewport);
   }
   if (viteState) throw new Error(viteStoppedMessage("dev server stopped during smoke check"));

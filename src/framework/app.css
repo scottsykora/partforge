@@ -259,6 +259,11 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 #pf-pick-banner .pf-pick-msg { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 #pf-pick-banner .pf-pick-label { color: var(--pf-muted); font-size: 11px; }
 #pf-pick-banner .pf-pick-prompt { color: var(--pf-text-strong); font-weight: 600; }
+/* Below the rail's breakpoint the rail stacks under the viewer, so the stage is
+   full width again and the banner centres on the window. */
+@media (max-width: 719px) {
+  #pf-pick-banner { left: 50%; }
+}
 #pf-pick-close {
   position: absolute; top: 6px; right: 6px; appearance: none;
   width: 20px; height: 20px; padding: 0;

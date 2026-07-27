@@ -53,3 +53,13 @@ test("app.css sets the body font from the --pf-sans token, not a literal stack",
   expect(css).toContain("var(--pf-sans)");
   expect(css).not.toContain("-apple-system, system-ui, sans-serif");
 });
+
+test("chrome.css is exported and stays id-free so any host can reuse the layout", () => {
+  const pkg = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"));
+  expect(pkg.exports["./chrome.css"]).toBe("./src/framework/chrome.css");
+  // The whole class-based design rests on this: an id-keyed sheet could never be
+  // reused by a host that builds its own DOM (partforge-cloud uses #viewer /
+  // #pfc-controls), so an id selector sneaking in silently breaks the contract.
+  const css = read("chrome.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  expect(css).not.toMatch(/#[a-zA-Z]/);
+});

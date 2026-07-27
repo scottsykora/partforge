@@ -1,13 +1,25 @@
 /* Reusable chrome LAYOUT for a partforge app: the shell, the viewer column
    ("stage"), the full-height controls rail, its resize seam, and the two
-   floating pill groups. Appearance of the controls INSIDE the rail stays in
-   app.css; this file is only about where things sit.
+   floating pill groups. This file owns the shell's layout and its structural
+   surfaces — the rail's/head's/foot's background, border, shadow, and text
+   color, and the seam pill's background — all expressed through overridable
+   --pf-* tokens. Appearance of the controls INSIDE the rail (the panel
+   widgets themselves) stays in app.css.
 
    Class-based on purpose. partforge-cloud's sandbox builds its own DOM
    (#viewer / #pfc-controls) and could never reuse an id-keyed sheet, so the
    layout is expressed as .pf-* classes and exported standalone as
    "partforge/chrome.css". app.css keeps :not(.pf-*) fallbacks so legacy
    id-only markup renders its previous floating look untouched.
+
+   Prerequisite: this sheet consumes --pf-* custom properties (--pf-rail-w,
+   --pf-rail-pad, --pf-border, --pf-surface, --pf-bg, --pf-text, --pf-muted,
+   --pf-shadow-rail) but does not import them — a standalone consumer must
+   also load "partforge/tokens.css" (kept separate so the two stay
+   independently composable). The host is also responsible for giving
+   .pf-shell a height (e.g. `height: 100%` on an ancestor chain rooted at
+   `html, body`, or `position: absolute; inset: 0`); this sheet does not size
+   the shell itself.
 
    See docs/superpowers/specs/2026-07-26-controls-rail-layout-design.md. */
 
@@ -39,6 +51,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   background: var(--pf-surface);
   border-left: 1px solid var(--pf-border);
   box-shadow: var(--pf-shadow-rail);
@@ -95,15 +108,15 @@
 }
 .pf-rail-seam:hover > span,
 .pf-rail-seam:focus-visible > span,
-[data-dragging] .pf-rail-seam > span { background: var(--pf-muted); }
+[data-pf-dragging] .pf-rail-seam > span { background: var(--pf-muted); }
 
 /* While dragging, the cursor must stay correct even when the pointer is out
    over the viewer, and the viewer must not react to it. Pointer capture keeps
    the events coming; these two rules are the second belt. */
-[data-dragging] { cursor: ew-resize; user-select: none; }
-[data-dragging] .pf-stage { pointer-events: none; }
-[data-dragging] .pf-rail,
-[data-key-resizing] .pf-rail { transition: none; }
+[data-pf-dragging] { cursor: ew-resize; user-select: none; }
+[data-pf-dragging] .pf-stage { pointer-events: none; }
+[data-pf-dragging] .pf-rail,
+[data-pf-key-resizing] .pf-rail { transition: none; }
 
 /* ---- floating chrome: PLACEMENT ONLY, absolute within the stage ----------
    Deliberately no appearance here. partforge-cloud's sandbox.css re-anchors
