@@ -56,8 +56,9 @@ three demo apps. Playwright's Chromium is required for the smoke check only:
 - **`src/framework/`** - the reusable engine (part-agnostic): `mount.js` (app
   entry), `controls.js` + `param-deps.js` (relevance-aware control panel),
   `viewer.js` (three.js), `worker.js` / `jobs.js` / `geometry-service.js` (job
-  loop across workers), `assembly.js` (collision checking), and `geometry/` (the
-  kernel).
+  loop across workers), `assembly.js` (collision checking), `geometry/` (the
+  kernel), and `app.css` / `chrome.css` (the shell/rail layout - `rail.js` binds
+  it to the DOM, `rail-state.js` is its pure drag/collapse state machine).
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/testing.js`** + **`src/testing/`** - headless helpers
   (`createManifoldKernel`, `measure`, `verify`, `assemblyOverlaps`,

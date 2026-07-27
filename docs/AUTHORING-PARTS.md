@@ -30,8 +30,9 @@ OCCT-only fillet/chamfer/shell ops.
    `http://localhost:5173/<your-part>.html`.
 
 That's the whole loop. The chrome (panel, tabs, viewer, export buttons) is shared —
-your HTML is ~30 lines of structural markup and carries no CSS (the framework
-supplies it via `framework/app.css`, imported by `mount`).
+your HTML is structural markup only and carries no CSS (the framework supplies it via
+`framework/app.css`, imported by `mount`). See "Wiring a part into a runnable app"
+below for what that markup must contain.
 
 ---
 
@@ -688,17 +689,47 @@ stylesheet). `mount` looks up these element IDs:
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
 | `#viewbar` with `#pause` / `#reframe` / `#cutaway` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#pause`/`#theme` |
 
-Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two workers are spawned from your one worker entry
-(`name` = `"manifold"` for preview/STL/3MF, `"occt"` for STEP — handled for you).
+Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two
+workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
+`"occt"` for STEP — handled for you).
+
+**The markup convention (`demo.html` is the canonical copy-me page):** `<body>` carries
+`class="pf-shell"`, the flex row that lays the viewer column next to the rail. `#app`
+(`class="pf-stage"`) *is* that viewer column, and now contains the floating chrome
+(`#topbar`, `#viewbar`, `#busy`) as absolutely-positioned siblings of the canvas, not
+page-level overlays. `#panel` (`class="pf-rail"`) is a full-height rail docked to the
+right edge, split into three children — `.pf-rail-head` / `.pf-rail-body` /
+`.pf-rail-foot` — of which head and foot are flex-fixed and only the body scrolls: put
+your heading in the head and the download row in the foot so the export buttons never
+scroll out of reach. The rail's drag/collapse seam is created by `rail.js` itself; don't
+add markup for it. This isn't decorative — get the head/body/foot split wrong and either
+the export buttons scroll away or a tall parameter list pushes them off-screen. See
+`docs/superpowers/specs/2026-07-26-controls-rail-layout-design.md` for why the rail is
+shaped this way (resize/collapse behavior, breakpoints, the design rationale).
+
+Legacy id-only markup (predating this class scheme) still renders: `app.css` keeps
+`:not(.pf-*)` fallbacks (`#app:not(.pf-stage)`, `#panel:not(.pf-rail)`, and
+placement-only ones for `#topbar`/`#viewbar`) that reproduce the old floating-card
+look — `:not()` rather than a plain id rule because an id selector outranks a class. New
+apps should still use the classed markup above; the fallback exists for pages that
+predate it, not as a second supported style.
+
+A host that builds its own DOM instead of using `mount`'s markup (e.g. an editor
+embedding the viewer/rail inside a larger UI) can adopt the same layout by importing
+**`partforge/chrome.css`** directly — it's deliberately class-based and id-free for that
+reason. It expects `partforge/tokens.css` to already be loaded for its `--pf-*` custom
+properties, and expects the host to size `.pf-shell` itself (`mount`'s own `app.css`,
+which `@import`s both, does both of these for you already).
 
 `#cutaway` is optional viewer chrome. When present, it toggles an interactive
 section plane whose exposed faces are hatched; changing views resets it. Cutaway
 is viewer-only and never changes STL, STEP, or 3MF exports. Hosts that omit the
 button get no cutaway UI.
 
-Programmatic hosts can provide the same optional control without relying on an
-ID by passing it beside the other chrome references:
+Programmatic hosts can provide the same optional controls, including the rail toggle,
+without relying on an ID by passing them beside the other chrome references:
 
 ```js
 mount(part, {
@@ -709,6 +740,7 @@ mount(part, {
       reframe,
       cutaway,
       theme,
+      railToggle,
     },
   },
 });
@@ -718,6 +750,16 @@ mount(part, {
 > (currently the landing gallery + the demo part pages). Other root `*.html` files are
 > **dev-only** (Vite serves any root HTML in `npm run dev`) unless added there. To also
 > ship one, add it to `build.rollupOptions.input` in `vite.config.js`.
+
+**Styling hooks:** the rail/stage layout and palette are both plain `--pf-*` custom
+properties from `partforge/tokens.css`, overridable on `:root` (or
+`:root[data-theme="light"]`) without touching `chrome.css`. Layout/shape tokens added
+alongside the rail: `--pf-sans`, `--pf-rail-w`, `--pf-rail-pad`, `--pf-radius-control`,
+`--pf-radius-pill`, `--pf-shadow-float`, `--pf-shadow-rail`. The dev demos self-host
+Geist and Geist Mono (`@fontsource-variable/geist(-mono)`, a `devDependency`, imported
+from each `app-<part>.js` — see `src/app-demo.js`) so a standalone forge looks like the
+finished product; the published library ships no font files, and a consumer that loads
+none falls through `--pf-sans`/`--pf-mono` to system stacks by design.
 
 ### Developing against a local (linked) partforge
 
