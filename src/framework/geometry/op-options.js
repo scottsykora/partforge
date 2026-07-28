@@ -103,7 +103,10 @@ export function prismArgs(o) {
 }
 
 export function extrudeArgs(o) {
-  checkKeys("extrude", o, ["profile", "h", "twist", "scaleTop"]);
+  // `bevel` is accepted here so the validating probe (lint) doesn't flag it, but
+  // it never reaches the positional backend op — kernel-front.js desugars a
+  // bevel call into extrude + loft + intersect before this normalizer runs.
+  checkKeys("extrude", o, ["profile", "h", "twist", "scaleTop", "bevel"]);
   return [req("extrude", o, "profile"), req("extrude", o, "h"), ...tail(o, ["twist", "scaleTop"])];
 }
 
