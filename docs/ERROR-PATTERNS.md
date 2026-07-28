@@ -47,7 +47,7 @@ test parses every one; keep prose like this as plain paragraphs):
 - **Cause:** replicad transforms and booleans (`translate`/`rotate`/`mirror`/`cut`/…) consume their operand — the input solid is deleted and a new one returned.
 - **Fix:** Never reuse a solid after transforming it; take a `.clone()` first when you need the original again. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Geometry: the kernel / `Solid` API" (the `s.clone()` row).
 
-The framework itself rebuilds each sub-part fresh per job and applies `place` once, which avoids the problem — follow the same pattern in your own code.
+The framework itself rebuilds each sub-part fresh per job and applies `place` once, which avoids the problem — follow the same pattern in your own code. (Since the OCCT solid cache landed, the in-repo backend clones internally before every consuming replicad call, so wrapped `Solid`s effectively have value semantics and this crash should no longer reproduce through the kernel API — but the portable rule stands: per KERNEL-CONTRACT.md a backend MAY consume, so a part must still not rely on reuse.)
 
 ## probe-routed-to-occt
 
