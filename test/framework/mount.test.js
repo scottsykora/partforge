@@ -605,6 +605,97 @@ test("the ?debug caching toggle still forces a rebuild after a pose repair", () 
 
   const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
   expect(jobs.some((m) => m.type === "generate")).toBe(true);
+
+  // …and the earlier repair is not credited to this unrelated rebuild's report.
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+  expect(document.getElementById("pf-debug").textContent).toContain("/ 0 posed");
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// The other build a repair must not ride along into: a view switch kicks a build
+// for whatever the new view is missing, which has nothing to do with the edit.
+test("switching views doesn't credit an earlier repair to the new view's build", () => {
+  vi.stubGlobal("location", { search: "?debug" });
+  vi.useFakeTimers();
+  const part = makePart();
+  part.views.other = { label: "Other" };
+  part.parts.cap = { label: "Cap", views: ["other"],
+    build: (k, p) => k.box({ min: [0, 0, 0], max: [p.h, 1, 1] }) };
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: els });
+  finishFirstBuild(workers);
+
+  const tilt = document.querySelectorAll('input[type="range"]')[1];
+  tilt.value = "45";
+  tilt.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250); // repaired by the fast path — no build of its own
+
+  [...els.tabs.querySelectorAll("button")]
+    .find((button) => button.textContent === "Other")
+    .click();
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "cap" }], ms: 5 } });
+
+  expect(document.getElementById("pf-debug").textContent).toContain("/ 0 posed");
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// A mixed edit: `body` is geometry-only (reads h), `arm` is pose-only (reads tilt).
+// Editing both in one dirty cycle must re-pose the arm AND rebuild the body, and
+// the build's overlay report must still credit the pose — the repaired count has
+// to survive the debounce into the generate it shares a cycle with.
+const makeMixedPart = () => {
+  const part = makePart();
+  part.parts.body.build = (k, p) => k.box({ min: [0, 0, 0], max: [p.h, p.h, p.h] });
+  part.parts.arm = { label: "Arm", views: ["main"], build: (k, p) =>
+    k.box({ min: [0, 0, 0], max: [2, 2, 2] })
+      .rotateAbout({ axis: "X", deg: p.tilt, through: [0, 0, 0] }) };
+  return part;
+};
+
+test("a mixed edit reports the posed sub-part alongside the rebuilt one", () => {
+  vi.stubGlobal("location", { search: "?debug" });
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makeMixedPart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }, { name: "arm" }], ms: 42 } });
+
+  const [height, tilt] = document.querySelectorAll('input[type="range"]');
+  tilt.value = "45";
+  tilt.dispatchEvent(new Event("input", { bubbles: true }));   // arm: pose-only
+  height.value = "6";
+  height.dispatchEvent(new Event("input", { bubbles: true }));  // body: needs a rebuild
+  vi.advanceTimersByTime(250);
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 7 } });
+
+  expect(fakeViewers[0].setSubPose).toHaveBeenCalledWith("arm", expect.any(Array));
+  expect(document.getElementById("pf-debug").textContent)
+    .toContain("1 skipped / 1 rebuilt / 1 posed");
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// ?debug&nocache exists to measure true uncached rebuilds; the fast path would
+// hide them by re-stamping pose-only edits current, so it's off when caching is.
+test("?debug&nocache disables the fast path — a pose-only edit still rebuilds", () => {
+  vi.stubGlobal("location", { search: "?debug&nocache" });
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  const tilt = document.querySelectorAll('input[type="range"]')[1];
+  tilt.value = "45";
+  tilt.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250);
+
+  expect(fakeViewers[0].setSubPose).not.toHaveBeenCalled();
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  expect(jobs.some((m) => m.type === "generate")).toBe(true);
   handle.dispose();
   vi.useRealTimers();
 });
