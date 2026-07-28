@@ -41,10 +41,13 @@ kernel-level op, so it is not in that Solid-op list).
 **B-rep class.** Core plus native `fillet`/`chamfer`/`shell` and `toSTEP`. The in-repo
 OCCT/replicad backend is the reference.
 
-**Optional ops.** `KERNEL_OPTIONAL_OPS` (`beginSubPart`/`endSubPart`/`cacheStats`/
-`resetCacheStats`/`cleanup`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may be omitted
-entirely; callers in the framework guard with `?.`/`typeof`. A host that omits them loses
-sub-part caching and mesh-topology gates (`holes`, emptiness), nothing else.
+**Optional ops.** `KERNEL_OPTIONAL_OPS` (`beginSubPart`/`endSubPart`/`sweepCache`/
+`cacheStats`/`resetCacheStats`/`cleanup`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may
+be omitted entirely; callers in the framework guard with `?.`/`typeof`. A host that omits
+them loses sub-part caching and mesh-topology gates (`holes`, emptiness), nothing else.
+`sweepCache()` is the cache's rebind hygiene hook: called once when a worker is rebound to
+a part (never inside a `beginSubPart`/`endSubPart` bracket), it drops cache partitions that
+have gone unbuilt for three consecutive rebinds.
 
 `KernelCapabilityError` is a *routing signal*, not a failure: partforge's geometry-free
 probe (`probe.js`) runs `build` against a fake kernel, and any use of an `OCCT_ONLY_OPS`

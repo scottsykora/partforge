@@ -25,7 +25,7 @@ export const KERNEL_OPS = [
 // Backend-optional kernel ops: the Manifold cache brackets + WASM lifetime hooks.
 // jobs.js calls all of these via `?.`, so a backend may simply omit them.
 export const KERNEL_OPTIONAL_OPS = [
-  "beginSubPart", "endSubPart", "cacheStats", "resetCacheStats", "cleanup",
+  "beginSubPart", "endSubPart", "sweepCache", "cacheStats", "resetCacheStats", "cleanup",
 ];
 
 // Ops every Solid must implement (including the sugar addSugar() attaches).
@@ -111,6 +111,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)
  * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (Manifold only)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)
+ * @property {() => void} [sweepCache]   drop cache partitions idle for 3 rebinds; call once per setPart, never mid-bracket
  * @property {() => {hits:number,misses:number}} [cacheStats]
  * @property {() => void} [resetCacheStats]
  * @property {() => void} [cleanup]   free per-job WASM objects (Manifold backend); call after each job
