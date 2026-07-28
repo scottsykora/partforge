@@ -198,11 +198,33 @@ test("hovering a labeled feature shows 'feature · sub-part' and a highlight ove
   expect(tip.classList.contains("show")).toBe(true);
   expect(tip.querySelector("b").textContent).toBe("Drainage hole");
   expect(tip.querySelector(".pf-hover-sub").textContent).toBe("Planter");
-  // overlay mesh added beside the sub-mesh
-  const overlay = viewer._subMeshes.one.parent.children.find((c) => c !== viewer._subMeshes.one);
+  // overlay mesh added as a child of the sub-mesh
+  const [overlay] = viewer._subMeshes.one.children;
   expect(overlay).toBeDefined();
   expect(overlay.visible).toBe(true);
   h.detach();
+});
+
+test("the highlight overlay inherits a posed sub-part's transform", () => {
+  // The overlay's geometry is a subset of the sub-part's, in the delivered mesh's
+  // own frame. Parenting it to the mesh (not the group) is what makes it follow
+  // viewer.setSubPose's fast-path matrix instead of drawing at the stale spot.
+  const viewer = makeViewer();
+  const mesh = viewer._subMeshes.one;
+  mesh.matrixAutoUpdate = false;
+  mesh.matrix.makeTranslation(0, 0, 1); // along the view axis, so the centre ray still hits
+  viewer._group.updateMatrixWorld(true);
+  const h = attachHoverLabels(viewer, { part, schedule: sync });
+  move(viewer.domElement, 100, 100);
+
+  const overlay = mesh.children.find((c) => c.visible);
+  expect(overlay).toBeDefined();
+  expect(overlay.parent).toBe(mesh);
+  viewer._group.updateMatrixWorld(true);
+  const posed = new THREE.Vector3().setFromMatrixPosition(overlay.matrixWorld);
+  expect(posed.z).toBeCloseTo(1, 5); // un-posed (group-parented) overlay would sit at z = 0
+  h.detach();
+  expect(mesh.children).toEqual([]);
 });
 
 test("hovering unlabeled geometry highlights the whole sub-part", () => {
@@ -214,7 +236,7 @@ test("hovering unlabeled geometry highlights the whole sub-part", () => {
   const tip = document.getElementById("pf-hover-tip");
   expect(tip.classList.contains("show")).toBe(true);
   expect(tip.querySelector("b").textContent).toBe("Planter");
-  const overlay = viewer._subMeshes.one.parent.children.find((c) => c !== viewer._subMeshes.one && c.visible);
+  const overlay = viewer._subMeshes.one.children.find((c) => c.visible);
   expect(overlay).toBeDefined();
   expect(overlay.geometry).toBe(sourceGeometry);
   h.detach();
@@ -259,9 +281,7 @@ test("hover overlay material follows cutaway clipping until detach", () => {
   expect(material).toBeInstanceOf(THREE.MeshBasicMaterial);
 
   move(viewer.domElement, 100, 100);
-  const overlay = viewer._group.children.find(
-    (child) => child !== viewer._subMeshes.one,
-  );
+  const [overlay] = viewer._subMeshes.one.children;
   expect(overlay.material).toBe(material);
   // Cutaway feature lines start at render order 2,000,000; the translucent
   // highlight must render after them so it remains legible on retained faces.
@@ -290,9 +310,7 @@ test("detach completes hover cleanup before reporting aggregated failures", () =
   const disposeMaterial = vi.spyOn(material, "dispose");
 
   move(viewer.domElement, 100, 100);
-  const overlay = viewer._group.children.find(
-    (child) => child !== viewer._subMeshes.one,
-  );
+  const [overlay] = viewer._subMeshes.one.children;
   const disposeGeometry = vi.spyOn(overlay.geometry, "dispose");
 
   let thrown;
@@ -300,7 +318,7 @@ test("detach completes hover cleanup before reporting aggregated failures", () =
 
   expect(thrown).toBeInstanceOf(AggregateError);
   expect(thrown.errors).toEqual([hideError, unregisterError]);
-  expect(viewer._group.children).toEqual([viewer._subMeshes.one]);
+  expect(viewer._subMeshes.one.children).toEqual([]); // no overlay left parented to the sub-part
   expect(disposeGeometry).toHaveBeenCalledTimes(1);
   expect(disposeMaterial).toHaveBeenCalledTimes(1);
   expect(unregister).toHaveBeenCalledTimes(1);
@@ -325,7 +343,7 @@ test("a queued hover frame has no effect after detach", () => {
   runFrame();
 
   expect(document.getElementById("pf-hover-tip")).toBeNull();
-  expect(viewer._group.children).toEqual([viewer._subMeshes.one]);
+  expect(viewer._subMeshes.one.children).toEqual([]); // no overlay left parented to the sub-part
 });
 
 test("pointerleave invalidates a queued hover frame", () => {
@@ -341,7 +359,7 @@ test("pointerleave invalidates a queued hover frame", () => {
   runFrame();
 
   expect(document.getElementById("pf-hover-tip").classList.contains("show")).toBe(false);
-  expect(viewer._group.children).toEqual([viewer._subMeshes.one]);
+  expect(viewer._subMeshes.one.children).toEqual([]); // no overlay left parented to the sub-part
   hover.detach();
 });
 
@@ -359,7 +377,7 @@ test("a quick pointerdown and pointerup invalidates a queued hover frame", () =>
   runFrame();
 
   expect(document.getElementById("pf-hover-tip").classList.contains("show")).toBe(false);
-  expect(viewer._group.children).toEqual([viewer._subMeshes.one]);
+  expect(viewer._subMeshes.one.children).toEqual([]); // no overlay left parented to the sub-part
   hover.detach();
 });
 
@@ -379,9 +397,7 @@ test("cutaway handle ownership immediately hides feature hover and suppresses mo
   const hover = attachHoverLabels(viewer, { part, schedule: sync });
   move(viewer.domElement, 100, 100);
   const tip = document.getElementById("pf-hover-tip");
-  const overlay = viewer._group.children.find(
-    (child) => child !== viewer._subMeshes.one,
-  );
+  const [overlay] = viewer._subMeshes.one.children;
   expect(tip.classList.contains("show")).toBe(true);
   expect(overlay.visible).toBe(true);
 
