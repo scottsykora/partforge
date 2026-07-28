@@ -288,6 +288,59 @@ test("Escape closes the popover; after dispose the document listener is gone", (
   expect(document.body.querySelector(".popover")).toBeNull();
 });
 
+// syncValues is the programmatic twin of a user edit: setParams() writes into
+// `params` behind the widgets' backs, so the panel has to be told to re-read.
+test("syncValues re-reads params into the widgets", () => {
+  const params = { h: 4 };
+  const root = document.createElement("div");
+  const panel = buildControls(root, [
+    { id: "s", title: "S", advanced: [{ key: "h", label: "H", min: 1, max: 10, step: 1 }] },
+  ], params, () => {});
+  params.h = 7; // programmatic change (setParams path)
+  panel.syncValues(["h"]);
+  expect(root.querySelector('input[type="range"]').value).toBe("7");
+  expect(root.querySelector('input[type="number"]').value).toBe("7");
+  panel.dispose();
+});
+
+test("syncValues() with no keys syncs every widget — sliders, toggles, features — and never fires onDirty", () => {
+  document.body.innerHTML = "";
+  const root = document.createElement("div");
+  document.body.append(root);
+  let dirty = 0;
+  const params = { od: 5, show_motor: 0, flange_d: 0 };
+  const panel = buildControls(root, [
+    { id: "body", title: "Body",
+      advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }],
+      toggles: [{ key: "show_motor", label: "Show motor", on: 1 }] },
+    featureSec(),
+  ], params, () => dirty++);
+  const feature = root.querySelector(".feat-group");
+  expect(feature.classList.contains("hidden")).toBe(true); // flange off to start
+
+  Object.assign(params, { od: 9, show_motor: 1, flange_d: 16 });
+  panel.syncValues(); // no keys → everything
+
+  const [motorBox, flangeBox] = root.querySelectorAll('input[type="checkbox"]');
+  expect(root.querySelector('input[type="range"]').value).toBe("9");
+  expect(motorBox.checked).toBe(true);
+  expect(flangeBox.checked).toBe(true);
+  expect(feature.classList.contains("hidden")).toBe(false); // enabling reveals its controls
+  expect(dirty).toBe(0); // programmatic: the caller drives the change path itself
+  panel.dispose();
+});
+
+test("syncValues(keys) leaves widgets outside the key list alone", () => {
+  const root = document.createElement("div");
+  const params = { od: 5, h: 5, bore: 2 };
+  const panel = buildControls(root, twoSections, params, () => {});
+  Object.assign(params, { od: 9, bore: 4 });
+  panel.syncValues(["od"]);
+  expect(wrapByLabel(root, "OD").querySelector('input[type="range"]').value).toBe("9");
+  expect(wrapByLabel(root, "Bore").querySelector('input[type="range"]').value).toBe("2"); // untouched
+  panel.dispose();
+});
+
 test("sections stay flat siblings so the rail can divide them with hairlines", () => {
   const root = document.createElement("div");
   buildControls(root, [presetSec(), featureSec()], { od: 5, secret: 0, flange_d: 16, hf: 0 }, () => {});

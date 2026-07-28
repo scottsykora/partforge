@@ -731,6 +731,50 @@ test("?debug&nocache disables the fast path — a pose-only edit still rebuilds"
   vi.useRealTimers();
 });
 
+// setParams is the animation-system hook: it runs the same change path as a
+// slider edit, so a pose-only edit lands in the viewer synchronously — and the
+// panel has to follow, or the sliders drift away from the params they show.
+test("setParams applies the fast path synchronously and syncs the panel", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const els = makeElements();
+  const handle = mount(makePart(), { createWorker, elements: els });
+  finishFirstBuild(workers);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  handle.setParams({ tilt: 60 });
+
+  expect(fakeViewers[0].setSubPose).toHaveBeenCalledWith("body", expect.any(Array));
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(jobsBefore); // synchronous, no job
+  const [height, tilt] = els.controls.querySelectorAll('input[type="range"]');
+  expect(tilt.value).toBe("60");                                           // UI synced
+  expect(els.controls.querySelectorAll("input.num")[1].value).toBe("60");
+  expect(height.value).toBe("4");                                          // untouched key
+  vi.advanceTimersByTime(250); // …and the debounce still finds nothing missing
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(jobsBefore);
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+test("setParams on a geometry param syncs the panel and rebuilds", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const els = makeElements();
+  const handle = mount(makePart(), { createWorker, elements: els });
+  finishFirstBuild(workers);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  handle.setParams({ h: 6 });
+  vi.advanceTimersByTime(250);
+
+  expect(els.controls.querySelectorAll('input[type="range"]')[0].value).toBe("6");
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  const generate = jobs.find((m) => m.type === "generate");
+  expect(generate?.params.h).toBe(6);
+  handle.dispose();
+  vi.useRealTimers();
+});
+
 test("dispose() before the first build rejects ready instead of hanging", () => {
   const { createWorker } = makeWorkers();
   const runtime = mount(makePart(), { createWorker, elements: makeElements() });

@@ -23,8 +23,8 @@ import { createPickRequestClient } from "./pick-request/index.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
-export function makeHandle({ ready, dispose, viewer }) {
-  return { ready, dispose, captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames) };
+export function makeHandle({ ready, dispose, viewer, setParams }) {
+  return { ready, dispose, setParams, captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames) };
 }
 
 function createCleanupStack() {
@@ -59,7 +59,10 @@ function createCleanupStack() {
 // Embedding contract (0.12.0):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick });
 //   await runtime.ready;   // first successful build of the default view
+//   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
 //   runtime.dispose();     // full teardown
+// onBuild fires per completed build, so it does NOT fire for a pose-only edit —
+// those are repaired in the viewer and produce no build at all.
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
@@ -358,6 +361,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       updateRelevance();
     }
 
+    // Programmatic param entry point — the animation-system hook. Same change
+    // path as a slider edit: pose-only changes repair synchronously (no worker
+    // job, no debounce); geometry changes fall through to the regen loop.
+    function setParams(partial) {
+      Object.assign(params, partial);
+      panel.syncValues(Object.keys(partial));
+      onParamChange();
+    }
+
     // Re-run the active view under the current caching setting, so toggling the
     // ?debug switch updates the readout for the same design without a param change.
     function forceRegen() {
@@ -405,7 +417,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.dispose();
     }
 
-    return makeHandle({ ready, dispose, viewer });
+    return makeHandle({ ready, dispose, viewer, setParams });
   } catch (error) {
     try {
       cleanup.dispose();

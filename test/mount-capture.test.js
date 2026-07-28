@@ -13,4 +13,12 @@ describe("mount handle captureViews", () => {
     expect(viewer.captureCanonicalViews).toHaveBeenCalledWith(["iso"]);
     expect(out).toEqual([{ view: "iso", dataUrl: "d" }]);
   });
+
+  it("exposes setParams straight through to the caller", () => {
+    const viewer = { captureCanonicalViews: vi.fn() };
+    const setParams = vi.fn();
+    const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer, setParams });
+    handle.setParams({ openAngle: 45 });
+    expect(setParams).toHaveBeenCalledWith({ openAngle: 45 });
+  });
 });

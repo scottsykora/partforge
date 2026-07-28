@@ -218,6 +218,7 @@ export function buildControls(root, parameters, params, onDirty) {
   const info = createInfoPopover();
   const controls = []; // { key, el } per control element
   const sections = []; // { el, keys:Set } per rendered section
+  const syncFns = []; // { key, sync } for every widget that can re-read params
   for (const sec of parameters) {
     if (!sectionRenders(sec)) continue;
     const section = el("div", "section");
@@ -225,7 +226,11 @@ export function buildControls(root, parameters, params, onDirty) {
     attachInfo(title, sec.description, info);
     section.append(title);
     const keys = new Set();
-    const register = (key, node) => { controls.push({ key, el: node }); keys.add(key); };
+    const register = (key, node, sync) => {
+      controls.push({ key, el: node });
+      keys.add(key);
+      if (sync) syncFns.push({ key, sync });
+    };
     if (sec.features) buildFeatureSection(section, sec, params, onDirty, register, info);
     else buildPresetSection(section, sec, params, onDirty, register, info);
     root.append(section);
@@ -233,6 +238,12 @@ export function buildControls(root, parameters, params, onDirty) {
   }
   return {
     applyRelevance: (relevant) => applyRelevance(relevant, controls, sections),
+    // Re-read params into the widgets — all of them, or just `keys`. The
+    // programmatic twin of a user edit (setParams); never fires onDirty.
+    syncValues: (keys) => {
+      const only = keys && new Set(keys);
+      for (const { key, sync } of syncFns) if (!only || only.has(key)) sync();
+    },
     dispose: () => { info.dispose(); root.replaceChildren(); },
   };
 }
@@ -263,7 +274,7 @@ function buildPresetSection(section, sec, params, onDirty, register, info) {
     attachInfo(lbl, t.description, info);
     row.append(box, lbl);
     box.addEventListener("change", () => { params[t.key] = box.checked ? (t.on ?? 1) : 0; onDirty?.(); });
-    register(t.key, row);
+    register(t.key, row, () => { box.checked = params[t.key] > 0; });
     section.append(row);
   }
 
@@ -275,7 +286,7 @@ function buildPresetSection(section, sec, params, onDirty, register, info) {
       const s = makeParameterControl(def, params, () => { if (preset) preset.value = "Custom"; onDirty?.(); }, info);
       adv.append(s.wrap);
       syncs[def.key] = s.sync;
-      register(def.key, s.wrap);
+      register(def.key, s.wrap, s.sync);
     }
     section.append(toggle, adv);
   }
@@ -306,7 +317,12 @@ function buildFeatureSection(section, sec, params, onDirty, register, info) {
     const featLabel = el("span", "", feat.label);
     attachInfo(featLabel, feat.description, info);
     checkRow.append(box, featLabel);
-    register(feat.key, checkRow);
+    // `group` is created just below — the sync only ever runs after this
+    // function returns, so the closure is safely bound by then.
+    register(feat.key, checkRow, () => {
+      box.checked = params[feat.key] > 0;
+      group.classList.toggle("hidden", !box.checked);
+    });
 
     const group = el("div", "feat-group");
     const syncs = [];
@@ -314,7 +330,7 @@ function buildFeatureSection(section, sec, params, onDirty, register, info) {
       const s = makeParameterControl(def, params, onDirty, info);
       group.append(s.wrap);
       syncs.push(s.sync);
-      register(def.key, s.wrap);
+      register(def.key, s.wrap, s.sync);
     }
     group.classList.toggle("hidden", !box.checked);
 
