@@ -17,7 +17,7 @@ const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tole
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
-          makeCompound, loft, draw, exportSTEP, measureVolume, makeSphere, makeLine, Plane } = replicad;
+          makeCompound, loft, draw, exportSTEP, measureVolume, makeSphere, makeLine, Plane, getOC } = replicad;
 
   // Fillet/chamfer/shell failure recovery (skip-on-failure, chamfer binary search) —
   // see occt-repair.js for the policies and why they differ per op.
@@ -278,7 +278,28 @@ export function createOcctKernel(replicad) {
       solids.flatMap((s) => cloneLabels(s._labels ?? []))
     ),
     shape2d,
-    toSTEP: (named) => exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._s }))).arrayBuffer(),
+    toSTEP: (named) => {
+      // Blob-free STEP: replicad's exportSTEP writes the STEP text to OCCT's
+      // virtual FS, reads it, and wraps it in a Blob. Safari's sandbox worker
+      // cannot read a Blob, so we intercept the FS read to capture the raw
+      // Uint8Array before it is wrapped, and return an ArrayBuffer instead. The
+      // interception is synchronous (exportSTEP is sync) and restored in finally.
+      const oc = getOC();
+      const realRead = oc.FS.readFile.bind(oc.FS);
+      let captured = null;
+      oc.FS.readFile = (path, ...rest) => {
+        const bytes = realRead(path, ...rest);
+        if (typeof path === "string" && path.toLowerCase().endsWith(".step")) captured = bytes;
+        return bytes;
+      };
+      try {
+        exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._s })));
+      } finally {
+        oc.FS.readFile = realRead;
+      }
+      if (!captured) throw new Error("STEP export produced no bytes");
+      return Promise.resolve(captured.buffer.slice(captured.byteOffset, captured.byteOffset + captured.byteLength));
+    },
   });
   return kernel;
 }

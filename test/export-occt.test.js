@@ -16,3 +16,15 @@ describe("OCCT toSTL", () => {
     expect(ab.byteLength).toBe(84 + n * 50); // exact binary-STL size for n facets
   });
 });
+
+describe("OCCT toSTEP", () => {
+  it("returns an ArrayBuffer of real STEP text (B-rep, not a mesh, no Blob)", async () => {
+    const s = k.box({ min: [0,0,0], max: [10,10,10] });
+    const ab = await k.toSTEP([{ name: "box", solid: s }]);
+    expect(ab).toBeInstanceOf(ArrayBuffer);
+    const text = new TextDecoder().decode(new Uint8Array(ab));
+    expect(text).toMatch(/ISO-10303|STEP/); // STEP header — proves STEP, not STL/mesh
+    expect(text).toMatch(/ENDSEC|DATA;/);   // STEP structure
+    expect(ab.byteLength).toBeGreaterThan(500);
+  });
+});
