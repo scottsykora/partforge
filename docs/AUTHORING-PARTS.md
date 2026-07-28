@@ -342,7 +342,9 @@ This holds on **both backends** — and on OCCT, `translate`/`rotate` are additi
 re-running any B-rep work. A parameter that only feeds a final placement rotation (a
 lid's open angle, an exploded-view offset) therefore re-drags in ~0 ms even on the
 slow exact kernel — keep such transforms as the last ops in `build` (or in `place`)
-rather than baking them into the geometry earlier.
+rather than baking them into the geometry earlier. In the app, such pose-only edits
+skip the worker entirely — the viewer re-poses the cached mesh — so they stay smooth
+even at animation rates (see `runtime.setParams`).
 
 ---
 

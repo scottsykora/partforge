@@ -1,7 +1,7 @@
 # Viewer-side pose fast path — design
 
 **Date:** 2026-07-27
-**Status:** approved
+**Status:** implemented
 **Depends on:** PR #73 (`claude/occt-solid-cache` — OCCT solid cache + `src/framework/geometry/pose.js`)
 
 ## Problem
@@ -127,3 +127,18 @@ Memoized per `(paramsVersion, view)` exactly like `subPartReadKeys` in
 - A declarative `pose()` part-contract field — revisit only if the animation
   system wants named, addressable poses.
 - Worker/backend/mesh-protocol changes — deliberately none.
+
+## Implementation notes
+
+Two contract details that differ from the design text above, settled while
+building it:
+
+- **`repair()` returns repaired NAMES (`string[]`), not a count.** A slider drag
+  re-repairs the same subpart on every input event, so a running total is
+  meaningless ("247 posed" for a one-subpart view). `mount.js` unions the names
+  into a `Set` across the drag and reports its size, so the `?debug` overlay's
+  posed figure counts distinct sub-parts, not repair calls.
+- **`onBuild` does not fire for pose-only edits.** It is documented as
+  per-completed-build, and a pose-only edit completes no build. Embedders that
+  need to observe pose-only changes should watch their own `setParams` calls
+  rather than `onBuild`.
