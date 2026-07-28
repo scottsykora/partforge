@@ -62,3 +62,19 @@ test("poseDelta re-poses a delivered point to the new pose", () => {
   transformPositions(expected, composePose(at(75)));
   for (let i = 0; i < 3; i++) expect(delivered[i]).toBeCloseTo(expected[i], 5);
 });
+
+test("poseDelta multiplies in the order new · old⁻¹, not the reverse", () => {
+  // The test above rotates about one axis line, where the two orders commute. These
+  // don't: a reversed multiply lands the point at [1,3,1] instead of [1,1,3].
+  const old = [{ t: "rotate", deg: 90, center: [0, 0, 0], axis: [0, 1, 0] }];
+  const now = [
+    { t: "rotate", deg: 90, center: [0, 0, 0], axis: [0, 0, 1] },
+    { t: "translate", v: [3, 0, 0] },
+  ];
+  const delivered = Float32Array.from([1, 2, 3]);
+  transformPositions(delivered, composePose(old));
+  transformPositions(delivered, poseDelta(now, old));
+  const expected = Float32Array.from([1, 2, 3]);
+  transformPositions(expected, composePose(now));
+  for (let i = 0; i < 3; i++) expect(delivered[i]).toBeCloseTo(expected[i], 5);
+});
