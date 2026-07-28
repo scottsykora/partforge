@@ -2,6 +2,7 @@
 // Probe and delta math run for real; viewer and mesh-cache are minimal stubs.
 import { expect, test } from "vitest";
 import { createPoseFastPath } from "../../src/framework/pose-fast-path.js";
+import { composePose } from "../../src/framework/geometry/pose.js";
 
 const posedPart = {
   defaults: { w: 10, angle: 0 },
@@ -47,6 +48,10 @@ test("a pose-only edit repairs the subpart: pose set, re-stamped current, count 
   expect(hx.current.has("a")).toBe(true);
   expect(Array.isArray(hx.poses.a)).toBe(true);
   expect(hx.poses.a).toHaveLength(16);
+  // The delta is new-relative-to-delivered, and the delivered pose (angle 0) is
+  // identity — so the repaired matrix must be the ABSOLUTE 45° pose, not its
+  // inverse. Pins the argument order of poseDelta(now, was) at the call site.
+  expect(hx.poses.a).toEqual(composePose([{ t: "rotate", deg: 45, center: [0, 0, 5], axis: [1, 0, 0] }]));
 });
 
 test("a geometry edit does not repair (base hash changed)", () => {
@@ -83,6 +88,37 @@ test("an untrusted subpart (geometry query in build) never repairs", () => {
   hx.deliver("a");
   hx.edit({ angle: 45 });
   expect(hx.fp.repair()).toBe(0);
+});
+
+// Trust flips with `q`: q=1 takes a geometry query (untrusted), q=0 is a plain
+// rigid rotate (trusted). Lets each side of the trust guard be tested alone.
+const trustFlipPart = (defaults) => ({
+  defaults,
+  views: { v: { label: "V" } },
+  parts: { a: { views: ["v"], build: (k, p) => {
+    const s = k.box({ min: [0, 0, 0], max: [4, 4, 4] });
+    return p.q
+      ? s.translate([0, 0, s.volume()])
+      : s.rotateAbout({ axis: "X", deg: p.angle, through: [0, 0, 0] });
+  } } },
+});
+
+test("delivered trusted, now untrusted: no repair, no throw", () => {
+  const hx = harness(trustFlipPart({ q: 0, angle: 0 }));
+  hx.deliver("a");           // stamped trusted
+  hx.edit({ q: 1 });         // current probe is untrusted (has no pose at all)
+  expect(() => hx.fp.repair()).not.toThrow();
+  expect(hx.fp.repair()).toBe(0);
+  expect(hx.poses.a).toBe(null);
+});
+
+test("delivered untrusted, now trusted: no repair, no throw", () => {
+  const hx = harness(trustFlipPart({ q: 1, angle: 0 }));
+  hx.deliver("a");                    // stamped untrusted (no pose recorded)
+  hx.edit({ q: 0, angle: 45 });       // current probe is trusted
+  expect(() => hx.fp.repair()).not.toThrow();
+  expect(hx.fp.repair()).toBe(0);
+  expect(hx.poses.a).toBe(null);
 });
 
 test("repair applies the delta against the DELIVERED pose, not the previous frame", () => {
