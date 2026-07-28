@@ -45,6 +45,9 @@ export function buildPosed(kernel, part, name, { purpose, view, p, d, onProgress
 //   { type:"generate", subparts, view, params } → { type:"meshes", meshes, ms }
 //   { type:"export-stl", view, params }         → { type:"download-parts", ext, mime, parts }
 //   { type:"export-step", view, params }        → { type:"download", data, filename, mime }
+// A generate also accepts `opts.isStale` — a caller-supplied predicate checked at each
+// sub-part boundary — and answers { type:"superseded" } instead of `meshes` when it
+// stops early (a build that ended without meshes, not an error; see KERNEL-CONTRACT.md).
 // Each result branch declares its own transferables (the big binary buffers,
 // zero-copy across the worker boundary) right where the buffers are created —
 // so a new job type can't silently regress to structured-cloning its payload.
