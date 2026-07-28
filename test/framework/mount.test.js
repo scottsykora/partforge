@@ -16,6 +16,7 @@ vi.mock("../../src/framework/viewer.js", () => ({
       showAssembly: vi.fn(),
       hideAssembly: vi.fn(),
       setSubGeometry: vi.fn((name) => built.add(name)),
+      setSubPose: vi.fn(),
       hasSubMesh: (name) => built.has(name),
       subTriangles: () => 0,
       frame: vi.fn(),
@@ -91,13 +92,22 @@ import { attachCutawayControls } from "../../src/framework/cutaway-controls.js";
 import { attachViewerControls } from "../../src/framework/viewer-controls.js";
 import { createTooltipPresenter } from "../../src/framework/tooltip.js";
 
+// `build` is written like a real part (options-form box + rigid rotateAbout), not
+// against a null kernel: the pose probe and the relevance probe both RUN it for
+// real against their stub kernels, and `tilt` is the pose-only param the fast
+// path repairs without a rebuild.
 const makePart = () => ({
   meta: { title: "Test Part", backend: "manifold" }, // pinned backend: no probe run
-  defaults: { h: 4 },
+  defaults: { h: 4, tilt: 0 },
   views: { main: { label: "Main" } },
-  parts: { body: { label: "Body", views: ["main"], build: (k, p) => k.box?.(p.h, p.h, p.h) } },
+  parts: { body: { label: "Body", views: ["main"], build: (k, p) =>
+    k.box({ min: [0, 0, 0], max: [p.h, p.h, p.h] })
+      .rotateAbout({ axis: "X", deg: p.tilt, through: [0, 0, 0] }) } },
   parameters: [{ id: "size", title: "Size",
-    advanced: [{ key: "h", label: "Height", min: 1, max: 10, step: 1 }] }],
+    advanced: [
+      { key: "h", label: "Height", min: 1, max: 10, step: 1 },
+      { key: "tilt", label: "Tilt", min: 0, max: 90, step: 1 },
+    ] }],
 });
 
 function makeWorkers() {
@@ -533,6 +543,236 @@ test("dispose() detaches the onPick picker", () => {
   // a reframe click after dispose must not reach the (now-disposed) viewer.
   els.chrome.reframe.click();
   expect(fakeViewers.at(-1).frame).not.toHaveBeenCalled();
+});
+
+test("a pose-only param edit re-poses in the viewer and sends no build job", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  // drive the tilt slider like a user drag
+  const tilt = document.querySelectorAll('input[type="range"]')[1];
+  tilt.value = "45";
+  tilt.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250); // let the regen debounce fire — it must find nothing missing
+
+  expect(fakeViewers[0].setSubPose).toHaveBeenCalledWith("body", expect.any(Array));
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(jobsBefore); // no new job
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+test("a geometry param edit still sends a build job", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  const height = document.querySelectorAll('input[type="range"]')[0];
+  height.value = "6";
+  height.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250);
+
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  expect(jobs.some((m) => m.type === "generate")).toBe(true);
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// The ?debug caching toggle calls forceRegen(), which forgets every stamp WITHOUT
+// bumping the params version. repair() must therefore never run in that path: it
+// would re-stamp everything current off the memoized probe and the forced rebuild
+// would silently no-op. This pins repair() to onParamChange only.
+test("the ?debug caching toggle still forces a rebuild after a pose repair", () => {
+  vi.stubGlobal("location", { search: "?debug" });
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+
+  const tilt = document.querySelectorAll('input[type="range"]')[1];
+  tilt.value = "45";
+  tilt.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250); // repaired by the fast path: body is stamped current again
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  const cb = document.querySelector("#pf-debug input[type=checkbox]");
+  cb.checked = false;
+  cb.dispatchEvent(new Event("change")); // → forceRegen()
+
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  expect(jobs.some((m) => m.type === "generate")).toBe(true);
+
+  // …and the earlier repair is not credited to this unrelated rebuild's report.
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+  expect(document.getElementById("pf-debug").textContent).toContain("/ 0 posed");
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// The other build a repair must not ride along into: a view switch kicks a build
+// for whatever the new view is missing, which has nothing to do with the edit.
+test("switching views doesn't credit an earlier repair to the new view's build", () => {
+  vi.stubGlobal("location", { search: "?debug" });
+  vi.useFakeTimers();
+  const part = makePart();
+  part.views.other = { label: "Other" };
+  part.parts.cap = { label: "Cap", views: ["other"],
+    build: (k, p) => k.box({ min: [0, 0, 0], max: [p.h, 1, 1] }) };
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: els });
+  finishFirstBuild(workers);
+
+  const tilt = document.querySelectorAll('input[type="range"]')[1];
+  tilt.value = "45";
+  tilt.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250); // repaired by the fast path — no build of its own
+
+  [...els.tabs.querySelectorAll("button")]
+    .find((button) => button.textContent === "Other")
+    .click();
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "cap" }], ms: 5 } });
+
+  expect(document.getElementById("pf-debug").textContent).toContain("/ 0 posed");
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// A mixed edit: `body` is geometry-only (reads h), `arm` is pose-only (reads tilt).
+// Editing both in one dirty cycle must re-pose the arm AND rebuild the body, and
+// the build's overlay report must still credit the pose — the repaired count has
+// to survive the debounce into the generate it shares a cycle with.
+const makeMixedPart = () => {
+  const part = makePart();
+  part.parts.body.build = (k, p) => k.box({ min: [0, 0, 0], max: [p.h, p.h, p.h] });
+  part.parts.arm = { label: "Arm", views: ["main"], build: (k, p) =>
+    k.box({ min: [0, 0, 0], max: [2, 2, 2] })
+      .rotateAbout({ axis: "X", deg: p.tilt, through: [0, 0, 0] }) };
+  return part;
+};
+
+test("a mixed edit reports the posed sub-part alongside the rebuilt one", () => {
+  vi.stubGlobal("location", { search: "?debug" });
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makeMixedPart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }, { name: "arm" }], ms: 42 } });
+
+  const [height, tilt] = document.querySelectorAll('input[type="range"]');
+  tilt.value = "45";
+  tilt.dispatchEvent(new Event("input", { bubbles: true }));   // arm: pose-only
+  height.value = "6";
+  height.dispatchEvent(new Event("input", { bubbles: true }));  // body: needs a rebuild
+  vi.advanceTimersByTime(250);
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 7 } });
+
+  expect(fakeViewers[0].setSubPose).toHaveBeenCalledWith("arm", expect.any(Array));
+  expect(document.getElementById("pf-debug").textContent)
+    .toContain("1 skipped / 1 rebuilt / 1 posed");
+
+  // …and that build CONSUMED the count: the next one reports none.
+  height.value = "7";
+  height.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250);
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 8 } });
+
+  expect(document.getElementById("pf-debug").textContent)
+    .toContain("1 skipped / 1 rebuilt / 0 posed");
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// The count is of SUB-PARTS re-posed, not of repairs performed: a slider drag
+// re-repairs the same sub-part on every input event, and reporting "247 posed"
+// for a one-sub-part app would be nonsense.
+test("repeated pose edits in one drag report one posed sub-part, not one per edit", () => {
+  vi.stubGlobal("location", { search: "?debug" });
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+
+  const tilt = document.querySelectorAll('input[type="range"]')[1];
+  for (const deg of ["15", "30", "45"]) {
+    tilt.value = deg;
+    tilt.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  vi.advanceTimersByTime(250);
+
+  expect(document.getElementById("pf-debug").textContent).toContain("/ 1 posed");
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// ?debug&nocache exists to measure true uncached rebuilds; the fast path would
+// hide them by re-stamping pose-only edits current, so it's off when caching is.
+test("?debug&nocache disables the fast path — a pose-only edit still rebuilds", () => {
+  vi.stubGlobal("location", { search: "?debug&nocache" });
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  const tilt = document.querySelectorAll('input[type="range"]')[1];
+  tilt.value = "45";
+  tilt.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250);
+
+  expect(fakeViewers[0].setSubPose).not.toHaveBeenCalled();
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  expect(jobs.some((m) => m.type === "generate")).toBe(true);
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// setParams is the animation-system hook: it runs the same change path as a
+// slider edit, so a pose-only edit lands in the viewer synchronously — and the
+// panel has to follow, or the sliders drift away from the params they show.
+test("setParams applies the fast path synchronously and syncs the panel", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const els = makeElements();
+  const handle = mount(makePart(), { createWorker, elements: els });
+  finishFirstBuild(workers);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  handle.setParams({ tilt: 60 });
+
+  expect(fakeViewers[0].setSubPose).toHaveBeenCalledWith("body", expect.any(Array));
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(jobsBefore); // synchronous, no job
+  const [height, tilt] = els.controls.querySelectorAll('input[type="range"]');
+  expect(tilt.value).toBe("60");                                           // UI synced
+  expect(els.controls.querySelectorAll("input.num")[1].value).toBe("60");
+  expect(height.value).toBe("4");                                          // untouched key
+  vi.advanceTimersByTime(250); // …and the debounce still finds nothing missing
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(jobsBefore);
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+test("setParams on a geometry param syncs the panel and rebuilds", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const els = makeElements();
+  const handle = mount(makePart(), { createWorker, elements: els });
+  finishFirstBuild(workers);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  handle.setParams({ h: 6 });
+  vi.advanceTimersByTime(250);
+
+  expect(els.controls.querySelectorAll('input[type="range"]')[0].value).toBe("6");
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  const generate = jobs.find((m) => m.type === "generate");
+  expect(generate?.params.h).toBe(6);
+  handle.dispose();
+  vi.useRealTimers();
 });
 
 test("dispose() before the first build rejects ready instead of hanging", () => {

@@ -67,3 +67,30 @@ test("raycast behavior is unchanged without a visibility predicate", () => {
   const viewer = makeViewer();
   expect(raycastViewer(viewer, 100, 100).pointWorld.z).toBeCloseTo(2, 4);
 });
+
+test("a fast-path pose on the sub-part is reflected in the reported point and normal", () => {
+  // The viewer's pose fast path writes a rigid matrix straight onto the sub-part
+  // mesh (viewer.setSubPose). Selection coords must describe the part as it is
+  // now posed, not the frame the delivered mesh was baked in.
+  const viewer = makeViewer();
+  const mesh = viewer._subMeshes.one;
+  mesh.matrixAutoUpdate = false;
+  // rotate +90° about X, then lift +1 in Z — the box's +Y geometry face becomes
+  // the +Z-facing face, and the front face lands at z = 3.
+  mesh.matrix
+    .makeRotationX(Math.PI / 2)
+    .premultiply(new THREE.Matrix4().makeTranslation(0, 0, 1));
+  mesh.parent.updateMatrixWorld(true);
+
+  const hit = raycastViewer(viewer, 100, 100);
+  expect(hit).not.toBeNull();
+  expect(hit.pointWorld.z).toBeCloseTo(3, 4);
+  // posed frame: [0, 0, 3] — NOT the delivered-geometry frame's [0, 2, 0]
+  expect(hit.pointLocal[0]).toBeCloseTo(0, 4);
+  expect(hit.pointLocal[1]).toBeCloseTo(0, 4);
+  expect(hit.pointLocal[2]).toBeCloseTo(3, 4);
+  // the hit triangle's geometry normal is +Y; the pose rotates it to +Z
+  expect(hit.normalLocal[0]).toBeCloseTo(0, 4);
+  expect(hit.normalLocal[1]).toBeCloseTo(0, 4);
+  expect(hit.normalLocal[2]).toBeCloseTo(1, 4);
+});

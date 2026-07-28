@@ -15,6 +15,7 @@ import { resolveDerived } from "./derive.js";
 import { detectBackend } from "./geometry/probe.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
+import { createPoseFastPath } from "./pose-fast-path.js";
 import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
@@ -22,8 +23,8 @@ import { createPickRequestClient } from "./pick-request/index.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
-export function makeHandle({ ready, dispose, viewer }) {
-  return { ready, dispose, captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames) };
+export function makeHandle({ ready, dispose, viewer, setParams }) {
+  return { ready, dispose, setParams, captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames) };
 }
 
 function createCleanupStack() {
@@ -58,7 +59,10 @@ function createCleanupStack() {
 // Embedding contract (0.12.0):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick });
 //   await runtime.ready;   // first successful build of the default view
+//   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
 //   runtime.dispose();     // full teardown
+// onBuild fires per completed build, so it does NOT fire for a pose-only edit —
+// those are repaired in the viewer and produce no build at all.
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
@@ -126,7 +130,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     const qs = new URLSearchParams(location.search);
     const debug = qs.has("debug");
     let cachingOn = !(debug && qs.has("nocache"));
-    let lastGen = { skipped: 0, rebuilt: 0 }; // Layer-1 counts for the most recent generate
+    let lastGen = { skipped: 0, rebuilt: 0, posed: 0 }; // Layer-0/1 counts for the most recent generate
+    // Sub-parts the pose fast path has repaired since the last build was dispatched.
+    // A SET of names, not a running total: a slider drag re-repairs the same
+    // sub-part on every input event, and "247 posed" for a one-sub-part app would
+    // be nonsense. A build dispatched in the SAME dirty cycle takes the count into
+    // its report — a mixed edit re-poses one sub-part and rebuilds another, and the
+    // overlay should say so. Anything that kicks a build for an unrelated reason
+    // (view switch / forceRegen) clears it first, so it can't be miscredited.
+    const pendingPosed = new Set();
     const dbg = debug
       ? createDebugOverlay({ initialCachingOn: cachingOn, onToggle: (on) => { cachingOn = on; forceRegen(); } })
       : null;
@@ -135,7 +147,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // View tabs (generated from part.views) + live params. A tab switch shows the
     // cached assembly instantly if it's current, else auto-builds what's missing.
     const tabsCtl = createViewTabs(els.tabs, part, {
-      onChange: () => { cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); },
+      onChange: () => { pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); },
     });
     cleanup.defer(() => tabsCtl.detach());
     const view = () => tabsCtl.current();
@@ -199,12 +211,20 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       missingParts,
       send: (missing) => {
         const needed = viewSubParts(part, view(), params);
-        lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length }; // for the overlay
+        // for the overlay; this build reports the poses repaired in its own cycle.
+        lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length, posed: pendingPosed.size };
+        pendingPosed.clear(); // consumed — never counted against a second build
         ui.showBusy("generating");
         service.send({ type: "generate", subparts: missing, view: view(), params, cache: cachingOn }, backendFor());
       },
     });
     cleanup.defer(() => loop.dispose());
+
+    // Pose fast path (Layer 0): a param edit that only re-poses a sub-part is
+    // repaired synchronously in the viewer — no debounce, no worker job.
+    const fastPath = createPoseFastPath(part, viewer, cache, {
+      params, getView: view, getParamsVersion: () => loop.version(),
+    });
 
     // First-build readiness: resolves on the first accepted meshes result, rejects on
     // a first-build error. Guarded against unhandled rejection when never awaited.
@@ -272,13 +292,17 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
               cache.record(m.name);
+              // Stamp the fast path's pose baseline. Only here, inside the
+              // non-stale branch: the stamp must describe the geometry actually
+              // delivered, which buildDone() true guarantees is at the live params.
+              fastPath.recordDelivered(m.name);
             }
             ui.hideBusy();
             refreshView();
             if (data.ms && missingParts().length === 0) {
               ui.setStatus(`${ui.statusText()} · ${(data.ms / 1000).toFixed(1)} s`);
             }
-            dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt });
+            dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed });
             onBuild?.({ status: "success", ms: data.ms });
             if (!readySettled) { readySettled = true; resolveReady(); }
           }
@@ -319,15 +343,37 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     const updateRelevance = () => panel.applyRelevance(relevantParamKeys(part, view(), params));
     updateRelevance(); // initial view
 
+    // The ONLY caller of fastPath.repair(). It must never move into the regen /
+    // forceRegen path: forceRegen() forgets cache stamps WITHOUT bumping the params
+    // version, so a repair there would re-stamp everything current off the memoized
+    // probe and the forced rebuild would silently no-op.
     function onParamChange() {
       loop.markDirty(); // bump the version first: refreshView below must see the parts as stale
+      // Pose-only edits: re-posed + re-stamped current, no job. Skipped entirely
+      // when caching is off — ?debug&nocache is there to measure true uncached
+      // rebuilds, which the fast path would otherwise hide.
+      const posed = cachingOn ? fastPath.repair() : [];
+      if (posed.length) {
+        for (const name of posed) pendingPosed.add(name);
+        dbg?.update({ posed: pendingPosed.size }); // partial: merges over the last build's numbers
+      }
       refreshView();    // keep showing the now-stale mesh (no flicker); disable export
       updateRelevance();
+    }
+
+    // Programmatic param entry point — the animation-system hook. Same change
+    // path as a slider edit: pose-only changes repair synchronously (no worker
+    // job, no debounce); geometry changes fall through to the regen loop.
+    function setParams(partial) {
+      Object.assign(params, partial);
+      panel.syncValues(Object.keys(partial));
+      onParamChange();
     }
 
     // Re-run the active view under the current caching setting, so toggling the
     // ?debug switch updates the readout for the same design without a param change.
     function forceRegen() {
+      pendingPosed.clear(); // this rebuild is not the pose edit's — don't credit it
       for (const n of viewSubParts(part, view(), params)) cache.forget(n);
       refreshView();
       loop.kick();
@@ -371,7 +417,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.dispose();
     }
 
-    return makeHandle({ ready, dispose, viewer });
+    return makeHandle({ ready, dispose, viewer, setParams });
   } catch (error) {
     try {
       cleanup.dispose();
