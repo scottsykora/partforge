@@ -1217,6 +1217,54 @@ entirely on OCCT, its fillets are exact in the STEP **and** present in the print
 > `partforge measure` reports `watertight`/`holes` as `n/a` for OCCT parts (Manifold-only
 > topology); `render` works on both.
 
+### Cost: fillet/chamfer scale with edge count — and order matters
+
+OCCT fillet/chamfer cost is **per selected edge**, on top of the OCCT boolean tax the
+routing already imposes on the rest of the part. Two habits keep it tolerable:
+
+- **Fillet/chamfer as early as possible, on the simplest solid.** A fillet on a bare
+  primitive is ~15× cheaper than the same fillet after a dozen boolean cuts have
+  multiplied the face count — and because the solid cache keys each op by its input's
+  content hash, an early fillet is a cache **hit** when a downstream parameter changes,
+  while a fillet-last build re-pays the whole op on every slider step of every parameter.
+- **Never point a rim selector at a many-point extruded profile.** `edges: {inPlane}` on
+  a gear-like extrusion selects *every* polygon edge (hundreds); one chamfer call then
+  costs seconds — and if the distance doesn't fit the tooth lands, the failure-rescue
+  bisection re-runs it ~8× (`ERROR-PATTERNS.md#chamfer-rescue-bisection`). Use the loft
+  bevel below instead.
+
+### Beveling profile rims: extrude's bevel option
+
+For an **extruded profile** (gear, star, bracket outline — any `k.extrude` of a polygon),
+a top/bottom rim bevel doesn't need `chamfer` at all — it's built into `extrude`:
+
+```js
+k.extrude({ profile: prof, h: 5, bevel: 0.6 });                 // 45° bevel, both rims
+k.extrude({ profile: prof, h: 5, bevel: { top: 0.6 } });        // one rim only
+```
+
+Same 45° bevel a rim `chamfer` would cut, but it desugars into extrude + loft +
+intersect at the shared kernel front, so the part **stays on the fast Manifold
+backend** (no CAD-only op for the probe to find) and costs one boolean regardless of
+profile point count. Measured on a 24-tooth involute gear: ~0.1 s on Manifold vs
+~40 s for the equivalent OCCT `chamfer` (576-edge rim × the rescue bisection).
+
+Rules (throws otherwise — `ERROR-PATTERNS.md#extrude-bevel-invalid`): plain
+point-array profiles only (no `{outer, holes}`, arc profiles, or `Shape2D`), no
+`twist`/`scaleTop`, and `bottom + top < h` — clamp from your height parameter, e.g.
+`bevel: Math.min(p.chamfer, p.thickness / 2 - 0.2)`. A bevel that would pinch a
+narrow feature shut (a gear's tooth land) is deterministically reduced to the
+largest inset the outline can take, with a console warning
+(`ERROR-PATTERNS.md#extrude-bevel-reduced`).
+
+Under the hood it insets the profile with `offsetPolygon(prof, -c, { corners:
+"sharp" })` and intersects with a loft envelope extended past both faces (so the
+envelope's own end caps never coincide with the extrusion's faces — coincident caps
+leave sliver-triangle shading artifacts). The same construction works by hand when
+you need a variant the option doesn't cover. This bevels a **whole rim**; for
+selective edges on a solid that's already OCCT-routed, plain `chamfer` with a tight
+selector is still the right tool.
+
 ---
 
 ## Conventions & gotchas

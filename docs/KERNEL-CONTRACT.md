@@ -123,7 +123,7 @@ for free.
 | `sphere` | `{r\|d}` — `sphere(5)` stays valid, undeprecated | `(r)` |
 | `box` | `{size:[x,y,z], center?}` (centered X/Y, base z=0; `center:true` also centers Z) · `{min, max}` | `(min, max)` |
 | `prism` | `{points, h, twist?, scaleTop?}` | `(points2D, h, {twist?,scaleTop?})` |
-| `extrude` | `{profile, h, twist?, scaleTop?}` — `profile` = points array, `{outer, holes}`, or arc profile | `(profile, h, {twist?,scaleTop?})` |
+| `extrude` | `{profile, h, twist?, scaleTop?, bevel?}` — `profile` = points array, `{outer, holes}`, or arc profile; `bevel` (plain point-array profiles only) has no positional form | `(profile, h, {twist?,scaleTop?})` |
 | `revolve` | `{profile, degrees?}` | `(points2D, {degrees?})` |
 | `loft` | `{rings, ruled?, closed?}` | `(rings, {ruled?,closed?})` |
 | `sweep` | `{profile, path, closed?, cornerRadius?, ruled?, smooth?}` | `(profile2D, path3D, opts?)` |
@@ -176,7 +176,7 @@ above. All ops return a `Solid`.
 | `sphere({r\|d})` | Sphere centered at the origin; bare `sphere(r)` stays valid. |
 | `box({size, center?})` · `box({min, max})` | Axis-aligned box: `{size:[x,y,z]}` centered in X/Y with base at z = 0 (`center: true` also centers Z), or explicit `[x,y,z]` `{min, max}` corners. |
 | `prism({points, h, twist?, scaleTop?})` | Extrude one CCW contour (point list or arc profile) from z = 0. `twist` = total degrees over the height; `scaleTop` = uniform top scale (1 straight, 0 → apex). |
-| `extrude({profile, h, twist?, scaleTop?})` | Same, for a polygon-with-holes region — `profile` is `{outer, holes?}` (bare contour = outer only) — in one op, no per-hole boolean. `profile` may also be a `Shape2D` (see below). |
+| `extrude({profile, h, twist?, scaleTop?, bevel?})` | Same, for a polygon-with-holes region — `profile` is `{outer, holes?}` (bare contour = outer only) — in one op, no per-hole boolean. `profile` may also be a `Shape2D` (see below). `bevel` (number = both rims, `{bottom?, top?}` = per rim) cuts a 45° rim bevel; it desugars at the shared front into extrude + loft + intersect, so it is backend-identical by construction, is **not** a CAD-only op (no OCCT routing), and requires a plain point-array profile with no `twist`/`scaleTop`. `bottom + top < h` or it throws; a bevel the profile's narrow features cannot take is deterministically reduced with a console warning (`ERROR-PATTERNS.md#extrude-bevel-reduced`). |
 | `revolve({profile, degrees?})` | Revolve a lathe profile `[[r, z], …]` (r ≥ 0) about Z; `degrees` < 360 gives a capped partial revolve. Default 360. |
 | `loft({rings, ruled?, closed?})` | Stack polygon cross-sections (per-ring `z`/`rotate`/`scale`, equal vertex counts) with ruled walls and capped ends. Must self-correct a fully inverted result (CW rings / descending z) to an outward solid. |
 | `sweep({profile, path, closed?, cornerRadius?, ruled?, smooth?})` | Sweep a fixed CCW profile along a polyline with a rotation-minimizing frame; sharp mitered corners, or `cornerRadius` fillets; capped ends. |

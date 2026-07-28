@@ -55,6 +55,34 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 - **Cause:** The geometry-free probe runs `build` against a recording proxy (dummy query values), and a `fillet`/`chamfer`/`shell` call it reaches — including a branch the real build wouldn't take, since queries return dummies — routes the whole part to OCCT.
 - **Fix:** Remove the CAD-only call the probe reaches unnecessarily, or force the backend with `meta.backend: "manifold"` (or `"occt"`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Fillet & chamfer (automatic OCCT backend)".
 
+## fillet-chamfer-many-edges-slow
+
+- **Symptom:** A part that fillets or chamfers the rim of an extruded profile (a gear, a star, any many-point polygon) takes many seconds — even tens of seconds — per build, with no error anywhere.
+- **Cause:** OCCT fillet/chamfer cost scales with the number of selected edges, and an `inPlane` rim selector on a many-point extruded profile selects every polygon edge (hundreds for a gear), so one op call costs seconds — and re-runs on every parameter change.
+- **Fix:** Use `extrude`'s `bevel` option instead of `chamfer` — same geometry, stays on the fast Manifold backend. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Beveling profile rims: extrude's bevel option".
+
+## chamfer-rescue-bisection
+
+- **Symptom:** `partforge: chamfer` warning saying the distance `over-ran the geometry — reduced to` a smaller one (or `has no valid distance`), with an attempt count and elapsed seconds, alongside slow builds.
+- **Cause:** The requested chamfer distance doesn't fit the geometry (it over-runs an adjacent face or a short edge), so the failure-rescue bisection in `occt-repair.js` re-runs the full chamfer up to 7 more times to find the largest valid distance — multiplying an already-expensive op by ~8× on every build, since the result is only cached per exact input hash.
+- **Fix:** Lower the chamfer parameter to at most the printed valid distance (the rescue then never fires), clamp it in `build` from the geometry that limits it, or — for extruded profile rims — switch to `extrude`'s `bevel` option, which finds its own limit in pure JS. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Beveling profile rims: extrude's bevel option".
+
+Variant literals under this entry: `partforge: chamfer <d> over-ran the geometry — reduced to <d'> (largest valid; <n> attempts, <t>s — see ERROR-PATTERNS.md#chamfer-rescue-bisection)`, `partforge: chamfer <d> has no valid distance for this geometry — feature skipped (<n> attempts, <t>s — see ERROR-PATTERNS.md#chamfer-rescue-bisection)`.
+
+## extrude-bevel-invalid
+
+- **Symptom:** `extrude: bevel must fit the height (bottom + top < h)`, `extrude: bevel requires a plain polygon profile ([[x,y],…] — no holes, arcs, or Shape2D)`, or `extrude: bevel cannot combine with twist or scaleTop` thrown from a build.
+- **Cause:** `extrude`'s `bevel` option desugars into an inset-loft envelope, which needs a plain point-array profile, an untwisted straight extrusion, and room for both bevels inside the height.
+- **Fix:** Clamp the bevel from the height parameter (e.g. `Math.min(c, h / 2 - 0.2)`), drop `twist`/`scaleTop`, or pass the outer contour alone and cut holes as separate booleans. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Beveling profile rims: extrude's bevel option".
+
+Variant literals under this entry: `extrude: unknown bevel option`, `extrude: bevel must be a number or { bottom?, top? }`, `extrude: bevel distances must be finite numbers >= 0`.
+
+## extrude-bevel-reduced
+
+- **Symptom:** `partforge: extrude bevel` warning saying the requested distance `exceeds what the profile can take — reduced to` a smaller one (or `has no valid inset for this profile — rim left square`).
+- **Cause:** Insetting the profile by the bevel distance would pinch a narrow feature (a tooth land, a thin bar) shut, so the bevel deterministically backs off to the largest inset the outline can take — the same geometric limit OCCT's chamfer hits, resolved in pure JS instead of kernel re-runs.
+- **Fix:** Usually nothing — the reduced bevel is the correct maximum for the geometry. To silence it, clamp the bevel parameter below the printed value or widen the narrow feature.
+
 ## boolean-not-watertight
 
 - **Symptom:** `NOT watertight ✗` from `partforge measure` (non-zero exit) after adding a boolean cut or union.
