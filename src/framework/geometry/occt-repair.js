@@ -42,7 +42,9 @@ export function createOcctRepair(measureVolume) {
   // WASM heap doesn't grow across regenerates.
   const validChamfer = (shape, finderFn, distance) => {
     if (!(distance > 0)) return shape.clone();
+    let attempts = 0;
     const tryAt = (d) => {
+      attempts++;
       const probe = shape.clone();
       let res;
       try { res = probe.chamfer(d, finderFn); } catch { return null; } // probe consumed by the op
@@ -50,6 +52,7 @@ export function createOcctRepair(measureVolume) {
       res.delete?.();
       return null;
     };
+    const t0 = performance.now();
     let best = tryAt(distance);
     if (best) return best;                                   // requested distance is valid
     let lo = 0, hi = distance, bestD = 0;
@@ -58,7 +61,12 @@ export function createOcctRepair(measureVolume) {
       const res = tryAt(mid);
       if (res) { best?.delete?.(); best = res; bestD = mid; lo = mid; } else hi = mid;
     }
-    if (best) { console.info(`partforge: chamfer ${distance} reduced to ${bestD.toFixed(2)} (largest valid for this geometry)`); return best; }
+    // The rescue re-ran the chamfer per attempt — on a many-edge selection that
+    // multiplies an already-expensive op by ~8x, so make the cost loud enough to
+    // act on (lower the distance, or bevel profile rims with a loft instead).
+    const cost = `${attempts} attempts, ${((performance.now() - t0) / 1000).toFixed(1)}s — see ERROR-PATTERNS.md#chamfer-rescue-bisection`;
+    if (best) { console.warn(`partforge: chamfer ${distance} over-ran the geometry — reduced to ${bestD.toFixed(2)} (largest valid; ${cost})`); return best; }
+    console.warn(`partforge: chamfer ${distance} has no valid distance for this geometry — feature skipped (${cost})`);
     return shape.clone();                                    // nothing valid — skip the chamfer
   };
 

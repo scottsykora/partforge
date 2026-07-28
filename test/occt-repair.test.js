@@ -35,6 +35,53 @@ test("safeOp returns the op's result when it yields real volume", () => {
   expect(backup.delete).toHaveBeenCalled(); // the unused backup is freed
 });
 
+// A fake shape whose chamfer succeeds up to maxValid and throws beyond it —
+// enough to drive validChamfer's first-try/bisection/skip paths without OCCT.
+const CLOSED_TRIS = [0, 1, 2, 0, 1, 3, 0, 2, 3, 1, 2, 3];
+const chamferable = (maxValid) => ({
+  clone: () => chamferable(maxValid),
+  chamfer(d) {
+    if (d > maxValid) throw new Error("chamfer over-ran");
+    return { vol: 1, chamferedAt: d, mesh: () => ({ vertices: TETRA_VERTS, triangles: CLOSED_TRIS }), delete: vi.fn() };
+  },
+});
+
+test("validChamfer is silent when the requested distance fits (no rescue, one attempt)", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { validChamfer } = createOcctRepair((s) => s.vol);
+  const out = validChamfer(chamferable(5), undefined, 2);
+  expect(out.chamferedAt).toBe(2);
+  expect(warn).not.toHaveBeenCalled();
+  warn.mockRestore();
+});
+
+test("validChamfer's rescue warns with attempt count, elapsed time, and the pattern id", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { validChamfer } = createOcctRepair((s) => s.vol);
+  const out = validChamfer(chamferable(1.4), undefined, 2); // over-large → bisection lands ≤ 1.4
+  expect(out.chamferedAt).toBeGreaterThan(0);
+  expect(out.chamferedAt).toBeLessThanOrEqual(1.4);
+  expect(warn).toHaveBeenCalledTimes(1);
+  const msg = warn.mock.calls[0][0];
+  expect(msg).toContain("over-ran the geometry");
+  expect(msg).toContain("reduced to");
+  expect(msg).toMatch(/\d+ attempts, \d+\.\ds/);
+  expect(msg).toContain("ERROR-PATTERNS.md#chamfer-rescue-bisection");
+  warn.mockRestore();
+});
+
+test("validChamfer warns (and skips) when no distance is valid at all", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { validChamfer } = createOcctRepair((s) => s.vol);
+  const original = chamferable(0); // every attempt throws
+  const out = validChamfer(original, undefined, 2);
+  expect(out.chamferedAt).toBeUndefined(); // untouched clone of the input
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0][0]).toContain("no valid distance");
+  expect(warn.mock.calls[0][0]).toContain("ERROR-PATTERNS.md#chamfer-rescue-bisection");
+  warn.mockRestore();
+});
+
 test("safeOp falls back to the original when the op empties the solid or throws", () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const { safeOp } = createOcctRepair((s) => s.vol);
