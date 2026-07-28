@@ -33,6 +33,18 @@ const partA2 = { defaults: {}, views: { main: { label: "Main" } }, parts: {
 } };
 const generate = { type: "generate", subparts: ["a", "b"], view: "main", params: {} };
 
+// Same shape as partA, but every build() invocation is counted. A build that never
+// ran is the only direct evidence that a job was skipped rather than started and
+// then aborted — the posted messages alone cannot tell those two apart.
+function countedPart({ rb = 1 } = {}) {
+  const stats = { a: 0, b: 0, get total() { return this.a + this.b; } };
+  const part = { defaults: {}, views: { main: { label: "Main" } }, parts: {
+    a: { views: ["main"], build: (k) => { stats.a++; return k.cylinder({ r: 5, h: 10 }).cut(k.cylinder({ r: 2, h: 12 })); } },
+    b: { views: ["main"], build: (k) => { stats.b++; return k.cylinder({ r: 3, h: 6 }).cut(k.cylinder({ r: rb, h: 8 })); } },
+  } };
+  return { part, stats };
+}
+
 describe("runWorker rebind contract", () => {
   it("setPart keeps the solid cache warm: unchanged ops hit on the next build", async () => {
     const handle = runWorker(partA);
@@ -48,12 +60,49 @@ describe("runWorker rebind contract", () => {
   });
 
   it("a queued generate superseded before it starts never builds", async () => {
-    runWorker(partA);
+    const { part, stats } = countedPart();
+    runWorker(part);
     await waitFor("ready");
     send(generate); send(generate); send(generate); // same sync tick: all queue
     await waitFor("meshes");
-    await new Promise((r) => setTimeout(r, 50));    // let any extra (wrong) builds land
+    // Job 1 was already dequeued and running when jobs 2 and 3 arrived, so it
+    // stops at its sub-part boundary — that is Task 3's isStale, and it costs one
+    // build of sub-part a and posts one "superseded". Job 2, still in the queue,
+    // must be dropped by the queue's stale check BEFORE it starts: silently, with
+    // no build and no post. Job 3 then builds both sub-parts.
+    // Without that skip job 2 would start, build sub-part a, and abort at the same
+    // boundary — a second "superseded" and a third build of a. Both counts pin it.
+    expect(posts.filter((m) => m.type === "superseded")).toHaveLength(1);
     expect(posts.filter((m) => m.type === "meshes")).toHaveLength(1);
+    expect(stats.a).toBe(2);
+    expect(stats.total).toBe(3);
+  });
+
+  it("setPart cancels a generate already in flight — it never posts meshes", async () => {
+    // The cancellation half of the rebind contract: without setPart's epoch bump the
+    // in-flight build runs the OLD part to completion and posts its meshes, and the
+    // host would render geometry for a part it no longer has mounted.
+    const { part, stats } = countedPart();
+    const { part: other } = countedPart({ rb: 2 });
+    const handle = runWorker(part);
+    await waitFor("ready");
+    send(generate);
+    // Land the rebind inside the generate's between-sub-parts yield. Deterministic,
+    // not a race: this timer is registered now, while jobs.js only schedules its own
+    // 0 ms yield after sub-part a builds — which happens later, once the pump's
+    // microtasks drain (nothing on that path awaits a timer). Same-delay timers fire
+    // in registration order, so setPart runs first, and the resumed job sees the
+    // bumped epoch at its boundary check.
+    setTimeout(() => handle.setPart(other), 0);
+    // Wait for whichever outcome the job reaches — an uncancelled build posts
+    // meshes, so this fails in milliseconds rather than timing out.
+    await vi.waitFor(() => {
+      expect(posts.some((m) => m.type === "superseded" || m.type === "meshes")).toBe(true);
+    }, { timeout: 30_000 });
+    expect(posts.filter((m) => m.type === "superseded")).toHaveLength(1);
+    expect(posts.filter((m) => m.type === "meshes")).toHaveLength(0);
+    expect(stats.a).toBe(1); // sub-part a had already been built when the rebind landed
+    expect(stats.b).toBe(0); // ...and b never was — the build stopped at the boundary
   });
 
   it("setPart re-posts ready", async () => {
