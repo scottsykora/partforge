@@ -99,7 +99,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(o:{r?:number,d?:number}) => Solid} sphere   sphere centred at the origin; {r|d}; bare sphere(r) stays valid
  * @property {(o:{size?:number[],center?:boolean,min?:number[],max?:number[]}) => Solid} box   {size} = centered X/Y, base z=0 ({center:true} centers Z too) or {min,max}; legacy (min,max) accepted until v2
  * @property {(o:{points:number[][],h:number,twist?:number,scaleTop?:number}) => Solid} prism   extrude polygon from z=0; legacy (points,h,opts) accepted until v2
- * @property {(o:{profile:number[][]|{outer:number[][],holes?:number[][][]},h:number,twist?:number,scaleTop?:number}) => Solid} extrude   polygon-with-holes region from z=0; legacy (profile,h,opts) accepted until v2
+ * @property {(o:{profile:number[][]|{outer:number[][],holes?:number[][][]},h:number,twist?:number,scaleTop?:number,bevel?:number|{bottom?:number,top?:number}}) => Solid} extrude   polygon-with-holes region from z=0; bevel = 45° rim bevel (plain point-array profiles only, no twist/scaleTop); legacy (profile,h,opts) accepted until v2
  * @property {(o:{rings:{polygon?:number[][],sides?:number,radius?:number,z:number,rotate?:number,scale?:number|number[]}[],ruled?:boolean,closed?:boolean}) => Solid} loft   stack polygon cross-sections; legacy (rings,opts) accepted until v2
  * @property {(o:{profile:number[][],path:number[][],closed?:boolean,cornerRadius?:number,ruled?:boolean,smooth?:boolean}) => Solid} sweep   sweep a 2-D profile along a 3-D polyline; legacy (profile,path,opts) accepted until v2
  * @property {(o:{profile:number[][],degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z; legacy (points,opts) accepted until v2

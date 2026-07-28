@@ -25,6 +25,7 @@ const opentype = typeof opentypeNamespace.parse === "function"
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
 import { textGlyphs } from "./text2d.js";
+import { beveledExtrude } from "./rim-bevel.js";
 import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
 import { convexHull, hullPoints } from "./hull.js";
 
@@ -44,6 +45,16 @@ export function finishKernel(k) {
       return raw(...pos);
     };
   }
+
+  // extrude({ bevel }) desugars here — before the spec-wrapped op ever sees it —
+  // into extrude + loft + intersect (rim-bevel.js), so both backends share one
+  // implementation and the probe records no CAD-only op. beveledExtrude calls
+  // back into the wrapped k.extrude/k.loft, so caching and validation apply.
+  const specExtrude = k.extrude;
+  k.extrude = (...a) =>
+    a.length === 1 && isPlainOptions(a[0]) && a[0].bevel !== undefined
+      ? beveledExtrude(k, a[0])
+      : specExtrude(...a);
 
   k.toSTEP ??= () => { throw new KernelCapabilityError("toSTEP requires the OCCT backend"); };
   k.shape2d ??= () => { throw new KernelCapabilityError("shape2d requires the Manifold backend"); };
