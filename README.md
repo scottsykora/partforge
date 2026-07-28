@@ -128,6 +128,20 @@ so **the rail must be a direct child of the positioned `.pf-shell`** unless
 the host also supplies `elements.shell` to point at the real containing block
 (e.g. when a wrapper div sits between them, as is common in a React layout).
 
+`runtime.setParams(partial)` edits parameters programmatically — the entry point
+for animating a part from host code:
+
+```js
+runtime.setParams({ openAngle: 45 });   // merges into the live params, syncs the panel
+```
+
+The partial is merged into the current params and the control panel updates to
+match. Keys the part doesn't define are silently ignored. When every changed
+parameter only moves geometry (a rotation or translation in `place()`), the
+viewer re-poses the meshes it already has — instantly, with no worker rebuild;
+`onBuild` does not fire for those pose-only edits. Anything that changes the
+geometry itself rebuilds as usual.
+
 `onPick` arms click-to-select permanently: `label` is the feature label (falling
 back to the sub-part label/name) for compact UI, `prompt` is the LLM-ready
 sentence, `token` the compact form, `selection` the raw object. When `onPick` is

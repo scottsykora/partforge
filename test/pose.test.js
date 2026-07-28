@@ -1,7 +1,7 @@
 // Pure rigid-pose math (no kernel boot): the OCCT backend's lazy translate/rotate
 // steps composed into a mat4 and applied to cached mesh vertices.
 import { expect, test } from "vitest";
-import { composePose, transformPositions } from "../src/framework/geometry/pose.js";
+import { composePose, transformPositions, invertRigid, poseDelta } from "../src/framework/geometry/pose.js";
 
 const apply = (steps, p) => {
   const positions = Float32Array.from(p);
@@ -36,4 +36,45 @@ test("steps compose in application order (earlier steps first)", () => {
   );
   expect(x).toBeCloseTo(0, 6);
   expect(y).toBeCloseTo(1, 6);
+});
+
+test("invertRigid round-trips: M · M⁻¹ applied to a point is identity", () => {
+  const m = composePose([
+    { t: "rotate", deg: 37, center: [5, -2, 1], axis: [0, 0, 1] },
+    { t: "translate", v: [3, 4, 5] },
+  ]);
+  const inv = invertRigid(m);
+  const p = Float32Array.from([1.5, -2.25, 7]);
+  transformPositions(p, m);
+  transformPositions(p, inv);
+  expect(p[0]).toBeCloseTo(1.5, 5);
+  expect(p[1]).toBeCloseTo(-2.25, 5);
+  expect(p[2]).toBeCloseTo(7, 5);
+});
+
+test("poseDelta re-poses a delivered point to the new pose", () => {
+  // delivered at 30°, new params ask 75°: delta must equal a further 45° about the same axis
+  const at = (deg) => [{ t: "rotate", deg, center: [0, 0, 5], axis: [1, 0, 0] }];
+  const delivered = Float32Array.from([2, 3, 0]);
+  transformPositions(delivered, composePose(at(30)));   // what the worker baked
+  transformPositions(delivered, poseDelta(at(75), at(30))); // what the viewer applies
+  const expected = Float32Array.from([2, 3, 0]);
+  transformPositions(expected, composePose(at(75)));
+  for (let i = 0; i < 3; i++) expect(delivered[i]).toBeCloseTo(expected[i], 5);
+});
+
+test("poseDelta multiplies in the order new · old⁻¹, not the reverse", () => {
+  // The test above rotates about one axis line, where the two orders commute. These
+  // don't: a reversed multiply lands the point at [1,3,1] instead of [1,1,3].
+  const old = [{ t: "rotate", deg: 90, center: [0, 0, 0], axis: [0, 1, 0] }];
+  const now = [
+    { t: "rotate", deg: 90, center: [0, 0, 0], axis: [0, 0, 1] },
+    { t: "translate", v: [3, 0, 0] },
+  ];
+  const delivered = Float32Array.from([1, 2, 3]);
+  transformPositions(delivered, composePose(old));
+  transformPositions(delivered, poseDelta(now, old));
+  const expected = Float32Array.from([1, 2, 3]);
+  transformPositions(expected, composePose(now));
+  for (let i = 0; i < 3; i++) expect(delivered[i]).toBeCloseTo(expected[i], 5);
 });

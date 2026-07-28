@@ -75,9 +75,12 @@ export function attachHoverLabels(
     emptyOverlayGeometry?.dispose();
     emptyOverlayGeometry = null;
     overlay.geometry = geometry;
-    if (overlayParent !== hit.mesh.parent) {
-      hit.mesh.parent.add(overlay);
-      overlayParent = hit.mesh.parent;
+    // Parent to the sub-part mesh, not to the group: the overlay geometry is a
+    // subset of the mesh's own (delivered-frame) vertices, so it must inherit
+    // whatever fast-path pose viewer.setSubPose has written onto that mesh.
+    if (overlayParent !== hit.mesh) {
+      hit.mesh.add(overlay);
+      overlayParent = hit.mesh;
     }
     overlay.visible = true;
   }

@@ -288,6 +288,98 @@ test("Escape closes the popover; after dispose the document listener is gone", (
   expect(document.body.querySelector(".popover")).toBeNull();
 });
 
+// syncValues is the programmatic twin of a user edit: setParams() writes into
+// `params` behind the widgets' backs, so the panel has to be told to re-read.
+test("syncValues re-reads params into the widgets", () => {
+  const params = { h: 4 };
+  const root = document.createElement("div");
+  const panel = buildControls(root, [
+    { id: "s", title: "S", advanced: [{ key: "h", label: "H", min: 1, max: 10, step: 1 }] },
+  ], params, () => {});
+  params.h = 7; // programmatic change (setParams path)
+  panel.syncValues(["h"]);
+  expect(root.querySelector('input[type="range"]').value).toBe("7");
+  expect(root.querySelector('input[type="number"]').value).toBe("7");
+  panel.dispose();
+});
+
+test("syncValues() with no keys syncs every widget — sliders, toggles, features — and never fires onDirty", () => {
+  document.body.innerHTML = "";
+  const root = document.createElement("div");
+  document.body.append(root);
+  let dirty = 0;
+  const params = { od: 5, show_motor: 0, flange_d: 0 };
+  const panel = buildControls(root, [
+    { id: "body", title: "Body",
+      advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }],
+      toggles: [{ key: "show_motor", label: "Show motor", on: 1 }] },
+    featureSec(),
+  ], params, () => dirty++);
+  const feature = root.querySelector(".feat-group");
+  expect(feature.classList.contains("hidden")).toBe(true); // flange off to start
+
+  Object.assign(params, { od: 9, show_motor: 1, flange_d: 16 });
+  panel.syncValues(); // no keys → everything
+
+  const [motorBox, flangeBox] = root.querySelectorAll('input[type="checkbox"]');
+  expect(root.querySelector('input[type="range"]').value).toBe("9");
+  expect(motorBox.checked).toBe(true);
+  expect(flangeBox.checked).toBe(true);
+  expect(feature.classList.contains("hidden")).toBe(false); // enabling reveals its controls
+  expect(dirty).toBe(0); // programmatic: the caller drives the change path itself
+  panel.dispose();
+});
+
+// A programmatic edit diverges from the preset just as a user edit does, so the
+// picker has to fall back to "Custom" — otherwise it names a preset the params
+// no longer match, and (worse) re-clicking that still-selected option fires no
+// change event, so the user can't get the preset back.
+const presetsSec = () => ({ id: "body", title: "Body",
+  presets: { First: { od: 5 }, Second: { od: 8 } },
+  advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] });
+
+test("syncValues on a preset-section control drops the picker to Custom", () => {
+  const root = document.createElement("div");
+  const params = { od: 5 };
+  const panel = buildControls(root, [presetsSec()], params, () => {});
+  const preset = root.querySelector("select.preset");
+  preset.value = "Second";
+  preset.dispatchEvent(new Event("change"));
+
+  params.od = 9; // programmatic change (setParams path)
+  panel.syncValues(["od"]);
+
+  expect(root.querySelector('input[type="range"]').value).toBe("9");
+  expect(preset.value).toBe("Custom");
+  panel.dispose();
+});
+
+test("applying a preset via the picker keeps its name — the raw syncs don't self-Custom", () => {
+  const root = document.createElement("div");
+  const params = { od: 5 };
+  const panel = buildControls(root, [presetsSec()], params, () => {});
+  const preset = root.querySelector("select.preset");
+
+  preset.value = "Second";
+  preset.dispatchEvent(new Event("change"));
+
+  expect(params.od).toBe(8);
+  expect(root.querySelector('input[type="range"]').value).toBe("8");
+  expect(preset.value).toBe("Second"); // not clobbered by its own refresh
+  panel.dispose();
+});
+
+test("syncValues(keys) leaves widgets outside the key list alone", () => {
+  const root = document.createElement("div");
+  const params = { od: 5, h: 5, bore: 2 };
+  const panel = buildControls(root, twoSections, params, () => {});
+  Object.assign(params, { od: 9, bore: 4 });
+  panel.syncValues(["od"]);
+  expect(wrapByLabel(root, "OD").querySelector('input[type="range"]').value).toBe("9");
+  expect(wrapByLabel(root, "Bore").querySelector('input[type="range"]').value).toBe("2"); // untouched
+  panel.dispose();
+});
+
 test("sections stay flat siblings so the rail can divide them with hairlines", () => {
   const root = document.createElement("div");
   buildControls(root, [presetSec(), featureSec()], { od: 5, secret: 0, flange_d: 16, hf: 0 }, () => {});

@@ -22,11 +22,30 @@ test("ticking the checkbox calls onToggle with the new value", () => {
 
 test("update() writes the build time and counts", () => {
   const o = createDebugOverlay({ initialCachingOn: true, onToggle: () => {} });
-  o.update({ ms: 123, hits: 12, misses: 3, skipped: 1, rebuilt: 2 });
+  o.update({ ms: 123, hits: 12, misses: 3, skipped: 1, rebuilt: 2, posed: 4 });
   const text = document.getElementById("pf-debug").textContent;
   expect(text).toContain("123 ms");
   expect(text).toContain("12 hit / 3 miss");
-  expect(text).toContain("1 skipped / 2 rebuilt");
+  expect(text).toContain("1 skipped / 2 rebuilt / 4 posed");
+});
+
+test("every count starts at zero and the build time at an em dash", () => {
+  const o = createDebugOverlay({ initialCachingOn: true, onToggle: () => {} });
+  o.update({ ms: 10, skipped: 1, rebuilt: 0 });
+  expect(document.getElementById("pf-debug").textContent)
+    .toContain("1 skipped / 0 rebuilt / 0 posed");
+});
+
+// A pose-only edit reports just `posed` — it ran no build and no cache ops, so a
+// non-merging update would blank the last build's numbers on its way to showing it.
+test("a partial update merges over what's already shown", () => {
+  const o = createDebugOverlay({ initialCachingOn: true, onToggle: () => {} });
+  o.update({ ms: 123, hits: 12, misses: 3, skipped: 1, rebuilt: 2, posed: 0 });
+  o.update({ posed: 1 });
+  const text = document.getElementById("pf-debug").textContent;
+  expect(text).toContain("123 ms");
+  expect(text).toContain("12 hit / 3 miss");
+  expect(text).toContain("1 skipped / 2 rebuilt / 1 posed");
 });
 
 test("when caching is off, the L2 line reads 'off'", () => {
