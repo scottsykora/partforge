@@ -8,6 +8,7 @@ import { addSugar } from "./solid-sugar.js";
 import { addShape2dSugar } from "./shape2d-sugar.js";
 import { assembleRegions } from "./shape2d-regions.js";
 import { finishKernel } from "./kernel-front.js";
+import { meshToStl } from "./mesh-stl.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
@@ -363,21 +364,14 @@ function creasedNormals(g, sharpCos, featureLabels) {
 }
 
 function stlFromMesh(g) {
-  const tris = g.triVerts, vp = g.vertProperties, np = g.numProp, n = tris.length / 3;
-  const ab = new ArrayBuffer(84 + n * 50); const dv = new DataView(ab); dv.setUint32(80, n, true);
-  let o = 84; const P = (i) => [vp[i*np], vp[i*np+1], vp[i*np+2]];
-  for (let i = 0; i < n; i++) {
-    const a = P(tris[i*3]), b = P(tris[i*3+1]), c = P(tris[i*3+2]);
-    // Per-facet flat normal from the winding (Manifold is CCW → outward). Slicers
-    // recompute this, but viewers that light from the stored normal (macOS
-    // Preview/Quick Look) render the mesh unlit if it's left as zero.
-    const ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
-    const vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
-    const nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
-    const L = Math.hypot(nx, ny, nz) || 1;
-    dv.setFloat32(o, nx/L, true); dv.setFloat32(o+4, ny/L, true); dv.setFloat32(o+8, nz/L, true); o += 12;
-    for (const p of [a, b, c]) for (const x of p) { dv.setFloat32(o, x, true); o += 4; }
-    dv.setUint16(o, 0, true); o += 2;
+  const vp = g.vertProperties, np = g.numProp;
+  const nVert = (vp.length / np) | 0;
+  let positions;
+  if (np === 3) {
+    positions = vp; // already x,y,z per vertex
+  } else {
+    positions = new Float32Array(nVert * 3);
+    for (let i = 0; i < nVert; i++) { positions[i*3] = vp[i*np]; positions[i*3+1] = vp[i*np+1]; positions[i*3+2] = vp[i*np+2]; }
   }
-  return ab;
+  return meshToStl(positions, g.triVerts);
 }
