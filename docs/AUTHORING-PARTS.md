@@ -337,6 +337,13 @@ their hash folds every shape-affecting argument (each `loft` ring's points/`z`/`
 profile's segment specs from `roundedProfile`, and the tessellation from `twist`), so
 changing any of them is a fresh cache node while an identical rebuild is a hit.
 
+This holds on **both backends** — and on OCCT, `translate`/`rotate` are additionally
+*pose-lazy*: the backend re-poses the cached solid's cached tessellation instead of
+re-running any B-rep work. A parameter that only feeds a final placement rotation (a
+lid's open angle, an exploded-view offset) therefore re-drags in ~0 ms even on the
+slow exact kernel — keep such transforms as the last ops in `build` (or in `place`)
+rather than baking them into the geometry earlier.
+
 ---
 
 ## Parameters: the control-panel schema

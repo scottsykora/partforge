@@ -1,7 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { assemblyOverlaps } from "../src/framework/assembly.js";
-import { KERNEL_OPS, SOLID_OPS, SOLID_OPTIONAL_OPS } from "../src/framework/geometry/kernel.js";
+import { KERNEL_OPS, KERNEL_OPTIONAL_OPS, SOLID_OPS, SOLID_OPTIONAL_OPS } from "../src/framework/geometry/kernel.js";
 import { roundedProfile, filletPolygon, circleProfile } from "../src/framework/geometry/polygon.js";
 import planterPart from "../src/parts/planter.js";
 
@@ -15,7 +15,7 @@ const publicKeys = (obj) => Object.keys(obj).filter((key) => !key.startsWith("_"
 test("OCCT kernel implements every required op and nothing undocumented", () => {
   const keys = publicKeys(k);
   for (const op of KERNEL_OPS) expect(keys, `kernel is missing ${op}`).toContain(op);
-  const documented = new Set(KERNEL_OPS); // the optional cache brackets are Manifold-only
+  const documented = new Set([...KERNEL_OPS, ...KERNEL_OPTIONAL_OPS]); // both backends implement the cache brackets now
   expect(keys.filter((key) => !documented.has(key))).toEqual([]);
 });
 

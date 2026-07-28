@@ -260,8 +260,10 @@ Normative signatures: `kernel.js`'s `@typedef
 Shape2D`; the full public surface is `SHAPE2D_OPS`. **Both backends implement it**:
 Manifold wraps a `CrossSection` (each method returns a fresh content-hash-cached
 value, same caching/dispose discipline as `Solid`); OCCT wraps a replicad `Drawing`
-(curve-preserving, so a curved boolean survives to exact STEP — no cache, matching
-OCCT's `Solid`). The `kernel-front.js` `KernelCapabilityError` stub for `shape2d` is
+(curve-preserving, so a curved boolean survives to exact STEP — content-hashed so
+downstream `Solid` ops can key on it, but itself uncached; OCCT's `Solid` ops go
+through the same solid cache as Manifold's, with rigid transforms kept pose-lazy so
+re-posing a cached solid re-runs no B-rep work). The `kernel-front.js` `KernelCapabilityError` stub for `shape2d` is
 now a dead / future-backend safety net only (both current backends define the op),
 not an OCCT limitation.
 
