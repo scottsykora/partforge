@@ -71,16 +71,16 @@ Variant literals under this entry: `partforge: chamfer <d> over-ran the geometry
 
 ## extrude-bevel-invalid
 
-- **Symptom:** `extrude: bevel must fit the height (bottom + top < h)`, `extrude: bevel requires a plain polygon profile ([[x,y],…] — no holes, arcs, or Shape2D)`, or `extrude: bevel cannot combine with twist or scaleTop` thrown from a build.
-- **Cause:** `extrude`'s `bevel` option desugars into an inset-loft envelope, which needs a plain point-array profile, an untwisted straight extrusion, and room for both bevels inside the height.
-- **Fix:** Clamp the bevel from the height parameter (e.g. `Math.min(c, h / 2 - 0.2)`), drop `twist`/`scaleTop`, or pass the outer contour alone and cut holes as separate booleans. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Beveling profile rims: extrude's bevel option".
+- **Symptom:** `extrude: bevel must fit the height (bottom + top < h)` or `extrude: bevel cannot combine with twist or scaleTop` thrown from a build.
+- **Cause:** `extrude`'s `bevel` option desugars into offset-loft envelopes, which need an untwisted straight extrusion and room for both bevels inside the height.
+- **Fix:** Clamp the bevel from the height parameter (e.g. `Math.min(c, h / 2 - 0.2)`) and drop `twist`/`scaleTop`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Beveling profile rims: extrude's bevel option".
 
 Variant literals under this entry: `extrude: unknown bevel option`, `extrude: bevel must be a number or { bottom?, top? }`, `extrude: bevel distances must be finite numbers >= 0`.
 
 ## extrude-bevel-reduced
 
-- **Symptom:** `partforge: extrude bevel` warning saying the requested distance `exceeds what the profile can take — reduced to` a smaller one (or `has no valid inset for this profile — rim left square`).
-- **Cause:** Insetting the profile by the bevel distance would pinch a narrow feature (a tooth land, a thin bar) shut, so the bevel deterministically backs off to the largest inset the outline can take — the same geometric limit OCCT's chamfer hits, resolved in pure JS instead of kernel re-runs.
+- **Symptom:** `partforge: extrude bevel` warning saying the requested distance `exceeds what the profile can take — reduced to` a smaller one (or `has no valid offset for this profile — rim left square`; `hole` in place of `profile` when a hole's flare is the limit).
+- **Cause:** Offsetting the rim by the bevel distance would pinch a narrow feature (a tooth land, a thin bar, a thin web beside a hole) shut, so the bevel deterministically backs off to the largest offset the outline can take — the same geometric limit OCCT's chamfer hits, resolved in pure JS instead of kernel re-runs.
 - **Fix:** Usually nothing — the reduced bevel is the correct maximum for the geometry. To silence it, clamp the bevel parameter below the printed value or widen the narrow feature.
 
 ## boolean-not-watertight

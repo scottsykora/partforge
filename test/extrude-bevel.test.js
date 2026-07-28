@@ -53,13 +53,11 @@ test("a bevel too deep for the profile backs off with a warning, not a failure",
   expect(s.volume()).toBeGreaterThan(0);
   expect(s.volume()).toBeLessThanOrEqual(40 * 2 * 8);
   expect(warn).toHaveBeenCalled();
-  expect(warn.mock.calls.map((c) => c[0]).join("\n")).toMatch(/extrude bevel 3 (exceeds|has no valid inset)/);
+  expect(warn.mock.calls.map((c) => c[0]).join("\n")).toMatch(/extrude bevel 3 (exceeds|has no valid offset)/);
   warn.mockRestore();
 });
 
 test("bevel rejects what it cannot express, with greppable errors", () => {
-  expect(() => k.extrude({ profile: { outer: SQUARE, holes: [] }, h: H, bevel: 1 }))
-    .toThrow("extrude: bevel requires a plain polygon profile");
   expect(() => k.extrude({ profile: SQUARE, h: H, bevel: 1, twist: 30 }))
     .toThrow("extrude: bevel cannot combine with twist or scaleTop");
   expect(() => k.extrude({ profile: SQUARE, h: H, bevel: 6 }))
@@ -68,6 +66,60 @@ test("bevel rejects what it cannot express, with greppable errors", () => {
     .toThrow("extrude: unknown bevel option");
   expect(() => k.extrude({ profile: SQUARE, h: H, bevel: "big" }))
     .toThrow("extrude: bevel must be a number or { bottom?, top? }");
+});
+
+// ---- regions, holes, curves, Shape2D --------------------------------------
+
+// 20×20 square with an 8×8 hole. The hole's rim flares OUTWARD (the opening is
+// larger at the face), so a hole bevel removes additional material.
+const HOLE = [[6, 6], [14, 6], [14, 14], [6, 14]];
+
+test("a region hole gets a flared bevel: more material removed than outer-only", () => {
+  const plain = k.extrude({ profile: { outer: SQUARE, holes: [HOLE] }, h: H }).volume();
+  const beveled = k.extrude({ profile: { outer: SQUARE, holes: [HOLE] }, h: H, bevel: 1.5 });
+  const removed = plain - beveled.volume();
+  // Outer rim (perimeter 80) + hole rim (perimeter 32), both rims, c=1.5.
+  const cap = 2 * ((80 + 32) * 1.5 * 1.5) / 2;
+  expect(removed).toBeGreaterThan(0.4 * cap);
+  expect(removed).toBeLessThanOrEqual(cap + 1e-6);
+  const bb = beveled.boundingBox();
+  expect(bb.min[2]).toBeCloseTo(0, 5);
+  expect(bb.max[2]).toBeCloseTo(H, 5);
+});
+
+test("hole winding does not matter (CW holes normalize)", () => {
+  const cwHole = [...HOLE].reverse();
+  const a = k.extrude({ profile: { outer: SQUARE, holes: [HOLE] }, h: H, bevel: 1.5 }).volume();
+  const b = k.extrude({ profile: { outer: SQUARE, holes: [cwHole] }, h: H, bevel: 1.5 }).volume();
+  expect(a).toBeCloseTo(b, 6);
+});
+
+// Circle of radius 10 as an arc contour — materialized at the fixed LOD.
+const CIRCLE = { start: [10, 0], segments: [{ via: [0, 10], to: [-10, 0] }, { via: [0, -10], to: [10, 0] }] };
+
+test("an arc-contour profile bevels (materialized at the fixed LOD)", () => {
+  const plain = k.extrude({ profile: CIRCLE, h: H }).volume();
+  const beveled = k.extrude({ profile: CIRCLE, h: H, bevel: 2 }).volume();
+  const removed = plain - beveled;
+  const cap = 2 * (2 * Math.PI * 10 * 2 * 2) / 2;
+  expect(removed).toBeGreaterThan(0.5 * cap);
+  expect(removed).toBeLessThanOrEqual(cap);
+});
+
+test("a Shape2D profile bevels via its own materialization", () => {
+  const shape = k.shape2d(CIRCLE);
+  const plain = k.extrude({ profile: shape, h: H }).volume();
+  const beveled = k.extrude({ profile: shape, h: H, bevel: 2 }).volume();
+  const removed = plain - beveled;
+  const cap = 2 * (2 * Math.PI * 10 * 2 * 2) / 2;
+  expect(removed).toBeGreaterThan(0.5 * cap);
+  expect(removed).toBeLessThanOrEqual(cap);
+});
+
+test("a multi-region Shape2D bevels every region", () => {
+  const two = k.shape2d(SQUARE).union(SQUARE.map(([x, y]) => [x + 40, y]));
+  const one = k.extrude({ profile: SQUARE, h: H, bevel: 2 }).volume();
+  expect(k.extrude({ profile: two, h: H, bevel: 2 }).volume()).toBeCloseTo(2 * one, 1);
 });
 
 test("resolveBevel normalizes and validates without a kernel", () => {

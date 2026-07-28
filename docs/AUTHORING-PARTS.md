@@ -1249,12 +1249,21 @@ backend** (no CAD-only op for the probe to find) and costs one boolean regardles
 profile point count. Measured on a 24-tooth involute gear: ~0.1 s on Manifold vs
 ~40 s for the equivalent OCCT `chamfer` (576-edge rim × the rescue bisection).
 
-Rules (throws otherwise — `ERROR-PATTERNS.md#extrude-bevel-invalid`): plain
-point-array profiles only (no `{outer, holes}`, arc profiles, or `Shape2D`), no
+Every profile form works: point arrays, arc profiles, `{outer, holes}` regions
+(hole rims flare outward — the opening is larger at the face, as a chamfer would
+cut it), and `Shape2D` (multi-region shapes bevel each region and union). One
+fidelity caveat: curved profiles are **materialized to point rings** first — the
+loft envelope needs matched points — so a beveled extrusion is faceted at the
+sampling LOD even in STEP export. Arc contours sample at a fixed LOD identically
+on both backends; a `Shape2D` materializes at its own backend's LOD. If you need
+arc-exact STEP walls, that's the one case native `chamfer` still buys you (at
+its OCCT cost).
+
+Rules (throws otherwise — `ERROR-PATTERNS.md#extrude-bevel-invalid`): no
 `twist`/`scaleTop`, and `bottom + top < h` — clamp from your height parameter, e.g.
 `bevel: Math.min(p.chamfer, p.thickness / 2 - 0.2)`. A bevel that would pinch a
 narrow feature shut (a gear's tooth land) is deterministically reduced to the
-largest inset the outline can take, with a console warning
+largest offset the rim can take, with a console warning
 (`ERROR-PATTERNS.md#extrude-bevel-reduced`).
 
 Under the hood it insets the profile with `offsetPolygon(prof, -c, { corners:
