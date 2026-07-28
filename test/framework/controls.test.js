@@ -330,6 +330,45 @@ test("syncValues() with no keys syncs every widget — sliders, toggles, feature
   panel.dispose();
 });
 
+// A programmatic edit diverges from the preset just as a user edit does, so the
+// picker has to fall back to "Custom" — otherwise it names a preset the params
+// no longer match, and (worse) re-clicking that still-selected option fires no
+// change event, so the user can't get the preset back.
+const presetsSec = () => ({ id: "body", title: "Body",
+  presets: { First: { od: 5 }, Second: { od: 8 } },
+  advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] });
+
+test("syncValues on a preset-section control drops the picker to Custom", () => {
+  const root = document.createElement("div");
+  const params = { od: 5 };
+  const panel = buildControls(root, [presetsSec()], params, () => {});
+  const preset = root.querySelector("select.preset");
+  preset.value = "Second";
+  preset.dispatchEvent(new Event("change"));
+
+  params.od = 9; // programmatic change (setParams path)
+  panel.syncValues(["od"]);
+
+  expect(root.querySelector('input[type="range"]').value).toBe("9");
+  expect(preset.value).toBe("Custom");
+  panel.dispose();
+});
+
+test("applying a preset via the picker keeps its name — the raw syncs don't self-Custom", () => {
+  const root = document.createElement("div");
+  const params = { od: 5 };
+  const panel = buildControls(root, [presetsSec()], params, () => {});
+  const preset = root.querySelector("select.preset");
+
+  preset.value = "Second";
+  preset.dispatchEvent(new Event("change"));
+
+  expect(params.od).toBe(8);
+  expect(root.querySelector('input[type="range"]').value).toBe("8");
+  expect(preset.value).toBe("Second"); // not clobbered by its own refresh
+  panel.dispose();
+});
+
 test("syncValues(keys) leaves widgets outside the key list alone", () => {
   const root = document.createElement("div");
   const params = { od: 5, h: 5, bore: 2 };

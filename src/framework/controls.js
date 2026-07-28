@@ -285,8 +285,11 @@ function buildPresetSection(section, sec, params, onDirty, register, info) {
     for (const def of advanced) {
       const s = makeParameterControl(def, params, () => { if (preset) preset.value = "Custom"; onDirty?.(); }, info);
       adv.append(s.wrap);
-      syncs[def.key] = s.sync;
-      register(def.key, s.wrap, s.sync);
+      syncs[def.key] = s.sync; // raw: preset APPLICATION must not mark itself Custom
+      // A programmatic edit diverges from the preset exactly as a user edit does,
+      // so the picker falls back to Custom — leaving a stale preset name selected
+      // would also make it unre-appliable (no change event for the current option).
+      register(def.key, s.wrap, () => { s.sync(); if (preset) preset.value = "Custom"; });
     }
     section.append(toggle, adv);
   }
