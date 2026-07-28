@@ -48,11 +48,15 @@ against a stub kernel, in the style of the existing backend-detection probe
 delivered mesh was built at), never to worker/backend hashes — so it needs
 stability across param changes, not cross-backend agreement.
 
-**Query taint:** stub query methods (`boundingBox`, `volume`, `area`, `genus`,
-`isEmpty`, Shape2D queries, …) return NaN-filled values. A pose step containing a
-non-finite number marks the subpart *untrusted* → it opts out of the fast path
-and takes the normal regen path. (Branching on a queried value is already the
-documented probe limitation; NaN taint catches the pose-affecting cases.)
+**Query taint:** *any* query op (`boundingBox`, `volume`, `area`, `genus`,
+`isEmpty`, Shape2D queries, mesh/STL exports, …) called during a subpart's build
+marks that subpart *untrusted* → it opts out of the fast path and takes the
+normal regen path. NaN-filled dummy return values stay in place as
+belt-and-suspenders (a non-finite number in a recorded pose step is rejected by
+the `stepsFinite` check), but they cannot be the primary defense: a queried value
+may feed a *geometry* argument rather than a pose one, where it is folded into
+the hash and NaN-flow tracking can no longer see it. Tainting on the query call
+itself covers both directions.
 
 A probe that throws marks the whole part untrusted for that params version
 (fall back to regen — today's behavior).
