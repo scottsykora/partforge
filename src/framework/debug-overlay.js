@@ -44,12 +44,12 @@ export function createDebugOverlay({ initialCachingOn = true, onToggle } = {}) {
   cb.addEventListener("change", () => onToggle?.(cb.checked));
 
   return {
-    update({ ms, hits = 0, misses = 0, skipped = 0, rebuilt = 0 } = {}) {
+    update({ ms, hits = 0, misses = 0, skipped = 0, rebuilt = 0, posed = 0 } = {}) {
       const l2 = cb.checked ? `${hits} hit / ${misses} miss` : "off";
       readout.textContent =
         `build: ${ms != null ? Math.round(ms) + " ms" : "—"}\n` +
         `L2 ops: ${l2}\n` +
-        `L1 parts: ${skipped} skipped / ${rebuilt} rebuilt`;
+        `L1 parts: ${skipped} skipped / ${rebuilt} rebuilt / ${posed} posed`;
     },
     detach: () => box.remove(),
   };

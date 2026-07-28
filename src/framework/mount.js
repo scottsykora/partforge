@@ -15,6 +15,7 @@ import { resolveDerived } from "./derive.js";
 import { detectBackend } from "./geometry/probe.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
+import { createPoseFastPath } from "./pose-fast-path.js";
 import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
@@ -126,7 +127,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     const qs = new URLSearchParams(location.search);
     const debug = qs.has("debug");
     let cachingOn = !(debug && qs.has("nocache"));
-    let lastGen = { skipped: 0, rebuilt: 0 }; // Layer-1 counts for the most recent generate
+    let lastGen = { skipped: 0, rebuilt: 0, posed: 0 }; // Layer-0/1 counts for the most recent generate
     const dbg = debug
       ? createDebugOverlay({ initialCachingOn: cachingOn, onToggle: (on) => { cachingOn = on; forceRegen(); } })
       : null;
@@ -199,12 +200,20 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       missingParts,
       send: (missing) => {
         const needed = viewSubParts(part, view(), params);
-        lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length }; // for the overlay
+        // for the overlay; posed carries through — a mixed edit can re-pose one
+        // sub-part (Layer 0) and still need a build for another.
+        lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length, posed: lastGen.posed };
         ui.showBusy("generating");
         service.send({ type: "generate", subparts: missing, view: view(), params, cache: cachingOn }, backendFor());
       },
     });
     cleanup.defer(() => loop.dispose());
+
+    // Pose fast path (Layer 0): a param edit that only re-poses a sub-part is
+    // repaired synchronously in the viewer — no debounce, no worker job.
+    const fastPath = createPoseFastPath(part, viewer, cache, {
+      params, getView: view, getParamsVersion: () => loop.version(),
+    });
 
     // First-build readiness: resolves on the first accepted meshes result, rejects on
     // a first-build error. Guarded against unhandled rejection when never awaited.
@@ -272,13 +281,18 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
               cache.record(m.name);
+              // Stamp the fast path's pose baseline. Only here, inside the
+              // non-stale branch: the stamp must describe the geometry actually
+              // delivered, which buildDone() true guarantees is at the live params.
+              fastPath.recordDelivered(m.name);
             }
             ui.hideBusy();
             refreshView();
             if (data.ms && missingParts().length === 0) {
               ui.setStatus(`${ui.statusText()} · ${(data.ms / 1000).toFixed(1)} s`);
             }
-            dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt });
+            dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed });
+            lastGen.posed = 0; // reported — the next repair starts a fresh count
             onBuild?.({ status: "success", ms: data.ms });
             if (!readySettled) { readySettled = true; resolveReady(); }
           }
@@ -319,8 +333,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     const updateRelevance = () => panel.applyRelevance(relevantParamKeys(part, view(), params));
     updateRelevance(); // initial view
 
+    // The ONLY caller of fastPath.repair(). It must never move into the regen /
+    // forceRegen path: forceRegen() forgets cache stamps WITHOUT bumping the params
+    // version, so a repair there would re-stamp everything current off the memoized
+    // probe and the forced rebuild would silently no-op.
     function onParamChange() {
       loop.markDirty(); // bump the version first: refreshView below must see the parts as stale
+      lastGen.posed = fastPath.repair(); // pose-only edits: re-posed + re-stamped current, no job
+      if (lastGen.posed) dbg?.update({ posed: lastGen.posed });
       refreshView();    // keep showing the now-stale mesh (no flicker); disable export
       updateRelevance();
     }

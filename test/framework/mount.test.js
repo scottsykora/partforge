@@ -16,6 +16,7 @@ vi.mock("../../src/framework/viewer.js", () => ({
       showAssembly: vi.fn(),
       hideAssembly: vi.fn(),
       setSubGeometry: vi.fn((name) => built.add(name)),
+      setSubPose: vi.fn(),
       hasSubMesh: (name) => built.has(name),
       subTriangles: () => 0,
       frame: vi.fn(),
@@ -91,13 +92,22 @@ import { attachCutawayControls } from "../../src/framework/cutaway-controls.js";
 import { attachViewerControls } from "../../src/framework/viewer-controls.js";
 import { createTooltipPresenter } from "../../src/framework/tooltip.js";
 
+// `build` is written like a real part (options-form box + rigid rotateAbout), not
+// against a null kernel: the pose probe and the relevance probe both RUN it for
+// real against their stub kernels, and `tilt` is the pose-only param the fast
+// path repairs without a rebuild.
 const makePart = () => ({
   meta: { title: "Test Part", backend: "manifold" }, // pinned backend: no probe run
-  defaults: { h: 4 },
+  defaults: { h: 4, tilt: 0 },
   views: { main: { label: "Main" } },
-  parts: { body: { label: "Body", views: ["main"], build: (k, p) => k.box?.(p.h, p.h, p.h) } },
+  parts: { body: { label: "Body", views: ["main"], build: (k, p) =>
+    k.box({ min: [0, 0, 0], max: [p.h, p.h, p.h] })
+      .rotateAbout({ axis: "X", deg: p.tilt, through: [0, 0, 0] }) } },
   parameters: [{ id: "size", title: "Size",
-    advanced: [{ key: "h", label: "Height", min: 1, max: 10, step: 1 }] }],
+    advanced: [
+      { key: "h", label: "Height", min: 1, max: 10, step: 1 },
+      { key: "tilt", label: "Tilt", min: 0, max: 90, step: 1 },
+    ] }],
 });
 
 function makeWorkers() {
@@ -533,6 +543,70 @@ test("dispose() detaches the onPick picker", () => {
   // a reframe click after dispose must not reach the (now-disposed) viewer.
   els.chrome.reframe.click();
   expect(fakeViewers.at(-1).frame).not.toHaveBeenCalled();
+});
+
+test("a pose-only param edit re-poses in the viewer and sends no build job", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  // drive the tilt slider like a user drag
+  const tilt = document.querySelectorAll('input[type="range"]')[1];
+  tilt.value = "45";
+  tilt.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250); // let the regen debounce fire — it must find nothing missing
+
+  expect(fakeViewers[0].setSubPose).toHaveBeenCalledWith("body", expect.any(Array));
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(jobsBefore); // no new job
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+test("a geometry param edit still sends a build job", () => {
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  const height = document.querySelectorAll('input[type="range"]')[0];
+  height.value = "6";
+  height.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250);
+
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  expect(jobs.some((m) => m.type === "generate")).toBe(true);
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// The ?debug caching toggle calls forceRegen(), which forgets every stamp WITHOUT
+// bumping the params version. repair() must therefore never run in that path: it
+// would re-stamp everything current off the memoized probe and the forced rebuild
+// would silently no-op. This pins repair() to onParamChange only.
+test("the ?debug caching toggle still forces a rebuild after a pose repair", () => {
+  vi.stubGlobal("location", { search: "?debug" });
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+
+  const tilt = document.querySelectorAll('input[type="range"]')[1];
+  tilt.value = "45";
+  tilt.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250); // repaired by the fast path: body is stamped current again
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  const cb = document.querySelector("#pf-debug input[type=checkbox]");
+  cb.checked = false;
+  cb.dispatchEvent(new Event("change")); // → forceRegen()
+
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  expect(jobs.some((m) => m.type === "generate")).toBe(true);
+  handle.dispose();
+  vi.useRealTimers();
 });
 
 test("dispose() before the first build rejects ready instead of hanging", () => {
