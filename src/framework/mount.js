@@ -128,12 +128,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     const debug = qs.has("debug");
     let cachingOn = !(debug && qs.has("nocache"));
     let lastGen = { skipped: 0, rebuilt: 0, posed: 0 }; // Layer-0/1 counts for the most recent generate
-    // Sub-parts the pose fast path repaired since the last build was dispatched.
-    // A build dispatched in the SAME dirty cycle takes the count into its report —
-    // a mixed edit re-poses one sub-part and rebuilds another, and the overlay
-    // should say so. Anything that kicks a build for an unrelated reason (view
-    // switch / forceRegen) clears it first, so the count can never be miscredited.
-    let pendingPosed = 0;
+    // Sub-parts the pose fast path has repaired since the last build was dispatched.
+    // A SET of names, not a running total: a slider drag re-repairs the same
+    // sub-part on every input event, and "247 posed" for a one-sub-part app would
+    // be nonsense. A build dispatched in the SAME dirty cycle takes the count into
+    // its report — a mixed edit re-poses one sub-part and rebuilds another, and the
+    // overlay should say so. Anything that kicks a build for an unrelated reason
+    // (view switch / forceRegen) clears it first, so it can't be miscredited.
+    const pendingPosed = new Set();
     const dbg = debug
       ? createDebugOverlay({ initialCachingOn: cachingOn, onToggle: (on) => { cachingOn = on; forceRegen(); } })
       : null;
@@ -142,7 +144,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // View tabs (generated from part.views) + live params. A tab switch shows the
     // cached assembly instantly if it's current, else auto-builds what's missing.
     const tabsCtl = createViewTabs(els.tabs, part, {
-      onChange: () => { pendingPosed = 0; cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); },
+      onChange: () => { pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); },
     });
     cleanup.defer(() => tabsCtl.detach());
     const view = () => tabsCtl.current();
@@ -207,8 +209,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       send: (missing) => {
         const needed = viewSubParts(part, view(), params);
         // for the overlay; this build reports the poses repaired in its own cycle.
-        lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length, posed: pendingPosed };
-        pendingPosed = 0; // consumed — never counted against a second build
+        lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length, posed: pendingPosed.size };
+        pendingPosed.clear(); // consumed — never counted against a second build
         ui.showBusy("generating");
         service.send({ type: "generate", subparts: missing, view: view(), params, cache: cachingOn }, backendFor());
       },
@@ -347,10 +349,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       // Pose-only edits: re-posed + re-stamped current, no job. Skipped entirely
       // when caching is off — ?debug&nocache is there to measure true uncached
       // rebuilds, which the fast path would otherwise hide.
-      const posed = cachingOn ? fastPath.repair() : 0;
-      if (posed) {
-        pendingPosed += posed;
-        dbg?.update({ posed: pendingPosed }); // partial: merges over the last build's numbers
+      const posed = cachingOn ? fastPath.repair() : [];
+      if (posed.length) {
+        for (const name of posed) pendingPosed.add(name);
+        dbg?.update({ posed: pendingPosed.size }); // partial: merges over the last build's numbers
       }
       refreshView();    // keep showing the now-stale mesh (no flicker); disable export
       updateRelevance();
@@ -359,7 +361,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // Re-run the active view under the current caching setting, so toggling the
     // ?debug switch updates the readout for the same design without a param change.
     function forceRegen() {
-      pendingPosed = 0; // this rebuild is not the pose edit's — don't credit it
+      pendingPosed.clear(); // this rebuild is not the pose edit's — don't credit it
       for (const n of viewSubParts(part, view(), params)) cache.forget(n);
       refreshView();
       loop.kick();

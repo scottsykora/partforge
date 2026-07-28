@@ -29,9 +29,11 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
     },
 
     // Re-pose every visible stale subpart whose base geometry is unchanged.
-    // Returns how many were repaired (0 = nothing pose-only to do).
+    // Returns the NAMES repaired (empty = nothing pose-only to do). Names, not a
+    // count: a slider drag repairs the same subpart on every input event, so only
+    // the caller's set union across a drag is a meaningful "how many were posed".
     repair() {
-      let posed = 0;
+      const posed = [];
       const poses = probeFor();
       for (const name of viewSubParts(part, getView(), params)) {
         if (cache.isCurrent(name) || !viewer.hasSubMesh(name)) continue;
@@ -39,7 +41,7 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
         if (!now?.trusted || !was?.trusted || now.baseHash !== was.baseHash) continue;
         viewer.setSubPose(name, poseDelta(now.pose, was.pose));
         cache.record(name); // current again at these params — regen loop sees nothing missing
-        posed++;
+        posed.push(name);
       }
       return posed;
     },

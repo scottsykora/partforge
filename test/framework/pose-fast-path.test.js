@@ -40,11 +40,11 @@ function harness(part) {
   };
 }
 
-test("a pose-only edit repairs the subpart: pose set, re-stamped current, count 1", () => {
+test("a pose-only edit repairs the subpart: pose set, re-stamped current, name returned", () => {
   const hx = harness(posedPart);
   hx.deliver("a");
   hx.edit({ angle: 45 });
-  expect(hx.fp.repair()).toBe(1);
+  expect(hx.fp.repair()).toEqual(["a"]);
   expect(hx.current.has("a")).toBe(true);
   expect(Array.isArray(hx.poses.a)).toBe(true);
   expect(hx.poses.a).toHaveLength(16);
@@ -58,21 +58,21 @@ test("a geometry edit does not repair (base hash changed)", () => {
   const hx = harness(posedPart);
   hx.deliver("a");
   hx.edit({ w: 12 });
-  expect(hx.fp.repair()).toBe(0);
+  expect(hx.fp.repair()).toEqual([]);
   expect(hx.current.has("a")).toBe(false);
 });
 
 test("an already-current subpart is left alone", () => {
   const hx = harness(posedPart);
   hx.deliver("a"); // current, delivered
-  expect(hx.fp.repair()).toBe(0);
+  expect(hx.fp.repair()).toEqual([]);
   expect(hx.poses.a).toBe(null); // untouched since delivery reset
 });
 
 test("no repair before any delivery (nothing stamped, no mesh)", () => {
   const hx = harness(posedPart);
   hx.edit({ angle: 30 });
-  expect(hx.fp.repair()).toBe(0);
+  expect(hx.fp.repair()).toEqual([]);
 });
 
 test("an untrusted subpart (geometry query in build) never repairs", () => {
@@ -87,7 +87,7 @@ test("an untrusted subpart (geometry query in build) never repairs", () => {
   const hx = harness(queryPart);
   hx.deliver("a");
   hx.edit({ angle: 45 });
-  expect(hx.fp.repair()).toBe(0);
+  expect(hx.fp.repair()).toEqual([]);
 });
 
 // Trust flips with `q`: q=1 takes a geometry query (untrusted), q=0 is a plain
@@ -108,7 +108,7 @@ test("delivered trusted, now untrusted: no repair, no throw", () => {
   hx.deliver("a");           // stamped trusted
   hx.edit({ q: 1 });         // current probe is untrusted (has no pose at all)
   expect(() => hx.fp.repair()).not.toThrow();
-  expect(hx.fp.repair()).toBe(0);
+  expect(hx.fp.repair()).toEqual([]);
   expect(hx.poses.a).toBe(null);
 });
 
@@ -117,8 +117,20 @@ test("delivered untrusted, now trusted: no repair, no throw", () => {
   hx.deliver("a");                    // stamped untrusted (no pose recorded)
   hx.edit({ q: 0, angle: 45 });       // current probe is trusted
   expect(() => hx.fp.repair()).not.toThrow();
-  expect(hx.fp.repair()).toBe(0);
+  expect(hx.fp.repair()).toEqual([]);
   expect(hx.poses.a).toBe(null);
+});
+
+// repair() reports what it did, not what's new: every edit of a drag re-poses the
+// same subpart and names it again. Callers counting "sub-parts posed" must union
+// the names (mount keeps a Set) rather than sum the lengths.
+test("consecutive pose edits each report the same subpart again", () => {
+  const hx = harness(posedPart);
+  hx.deliver("a");
+  hx.edit({ angle: 15 });
+  expect(hx.fp.repair()).toEqual(["a"]);
+  hx.edit({ angle: 30 });
+  expect(hx.fp.repair()).toEqual(["a"]);
 });
 
 test("repair applies the delta against the DELIVERED pose, not the previous frame", () => {

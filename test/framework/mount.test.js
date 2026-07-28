@@ -674,6 +674,37 @@ test("a mixed edit reports the posed sub-part alongside the rebuilt one", () => 
   expect(fakeViewers[0].setSubPose).toHaveBeenCalledWith("arm", expect.any(Array));
   expect(document.getElementById("pf-debug").textContent)
     .toContain("1 skipped / 1 rebuilt / 1 posed");
+
+  // …and that build CONSUMED the count: the next one reports none.
+  height.value = "7";
+  height.dispatchEvent(new Event("input", { bubbles: true }));
+  vi.advanceTimersByTime(250);
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 8 } });
+
+  expect(document.getElementById("pf-debug").textContent)
+    .toContain("1 skipped / 1 rebuilt / 0 posed");
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+// The count is of SUB-PARTS re-posed, not of repairs performed: a slider drag
+// re-repairs the same sub-part on every input event, and reporting "247 posed"
+// for a one-sub-part app would be nonsense.
+test("repeated pose edits in one drag report one posed sub-part, not one per edit", () => {
+  vi.stubGlobal("location", { search: "?debug" });
+  vi.useFakeTimers();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePart(), { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+
+  const tilt = document.querySelectorAll('input[type="range"]')[1];
+  for (const deg of ["15", "30", "45"]) {
+    tilt.value = deg;
+    tilt.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  vi.advanceTimersByTime(250);
+
+  expect(document.getElementById("pf-debug").textContent).toContain("/ 1 posed");
   handle.dispose();
   vi.useRealTimers();
 });
