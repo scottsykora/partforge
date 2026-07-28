@@ -12,6 +12,7 @@ import { classifyFaceGroups } from "./feature-attribution.js";
 import { resolveRings } from "./loft.js";
 import { resolveSweepStations } from "./sweep.js";
 import { normalizeProfile } from "./profile.js";
+import { meshToStl } from "./mesh-stl.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 export function createOcctKernel(replicad) {
@@ -65,7 +66,10 @@ export function createOcctKernel(replicad) {
       }
       return out;
     },
-    toSTL: ({ quality = "print" } = {}) => shape.blobSTL(MESH[quality]).arrayBuffer(),
+    toSTL: ({ quality = "print" } = {}) => {
+      const m = shape.mesh(MESH[quality]);
+      return Promise.resolve(meshToStl(Float32Array.from(m.vertices), Uint32Array.from(m.triangles)));
+    },
     fillet: (radius, selector) => wrap(safeOp(shape, (sh) => sh.fillet(radius, toEdgeFinder(selector)), `fillet(${radius})`), cloneLabels(labels)),
     chamfer: (distance, selector) => wrap(validChamfer(shape, toEdgeFinder(selector), distance), cloneLabels(labels)),
     shell: (thickness, openFaces) => {
