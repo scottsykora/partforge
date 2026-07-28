@@ -76,6 +76,47 @@ test("a build that queries geometry is untrusted (query results can't be probed)
   expect(probePoses(part, "v", {}).get("a").trusted).toBe(false);
 });
 
+test("a query feeding a GEOMETRY arg is untrusted (not just a pose arg)", () => {
+  const part = {
+    defaults: {},
+    views: { v: { label: "V" } },
+    parts: { a: { views: ["v"], build: (k) => {
+      const s = k.box({ min: [0, 0, 0], max: [4, 4, 4] });
+      return s.union(k.sphere({ r: s.boundingBox().size[0] }));
+    } } },
+  };
+  expect(probePoses(part, "v", {}).get("a").trusted).toBe(false);
+});
+
+// A closure selector captures params the source text doesn't show, so it can't be
+// hashed — the OCCT backend gives function selectors a per-call unique key for the
+// same reason. Hashing them would keep baseHash stable while geometry changed.
+test("a function arg nested in an options object is untrusted", () => {
+  const part = {
+    defaults: { z: 1 },
+    views: { v: { label: "V" } },
+    parts: { a: { views: ["v"], build: (k, p) =>
+      k.box({ min: [0, 0, 0], max: [4, 4, 4] })
+        .fillet({ r: 1, edges: (e) => e.inDirection([0, 0, p.z]) }) } },
+  };
+  const a1 = probePoses(part, "v", { z: 1 }).get("a");
+  const a2 = probePoses(part, "v", { z: 2 }).get("a");
+  expect(a1.trusted).toBe(false);
+  expect(a2.trusted).toBe(false);
+});
+
+test("a top-level positional function arg is untrusted", () => {
+  const part = {
+    defaults: { z: 1 },
+    views: { v: { label: "V" } },
+    parts: { a: { views: ["v"], build: (k, p) =>
+      k.box({ min: [0, 0, 0], max: [4, 4, 4] })
+        .fillet(1, (e) => e.inDirection([0, 0, p.z])) } },
+  };
+  expect(probePoses(part, "v", { z: 1 }).get("a").trusted).toBe(false);
+  expect(probePoses(part, "v", { z: 2 }).get("a").trusted).toBe(false);
+});
+
 test("a throwing build is untrusted, and other subparts still probe", () => {
   const part = {
     defaults: {},
