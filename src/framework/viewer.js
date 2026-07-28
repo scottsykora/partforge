@@ -209,6 +209,7 @@ export function createViewer(container, part) {
   const subCache = Object.fromEntries(names.map((n) => [n, null]));
 
   function setSubGeometry(name, payload) {
+    setSubPose(name, null); // fresh worker mesh is baked at current params — clear any fast-path pose
     const prev = subCache[name];
     const next = buildGeometry(payload);
     subCache[name] = next;
@@ -218,17 +219,38 @@ export function createViewer(container, part) {
     if (prev) { prev.userData.edges?.dispose(); prev.dispose(); }
   }
 
+  // Presentational rigid pose for one sub-part (the pose fast path): applied to
+  // the mesh and its edge lines. `null` clears. Column-major mat16 (pose.js /
+  // three.js Matrix4 convention). Never affects exports or geometry — the worker
+  // owns real placement; this only re-poses the delivered mesh.
+  function setSubPose(name, mat16) {
+    for (const obj of [subMesh[name], subLines[name]]) {
+      if (!obj) continue;
+      obj.matrixAutoUpdate = false;
+      if (mat16) obj.matrix.fromArray(mat16);
+      else obj.matrix.identity();
+      obj.matrixWorldNeedsUpdate = true;
+    }
+  }
+
   // Cache queries for the app's regenerate loop (so it never reaches into subCache).
   const hasSubMesh = (name) => !!subCache[name];
   const subTriangles = (name) => subCache[name]?.userData.triangles ?? 0;
 
   // --- show / hide assembly -------------------------------------------------
   const _box = new THREE.Box3();
+  const _posedBox = new THREE.Box3();
 
   // Recentre the assembly on the pivot and frame the camera to the named parts.
+  // Cached bounding boxes are in the delivered mesh's own frame, so any fast-path
+  // pose has to be applied before the union or framing ignores the re-posing.
   function frameTo(visibleNames) {
     _box.makeEmpty();
-    for (const name of visibleNames) if (subCache[name]) _box.union(subCache[name].boundingBox);
+    for (const name of visibleNames) {
+      if (!subCache[name]) continue;
+      _posedBox.copy(subCache[name].boundingBox).applyMatrix4(subMesh[name].matrix);
+      _box.union(_posedBox);
+    }
     if (_box.isEmpty()) return;
     const center = _box.getCenter(new THREE.Vector3());
     partsGroup.position.copy(center).multiplyScalar(-1); // centre assembly on the pivot
@@ -457,6 +479,7 @@ export function createViewer(container, part) {
     showAssembly,
     hideAssembly,
     setSubGeometry,
+    setSubPose,
     hasSubMesh,
     subTriangles,
     frame,
