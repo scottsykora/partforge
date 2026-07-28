@@ -343,7 +343,13 @@ export because an edit landed would be wrong. A generate that is stale by the ti
 job pump reaches it is skipped and never builds at all. A generate already running
 re-checks staleness at each sub-part boundary and, if it has been superseded, stops
 there and posts `{type:"superseded"}` **instead of** `{type:"meshes"}` — a build that
-ended without producing meshes, and not an error.
+ended without producing meshes, and not an error. A generate with no boundary left to
+stop at — one that goes stale during its *final* sub-part, or a single-sub-part generate
+that goes stale once the pump has dequeued it — runs to completion, and the worker then
+discards its result the same way, posting `{type:"superseded"}` in place of the meshes it
+built. So **a `meshes` post is current as of the moment it is posted**: it is never a
+previous part's geometry surfacing after a rebind, and a host may take it as the build
+outcome for the part it currently has mounted.
 
 **Host-side rule for `superseded`.** partforge's own `mount()` does not handle a
 `superseded` message, and does not need to: in its single-mount flow the regen loop
@@ -364,7 +370,9 @@ sub-parts (one macrotask yield each), so a single long WASM op — a big boolean
 fillet — runs to completion no matter how stale it is. That is by design: WASM kernel
 calls are not interruptible, and a build that abandons a sub-part mid-bracket would
 strand pinned cache entries. Hosts should size responsiveness expectations against the
-slowest single sub-part, not the whole build.
+slowest single sub-part, not the whole build. Cancellation is therefore about *work
+avoided*, never about correctness of what is posted: work already under way may finish,
+but its output is still gated behind the epoch before it leaves the worker.
 
 ## Versioning
 

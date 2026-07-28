@@ -86,8 +86,17 @@ export function runWorker(part) {
         if (job.epoch !== null && job.epoch !== epoch) continue;
         const kernel = await kernelFor(job.data);
         // handle() declares each message's transferables (the big binary buffers).
-        await handle(kernel, job.part, job.data, (m, transfer = []) => postMessage(m, transfer),
-          job.epoch === null ? {} : { isStale: () => job.epoch !== epoch });
+        const post = (m, transfer = []) => postMessage(m, transfer);
+        if (job.epoch === null) { await handle(kernel, job.part, job.data, post); continue; }
+        const isStale = () => job.epoch !== epoch;
+        // Post gate. The boundary check cannot catch a generate that goes stale during
+        // its FINAL sub-part — there is no boundary after it — nor a single-sub-part
+        // generate that goes stale once dequeued. Both would otherwise post the OLD
+        // part's meshes after a rebind. Downgrading them to `superseded` keeps the
+        // contract simple: a `meshes` post is current as of the moment it is posted.
+        const gated = (m, transfer = []) =>
+          (m.type === "meshes" && isStale() ? post({ type: "superseded" }) : post(m, transfer));
+        await handle(kernel, job.part, job.data, gated, { isStale });
       }
     } finally {
       pumping = false;

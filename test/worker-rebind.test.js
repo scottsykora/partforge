@@ -105,6 +105,26 @@ describe("runWorker rebind contract", () => {
     expect(stats.b).toBe(0); // ...and b never was — the build stopped at the boundary
   });
 
+  it("a generate that goes stale during its last sub-part posts superseded, not meshes", async () => {
+    // The post gate — distinct from the queue skip and the boundary cancel. This job is
+    // already dequeued (the pump is suspended on kernelFor's microtask) so it cannot be
+    // skipped, and a single-sub-part generate has no boundary left to stop at, so it
+    // builds to completion. Its meshes are the OLD part's and must never be posted as a
+    // build result: a `meshes` post has to mean "current as of this post".
+    const { part, stats } = countedPart();
+    const { part: other } = countedPart({ rb: 2 });
+    const handle = runWorker(part);
+    await waitFor("ready");
+    send({ type: "generate", subparts: ["a"], view: "main", params: {} }); // single sub-part
+    handle.setPart(other);                                                 // same sync tick
+    await vi.waitFor(() => {
+      expect(posts.some((m) => m.type === "superseded" || m.type === "meshes")).toBe(true);
+    }, { timeout: 30_000 });
+    expect(posts.filter((m) => m.type === "superseded")).toHaveLength(1);
+    expect(posts.filter((m) => m.type === "meshes")).toHaveLength(0);
+    expect(stats.a).toBe(1); // the build DID run — this is a discarded result, not a skip
+  });
+
   it("setPart re-posts ready", async () => {
     const handle = runWorker(partA);
     await waitFor("ready");
