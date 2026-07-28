@@ -3,6 +3,11 @@
 // the underlying B-rep shape; composePose folds them (in application order) into
 // one column-major mat4, and transformPositions re-poses a cached tessellation's
 // vertices with it. Pure JS — unit-testable without booting a kernel.
+//
+// The same math backs the viewer's pose fast path: when a param change only
+// moves a sub-part, `poseDelta` (via `invertRigid`) gives the matrix carrying an
+// already-delivered mesh from the pose it was built at to the new one, so the
+// viewer re-poses instead of rebuilding.
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -46,7 +51,9 @@ export function transformPositions(positions, m) {
   }
 }
 
-// Invert a rigid mat4 (rotation + translation only): Rᵀ, t' = −Rᵀ·t.
+// Invert a rigid mat4 (rotation + translation only): Rᵀ, t' = −Rᵀ·t. Valid only
+// for matrices produced by composePose — transposing the 3x3 block inverts a
+// rotation, so any scale or shear in it yields garbage rather than an inverse.
 export function invertRigid(m) {
   const r0 = m[0], r1 = m[1], r2 = m[2],
         r4 = m[4], r5 = m[5], r6 = m[6],

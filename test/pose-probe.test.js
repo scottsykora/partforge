@@ -117,6 +117,36 @@ test("a top-level positional function arg is untrusted", () => {
   expect(probePoses(part, "v", { z: 2 }).get("a").trusted).toBe(false);
 });
 
+// regions() is scission: on a real backend the ARRAY LENGTH is param-dependent
+// data, so a build branching on it can keep a stable baseHash while the geometry
+// changes. The probe returns one token, so that data can't be believed either.
+test("a build that calls regions() is untrusted (its length is a query result)", () => {
+  const part = {
+    defaults: { n: 2 },
+    views: { v: { label: "V" } },
+    parts: { a: { views: ["v"], build: (k, p) => {
+      const profile = k.rect({ w: p.n, h: 4 });
+      const regions = profile.regions();
+      return k.extrude({ profile: regions[0], h: regions.length });
+    } } },
+  };
+  expect(probePoses(part, "v", { n: 2 }).get("a").trusted).toBe(false);
+});
+
+// The NaN belt-and-suspenders: a pose step whose angle isn't finite must fail
+// the trust gate on its own, with no query op anywhere in the build.
+test("a non-finite pose value is untrusted even with no query", () => {
+  const part = {
+    defaults: { angle: 0 },
+    views: { v: { label: "V" } },
+    parts: { a: { views: ["v"], build: (k, p) =>
+      k.box({ min: [0, 0, 0], max: [4, 4, 4] })
+        .rotateAbout({ axis: "X", deg: p.angle, through: [0, 0, 2] }) } },
+  };
+  expect(probePoses(part, "v", { angle: 45 }).get("a").trusted).toBe(true);
+  expect(probePoses(part, "v", { angle: NaN }).get("a").trusted).toBe(false);
+});
+
 test("a throwing build is untrusted, and other subparts still probe", () => {
   const part = {
     defaults: {},

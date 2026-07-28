@@ -72,7 +72,12 @@ function makeProbeSession() {
       translate: (v) => { tick(); return token(hash, [...pose, { t: "translate", v }]); },
       rotate: (deg, center, axis) => { tick(); return token(hash, [...pose, { t: "rotate", deg, center, axis }]); },
       clone: () => t, // tokens are immutable — sharing is safe
-      regions: () => { tick(); return [token(h("regions", folded()), [])]; },
+      // regions() is a data-returning query in disguise: on a real backend the
+      // scission ARRAY LENGTH is param-dependent data, so a build branching on
+      // `regions().length` could hold baseHash stable while geometry changed.
+      // It therefore poisons trust like any other query; the single token is
+      // still returned so op chains on regions()[0] don't crash mid-probe.
+      regions: () => { tick(); state.queried = true; return [token(h("regions", folded()), [])]; },
     };
     for (const [op, dummy] of Object.entries(QUERY_DUMMIES))
       t[op] = (...a) => { tick(); state.queried = true; return dummy(...a); };
