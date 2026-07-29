@@ -125,6 +125,35 @@ describe("runWorker rebind contract", () => {
     expect(stats.a).toBe(1); // the build DID run — this is a discarded result, not a skip
   });
 
+  it("a kernel boot failure posts an error and the pump keeps draining", async () => {
+    // The pump's error boundary. kernelFor is the one await in the loop that can reject
+    // for reasons handle() never sees (here: the WASM module failing to load). Without
+    // the catch that rejection escapes as an unhandled rejection and kills the pump —
+    // the running job AND everything queued behind it vanish with no reply, and the host
+    // sits there until its own timeout. Mocking the backend module is the only way to
+    // make that boot fail deterministically, so this test loads its own copy of
+    // worker.js from a reset registry rather than the one the other tests share.
+    vi.resetModules();
+    vi.doMock("manifold-3d", () => ({ default: () => Promise.reject(new Error("wasm fetch failed")) }));
+    try {
+      const { runWorker: runWorkerMocked } = await import("../src/framework/worker.js");
+      runWorkerMocked(partA);
+      // No "ready" is ever posted (the boot failed), so send straight away — messages
+      // queue regardless. The second job is an inspect: not epoch-guarded, so its error
+      // cannot be explained by anything but the pump surviving the first failure.
+      send({ type: "generate", subparts: ["a"], view: "main", params: {} });
+      send({ type: "inspect", subparts: ["a"], view: "main", params: {} });
+      await vi.waitFor(() => {
+        expect(posts.filter((m) => m.type === "error")).toHaveLength(2);
+      }, { timeout: 30_000 });
+      expect(posts.filter((m) => m.type === "error")[0].message).toContain("wasm fetch failed");
+      expect(posts.filter((m) => m.type === "meshes")).toHaveLength(0);
+    } finally {
+      vi.doUnmock("manifold-3d");
+      vi.resetModules();
+    }
+  });
+
   it("setPart re-posts ready", async () => {
     const handle = runWorker(partA);
     await waitFor("ready");

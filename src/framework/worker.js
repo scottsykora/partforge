@@ -49,6 +49,11 @@ export function runWorker(part) {
   // Manifold is cheap to boot — bring it up eagerly and signal readiness.
   if (backend === "manifold") {
     booting = manifoldKernels().then((m) => { manifold = m; postMessage({ type: "ready" }); });
+    // A failed boot is reported to the host by the first job that awaits `booting`
+    // (the pump's error boundary posts it). This no-op handler only keeps the eager
+    // rejection from surfacing as an unhandled rejection before that job arrives —
+    // `booting` itself still rejects for kernelFor.
+    booting.catch(() => {});
   } else {
     // OCCT boots lazily (its ~11 MB WASM loads on the first job), but the worker can
     // accept jobs as soon as its module graph is up — messages queue in the port.
@@ -82,21 +87,31 @@ export function runWorker(part) {
     try {
       while (queue.length) {
         const job = queue.shift();
-        // A generate superseded while it sat in the queue never builds at all.
-        if (job.epoch !== null && job.epoch !== epoch) continue;
-        const kernel = await kernelFor(job.data);
-        // handle() declares each message's transferables (the big binary buffers).
-        const post = (m, transfer = []) => postMessage(m, transfer);
-        if (job.epoch === null) { await handle(kernel, job.part, job.data, post); continue; }
-        const isStale = () => job.epoch !== epoch;
-        // Post gate. The boundary check cannot catch a generate that goes stale during
-        // its FINAL sub-part — there is no boundary after it — nor a single-sub-part
-        // generate that goes stale once dequeued. Both would otherwise post the OLD
-        // part's meshes after a rebind. Downgrading them to `superseded` keeps the
-        // contract simple: a `meshes` post is current as of the moment it is posted.
-        const gated = (m, transfer = []) =>
-          (m.type === "meshes" && isStale() ? post({ type: "superseded" }) : post(m, transfer));
-        await handle(kernel, job.part, job.data, gated, { isStale });
+        // Error boundary around the whole body. handle() reports build failures itself,
+        // but kernelFor can reject — a WASM asset that 404s, an OOM during boot — and an
+        // escaping rejection would kill the pump: this job AND everything queued behind
+        // it would be dropped with no reply at all, leaving the host waiting on a message
+        // that never comes until its own timeout fires.
+        try {
+          // A generate superseded while it sat in the queue never builds at all.
+          if (job.epoch !== null && job.epoch !== epoch) continue;
+          const kernel = await kernelFor(job.data);
+          // handle() declares each message's transferables (the big binary buffers).
+          const post = (m, transfer = []) => postMessage(m, transfer);
+          if (job.epoch === null) { await handle(kernel, job.part, job.data, post); continue; }
+          const isStale = () => job.epoch !== epoch;
+          // Post gate. The boundary check cannot catch a generate that goes stale during
+          // its FINAL sub-part — there is no boundary after it — nor a single-sub-part
+          // generate that goes stale once dequeued. Both would otherwise post the OLD
+          // part's meshes after a rebind. Downgrading them to `superseded` keeps the
+          // contract simple: a `meshes` post is current as of the moment it is posted.
+          const gated = (m, transfer = []) =>
+            (m.type === "meshes" && isStale() ? post({ type: "superseded" }) : post(m, transfer));
+          await handle(kernel, job.part, job.data, gated, { isStale });
+        } catch (err) {
+          // Same shape jobs.js posts for a failed build, so hosts need no new branch.
+          postMessage({ type: "error", message: String(err?.message || err) });
+        }
       }
     } finally {
       pumping = false;

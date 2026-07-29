@@ -365,6 +365,13 @@ two things:
   state, keep the current geometry, and wait for the next result. A host that instead
   lets it fall through a `meshes`-only handler leaves a spinner up forever.
 
+**Only `meshes` is epoch-gated**, so the second option is the weaker one. A stale build's
+other posts — `progress`, `error`, `needs-occt` — are not gated and still reach a listener
+that survived the rebind: a stale `error` would mark a perfectly good new part failed, and
+a stale `needs-occt` would stickily flip the host's backend for a part that never asked for
+it. Handling `superseded` fixes the stuck spinner but not that crosstalk, which is why
+detaching the listener is the recommended pattern.
+
 **Cancellation granularity is the sub-part.** The guard is checked only between
 sub-parts (one macrotask yield each), so a single long WASM op — a big boolean, an OCCT
 fillet — runs to completion no matter how stale it is. That is by design: WASM kernel
