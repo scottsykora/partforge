@@ -21,6 +21,7 @@ import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
 import { createPickRequestClient } from "./pick-request/index.js";
 import { exportablePartNames, partLabel } from "./export-select.js";
+import { createExportController } from "./export-controller.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
@@ -285,6 +286,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     // --- shared message handler ------------------------------------------------
     function onWorkerMessage({ data }) {
+      // Headless exportParts() correlation: consume its own replies first.
+      if (exportCtl.handleMessage(data, onDownload)) return;
       switch (data.type) {
         case "ready":
           loop.ready(); // auto-build the default view (keeps the busy spinner up)
@@ -343,6 +346,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     const service = createGeometryService({ createWorker, onMessage: onWorkerMessage });
     cleanup.defer(() => service.terminate());
+
+    const exportCtl = createExportController({
+      send: (msg, backend) => service.send(msg, backend),
+      currentView: () => view(),
+      title: () => part.meta?.title ?? "parts",
+      defaultBackend: () => backendFor(),
+    });
 
     const panel = buildControls(els.controls, part.parameters, params, onParamChange);
     cleanup.defer(() => panel.dispose());
@@ -427,7 +437,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       ready, dispose, viewer, setParams,
       listExportableParts: () =>
         exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
-      exportParts: undefined, // wired in Task 4
+      exportParts: (opts) => exportCtl.exportParts(opts),
     });
   } catch (error) {
     try {
