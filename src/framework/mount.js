@@ -63,10 +63,15 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.12.0):
-//   const runtime = mount(part, { createWorker, elements, onBuild, onPick });
+// Embedding contract (0.36.0):
+//   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
+//   runtime.listExportableParts();        // [{ name, label }] — every exportable sub-part,
+//                                         // independent of the active view (for an embedder-drawn export UI)
+//   await runtime.exportParts({ parts: ["base"], format: "stl", onProgress });
+//                                         // headless export of a chosen subset; bytes reach the onDownload
+//                                         // sink, resolves when written, rejects on failure
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.

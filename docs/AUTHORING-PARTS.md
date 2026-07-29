@@ -705,6 +705,23 @@ Copy `demo.html` and change the title, the panel heading, and the `<script src>`
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
 `"occt"` for STEP — handled for you).
 
+**Headless export (the mount handle).** The `#download*` buttons above are the built-in,
+view-bound export UI. An embedder that wants its own export UI (e.g. a "pick which parts,
+pick a format" modal) can skip those buttons and drive export off the handle `mount()`
+returns instead:
+
+- `runtime.listExportableParts() → [{ name, label }]` — every exportable sub-part
+  (excludes any `exportable: false` part, respects each part's `enabled(params)`),
+  **independent of the active view**. Use it to populate an export checklist.
+- `runtime.exportParts({ parts, format, quality?, onProgress }) → Promise<void>` — build
+  the given `parts` (sub-part names) in `format` (`"stl" | "step" | "3mf"`), streaming
+  phase strings to `onProgress(phase)`. Resolves once the bytes reach the `onDownload`
+  sink; rejects on build/export failure or an empty selection. Placement uses the current
+  view. STEP is routed to OCCT automatically.
+
+Pass `onDownload({ data, filename, mime })` to `mount()` to receive the exported bytes
+yourself (e.g. to download from a different origin) instead of partforge's own DOM download.
+
 **The markup convention (`demo.html` is the canonical copy-me page):** `<body>` carries
 `class="pf-shell"`, the flex row that lays the viewer column next to the rail. `#app`
 (`class="pf-stage"`) *is* that viewer column, and now contains the floating chrome
