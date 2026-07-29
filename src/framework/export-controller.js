@@ -4,7 +4,7 @@
 // Pure — no DOM, no worker; `send` and the sink are injected.
 import { triggerDownload, downloadParts } from "./download.js";
 
-export function createExportController({ send, currentView, title, defaultBackend = () => "manifold" }) {
+export function createExportController({ send, currentView, title, defaultBackend = () => "manifold", currentParams = () => ({}) }) {
   const pending = new Map(); // jobId -> { resolve, reject, onProgress }
   let nextId = 1;
 
@@ -14,7 +14,7 @@ export function createExportController({ send, currentView, title, defaultBacken
     const backend = format === "step" ? "occt" : defaultBackend();
     return new Promise((resolve, reject) => {
       pending.set(jobId, { resolve, reject, onProgress });
-      send({ type, jobId, parts, view: currentView(), name: title(), quality }, backend);
+      send({ type, jobId, parts, view: currentView(), params: currentParams(), name: title(), quality }, backend);
     });
   }
 
@@ -42,5 +42,13 @@ export function createExportController({ send, currentView, title, defaultBacken
     return false;
   }
 
-  return { exportParts, handleMessage };
+  // Reject every in-flight export and clear the map — for teardown / worker
+  // death, where worker replies will never arrive to settle these Promises.
+  function dispose(reason) {
+    const err = new Error(reason ?? "export cancelled");
+    for (const entry of pending.values()) entry.reject(err);
+    pending.clear();
+  }
+
+  return { exportParts, handleMessage, dispose };
 }

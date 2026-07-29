@@ -715,8 +715,9 @@ returns instead:
   **independent of the active view**. Use it to populate an export checklist.
 - `runtime.exportParts({ parts, format, quality?, onProgress }) → Promise<void>` — build
   the given `parts` (sub-part names) in `format` (`"stl" | "step" | "3mf"`), streaming
-  phase strings to `onProgress(phase)`. Resolves once the bytes reach the `onDownload`
-  sink; rejects on build/export failure or an empty selection. Placement uses the current
+  phase strings to `onProgress(phase)`. Resolves once the file is written (handed to your
+  `onDownload` sink, or downloaded directly if you don't supply one); rejects on
+  build/export failure or an empty selection. Placement uses the current
   view. STEP is routed to OCCT automatically.
 
 Pass `onDownload({ data, filename, mime })` to `mount()` to receive the exported bytes

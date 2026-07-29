@@ -117,7 +117,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const out = [];
       for (const name of names) {
         onProgress(`building ${label(name)}`);
-        out.push({ name: exportName(name), data: await posed(name, "export", onProgress).toSTL({ quality: "print" }) });
+        out.push({ name: exportName(name), data: await posed(name, "export", onProgress).toSTL({ quality: msg.quality ?? "print" }) });
       }
       post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out, jobId: msg.jobId },
            out.map((pp) => bufferOf(pp.data)));

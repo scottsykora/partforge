@@ -10,6 +10,7 @@ function setup(overrides = {}) {
     currentView: () => "all",
     title: () => "My Part",
     defaultBackend: () => "manifold",
+    currentParams: () => ({ foo: 1 }),
     ...overrides,
   });
   return { ctl, sent };
@@ -22,6 +23,19 @@ test("STL export sends jobId + explicit parts on the default backend", () => {
   expect(sent[0].backend).toBe("manifold");
   expect(sent[0].msg).toMatchObject({ type: "export-stl", parts: ["a", "b"], view: "all", name: "My Part" });
   expect(Number.isInteger(sent[0].msg.jobId)).toBe(true);
+});
+
+test("the sent message carries the live params from currentParams()", () => {
+  const { ctl, sent } = setup({ currentParams: () => ({ facets: 7, twist: true }) });
+  ctl.exportParts({ parts: ["a"], format: "stl", onProgress: vi.fn() });
+  expect(sent[0].msg.params).toEqual({ facets: 7, twist: true });
+});
+
+test("dispose rejects every pending export", async () => {
+  const { ctl } = setup();
+  const done = ctl.exportParts({ parts: ["a"], format: "stl", onProgress: vi.fn() });
+  ctl.dispose("viewer disposed");
+  await expect(done).rejects.toThrow("viewer disposed");
 });
 
 test("STEP export routes to occt", () => {

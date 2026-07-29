@@ -70,8 +70,9 @@ function createCleanupStack() {
 //   runtime.listExportableParts();        // [{ name, label }] — every exportable sub-part,
 //                                         // independent of the active view (for an embedder-drawn export UI)
 //   await runtime.exportParts({ parts: ["base"], format: "stl", onProgress });
-//                                         // headless export of a chosen subset; bytes reach the onDownload
-//                                         // sink, resolves when written, rejects on failure
+//                                         // headless export of a chosen subset; resolves when the file is
+//                                         // written (handed to your onDownload sink, or downloaded directly
+//                                         // if you don't supply one), rejects on failure
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
@@ -357,7 +358,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       currentView: () => view(),
       title: () => part.meta?.title ?? "parts",
       defaultBackend: () => backendFor(),
+      currentParams: () => params,
     });
+    cleanup.defer(() => exportCtl.dispose("viewer disposed"));
 
     const panel = buildControls(els.controls, part.parameters, params, onParamChange);
     cleanup.defer(() => panel.dispose());
