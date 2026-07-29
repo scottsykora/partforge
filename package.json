@@ -19,6 +19,7 @@
     "skills/partforge/SKILL.md",
     "docs/AUTHORING-PARTS.md",
     "docs/ERROR-PATTERNS.md",
+    "docs/KERNEL-CONTRACT.md",
     "README.md"
   ],
   "exports": {
