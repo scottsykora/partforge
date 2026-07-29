@@ -1,7 +1,7 @@
 // Drives runWorker() with a stubbed `self`/`postMessage` — no real Worker, but the
 // real Manifold WASM boot and the real job loop. (Manifold-only: the OCCT test
 // below never touches its kernel, so the two-backends-one-process rule holds.)
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { runWorker } from "../src/framework/worker.js";
 
 const part = {
@@ -26,9 +26,18 @@ const stlTriangles = (dl) => new DataView(dl.parts[0].data).getUint32(80, true);
 
 test("the manifold worker picks its kernel from msg.quality, not the job type", async () => {
   const posts = bootFakeWorker("manifold");
-  await self.onmessage({ data: { type: "export-stl", view: "v", params: {} } }); // no quality → preview
-  await self.onmessage({ data: { type: "export-stl", view: "v", params: {}, quality: "print" } });
-  const [preview, print] = posts.filter((m) => m.type === "download-parts").map(stlTriangles);
+  // onmessage enqueues onto the worker's serial job pump and returns immediately
+  // (a real WorkerGlobalScope ignores the handler's return value), so wait on the
+  // posted results rather than awaiting the dispatch. Both exports still run —
+  // only generates supersede each other.
+  self.onmessage({ data: { type: "export-stl", view: "v", params: {} } }); // no quality → preview
+  self.onmessage({ data: { type: "export-stl", view: "v", params: {}, quality: "print" } });
+  const downloads = await vi.waitFor(() => {
+    const d = posts.filter((m) => m.type === "download-parts");
+    expect(d).toHaveLength(2);
+    return d;
+  }, { timeout: 30_000 });
+  const [preview, print] = downloads.map(stlTriangles);
   expect(print).toBeGreaterThan(preview * 3); // print tessellates ~4× finer than preview
 });
 

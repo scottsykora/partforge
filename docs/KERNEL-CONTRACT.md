@@ -41,10 +41,13 @@ kernel-level op, so it is not in that Solid-op list).
 **B-rep class.** Core plus native `fillet`/`chamfer`/`shell` and `toSTEP`. The in-repo
 OCCT/replicad backend is the reference.
 
-**Optional ops.** `KERNEL_OPTIONAL_OPS` (`beginSubPart`/`endSubPart`/`cacheStats`/
-`resetCacheStats`/`cleanup`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may be omitted
-entirely; callers in the framework guard with `?.`/`typeof`. A host that omits them loses
-sub-part caching and mesh-topology gates (`holes`, emptiness), nothing else.
+**Optional ops.** `KERNEL_OPTIONAL_OPS` (`beginSubPart`/`endSubPart`/`sweepCache`/
+`cacheStats`/`resetCacheStats`/`cleanup`) and `SOLID_OPTIONAL_OPS` (`genus`/`isEmpty`) may
+be omitted entirely; callers in the framework guard with `?.`/`typeof`. A host that omits
+them loses sub-part caching and mesh-topology gates (`holes`, emptiness), nothing else.
+`sweepCache()` is the cache's rebind hygiene hook: called once when a worker is rebound to
+a part (never inside a `beginSubPart`/`endSubPart` bracket), it drops cache partitions that
+have gone unbuilt for three consecutive rebinds.
 
 `KernelCapabilityError` is a *routing signal*, not a failure: partforge's geometry-free
 probe (`probe.js`) runs `build` against a fake kernel, and any use of an `OCCT_ONLY_OPS`
@@ -308,6 +311,75 @@ asserts every `polygon.js` export is named here.)
 - `pathProfile` — fluent builder for a curve-native path contour (`lineTo` /
   `arcTo` / `cubicTo` / `close`); cubic segments become exact B-rep on OCCT and
   facet at mesh LOD on Manifold.
+
+## Worker rebind
+
+The op tables above are the portable seam for *geometry*; this section is the matching
+seam for *worker lifetime*. A host that shows one part after another (an embedder, the
+cloud runner) can keep a single worker across the swap and reuse its booted WASM kernel
+and warm solid cache instead of paying the boot cost again.
+
+`runWorker(part)` (`src/framework/worker.js`) returns a rebind handle —
+`{ setPart(newPart) }` — and that handle is the whole interface. The framework defines
+**no rebind *message***: a host that talks to its worker over its own re-init protocol
+maps that protocol onto `setPart` itself.
+
+`setPart(newPart)` does four things, synchronously, on the worker's own turn:
+
+- **Swaps the part** for jobs that arrive *after* the call. Jobs already queued keep the
+  part that was current when their message arrived — a job always runs against the part
+  it was sent for, never against a part that replaced it mid-flight.
+- **Bumps the generate epoch**, which is what makes earlier builds stale (below).
+- **Sweeps each booted kernel's solid cache** — one `sweepCache()` per booted kernel,
+  never inside a `beginSubPart`/`endSubPart` bracket. See the Optional ops paragraph
+  under [Conformance classes](#conformance-classes) for what the sweep evicts; a host
+  whose kernel omits the op simply keeps every partition.
+- **Re-posts `{type:"ready"}`**, so a remounting host gates its first generate on
+  readiness exactly as it would on a freshly spawned worker.
+
+**Epoch guard.** Generates supersede each other; exports (`export-stl`/`export-step`/
+`export-3mf`), `inspect`, and `lint` are **never** epoch-guarded — cancelling a user's
+export because an edit landed would be wrong. A generate that is stale by the time the
+job pump reaches it is skipped and never builds at all. A generate already running
+re-checks staleness at each sub-part boundary and, if it has been superseded, stops
+there and posts `{type:"superseded"}` **instead of** `{type:"meshes"}` — a build that
+ended without producing meshes, and not an error. A generate with no boundary left to
+stop at — one that goes stale during its *final* sub-part, or a single-sub-part generate
+that goes stale once the pump has dequeued it — runs to completion, and the worker then
+discards its result the same way, posting `{type:"superseded"}` in place of the meshes it
+built. So **a `meshes` post is current as of the moment it is posted**: it is never a
+previous part's geometry surfacing after a rebind, and a host may take it as the build
+outcome for the part it currently has mounted.
+
+**Host-side rule for `superseded`.** partforge's own `mount()` does not handle a
+`superseded` message, and does not need to: in its single-mount flow the regen loop
+serializes generates, so no generate is ever in flight when the next one is sent and the
+message is unreachable. An **embedding host that rebinds via `setPart` must** do one of
+two things:
+
+- detach the old message listener before rebinding — the partforge-cloud pattern. A
+  rebound worker's next mount sends its first generate *after* `setPart`, so that
+  generate can never be stale, and any `superseded` from the previous mount lands on a
+  listener that is already gone; or
+- handle `superseded` explicitly as "this build ended without meshes" — clear the busy
+  state, keep the current geometry, and wait for the next result. A host that instead
+  lets it fall through a `meshes`-only handler leaves a spinner up forever.
+
+**Only `meshes` is epoch-gated**, so the second option is the weaker one. A stale build's
+other posts — `progress`, `error`, `needs-occt` — are not gated and still reach a listener
+that survived the rebind: a stale `error` would mark a perfectly good new part failed, and
+a stale `needs-occt` would stickily flip the host's backend for a part that never asked for
+it. Handling `superseded` fixes the stuck spinner but not that crosstalk, which is why
+detaching the listener is the recommended pattern.
+
+**Cancellation granularity is the sub-part.** The guard is checked only between
+sub-parts (one macrotask yield each), so a single long WASM op — a big boolean, an OCCT
+fillet — runs to completion no matter how stale it is. That is by design: WASM kernel
+calls are not interruptible, and a build that abandons a sub-part mid-bracket would
+strand pinned cache entries. Hosts should size responsiveness expectations against the
+slowest single sub-part, not the whole build. Cancellation is therefore about *work
+avoided*, never about correctness of what is posted: work already under way may finish,
+but its output is still gated behind the epoch before it leaves the worker.
 
 ## Versioning
 

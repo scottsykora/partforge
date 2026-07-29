@@ -246,6 +246,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     shape2d,
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
+    sweepCache: () => cache.sweep(),
     cacheStats: () => cache.stats(),
     resetCacheStats: () => cache.resetStats(),
     // Free every WASM object created since the last cleanup EXCEPT solids the cache

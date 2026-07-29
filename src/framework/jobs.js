@@ -45,6 +45,9 @@ export function buildPosed(kernel, part, name, { purpose, view, p, d, onProgress
 //   { type:"generate", subparts, view, params } → { type:"meshes", meshes, ms }
 //   { type:"export-stl", view, params }         → { type:"download-parts", ext, mime, parts }
 //   { type:"export-step", view, params }        → { type:"download", data, filename, mime }
+// A generate also accepts `opts.isStale` — a caller-supplied predicate checked at each
+// sub-part boundary — and answers { type:"superseded" } instead of `meshes` when it
+// stops early (a build that ended without meshes, not an error; see KERNEL-CONTRACT.md).
 // Each result branch declares its own transferables (the big binary buffers,
 // zero-copy across the worker boundary) right where the buffers are created —
 // so a new job type can't silently regress to structured-cloning its payload.
@@ -53,7 +56,8 @@ export function buildPosed(kernel, part, name, { purpose, view, p, d, onProgress
 // preview generates stay quiet (no callback) to avoid flicker during slider drags.
 const bufferOf = (data) => (ArrayBuffer.isView(data) ? data.buffer : data);
 
-export async function handle(kernel, part, msg, post) {
+export async function handle(kernel, part, msg, post, opts = {}) {
+  const isStale = opts.isStale ?? (() => false);
   const onProgress = (phase) => post({ type: "progress", phase });
   const label = (name) => part.parts[name].label ?? name;
   const exportName = (name) => part.parts[name].export?.name ?? name;
@@ -78,7 +82,7 @@ export async function handle(kernel, part, msg, post) {
       const useCache = msg.cache !== false; // ?debug toggle can disable caching (cache:false)
       const meshes = [];
       kernel.resetCacheStats?.(); // count hits/misses for just this job
-      for (const name of msg.subparts) {
+      for (const [i, name] of msg.subparts.entries()) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
         try {
           const m = posed(name, "display").toMesh({ quality: "preview" });
@@ -86,6 +90,15 @@ export async function handle(kernel, part, msg, post) {
         } finally {
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
           kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)
+        }
+        // Cooperative cancel: yield one macrotask so queued messages (a newer
+        // generate, a part rebind) can be seen, then stop at this boundary if
+        // this build is stale. The last sub-part skips the yield — nothing
+        // follows it. Completed sub-parts have already committed their cache
+        // brackets, so an abort here strands nothing.
+        if (i < msg.subparts.length - 1) {
+          await new Promise((r) => setTimeout(r, 0));
+          if (isStale()) return void post({ type: "superseded" });
         }
       }
       const transfer = meshes.flatMap((m) =>

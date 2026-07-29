@@ -6,11 +6,13 @@
 export function createSolidCache() {
   const caches = new Map(); // name -> Map(hash -> { value, pin, dispose })
   const pinned = new Set();  // every live `pin` across all sub-parts
+  const lastBuilt = new Map(); // name -> rebind generation of the partition's last begin()
+  let generation = 0;          // bumped only by sweep() (i.e. per part rebind)
   let name = null, active = null, prev = null;
   let hits = 0, misses = 0;
 
   return {
-    begin(n) { name = n; prev = caches.get(n) ?? new Map(); active = new Map(); },
+    begin(n) { name = n; lastBuilt.set(n, generation); prev = caches.get(n) ?? new Map(); active = new Map(); },
 
     end() {
       if (name == null) return;
@@ -19,6 +21,20 @@ export function createSolidCache() {
       }
       caches.set(name, active);
       name = null; active = prev = null;
+    },
+
+    // Rebind hygiene: called once per setPart() (never mid-bracket — the worker's
+    // job queue is serial). Partitions a rebind renamed or deleted would otherwise
+    // pin their last build's solids until worker death; three idle generations is
+    // the eviction line, so recently-viewed views stay warm across edits.
+    sweep() {
+      generation++;
+      for (const [n, entries] of caches) {
+        if (generation - (lastBuilt.get(n) ?? 0) < 3) continue;
+        for (const entry of entries.values()) { pinned.delete(entry.pin); entry.dispose(); }
+        caches.delete(n);
+        lastBuilt.delete(n);
+      }
     },
 
     lookup(hash, make) {

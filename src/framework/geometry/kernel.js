@@ -22,10 +22,12 @@ export const KERNEL_OPS = [
   "loft", "sweep", "helixSweptTube", "union", "shape2d", "text2d", "hull", "hullChain", "toSTEP",
 ];
 
-// Backend-optional kernel ops: the Manifold cache brackets + WASM lifetime hooks.
-// jobs.js calls all of these via `?.`, so a backend may simply omit them.
+// Backend-optional kernel ops: the sub-part cache brackets + WASM lifetime hooks.
+// Both in-repo backends implement the brackets (only `cleanup` is Manifold-specific —
+// OCCT's replicad shapes need no dispose bookkeeping). jobs.js calls all of these via
+// `?.`, so a third-party backend may simply omit them.
 export const KERNEL_OPTIONAL_OPS = [
-  "beginSubPart", "endSubPart", "cacheStats", "resetCacheStats", "cleanup",
+  "beginSubPart", "endSubPart", "sweepCache", "cacheStats", "resetCacheStats", "cleanup",
 ];
 
 // Ops every Solid must implement (including the sugar addSugar() attaches).
@@ -109,8 +111,9 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hull   convex hull of all inputs → a convex Shape2D (faceted; pure-JS monotone chain)
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hullChain   swept hull over an ordered sequence (≥2): union of hull([inᵢ,inᵢ₊₁])
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)
- * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (Manifold only)
+ * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (both backends)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)
+ * @property {() => void} [sweepCache]   drop cache partitions idle for 3 rebinds; call once per setPart, never mid-bracket
  * @property {() => {hits:number,misses:number}} [cacheStats]
  * @property {() => void} [resetCacheStats]
  * @property {() => void} [cleanup]   free per-job WASM objects (Manifold backend); call after each job

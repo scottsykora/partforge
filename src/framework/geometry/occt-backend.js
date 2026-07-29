@@ -473,6 +473,7 @@ export function createOcctKernel(replicad) {
     },
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
+    sweepCache: () => cache.sweep(),
     cacheStats: () => cache.stats(),
     resetCacheStats: () => cache.resetStats(),
   });

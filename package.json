@@ -1,6 +1,6 @@
 {
   "name": "partforge",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "description": "Turn a declarative part definition into a parametric-CAD web app (three.js + Manifold/Replicad). Requires a Vite-based consumer.",
   "type": "module",
   "license": "MIT",
@@ -19,6 +19,7 @@
     "skills/partforge/SKILL.md",
     "docs/AUTHORING-PARTS.md",
     "docs/ERROR-PATTERNS.md",
+    "docs/KERNEL-CONTRACT.md",
     "README.md"
   ],
   "exports": {
