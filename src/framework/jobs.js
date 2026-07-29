@@ -1,4 +1,5 @@
 import { meshTo3MF } from "./geometry/threemf.js";
+import { exportablePartNames } from "./export-select.js";
 import { resolveDerived } from "./derive.js";
 import { resolveFonts } from "./fonts.js";
 import { measure } from "../testing/measure.js";
@@ -58,7 +59,7 @@ const bufferOf = (data) => (ArrayBuffer.isView(data) ? data.buffer : data);
 
 export async function handle(kernel, part, msg, post, opts = {}) {
   const isStale = opts.isStale ?? (() => false);
-  const onProgress = (phase) => post({ type: "progress", phase });
+  const onProgress = (phase) => post({ type: "progress", phase, jobId: msg.jobId });
   const label = (name) => part.parts[name].label ?? name;
   const exportName = (name) => part.parts[name].export?.name ?? name;
 
@@ -76,6 +77,12 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     const { p, d } = resolveParams(part, msg.params);
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
     const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
+    // Explicit selection (headless exportParts) overrides view-derived selection.
+    const selected = () =>
+      msg.parts
+        ? exportablePartNames(part, p).filter((name) => msg.parts.includes(name))
+        : exportSubParts(part, msg.view, p);
+    const fileBase = msg.name ?? msg.view; // STEP/3MF single-file name base
 
     if (msg.type === "generate") {
       const t0 = Date.now();
@@ -105,29 +112,36 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
       post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.() }, transfer);
     } else if (msg.type === "export-stl") {
+      const names = selected();
+      if (names.length === 0) throw new Error("no exportable parts selected");
       const out = [];
-      for (const name of exportSubParts(part, msg.view, p)) {
+      for (const name of names) {
         onProgress(`building ${label(name)}`);
         out.push({ name: exportName(name), data: await posed(name, "export", onProgress).toSTL({ quality: "print" }) });
       }
-      post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out }, out.map((p) => bufferOf(p.data)));
+      post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out, jobId: msg.jobId },
+           out.map((pp) => bufferOf(pp.data)));
     } else if (msg.type === "export-step") {
-      const solids = exportSubParts(part, msg.view, p).map((name) => {
+      const names = selected();
+      if (names.length === 0) throw new Error("no exportable parts selected");
+      const solids = names.map((name) => {
         onProgress(`building ${label(name)}`);
         return { name: exportName(name), solid: posed(name, "export", onProgress) };
       });
       onProgress("writing STEP file");
       const data = await kernel.toSTEP(solids);
-      post({ type: "download", data, filename: `${msg.view}.step`, mime: "application/step" }, [bufferOf(data)]);
+      post({ type: "download", data, filename: `${fileBase}.step`, mime: "application/step", jobId: msg.jobId }, [bufferOf(data)]);
     } else if (msg.type === "export-3mf") {
-      const meshes = exportSubParts(part, msg.view, p).map((name) => {
+      const names = selected();
+      if (names.length === 0) throw new Error("no exportable parts selected");
+      const meshes = names.map((name) => {
         onProgress(`building ${label(name)}`);
         const { positions, indices } = posed(name, "export", onProgress).toIndexedMesh();
         return { name: exportName(name), positions, indices };
       });
       onProgress("writing 3MF file");
       const data = meshTo3MF(meshes);
-      post({ type: "download", data, filename: `${msg.view}.3mf`, mime: "model/3mf" }, [bufferOf(data)]);
+      post({ type: "download", data, filename: `${fileBase}.3mf`, mime: "model/3mf", jobId: msg.jobId }, [bufferOf(data)]);
     } else if (msg.type === "inspect") {
       // Full geometric oracle for the current view: solid facts (volume/genus/
       // watertight), mesh facts, overlaps, and gap distances, plus the part's
@@ -142,8 +156,8 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       post({ type: "report", ...report });
     }
   } catch (err) {
-    if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt" });
-    else post({ type: "error", message: String(err?.message || err) });
+    if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt", jobId: msg.jobId });
+    else post({ type: "error", message: String(err?.message || err), jobId: msg.jobId });
   } finally {
     kernel.cleanup?.();
   }
