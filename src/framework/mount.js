@@ -20,11 +20,17 @@ import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
 import { createPickRequestClient } from "./pick-request/index.js";
+import { exportablePartNames, partLabel } from "./export-select.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
-export function makeHandle({ ready, dispose, viewer, setParams }) {
-  return { ready, dispose, setParams, captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames) };
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts }) {
+  return {
+    ready, dispose, setParams,
+    captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
+    listExportableParts,
+    exportParts,
+  };
 }
 
 function createCleanupStack() {
@@ -417,7 +423,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.dispose();
     }
 
-    return makeHandle({ ready, dispose, viewer, setParams });
+    return makeHandle({
+      ready, dispose, viewer, setParams,
+      listExportableParts: () =>
+        exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
+      exportParts: undefined, // wired in Task 4
+    });
   } catch (error) {
     try {
       cleanup.dispose();
