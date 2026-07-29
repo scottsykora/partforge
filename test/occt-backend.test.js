@@ -52,6 +52,34 @@ test("Solid.union(other) fuses like k.union([a, b])", () => {
   expect(mk().union(mk2()).volume()).toBeCloseTo(k.union([mk(), mk2()]).volume(), 3);
 });
 
+test("cutAll matches cut(union(...)) and chained cuts for intersecting bores", () => {
+  const makeBody = () => k.box({ size: [40, 40, 40] }).fillet(4);
+  const makeBores = () => {
+    const boreX = k.cylinder({ d: 10, h: 44 }).along("+X").at([-22, 0, 20]);
+    const boreY = k.cylinder({ d: 10, h: 44 }).along("+Y").at([0, -22, 20]);
+    const boreZ = k.cylinder({ d: 10, h: 44 }).at([0, 0, -2]);
+    return [boreX, boreY, boreZ];
+  };
+
+  const viaCutAll = makeBody().cutAll(makeBores());
+  const viaUnion = makeBody().cut(k.union(makeBores()));
+  const [chainX, chainY, chainZ] = makeBores();
+  const viaChain = makeBody().cut(chainX).cut(chainY).cut(chainZ);
+
+  expect(viaCutAll.volume()).toBeCloseTo(viaUnion.volume(), 3);
+  expect(viaCutAll.volume()).toBeCloseTo(viaChain.volume(), 3);
+
+  const bbAll = viaCutAll.boundingBox();
+  const bbUnion = viaUnion.boundingBox();
+  const bbChain = viaChain.boundingBox();
+  for (let i = 0; i < 3; i++) {
+    expect(bbAll.min[i]).toBeCloseTo(bbUnion.min[i], 3);
+    expect(bbAll.max[i]).toBeCloseTo(bbUnion.max[i], 3);
+    expect(bbAll.min[i]).toBeCloseTo(bbChain.min[i], 3);
+    expect(bbAll.max[i]).toBeCloseTo(bbChain.max[i], 3);
+  }
+});
+
 test("assemblyOverlaps runs on OCCT — clean for disjoint parts, flags a real overlap", () => {
   // Adding intersect to OCCT flips measure.js's canIntersect gate, so this overlap path now
   // runs on the OCCT kernel for the first time. Guard that it behaves: no throw on disjoint.
