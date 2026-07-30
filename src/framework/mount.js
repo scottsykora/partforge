@@ -20,11 +20,18 @@ import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
 import { createPickRequestClient } from "./pick-request/index.js";
+import { exportablePartNames, partLabel } from "./export-select.js";
+import { createExportController } from "./export-controller.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
-export function makeHandle({ ready, dispose, viewer, setParams }) {
-  return { ready, dispose, setParams, captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames) };
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts }) {
+  return {
+    ready, dispose, setParams,
+    captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
+    listExportableParts,
+    exportParts,
+  };
 }
 
 function createCleanupStack() {
@@ -56,10 +63,16 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.12.0):
-//   const runtime = mount(part, { createWorker, elements, onBuild, onPick });
+// Embedding contract (0.36.0):
+//   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
+//   runtime.listExportableParts();        // [{ name, label }] — every exportable sub-part,
+//                                         // independent of the active view (for an embedder-drawn export UI)
+//   await runtime.exportParts({ parts: ["base"], format: "stl", onProgress });
+//                                         // headless export of a chosen subset; resolves when the file is
+//                                         // written (handed to your onDownload sink, or downloaded directly
+//                                         // if you don't supply one), rejects on failure
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
@@ -279,6 +292,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     // --- shared message handler ------------------------------------------------
     function onWorkerMessage({ data }) {
+      // Headless exportParts() correlation: consume its own replies first.
+      if (exportCtl.handleMessage(data, onDownload)) return;
       switch (data.type) {
         case "ready":
           loop.ready(); // auto-build the default view (keeps the busy spinner up)
@@ -337,6 +352,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     const service = createGeometryService({ createWorker, onMessage: onWorkerMessage });
     cleanup.defer(() => service.terminate());
+
+    const exportCtl = createExportController({
+      send: (msg, backend) => service.send(msg, backend),
+      currentView: () => view(),
+      title: () => part.meta?.title ?? "parts",
+      defaultBackend: () => backendFor(),
+      currentParams: () => params,
+    });
+    cleanup.defer(() => exportCtl.dispose("viewer disposed"));
 
     const panel = buildControls(els.controls, part.parameters, params, onParamChange);
     cleanup.defer(() => panel.dispose());
@@ -417,7 +441,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.dispose();
     }
 
-    return makeHandle({ ready, dispose, viewer, setParams });
+    return makeHandle({
+      ready, dispose, viewer, setParams,
+      listExportableParts: () =>
+        exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
+      exportParts: (opts) => exportCtl.exportParts(opts),
+    });
   } catch (error) {
     try {
       cleanup.dispose();
