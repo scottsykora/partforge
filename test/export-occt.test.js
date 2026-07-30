@@ -1,6 +1,8 @@
 // OCCT export bytes. OCCT boots alone (never with Manifold).
 import { beforeAll, describe, it, expect } from "vitest";
+import { unzipSync, strFromU8 } from "fflate";
 import { bootOcctKernel } from "../src/testing.js";
+import { meshTo3MF } from "../src/framework/geometry/threemf.js";
 
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); }, 120000);
@@ -14,6 +16,57 @@ describe("OCCT toSTL", () => {
     const n = dv.getUint32(80, true);
     expect(n).toBeGreaterThanOrEqual(12); // a box meshes to >= 12 triangles
     expect(ab.byteLength).toBe(84 + n * 50); // exact binary-STL size for n facets
+  });
+});
+
+// Count undirected edges not shared by exactly two triangles, reading topology
+// from the indices the way a 3MF consumer does. A closed solid must score zero —
+// a slicer reports exactly this figure as "non-manifold edges". Counted per
+// <object>, since vertex indices restart in each one.
+function nonManifoldEdges(model) {
+  return [...model.matchAll(/<object\b[\s\S]*?<\/object>/g)].map(([obj]) => {
+    const edges = new Map();
+    for (const m of obj.matchAll(/<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"\/>/g)) {
+      const t = [+m[1], +m[2], +m[3]];
+      for (let k = 0; k < 3; k++) {
+        const a = t[k], b = t[(k + 1) % 3];
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+        edges.set(key, (edges.get(key) || 0) + 1);
+      }
+    }
+    return [...edges.values()].filter((n) => n !== 2).length;
+  });
+}
+
+const modelOf = (solids) =>
+  strFromU8(unzipSync(new Uint8Array(meshTo3MF(
+    solids.map((s, i) => ({ name: `p${i}`, ...s.toIndexedMesh() }))
+  )))["3D/3dmodel.model"]);
+
+describe("OCCT 3MF export", () => {
+  // OCCT meshes each B-rep face independently, so its indexed mesh holds one copy
+  // of every seam vertex per adjacent face. STL hides that (slicers re-stitch soup
+  // by position); 3MF does not, so the export path has to weld.
+  it("emits closed, manifold topology for a box", () => {
+    const model = modelOf([k.box({ min: [0, 0, 0], max: [10, 10, 10] })]);
+    expect(nonManifoldEdges(model)).toEqual([0]);
+  });
+
+  it("emits closed, manifold topology for curved and filleted solids", () => {
+    const model = modelOf([
+      k.cylinder(5, 5, 10),
+      k.box({ min: [0, 0, 0], max: [20, 20, 10] }).fillet(2),
+    ]);
+    expect(nonManifoldEdges(model)).toEqual([0, 0]);
+  });
+
+  it("tessellates a 3MF at print quality, matching the STL export", () => {
+    const s = k.cylinder(5, 5, 10);
+    const preview = s.toIndexedMesh({ quality: "preview" }).indices.length / 3;
+    const print = s.toIndexedMesh({ quality: "print" }).indices.length / 3;
+    expect(print).toBeGreaterThan(preview); // print really is the denser preset
+    // The default must be the print preset — a .3mf should not be coarser than the .stl.
+    expect(s.toIndexedMesh().indices.length / 3).toBe(print);
   });
 });
 

@@ -222,7 +222,7 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 | `genus()` / `isEmpty()` | Optional (`SOLID_OPTIONAL_OPS`): mesh-topology queries — through-hole count / no-geometry test. The mesh backend provides them; OCCT has no cheap equivalent. |
 | `toMesh({quality?})` | Render mesh: `{positions, normals, indices?, triangles, edges?, featureIds?, features?}`. `indices` optional (a backend may emit soup or indexed); `normals` may be empty (`length 0`) to delegate creasing to the viewer; `edges` (feature-line segments) and the feature fields are optional metadata. |
 | `toSTL({quality?})` | `Promise<ArrayBuffer>`, binary STL, outward CCW winding. Stored facet normals may be zero — slicers recompute them (the mesh backend happens to write them). |
-| `toIndexedMesh()` | `{positions, indices}` indexed mesh (3MF path). |
+| `toIndexedMesh({quality?})` | `{positions, indices}` indexed mesh (3MF path); defaults to `"print"` like `toSTL`. Coincident vertices need NOT be welded — the 3MF writer welds, because that format reads topology from the indices rather than re-stitching soup by position the way an STL consumer does. |
 | `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | B-rep class (core throws `KernelCapabilityError`). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` hollows inward, keeping outer dimensions; `open` (face selector) is required. |
 
 `quality` (`"preview"` | `"print"`) is **advisory**: it trades tessellation density for
