@@ -75,9 +75,16 @@ regimes, which are the supported parameter space:
    on the vertical corner-arc axis at radial offset `side − top`, degenerating
    to a **sphere octant** when the radii are equal.
 2. **`side = 0`** (rim-only round-over on a sharp-sided box — the "rounded
-   lid"): the rolling ball pivots at each sharp corner, producing an exact
-   **sphere patch** of the rim radius, centered at the pivot (inset `top`,
-   `top` from the corner at height `h − top`).
+   lid"): each rim edge's quarter-round runs the **full edge length**, and
+   adjacent round-overs meet in their natural **intersection curve** at each
+   corner (the top face keeps sharp corners, inset by the rim radius). This is
+   the classic CSG round-over — closed-form and deterministic on both
+   backends. (A rolling ball cannot physically reach into a sharp corner, and
+   OCCT's native vertex blend there is a kernel-specific patch a mesh
+   generator cannot reproduce — so we define and construct the corner
+   explicitly rather than inherit either.) *Amended 2026-07-30: an earlier
+   revision described this corner as a "sphere pivot patch", which does not
+   survive the geometry.*
 
 **The middle regime `0 < side < max(top, bottom)` clamps, with a warning.**
 The rim radii clamp **down** to `side`; `side` itself is never changed. In
@@ -94,9 +101,11 @@ roundedBox: round.top 3 clamped to round.side 1 (side must be 0 or ≥ rim radii
 ```
 
 The clamp lives in the shared kernel-front normalization, so both backends see
-identical clamped values and parity holds by construction. The solid cache
-memoizes by content hash, so the warning fires once per distinct parameter
-combination, not per preview frame. **Documented discontinuity** (inherent to
+identical clamped values and parity holds by construction (a clamped call and
+its explicitly-clamped equivalent normalize to the same arguments, hence the
+same cache node). The normalizer runs before the cache, so the warning is
+deduped by a small module-level set of already-warned messages — it fires once
+per distinct parameter combination per worker session, not per preview frame. **Documented discontinuity** (inherent to
 any clamp rule): `side: 0` with a large rim radius is the valid sphere-pivot
 regime, but `side: ε` clamps that rim to ε — the docs state explicitly: *for a
 rim-only round-over, use `side: 0` exactly*. The warning is what keeps an
@@ -147,12 +156,17 @@ clause); measure parity within facet tolerance, not a parity waiver.
   at the kernel's `segs` LOD with **shared boundary rings** — no T-junctions,
   no booleans, one atomic solid. Degenerate patches (zero-radius groups) drop
   out of the grid rather than emitting zero-area triangles.
-- **OCCT**: native `makeBox` + **sequential `fillet` calls** with edge
-  selectors (vertical edges, then top rim, then bottom rim — reusing
-  `edge-selector.js` machinery internally; the part-facing op takes no
-  selectors). All-radii-equal collapses to a single fillet call as a fast
-  path. Exact B-rep → clean STEP. Fillet failures fall under the existing
-  OCCT repair policy, not a new error class.
+- **OCCT**, split by regime (the part-facing op takes no selectors):
+  - `side > 0`: extrude an **arc-exact rounded-rect profile** (real CIRCLE
+    wall edges in STEP), then **one native `fillet` per rim** on its smooth
+    rim edge loop (`{inPlane: "XY", at: zRim}` internally) — exact torus /
+    sphere-octant corner patches matching the mesh semantics. Fillet failures
+    fall under the existing OCCT repair policy, not a new error class.
+  - `side = 0`: cut the box with **quarter-cylinder wedge cutters** (a strip
+    box minus a cylinder per rim edge, full edge length) — the corners come
+    out as the exact intersection of adjacent round-overs, matching the
+    normative semantics deterministically; native fillet's vertex blend is
+    deliberately not used. Still exact B-rep cylinders in STEP.
 - The probe kernel picks all three ops up automatically from `KERNEL_OPS`; the
   ops are **not** in `OCCT_ONLY_OPS`, so — the entire point of the feature —
   **a part using `roundedBox` stays on the Manifold backend** for preview and
@@ -180,7 +194,7 @@ clause); measure parity within facet tolerance, not a parity waiver.
   `V = w'd'h' + r·2(w'd' + w'h' + d'h') + πr²(w' + d' + h') + (4/3)πr³` with
   `w' = w − 2r` etc. Assert Manifold and OCCT both converge to the analytic
   value within facet tolerance for each regime: all-equal, `side > top`,
-  `side = 0` (sphere-pivot), mixed `top ≠ bottom`, and a clamped middle-regime
+  `side = 0` (rim-only), mixed `top ≠ bottom`, and a clamped middle-regime
   call (asserting it equals the explicitly-clamped call bit-for-bit on
   Manifold / value-for-value on OCCT). Same treatment for
   `roundedCylinder` (lathe closed form) and `torus` (`2π²·rMajor·rMinor²`).
