@@ -136,7 +136,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       if (names.length === 0) throw new Error("no exportable parts selected");
       const meshes = names.map((name) => {
         onProgress(`building ${label(name)}`);
-        const { positions, indices } = posed(name, "export", onProgress).toIndexedMesh();
+        const { positions, indices } = posed(name, "export", onProgress).toIndexedMesh({ quality: msg.quality ?? "print" });
         return { name: exportName(name), positions, indices };
       });
       onProgress("writing 3MF file");
