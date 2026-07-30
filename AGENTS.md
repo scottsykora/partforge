@@ -51,6 +51,24 @@ CI (`.github/workflows/ci.yml`) runs `npm test` then the smoke check against all
 three demo apps. Playwright's Chromium is required for the smoke check only:
 `npm i -D playwright && npx playwright install chromium`.
 
+## Releasing
+
+Publishing to npm is tag-driven — never run `npm publish` by hand. The
+version in `package.json` is bumped on the feature branch (part of the PR);
+after that PR merges to `main`, tag the merge commit `v<version>` (matching
+`package.json` exactly) and push the tag:
+
+```bash
+git fetch origin main
+git tag v0.33.0 origin/main   # tag name = "v" + package.json version
+git push origin v0.33.0
+```
+
+`.github/workflows/publish.yml` triggers on `v*` tags and publishes to npm.
+Verify with `npm view partforge version` once the run completes. Downstream
+(partforge-cloud) pins `^<version>` and regenerates its prompt corpus against
+the installed package, so publish before bumping the dep there.
+
 ## Architecture
 
 - **`src/framework/`** - the reusable engine (part-agnostic): `mount.js` (app
