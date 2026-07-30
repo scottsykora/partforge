@@ -210,8 +210,10 @@ export function createOcctKernel(replicad) {
         });
       },
       volume: () => measureVolume(mat()._s),
-      toIndexedMesh: () => {
-        const base = baseMesh("preview");
+      // Same default as toSTL: an export is an export, so a .3mf must not ship a
+      // coarser tessellation than the .stl of the same solid would.
+      toIndexedMesh: ({ quality = "print" } = {}) => {
+        const base = baseMesh(quality);
         return { positions: posedPositions(base), indices: Uint32Array.from(base.indices) };
       },
     });

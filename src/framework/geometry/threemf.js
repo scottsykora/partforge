@@ -19,6 +19,54 @@ const RELS =
 const xmlEsc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 const r = (x) => +x.toFixed(4); // 0.1 µm precision — finer than any printer, much smaller XML
 
+// Weld coincident vertices and drop triangles that collapse to zero area.
+//
+// This is what keeps a .3mf manifold, and it has no STL equivalent: STL is vertex
+// soup, so a consumer re-stitches triangles by POSITION and never sees how the
+// mesh was indexed. 3MF reads topology from the indices instead, so two triangles
+// that meet along an edge must literally cite the same two vertex ids — otherwise
+// each counts the shared edge as its own boundary and slicers report the solid as
+// non-manifold. The OCCT backend triangulates every B-rep face independently and
+// concatenates the results, so it hands us one copy of each seam vertex PER
+// adjacent face; welding here is what closes that mesh. (Manifold's own output is
+// already welded, so for that backend this is a no-op beyond the copy.)
+//
+// Welding uses `r` — exactly the precision the file is written at — so any two
+// vertices that would print identical coordinates always collapse to one id. A
+// looser tolerance would move geometry; a tighter one would leave split vertices
+// sitting at coordinates the file cannot tell apart.
+function weld(positions, indices) {
+  const idOf = new Map(); // "x,y,z" → canonical vertex id
+  const coord = []; // canonical id → rounded x,y,z (flat)
+  const canon = new Uint32Array(positions.length / 3);
+  for (let i = 0, v = 0; i < positions.length; i += 3, v++) {
+    const x = r(positions[i]), y = r(positions[i + 1]), z = r(positions[i + 2]);
+    const key = `${x},${y},${z}`;
+    let id = idOf.get(key);
+    if (id === undefined) { id = coord.length / 3; idOf.set(key, id); coord.push(x, y, z); }
+    canon[v] = id;
+  }
+  // Emit vertices in order of first use by a surviving triangle, so a vertex left
+  // behind by a dropped degenerate never ships as an unreferenced <vertex>.
+  const emitted = new Map(); // canonical id → written vertex index
+  const verts = [], tris = [];
+  const emit = (id) => {
+    let at = emitted.get(id);
+    if (at === undefined) {
+      at = verts.length / 3;
+      emitted.set(id, at);
+      verts.push(coord[id * 3], coord[id * 3 + 1], coord[id * 3 + 2]);
+    }
+    return at;
+  };
+  for (let k = 0; k < indices.length; k += 3) {
+    const a = canon[indices[k]], b = canon[indices[k + 1]], c = canon[indices[k + 2]];
+    if (a === b || b === c || a === c) continue; // zero area at print precision — carries no surface
+    tris.push(emit(a), emit(b), emit(c));
+  }
+  return { verts, tris };
+}
+
 // parts: [{ name, positions: Float32Array (x,y,z per vertex), indices: Uint32Array (3 per triangle) }]
 // → ArrayBuffer of the .3mf zip (millimetre units; one <object> + <build> item per part).
 export function meshTo3MF(parts) {
@@ -29,10 +77,9 @@ export function meshTo3MF(parts) {
   ];
   parts.forEach((p, i) => {
     out.push(`<object id="${i + 1}" type="model" name="${xmlEsc(p.name)}"><mesh><vertices>`);
-    const v = p.positions;
-    for (let k = 0; k < v.length; k += 3) out.push(`<vertex x="${r(v[k])}" y="${r(v[k + 1])}" z="${r(v[k + 2])}"/>`);
+    const { verts: v, tris: t } = weld(p.positions, p.indices);
+    for (let k = 0; k < v.length; k += 3) out.push(`<vertex x="${v[k]}" y="${v[k + 1]}" z="${v[k + 2]}"/>`);
     out.push("</vertices><triangles>");
-    const t = p.indices;
     for (let k = 0; k < t.length; k += 3) out.push(`<triangle v1="${t[k]}" v2="${t[k + 1]}" v3="${t[k + 2]}"/>`);
     out.push("</triangles></mesh></object>");
   });
