@@ -34,7 +34,7 @@ const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tole
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
-          makeCompound, loft, draw, exportSTEP, measureVolume, makeSphere, makeLine, Plane } = replicad;
+          loft, draw, exportSTEP, measureVolume, makeSphere, makeLine, Plane } = replicad;
 
   // Fillet/chamfer/shell failure recovery (skip-on-failure, chamfer binary search) —
   // see occt-repair.js for the policies and why they differ per op.
@@ -127,8 +127,12 @@ export function createOcctKernel(replicad) {
         const key = h("cutAll", hash, tools.map((t) => t._hash));
         return cached(key, () => {
           const a = mat(), bs = tools.map((t) => t._mat());
+          if (bs.length === 0) return wrap(a._s.clone(), cloneLabels(a._labels), key);
+          const fusedTools = bs
+            .slice(1)
+            .reduce((acc, b) => acc.fuse(b._s.clone()), bs[0]._s.clone());
           return wrap(
-            a._s.clone().cut(makeCompound(bs.map((b) => b._s.clone()))),
+            a._s.clone().cut(fusedTools),
             [...cloneLabels(a._labels), ...bs.flatMap((b) => cloneLabels(b._labels))],
             key,
           );
