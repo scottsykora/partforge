@@ -83,7 +83,8 @@ test("roundedBox is watertight (genus 0) across regimes and boundaries", () => {
     { size: [20, 14, 10], round: 3 },                              // all-equal
     { size: [24, 16, 12], round: { side: 4, top: 2, bottom: 1 } }, // selective
     { size: [20, 20, 8], round: { side: 0, top: 3, bottom: 2 } },  // rim-only
-    { size: [20, 12, 10], round: { side: 6, top: 5, bottom: 5 } }, // stadium (2·side = min) + top+bottom = h
+    { size: [20, 12, 10], round: { side: 6, top: 4, bottom: 4 } }, // stadium (2·side = min), strict rim gap
+    { size: [20, 20, 8], round: { side: 0, top: 4, bottom: 4 } },  // side-0 full-height round-over
   ];
   for (const c of cases) {
     const s = k.roundedBox(c);
@@ -96,6 +97,7 @@ test("roundedBox is watertight (genus 0) across regimes and boundaries", () => {
 test("clamped middle regime builds the SAME solid as the explicit clamp", () => {
   const a = k.roundedBox({ size: [20, 20, 10], round: { side: 1, top: 3 } });
   const b = k.roundedBox({ size: [20, 20, 10], round: { side: 1, top: 1 } });
+  expect(a._hash).toBe(b._hash); // same cache node, proven directly
   expect(a.volume()).toBe(b.volume()); // identical normalized args → same cache node
 });
 

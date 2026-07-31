@@ -44,6 +44,13 @@ test("roundedBox: the h-fit check validates POST-clamp values", () => {
   spy.mockRestore();
 });
 
+test("roundedBox: with round.side > 0, top + bottom must be strictly < h", () => {
+  expect(() => roundedBoxArgs({ size: [20, 14, 10], round: { side: 5, top: 5, bottom: 5 } }))
+    .toThrow("roundedBox: with round.side > 0, round.top + round.bottom must be < h (the rim fillets would meet tangentially; use side: 0 for full-height round-overs)");
+  expect(() => roundedBoxArgs({ size: [20, 20, 8], round: { side: 0, top: 4, bottom: 4 } }))
+    .not.toThrow();
+});
+
 test("roundedBox: validation errors", () => {
   expect(() => roundedBoxArgs({ size: [20, 12, 8], round: { side: 11 } }))
     .toThrow("roundedBox: round.side (11) must be ≤ min(w, d)/2");

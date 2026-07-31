@@ -26,7 +26,7 @@ import { classifyFaceGroups } from "./feature-attribution.js";
 import { resolveRings } from "./loft.js";
 import { resolveSweepStations } from "./sweep.js";
 import { normalizeProfile } from "./profile.js";
-import { roundedProfile } from "./polygon.js";
+import { roundedRectContour } from "./rounded-solids.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
 import { composePose, transformPositions } from "./pose.js";
@@ -252,8 +252,7 @@ export function createOcctKernel(replicad) {
     return cached(key, () => {
       const z0 = center ? -hgt / 2 : 0;
       if (side > 0) {
-        const rect = [[w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2], [-w / 2, -d / 2]];
-        let s = contourDrawing(roundedProfile(rect, side)).sketchOnPlane("XY", z0).extrude(hgt);
+        let s = contourDrawing(roundedRectContour(w, d, side)).sketchOnPlane("XY", z0).extrude(hgt);
         if (top > 0) s = safeOp(s, (sh) => sh.fillet(top, (e) => e.inPlane("XY", z0 + hgt)), `fillet(${top})`);
         if (bottom > 0) s = safeOp(s, (sh) => sh.fillet(bottom, (e) => e.inPlane("XY", z0)), `fillet(${bottom})`);
         return wrap(s, [], key);
@@ -266,13 +265,13 @@ export function createOcctKernel(replicad) {
         for (const sy of [1, -1]) { // ±Y walls: strip + quarter-cylinder axis along X
           const strip = makeBox([-w / 2, sy > 0 ? d / 2 - rim : -d / 2, zMin],
             [w / 2, sy > 0 ? d / 2 : -d / 2 + rim, zMax]);
-          const cyl = makeCylinder(rim, w, [-w / 2, sy * (d / 2 - rim), zAxis], [1, 0, 0]);
+          const cyl = makeCylinder(rim, w + 4, [-w / 2 - 2, sy * (d / 2 - rim), zAxis], [1, 0, 0]);
           s = s.cut(strip.cut(cyl));
         }
         for (const sx of [1, -1]) { // ±X walls: strip + axis along Y
           const strip = makeBox([sx > 0 ? w / 2 - rim : -w / 2, -d / 2, zMin],
             [sx > 0 ? w / 2 : -w / 2 + rim, d / 2, zMax]);
-          const cyl = makeCylinder(rim, d, [sx * (w / 2 - rim), -d / 2, zAxis], [0, 1, 0]);
+          const cyl = makeCylinder(rim, d + 4, [sx * (w / 2 - rim), -d / 2 - 2, zAxis], [0, 1, 0]);
           s = s.cut(strip.cut(cyl));
         }
       }

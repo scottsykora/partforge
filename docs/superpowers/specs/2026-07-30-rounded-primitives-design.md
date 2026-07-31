@@ -118,7 +118,13 @@ rim fillet on a circular rim is always a closed-form torus patch).
 
 - `roundedBox`: all radii ≥ 0; `2·side ≤ min(w, d)`; `2·top ≤ min(w, d)` and
   likewise `bottom` (the rim round-over inset must keep the cross-section
-  nonempty); `top + bottom ≤ h`.
+  nonempty); `top + bottom ≤ h`, **strict `<` when `side > 0`** — two rim
+  fillets meeting tangentially at the equator is not reliably constructible
+  on the B-rep backend (OCCT's fillet fails at exact fillet-to-fillet
+  tangency), so the fillet-path regime requires a straight wall band;
+  `side: 0` full-height round-overs (`top + bottom = h`) stay valid on both
+  backends. *(Amended 2026-07-30 during implementation — Task 5 review found
+  the OCCT boundary failure.)*
 - `roundedCylinder`: `round.top/bottom ≥ 0`; `round.top ≤ r` and likewise
   `bottom`; `top + bottom ≤ h`.
 - `torus`: `0 < rMinor < rMajor` (horn and self-intersecting tori rejected).

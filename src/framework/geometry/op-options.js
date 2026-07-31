@@ -174,6 +174,8 @@ export function roundedBoxArgs(o) {
   }
   if (round.top + round.bottom > h + 1e-9)
     throw new Error("roundedBox: round.top + round.bottom must be ≤ h");
+  if (round.side > 0 && round.top + round.bottom > h - 1e-9)
+    throw new Error("roundedBox: with round.side > 0, round.top + round.bottom must be < h (the rim fillets would meet tangentially; use side: 0 for full-height round-overs)");
   return [{ size: [w, d, h], center: o.center === true, round }];
 }
 

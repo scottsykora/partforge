@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   latheRoundedRect, torusContour, roundedRectRing, roundedBoxRings, EPS_R,
+  roundedRectContour,
 } from "../src/framework/geometry/rounded-solids.js";
 
 const SQ = Math.SQRT1_2;
@@ -94,4 +95,38 @@ test("roundedBoxRings with round 0 everywhere is just two rect rings", () => {
   expect(rings).toHaveLength(2);
   expect(rings[0].z).toBe(0);
   expect(rings[1].z).toBe(8);
+});
+
+test("roundedRectContour: normal case has 4 lines + 4 arcs, closes on start, vias sit at corner radius r", () => {
+  const r = 2;
+  const c = roundedRectContour(20, 12, r);
+  expect(c.segments).toHaveLength(8);
+  const arcs = c.segments.filter((s) => s.via);
+  const lines = c.segments.filter((s) => !s.via);
+  expect(arcs).toHaveLength(4);
+  expect(lines).toHaveLength(4);
+  expect(c.segments[c.segments.length - 1].to).toEqual(c.start);
+  const hw = 10, hd = 6;
+  const centers = [[hw - r, hd - r], [-(hw - r), hd - r], [-(hw - r), -(hd - r)], [hw - r, -(hd - r)]];
+  arcs.forEach((s, i) => {
+    const [cx, cy] = centers[i];
+    expect(Math.hypot(s.via[0] - cx, s.via[1] - cy)).toBeCloseTo(r, 12);
+  });
+});
+
+test("roundedRectContour: stadium boundary (2·r = min(w, d)) has no zero-length segments", () => {
+  const c = roundedRectContour(20, 12, 6);
+  let cur = c.start;
+  for (const s of c.segments) {
+    expect(Math.hypot(s.to[0] - cur[0], s.to[1] - cur[1])).toBeGreaterThan(1e-9);
+    cur = s.to;
+  }
+  expect(c.segments.filter((s) => s.via)).toHaveLength(4);
+});
+
+test("roundedRectContour: square-stadium (2·r = w = d) is a circle of 4 arcs only, closing on start", () => {
+  const c = roundedRectContour(12, 12, 6);
+  expect(c.segments).toHaveLength(4);
+  for (const s of c.segments) expect(s.via).toBeDefined();
+  expect(c.segments[c.segments.length - 1].to).toEqual(c.start);
 });

@@ -64,3 +64,21 @@ test("roundedBox STEP export carries spherical corner patches (all-equal)", asyn
     await k.toSTEP([{ name: "b", solid: k.roundedBox({ size: [20, 14, 10], round: 3 }) }]));
   expect(step).toMatch(/SPHERICAL_SURFACE/);
 });
+
+test("stadium boundary (2·side = min(w,d)) is B-rep exact", () => {
+  const round = { side: 6, top: 4, bottom: 4 };
+  const v = k.roundedBox({ size: [20, 12, 10], round }).volume();
+  expect(rel(v, roundedBoxVolume([20, 12, 10], round))).toBeLessThan(1e-4);
+});
+
+test("side = 0 full-height round-over (top + bottom = h) is B-rep exact", () => {
+  const round = { side: 0, top: 4, bottom: 4 };
+  const v = k.roundedBox({ size: [20, 20, 8], round }).volume();
+  expect(rel(v, roundedBoxVolume([20, 20, 8], round))).toBeLessThan(1e-4);
+});
+
+test("roundedBox center: true centers Z on OCCT", () => {
+  const bb = k.roundedBox({ size: [20, 14, 10], round: 2, center: true }).boundingBox();
+  expect(bb.min[2]).toBeCloseTo(-5, 4);
+  expect(bb.max[2]).toBeCloseTo(5, 4);
+});

@@ -85,6 +85,31 @@ export function latheRoundedRect(r, h, rTop, rBottom) {
   return { start, segments }; // consumers close() back down the revolve axis
 }
 
+// ArcContour for a rounded rectangle centered at the origin (the OCCT
+// roundedBox base profile). Like latheRoundedRect, built with explicit
+// tangent/via points and zero-length lines SKIPPED, so the exact stadium
+// boundary (2·r = min(w, d), adjacent arcs meeting at the edge midpoint)
+// stays a valid Drawing — roundedProfile emits zero-length segments there.
+// Requires r > 0 (the side = 0 box never takes this path). The loop ends
+// exactly on its start (close() is a no-op, like torusContour).
+export function roundedRectContour(w, d, r) {
+  const hw = w / 2, hd = d / 2, c = r * (1 - COS45);
+  const start = [hw, -(hd - r)];
+  const segments = [];
+  let cur = start;
+  const lineTo = (p) => { if (Math.hypot(p[0] - cur[0], p[1] - cur[1]) > 1e-12) { segments.push({ to: p }); cur = p; } };
+  const arcTo = (to, via) => { segments.push({ to, via }); cur = to; };
+  lineTo([hw, hd - r]);
+  arcTo([hw - r, hd], [hw - c, hd - c]);
+  lineTo([-(hw - r), hd]);
+  arcTo([-hw, hd - r], [-(hw - c), hd - c]);
+  lineTo([-hw, -(hd - r)]);
+  arcTo([-(hw - r), -hd], [-(hw - c), -(hd - c)]);
+  lineTo([hw - r, -hd]);
+  arcTo([hw, -(hd - r)], [hw - c, -(hd - c)]);
+  return { start, segments };
+}
+
 // ArcContour for the torus lathe profile: a full circle of radius rMinor
 // centered at [rMajor, 0], as four quarter arcs. The loop ends exactly on its
 // start: replicad's close() skips the closing line when the pen is already
