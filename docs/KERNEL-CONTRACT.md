@@ -239,7 +239,10 @@ rims ≤ r, top + bottom ≤ h; torus: 0 < rMinor < rMajor. `roundedCylinder`/
 carry real torus/sphere faces to STEP; mesh backends facet at the segs LOD
 (the standard exact-vs-faceted split, not a parity waiver). `roundedBox` is
 faceted at the segs LOD on mesh backends and exact B-rep on OCCT; measure
-parity holds within facet tolerance.
+parity holds within facet tolerance — except where a rim fillet hits a
+degenerate boundary (e.g. rim = side on a stadium profile) and the B-rep
+backend skips it with a warning (`ERROR-PATTERNS.md`,
+`roundedbox-fillet-skipped`) rather than export invalid geometry.
 
 ## Solid ops (combine / transform / query / output)
 

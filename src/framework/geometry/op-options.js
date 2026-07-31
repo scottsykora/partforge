@@ -197,6 +197,10 @@ export function roundedCylinderArgs(o) {
   const round = normalizeRound("roundedCylinder", req("roundedCylinder", o, "round"), ["top", "bottom"]);
   checkRoundRadius("roundedCylinder", "round.top", round.top, r, "r");
   checkRoundRadius("roundedCylinder", "round.bottom", round.bottom, r, "r");
+  // Normalize the +1e-9 validation slack to the exact bound (the roundedBox
+  // side clamp's twin) so the lathe profile never crosses the revolve axis.
+  round.top = Math.min(round.top, r);
+  round.bottom = Math.min(round.bottom, r);
   if (round.top + round.bottom > h + 1e-9)
     throw new Error("roundedCylinder: round.top + round.bottom must be ≤ h");
   return [{ r, h, center: o.center === true, round }];
