@@ -26,6 +26,7 @@ import { classifyFaceGroups } from "./feature-attribution.js";
 import { resolveRings } from "./loft.js";
 import { resolveSweepStations } from "./sweep.js";
 import { normalizeProfile } from "./profile.js";
+import { roundedProfile } from "./polygon.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
 import { composePose, transformPositions } from "./pose.js";
@@ -236,6 +237,49 @@ export function createOcctKernel(replicad) {
     });
   };
 
+  // Rounded box. side > 0: an arc-exact rounded-rect extrusion (real CIRCLE
+  // wall edges in STEP) with each rim rounded by ONE native fillet on its
+  // smooth rim loop — exact torus/sphere corner patches, matching the mesh
+  // backend's ring semantics by construction. side = 0: rim round-overs are
+  // CUT with strip-minus-quarter-cylinder wedges running the full edge
+  // length, so corners are the deterministic intersection of adjacent
+  // round-overs (native fillet's vertex blend is kernel-specific and the
+  // mesh backend could not reproduce it — see the design spec).
+  const roundedBox = ({ size, center, round }) => {
+    const [w, d, hgt] = size;
+    const { side, top, bottom } = round;
+    const key = h("roundedBox", size, center, side, top, bottom);
+    return cached(key, () => {
+      const z0 = center ? -hgt / 2 : 0;
+      if (side > 0) {
+        const rect = [[w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2], [-w / 2, -d / 2]];
+        let s = contourDrawing(roundedProfile(rect, side)).sketchOnPlane("XY", z0).extrude(hgt);
+        if (top > 0) s = safeOp(s, (sh) => sh.fillet(top, (e) => e.inPlane("XY", z0 + hgt)), `fillet(${top})`);
+        if (bottom > 0) s = safeOp(s, (sh) => sh.fillet(bottom, (e) => e.inPlane("XY", z0)), `fillet(${bottom})`);
+        return wrap(s, [], key);
+      }
+      let s = makeBox([-w / 2, -d / 2, z0], [w / 2, d / 2, z0 + hgt]);
+      for (const [rim, zFace, into] of [[top, z0 + hgt, -1], [bottom, z0, 1]]) {
+        if (!(rim > 0)) continue;
+        const zAxis = zFace + into * rim;
+        const zMin = Math.min(zFace, zAxis), zMax = Math.max(zFace, zAxis);
+        for (const sy of [1, -1]) { // ±Y walls: strip + quarter-cylinder axis along X
+          const strip = makeBox([-w / 2, sy > 0 ? d / 2 - rim : -d / 2, zMin],
+            [w / 2, sy > 0 ? d / 2 : -d / 2 + rim, zMax]);
+          const cyl = makeCylinder(rim, w, [-w / 2, sy * (d / 2 - rim), zAxis], [1, 0, 0]);
+          s = s.cut(strip.cut(cyl));
+        }
+        for (const sx of [1, -1]) { // ±X walls: strip + axis along Y
+          const strip = makeBox([sx > 0 ? w / 2 - rim : -w / 2, -d / 2, zMin],
+            [sx > 0 ? w / 2 : -w / 2 + rim, d / 2, zMax]);
+          const cyl = makeCylinder(rim, d, [sx * (w / 2 - rim), -d / 2, zAxis], [0, 1, 0]);
+          s = s.cut(strip.cut(cyl));
+        }
+      }
+      return wrap(s, [], key);
+    });
+  };
+
   // Draw a closed Drawing from a Contour: a legacy 2-D point list (all straight edges,
   // the former polyDrawing) OR an ArcContour whose { to, via } segments become true
   // OCCT arc edges via threePointsArcTo — so a rounded corner survives to STEP as a
@@ -441,6 +485,7 @@ export function createOcctKernel(replicad) {
   const kernel = finishKernel({
     cylinder, // boredCylinder: the kernel front's default composition is exactly right here
     box: (min, max) => cached(h("box", min, max), () => wrap(makeBox(min, max), [], h("box", min, max))),
+    roundedBox,
     prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube,
     sphere: (r) => cached(h("sphere", r), () => wrap(makeSphere(r), [], h("sphere", r))),
     union: (solids) => {

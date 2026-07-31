@@ -1,6 +1,7 @@
 import { helixTube } from "./helix-tube.js";
 import { loftMesh } from "./loft.js";
 import { sweepMesh } from "./sweep.js";
+import { roundedBoxRings } from "./rounded-solids.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
@@ -197,6 +198,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       const tool = T(tool0.translate([0, 0, -2])); // raw ops: track each result
       return T(body.subtract(tool));
     }),
+    // Rounded box: ONE hand-meshed ring stack (no booleans) whose cross-
+    // sections follow the normative formula (rounded-solids.js / the design
+    // spec). Reuses loftMesh's stitch/cap/winding machinery. Atomic cache
+    // node hashed from its own args, like boredCylinder.
+    roundedBox: ({ size, center, round }) => cached(
+      h("roundedBox", size, center, round.side, round.top, round.bottom, segs),
+      () => {
+        const solid = T(loftMesh(wasm, roundedBoxRings(size, round, segs)));
+        return center ? T(solid.translate([0, 0, -size[2] / 2])) : solid;
+      }),
     sphere: (r) => wrap(T(Manifold.sphere(r, segs)), h("sphere", r, segs)),
     box: (min, max) => {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
