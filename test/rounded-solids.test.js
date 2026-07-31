@@ -85,6 +85,10 @@ test("roundedBoxRings: ascending z, constant N, correct zone endpoints", () => {
   expect(Math.max(...xt)).toBeCloseTo(10, 9);
 });
 
+// Deliberately exercises the builder directly with top + bottom = h at side > 0 —
+// the public roundedBox op's validation now rejects this exact combination
+// (round.top + round.bottom must be strictly < h when side > 0); this test
+// pins the lower-level builder's own station-dedup behavior, not a reachable op call.
 test("roundedBoxRings dedupes the shared station when top + bottom = h", () => {
   const rings = roundedBoxRings([20, 20, 10], { side: 5, top: 5, bottom: 5 }, 32);
   for (let i = 1; i < rings.length; i++) expect(rings[i].z).toBeGreaterThan(rings[i - 1].z);

@@ -20,14 +20,14 @@ test("oracle self-check: quadrature agrees with the Minkowski anchor", () => {
 
 test("roundedCylinder volume matches the lathe oracle", () => {
   const v = k.roundedCylinder({ r: 8, h: 20, round: { top: 3, bottom: 1.5 } }).volume();
-  expect(rel(v, roundedCylinderVolume(8, 20, { top: 3, bottom: 1.5 }))).toBeLessThan(0.01);
+  expect(rel(v, roundedCylinderVolume(8, 20, { top: 3, bottom: 1.5 }))).toBeLessThan(0.005);
 });
 
 test("capsule boundary (round = r, top + bottom = h) builds watertight — a sphere", () => {
   const s = k.roundedCylinder({ r: 5, h: 10, round: 5 });
   expect(s.isEmpty()).toBe(false);
   expect(s.genus()).toBe(0);
-  expect(rel(s.volume(), (4 / 3) * Math.PI * 125)).toBeLessThan(0.01);
+  expect(rel(s.volume(), (4 / 3) * Math.PI * 125)).toBeLessThan(0.005);
 });
 
 test("round: 0 degenerates to the plain cylinder", () => {
@@ -45,7 +45,7 @@ test("torus: genus 1, volume 2π²·R·r²", () => {
   const s = k.torus({ rMajor: 10, rMinor: 3 });
   expect(s.genus()).toBe(1);
   expect(s.isEmpty()).toBe(false);
-  expect(rel(s.volume(), torusVolume(10, 3))).toBeLessThan(0.01);
+  expect(rel(s.volume(), torusVolume(10, 3))).toBeLessThan(0.005);
 });
 
 test("torus bounding box spans z ∈ [−rMinor, rMinor]", () => {
@@ -57,25 +57,30 @@ test("torus bounding box spans z ∈ [−rMinor, rMinor]", () => {
 
 test("all-equal roundedBox matches the Minkowski closed form", () => {
   const v = k.roundedBox({ size: [20, 14, 10], round: 3 }).volume();
-  expect(rel(v, minkowskiRoundedBoxVolume([20, 14, 10], 3))).toBeLessThan(0.01);
+  expect(rel(v, minkowskiRoundedBoxVolume([20, 14, 10], 3))).toBeLessThan(0.005);
 });
 
 test("selective radii (side > rims) match the section oracle", () => {
   const round = { side: 4, top: 2, bottom: 1 };
   const v = k.roundedBox({ size: [24, 16, 12], round }).volume();
-  expect(rel(v, roundedBoxVolume([24, 16, 12], round))).toBeLessThan(0.01);
+  expect(rel(v, roundedBoxVolume([24, 16, 12], round))).toBeLessThan(0.005);
 });
 
 test("side = 0 rim-only round-over matches the oracle", () => {
   const round = { side: 0, top: 3, bottom: 0 };
   const v = k.roundedBox({ size: [20, 20, 8], round }).volume();
-  expect(rel(v, roundedBoxVolume([20, 20, 8], round))).toBeLessThan(0.01);
+  expect(rel(v, roundedBoxVolume([20, 20, 8], round))).toBeLessThan(0.005);
 });
 
 test("vertical-only rounding (rims 0) matches the oracle", () => {
   const round = { side: 3, top: 0, bottom: 0 };
   const v = k.roundedBox({ size: [20, 12, 8], round }).volume();
-  expect(rel(v, roundedBoxVolume([20, 12, 8], round))).toBeLessThan(0.01);
+  expect(rel(v, roundedBoxVolume([20, 12, 8], round))).toBeLessThan(0.005);
+});
+
+test("round: 0 degenerates to the plain box volume", () => {
+  const v = k.roundedBox({ size: [20, 12, 8], round: 0 }).volume();
+  expect(rel(v, 20 * 12 * 8)).toBeLessThan(0.005);
 });
 
 test("roundedBox is watertight (genus 0) across regimes and boundaries", () => {

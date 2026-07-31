@@ -253,8 +253,13 @@ export function createOcctKernel(replicad) {
       const z0 = center ? -hgt / 2 : 0;
       if (side > 0) {
         let s = contourDrawing(roundedRectContour(w, d, side)).sketchOnPlane("XY", z0).extrude(hgt);
-        if (top > 0) s = safeOp(s, (sh) => sh.fillet(top, (e) => e.inPlane("XY", z0 + hgt)), `fillet(${top})`);
-        if (bottom > 0) s = safeOp(s, (sh) => sh.fillet(bottom, (e) => e.inPlane("XY", z0)), `fillet(${bottom})`);
+        // A rim fillet can only remove material, never add it — OCCT's fillet is
+        // known to produce invalid-but-nonempty geometry at certain degenerate
+        // boundaries (e.g. rim radius == side on a stadium profile), so gate
+        // acceptance on strict volume reduction rather than just "non-empty".
+        const isRimFilletValid = (vol, before) => vol > 0 && vol < before - 1e-9;
+        if (top > 0) s = safeOp(s, (sh) => sh.fillet(top, (e) => e.inPlane("XY", z0 + hgt)), `fillet(${top})`, isRimFilletValid);
+        if (bottom > 0) s = safeOp(s, (sh) => sh.fillet(bottom, (e) => e.inPlane("XY", z0)), `fillet(${bottom})`, isRimFilletValid);
         return wrap(s, [], key);
       }
       let s = makeBox([-w / 2, -d / 2, z0], [w / 2, d / 2, z0 + hgt]);

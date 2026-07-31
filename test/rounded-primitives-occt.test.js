@@ -33,6 +33,11 @@ test("validation errors are backend-identical (shared normalizer)", () => {
     .toThrow("roundedCylinder: round.top + round.bottom must be ≤ h");
 });
 
+test("revolve: a Shape2D profile crossing the axis (negative radius) throws", () => {
+  expect(() => k.revolve({ profile: k.shape2d([[-1, 0], [5, 0], [5, 3], [-1, 3]]) }))
+    .toThrow("revolve: profile radius must be ≥ 0");
+});
+
 test("STEP export carries real curved surfaces (no faceting)", async () => {
   const torusStep = new TextDecoder().decode(
     await k.toSTEP([{ name: "t", solid: k.torus({ rMajor: 10, rMinor: 3 }) }]));
@@ -81,4 +86,26 @@ test("roundedBox center: true centers Z on OCCT", () => {
   const bb = k.roundedBox({ size: [20, 14, 10], round: 2, center: true }).boundingBox();
   expect(bb.min[2]).toBeCloseTo(-5, 4);
   expect(bb.max[2]).toBeCloseTo(5, 4);
+});
+
+test("stadium rim == side: OCCT never ships fillet output that adds material", () => {
+  // OCCT's fillet produces invalid geometry at this exact boundary (rim == side
+  // on a stadium profile); the monotonicity gate must skip it loudly rather
+  // than export it. The un-filleted stadium prism is the volume ceiling.
+  const base = 20 * 12 * 10 - (4 - Math.PI) * 36 * 10; // stadium prism, side 6
+  for (const round of [{ side: 6, top: 6 }, { side: 6, top: 6, bottom: 3 }]) {
+    const v = k.roundedBox({ size: [20, 12, 10], round }).volume();
+    expect(v, JSON.stringify(round)).toBeLessThanOrEqual(base + 1e-6);
+  }
+});
+
+test("OCCT: round: 0 degenerates to the plain box, and side-only rounding matches the oracle", () => {
+  const v = k.roundedBox({ size: [20, 12, 8], round: { side: 3, top: 0, bottom: 0 } }).volume();
+  expect(rel(v, roundedBoxVolume([20, 12, 8], { side: 3, top: 0, bottom: 0 }))).toBeLessThan(1e-4);
+});
+
+test("OCCT: side = 0 wedge round-over with center: true centers Z", () => {
+  const bb = k.roundedBox({ size: [20, 20, 8], round: { side: 0, top: 3, bottom: 2 }, center: true }).boundingBox();
+  expect(bb.min[2]).toBeCloseTo(-4, 4);
+  expect(bb.max[2]).toBeCloseTo(4, 4);
 });

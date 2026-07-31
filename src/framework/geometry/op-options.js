@@ -160,22 +160,29 @@ export function roundedBoxArgs(o) {
   checkRoundRadius("roundedBox", "round.side", round.side, Math.min(w, d) / 2, "min(w, d)/2");
   checkRoundRadius("roundedBox", "round.top", round.top, Math.min(w, d) / 2, "min(w, d)/2");
   checkRoundRadius("roundedBox", "round.bottom", round.bottom, Math.min(w, d) / 2, "min(w, d)/2");
+  // Normalize the +1e-9 validation slack above to the exact stadium bound, so
+  // Manifold and OCCT build from bit-identical arguments at that boundary.
+  round.side = Math.min(round.side, Math.min(w, d) / 2);
   // Middle regime (0 < side < rim): rims clamp DOWN to side — side defines the
   // footprint and must not grow; a shrunk round-over only adds material. The
   // side = 0 sphere-free rim round-over stays fully valid (see the spec).
   if (round.side > 0) {
     for (const key of ["top", "bottom"]) {
       if (round[key] > round.side) {
+        // Keyed on op/field/side rather than the full message — a slider sweep
+        // over the raw rim value (round[key]) would otherwise mint a distinct
+        // message (and a distinct Set entry) on every rebuild, defeating the dedupe.
+        const dedupeKey = `roundedBox.${key}|${round.side}`;
         const msg = `roundedBox: round.${key} ${round[key]} clamped to round.side ${round.side} (side must be 0 or ≥ rim radii; use side: 0 for a rim-only round-over)`;
-        if (!warnedClamps.has(msg)) { warnedClamps.add(msg); console.warn(msg); }
+        if (!warnedClamps.has(dedupeKey)) { warnedClamps.add(dedupeKey); console.warn(msg); }
         round[key] = round.side;
       }
     }
   }
   if (round.top + round.bottom > h + 1e-9)
     throw new Error("roundedBox: round.top + round.bottom must be ≤ h");
-  if (round.side > 0 && round.top + round.bottom > h - 1e-9)
-    throw new Error("roundedBox: with round.side > 0, round.top + round.bottom must be < h (the rim fillets would meet tangentially; use side: 0 for full-height round-overs)");
+  if (round.side > 0 && round.top + round.bottom > h - 1e-6)
+    throw new Error("roundedBox: with round.side > 0, round.top + round.bottom must be < h (the rim fillets would meet tangentially; reduce the rim radii slightly, or use side: 0 for a sharp-sided full-height round-over)");
   return [{ size: [w, d, h], center: o.center === true, round }];
 }
 
