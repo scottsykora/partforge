@@ -20,6 +20,7 @@ export const CONTRACT_VERSION = 1;
 export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
   "loft", "sweep", "helixSweptTube", "union", "shape2d", "text2d", "hull", "hullChain", "toSTEP",
+  "roundedCylinder", "torus",
 ];
 
 // Backend-optional kernel ops: the sub-part cache brackets + WASM lifetime hooks.
@@ -99,6 +100,8 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(o:{r?:number,d?:number,r1?:number,r2?:number,d1?:number,d2?:number,h:number,center?:boolean}) => Solid} cylinder   canonical: {r|d,h} straight, {r1,r2,h}|{d1,d2,h} cone; legacy (rBottom,rTop,h,opts) accepted until contract v2
  * @property {(o:{od:number,h:number,bore:number}) => Solid} boredCylinder   compound: bored-through cylinder (one cache node)
  * @property {(o:{r?:number,d?:number}) => Solid} sphere   sphere centred at the origin; {r|d}; bare sphere(r) stays valid
+ * @property {(o:{r?:number,d?:number,h:number,center?:boolean,round:number|{top?:number,bottom?:number}}) => Solid} roundedCylinder   rim round-overs via one lathe revolve; options-only; round ≤ r, top+bottom ≤ h
+ * @property {(o:{rMajor:number,rMinor:number}) => Solid} torus   centered at origin, tube centerline in the z=0 plane; 0 < rMinor < rMajor; options-only
  * @property {(o:{size?:number[],center?:boolean,min?:number[],max?:number[]}) => Solid} box   {size} = centered X/Y, base z=0 ({center:true} centers Z too) or {min,max}; legacy (min,max) accepted until v2
  * @property {(o:{points:number[][],h:number,twist?:number,scaleTop?:number}) => Solid} prism   extrude polygon from z=0; legacy (points,h,opts) accepted until v2
  * @property {(o:{profile:number[][]|{outer:number[][],holes?:number[][][]},h:number,twist?:number,scaleTop?:number,bevel?:number|{bottom?:number,top?:number}}) => Solid} extrude   polygon-with-holes region from z=0; bevel = 45° rim bevel (any profile form incl. Shape2D, materialized to point rings; no twist/scaleTop); legacy (profile,h,opts) accepted until v2
