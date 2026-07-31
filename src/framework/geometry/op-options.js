@@ -226,7 +226,11 @@ export const KERNEL_OP_SPECS = {
   extrude:  { toArgs: extrudeArgs, check: checkScaleTop("extrude") },
   revolve:  { toArgs: revolveArgs, check: (pts) => {
     if (pts && pts._shape2d) {
-      if (pts.boundingBox().min[0] < 0) throw new Error("revolve: profile radius must be ≥ 0");
+      // The B-rep backend's Drawing bounding box is tolerance-padded (1e-6 on
+      // every side, measured), so a lathe profile touching the revolve axis at
+      // x = 0 reports min[0] = -1e-6. Tolerate the padding; a real negative-
+      // radius profile still trips the check.
+      if (pts.boundingBox().min[0] < -1e-5) throw new Error("revolve: profile radius must be ≥ 0");
       return;
     }
     for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
