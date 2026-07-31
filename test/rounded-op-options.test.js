@@ -33,6 +33,17 @@ test("roundedBox: side = 0 with big rims does NOT clamp or warn", () => {
   spy.mockRestore();
 });
 
+test("roundedBox: the h-fit check validates POST-clamp values", () => {
+  const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  // raw top+bottom = 4 > h = 3, but both clamp down to side = 1 → valid
+  const [o] = roundedBoxArgs({ size: [20, 20, 3], round: { side: 1, top: 2, bottom: 2 } });
+  expect(o.round).toEqual({ side: 1, top: 1, bottom: 1 });
+  // side = 0 disables the clamp, so an oversized raw sum still throws
+  expect(() => roundedBoxArgs({ size: [20, 20, 3], round: { side: 0, top: 2, bottom: 2 } }))
+    .toThrow("roundedBox: round.top + round.bottom must be ≤ h");
+  spy.mockRestore();
+});
+
 test("roundedBox: validation errors", () => {
   expect(() => roundedBoxArgs({ size: [20, 12, 8], round: { side: 11 } }))
     .toThrow("roundedBox: round.side (11) must be ≤ min(w, d)/2");

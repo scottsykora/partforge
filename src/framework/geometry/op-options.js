@@ -160,8 +160,6 @@ export function roundedBoxArgs(o) {
   checkRoundRadius("roundedBox", "round.side", round.side, Math.min(w, d) / 2, "min(w, d)/2");
   checkRoundRadius("roundedBox", "round.top", round.top, Math.min(w, d) / 2, "min(w, d)/2");
   checkRoundRadius("roundedBox", "round.bottom", round.bottom, Math.min(w, d) / 2, "min(w, d)/2");
-  if (round.top + round.bottom > h + 1e-9)
-    throw new Error("roundedBox: round.top + round.bottom must be ≤ h");
   // Middle regime (0 < side < rim): rims clamp DOWN to side — side defines the
   // footprint and must not grow; a shrunk round-over only adds material. The
   // side = 0 sphere-free rim round-over stays fully valid (see the spec).
@@ -174,6 +172,8 @@ export function roundedBoxArgs(o) {
       }
     }
   }
+  if (round.top + round.bottom > h + 1e-9)
+    throw new Error("roundedBox: round.top + round.bottom must be ≤ h");
   return [{ size: [w, d, h], center: o.center === true, round }];
 }
 
