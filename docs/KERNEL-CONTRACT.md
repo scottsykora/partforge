@@ -212,7 +212,9 @@ station list (`sweep.js`) on both backends.
 ### Rounded primitives
 
 `roundedBox` / `roundedCylinder` / `torus` are options-only compound
-primitives (atomic cache nodes). Normative semantics for `roundedBox`
+primitives. `roundedBox` is an atomic compound node; `roundedCylinder`/`torus`
+desugar to a `shape2d` + `revolve` pair (both nodes hash deterministically
+from the op's arguments). Normative semantics for `roundedBox`
 (design spec 2026-07-30): the cross-section at height z is the rounded
 rectangle inset by δ(z) with corner radius max(side − δ(z), 0), where δ
 traces a quarter circle of the rim radius in each rim zone and is 0 in the

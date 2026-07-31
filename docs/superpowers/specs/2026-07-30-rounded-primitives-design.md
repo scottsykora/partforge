@@ -59,7 +59,10 @@ k.torus({ rMajor, rMinor })
   replaces.
 - All three are **compound cache nodes** hashing their own arguments plus the
   mesh LOD (`segs`) on Manifold — the `boredCylinder` precedent. Internals
-  (lathe profiles, fillet intermediates) never hit the solid cache.
+  (lathe profiles, fillet intermediates) never hit the solid cache. (Implementation
+  note, 2026-07-30: `roundedBox` is a single atomic node; `roundedCylinder`/`torus`
+  desugar to a `shape2d` + `revolve` node pair at the kernel front — two
+  deterministic nodes, no WASM internals exposed.)
 - Canonical-at-origin, orient-then-place: all three compose with
   `.along(dir).at(v)` like every other primitive.
 

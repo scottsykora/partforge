@@ -89,6 +89,18 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** the middle regime `0 < side < rim` has no closed-form corner shared by both backends, so the rim radii clamp down to `side` (the footprint-defining radius never grows silently).
 - **Fix:** either raise `round.side` to ≥ the rim radii (torus/sphere corners), or set `side: 0` exactly for a full-size rim-only round-over on sharp vertical edges.
 
+## roundedbox-strict-h
+
+- **Symptom:** `roundedBox: with round.side > 0, round.top + round.bottom must be < h (the rim fillets would meet tangentially; reduce the rim radii slightly, or use side: 0 for a sharp-sided full-height round-over)` thrown from a build.
+- **Cause:** with `round.side > 0`, the top and bottom rim fillets are separate features that need a straight wall band between them; `top + bottom == h` (or greater) leaves no band, so the fillets would meet tangentially — which the B-rep backend cannot build.
+- **Fix:** reduce `round.top`/`round.bottom` slightly so their sum is strictly less than `h`, or set `round.side: 0` for a sharp-sided full-height round-over. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § roundedBox row.
+
+## roundedbox-fillet-skipped
+
+- **Symptom:** `partforge: fillet(<r>) produced invalid geometry — feature skipped` (or `… produced an empty solid — feature skipped`) in the console during a `roundedBox` build, and the OCCT-exported rim is sharp where a round-over was requested.
+- **Cause:** OCCT's native fillet cannot build the rim round-over at a degenerate boundary (e.g. a rim radius exactly equal to `round.side` on a stadium profile, `2·side == min(w, d)`) and would otherwise return invalid-but-nonempty geometry; the monotonicity/validity gate in `occt-repair.js`'s `safeOp` catches it and skips the feature rather than exporting invalid STEP.
+- **Fix:** shrink the affected rim radius slightly below `round.side` (or below the degenerate boundary), or accept the sharp rim at that exact radius.
+
 ## boolean-not-watertight
 
 - **Symptom:** `NOT watertight ✗` from `partforge measure` (non-zero exit) after adding a boolean cut or union.
