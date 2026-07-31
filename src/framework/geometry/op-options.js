@@ -126,6 +126,94 @@ export function sweepArgs(o) {
     ...tail(o, ["closed", "cornerRadius", "ruled", "smooth"])];
 }
 
+// ---- rounded primitives (options-only ops) -------------------------------
+
+// Clamp warnings are deduped per distinct message so a slider sweep doesn't
+// spam the console on every rebuild. Console-only side channel; the returned
+// geometry stays a pure function of the arguments.
+const warnedClamps = new Set();
+
+// `round` accepts a number (broadcast to every group) or a plain object with
+// the op's group keys (missing keys → 0).
+const normalizeRound = (op, v, keys) => {
+  if (typeof v === "number") return Object.fromEntries(keys.map((key) => [key, v]));
+  if (isPlainOptions(v)) {
+    checkKeys(`${op}: round`, v, keys);
+    return Object.fromEntries(keys.map((key) => [key, v[key] ?? 0]));
+  }
+  throw new Error(`${op}: round must be a number or { ${keys.join("?, ")}? }`);
+};
+
+const checkRoundRadius = (op, name, v, max, maxDesc) => {
+  if (!(typeof v === "number" && Number.isFinite(v) && v >= 0))
+    throw new Error(`${op}: ${name} must be a finite number ≥ 0`);
+  if (v > max + 1e-9) throw new Error(`${op}: ${name} (${v}) must be ≤ ${maxDesc}`);
+};
+
+export function roundedBoxArgs(o) {
+  checkKeys("roundedBox", o, ["size", "center", "round"]);
+  const size = req("roundedBox", o, "size");
+  if (!Array.isArray(size) || size.length !== 3 || !size.every((v) => Number.isFinite(v) && v > 0))
+    throw new Error("roundedBox: size must be [w, d, h] with three positive numbers");
+  const [w, d, h] = size;
+  const round = normalizeRound("roundedBox", req("roundedBox", o, "round"), ["side", "top", "bottom"]);
+  checkRoundRadius("roundedBox", "round.side", round.side, Math.min(w, d) / 2, "min(w, d)/2");
+  checkRoundRadius("roundedBox", "round.top", round.top, Math.min(w, d) / 2, "min(w, d)/2");
+  checkRoundRadius("roundedBox", "round.bottom", round.bottom, Math.min(w, d) / 2, "min(w, d)/2");
+  // Normalize the +1e-9 validation slack above to the exact stadium bound, so
+  // Manifold and OCCT build from bit-identical arguments at that boundary.
+  round.side = Math.min(round.side, Math.min(w, d) / 2);
+  // Middle regime (0 < side < rim): rims clamp DOWN to side — side defines the
+  // footprint and must not grow; a shrunk round-over only adds material. The
+  // side = 0 sphere-free rim round-over stays fully valid (see the spec).
+  if (round.side > 0) {
+    for (const key of ["top", "bottom"]) {
+      if (round[key] > round.side) {
+        // Keyed on op/field/side rather than the full message — a slider sweep
+        // over the raw rim value (round[key]) would otherwise mint a distinct
+        // message (and a distinct Set entry) on every rebuild, defeating the dedupe.
+        const dedupeKey = `roundedBox.${key}|${round.side}`;
+        const msg = `roundedBox: round.${key} ${round[key]} clamped to round.side ${round.side} (side must be 0 or ≥ rim radii; use side: 0 for a rim-only round-over)`;
+        if (!warnedClamps.has(dedupeKey)) { warnedClamps.add(dedupeKey); console.warn(msg); }
+        round[key] = round.side;
+      }
+    }
+  }
+  if (round.top + round.bottom > h + 1e-9)
+    throw new Error("roundedBox: round.top + round.bottom must be ≤ h");
+  if (round.side > 0 && round.top + round.bottom > h - 1e-6)
+    throw new Error("roundedBox: with round.side > 0, round.top + round.bottom must be < h (the rim fillets would meet tangentially; reduce the rim radii slightly, or use side: 0 for a sharp-sided full-height round-over)");
+  return [{ size: [w, d, h], center: o.center === true, round }];
+}
+
+export function roundedCylinderArgs(o) {
+  checkKeys("roundedCylinder", o, ["r", "d", "h", "center", "round"]);
+  const hasR = o.r !== undefined;
+  if (hasR === (o.d !== undefined)) throw new Error("roundedCylinder: pass exactly one of r/d");
+  const r = hasR ? o.r : o.d / 2;
+  if (!(Number.isFinite(r) && r > 0)) throw new Error("roundedCylinder: r must be > 0");
+  const h = req("roundedCylinder", o, "h");
+  if (!(Number.isFinite(h) && h > 0)) throw new Error("roundedCylinder: h must be > 0");
+  const round = normalizeRound("roundedCylinder", req("roundedCylinder", o, "round"), ["top", "bottom"]);
+  checkRoundRadius("roundedCylinder", "round.top", round.top, r, "r");
+  checkRoundRadius("roundedCylinder", "round.bottom", round.bottom, r, "r");
+  // Normalize the +1e-9 validation slack to the exact bound (the roundedBox
+  // side clamp's twin) so the lathe profile never crosses the revolve axis.
+  round.top = Math.min(round.top, r);
+  round.bottom = Math.min(round.bottom, r);
+  if (round.top + round.bottom > h + 1e-9)
+    throw new Error("roundedCylinder: round.top + round.bottom must be ≤ h");
+  return [{ r, h, center: o.center === true, round }];
+}
+
+export function torusArgs(o) {
+  checkKeys("torus", o, ["rMajor", "rMinor"]);
+  const rMajor = req("torus", o, "rMajor"), rMinor = req("torus", o, "rMinor");
+  if (!(Number.isFinite(rMajor) && Number.isFinite(rMinor) && rMinor > 0 && rMinor < rMajor))
+    throw new Error("torus: requires 0 < rMinor < rMajor");
+  return [{ rMajor, rMinor }];
+}
+
 // Per-op semantic validations, applied to the NORMALIZED positional args so
 // they cover both calling forms (these moved here from kernel-front.js).
 const checkScaleTop = (op) => (_profile, _h, opts) => {
@@ -151,7 +239,11 @@ export const KERNEL_OP_SPECS = {
   extrude:  { toArgs: extrudeArgs, check: checkScaleTop("extrude") },
   revolve:  { toArgs: revolveArgs, check: (pts) => {
     if (pts && pts._shape2d) {
-      if (pts.boundingBox().min[0] < 0) throw new Error("revolve: profile radius must be ≥ 0");
+      // The B-rep backend's Drawing bounding box is tolerance-padded (1e-6 on
+      // every side, measured), so a lathe profile touching the revolve axis at
+      // x = 0 reports min[0] = -1e-6. Tolerate the padding; a real negative-
+      // radius profile still trips the check.
+      if (pts.boundingBox().min[0] < -1e-5) throw new Error("revolve: profile radius must be ≥ 0");
       return;
     }
     for (const [r] of pts) if (r < 0) throw new Error("revolve: profile radius must be ≥ 0");
@@ -161,6 +253,9 @@ export const KERNEL_OP_SPECS = {
   boredCylinder:  { toArgs: passThrough("boredCylinder", ["od", "h", "bore"], ["od", "h", "bore"]) },
   helixSweptTube: { toArgs: passThrough("helixSweptTube",
     ["pathR", "profileR", "pitch", "turns", "z0", "lefthand"], ["pathR", "profileR", "pitch", "turns"]) },
+  roundedBox:      { toArgs: roundedBoxArgs },
+  roundedCylinder: { toArgs: roundedCylinderArgs },
+  torus:           { toArgs: torusArgs },
 };
 
 // Solid ops under the options convention; addSugar() wraps these when the

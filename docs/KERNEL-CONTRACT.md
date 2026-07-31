@@ -177,6 +177,9 @@ above. All ops return a `Solid`.
 | `cylinder({r\|d, h, center?})` · `cylinder({r1, r2, h, center?})` \| `{d1, d2, h}` | Cylinder along +Z from z = 0 (straight: exactly one of `r`/`d`); the cone form (`r1`/`r2` or `d1`/`d2` ends) gives a frustum. `center: true` centers on z = 0. |
 | `boredCylinder({od, h, bore})` | Compound: cylinder of diameter `od` with a through-bore `bore`. Semantically identical to the composition in `kernel-front.js`; a backend may override only for caching, never for different geometry. |
 | `sphere({r\|d})` | Sphere centered at the origin; bare `sphere(r)` stays valid. |
+| `roundedCylinder({ r\|d, h, center?, round })` | Cylinder with rim round-overs (`round`: number = both rims, or `{ top?, bottom? }`), built as one lathe `revolve` of an arc-exact profile — real torus faces in STEP. Validation: radii ≥ 0, each ≤ r, top + bottom ≤ h. Options-only. |
+| `torus({ rMajor, rMinor })` | Torus centered at the origin, tube centerline in the z = 0 plane; requires 0 < rMinor < rMajor. Curve-exact on B-rep backends. Options-only. |
+| `roundedBox({ size, center?, round })` | Box with selectively rounded edges; `round`: number = every edge, or `{ side?, top?, bottom? }` (vertical edges / top rim / bottom rim). Corner semantics and the `0 < side < rim` clamp-with-warning rule are normative in the design spec and summarized under [Rounded primitives](#rounded-primitives). Options-only. |
 | `box({size, center?})` · `box({min, max})` | Axis-aligned box: `{size:[x,y,z]}` centered in X/Y with base at z = 0 (`center: true` also centers Z), or explicit `[x,y,z]` `{min, max}` corners. |
 | `prism({points, h, twist?, scaleTop?})` | Extrude one CCW contour (point list or arc profile) from z = 0. `twist` = total degrees over the height; `scaleTop` = uniform top scale (1 straight, 0 → apex). |
 | `extrude({profile, h, twist?, scaleTop?, bevel?})` | Same, for a polygon-with-holes region — `profile` is `{outer, holes?}` (bare contour = outer only) — in one op, no per-hole boolean. `profile` may also be a `Shape2D` (see below). `bevel` (number = both rims, `{bottom?, top?}` = per rim) cuts a 45° rim bevel; it desugars at the shared front into extrude + loft + intersect/cut, so it is backend-identical by construction and is **not** a CAD-only op (no OCCT routing). Every profile form works — point array, arc profile, `{outer, holes}` (hole rims flare outward), or `Shape2D` (multi-region bevels each and unions) — but curved profiles are **materialized to point rings** first, so a beveled extrusion is faceted at the sampling LOD even in STEP (arc contours at a fixed pure-JS LOD, backend-identical; a `Shape2D` at its backend's own LOD — `hull`'s parity class). No `twist`/`scaleTop`, and `bottom + top < h` or it throws; a bevel a rim's narrow features cannot take is deterministically reduced with a console warning (`ERROR-PATTERNS.md#extrude-bevel-reduced`). |
@@ -205,6 +208,41 @@ mesh backends** (Manifold); B-rep kernels throw a plain `Error` naming the limit
 render the ruled form. `sweep` `closed: true` loops must be planar. Where both backends build the same
 shape they do it **by construction, not by tolerance**: sweep elbows loft the identical
 station list (`sweep.js`) on both backends.
+
+### Rounded primitives
+
+`roundedBox` / `roundedCylinder` / `torus` are options-only compound
+primitives. `roundedBox` is an atomic compound node; `roundedCylinder`/`torus`
+desugar to a `shape2d` + `revolve` pair (both nodes hash deterministically
+from the op's arguments). Normative semantics for `roundedBox`
+(design spec 2026-07-30): the cross-section at height z is the rounded
+rectangle inset by δ(z) with corner radius max(side − δ(z), 0), where δ
+traces a quarter circle of the rim radius in each rim zone and is 0 in the
+straight zone. Consequences an implementation must honour:
+
+- **side ≥ max(top, bottom)**: top/bottom corners are exact torus patches
+  (sphere octants when equal).
+- **side = 0**: each rim round-over runs the full edge length and adjacent
+  round-overs meet in their natural intersection curve — NOT a
+  kernel-specific vertex blend; the top/bottom face keeps sharp corners.
+- **0 < side < max(top, bottom)**: the rim radii CLAMP DOWN to side, with a
+  console warning (deduped per distinct message). A clamped call and its
+  explicitly-clamped equivalent are the same normalized arguments — one
+  cache node. For a rim-only round-over use side: 0 exactly.
+
+Validation (op-named plain Errors, backend-identical): radii ≥ 0 and finite;
+box: 2·r ≤ min(w, d) for every group, top + bottom ≤ h (strict < when
+side > 0 — the two rim fillets would meet tangentially, which the B-rep
+backend cannot build; side: 0 full-height round-overs stay valid); cylinder:
+rims ≤ r, top + bottom ≤ h; torus: 0 < rMinor < rMajor. `roundedCylinder`/
+`torus` are single lathe revolves of arc-exact profiles — B-rep backends
+carry real torus/sphere faces to STEP; mesh backends facet at the segs LOD
+(the standard exact-vs-faceted split, not a parity waiver). `roundedBox` is
+faceted at the segs LOD on mesh backends and exact B-rep on OCCT; measure
+parity holds within facet tolerance — except where a rim fillet hits a
+degenerate boundary (e.g. rim = side on a stadium profile) and the B-rep
+backend skips it with a warning (`ERROR-PATTERNS.md`,
+`roundedbox-fillet-skipped`) rather than export invalid geometry.
 
 ## Solid ops (combine / transform / query / output)
 

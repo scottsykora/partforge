@@ -28,6 +28,7 @@ import { textGlyphs } from "./text2d.js";
 import { beveledExtrude } from "./rim-bevel.js";
 import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
 import { convexHull, hullPoints } from "./hull.js";
+import { latheRoundedRect, torusContour } from "./rounded-solids.js";
 
 export function finishKernel(k) {
   // Compound default: bored-through cylinder (tool overshoots 2 mm each end for
@@ -35,6 +36,16 @@ export function finishKernel(k) {
   // the same key validation as a backend-native override.
   k.boredCylinder ??= ({ od, h, bore }) =>
     k.cylinder(od / 2, od / 2, h).cut(k.cylinder(bore / 2, bore / 2, h + 4).translate([0, 0, -2]));
+
+  // Compound defaults: rounded lathe solids — ONE revolve of an arc-exact
+  // profile, so OCCT gets real torus/sphere/cylinder faces in STEP and
+  // Manifold facets at the mesh LOD. Zero booleans; neither backend overrides.
+  k.roundedCylinder ??= ({ r, h, center, round }) => {
+    const s = k.revolve({ profile: k.shape2d(latheRoundedRect(r, h, round.top, round.bottom)) });
+    return center ? s.translate([0, 0, -h / 2]) : s;
+  };
+  k.torus ??= ({ rMajor, rMinor }) =>
+    k.revolve({ profile: k.shape2d(torusContour(rMajor, rMinor)) });
 
   for (const [op, { toArgs, check }] of Object.entries(KERNEL_OP_SPECS)) {
     const raw = k[op];

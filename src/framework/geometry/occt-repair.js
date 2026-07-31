@@ -74,13 +74,24 @@ export function createOcctRepair(measureVolume) {
   // or awkward edge interactions. Rather than letting the whole part vanish, attempt
   // the op on a clone and fall back to the original shape (feature skipped) on a
   // throw or empty result, with a console warning so it's discoverable.
-  const safeOp = (shape, op, label) => {
+  //
+  // `isValid` is an optional second acceptance gate, evaluated ONLY when the op
+  // produces non-empty geometry: (resultVolume, inputVolume) => boolean. Some OCCT
+  // fillet failures don't throw or empty out — they return non-empty geometry that
+  // is nonetheless topologically invalid (e.g. a rim fillet on a stadium profile
+  // whose radius equals the straight-side radius can report MORE volume than the
+  // un-filleted input, which is impossible for a material-removing fillet). The
+  // default (no `isValid`) keeps every existing caller's behavior unchanged.
+  const safeOp = (shape, op, label, isValid) => {
     const backup = shape.clone();
+    const beforeVolume = isValid ? measureVolume(shape) : undefined;
     try {
       const result = op(shape);
-      if (measureVolume(result) > 0) { backup.delete?.(); return result; }
+      const resultVolume = measureVolume(result);
+      if (resultVolume > 0 && (!isValid || isValid(resultVolume, beforeVolume))) { backup.delete?.(); return result; }
       result.delete?.();
-      console.warn(`partforge: ${label} produced an empty solid — feature skipped (radius out of range?)`);
+      if (resultVolume > 0) console.warn(`partforge: ${label} produced invalid geometry — feature skipped`);
+      else console.warn(`partforge: ${label} produced an empty solid — feature skipped (radius out of range?)`);
     } catch (e) {
       console.warn(`partforge: ${label} failed (${e?.message || e}) — feature skipped`);
     }
