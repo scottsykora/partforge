@@ -296,9 +296,18 @@ async function checkCaptureCurrent() {
   if (await pauseButton.count() && await pauseButton.textContent() === "⏸") {
     await pauseButton.click();
   }
-  // Baseline only once the canvas is actually static: the viewport restore above
-  // leaves OrbitControls damping settling for a few hundred ms, and a baseline
-  // taken mid-settle makes the after-capture comparison below fail spuriously.
+  // Baseline only once the canvas is actually static. Auto-rotation feeds
+  // OrbitControls' damping delta every frame, and after the pause it decays by
+  // ~5% per RENDERED frame — so on a slow software-GL runner (CI) a wall-clock
+  // sleep under-waits and the residual sub-pixel drift keeps accumulating
+  // between the baseline and after-capture screenshots. Wait the decay out in
+  // frames (machine-speed independent), then still demand consecutive
+  // identical screenshots before trusting the baseline.
+  await page.evaluate(() => new Promise((resolve) => {
+    let n = 0;
+    const tick = () => (++n >= 120 ? resolve() : requestAnimationFrame(tick));
+    requestAnimationFrame(tick);
+  }));
   let before = await page.locator("#app canvas").screenshot();
   let stable = false;
   for (let i = 0; i < 15 && !stable; i++) {
