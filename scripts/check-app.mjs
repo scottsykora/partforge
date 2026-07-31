@@ -348,6 +348,61 @@ async function checkCaptureCurrent() {
   }
 }
 
+// Cutaway section caps are stencil-masked, and a WebGLRenderTarget does not get
+// a stencil buffer unless it asks for one — so an offscreen capture taken with
+// cutaway enabled used to come back with each cap flooding its ENTIRE plane with
+// hatch, burying the part, while the live canvas stayed perfect. Nothing threw;
+// only the captured pixels were wrong, which is exactly what the faked-renderer
+// unit tests cannot see (they have no GL state, let alone a stencil buffer).
+//
+// Measure how much of the frame the hatch covers. Hatch is a fine stripe pattern,
+// so sampling pairs of pixels a few px apart and counting big luminance jumps
+// gives its area; a masked cap marks only the cross-section, an unmasked one
+// marks a whole quad. Measured on demo.html at the default framing: 0.8% with
+// cutaway off, 7.9% masked (correct), 32.0% unmasked (the bug). The threshold
+// sits between the latter two — retune it here if a page with a much larger
+// cross-section ever stashes a runtime handle.
+async function checkCutawayCapture() {
+  if (!cutaway) return; // no cutaway on this page — nothing to assert
+  if (!await page.evaluate(() => Boolean(window.__pfRuntime?.captureCurrent))) return;
+  const result = await page.evaluate(async () => {
+    const dataUrl = window.__pfRuntime.captureCurrent({ size: 512 });
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/jpeg")) {
+      return { ok: false, why: `unexpected return value: ${String(dataUrl).slice(0, 40)}` };
+    }
+    const img = new Image();
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl; });
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const luma = (x, y) => {
+      const i = (y * canvas.width + x) * 4;
+      return 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+    };
+    const STRIDE = 3, EDGE = 18;
+    let hatched = 0, sampled = 0;
+    for (let y = 0; y < canvas.height; y += 2) {
+      for (let x = 0; x + STRIDE < canvas.width; x += 2) {
+        sampled++;
+        if (Math.abs(luma(x, y) - luma(x + STRIDE, y)) > EDGE) hatched++;
+      }
+    }
+    return { ok: true, coverage: hatched / sampled };
+  });
+  if (!result.ok) { errors.push(`cutaway capture: ${result.why}`); return; }
+  const MAX_HATCH_COVERAGE = 0.18;
+  if (result.coverage > MAX_HATCH_COVERAGE) {
+    errors.push(
+      `cutaway capture: section hatch covers ${(result.coverage * 100).toFixed(1)}% of the frame `
+      + `(limit ${(MAX_HATCH_COVERAGE * 100).toFixed(0)}%) — caps are rendering unmasked, `
+      + "which means the offscreen render target has no stencil buffer",
+    );
+  }
+}
+
 // The ?debug cache overlay (#pf-debug) is fixed-position dev chrome, wholly
 // separate from the app's own layout. It has been chased around the window's
 // corners more than once, silently colliding with #topbar's floating tabs or
@@ -440,6 +495,7 @@ try {
     if (viewport) await page.setViewportSize(viewport);
   }
   await checkCaptureCurrent(); // before checkDebugOverlay — that one navigates away
+  await checkCutawayCapture(); // cutaway is still enabled from the toggle above
   // 390px is below the 720px stacked-layout breakpoint; 850px sits in the
   // narrower-but-still-side-by-side range where the tabs and a corner overlay
   // are most likely to collide (see the debug-overlay-fix report).

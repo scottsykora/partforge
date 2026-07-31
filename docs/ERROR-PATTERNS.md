@@ -215,6 +215,12 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** Only pages listed in `build.rollupOptions.input` are compiled by the production build; other root `*.html` pages are dev-only conveniences Vite serves without building.
 - **Fix:** Add the page to `build.rollupOptions.input` in `vite.config.js` if it should ship. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Wiring a part into a runnable app".
 
+## cutaway-capture-hatch-flood
+
+- **Symptom:** With cutaway enabled, a `captureCurrent`/`captureViews` image comes back with section hatch flooding a whole quad and burying the part, while the live viewer looks correct; a consumer may instead report the capture being rejected as too large, because full-frame hatch is worst-case JPEG content.
+- **Cause:** Cutaway masks its section caps with the stencil buffer, and a `THREE.WebGLRenderTarget` has none unless it asks for one — so the mask no-ops in offscreen renders even though the visible canvas (created with `stencil: true`) is fine.
+- **Fix:** Allocate offscreen render targets with `stencilBuffer: true` (`renderOffscreen` in `src/framework/viewer.js`); `scripts/check-app.mjs` measures hatch coverage in a real-GL capture to keep it that way.
+
 ## options-unknown-key
 
 - **Symptom:** `unknown option` — e.g. `cylinder: unknown option "radius" — did you mean r?`
