@@ -42,6 +42,10 @@ as candidate future work. Each remaining item becomes its own spec/plan under
   sweeps the hull over an ordered sequence (≥2 inputs) for capsules, rounded
   slots, and organic tapers. Pure-JS (monotone chain), no backend/WASM
   involvement — point/contour inputs hull bit-identically across backends.
+- **Rounded 3-D primitives** (v0.37.0) — `roundedBox` (selective side/top/
+  bottom radii; Manifold ring-stack mesh, OCCT fillet/wedge B-rep, no OCCT
+  routing), `roundedCylinder` and `torus` (single arc-exact lathe revolves,
+  STEP-exact). Middle regime (0 < side < rim) clamps rims down with a warning.
 
 The curve thread (F1→F3) + offsetPolygon covers most of JSCAD's geom2 workflow:
 booleans, offset/expand/contract, curved paths, linear/rotate extrude, and the
@@ -60,16 +64,13 @@ booleans, offset/expand/contract, curved paths, linear/rotate extrude, and the
 | `vectorText`/`vectorChar` | `k.text2d` → `Shape2D` | ✅ |
 | `scission` (split disjoint) | `.regions()` (live `Shape2D`s) + `.toRegions()` | ✅ |
 | `align`/`center` | `.boundingBox()`; no align helper | ◑ |
-| rounded 3-D primitives (`roundedCuboid`/`roundedCylinder`/`torus`) | — | ❌ |
+| rounded 3-D primitives | `roundedBox` / `roundedCylinder` / `torus` | ✅ |
 
 ## Candidates — ranked (re-evaluated now that `Shape2D` exists)
 
 1. **`align` / `center` helpers** (low/low) — position a `Shape2D`/`Solid` by
    its bbox (align edges/centers to another or to origin). Small ergonomic win.
-2. **Rounded 3-D primitives** (`roundedCuboid`/`roundedCylinder`/`torus`) —
-   JSCAD staples; fast rounded boxes on Manifold without OCCT fillet. Independent
-   of the 2-D thread.
-3. **Slice/section a `Solid` → `Shape2D`** — NEW capability `Shape2D` unlocks
+2. **Slice/section a `Solid` → `Shape2D`** — NEW capability `Shape2D` unlocks
    (not from JSCAD): project a 3-D part's silhouette or take a cross-section as a
    2-D `Shape2D` (Manifold `slice`/`project`; replicad section) to boolean/offset/
    re-extrude "the outline of this part".

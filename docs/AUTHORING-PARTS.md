@@ -152,6 +152,9 @@ future contract v2 — but are not shown here; see `docs/KERNEL-CONTRACT.md`
 | `k.loft({ rings, ruled?, closed? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls |
 | `k.sweep({ profile, path, cornerRadius?, closed?, ruled?, smooth? })` | sweep a fixed 2-D profile along a 3-D polyline path — sharp mitered corners (or `cornerRadius` fillets), capped ends (both backends). `closed:true` capless loops and `smooth:true` (OCCT-native swept B-rep, STEP-exact / preview-faceted) are backend-specific, like loft's `closed`/`ruled:false`. `closed:true` loops must be **planar** — RMF frame-transport holonomy can seam-twist a non-planar closed loop where the last station rejoins the first, so only planar closed loops are supported/tested |
 | `k.sphere({ r\|d })` | sphere centred at the origin; bare `k.sphere(r)` also stays valid |
+| `k.roundedBox({ size, center?, round })` | box with rounded edges — `round` = number (all edges) or `{ side?, top?, bottom? }` (vertical edges / rims); stays on Manifold (no OCCT routing, unlike `fillet`); `side` must be 0 or ≥ the rim radii (between clamps with a warning) |
+| `k.roundedCylinder({ r\|d, h, center?, round })` | cylinder with rounded rims — `round` = number (both) or `{ top?, bottom? }`; `round: r` with `top+bottom = h` gives a capsule; one lathe revolve, curve-exact in STEP |
+| `k.torus({ rMajor, rMinor })` | torus centered at the origin (tube centerline in z=0); `0 < rMinor < rMajor` |
 | `k.revolve({ profile, degrees? })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove) |
 | `k.union(solids[])` | boolean union |
@@ -194,6 +197,9 @@ const tab = pathProfile([0, 0])
   .cubicTo([0, 8], [14, 16], [6, 16])   // curved top edge
   .close();
 k.extrude({ profile: tab, h: 3 });
+
+// Rounded enclosure: soft vertical edges, a softer lid, a flat base.
+const shell = k.roundedBox({ size: [60, 40, 22], round: { side: 4, top: 2, bottom: 0 } });
 ```
 
 2-D polygon helpers for `prism`/`extrude`/`loft`: `import { piePolygon, hexPolygon,
@@ -542,8 +548,10 @@ Pure helpers from `partforge/geometry` (no backend dependency):
 cut an inner cylinder from an outer one instead).
 `circleProfile(r, center?)` — a circle of radius `r` centered at `[cx,cy]` (default origin).
 Compose it for round solids: `k.prism({ points: circleProfile(r), h })` is a cylinder, and
-**a torus is `k.revolve({ profile: circleProfile(minorR, [majorR, 0]) })`** (with `majorR > minorR`) —
-partforge has no `torus` primitive because it's just a revolved circle.
+**use `k.torus({ rMajor, rMinor })` for a torus** — it desugars to a revolve of
+an arc-exact circle profile (`k.revolve({ profile: circleProfile(minorR,
+[majorR, 0]) })` is the faceted hand-rolled equivalent; the primitive keeps
+real TORUS faces in STEP).
 
 **Patterns** (return `Solid[]` — feed to `k.union(...)` for features or `s.cutAll(...)` for holes):
 `linearPattern(solid, count, [dx,dy,dz])`, `circularPattern(solid, count, { center, axis, angle, rotateCopies })`.

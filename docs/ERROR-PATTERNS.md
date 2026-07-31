@@ -83,6 +83,12 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** Offsetting the rim by the bevel distance would pinch a narrow feature (a tooth land, a thin bar, a thin web beside a hole) shut, so the bevel deterministically backs off to the largest offset the outline can take — the same geometric limit OCCT's chamfer hits, resolved in pure JS instead of kernel re-runs.
 - **Fix:** Usually nothing — the reduced bevel is the correct maximum for the geometry. To silence it, clamp the bevel parameter below the printed value or widen the narrow feature.
 
+## roundedbox-rim-clamped
+
+- **Symptom:** `roundedBox: round.top <n> clamped to round.side <m> (side must be 0 or ≥ rim radii; use side: 0 for a rim-only round-over)` in the console, and the built rim round-over is smaller than the `round.top`/`round.bottom` you passed.
+- **Cause:** the middle regime `0 < side < rim` has no closed-form corner shared by both backends, so the rim radii clamp down to `side` (the footprint-defining radius never grows silently).
+- **Fix:** either raise `round.side` to ≥ the rim radii (torus/sphere corners), or set `side: 0` exactly for a full-size rim-only round-over on sharp vertical edges.
+
 ## boolean-not-watertight
 
 - **Symptom:** `NOT watertight ✗` from `partforge measure` (non-zero exit) after adding a boolean cut or union.

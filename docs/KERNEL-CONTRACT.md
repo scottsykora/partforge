@@ -209,6 +209,36 @@ render the ruled form. `sweep` `closed: true` loops must be planar. Where both b
 shape they do it **by construction, not by tolerance**: sweep elbows loft the identical
 station list (`sweep.js`) on both backends.
 
+### Rounded primitives
+
+`roundedBox` / `roundedCylinder` / `torus` are options-only compound
+primitives (atomic cache nodes). Normative semantics for `roundedBox`
+(design spec 2026-07-30): the cross-section at height z is the rounded
+rectangle inset by δ(z) with corner radius max(side − δ(z), 0), where δ
+traces a quarter circle of the rim radius in each rim zone and is 0 in the
+straight zone. Consequences an implementation must honour:
+
+- **side ≥ max(top, bottom)**: top/bottom corners are exact torus patches
+  (sphere octants when equal).
+- **side = 0**: each rim round-over runs the full edge length and adjacent
+  round-overs meet in their natural intersection curve — NOT a
+  kernel-specific vertex blend; the top/bottom face keeps sharp corners.
+- **0 < side < max(top, bottom)**: the rim radii CLAMP DOWN to side, with a
+  console warning (deduped per distinct message). A clamped call and its
+  explicitly-clamped equivalent are the same normalized arguments — one
+  cache node. For a rim-only round-over use side: 0 exactly.
+
+Validation (op-named plain Errors, backend-identical): radii ≥ 0 and finite;
+box: 2·r ≤ min(w, d) for every group, top + bottom ≤ h (strict < when
+side > 0 — the two rim fillets would meet tangentially, which the B-rep
+backend cannot build; side: 0 full-height round-overs stay valid); cylinder:
+rims ≤ r, top + bottom ≤ h; torus: 0 < rMinor < rMajor. `roundedCylinder`/
+`torus` are single lathe revolves of arc-exact profiles — B-rep backends
+carry real torus/sphere faces to STEP; mesh backends facet at the segs LOD
+(the standard exact-vs-faceted split, not a parity waiver). `roundedBox` is
+faceted at the segs LOD on mesh backends and exact B-rep on OCCT; measure
+parity holds within facet tolerance.
+
 ## Solid ops (combine / transform / query / output)
 
 Normative signatures: `kernel.js`'s `@typedef Solid`.
