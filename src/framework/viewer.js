@@ -56,6 +56,36 @@ export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, b
   }
 }
 
+// Render the LIVE camera's current framing offscreen, once, at a caller-chosen
+// resolution — the showcase capture behind the runtime handle's captureCurrent.
+// Same injected-renderer split as captureViewsFromScene so it runs without a GL
+// context: pose comes from the live camera (never a canonical pose), the output
+// long edge is `size` clamped into [256, maxTextureSize], and the short edge
+// follows the live camera's aspect so the capture matches what the user framed.
+export function captureCurrentFromScene(
+  { size = 2048, hideGrid = true, quality = 0.9 } = {},
+  { renderer, liveCamera, target, grid, maxTextureSize },
+) {
+  const MIN_SIZE = 256;
+  // WebGL2 guarantees MAX_TEXTURE_SIZE >= 2048; only trust a larger reported cap.
+  const long = Math.min(Math.max(Math.round(size) || MIN_SIZE, MIN_SIZE), maxTextureSize ?? 2048);
+  const aspect = liveCamera.aspect || 1;
+  const width = aspect >= 1 ? long : Math.max(1, Math.round(long * aspect));
+  const height = aspect >= 1 ? Math.max(1, Math.round(long / aspect)) : long;
+  const before = liveCamera.position.clone();
+  const gridWasVisible = grid?.visible;
+  if (grid && hideGrid) grid.visible = false;
+  try {
+    return renderer.renderOffscreen(
+      { position: liveCamera.position.toArray(), up: liveCamera.up.toArray(), target },
+      { width, height, fov: liveCamera.fov, quality },
+    );
+  } finally {
+    if (grid && hideGrid) grid.visible = gridWasVisible;
+    liveCamera.position.copy(before); // belt-and-suspenders: never leak camera state
+  }
+}
+
 export function createViewer(container, part) {
   const names = Object.keys(part.parts);
 
@@ -345,14 +375,22 @@ export function createViewer(container, part) {
   const _rtSize = 1024;
   let _rt = null;
   let _capLights = null;
-  function renderOffscreen({ position, up, target }) {
-    _rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize, { samples: 4 });
+  // Defaults reproduce the canonical-view capture exactly (1024² cached target,
+  // fov 45, quality 0.9). A custom size (captureCurrent) gets a fresh render
+  // target, disposed after the read — those captures are rare, so per-call
+  // allocation beats caching one target per size ever requested.
+  function renderOffscreen({ position, up, target },
+                           { width = _rtSize, height = _rtSize, fov = 45, quality = 0.9 } = {}) {
+    const cachedSize = width === _rtSize && height === _rtSize;
+    const rt = cachedSize
+      ? (_rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize, { samples: 4 }))
+      : new THREE.WebGLRenderTarget(width, height, { samples: 4 });
     _capLights = _capLights ?? createCaptureLights();
-    const cam = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const cam = new THREE.PerspectiveCamera(fov, width / height, 0.1, 1000);
     cam.position.set(position[0], position[1], position[2]);
     cam.up.set(up[0], up[1], up[2]);
     cam.lookAt(target[0], target[1], target[2]);
-    const buf = new Uint8Array(_rtSize * _rtSize * 4);
+    const buf = new Uint8Array(width * height * 4);
     // Swap the world-fixed key/fill for the camera-relative pair, for this one render
     // only. A DirectionalLight aims at its `target`, whose matrixWorld only updates
     // while it is in the scene graph, so both go in and both come back out.
@@ -365,30 +403,31 @@ export function createViewer(container, part) {
     liveLights.fill.visible = false;
     scene.add(capKey, capKey.target, capFill, capFill.target);
     try {
-      renderer.setRenderTarget(_rt);
+      renderer.setRenderTarget(rt);
       renderer.render(scene, cam);
       // render() resolves the multisample renderbuffer into the target texture, so this
       // reads antialiased pixels.
-      renderer.readRenderTargetPixels(_rt, 0, 0, _rtSize, _rtSize, buf);
+      renderer.readRenderTargetPixels(rt, 0, 0, width, height, buf);
     } finally {
       // Never leave the user's own view unlit or pointed at the offscreen target.
       renderer.setRenderTarget(null);
       scene.remove(capKey, capKey.target, capFill, capFill.target);
       liveLights.key.visible = true;
       liveLights.fill.visible = true;
+      if (!cachedSize) rt.dispose();
     }
     const canvas = document.createElement("canvas");
-    canvas.width = _rtSize; canvas.height = _rtSize;
+    canvas.width = width; canvas.height = height;
     const ctx = canvas.getContext("2d");
-    const img = ctx.createImageData(_rtSize, _rtSize);
+    const img = ctx.createImageData(width, height);
     // flip rows (GL origin is bottom-left)
-    for (let y = 0; y < _rtSize; y++) {
-      const src = (_rtSize - 1 - y) * _rtSize * 4;
-      img.data.set(buf.subarray(src, src + _rtSize * 4), y * _rtSize * 4);
+    for (let y = 0; y < height; y++) {
+      const src = (height - 1 - y) * width * 4;
+      img.data.set(buf.subarray(src, src + width * 4), y * width * 4);
     }
     srgbEncodeInPlace(img.data);
     ctx.putImageData(img, 0, 0);
-    return canvas.toDataURL("image/jpeg", 0.9);
+    return canvas.toDataURL("image/jpeg", quality);
   }
 
   // Render the canonical camera angles offscreen, framed to whatever is visible,
@@ -405,6 +444,22 @@ export function createViewer(container, part) {
       liveCamera: camera,
       grid,
       bounds: { center, radius },
+    });
+  }
+
+  // One offscreen render of the user's CURRENT framing (live camera pose +
+  // orbit target, live aspect) at a caller-chosen resolution — the showcase
+  // capture. Returns a JPEG data URL, or null when disposed / nothing visible.
+  function captureCurrent(opts) {
+    if (disposed) return null;
+    const box = getVisibleWorldBounds();
+    if (!box || box.isEmpty()) return null;
+    return captureCurrentFromScene(opts, {
+      renderer: { renderOffscreen },
+      liveCamera: camera,
+      target: controls.target.toArray(),
+      grid,
+      maxTextureSize: renderer.capabilities?.maxTextureSize,
     });
   }
 
@@ -484,6 +539,7 @@ export function createViewer(container, part) {
     subTriangles,
     frame,
     captureCanonicalViews,
+    captureCurrent,
     setAutoRotate,
     setTheme,
     getCameraState,

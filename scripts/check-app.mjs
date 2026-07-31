@@ -282,6 +282,72 @@ async function resetRail() {
   await sleep(50);
 }
 
+// Showcase capture (runtime.captureCurrent): a page that stashes its mount handle
+// on window.__pfRuntime (demo.html does) gets the capture exercised the way an
+// embedder would. Asserts the real-GL properties the faked-renderer unit tests
+// cannot: the JPEG comes back at the requested long-edge size with the live
+// viewport's aspect, and the visible canvas is pixel-identical afterwards (render
+// target, lights, and grid all restored). Pages without the handle are skipped.
+async function checkCaptureCurrent() {
+  if (!await page.evaluate(() => Boolean(window.__pfRuntime?.captureCurrent))) return;
+  // Stop auto-rotation so the before/after frames are comparable (same trick as
+  // the cutaway check; a no-op if an earlier check already paused it).
+  const pauseButton = page.locator("#pause");
+  if (await pauseButton.count() && await pauseButton.textContent() === "⏸") {
+    await pauseButton.click();
+  }
+  // Baseline only once the canvas is actually static. Auto-rotation feeds
+  // OrbitControls' damping delta every frame, and after the pause it decays by
+  // ~5% per RENDERED frame — so on a slow software-GL runner (CI) a wall-clock
+  // sleep under-waits and the residual sub-pixel drift keeps accumulating
+  // between the baseline and after-capture screenshots. Wait the decay out in
+  // frames (machine-speed independent), then still demand consecutive
+  // identical screenshots before trusting the baseline.
+  await page.evaluate(() => new Promise((resolve) => {
+    let n = 0;
+    const tick = () => (++n >= 120 ? resolve() : requestAnimationFrame(tick));
+    requestAnimationFrame(tick);
+  }));
+  let before = await page.locator("#app canvas").screenshot();
+  let stable = false;
+  for (let i = 0; i < 15 && !stable; i++) {
+    await sleep(200);
+    const next = await page.locator("#app canvas").screenshot();
+    stable = before.equals(next);
+    before = next;
+  }
+  if (!stable) { errors.push("captureCurrent: canvas never stabilized for a baseline"); return; }
+  const result = await page.evaluate(async () => {
+    const dataUrl = window.__pfRuntime.captureCurrent({ size: 512 });
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/jpeg")) {
+      return { ok: false, why: `unexpected return value: ${String(dataUrl).slice(0, 40)}` };
+    }
+    const img = new Image();
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl; });
+    const canvas = document.querySelector("#app canvas");
+    return {
+      ok: true,
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+      canvasW: canvas.clientWidth,
+      canvasH: canvas.clientHeight,
+    };
+  });
+  if (!result.ok) { errors.push(`captureCurrent: ${result.why}`); return; }
+  if (Math.max(result.width, result.height) !== 512) {
+    errors.push(`captureCurrent: long edge ${Math.max(result.width, result.height)} != requested 512`);
+  }
+  const wantAspect = result.canvasW / result.canvasH;
+  const gotAspect = result.width / result.height;
+  if (Math.abs(gotAspect - wantAspect) > 0.02) {
+    errors.push(`captureCurrent: aspect ${gotAspect.toFixed(3)} != viewport ${wantAspect.toFixed(3)}`);
+  }
+  await sleep(100);
+  if (!before.equals(await page.locator("#app canvas").screenshot())) {
+    errors.push("captureCurrent: live canvas changed after an offscreen capture");
+  }
+}
+
 // The ?debug cache overlay (#pf-debug) is fixed-position dev chrome, wholly
 // separate from the app's own layout. It has been chased around the window's
 // corners more than once, silently colliding with #topbar's floating tabs or
@@ -373,6 +439,7 @@ try {
     }
     if (viewport) await page.setViewportSize(viewport);
   }
+  await checkCaptureCurrent(); // before checkDebugOverlay — that one navigates away
   // 390px is below the 720px stacked-layout breakpoint; 850px sits in the
   // narrower-but-still-side-by-side range where the tabs and a corner overlay
   // are most likely to collide (see the debug-overlay-fix report).

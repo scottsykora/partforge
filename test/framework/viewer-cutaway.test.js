@@ -230,3 +230,34 @@ test("captureCanonicalViews returns [] after dispose instead of touching the tor
 
   expect(viewer.captureCanonicalViews(["iso"])).toEqual([]);
 });
+
+test("captureCurrent returns null after dispose instead of touching the torn-down renderer", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+  // Same rationale as the captureCanonicalViews test above: non-empty world
+  // bounds so only the disposed guard (not the empty-scene guard) can save us
+  // from reaching into the incompletely faked WebGLRenderer.
+  viewer.setSubGeometry("body", {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    triangles: 1,
+  });
+  viewer.showAssembly(["body"], { frame: true });
+
+  viewer.dispose();
+
+  expect(viewer.captureCurrent({ size: 2048 })).toBe(null);
+});
+
+test("captureCurrent returns null when nothing is visible in the scene", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+
+  expect(viewer.captureCurrent()).toBe(null);
+
+  viewer.dispose();
+});

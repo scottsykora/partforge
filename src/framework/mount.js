@@ -29,6 +29,7 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
   return {
     ready, dispose, setParams,
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
+    captureCurrent: (opts) => viewer.captureCurrent(opts),
     listExportableParts,
     exportParts,
   };
@@ -63,10 +64,14 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.36.0):
+// Embedding contract (0.38.0):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
+//   runtime.captureCurrent({ size: 2048 });  // one offscreen render of the user's current
+//                                         // framing (live camera pose + viewport aspect) at the
+//                                         // given long-edge resolution → JPEG data URL, or null
+//                                         // when disposed / nothing built yet
 //   runtime.listExportableParts();        // [{ name, label }] — every exportable sub-part,
 //                                         // independent of the active view (for an embedder-drawn export UI)
 //   await runtime.exportParts({ parts: ["base"], format: "stl", onProgress });

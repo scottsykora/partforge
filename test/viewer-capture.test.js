@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import * as THREE from "three";
-import { captureViewsFromScene, srgbEncodeInPlace } from "../src/framework/viewer.js";
+import { captureViewsFromScene, captureCurrentFromScene, srgbEncodeInPlace } from "../src/framework/viewer.js";
 import { CANONICAL_VIEWS } from "../src/framework/view-angles.js";
 
 // captureViewsFromScene is the pure-ish core extracted so it can run without a
@@ -47,6 +47,105 @@ describe("captureViewsFromScene", () => {
 
     expect(out.map((o) => o.view)).toEqual(CANONICAL_VIEWS);
     expect(fakeRenderer.renderOffscreen).toHaveBeenCalledTimes(CANONICAL_VIEWS.length);
+  });
+});
+
+// captureCurrentFromScene is the same injected-renderer core for the showcase
+// capture: one offscreen render of the LIVE camera's pose at a caller-chosen
+// resolution, matching the live viewport's aspect (long edge = `size`).
+describe("captureCurrentFromScene", () => {
+  function setup({ aspect = 2, fov = 45 } = {}) {
+    const liveCamera = new THREE.PerspectiveCamera(fov, aspect);
+    liveCamera.position.set(18, 12, 18);
+    const fakeRenderer = { renderOffscreen: vi.fn(() => "data:image/jpeg;base64,AAAA") };
+    const grid = { visible: true };
+    return { liveCamera, fakeRenderer, grid };
+  }
+
+  it("renders once from the live camera pose at the requested long-edge size", () => {
+    const { liveCamera, fakeRenderer, grid } = setup({ aspect: 2, fov: 30 });
+    const out = captureCurrentFromScene({ size: 2048 }, {
+      renderer: fakeRenderer, liveCamera, target: [1, 2, 3], grid, maxTextureSize: 8192,
+    });
+    expect(out).toMatch(/^data:image\/jpeg/);
+    expect(fakeRenderer.renderOffscreen).toHaveBeenCalledTimes(1);
+    const [pose, opts] = fakeRenderer.renderOffscreen.mock.calls[0];
+    expect(pose.position).toEqual([18, 12, 18]);
+    expect(pose.up).toEqual([0, 1, 0]); // camera default up
+    expect(pose.target).toEqual([1, 2, 3]);
+    expect(opts).toMatchObject({ width: 2048, height: 1024, fov: 30, quality: 0.9 });
+  });
+
+  it("puts the long edge on height for a portrait viewport", () => {
+    const { liveCamera, fakeRenderer, grid } = setup({ aspect: 0.5 });
+    captureCurrentFromScene({ size: 1000 }, {
+      renderer: fakeRenderer, liveCamera, target: [0, 0, 0], grid, maxTextureSize: 8192,
+    });
+    const [, opts] = fakeRenderer.renderOffscreen.mock.calls[0];
+    expect(opts).toMatchObject({ width: 500, height: 1000 });
+  });
+
+  it("clamps size into [256, maxTextureSize]", () => {
+    const { liveCamera, fakeRenderer, grid } = setup({ aspect: 1 });
+    captureCurrentFromScene({ size: 999999 }, {
+      renderer: fakeRenderer, liveCamera, target: [0, 0, 0], grid, maxTextureSize: 4096,
+    });
+    captureCurrentFromScene({ size: 1 }, {
+      renderer: fakeRenderer, liveCamera, target: [0, 0, 0], grid, maxTextureSize: 4096,
+    });
+    expect(fakeRenderer.renderOffscreen.mock.calls[0][1]).toMatchObject({ width: 4096, height: 4096 });
+    expect(fakeRenderer.renderOffscreen.mock.calls[1][1]).toMatchObject({ width: 256, height: 256 });
+  });
+
+  it("hides the grid for the render and restores it after (default)", () => {
+    const { liveCamera, grid } = setup();
+    let visibleDuringRender = null;
+    const fakeRenderer = {
+      renderOffscreen: vi.fn(() => {
+        visibleDuringRender = grid.visible;
+        return "data:image/jpeg;base64,AAAA";
+      }),
+    };
+    captureCurrentFromScene({}, {
+      renderer: fakeRenderer, liveCamera, target: [0, 0, 0], grid, maxTextureSize: 8192,
+    });
+    expect(visibleDuringRender).toBe(false);
+    expect(grid.visible).toBe(true); // restored
+  });
+
+  it("keeps the grid visible when hideGrid is false", () => {
+    const { liveCamera, grid } = setup();
+    let visibleDuringRender = null;
+    const fakeRenderer = {
+      renderOffscreen: vi.fn(() => {
+        visibleDuringRender = grid.visible;
+        return "data:image/jpeg;base64,AAAA";
+      }),
+    };
+    captureCurrentFromScene({ hideGrid: false }, {
+      renderer: fakeRenderer, liveCamera, target: [0, 0, 0], grid, maxTextureSize: 8192,
+    });
+    expect(visibleDuringRender).toBe(true);
+    expect(grid.visible).toBe(true);
+  });
+
+  it("never mutates the live camera and forwards a custom quality", () => {
+    const { liveCamera, fakeRenderer, grid } = setup();
+    const before = liveCamera.position.toArray();
+    captureCurrentFromScene({ quality: 0.7 }, {
+      renderer: fakeRenderer, liveCamera, target: [0, 0, 0], grid, maxTextureSize: 8192,
+    });
+    expect(liveCamera.position.toArray()).toEqual(before);
+    expect(fakeRenderer.renderOffscreen.mock.calls[0][1]).toMatchObject({ quality: 0.7 });
+  });
+
+  it("restores the grid even when the offscreen render throws", () => {
+    const { liveCamera, grid } = setup();
+    const fakeRenderer = { renderOffscreen: vi.fn(() => { throw new Error("GL lost"); }) };
+    expect(() => captureCurrentFromScene({}, {
+      renderer: fakeRenderer, liveCamera, target: [0, 0, 0], grid, maxTextureSize: 8192,
+    })).toThrow("GL lost");
+    expect(grid.visible).toBe(true);
   });
 });
 
