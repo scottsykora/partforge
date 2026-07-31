@@ -731,6 +731,25 @@ returns instead:
 Pass `onDownload({ data, filename, mime })` to `mount()` to receive the exported bytes
 yourself (e.g. to download from a different origin) instead of partforge's own DOM download.
 
+**Showcase capture (the mount handle).** The handle can also render the user's *current*
+framing offscreen at a resolution independent of the window size and devicePixelRatio —
+for gallery/preview images, where grabbing the live canvas would be capped at the viewer
+pane's pixel size:
+
+- `runtime.captureCurrent({ size = 2048, hideGrid = true, quality = 0.9 } = {}) → string | null` —
+  one offscreen render from the live camera's pose (position, up, and orbit target — not a
+  canonical pose) with the live viewport's aspect ratio, `size` px on the long edge
+  (clamped into `[256, maxTextureSize]`). Renders with 4× MSAA and the same
+  camera-relative capture lighting as `captureViews`, so the result is print-quality even
+  from a small window on a 1× display. Returns a `data:image/jpeg;base64,…` string, or
+  `null` when the runtime is disposed or nothing is built/visible yet — it never throws.
+  `hideGrid: false` keeps the floor grid so the capture matches the on-screen look
+  exactly. The live view is untouched: the camera never moves, and lights/grid/render
+  target are restored after the render.
+- `runtime.captureViews(viewNames) → [{ view, dataUrl }]` — the canonical-angle
+  counterpart (fixed poses, framed to the visible assembly, 1024², grid hidden). Sized
+  for feeding a vision model, not for display; use `captureCurrent` for showcase images.
+
 **The markup convention (`demo.html` is the canonical copy-me page):** `<body>` carries
 `class="pf-shell"`, the flex row that lays the viewer column next to the rail. `#app`
 (`class="pf-stage"`) *is* that viewer column, and now contains the floating chrome

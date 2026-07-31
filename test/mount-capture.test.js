@@ -14,6 +14,17 @@ describe("mount handle captureViews", () => {
     expect(out).toEqual([{ view: "iso", dataUrl: "d" }]);
   });
 
+  it("delegates captureCurrent to viewer.captureCurrent", () => {
+    const viewer = {
+      captureCanonicalViews: vi.fn(),
+      captureCurrent: vi.fn(() => "data:image/jpeg;base64,AAAA"),
+    };
+    const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer });
+    const out = handle.captureCurrent({ size: 2048 });
+    expect(viewer.captureCurrent).toHaveBeenCalledWith({ size: 2048 });
+    expect(out).toBe("data:image/jpeg;base64,AAAA");
+  });
+
   it("exposes setParams straight through to the caller", () => {
     const viewer = { captureCanonicalViews: vi.fn() };
     const setParams = vi.fn();
