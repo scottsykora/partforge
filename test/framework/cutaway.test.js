@@ -124,6 +124,13 @@ function findCaps(scene) {
   );
 }
 
+// The section helpers a subpart mesh carries: the two stencil passes. The
+// cut-face outline is also a child, but it is a LineSegments2 and has its own
+// visibility rules, so it is not part of what these assertions describe.
+function stencilPasses(mesh) {
+  return mesh.children.filter((entry) => !entry.isLineSegments2);
+}
+
 function movePointer(element, x = 100, y = 100) {
   element.dispatchEvent(new PointerEvent("pointermove", {
     clientX: x,
@@ -508,7 +515,7 @@ test("enable sections visible subparts at a centered camera-facing plane", () =>
   expect(mesh.material).not.toBe(material);
   expect(mesh.material.clippingPlanes).toEqual([plane]);
   expect(edgeLines.material).not.toBe(edgeMaterial);
-  expect(mesh.children.every((entry) => entry.visible)).toBe(true);
+  expect(stencilPasses(mesh).every((entry) => entry.visible)).toBe(true);
   expect(findCap(fixture.scene).visible).toBe(true);
   expect(findGizmo(fixture.scene).visible).toBe(true);
 });
@@ -589,12 +596,12 @@ test("setVisible isolates section helpers to selected names", () => {
   fixture.controller.setVisible(["second"]);
   fixture.controller.setEnabled(true);
 
-  expect(first.mesh.children.every((entry) => !entry.visible)).toBe(true);
-  expect(second.mesh.children.every((entry) => entry.visible)).toBe(true);
+  expect(stencilPasses(first.mesh).every((entry) => !entry.visible)).toBe(true);
+  expect(stencilPasses(second.mesh).every((entry) => entry.visible)).toBe(true);
 
   fixture.controller.setVisible(new Set(["first"]));
-  expect(first.mesh.children.every((entry) => entry.visible)).toBe(true);
-  expect(second.mesh.children.every((entry) => !entry.visible)).toBe(true);
+  expect(stencilPasses(first.mesh).every((entry) => entry.visible)).toBe(true);
+  expect(stencilPasses(second.mesh).every((entry) => !entry.visible)).toBe(true);
 });
 
 test("geometry replacement is shared by stencil passes and remains caller-owned", () => {
@@ -606,7 +613,7 @@ test("geometry replacement is shared by stencil passes and remains caller-owned"
 
   fixture.controller.updateGeometry("body", replacement);
 
-  expect(mesh.children.map((entry) => entry.geometry)).toEqual([replacement, replacement]);
+  expect(stencilPasses(mesh).map((entry) => entry.geometry)).toEqual([replacement, replacement]);
   fixture.controller.dispose();
   expect(originalDispose).not.toHaveBeenCalled();
   expect(replacementDispose).not.toHaveBeenCalled();
@@ -628,7 +635,7 @@ test("geometry-only updates preserve prepared clipped materials without disposal
 
   expect(mesh.material).toBe(preparedMeshMaterial);
   expect(edgeLines.material).toBe(preparedEdgeMaterial);
-  expect(mesh.children.map((entry) => entry.geometry)).toEqual([
+  expect(stencilPasses(mesh).map((entry) => entry.geometry)).toEqual([
     replacementGeometry,
     replacementGeometry,
   ]);
