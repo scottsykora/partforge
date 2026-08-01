@@ -958,3 +958,38 @@ test("dispose ends a drag, removes listeners and scene objects, and disposes own
   pointer(domElement, "pointerdown");
   expect(pickHandle).toHaveBeenCalledOnce();
 });
+
+test("drag change fires once on start and once on every termination route", () => {
+  for (const finish of ["pointerup", "pointercancel", "lostpointercapture", "pointerleave", "blur"]) {
+    const onDragChange = vi.fn();
+    const { domElement, gizmo } = createFixture({
+      pickHandle: () => "translate",
+      onDragChange,
+    });
+    gizmo.setVisible(true);
+
+    pointer(domElement, "pointerdown");
+    expect(onDragChange).toHaveBeenCalledTimes(1);
+    expect(onDragChange).toHaveBeenLastCalledWith(true);
+
+    if (finish === "blur") window.dispatchEvent(new Event("blur"));
+    else pointer(domElement, finish);
+
+    expect(onDragChange).toHaveBeenCalledTimes(2);
+    expect(onDragChange).toHaveBeenLastCalledWith(false);
+  }
+});
+
+test("drag change does not fire when no drag is in flight", () => {
+  const onDragChange = vi.fn();
+  const { domElement, gizmo } = createFixture({
+    pickHandle: () => null,
+    onDragChange,
+  });
+  gizmo.setVisible(true);
+
+  pointer(domElement, "pointerdown");
+  pointer(domElement, "pointerup");
+
+  expect(onDragChange).not.toHaveBeenCalled();
+});

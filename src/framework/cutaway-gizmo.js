@@ -46,6 +46,7 @@ export function createCutawayGizmo({
   onPoseChange = () => {},
   onActivity = () => {},
   onHandleHoverChange = () => {},
+  onDragChange = () => {},
   pickHandle,
 }) {
   const group = new THREE.Group();
@@ -326,6 +327,7 @@ export function createCutawayGizmo({
     drag = null;
     if (orbitControls) orbitControls.enabled = ending.orbitEnabled;
     safeRelease(ending.pointerId);
+    onDragChange(false);
   }
 
   function updateAppearance() {
@@ -468,6 +470,7 @@ export function createCutawayGizmo({
     setHoveredHandle(handle);
     onActivity();
     drag = nextDrag;
+    onDragChange(true);
     if (orbitControls) orbitControls.enabled = false;
     safeCapture(event.pointerId);
     event.preventDefault();
