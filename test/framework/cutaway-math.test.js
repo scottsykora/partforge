@@ -1,12 +1,14 @@
 import { expect, test } from "vitest";
 import * as THREE from "three";
 import {
+  AXIS_SNAP_RADIANS,
   axisParameterFromRay,
   initialCutawayPose,
   nearestCanonicalAxis,
   planeFromPose,
   pointSurvivesPlane,
   signedAngleAroundAxis,
+  snapQuaternionToAxis,
 } from "../../src/framework/cutaway-math.js";
 
 test("initial pose centers the plane, points away from the camera, and sizes it to the box", () => {
@@ -138,4 +140,68 @@ test("initial pose snaps the plane normal to a canonical axis", () => {
   for (const component of inPlane.toArray()) {
     expect(Math.abs(Math.abs(component) - Math.round(Math.abs(component)))).toBeLessThan(1e-6);
   }
+});
+
+test("axis snap threshold is 7 degrees", () => {
+  expect(AXIS_SNAP_RADIANS).toBeCloseTo((7 * Math.PI) / 180, 10);
+});
+
+test("snapping pulls a near-axis normal exactly onto the axis", () => {
+  const nudged = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(1, 0, 0),
+    (4 * Math.PI) / 180,
+  );
+
+  const snapped = snapQuaternionToAxis(nudged);
+  const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(snapped);
+
+  expect(normal.x).toBeCloseTo(0, 6);
+  expect(normal.y).toBeCloseTo(0, 6);
+  expect(normal.z).toBeCloseTo(1, 6);
+});
+
+test("snapping leaves a normal outside the threshold alone", () => {
+  const nudged = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(1, 0, 0),
+    (12 * Math.PI) / 180,
+  );
+
+  const snapped = snapQuaternionToAxis(nudged);
+  const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(snapped);
+
+  expect(normal.angleTo(new THREE.Vector3(0, 0, 1))).toBeCloseTo((12 * Math.PI) / 180, 6);
+});
+
+test("snapping preserves in-plane roll so the gizmo rings do not spin", () => {
+  const roll = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 0, 1),
+    Math.PI / 3,
+  );
+  const tilt = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(1, 0, 0),
+    (3 * Math.PI) / 180,
+  );
+  const pose = tilt.clone().multiply(roll);
+
+  const snapped = snapQuaternionToAxis(pose);
+  const rolledAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(snapped);
+  const expected = new THREE.Vector3(1, 0, 0).applyQuaternion(roll);
+
+  // The normal lands on +Z, and the in-plane direction stays where the roll
+  // put it rather than jumping to whatever setFromUnitVectors would pick.
+  expect(new THREE.Vector3(0, 0, 1).applyQuaternion(snapped).z).toBeCloseTo(1, 6);
+  expect(rolledAxis.angleTo(expected)).toBeLessThan(0.06); // within the 3-degree tilt
+});
+
+test("snapping honours a custom threshold and writes into a target", () => {
+  const nudged = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(1, 0, 0),
+    (10 * Math.PI) / 180,
+  );
+  const target = new THREE.Quaternion();
+
+  const result = snapQuaternionToAxis(nudged, (12 * Math.PI) / 180, target);
+
+  expect(result).toBe(target);
+  expect(new THREE.Vector3(0, 0, 1).applyQuaternion(result).z).toBeCloseTo(1, 6);
 });

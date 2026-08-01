@@ -2,6 +2,7 @@ import * as THREE from "three";
 import {
   axisParameterFromRay,
   signedAngleAroundAxis,
+  snapQuaternionToAxis,
 } from "./cutaway-math.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 
@@ -262,6 +263,7 @@ export function createCutawayGizmo({
   let activeAppearance = true;
   let themeMode = "dark";
   const raycaster = new THREE.Raycaster();
+  const _snapped = new THREE.Quaternion();
   const hitProxies = Object.values(handles);
 
   function rayFromEvent(event) {
@@ -361,6 +363,15 @@ export function createCutawayGizmo({
     hoveredHandle = normalized;
     updateAppearance();
     onHandleHoverChange(normalized);
+  }
+
+  // Rotation lands on a canonical axis when it gets close to one. Shift is read
+  // per move rather than latched at pointer-down, so it can be pressed and
+  // released mid-drag; it is unbound during a gizmo drag because orbit controls
+  // are already disabled.
+  function snapRotation(candidate, event) {
+    candidate.normalize();
+    return event.shiftKey ? candidate : snapQuaternionToAxis(candidate, undefined, _snapped);
   }
 
   function notifyPose() {
@@ -515,7 +526,7 @@ export function createCutawayGizmo({
         * SCREEN_ROTATION_RADIANS_PER_PIXEL;
       if (!Number.isFinite(angle)) return;
       const delta = new THREE.Quaternion().setFromAxisAngle(drag.axis, angle);
-      group.quaternion.copy(delta.multiply(drag.startQuaternion)).normalize();
+      group.quaternion.copy(snapRotation(delta.multiply(drag.startQuaternion), event));
       group.position.copy(drag.startPosition);
       syncHandleTransform();
       notifyPose();
@@ -530,7 +541,7 @@ export function createCutawayGizmo({
     const angle = signedAngleAroundAxis(drag.startRadial, radial, drag.axis);
     if (!Number.isFinite(angle)) return;
     const delta = new THREE.Quaternion().setFromAxisAngle(drag.axis, angle);
-    group.quaternion.copy(delta.multiply(drag.startQuaternion)).normalize();
+    group.quaternion.copy(snapRotation(delta.multiply(drag.startQuaternion), event));
     group.position.copy(drag.startPosition);
     syncHandleTransform();
     notifyPose();

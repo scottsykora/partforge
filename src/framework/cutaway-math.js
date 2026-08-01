@@ -48,6 +48,27 @@ export function initialCutawayPose(box, camera) {
   };
 }
 
+export const AXIS_SNAP_RADIANS = (7 * Math.PI) / 180;
+
+// Pull a plane pose onto the nearest canonical axis once its normal is within
+// `maxAngle` of one. The correction is the minimal rotation carrying the normal
+// onto the axis, not a rebuilt quaternion, so the plane's in-plane roll survives
+// and the gizmo rings do not visibly spin at the moment of snapping. Roll does
+// not affect the clip either way.
+export function snapQuaternionToAxis(
+  quaternion,
+  maxAngle = AXIS_SNAP_RADIANS,
+  target = new THREE.Quaternion(),
+) {
+  const normal = PLANE_LOCAL_NORMAL.clone().applyQuaternion(quaternion).normalize();
+  const axis = nearestCanonicalAxis(normal);
+  if (normal.angleTo(axis) > maxAngle) return target.copy(quaternion);
+  return target
+    .setFromUnitVectors(normal, axis)
+    .multiply(quaternion)
+    .normalize();
+}
+
 export function planeFromPose(plane, normalTarget, position, quaternion, flipped) {
   normalTarget.copy(PLANE_LOCAL_NORMAL).applyQuaternion(quaternion).normalize();
   if (flipped) normalTarget.negate();

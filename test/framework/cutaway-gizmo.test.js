@@ -69,6 +69,7 @@ function pointer(domElement, type, {
   y = 100,
   pointerId = 7,
   pointerType = "mouse",
+  shiftKey = false,
 } = {}) {
   domElement.dispatchEvent(new PointerEvent(type, {
     pointerId,
@@ -76,6 +77,7 @@ function pointer(domElement, type, {
     clientX: x,
     clientY: y,
     button: 0,
+    shiftKey,
     bubbles: true,
   }));
 }
@@ -992,4 +994,62 @@ test("drag change does not fire when no drag is in flight", () => {
   pointer(domElement, "pointerup");
 
   expect(onDragChange).not.toHaveBeenCalled();
+});
+
+// Camera on +Z looking at the origin, so the initial plane normal is -Z and a
+// rotate-x drag runs in screen-rotate mode: SCREEN_ROTATION_RADIANS_PER_PIXEL
+// is PI/240, i.e. 0.75 degrees per pixel of vertical drag.
+function rotateBy(fixture, pixels, { shiftKey = false } = {}) {
+  const { domElement } = fixture;
+  pointer(domElement, "pointerdown", { x: 100, y: 100 });
+  pointer(domElement, "pointermove", { x: 100, y: 100 + pixels, shiftKey });
+  pointer(domElement, "pointerup", { x: 100, y: 100 + pixels });
+  return new THREE.Vector3(0, 0, 1).applyQuaternion(fixture.gizmo.group.quaternion);
+}
+
+test("rotation snaps to a canonical axis inside the threshold", () => {
+  const fixture = createFixture({ pickHandle: () => "rotate-x" });
+  fixture.gizmo.setVisible(true);
+  setProductionPose(fixture);
+
+  // 5 px is 3.75 degrees, inside the 7-degree snap zone.
+  const normal = rotateBy(fixture, 5);
+
+  expect(normal.angleTo(new THREE.Vector3(0, 0, -1))).toBeCloseTo(0, 6);
+});
+
+test("rotation past the threshold is left alone", () => {
+  const fixture = createFixture({ pickHandle: () => "rotate-x" });
+  fixture.gizmo.setVisible(true);
+  setProductionPose(fixture);
+
+  // 12 px is 9 degrees, outside the snap zone.
+  const normal = rotateBy(fixture, 12);
+
+  expect(normal.angleTo(new THREE.Vector3(0, 0, -1)))
+    .toBeCloseTo((9 * Math.PI) / 180, 4);
+});
+
+test("holding shift disables snapping", () => {
+  const fixture = createFixture({ pickHandle: () => "rotate-x" });
+  fixture.gizmo.setVisible(true);
+  setProductionPose(fixture);
+
+  const normal = rotateBy(fixture, 5, { shiftKey: true });
+
+  expect(normal.angleTo(new THREE.Vector3(0, 0, -1)))
+    .toBeCloseTo((3.75 * Math.PI) / 180, 4);
+});
+
+test("translation is never snapped", () => {
+  const fixture = createFixture({ pickHandle: () => "translate" });
+  fixture.gizmo.setVisible(true);
+  const pose = setProductionPose(fixture);
+
+  pointer(fixture.domElement, "pointerdown", { x: 100, y: 100 });
+  pointer(fixture.domElement, "pointermove", { x: 100, y: 80 });
+  pointer(fixture.domElement, "pointerup", { x: 100, y: 80 });
+
+  expect(fixture.gizmo.group.quaternion.angleTo(pose.quaternion)).toBeCloseTo(0, 6);
+  expect(fixture.gizmo.group.position.equals(pose.position)).toBe(false);
 });
