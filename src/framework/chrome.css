@@ -152,42 +152,10 @@
 .pf-float-tabs { top: 12px; left: 50%; transform: translateX(-50%); }
 .pf-float-viewbar { bottom: 12px; right: 12px; }
 
-/* ---- narrow layout: ONE pane at a time, chosen by a tab bar ---------------
-   The old layout here stacked the rail as a 45vh strip under the viewer, which
-   left both panes too cramped to use on a phone. Instead the shell becomes a
-   column of [pane][tab bar] and shows exactly one pane, full height, keyed on
-   data-pf-pane (written by mobile-tabs.js, or by a host through its
-   setHostPane).
-
-   Written as :not([data-pf-pane="rail"]) so a MISSING attribute falls to the
-   stage rather than showing both panes at once — the layout is correct from
-   first paint, before any JS runs.
-
-   The seam stays hidden and resize is absent at this width (rail.js also
-   refuses to start a drag). Collapse has no meaning here either: rail.js
-   suppresses it entirely below this breakpoint, so there is deliberately no
-   .pf-rail[inert] rule left — nothing sets inert at this width. */
-@media (max-width: 719px) {
-  .pf-shell { flex-direction: column; }
-  .pf-shell:not([data-pf-pane="rail"]) .pf-rail { display: none; }
-  .pf-shell[data-pf-pane="rail"] .pf-stage { display: none; }
-  /* Whichever pane shows fills the column. --pf-rail-w, the left border, and
-     the inset shadow all existed to make the rail read as a set-back right
-     EDGE; none of that means anything when the rail IS the whole surface. */
-  .pf-rail {
-    flex: 1;
-    width: auto;
-    border-left: 0;
-    box-shadow: none;
-  }
-  .pf-rail-seam { display: none; }
-  .pf-tabbar { display: flex; }
-}
-
 /* ---- the narrow-layout tab bar ------------------------------------------
    Created by mobile-tabs.js (no host markup declares it). Hidden by default:
-   above the breakpoint the rail sits beside the viewer and needs no tab, so
-   the media query above is what reveals it.
+   below the breakpoint the rail sits beside the viewer and needs no tab, so
+   the media query below is what reveals it.
 
    The [hidden] rule is not redundant. `hidden` is how mobile-tabs.js stands
    the bar down when a HOST owns pane selection, and the UA's
@@ -221,6 +189,40 @@
   cursor: pointer;
 }
 .pf-tabbar button[aria-pressed="true"] { color: var(--pf-accent); }
+
+/* ---- narrow layout: ONE pane at a time, chosen by a tab bar ---------------
+   The old layout here stacked the rail as a 45vh strip under the viewer, which
+   left both panes too cramped to use on a phone. Instead the shell becomes a
+   column of [pane][tab bar] and shows exactly one pane, full height, keyed on
+   data-pf-pane (written by mobile-tabs.js, or by a host through its
+   setHostPane).
+
+   Written as :not([data-pf-pane="rail"]) so a MISSING attribute falls to the
+   stage rather than showing both panes at once — the layout is correct from
+   first paint, before any JS runs.
+
+   The seam stays hidden and resize is absent at this width (rail.js also
+   refuses to start a drag). Collapse has no meaning here either: rail.js
+   suppresses it entirely below this breakpoint, so there is deliberately no
+   .pf-rail[inert] rule left — nothing sets inert at this width. */
+@media (max-width: 719px) {
+  .pf-shell { flex-direction: column; }
+  .pf-shell:not([data-pf-pane="rail"]) .pf-rail { display: none; }
+  .pf-shell[data-pf-pane="rail"] .pf-stage { display: none; }
+  /* Whichever pane shows fills the column. --pf-rail-w, the left border, and
+     the inset shadow all existed to make the rail read as a set-back right
+     EDGE; none of that means anything when the rail IS the whole surface. */
+  .pf-rail {
+    flex: 1;
+    width: auto;
+    border-left: 0;
+    box-shadow: none;
+  }
+  .pf-rail-seam { display: none; }
+  .pf-tabbar { display: flex; }
+}
+
+
 
 /* ---- reduced motion -----------------------------------------------------
    Collapsing the rail slides 288px of layout across the screen — the first
