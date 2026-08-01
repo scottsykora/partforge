@@ -3,6 +3,7 @@ import * as THREE from "three";
 import {
   axisParameterFromRay,
   initialCutawayPose,
+  nearestCanonicalAxis,
   planeFromPose,
   pointSurvivesPlane,
   signedAngleAroundAxis,
@@ -82,4 +83,59 @@ test("signed angle preserves rotation direction around the axis", () => {
 
   expect(signedAngleAroundAxis(x, y, z)).toBeCloseTo(Math.PI / 2);
   expect(signedAngleAroundAxis(y, x, z)).toBeCloseTo(-Math.PI / 2);
+});
+
+test("nearest canonical axis picks the signed axis closest to a direction", () => {
+  const axis = new THREE.Vector3();
+
+  expect(nearestCanonicalAxis(new THREE.Vector3(1, 0, 0), axis).toArray()).toEqual([1, 0, 0]);
+  expect(nearestCanonicalAxis(new THREE.Vector3(-1, 0, 0), axis).toArray()).toEqual([-1, 0, 0]);
+  expect(nearestCanonicalAxis(new THREE.Vector3(0, 1, 0), axis).toArray()).toEqual([0, 1, 0]);
+  expect(nearestCanonicalAxis(new THREE.Vector3(0, -1, 0), axis).toArray()).toEqual([0, -1, 0]);
+  expect(nearestCanonicalAxis(new THREE.Vector3(0, 0, 1), axis).toArray()).toEqual([0, 0, 1]);
+  expect(nearestCanonicalAxis(new THREE.Vector3(0, 0, -1), axis).toArray()).toEqual([0, 0, -1]);
+
+  // dominant-but-not-exact
+  expect(nearestCanonicalAxis(new THREE.Vector3(0.2, -0.9, 0.3), axis).toArray())
+    .toEqual([0, -1, 0]);
+});
+
+test("nearest canonical axis breaks ties in X, Y, Z order", () => {
+  // The default isometric framing (camera at 18, 12, 18) is an exact tie
+  // between -X and -Z; a strictly-greater comparison keeps the earlier axis.
+  const isometric = new THREE.Vector3(-18, -12, -18).normalize();
+  expect(nearestCanonicalAxis(isometric).toArray()).toEqual([-1, 0, 0]);
+
+  expect(nearestCanonicalAxis(new THREE.Vector3(0, 1, 1).normalize()).toArray())
+    .toEqual([0, 1, 0]);
+});
+
+test("nearest canonical axis falls back to +Z for degenerate directions", () => {
+  expect(nearestCanonicalAxis(new THREE.Vector3(0, 0, 0)).toArray()).toEqual([0, 0, 1]);
+  expect(nearestCanonicalAxis(new THREE.Vector3(NaN, 1, 0)).toArray()).toEqual([0, 0, 1]);
+});
+
+test("initial pose snaps the plane normal to a canonical axis", () => {
+  const box = new THREE.Box3(
+    new THREE.Vector3(-5, -4, -3),
+    new THREE.Vector3(5, 4, 3),
+  );
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.set(18, 12, 18);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+
+  const pose = initialCutawayPose(box, camera);
+  const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(pose.quaternion);
+
+  expect(normal.x).toBeCloseTo(-1);
+  expect(normal.y).toBeCloseTo(0);
+  expect(normal.z).toBeCloseTo(0);
+
+  // A rotation between two axis vectors maps axes to axes, so the plane's
+  // in-plane directions come out axis-aligned and the gizmo reads square.
+  const inPlane = new THREE.Vector3(1, 0, 0).applyQuaternion(pose.quaternion);
+  for (const component of inPlane.toArray()) {
+    expect(Math.abs(Math.abs(component) - Math.round(Math.abs(component)))).toBeLessThan(1e-6);
+  }
 });
