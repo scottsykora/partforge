@@ -423,12 +423,17 @@ export function createCutaway({
   // is the one place the cost could show, so decide once at drag start — from
   // costs already measured, so the drag never pays a spike to discover it is
   // too expensive — and hide all of them or none. Half-outlined assemblies read
-  // as broken.
+  // as broken. Only sections that are actually showing count toward the budget:
+  // a hidden section's refresh() early-returns without slicing, so its cost
+  // entry is whatever was last measured while it *was* visible — stale, and
+  // irrelevant to what the drag will actually spend time on.
   function setDragging(active) {
     if (disposed) return;
     if (active) {
       let total = 0;
-      for (const { renderSet } of renderSets.values()) total += renderSet.outlineSliceCost();
+      for (const [name, { renderSet }] of renderSets) {
+        if (enabled && selected(name)) total += renderSet.outlineSliceCost();
+      }
       outlinesSuppressed = total > OUTLINE_SLICE_BUDGET_MS;
     } else {
       outlinesSuppressed = false;

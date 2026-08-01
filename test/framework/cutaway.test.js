@@ -1148,6 +1148,41 @@ describe("section outlines", () => {
     expect(outline.object.visible).toBe(true);
   });
 
+  test("deselecting an expensive subpart does not suppress a cheap sibling's outline", () => {
+    // Costs are attributed to whichever slice is running when they land, so
+    // the second `now()` call of each pair (the one that lands on the "end"
+    // timestamp) carries the intended cost: 50ms for the first subpart's
+    // slice, 1ms for the second's.
+    const increments = [1, 50, 1, 1];
+    let index = 0;
+    let clock = 0;
+    const now = () => {
+      clock += increments[index] ?? 1;
+      index += 1;
+      return clock;
+    };
+    const fixture = createFixture({ now });
+    addSubpart(fixture, "expensive");
+    addSubpart(fixture, "cheap");
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const expensiveOutline = fixture.controller._renderSetFor("expensive").outline;
+    const cheapOutline = fixture.controller._renderSetFor("cheap").outline;
+    expect(expensiveOutline.sliceCost()).toBeGreaterThan(OUTLINE_SLICE_BUDGET_MS);
+    expect(cheapOutline.sliceCost()).toBeLessThan(OUTLINE_SLICE_BUDGET_MS);
+
+    // Deselect the expensive subpart. Its outline is now hidden, but its
+    // last-measured cost is still sitting in the map, stale.
+    fixture.controller.setVisible(["cheap"]);
+    expect(cheapOutline.object.visible).toBe(true);
+
+    // Only the cheap subpart is visible, and it is well under budget on its
+    // own - the stale cost of the hidden subpart must not count against it.
+    fixture.controller._setDragging(true);
+    expect(cheapOutline.object.visible).toBe(true);
+  });
+
   test("a drag that ends re-slices whatever moved while outlines were hidden", () => {
     let clock = 0;
     const fixture = createFixture({ now: () => (clock += 25) });
