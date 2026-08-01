@@ -310,11 +310,22 @@ async function checkNarrowPaneTabs(narrowWidth, wideWidth) {
       const el = document.querySelector(selector);
       return el ? getComputedStyle(el).display : "(missing)";
     };
+    // Geometry, not just `display`. A tab bar can be display:flex and still be
+    // invisible: if the stage refuses to shrink (it needs min-height: 0, since
+    // the narrow shell is a column and the canvas carries a real pixel height),
+    // the bar is pushed past the bottom of the viewport. That shipped once, and
+    // a display-only assertion waved it through in both engines.
+    const bar = document.querySelector(".pf-tabbar");
+    const rect = bar ? bar.getBoundingClientRect() : null;
     return {
       tabbar: display(".pf-tabbar"),
       railToggle: display("#rail-toggle"),
       stage: display(".pf-stage"),
       rail: display(".pf-rail"),
+      barOnScreen: rect ? rect.top < window.innerHeight && rect.bottom > 0 && rect.height > 0 : false,
+      barBottom: rect ? Math.round(rect.bottom) : null,
+      viewportH: window.innerHeight,
+      overflowY: document.documentElement.scrollHeight - window.innerHeight,
     };
   });
 
@@ -323,6 +334,12 @@ async function checkNarrowPaneTabs(narrowWidth, wideWidth) {
   let result = await displays();
   if (result.tabbar !== "flex") {
     errors.push(`pane tabs ${narrowWidth}px: .pf-tabbar display is ${result.tabbar}, expected flex`);
+  }
+  if (!result.barOnScreen) {
+    errors.push(`pane tabs ${narrowWidth}px: .pf-tabbar is laid out off-screen (bottom ${result.barBottom} vs viewport ${result.viewportH}) — it is display:${result.tabbar} but not visible`);
+  }
+  if (result.overflowY > 0) {
+    errors.push(`pane tabs ${narrowWidth}px: the shell overflows the viewport by ${result.overflowY}px — a pane is refusing to shrink`);
   }
   if (result.railToggle !== "none") {
     errors.push(`pane tabs ${narrowWidth}px: #rail-toggle display is ${result.railToggle}, expected none`);

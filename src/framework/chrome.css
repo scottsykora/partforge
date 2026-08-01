@@ -15,8 +15,7 @@
    Prerequisite: this sheet consumes --pf-* custom properties (--pf-rail-w,
    --pf-rail-pad, --pf-border, --pf-surface, --pf-bg, --pf-text, --pf-muted,
    --pf-accent, --pf-shadow-rail) but does not import them — a standalone
-   consumer must
-   also load "partforge/tokens.css" (kept separate so the two stay
+   consumer must also load "partforge/tokens.css" (kept separate so the two stay
    independently composable). The host is also responsible for giving
    .pf-shell a height (e.g. `height: 100%` on an ancestor chain rooted at
    `html, body`, or `position: absolute; inset: 0`); this sheet does not size
@@ -34,11 +33,21 @@
 
 /* ---- stage: the viewer column, which owns its floating chrome ------------
    min-width: 0 lets the column shrink past the canvas's intrinsic width, so
-   dragging the rail wider actually narrows the viewer instead of overflowing. */
+   dragging the rail wider actually narrows the viewer instead of overflowing.
+
+   min-height: 0 is the same escape hatch for the OTHER axis, and it is what
+   the narrow layout needs: there the shell is a column, so the canvas's
+   height — a real pixel height the renderer wrote, not an intrinsic 150px —
+   becomes this flex item's automatic minimum size. Without it the stage
+   refuses to shrink, and the tab bar below it is pushed off the bottom of
+   the screen: still display:flex, still in the DOM, simply not on screen.
+   That failure survived a `display` assertion in the smoke check, which is
+   why that check now asserts the bar is inside the viewport instead. */
 .pf-stage {
   flex: 1;
   position: relative;
   min-width: 0;
+  min-height: 0;
   background: var(--pf-bg);
 }
 
