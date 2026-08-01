@@ -20,6 +20,15 @@ const _crossing = new THREE.Vector3();
 //   - a triangle with an edge in the plane emits that edge only when its third
 //     vertex is on the clipped side, so the two triangles sharing that edge do
 //     not both emit it.
+//
+// Known limitation: that last rule reads only its own triangle, so it cannot
+// tell "the neighbour is on the other side" (a real crossing, one emission)
+// from "the neighbour is also clipped" (a ridge merely tangent to the plane,
+// two emissions of the same edge). Telling them apart needs per-slice edge
+// bookkeeping on a path that runs every frame of a gizmo drag, and the payoff
+// is small: the duplicates are coincident, so they are invisible on opaque
+// parts and only slightly darken a translucent one, in the measure-zero case
+// where a plane lands exactly on a crease.
 export function sectionSegments(geometry, plane) {
   const position = geometry?.getAttribute?.("position");
   if (!position) return new Float32Array(0);
