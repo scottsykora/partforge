@@ -33,6 +33,7 @@ export function createCutaway({
   getBounds,
   edgeColor,
   schedule = defaultSchedule,
+  now,
 }) {
   let supported = false;
   try {
@@ -236,6 +237,7 @@ export function createCutaway({
       capGeometry,
       order,
       inkColor: hatchInk,
+      now,
     });
     renderSets.set(name, { renderSet, mesh, edgeLines, order });
     if (viewportSize) {
@@ -402,8 +404,17 @@ export function createCutaway({
     };
   }
 
+  // Per-frame maintenance while the cutaway is on: the gizmo rescales for the
+  // camera, and every visible section re-slices its outline if anything it
+  // depends on moved. Both are cheap no-ops when nothing changed.
+  function refreshSections() {
+    for (const { renderSet } of renderSets.values()) renderSet.refreshOutline();
+  }
+
   function updateForCamera() {
-    if (enabled && !disposed) gizmo.updateForCamera();
+    if (!enabled || disposed) return;
+    gizmo.updateForCamera();
+    refreshSections();
   }
 
   function renderOverlay(targetRenderer, targetCamera) {
@@ -465,5 +476,6 @@ export function createCutaway({
     renderOverlay,
     onHandleHoverChange,
     dispose,
+    _renderSetFor: (name) => renderSets.get(name)?.renderSet ?? null,
   };
 }

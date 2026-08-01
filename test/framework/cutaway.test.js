@@ -1066,3 +1066,51 @@ test("viewer supplies visible transformed meshes as world-space cutaway bounds",
   vi.doUnmock("three");
   vi.doUnmock("../../src/framework/cutaway.js");
 });
+
+describe("section outlines", () => {
+  test("updateForCamera re-slices outlines while enabled", () => {
+    const fixture = createFixture();
+    const { mesh } = addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    fixture.controller.updateForCamera();
+    expect(outline.object.visible).toBe(true);
+
+    // A world-fixed plane with a moved part still changes the section.
+    const before = outline.object.geometry;
+    mesh.position.set(0, 0, 1.5);
+    mesh.updateMatrixWorld(true);
+    fixture.controller.updateForCamera();
+    expect(outline.object.geometry).not.toBe(before);
+  });
+
+  test("updateForCamera does not re-slice while disabled", () => {
+    const fixture = createFixture();
+    addSubpart(fixture);
+    // Spy on the render set, not the outline: refreshSections looks the method
+    // up on the render set at call time, so a spy there is what intercepts.
+    const renderSet = fixture.controller._renderSetFor("body");
+    const refresh = vi.spyOn(renderSet, "refreshOutline");
+
+    fixture.controller.updateForCamera();
+
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  test("flipping leaves the outline segments alone", () => {
+    const fixture = createFixture();
+    addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    const before = outline.object.geometry.attributes.instanceStart.data.array.slice();
+
+    fixture.controller.flip();
+    fixture.controller.updateForCamera();
+
+    const after = outline.object.geometry.attributes.instanceStart.data.array;
+    expect([...after]).toEqual([...before]);
+  });
+});
