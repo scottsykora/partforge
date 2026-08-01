@@ -379,12 +379,19 @@ export function createViewer(container, part) {
   // fov 45, quality 0.9). A custom size (captureCurrent) gets a fresh render
   // target, disposed after the read — those captures are rare, so per-call
   // allocation beats caching one target per size ever requested.
+  //
+  // stencilBuffer is NOT optional: cutaway masks its section caps with the
+  // stencil buffer, and a WebGLRenderTarget defaults to not having one (the
+  // visible canvas does, via the `stencil: true` renderer above). Without it
+  // the mask silently no-ops and every cap floods its whole plane with hatch —
+  // no error, live view unaffected, wrong only in the capture.
+  const RT_OPTIONS = { samples: 4, stencilBuffer: true };
   function renderOffscreen({ position, up, target },
                            { width = _rtSize, height = _rtSize, fov = 45, quality = 0.9 } = {}) {
     const cachedSize = width === _rtSize && height === _rtSize;
     const rt = cachedSize
-      ? (_rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize, { samples: 4 }))
-      : new THREE.WebGLRenderTarget(width, height, { samples: 4 });
+      ? (_rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize, RT_OPTIONS))
+      : new THREE.WebGLRenderTarget(width, height, RT_OPTIONS);
     _capLights = _capLights ?? createCaptureLights();
     const cam = new THREE.PerspectiveCamera(fov, width / height, 0.1, 1000);
     cam.position.set(position[0], position[1], position[2]);
