@@ -293,6 +293,17 @@ async function resetRail() {
 // `[hidden] { display: none }` (rail.js's `toggle.hidden = true` left
 // #rail-toggle fully visible below the breakpoint). Both are fixed; this check
 // is what would have caught them.
+//
+// What this does NOT cover: this whole script runs Chromium headless, and
+// headless Chromium does not throttle rendering the way a headed browser
+// does for hidden content. Measured directly: a `visibility: hidden`
+// sandboxed iframe kept delivering requestAnimationFrame callbacks under
+// headless (180 in the sample window; `display: none` delivered a full
+// count too in one configuration), while headed Chromium delivered zero for
+// `visibility: hidden`. So a bug where hiding an element starves its rAF
+// loop — as happened to partforge-cloud's viewer iframe and its
+// build-screenshot capture — would pass this check even if reintroduced
+// here. Catching that class needs a headed run.
 async function checkNarrowPaneTabs(narrowWidth, wideWidth) {
   const displays = async () => page.evaluate(() => {
     const display = (selector) => {
