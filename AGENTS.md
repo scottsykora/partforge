@@ -77,6 +77,13 @@ the installed package, so publish before bumping the dep there.
   loop across workers), `assembly.js` (collision checking), `geometry/` (the
   kernel), and `app.css` / `chrome.css` (the shell/rail layout - `rail.js` binds
   it to the DOM, `rail-state.js` is its pure drag/collapse state machine).
+  Below `RAIL_NARROW_BREAKPOINT` (720px) the rail cannot sit beside the viewer:
+  the shell shows exactly ONE pane, keyed on `data-pf-pane`, and `mobile-tabs.js`
+  draws the bottom tab bar that picks it. A host that wants to draw its own bar
+  (partforge-cloud does, at the window level) takes over with
+  `runtime.setHostPane('stage' | 'rail')` and releases with `null`. Collapse is
+  suspended at that width — `rail.js` ignores a persisted `collapsed` flag there
+  rather than clearing it.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/testing.js`** + **`src/testing/`** - headless helpers
   (`createManifoldKernel`, `measure`, `verify`, `assemblyOverlaps`,

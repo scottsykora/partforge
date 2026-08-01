@@ -282,6 +282,113 @@ async function resetRail() {
   await sleep(50);
 }
 
+// Narrow-layout pane tabs: below RAIL_NARROW_BREAKPOINT (720px) the shell shows
+// exactly ONE pane, full height, chosen by .pf-tabbar (mobile-tabs.js writes
+// data-pf-pane onto .pf-shell) — and #rail-toggle hides itself because the tab
+// bar replaces it. This is pure CSS cascade, invisible to happy-dom (the vitest
+// suite never loads chrome.css/app.css), which is exactly how this branch's two
+// bugs escaped: .pf-tabbar's unconditional `display: none` declared after the
+// media query that reveals it (the bar was invisible at every width), and
+// #viewbar button's author-origin `display: flex` beating the UA's
+// `[hidden] { display: none }` (rail.js's `toggle.hidden = true` left
+// #rail-toggle fully visible below the breakpoint). Both are fixed; this check
+// is what would have caught them.
+//
+// What this does NOT cover: this whole script runs Chromium headless, and
+// headless Chromium does not throttle rendering the way a headed browser
+// does for hidden content. Measured directly: a `visibility: hidden`
+// sandboxed iframe kept delivering requestAnimationFrame callbacks under
+// headless (180 in the sample window; `display: none` delivered a full
+// count too in one configuration), while headed Chromium delivered zero for
+// `visibility: hidden`. So a bug where hiding an element starves its rAF
+// loop — as happened to partforge-cloud's viewer iframe and its
+// build-screenshot capture — would pass this check even if reintroduced
+// here. Catching that class needs a headed run.
+async function checkNarrowPaneTabs(narrowWidth, wideWidth) {
+  const displays = async () => page.evaluate(() => {
+    const display = (selector) => {
+      const el = document.querySelector(selector);
+      return el ? getComputedStyle(el).display : "(missing)";
+    };
+    // Geometry, not just `display`. A tab bar can be display:flex and still be
+    // invisible: if the stage refuses to shrink (it needs min-height: 0, since
+    // the narrow shell is a column and the canvas carries a real pixel height),
+    // the bar is pushed past the bottom of the viewport. That shipped once, and
+    // a display-only assertion waved it through in both engines.
+    const bar = document.querySelector(".pf-tabbar");
+    const rect = bar ? bar.getBoundingClientRect() : null;
+    return {
+      tabbar: display(".pf-tabbar"),
+      railToggle: display("#rail-toggle"),
+      stage: display(".pf-stage"),
+      rail: display(".pf-rail"),
+      barOnScreen: rect ? rect.top < window.innerHeight && rect.bottom > 0 && rect.height > 0 : false,
+      barBottom: rect ? Math.round(rect.bottom) : null,
+      viewportH: window.innerHeight,
+      overflowY: document.documentElement.scrollHeight - window.innerHeight,
+    };
+  });
+
+  await page.setViewportSize({ width: narrowWidth, height: 720 });
+  await sleep(50);
+  let result = await displays();
+  if (result.tabbar !== "flex") {
+    errors.push(`pane tabs ${narrowWidth}px: .pf-tabbar display is ${result.tabbar}, expected flex`);
+  }
+  if (!result.barOnScreen) {
+    errors.push(`pane tabs ${narrowWidth}px: .pf-tabbar is laid out off-screen (bottom ${result.barBottom} vs viewport ${result.viewportH}) — it is display:${result.tabbar} but not visible`);
+  }
+  if (result.overflowY > 0) {
+    errors.push(`pane tabs ${narrowWidth}px: the shell overflows the viewport by ${result.overflowY}px — a pane is refusing to shrink`);
+  }
+  if (result.railToggle !== "none") {
+    errors.push(`pane tabs ${narrowWidth}px: #rail-toggle display is ${result.railToggle}, expected none`);
+  }
+  if (result.stage === "none") {
+    errors.push(`pane tabs ${narrowWidth}px: .pf-stage is hidden with data-pf-pane at its default`);
+  }
+  if (result.rail !== "none") {
+    errors.push(`pane tabs ${narrowWidth}px: .pf-rail display is ${result.rail}, expected none with data-pf-pane at its default`);
+  }
+
+  // Switch panes the way a phone user would: tap the tab bar's Controls button.
+  const railTab = page.locator('[data-pf-pane-tab="rail"]');
+  if (await railTab.count()) {
+    await railTab.click();
+    await sleep(50);
+    result = await displays();
+    if (result.rail === "none") {
+      errors.push(`pane tabs ${narrowWidth}px: .pf-rail is still hidden after switching to the Controls tab`);
+    }
+    if (result.stage !== "none") {
+      errors.push(`pane tabs ${narrowWidth}px: .pf-stage display is ${result.stage} after switching to the Controls tab, expected none`);
+    }
+    // Switch back to the stage tab so no state leaks into a later check that
+    // reuses this narrow width (checkCompactLayout runs at widths below the
+    // same breakpoint).
+    const stageTab = page.locator('[data-pf-pane-tab="stage"]');
+    if (await stageTab.count()) {
+      await stageTab.click();
+      await sleep(50);
+    }
+  } else {
+    errors.push(`pane tabs ${narrowWidth}px: no [data-pf-pane-tab="rail"] button to click`);
+  }
+
+  await page.setViewportSize({ width: wideWidth, height: 720 });
+  await sleep(50);
+  result = await displays();
+  if (result.tabbar !== "none") {
+    errors.push(`pane tabs ${wideWidth}px: .pf-tabbar display is ${result.tabbar}, expected none above the breakpoint`);
+  }
+  if (result.railToggle === "none") {
+    errors.push(`pane tabs ${wideWidth}px: #rail-toggle is hidden above the breakpoint`);
+  }
+  if (result.stage === "none" || result.rail === "none") {
+    errors.push(`pane tabs ${wideWidth}px: stage and rail are not both visible above the breakpoint (stage=${result.stage}, rail=${result.rail})`);
+  }
+}
+
 // Showcase capture (runtime.captureCurrent): a page that stashes its mount handle
 // on window.__pfRuntime (demo.html does) gets the capture exercised the way an
 // embedder would. Asserts the real-GL properties the faked-renderer unit tests
@@ -492,6 +599,7 @@ try {
       await checkCompactLayout(390);
       await checkCompactLayout(320);
     }
+    await checkNarrowPaneTabs(400, 1024);
     if (viewport) await page.setViewportSize(viewport);
   }
   await checkCaptureCurrent(); // before checkDebugOverlay — that one navigates away

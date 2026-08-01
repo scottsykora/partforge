@@ -109,6 +109,9 @@ const runtime = mount(part, {
   onPick: ({ selection, label, prompt, token }) => {}, // programmatic click-to-select
 });
 await runtime.ready;   // first successful build (rejects on a first-build error)
+runtime.setHostPane("rail");  // narrow layout only: show just the controls
+                               // rail ('stage' | 'rail'), suppressing the
+                               // built-in tab bar. null hands selection back.
 runtime.dispose();     // stops loops, workers, observers, listeners; frees GPU resources
 ```
 

@@ -86,7 +86,7 @@ vi.mock("../../src/framework/viewer-controls.js", async (importOriginal) => {
   return { ...real, attachViewerControls: vi.fn(real.attachViewerControls) };
 });
 
-import { mount } from "../../src/framework/mount.js";
+import { mount, makeHandle } from "../../src/framework/mount.js";
 import { attachPicker, attachPickToggle, attachHoverLabels } from "../../src/framework/selection/index.js";
 import { attachCutawayControls } from "../../src/framework/cutaway-controls.js";
 import { attachViewerControls } from "../../src/framework/viewer-controls.js";
@@ -147,6 +147,21 @@ function makeElements() {
 function finishFirstBuild(workers, ms = 42) {
   workers.manifold.onmessage({ data: { type: "ready" } });
   workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms } });
+}
+
+// mount() with elements.rail reparented under a real .pf-shell wrapper before
+// mounting — attachMobileTabs (like attachRail) resolves its shell as
+// rail.parentElement, so the bar needs a real ancestor to land on, not the
+// bare document.body every other test's makeElements() leaves it in.
+async function mountFixture() {
+  const els = makeElements();
+  const shell = document.createElement("div");
+  shell.className = "pf-shell";
+  shell.append(els.viewer, els.rail); // reparent before mount() resolves the shell
+  document.body.append(shell);
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  return { runtime, shell };
 }
 
 beforeEach(() => {
@@ -780,4 +795,40 @@ test("dispose() before the first build rejects ready instead of hanging", () => 
   const runtime = mount(makePart(), { createWorker, elements: makeElements() });
   runtime.dispose(); // no build ever completed
   return expect(runtime.ready).rejects.toThrow("disposed before first build");
+});
+
+// --- narrow-layout pane tabs ----------------------------------------------
+// mount() attaches the tab bar the same way it attaches the rail, so a host
+// that supplies a rail gets narrow-layout tabs for free — and one that lays the
+// framework out itself still gets a callable setHostPane, so the handle's shape
+// never varies with the host's markup.
+test("mount attaches the pane tab bar and exposes setHostPane", async () => {
+  const { runtime, shell } = await mountFixture(); // the file's existing mount helper
+  expect(typeof runtime.setHostPane).toBe("function");
+  expect(shell.querySelector(".pf-tabbar")).not.toBeNull();
+  expect(shell.dataset.pfPane).toBe("stage");
+
+  runtime.setHostPane("rail");
+  expect(shell.dataset.pfPane).toBe("rail");
+  expect(shell.querySelector(".pf-tabbar").hidden).toBe(true);
+
+  runtime.setHostPane(null);
+  expect(shell.querySelector(".pf-tabbar").hidden).toBe(false);
+});
+
+test("dispose removes the tab bar", async () => {
+  const { runtime, shell } = await mountFixture();
+  runtime.dispose();
+  expect(shell.querySelector(".pf-tabbar")).toBeNull();
+  expect(shell.dataset.pfPane).toBeUndefined();
+});
+
+test("makeHandle always exposes a callable setHostPane", () => {
+  // Called with no setHostPane at all (the no-rail path, and every existing
+  // direct-makeHandle test): the method must still be safe to call.
+  const handle = makeHandle({
+    ready: Promise.resolve(), dispose() {}, viewer: { captureCanonicalViews: () => [] },
+    setParams() {}, listExportableParts: () => [], exportParts: async () => {},
+  });
+  expect(() => handle.setHostPane("rail")).not.toThrow();
 });
