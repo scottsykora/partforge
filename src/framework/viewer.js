@@ -175,14 +175,24 @@ export function createViewer(container, part) {
   }
 
   // The cutaway plane lives in world space, so its initial/reset bounds must
-  // include the pivot rotation and the per-view recentering transform.
+  // include the pivot rotation and the per-view recentering transform —
+  // mesh.matrixWorld carries both. Union each visible mesh's own
+  // geometry.boundingBox rather than `Box3.expandByObject`, which recurses into
+  // children: the two stencil-pass meshes share `mesh.geometry` so that
+  // recursion is harmless for them, but the cut-face outline child carries its
+  // own independent geometry that only re-slices while the cutaway is enabled
+  // and visible — while hidden it can keep segments from an older, larger part
+  // and inflate these bounds. A subpart's initial placeholder BufferGeometry
+  // has no boundingBox computed (only buildGeometry computes one), so skip it.
   const _worldBounds = new THREE.Box3();
+  const _meshBounds = new THREE.Box3();
   function getVisibleWorldBounds() {
     _worldBounds.makeEmpty();
     for (const mesh of Object.values(subMesh)) {
-      if (!mesh.visible || !mesh.geometry) continue;
+      if (!mesh.visible || !mesh.geometry?.boundingBox) continue;
       mesh.updateWorldMatrix(true, false);
-      _worldBounds.expandByObject(mesh);
+      _meshBounds.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
+      _worldBounds.union(_meshBounds);
     }
     return _worldBounds;
   }

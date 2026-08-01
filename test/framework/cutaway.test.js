@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 
-import { createCutaway } from "../../src/framework/cutaway.js";
+import { OUTLINE_SLICE_BUDGET_MS, createCutaway } from "../../src/framework/cutaway.js";
 
 const controllers = [];
 const CENTER_HANDLE = "rotate-y";
@@ -43,6 +43,7 @@ function createFixture({
   schedule: providedSchedule,
   localClippingEnabled = false,
   edgeColor = 0x1c232d,
+  now,
 } = {}) {
   const renderer = makeRenderer(stencil);
   renderer.localClippingEnabled = localClippingEnabled;
@@ -76,6 +77,7 @@ function createFixture({
     getBounds: () => bounds,
     schedule: providedSchedule ?? timer.schedule,
     edgeColor,
+    now,
   });
   controllers.push(controller);
   return {
@@ -122,6 +124,13 @@ function findCaps(scene) {
   return scene.children.filter(
     (child) => child.isMesh && child.material?.isShaderMaterial,
   );
+}
+
+// The section helpers a subpart mesh carries: the two stencil passes. The
+// cut-face outline is also a child, but it is a LineSegments2 and has its own
+// visibility rules, so it is not part of what these assertions describe.
+function stencilPasses(mesh) {
+  return mesh.children.filter((entry) => !entry.isLineSegments2);
 }
 
 function movePointer(element, x = 100, y = 100) {
@@ -508,7 +517,7 @@ test("enable sections visible subparts at a centered camera-facing plane", () =>
   expect(mesh.material).not.toBe(material);
   expect(mesh.material.clippingPlanes).toEqual([plane]);
   expect(edgeLines.material).not.toBe(edgeMaterial);
-  expect(mesh.children.every((entry) => entry.visible)).toBe(true);
+  expect(stencilPasses(mesh).every((entry) => entry.visible)).toBe(true);
   expect(findCap(fixture.scene).visible).toBe(true);
   expect(findGizmo(fixture.scene).visible).toBe(true);
 });
@@ -589,12 +598,12 @@ test("setVisible isolates section helpers to selected names", () => {
   fixture.controller.setVisible(["second"]);
   fixture.controller.setEnabled(true);
 
-  expect(first.mesh.children.every((entry) => !entry.visible)).toBe(true);
-  expect(second.mesh.children.every((entry) => entry.visible)).toBe(true);
+  expect(stencilPasses(first.mesh).every((entry) => !entry.visible)).toBe(true);
+  expect(stencilPasses(second.mesh).every((entry) => entry.visible)).toBe(true);
 
   fixture.controller.setVisible(new Set(["first"]));
-  expect(first.mesh.children.every((entry) => entry.visible)).toBe(true);
-  expect(second.mesh.children.every((entry) => !entry.visible)).toBe(true);
+  expect(stencilPasses(first.mesh).every((entry) => entry.visible)).toBe(true);
+  expect(stencilPasses(second.mesh).every((entry) => !entry.visible)).toBe(true);
 });
 
 test("geometry replacement is shared by stencil passes and remains caller-owned", () => {
@@ -606,7 +615,7 @@ test("geometry replacement is shared by stencil passes and remains caller-owned"
 
   fixture.controller.updateGeometry("body", replacement);
 
-  expect(mesh.children.map((entry) => entry.geometry)).toEqual([replacement, replacement]);
+  expect(stencilPasses(mesh).map((entry) => entry.geometry)).toEqual([replacement, replacement]);
   fixture.controller.dispose();
   expect(originalDispose).not.toHaveBeenCalled();
   expect(replacementDispose).not.toHaveBeenCalled();
@@ -628,7 +637,7 @@ test("geometry-only updates preserve prepared clipped materials without disposal
 
   expect(mesh.material).toBe(preparedMeshMaterial);
   expect(edgeLines.material).toBe(preparedEdgeMaterial);
-  expect(mesh.children.map((entry) => entry.geometry)).toEqual([
+  expect(stencilPasses(mesh).map((entry) => entry.geometry)).toEqual([
     replacementGeometry,
     replacementGeometry,
   ]);
@@ -1058,4 +1067,176 @@ test("viewer supplies visible transformed meshes as world-space cutaway bounds",
   viewer.dispose();
   vi.doUnmock("three");
   vi.doUnmock("../../src/framework/cutaway.js");
+});
+
+describe("section outlines", () => {
+  test("updateForCamera re-slices outlines while enabled", () => {
+    const fixture = createFixture();
+    const { mesh } = addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    fixture.controller.updateForCamera();
+    expect(outline.object.visible).toBe(true);
+
+    // A world-fixed plane with a moved part still changes the section.
+    const before = outline.object.geometry;
+    mesh.position.set(0, 0, 1.5);
+    mesh.updateMatrixWorld(true);
+    fixture.controller.updateForCamera();
+    expect(outline.object.geometry).not.toBe(before);
+  });
+
+  test("updateForCamera does not re-slice while disabled", () => {
+    const fixture = createFixture();
+    addSubpart(fixture);
+    // Spy on the render set, not the outline: refreshSections looks the method
+    // up on the render set at call time, so a spy there is what intercepts.
+    const renderSet = fixture.controller._renderSetFor("body");
+    const refresh = vi.spyOn(renderSet, "refreshOutline");
+
+    fixture.controller.updateForCamera();
+
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  test("flipping leaves the outline segments alone", () => {
+    const fixture = createFixture();
+    addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    const before = outline.object.geometry.attributes.instanceStart.data.array.slice();
+
+    fixture.controller.flip();
+    fixture.controller.updateForCamera();
+
+    const after = outline.object.geometry.attributes.instanceStart.data.array;
+    expect([...after]).toEqual([...before]);
+  });
+
+  test("outlines keep tracking the plane during a cheap drag", () => {
+    let clock = 0;
+    const fixture = createFixture({ now: () => (clock += 0.5) });
+    addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    expect(outline.sliceCost()).toBeLessThan(OUTLINE_SLICE_BUDGET_MS);
+
+    fixture.controller._setDragging(true);
+    expect(outline.object.visible).toBe(true);
+  });
+
+  test("outlines hide for the drag when the last slice blew the budget", () => {
+    let clock = 0;
+    const fixture = createFixture({ now: () => (clock += 25) });
+    addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    expect(outline.sliceCost()).toBeGreaterThan(OUTLINE_SLICE_BUDGET_MS);
+    expect(outline.object.visible).toBe(true);
+
+    fixture.controller._setDragging(true);
+    expect(outline.object.visible).toBe(false);
+
+    fixture.controller._setDragging(false);
+    expect(outline.object.visible).toBe(true);
+  });
+
+  test("deselecting an expensive subpart does not suppress a cheap sibling's outline", () => {
+    // Costs are attributed to whichever slice is running when they land, so
+    // the second `now()` call of each pair (the one that lands on the "end"
+    // timestamp) carries the intended cost: 50ms for the first subpart's
+    // slice, 1ms for the second's.
+    const increments = [1, 50, 1, 1];
+    let index = 0;
+    let clock = 0;
+    const now = () => {
+      clock += increments[index] ?? 1;
+      index += 1;
+      return clock;
+    };
+    const fixture = createFixture({ now });
+    addSubpart(fixture, "expensive");
+    addSubpart(fixture, "cheap");
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const expensiveOutline = fixture.controller._renderSetFor("expensive").outline;
+    const cheapOutline = fixture.controller._renderSetFor("cheap").outline;
+    expect(expensiveOutline.sliceCost()).toBeGreaterThan(OUTLINE_SLICE_BUDGET_MS);
+    expect(cheapOutline.sliceCost()).toBeLessThan(OUTLINE_SLICE_BUDGET_MS);
+
+    // Deselect the expensive subpart. Its outline is now hidden, but its
+    // last-measured cost is still sitting in the map, stale.
+    fixture.controller.setVisible(["cheap"]);
+    expect(cheapOutline.object.visible).toBe(true);
+
+    // Only the cheap subpart is visible, and it is well under budget on its
+    // own - the stale cost of the hidden subpart must not count against it.
+    fixture.controller._setDragging(true);
+    expect(cheapOutline.object.visible).toBe(true);
+  });
+
+  test("a drag that ends re-slices whatever moved while outlines were hidden", () => {
+    let clock = 0;
+    const fixture = createFixture({ now: () => (clock += 25) });
+    const { mesh } = addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    fixture.controller._setDragging(true);
+    const stale = outline.object.geometry;
+    mesh.position.set(0, 0, 1.5);
+    mesh.updateMatrixWorld(true);
+    fixture.controller._setDragging(false);
+
+    expect(outline.object.geometry).not.toBe(stale);
+  });
+
+  // Every other suppression test above drives dragging through the
+  // `_setDragging` test hook, which bypasses the gizmo entirely. The only
+  // thing that actually wires the gizmo to drag suppression in production is
+  // `onDragChange: setDragging` in the createCutawayGizmo call — a real
+  // pointer drag has to prove that connection, or a deleted wire would pass
+  // every test above and still ship dead.
+  test("a real pointer drag on a gizmo handle suppresses an over-budget outline", () => {
+    let clock = 0;
+    const fixture = createFixture({ now: () => (clock += 25) });
+    addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    expect(outline.sliceCost()).toBeGreaterThan(OUTLINE_SLICE_BUDGET_MS);
+    expect(outline.object.visible).toBe(true);
+
+    // (100, 100) is the viewport center, where the "handle hover subscriptions"
+    // test above confirms CENTER_HANDLE ("rotate-y") picks up a real pointer.
+    fixture.domElement.dispatchEvent(new PointerEvent("pointerdown", {
+      clientX: 100,
+      clientY: 100,
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+    }));
+
+    expect(outline.object.visible).toBe(false);
+
+    fixture.domElement.dispatchEvent(new PointerEvent("pointerup", {
+      clientX: 100,
+      clientY: 100,
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+    }));
+
+    expect(outline.object.visible).toBe(true);
+  });
 });

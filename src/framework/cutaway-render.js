@@ -1,5 +1,7 @@
 import * as THREE from "three";
 
+import { createSectionOutline } from "./cutaway-outline.js";
+
 export const HATCH_PERIOD_CSS_PX = 5;
 export const HATCH_LINE_CSS_PX = 1;
 
@@ -9,6 +11,7 @@ export const HATCH_LINE_CSS_PX = 1;
 const SURFACE_ORDER_BASE = 1_000_000;
 const EDGE_ORDER_BASE = 2_000_000;
 const SECTION_ORDER_STRIDE = 2;
+export const OUTLINE_ORDER_BASE = 2_500_000;
 export const CUTAWAY_OVERLAY_RENDER_ORDER = 3_000_000;
 
 export function createHatchMaterial({ color, opacity, inkColor }) {
@@ -122,6 +125,7 @@ export function createSectionRenderSet({
   capGeometry,
   order,
   inkColor,
+  now,
 }) {
   let originalMeshMaterial = mesh.material;
   let originalEdgeMaterial = edgeLines?.material;
@@ -187,6 +191,13 @@ export function createSectionRenderSet({
   front.renderOrder = stencilOrder;
   cap.renderOrder = stencilOrder + 1;
 
+  // Cut-face outline: real 3D segments sliced from the mesh, drawn with the
+  // same fat-line renderer as the viewer's feature edges. Ordered above the
+  // clipped edges so it wins the coincident depth against its own cap.
+  const outline = createSectionOutline({ mesh, plane, inkColor, now });
+  outline.object.renderOrder = OUTLINE_ORDER_BASE + order;
+  outline.setTransparent(capMaterial.transparent);
+
   let enabled = false;
   let visible = mesh.visible;
   let disposed = false;
@@ -196,6 +207,7 @@ export function createSectionRenderSet({
     back.visible = on;
     front.visible = on;
     cap.visible = on;
+    outline.setVisible(on);
   }
 
   back.visible = false;
@@ -245,12 +257,14 @@ export function createSectionRenderSet({
   function setHatchInk(color) {
     if (disposed) return;
     capMaterial.userData.setInkColor(color);
+    outline.setInk(color);
   }
 
   function setViewportSize(width, height, pixelRatio = 1) {
     if (disposed) return;
     viewportSize = { width, height, pixelRatio };
     setLineResolution(clippedEdgeMaterial, width, height);
+    outline.setViewportSize(width, height);
     capMaterial.userData.setScreenScale(pixelRatio);
   }
 
@@ -302,6 +316,7 @@ export function createSectionRenderSet({
     backMaterial.transparent = capMaterial.transparent;
     frontMaterial.transparent = capMaterial.transparent;
     if (clippedEdgeMaterial && capMaterial.transparent) makeTransparent(clippedEdgeMaterial);
+    outline.setTransparent(capMaterial.transparent);
 
     if (enabled) {
       mesh.material = clippedMeshMaterial;
@@ -319,6 +334,7 @@ export function createSectionRenderSet({
     disposed = true;
     mesh.remove(back, front);
     scene.remove(cap);
+    outline.dispose();
     for (const material of ownedMaterials) material.dispose();
   }
 
@@ -326,6 +342,7 @@ export function createSectionRenderSet({
     back,
     front,
     cap,
+    outline,
     setEnabled,
     setVisible,
     setGeometry,
@@ -333,6 +350,9 @@ export function createSectionRenderSet({
     setHatchInk,
     setViewportSize,
     refreshSourceMaterial,
+    refreshOutline: outline.refresh,
+    outlineSliceCost: outline.sliceCost,
+    setOutlineSuppressed: outline.setSuppressed,
     dispose,
   };
 }

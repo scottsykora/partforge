@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as THREE from "three";
 
 const state = vi.hoisted(() => ({
   cutaway: null,
@@ -333,6 +334,46 @@ test("captureCurrent returns null when nothing is visible in the scene", () => {
   });
 
   expect(viewer.captureCurrent()).toBe(null);
+
+  viewer.dispose();
+});
+
+// createCutaway is mocked in this file, so `cutawayOptions.getBounds` is the
+// real getVisibleWorldBounds passed through untouched — exercising it directly
+// reaches the bug without booting the real cutaway feature.
+test("getBounds follows the mesh's own geometry, not a stale outline child", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+  viewer.setSubGeometry("body", {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    triangles: 1,
+  });
+  viewer.showAssembly(["body"], { frame: true });
+
+  // The real cut-face outline (cutaway-outline.js) is a LineSegments2 parented
+  // to the mesh, carrying its own LineSegmentsGeometry that only re-slices
+  // while the cutaway is enabled and visible. Reproduce a stale one directly:
+  // the part shrank to a 0..1 box above, but the outline still holds a slice
+  // from when the part spanned ±50 (e.g. taken with the cutaway enabled, then
+  // left behind after the cutaway was disabled and a parameter shrank the part).
+  const staleOutline = new THREE.Object3D();
+  staleOutline.geometry = new THREE.BufferGeometry();
+  staleOutline.geometry.setAttribute(
+    "position",
+    new THREE.BufferAttribute(new Float32Array([-50, -50, -50, 50, 50, 50]), 3),
+  );
+  staleOutline.geometry.computeBoundingBox();
+  viewer._subMeshes.body.add(staleOutline);
+
+  const bounds = state.cutawayOptions.getBounds();
+
+  // Bounds must follow the mesh's own geometry (the 0..1 triangle), not the
+  // stale ±50 outline child.
+  expect(bounds.min.x).toBeGreaterThan(-2);
+  expect(bounds.max.x).toBeLessThan(2);
 
   viewer.dispose();
 });

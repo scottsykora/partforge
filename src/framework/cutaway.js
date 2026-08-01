@@ -10,6 +10,11 @@ import { createSectionRenderSet } from "./cutaway-render.js";
 
 const IDLE_DELAY_MS = 800;
 
+// Slicing rides on top of everything else in the frame, so the whole visible
+// assembly gets about an eighth of a 60 fps frame before outlines step aside
+// for the duration of a drag.
+export const OUTLINE_SLICE_BUDGET_MS = 2;
+
 function defaultSchedule(callback, delay) {
   const timer = setTimeout(callback, delay);
   return () => clearTimeout(timer);
@@ -33,6 +38,7 @@ export function createCutaway({
   getBounds,
   edgeColor,
   schedule = defaultSchedule,
+  now,
 }) {
   let supported = false;
   try {
@@ -61,6 +67,7 @@ export function createCutaway({
   let previousLocalClippingEnabled;
   let disposed = false;
   let disabling = false;
+  let outlinesSuppressed = false;
   let hoveredHandle = null;
   const handleHoverSubscribers = new Set();
   const pendingHandlePublications = [];
@@ -218,6 +225,7 @@ export function createCutaway({
     onPoseChange,
     onActivity: showActive,
     onHandleHoverChange: publishHandleHover,
+    onDragChange: setDragging,
   });
   gizmo.setVisible(false);
   gizmo.setTheme(theme);
@@ -236,6 +244,7 @@ export function createCutaway({
       capGeometry,
       order,
       inkColor: hatchInk,
+      now,
     });
     renderSets.set(name, { renderSet, mesh, edgeLines, order });
     if (viewportSize) {
@@ -248,6 +257,7 @@ export function createCutaway({
     applyCapPose(renderSet);
     renderSet.setVisible(enabled && selected(name));
     renderSet.setEnabled(enabled);
+    renderSet.setOutlineSuppressed(outlinesSuppressed);
     return true;
   }
 
@@ -402,8 +412,42 @@ export function createCutaway({
     };
   }
 
+  // Per-frame maintenance while the cutaway is on: the gizmo rescales for the
+  // camera, and every visible section re-slices its outline if anything it
+  // depends on moved. Both are cheap no-ops when nothing changed.
+  function refreshSections() {
+    for (const { renderSet } of renderSets.values()) renderSet.refreshOutline();
+  }
+
+  // Outlines re-slice on every frame of a gizmo drag. On heavy assemblies that
+  // is the one place the cost could show, so decide once at drag start — from
+  // costs already measured, so the drag never pays a spike to discover it is
+  // too expensive — and hide all of them or none. Half-outlined assemblies read
+  // as broken. Only sections that are actually showing count toward the budget:
+  // a hidden section's refresh() early-returns without slicing, so its cost
+  // entry is whatever was last measured while it *was* visible — stale, and
+  // irrelevant to what the drag will actually spend time on.
+  function setDragging(active) {
+    if (disposed) return;
+    if (active) {
+      let total = 0;
+      for (const [name, { renderSet }] of renderSets) {
+        if (enabled && selected(name)) total += renderSet.outlineSliceCost();
+      }
+      outlinesSuppressed = total > OUTLINE_SLICE_BUDGET_MS;
+    } else {
+      outlinesSuppressed = false;
+    }
+    for (const { renderSet } of renderSets.values()) {
+      renderSet.setOutlineSuppressed(outlinesSuppressed);
+    }
+    if (!active) refreshSections();
+  }
+
   function updateForCamera() {
-    if (enabled && !disposed) gizmo.updateForCamera();
+    if (!enabled || disposed) return;
+    gizmo.updateForCamera();
+    refreshSections();
   }
 
   function renderOverlay(targetRenderer, targetCamera) {
@@ -465,5 +509,7 @@ export function createCutaway({
     renderOverlay,
     onHandleHoverChange,
     dispose,
+    _renderSetFor: (name) => renderSets.get(name)?.renderSet ?? null,
+    _setDragging: setDragging,
   };
 }

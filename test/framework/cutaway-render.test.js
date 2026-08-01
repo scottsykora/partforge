@@ -3,8 +3,10 @@ import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 
 import {
+  CUTAWAY_OVERLAY_RENDER_ORDER,
   HATCH_LINE_CSS_PX,
   HATCH_PERIOD_CSS_PX,
+  OUTLINE_ORDER_BASE,
   createHatchMaterial,
   createSectionRenderSet,
 } from "../../src/framework/cutaway-render.js";
@@ -13,6 +15,7 @@ function createFixture({
   order = 0,
   inkColor = 0x2468ac,
   edgeMaterial: providedEdgeMaterial,
+  now,
 } = {}) {
   const scene = new THREE.Scene();
   const parent = new THREE.Group();
@@ -43,6 +46,13 @@ function createFixture({
 
   const plane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
   const capGeometry = new THREE.PlaneGeometry(1, 1);
+
+  mesh.updateWorldMatrix(true, false);
+  plane.setFromNormalAndCoplanarPoint(
+    new THREE.Vector3(1, 0, 0),
+    new THREE.Vector3().setFromMatrixPosition(mesh.matrixWorld),
+  );
+
   const renderSet = createSectionRenderSet({
     scene,
     mesh,
@@ -51,6 +61,7 @@ function createFixture({
     capGeometry,
     order,
     inkColor,
+    now,
   });
 
   return {
@@ -492,5 +503,80 @@ describe("createSectionRenderSet", () => {
     expect(capGeometryDispose).not.toHaveBeenCalled();
     expect(materialDispose).not.toHaveBeenCalled();
     expect(edgeMaterialDispose).not.toHaveBeenCalled();
+  });
+});
+
+describe("section outline", () => {
+  test("adds an outline to the mesh, ordered above edges and below the overlay", () => {
+    const { mesh, renderSet } = createFixture({ order: 3 });
+
+    expect(OUTLINE_ORDER_BASE).toBe(2_500_000);
+    expect(OUTLINE_ORDER_BASE).toBeLessThan(CUTAWAY_OVERLAY_RENDER_ORDER);
+    expect(mesh.children).toContain(renderSet.outline.object);
+    expect(renderSet.outline.object.renderOrder).toBe(OUTLINE_ORDER_BASE + 3);
+    expect(renderSet.outline.object.material.clippingPlanes).toBeNull();
+  });
+
+  test("outline visibility follows the cap", () => {
+    const { renderSet } = createFixture();
+
+    renderSet.setEnabled(true);
+    renderSet.setVisible(true);
+    renderSet.refreshOutline();
+    expect(renderSet.outline.object.visible).toBe(true);
+
+    renderSet.setVisible(false);
+    expect(renderSet.outline.object.visible).toBe(false);
+
+    renderSet.setVisible(true);
+    renderSet.refreshOutline();
+    renderSet.setEnabled(false);
+    expect(renderSet.outline.object.visible).toBe(false);
+  });
+
+  test("suppression hides the outline without clearing its visibility", () => {
+    const { renderSet } = createFixture();
+    renderSet.setEnabled(true);
+    renderSet.setVisible(true);
+    renderSet.refreshOutline();
+
+    renderSet.setOutlineSuppressed(true);
+    expect(renderSet.outline.object.visible).toBe(false);
+
+    renderSet.setOutlineSuppressed(false);
+    expect(renderSet.outline.object.visible).toBe(true);
+  });
+
+  test("hatch ink, viewport size, and transparency reach the outline", () => {
+    const { renderSet } = createFixture();
+
+    renderSet.setHatchInk(0x00ff00);
+    expect(renderSet.outline.object.material.color.getHex()).toBe(0x00ff00);
+
+    renderSet.setViewportSize(640, 480, 2);
+    expect(renderSet.outline.object.material.resolution.toArray()).toEqual([640, 480]);
+
+    // The fixture's source material is translucent, so the cap is transparent
+    // and the outline must join it in the transparent draw list.
+    expect(renderSet.outline.object.material.transparent).toBe(true);
+  });
+
+  test("reports the outline slice cost from the injected clock", () => {
+    let clock = 0;
+    const { renderSet } = createFixture({ now: () => (clock += 3) });
+    renderSet.setEnabled(true);
+    renderSet.setVisible(true);
+
+    expect(renderSet.outlineSliceCost()).toBe(0);
+    renderSet.refreshOutline();
+    expect(renderSet.outlineSliceCost()).toBe(3);
+  });
+
+  test("dispose removes the outline from the mesh", () => {
+    const { mesh, renderSet } = createFixture();
+
+    renderSet.dispose();
+
+    expect(mesh.children).not.toContain(renderSet.outline.object);
   });
 });

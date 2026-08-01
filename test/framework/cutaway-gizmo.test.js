@@ -69,6 +69,7 @@ function pointer(domElement, type, {
   y = 100,
   pointerId = 7,
   pointerType = "mouse",
+  shiftKey = false,
 } = {}) {
   domElement.dispatchEvent(new PointerEvent(type, {
     pointerId,
@@ -76,6 +77,7 @@ function pointer(domElement, type, {
     clientX: x,
     clientY: y,
     button: 0,
+    shiftKey,
     bubbles: true,
   }));
 }
@@ -957,4 +959,143 @@ test("dispose ends a drag, removes listeners and scene objects, and disposes own
 
   pointer(domElement, "pointerdown");
   expect(pickHandle).toHaveBeenCalledOnce();
+});
+
+test("drag change fires once on start and once on every termination route", () => {
+  for (const finish of ["pointerup", "pointercancel", "lostpointercapture", "pointerleave", "blur"]) {
+    const onDragChange = vi.fn();
+    const { domElement, gizmo } = createFixture({
+      pickHandle: () => "translate",
+      onDragChange,
+    });
+    gizmo.setVisible(true);
+
+    pointer(domElement, "pointerdown");
+    expect(onDragChange).toHaveBeenCalledTimes(1);
+    expect(onDragChange).toHaveBeenLastCalledWith(true);
+
+    if (finish === "blur") window.dispatchEvent(new Event("blur"));
+    else pointer(domElement, finish);
+
+    expect(onDragChange).toHaveBeenCalledTimes(2);
+    expect(onDragChange).toHaveBeenLastCalledWith(false);
+  }
+});
+
+test("drag change does not fire when no drag is in flight", () => {
+  const onDragChange = vi.fn();
+  const { domElement, gizmo } = createFixture({
+    pickHandle: () => null,
+    onDragChange,
+  });
+  gizmo.setVisible(true);
+
+  pointer(domElement, "pointerdown");
+  pointer(domElement, "pointerup");
+
+  expect(onDragChange).not.toHaveBeenCalled();
+});
+
+// Camera on +Z looking at the origin, so the initial plane normal is -Z and a
+// rotate-x drag runs in screen-rotate mode: SCREEN_ROTATION_RADIANS_PER_PIXEL
+// is PI/240, i.e. 0.75 degrees per pixel of vertical drag.
+function rotateBy(fixture, pixels, { shiftKey = false } = {}) {
+  const { domElement } = fixture;
+  pointer(domElement, "pointerdown", { x: 100, y: 100 });
+  pointer(domElement, "pointermove", { x: 100, y: 100 + pixels, shiftKey });
+  pointer(domElement, "pointerup", { x: 100, y: 100 + pixels });
+  return new THREE.Vector3(0, 0, 1).applyQuaternion(fixture.gizmo.group.quaternion);
+}
+
+test("rotation snaps to a canonical axis inside the threshold", () => {
+  const fixture = createFixture({ pickHandle: () => "rotate-x" });
+  fixture.gizmo.setVisible(true);
+  setProductionPose(fixture);
+
+  // 5 px is 3.75 degrees, inside the 7-degree snap zone.
+  const normal = rotateBy(fixture, 5);
+
+  expect(normal.angleTo(new THREE.Vector3(0, 0, -1))).toBeCloseTo(0, 6);
+});
+
+test("rotation past the threshold is left alone", () => {
+  const fixture = createFixture({ pickHandle: () => "rotate-x" });
+  fixture.gizmo.setVisible(true);
+  setProductionPose(fixture);
+
+  // 12 px is 9 degrees, outside the snap zone.
+  const normal = rotateBy(fixture, 12);
+
+  expect(normal.angleTo(new THREE.Vector3(0, 0, -1)))
+    .toBeCloseTo((9 * Math.PI) / 180, 4);
+});
+
+test("holding shift disables snapping", () => {
+  const fixture = createFixture({ pickHandle: () => "rotate-x" });
+  fixture.gizmo.setVisible(true);
+  setProductionPose(fixture);
+
+  const normal = rotateBy(fixture, 5, { shiftKey: true });
+
+  expect(normal.angleTo(new THREE.Vector3(0, 0, -1)))
+    .toBeCloseTo((3.75 * Math.PI) / 180, 4);
+});
+
+test("translation is never snapped", () => {
+  const fixture = createFixture({ pickHandle: () => "translate" });
+  fixture.gizmo.setVisible(true);
+  const pose = setProductionPose(fixture);
+
+  pointer(fixture.domElement, "pointerdown", { x: 100, y: 100 });
+  pointer(fixture.domElement, "pointermove", { x: 100, y: 80 });
+  pointer(fixture.domElement, "pointerup", { x: 100, y: 80 });
+
+  expect(fixture.gizmo.group.quaternion.angleTo(pose.quaternion)).toBeCloseTo(0, 6);
+  expect(fixture.gizmo.group.position.equals(pose.position)).toBe(false);
+});
+
+// onPointerDown picks "plane-rotate" over "screen-rotate" only when the
+// rotation axis is closely aligned with the view direction (alignment,
+// |axis . viewDirection|, above ROTATION_SCREEN_ALIGNMENT) -- i.e. when the
+// user is looking nearly straight down the axis they're about to spin, so the
+// screen-space heuristic (rotate perpendicular to the on-screen axis
+// direction) breaks down and the drag has to be resolved geometrically
+// against the actual rotation plane instead. Every other rotation test in
+// this file keeps the camera close to the plane's own view-facing pose
+// (`setProductionPose`), where the in-plane rotate-x/rotate-y axes sit nearly
+// perpendicular to the view and screen-rotate is always picked -- this is the
+// one test that deliberately breaks that habit.
+test("a rotation axis facing the camera runs in plane-rotate mode and still snaps", () => {
+  const fixture = createFixture({ pickHandle: () => "rotate-x" });
+  const { camera, domElement, gizmo } = fixture;
+  // The gizmo is left at its default pose (identity quaternion, origin), so
+  // rotate-x's axis is world +X. Point the camera almost straight down +X
+  // (a small Y/Z offset only, to keep the ray off the singular case where the
+  // click lands exactly on the rotation axis): alignment comes out to ~0.97,
+  // well past the 0.15 threshold.
+  camera.position.set(20, 3, 4);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+
+  // Only the plane-rotate path calls Ray.intersectPlane: once in onPointerDown
+  // to test feasibility (and capture the rotation plane/startRadial),
+  // and once per onPointerMove to project the live pointer onto it.
+  // screen-rotate never calls it, so two calls is a direct, mode-specific
+  // proof this drag actually ran through plane-rotate rather than falling
+  // back to screen-rotate (which snapping to the same already-canonical
+  // target could otherwise mask).
+  const intersectPlane = vi.spyOn(THREE.Ray.prototype, "intersectPlane");
+
+  // Screen coordinates chosen by walking the actual ray/plane intersection
+  // (not a pixel-to-radian constant, which is what screen-rotate would use)
+  // to a ~5.8 degree rotation about world X -- inside the 7-degree snap zone.
+  pointer(domElement, "pointerdown", { x: 100, y: 130 });
+  pointer(domElement, "pointermove", { x: 97, y: 130 });
+
+  expect(intersectPlane).toHaveBeenCalledTimes(2);
+
+  // Snapping pulls the plane's normal (local Z, already sitting on canonical
+  // +Z) exactly back onto +Z now that the drag landed inside the 7-degree zone.
+  const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(gizmo.group.quaternion);
+  expect(normal.angleTo(new THREE.Vector3(0, 0, 1))).toBeCloseTo(0, 6);
 });
