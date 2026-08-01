@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 
 // Matches POINT_EPSILON in cutaway-math.js: a vertex this close to the plane
 // counts as lying on it, so a grazing plane produces neither duplicate nor
@@ -90,4 +93,124 @@ function crossingPoint(a, b) {
 
 function pushPoint(out, point) {
   out.push(point.x, point.y, point.z);
+}
+
+const defaultNow = () => (typeof performance !== "undefined" ? performance.now() : 0);
+
+// One cut-face outline for one subpart. The object is parented to the mesh, the
+// same trick the stencil helpers use, so it inherits every present and future
+// transform including the pose fast path — and it always slices whatever
+// `mesh.geometry` currently draws, so the outline cannot disagree with the
+// surface it bounds.
+//
+// The section moves for four unrelated reasons (plane pose, geometry swap,
+// frameTo recentring the assembly under a world-fixed plane, and setSubPose),
+// and only the first two notify the cutaway. Rather than thread invalidation
+// through all four, refresh() compares a signature and re-slices when it
+// differs — roughly 21 float compares per frame.
+export function createSectionOutline({ mesh, plane, inkColor, now = defaultNow }) {
+  const material = new LineMaterial({
+    color: inkColor,
+    linewidth: 1,
+    // The outline lies exactly in the cap plane; pull it toward the viewer so
+    // the coincident-depth line wins against the cap it sits in.
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  material.resolution.set(1, 1);
+  // Deliberately no clippingPlanes: the outline sits at distance ~0 from its
+  // own plane, and clipping it would speckle.
+
+  const object = new LineSegments2(new LineSegmentsGeometry(), material);
+  object.frustumCulled = false;
+  object.visible = false;
+  mesh.add(object);
+
+  const localPlane = new THREE.Plane();
+  const inverse = new THREE.Matrix4();
+  const lastNormal = new THREE.Vector3(NaN, NaN, NaN);
+  const lastMatrix = new THREE.Matrix4();
+  let lastConstant = NaN;
+  let lastGeometry = null;
+  let lastCost = 0;
+  let hasSegments = false;
+  let visible = false;
+  let suppressed = false;
+  let disposed = false;
+
+  function applyVisibility() {
+    object.visible = visible && hasSegments && !suppressed && !disposed;
+  }
+
+  function slice(geometry, matrixWorld) {
+    const start = now();
+    localPlane.copy(plane).applyMatrix4(inverse.copy(matrixWorld).invert());
+    const segments = geometry
+      ? sectionSegments(geometry, localPlane)
+      : new Float32Array(0);
+    hasSegments = segments.length > 0;
+    const previous = object.geometry;
+    const next = new LineSegmentsGeometry();
+    if (hasSegments) next.setPositions(segments);
+    object.geometry = next;
+    previous?.dispose();
+    lastCost = now() - start;
+    applyVisibility();
+  }
+
+  function refresh() {
+    if (disposed || !visible || suppressed) return false;
+    mesh.updateWorldMatrix(true, false);
+    const geometry = mesh.geometry;
+    if (
+      geometry === lastGeometry
+      && plane.constant === lastConstant
+      && plane.normal.equals(lastNormal)
+      && mesh.matrixWorld.equals(lastMatrix)
+    ) {
+      return false;
+    }
+    lastGeometry = geometry;
+    lastConstant = plane.constant;
+    lastNormal.copy(plane.normal);
+    lastMatrix.copy(mesh.matrixWorld);
+    slice(geometry, mesh.matrixWorld);
+    return true;
+  }
+
+  return {
+    object,
+    refresh,
+    sliceCost: () => lastCost,
+    setVisible(on) {
+      if (disposed) return;
+      visible = Boolean(on);
+      applyVisibility();
+    },
+    setSuppressed(on) {
+      if (disposed) return;
+      suppressed = Boolean(on);
+      applyVisibility();
+    },
+    setInk(color) {
+      if (!disposed) material.color.set(color);
+    },
+    setTransparent(on) {
+      if (disposed || material.transparent === Boolean(on)) return;
+      material.transparent = Boolean(on);
+      material.needsUpdate = true;
+    },
+    setViewportSize(width, height) {
+      if (!disposed) material.resolution.set(width, height);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      object.visible = false;
+      mesh.remove(object);
+      object.geometry?.dispose();
+      material.dispose();
+    },
+  };
 }

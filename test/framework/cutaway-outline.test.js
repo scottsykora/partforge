@@ -1,7 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import * as THREE from "three";
 
-import { sectionSegments } from "../../src/framework/cutaway-outline.js";
+import { createSectionOutline, sectionSegments } from "../../src/framework/cutaway-outline.js";
 
 // Every emitted point, as Vector3s.
 function points(segments) {
@@ -132,5 +132,139 @@ describe("sectionSegments", () => {
       // boundary of the kept half, never inside the discarded one.
       expect(plane.distanceToPoint(point)).toBeGreaterThanOrEqual(-1e-6);
     }
+  });
+});
+
+describe("createSectionOutline", () => {
+  function createFixture({ now } = {}) {
+    const parent = new THREE.Group();
+    parent.position.set(10, 0, 0);
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(2, 2, 2),
+      new THREE.MeshStandardMaterial(),
+    );
+    parent.add(mesh);
+    parent.updateMatrixWorld(true);
+    // World-space plane through the mesh's centre (which sits at x = 10).
+    const plane = new THREE.Plane(new THREE.Vector3(1, 0, 0), -10);
+    const outline = createSectionOutline({
+      mesh,
+      plane,
+      inkColor: 0x1c232d,
+      now,
+    });
+    outline.setVisible(true);
+    return { parent, mesh, plane, outline };
+  }
+
+  test("parents a fat-line object to the mesh and slices in mesh-local space", () => {
+    const { mesh, outline } = createFixture();
+
+    expect(outline.object.parent).toBe(mesh);
+    expect(mesh.children).toContain(outline.object);
+    expect(outline.object.frustumCulled).toBe(false);
+
+    expect(outline.refresh()).toBe(true);
+    expect(outline.object.visible).toBe(true);
+
+    // Local coordinates: the mesh is at x = 10 in world, so the world plane at
+    // x = 10 is the local plane at x = 0.
+    const positions = outline.object.geometry.attributes.instanceStart.data.array;
+    for (let i = 0; i < positions.length; i += 3) {
+      expect(positions[i]).toBeCloseTo(0, 5);
+    }
+  });
+
+  test("re-slices only when the plane, transform, or geometry changes", () => {
+    const { mesh, plane, outline } = createFixture();
+
+    expect(outline.refresh()).toBe(true);
+    expect(outline.refresh()).toBe(false);
+
+    plane.constant = -10.5;
+    expect(outline.refresh()).toBe(true);
+    expect(outline.refresh()).toBe(false);
+
+    // A transform change with no plane change still moves the section: the
+    // plane is world-fixed, so recentring slides the part through it.
+    mesh.position.set(0, 0.3, 0);
+    mesh.updateMatrixWorld(true);
+    expect(outline.refresh()).toBe(true);
+    expect(outline.refresh()).toBe(false);
+
+    mesh.geometry = new THREE.BoxGeometry(3, 3, 3);
+    expect(outline.refresh()).toBe(true);
+    expect(outline.refresh()).toBe(false);
+  });
+
+  test("hides itself when the plane misses the mesh", () => {
+    const { plane, outline } = createFixture();
+
+    outline.refresh();
+    expect(outline.object.visible).toBe(true);
+
+    plane.constant = -100;
+    outline.refresh();
+    expect(outline.object.visible).toBe(false);
+  });
+
+  test("visibility and suppression both gate the object", () => {
+    const { outline } = createFixture();
+    outline.refresh();
+
+    outline.setSuppressed(true);
+    expect(outline.object.visible).toBe(false);
+    outline.setSuppressed(false);
+    expect(outline.object.visible).toBe(true);
+
+    outline.setVisible(false);
+    expect(outline.object.visible).toBe(false);
+  });
+
+  test("skips slicing while hidden and catches up when shown", () => {
+    const { plane, outline } = createFixture();
+    outline.refresh();
+
+    outline.setVisible(false);
+    plane.constant = -10.25;
+    expect(outline.refresh()).toBe(false);
+
+    outline.setVisible(true);
+    expect(outline.refresh()).toBe(true);
+  });
+
+  test("records the slice cost from the injected clock", () => {
+    let clock = 0;
+    const { outline } = createFixture({ now: () => (clock += 4) });
+
+    expect(outline.sliceCost()).toBe(0);
+    outline.refresh();
+    expect(outline.sliceCost()).toBe(4);
+  });
+
+  test("ink, transparency, and viewport size reach the line material", () => {
+    const { outline } = createFixture();
+
+    outline.setInk(0xff0000);
+    expect(outline.object.material.color.getHex()).toBe(0xff0000);
+
+    outline.setTransparent(true);
+    expect(outline.object.material.transparent).toBe(true);
+
+    outline.setViewportSize(800, 600);
+    expect(outline.object.material.resolution.toArray()).toEqual([800, 600]);
+  });
+
+  test("dispose detaches the object and releases its resources", () => {
+    const { mesh, outline } = createFixture();
+    outline.refresh();
+    const material = outline.object.material;
+    const disposeSpy = vi.spyOn(material, "dispose");
+
+    outline.dispose();
+
+    expect(mesh.children).not.toContain(outline.object);
+    expect(disposeSpy).toHaveBeenCalled();
+    expect(outline.refresh()).toBe(false);
   });
 });
