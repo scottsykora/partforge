@@ -31,6 +31,14 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     ready, dispose, setParams,
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
     captureCurrent: (opts) => viewer.captureCurrent(opts),
+    // Park/unpark the viewer. For an embedder that hides the canvas without
+    // unmounting it — `visibility: hidden`, an off-screen tab — where nothing
+    // collapses the container and the render loop would otherwise run forever.
+    // See the setActive comment in viewer.js for what it costs on a phone.
+    setActive: (active) => viewer.setActive(active),
+    // Subscribe to WebGL context loss (returns an unsubscribe), so a host can
+    // say "the 3D view ran out of memory" instead of showing a dead canvas.
+    onContextLost: (listener) => viewer.onContextLost(listener),
     listExportableParts,
     exportParts,
     // Narrow-layout pane selection, for a host that draws its own tab bar
@@ -69,7 +77,7 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.39.0):
+// Embedding contract (0.41.0):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
@@ -86,6 +94,15 @@ function createCleanupStack() {
 //   runtime.setHostPane("rail");  // narrow layout only: show just the controls
 //                                 // rail ('stage' | 'rail'), suppressing the
 //                                 // built-in tab bar. null hands selection back.
+//   runtime.setActive(false);     // park the viewer: stop the render loop and release
+//                                 // the drawing buffer. For a host that hides the canvas
+//                                 // WITHOUT unmounting it (`visibility: hidden`, an
+//                                 // inactive tab) — nothing else can detect that, and the
+//                                 // loop would otherwise render a hidden pane forever.
+//                                 // setActive(true) restores both. Safe after dispose().
+//   const off = runtime.onContextLost(() => …);  // WebGL context loss, i.e. the GPU or the
+//                                 // OS gave up — surface it rather than showing a dead
+//                                 // canvas. Returns an unsubscribe.
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
