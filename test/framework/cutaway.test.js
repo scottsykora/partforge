@@ -1199,4 +1199,44 @@ describe("section outlines", () => {
 
     expect(outline.object.geometry).not.toBe(stale);
   });
+
+  // Every other suppression test above drives dragging through the
+  // `_setDragging` test hook, which bypasses the gizmo entirely. The only
+  // thing that actually wires the gizmo to drag suppression in production is
+  // `onDragChange: setDragging` in the createCutawayGizmo call — a real
+  // pointer drag has to prove that connection, or a deleted wire would pass
+  // every test above and still ship dead.
+  test("a real pointer drag on a gizmo handle suppresses an over-budget outline", () => {
+    let clock = 0;
+    const fixture = createFixture({ now: () => (clock += 25) });
+    addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    expect(outline.sliceCost()).toBeGreaterThan(OUTLINE_SLICE_BUDGET_MS);
+    expect(outline.object.visible).toBe(true);
+
+    // (100, 100) is the viewport center, where the "handle hover subscriptions"
+    // test above confirms CENTER_HANDLE ("rotate-y") picks up a real pointer.
+    fixture.domElement.dispatchEvent(new PointerEvent("pointerdown", {
+      clientX: 100,
+      clientY: 100,
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+    }));
+
+    expect(outline.object.visible).toBe(false);
+
+    fixture.domElement.dispatchEvent(new PointerEvent("pointerup", {
+      clientX: 100,
+      clientY: 100,
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+    }));
+
+    expect(outline.object.visible).toBe(true);
+  });
 });
