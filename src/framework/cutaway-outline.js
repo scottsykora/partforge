@@ -185,14 +185,7 @@ export function createSectionOutline({ mesh, plane, inkColor, now = defaultNow }
     if (disposed || !visible || suppressed) return false;
     mesh.updateWorldMatrix(true, false);
     const geometry = mesh.geometry;
-    if (
-      geometry === lastGeometry
-      && plane.constant === lastConstant
-      && plane.normal.equals(lastNormal)
-      && mesh.matrixWorld.equals(lastMatrix)
-    ) {
-      return false;
-    }
+    if (signatureMatches(geometry, mesh.matrixWorld)) return false;
     lastGeometry = geometry;
     lastConstant = plane.constant;
     lastNormal.copy(plane.normal);
