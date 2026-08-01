@@ -9,6 +9,23 @@ const state = vi.hoisted(() => ({
 }));
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
+const OriginalGetContext = globalThis.HTMLCanvasElement.prototype.getContext;
+const OriginalToDataURL = globalThis.HTMLCanvasElement.prototype.toDataURL;
+
+// happy-dom has no 2D canvas, and renderOffscreen encodes its readback through
+// one. Enough of a stub to let the capture path run end to end.
+function stubCanvas2D() {
+  globalThis.HTMLCanvasElement.prototype.getContext = function (type, ...rest) {
+    if (type !== "2d") return OriginalGetContext.call(this, type, ...rest);
+    return {
+      createImageData: (width, height) => ({
+        width, height, data: new Uint8ClampedArray(width * height * 4),
+      }),
+      putImageData: () => {},
+    };
+  };
+  globalThis.HTMLCanvasElement.prototype.toDataURL = () => "data:image/jpeg;base64,AAAA";
+}
 
 vi.mock("three", async (importOriginal) => {
   const actual = await importOriginal();
@@ -17,6 +34,7 @@ vi.mock("three", async (importOriginal) => {
       this.domElement = document.createElement("canvas");
       this.localClippingEnabled = false;
       this.calls = [];
+      this.renderTargets = [];
       state.renderer = this;
     }
     getContext() { return { getContextAttributes: () => ({ stencil: true }) }; }
@@ -25,6 +43,11 @@ vi.mock("three", async (importOriginal) => {
     setSize() {}
     setAnimationLoop(callback) { this.animationLoop = callback; }
     render(scene, camera) { this.calls.push({ type: "main", scene, camera }); }
+    // Offscreen capture surface: record every target the viewer renders into so
+    // a test can assert what was allocated, and leave the pixel buffer zeroed.
+    get capabilities() { return { maxTextureSize: 8192 }; }
+    setRenderTarget(target) { if (target) this.renderTargets.push(target); }
+    readRenderTargetPixels() {}
     dispose() {}
   }
   return { ...actual, WebGLRenderer: FakeRenderer };
@@ -80,6 +103,7 @@ beforeEach(() => {
   state.cutawayOptions = null;
   state.renderer = null;
   state.resize = null;
+  stubCanvas2D();
   globalThis.ResizeObserver = class {
     constructor(callback) { state.resize = callback; }
     observe() {}
@@ -89,6 +113,8 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.ResizeObserver = OriginalResizeObserver;
+  globalThis.HTMLCanvasElement.prototype.getContext = OriginalGetContext;
+  globalThis.HTMLCanvasElement.prototype.toDataURL = OriginalToDataURL;
   vi.unstubAllGlobals();
   document.body.innerHTML = "";
 });
@@ -249,6 +275,55 @@ test("captureCurrent returns null after dispose instead of touching the torn-dow
   viewer.dispose();
 
   expect(viewer.captureCurrent({ size: 2048 })).toBe(null);
+});
+
+// Cutaway paints its section caps through a stencil mask (cutaway-render.js
+// writes the mask, the cap material tests against it). The VISIBLE canvas gets
+// a stencil buffer because createViewer asks for one (`stencil: true`), but a
+// WebGLRenderTarget defaults to `stencilBuffer: false` — and with no stencil
+// attachment the mask silently does nothing and every cap quad floods its whole
+// plane with hatch. That failure is invisible here (no error, live view fine)
+// and only shows up in the capture, so pin the allocation itself.
+test("captureCurrent renders into a target that has a stencil buffer", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+  viewer.setSubGeometry("body", {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    triangles: 1,
+  });
+  viewer.showAssembly(["body"], { frame: true });
+
+  viewer.captureCurrent({ size: 2048 });
+
+  expect(state.renderer.renderTargets).toHaveLength(1);
+  expect(state.renderer.renderTargets[0].stencilBuffer).toBe(true);
+
+  viewer.dispose();
+});
+
+test("captureCanonicalViews renders into targets that have a stencil buffer", () => {
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { body: {} },
+  });
+  viewer.setSubGeometry("body", {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    triangles: 1,
+  });
+  viewer.showAssembly(["body"], { frame: true });
+
+  viewer.captureCanonicalViews(["iso", "front"]);
+
+  expect(state.renderer.renderTargets).toHaveLength(2);
+  for (const target of state.renderer.renderTargets) {
+    expect(target.stencilBuffer).toBe(true);
+  }
+
+  viewer.dispose();
 });
 
 test("captureCurrent returns null when nothing is visible in the scene", () => {
