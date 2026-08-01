@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { expect, test } from "vitest";
-import { buildBVH, meshTriangles } from "../src/testing/bvh.js";
+import { buildBVH, cachedBVH, meshTriangles } from "../src/testing/bvh.js";
 
 // a unit-ish box [0,0,0]..[10,20,5] as a non-indexed triangle soup (12 tris)
 function boxMesh(sx, sy, sz) {
@@ -172,6 +173,60 @@ test("distanceTo works across indexed and soup meshes", () => {
   expect(a.distanceTo(b).distance).toBeCloseTo(0.2, 6);
 });
 
+// ── memory footprint ───────────────────────────────────────────────────────────────────────
+
+// A thick-walled tube as a non-indexed Float32 soup — exactly the shape Manifold's
+// toMesh() hands back, and the dense-mesh case the footprint has to survive.
+// Serialized into the child process below, so it must stay self-contained.
+function tubeSoup(targetTris) {
+  const segs = 116;
+  const rings = Math.max(2, Math.round(targetTris / (segs * 4)));
+  const pos = [];
+  const pt = (r, i, j) => { const a = (2 * Math.PI * i) / segs; return [r * Math.cos(a), r * Math.sin(a), (j / rings) * 50]; };
+  for (let j = 0; j < rings; j++) for (let i = 0; i < segs; i++) {
+    const i2 = (i + 1) % segs;
+    for (const r of [10, 8]) {
+      const a = pt(r, i, j), b = pt(r, i2, j), c = pt(r, i2, j + 1), d = pt(r, i, j + 1);
+      pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+    }
+  }
+  return { positions: new Float32Array(pos) };
+}
+
+test("the BVH keeps its triangles in flat typed arrays and accounts for its own bytes", () => {
+  const mesh = tubeSoup(20_000);
+  const bvh = buildBVH(mesh);
+  expect(bvh.triangleCount).toBe(mesh.positions.length / 9);
+  expect(ArrayBuffer.isView(bvh.vertices)).toBe(true);
+  expect(bvh.vertices.length).toBe(bvh.triangleCount * 9);
+  expect(bvh.bytes / bvh.triangleCount).toBeLessThan(120);
+});
+
+// The self-reported `bytes` above only counts what the BVH knows it allocated, so
+// it cannot catch a regression that reintroduces per-triangle JS objects. This one
+// weighs the real thing: a child process with --expose-gc, a full collection either
+// side of the build, and heapUsed + external so typed-array backing stores (which
+// live off the JS heap) are counted too. Measuring only what survives a collection
+// while the BVH is still reachable makes it a retention number, not a peak — stable
+// to a few bytes per triangle run to run, which is why a 300-byte bound is safe.
+test("buildBVH retains ~100 bytes/triangle, not ~1 KB (measured with --expose-gc)", () => {
+  const bvhUrl = new URL("../src/testing/bvh.js", import.meta.url).href;
+  const src = `
+    ${tubeSoup.toString()}
+    const { buildBVH } = await import(${JSON.stringify(bvhUrl)});
+    const mesh = tubeSoup(100000);
+    const settle = () => { for (let i = 0; i < 4; i++) global.gc(); const m = process.memoryUsage(); return m.heapUsed + m.external; };
+    const before = settle();
+    const bvh = buildBVH(mesh);
+    const after = settle();
+    console.log(JSON.stringify({ bytesPerTri: (after - before) / bvh.triangleCount }));
+  `;
+  const out = execFileSync(process.execPath, ["--expose-gc", "--input-type=module", "-e", src], { encoding: "utf8" });
+  const { bytesPerTri } = JSON.parse(out.trim().split("\n").pop());
+  expect(bytesPerTri).toBeGreaterThan(0);    // sanity: the measurement saw the build at all
+  expect(bytesPerTri).toBeLessThan(300);     // the nested-array representation cost ~950
+});
+
 // ── reference closest-point-on-triangle (Ericson) for the brute-force check ────────────────
 function distSqPointTriRef(P, A, B, C) {
   const sub = (p, q) => [p[0]-q[0], p[1]-q[1], p[2]-q[2]];
@@ -187,3 +242,17 @@ function distSqPointTriRef(P, A, B, C) {
   const va = d3*d6 - d5*d4; if (va<=0&&(d4-d3)>=0&&(d5-d6)>=0){const w=(d4-d3)/((d4-d3)+(d5-d6));const q=add(B,mul(sub(C,B),w));const pq=sub(P,q);return dot(pq,pq);}
   const denom=1/(va+vb+vc); const v=vb*denom, w=vc*denom; const q=add(add(A,mul(ab,v)),mul(ac,w)); const pq=sub(P,q); return dot(pq,pq);
 }
+
+// ── cachedBVH: caller-owned, caller-scoped memoization ───────────────────────
+
+test("cachedBVH memoizes per mesh in a caller-owned cache, and builds fresh without one", () => {
+  const mesh = boxMesh(10, 20, 5);
+  const cache = new Map();
+  const a = cachedBVH(mesh, cache);
+  expect(cachedBVH(mesh, cache)).toBe(a);              // same mesh object → same index
+  expect(cache.size).toBe(1);
+  expect(cachedBVH(mesh)).not.toBe(a);                 // no cache → build fresh, exactly as before
+  const other = boxMesh(4, 4, 4);
+  expect(cachedBVH(other, cache)).not.toBe(a);
+  expect(cache.size).toBe(2);
+});

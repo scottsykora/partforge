@@ -18,11 +18,23 @@ const unionBounds = (list) => list.reduce(
 //   → { part, view, subparts[], aggregate, overlaps[], gaps[], nearMisses[], ok }
 export function measure(kernel, part, view = Object.keys(part.views)[0], params = {}, opts = {}) {
   const built = buildView(kernel, part, view, params);
+  // ONE BVH per sub-part mesh for this call, shared by the two passes that need
+  // one: min-wall (inward rays per triangle) and meshGaps (pair distances). They
+  // used to index the same mesh objects independently, so every sub-part of a
+  // multi-part view was built into a BVH twice — at ~77 bytes/triangle that is a
+  // whole second index's worth of build time and peak memory for nothing.
+  //
+  // Scoped to this call on purpose, and NOT a module-level WeakMap: a global
+  // cache would keep an index alive for as long as anything held its mesh, which
+  // is exactly the quiet retention this work exists to remove. Here it dies with
+  // the call. Peak memory is unchanged — meshGaps already held every sub-part's
+  // index at once — the cache just fills it earlier.
+  const bvhCache = new Map();
   const subBounds = [];
   const subparts = built.map(({ name, solid, mesh }) => {
     const b = bounds(mesh.positions);
     subBounds.push(b);
-    const mw = opts.minWall ? minWall(mesh) : null;
+    const mw = opts.minWall ? minWall(mesh, { bvhCache }) : null;
     return {
       name,
       bbox: size(b),
@@ -35,6 +47,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       holes: typeof solid.genus === "function" ? solid.genus() : null,
       minWall: mw?.value ?? null,
       minWallAt: mw?.location ?? null,
+      // Sampling accounting, so a report can tell a guaranteed minimum from an
+      // upper bound: on a dense mesh min-wall casts from a spread subset rather
+      // than every triangle (see min-wall.js). Exact readings say so explicitly.
+      minWallSampled: mw?.sampled ?? false,
+      minWallSamples: mw ? { sampled: mw.sampledTriangles, total: mw.totalTriangles } : null,
     };
   });
 
@@ -42,7 +59,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // so this reads on OCCT too. nearMisses = the issue-#29 signal: pairs that
   // *almost* touch; overlapping pairs are excluded by name (a fully-contained
   // sub-part has surface distance > 0 but is the overlap gate's business).
-  const gaps = built.length > 1 ? meshGaps(built) : [];
+  const gaps = built.length > 1 ? meshGaps(built, { bvhCache }) : [];
 
   // Rebuilds with the same kernel and cleans up at its end — every solid fact
   // above is already read, so this is safe.

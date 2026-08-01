@@ -149,9 +149,19 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // — the main thread only has mesh arrays, so this can only happen here.
       // measure/verify build their own solids via buildView and are cleaned up by
       // the `finally` below.
+      // The two halves overlap: verify always expands a "defaults" case, and for
+      // an unparameterized inspect that case IS this measurement. Seeding it in
+      // (see verify.js's seeding block for the min-wall superset rule that makes
+      // the reuse sound) stops the oracle from rebuilding the same geometry and
+      // re-casting the same min-wall rays a second time. `minWall: true` here is
+      // what makes the seed usable by any verify run, min-wall gated or not.
+      const measured = measure(kernel, part, msg.view, msg.params ?? {}, { minWall: true });
       const report = {
-        measure: measure(kernel, part, msg.view, msg.params ?? {}, { minWall: true }),
-        verify: verify(kernel, part, { view: msg.view }),
+        measure: measured,
+        verify: verify(kernel, part, {
+          view: msg.view,
+          seed: { params: msg.params ?? {}, minWall: true, result: measured },
+        }),
       };
       post({ type: "report", ...report });
     }
