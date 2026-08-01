@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 
-import { createCutaway } from "../../src/framework/cutaway.js";
+import { OUTLINE_SLICE_BUDGET_MS, createCutaway } from "../../src/framework/cutaway.js";
 
 const controllers = [];
 const CENTER_HANDLE = "rotate-y";
@@ -43,6 +43,7 @@ function createFixture({
   schedule: providedSchedule,
   localClippingEnabled = false,
   edgeColor = 0x1c232d,
+  now,
 } = {}) {
   const renderer = makeRenderer(stencil);
   renderer.localClippingEnabled = localClippingEnabled;
@@ -76,6 +77,7 @@ function createFixture({
     getBounds: () => bounds,
     schedule: providedSchedule ?? timer.schedule,
     edgeColor,
+    now,
   });
   controllers.push(controller);
   return {
@@ -1112,5 +1114,54 @@ describe("section outlines", () => {
 
     const after = outline.object.geometry.attributes.instanceStart.data.array;
     expect([...after]).toEqual([...before]);
+  });
+
+  test("outlines keep tracking the plane during a cheap drag", () => {
+    let clock = 0;
+    const fixture = createFixture({ now: () => (clock += 0.5) });
+    addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    expect(outline.sliceCost()).toBeLessThan(OUTLINE_SLICE_BUDGET_MS);
+
+    fixture.controller._setDragging(true);
+    expect(outline.object.visible).toBe(true);
+  });
+
+  test("outlines hide for the drag when the last slice blew the budget", () => {
+    let clock = 0;
+    const fixture = createFixture({ now: () => (clock += 25) });
+    addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    expect(outline.sliceCost()).toBeGreaterThan(OUTLINE_SLICE_BUDGET_MS);
+    expect(outline.object.visible).toBe(true);
+
+    fixture.controller._setDragging(true);
+    expect(outline.object.visible).toBe(false);
+
+    fixture.controller._setDragging(false);
+    expect(outline.object.visible).toBe(true);
+  });
+
+  test("a drag that ends re-slices whatever moved while outlines were hidden", () => {
+    let clock = 0;
+    const fixture = createFixture({ now: () => (clock += 25) });
+    const { mesh } = addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.updateForCamera();
+
+    const outline = fixture.controller._renderSetFor("body").outline;
+    fixture.controller._setDragging(true);
+    const stale = outline.object.geometry;
+    mesh.position.set(0, 0, 1.5);
+    mesh.updateMatrixWorld(true);
+    fixture.controller._setDragging(false);
+
+    expect(outline.object.geometry).not.toBe(stale);
   });
 });

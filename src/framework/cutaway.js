@@ -10,6 +10,11 @@ import { createSectionRenderSet } from "./cutaway-render.js";
 
 const IDLE_DELAY_MS = 800;
 
+// Slicing rides on top of everything else in the frame, so the whole visible
+// assembly gets about an eighth of a 60 fps frame before outlines step aside
+// for the duration of a drag.
+export const OUTLINE_SLICE_BUDGET_MS = 2;
+
 function defaultSchedule(callback, delay) {
   const timer = setTimeout(callback, delay);
   return () => clearTimeout(timer);
@@ -62,6 +67,7 @@ export function createCutaway({
   let previousLocalClippingEnabled;
   let disposed = false;
   let disabling = false;
+  let outlinesSuppressed = false;
   let hoveredHandle = null;
   const handleHoverSubscribers = new Set();
   const pendingHandlePublications = [];
@@ -219,6 +225,7 @@ export function createCutaway({
     onPoseChange,
     onActivity: showActive,
     onHandleHoverChange: publishHandleHover,
+    onDragChange: setDragging,
   });
   gizmo.setVisible(false);
   gizmo.setTheme(theme);
@@ -250,6 +257,7 @@ export function createCutaway({
     applyCapPose(renderSet);
     renderSet.setVisible(enabled && selected(name));
     renderSet.setEnabled(enabled);
+    renderSet.setOutlineSuppressed(outlinesSuppressed);
     return true;
   }
 
@@ -411,6 +419,26 @@ export function createCutaway({
     for (const { renderSet } of renderSets.values()) renderSet.refreshOutline();
   }
 
+  // Outlines re-slice on every frame of a gizmo drag. On heavy assemblies that
+  // is the one place the cost could show, so decide once at drag start — from
+  // costs already measured, so the drag never pays a spike to discover it is
+  // too expensive — and hide all of them or none. Half-outlined assemblies read
+  // as broken.
+  function setDragging(active) {
+    if (disposed) return;
+    if (active) {
+      let total = 0;
+      for (const { renderSet } of renderSets.values()) total += renderSet.outlineSliceCost();
+      outlinesSuppressed = total > OUTLINE_SLICE_BUDGET_MS;
+    } else {
+      outlinesSuppressed = false;
+    }
+    for (const { renderSet } of renderSets.values()) {
+      renderSet.setOutlineSuppressed(outlinesSuppressed);
+    }
+    if (!active) refreshSections();
+  }
+
   function updateForCamera() {
     if (!enabled || disposed) return;
     gizmo.updateForCamera();
@@ -477,5 +505,6 @@ export function createCutaway({
     onHandleHoverChange,
     dispose,
     _renderSetFor: (name) => renderSets.get(name)?.renderSet ?? null,
+    _setDragging: setDragging,
   };
 }
