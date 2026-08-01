@@ -1053,3 +1053,49 @@ test("translation is never snapped", () => {
   expect(fixture.gizmo.group.quaternion.angleTo(pose.quaternion)).toBeCloseTo(0, 6);
   expect(fixture.gizmo.group.position.equals(pose.position)).toBe(false);
 });
+
+// onPointerDown picks "plane-rotate" over "screen-rotate" only when the
+// rotation axis is closely aligned with the view direction (alignment,
+// |axis . viewDirection|, above ROTATION_SCREEN_ALIGNMENT) -- i.e. when the
+// user is looking nearly straight down the axis they're about to spin, so the
+// screen-space heuristic (rotate perpendicular to the on-screen axis
+// direction) breaks down and the drag has to be resolved geometrically
+// against the actual rotation plane instead. Every other rotation test in
+// this file keeps the camera close to the plane's own view-facing pose
+// (`setProductionPose`), where the in-plane rotate-x/rotate-y axes sit nearly
+// perpendicular to the view and screen-rotate is always picked -- this is the
+// one test that deliberately breaks that habit.
+test("a rotation axis facing the camera runs in plane-rotate mode and still snaps", () => {
+  const fixture = createFixture({ pickHandle: () => "rotate-x" });
+  const { camera, domElement, gizmo } = fixture;
+  // The gizmo is left at its default pose (identity quaternion, origin), so
+  // rotate-x's axis is world +X. Point the camera almost straight down +X
+  // (a small Y/Z offset only, to keep the ray off the singular case where the
+  // click lands exactly on the rotation axis): alignment comes out to ~0.97,
+  // well past the 0.15 threshold.
+  camera.position.set(20, 3, 4);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+
+  // Only the plane-rotate path calls Ray.intersectPlane: once in onPointerDown
+  // to test feasibility (and capture the rotation plane/startRadial),
+  // and once per onPointerMove to project the live pointer onto it.
+  // screen-rotate never calls it, so two calls is a direct, mode-specific
+  // proof this drag actually ran through plane-rotate rather than falling
+  // back to screen-rotate (which snapping to the same already-canonical
+  // target could otherwise mask).
+  const intersectPlane = vi.spyOn(THREE.Ray.prototype, "intersectPlane");
+
+  // Screen coordinates chosen by walking the actual ray/plane intersection
+  // (not a pixel-to-radian constant, which is what screen-rotate would use)
+  // to a ~5.8 degree rotation about world X -- inside the 7-degree snap zone.
+  pointer(domElement, "pointerdown", { x: 100, y: 130 });
+  pointer(domElement, "pointermove", { x: 97, y: 130 });
+
+  expect(intersectPlane).toHaveBeenCalledTimes(2);
+
+  // Snapping pulls the plane's normal (local Z, already sitting on canonical
+  // +Z) exactly back onto +Z now that the drag landed inside the 7-degree zone.
+  const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(gizmo.group.quaternion);
+  expect(normal.angleTo(new THREE.Vector3(0, 0, 1))).toBeCloseTo(0, 6);
+});
