@@ -96,7 +96,9 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   // hand back a plain, unwired button rather than a dead "Show controls" one.
   // innerHTML (not textContent) so a host's original content - markup, not
   // just text - genuinely round-trips; the icon apply() writes is markup too.
-  const toggleOriginal = toggle ? { html: toggle.innerHTML, title: toggle.title } : null;
+  const toggleOriginal = toggle
+    ? { html: toggle.innerHTML, title: toggle.title, hidden: toggle.hidden }
+    : null;
   // Built once here rather than inside apply() (which reruns on every resize/
   // key/drag tick); apply() only ever swaps toggleChevron's `d`.
   let toggleChevron = null;
@@ -123,7 +125,17 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   // flush, not a cached value.
   function apply({ persist = false, shellW } = {}) {
     const sw = shellW ?? shellWidth();
-    const width = state.collapsed ? 0 : clampRailWidth(state.width, sw);
+    // Below the breakpoint the shell shows exactly ONE pane (chrome.css, keyed
+    // on data-pf-pane) and mobile-tabs.js picks it, so collapse has no meaning:
+    // a persisted `collapsed: true` must not make the Controls tab land on an
+    // inert, invisible rail. `state` is deliberately NOT rewritten — the stored
+    // preference applies again the moment the window widens.
+    const narrow = window.innerWidth < RAIL_NARROW_BREAKPOINT;
+    const collapsed = state.collapsed && !narrow;
+    // Narrow: the rail is either the whole surface or absent, so it reserves no
+    // width beside the viewer — and anything centring itself against the rail
+    // (app.css's #pf-pick-banner) must not be offset by a stale 288px.
+    const width = collapsed || narrow ? 0 : clampRailWidth(state.width, sw);
     // Written on :root, not the rail/shell, so body-appended overlays (the
     // pick banner, the ?debug overlay) inherit it — see spec §4.4. This
     // assumes ONE rail per document: attachRail is written for a single
@@ -133,17 +145,20 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     // multiple mount() calls in general (e.g. cross-fade swaps), which is
     // fine as long as at most one has a resolvable rail at a time.
     root.style.setProperty("--pf-rail-w", `${width}px`);
-    rail.toggleAttribute("inert", state.collapsed);
-    seam.toggleAttribute("data-collapsed", state.collapsed);
+    rail.toggleAttribute("inert", collapsed);
+    seam.toggleAttribute("data-collapsed", collapsed);
     seam.setAttribute("aria-valuenow", String(width));
     seam.setAttribute("aria-valuemax", String(railMaxWidth(sw)));
     if (toggle) {
-      toggleChevron?.setAttribute("d", state.collapsed ? CHEVRON_RAIL_COLLAPSED : CHEVRON_RAIL_OPEN);
-      const label = state.collapsed ? "Show controls" : "Hide controls";
-      toggle.setAttribute("aria-expanded", String(!state.collapsed));
+      // The tab bar owns pane selection below the breakpoint, so a second
+      // collapse affordance in the viewbar would be a competing control.
+      toggle.hidden = narrow;
+      toggleChevron?.setAttribute("d", collapsed ? CHEVRON_RAIL_COLLAPSED : CHEVRON_RAIL_OPEN);
+      const label = collapsed ? "Show controls" : "Hide controls";
+      toggle.setAttribute("aria-expanded", String(!collapsed));
       toggle.setAttribute("aria-label", label);
       toggle.title = label;
-      toggle.classList.toggle("on", state.collapsed);
+      toggle.classList.toggle("on", collapsed);
     }
     if (persist) writeRailPref(state, storage);
   }
@@ -312,6 +327,7 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
       if (toggle) {
         toggle.innerHTML = toggleOriginal.html;
         toggle.title = toggleOriginal.title;
+        toggle.hidden = toggleOriginal.hidden;
         toggle.removeAttribute("aria-expanded");
         toggle.removeAttribute("aria-label");
         toggle.classList.remove("on");

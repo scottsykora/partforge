@@ -303,3 +303,106 @@ test("detach restores a toggle to its pre-attach label instead of leaving it wir
   expect(toggle.getAttribute("aria-label")).toBeNull();
   expect(toggle.classList.contains("on")).toBe(false);
 });
+
+// --- narrow layout -----------------------------------------------------
+// Below RAIL_NARROW_BREAKPOINT the shell shows exactly one pane and the tab
+// bar (mobile-tabs.js) picks it, so collapse is suspended: an inert rail
+// would land the Controls tab on a dead, invisible pane. The STORED flag
+// must survive untouched, because it applies again the instant the window
+// widens past the breakpoint.
+//
+// window.innerWidth is read-only in this vitest+happy-dom setup (matching
+// the existing "onPointerDown refuses..." test above), so it takes
+// Object.defineProperty rather than a plain assignment — and, unlike the
+// shell's zero-size getBoundingClientRect box, nothing resets it between
+// tests, so each test restores the original value itself.
+
+test("narrow: a stored collapsed flag does not make the rail inert", () => {
+  const original = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { value: 500, configurable: true });
+  try {
+    document.body.innerHTML = `
+      <div class="pf-shell">
+        <div class="pf-stage"></div>
+        <div class="pf-rail"></div>
+      </div>`;
+    const shell = document.querySelector(".pf-shell");
+    const rail = document.querySelector(".pf-rail");
+    shell.getBoundingClientRect = () => ({ left: 0, right: 1600, width: 1600, top: 0, bottom: 720, height: 720 });
+    const storage = fakeStorage();
+    storage.setItem("partforge:rail", JSON.stringify({ width: 300, collapsed: true }));
+    track(attachRail({ rail, shell, storage }));
+
+    expect(rail.hasAttribute("inert")).toBe(false);
+    // Nothing is reserved beside the viewer at this width — the rail is
+    // either the whole surface or absent — so anything centring itself
+    // against the rail must not be offset by a stale width.
+    expect(railWidth()).toBe("0px");
+  } finally {
+    Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
+  }
+});
+
+test("narrow: the rail toggle is hidden, since the tab bar replaces it", () => {
+  const original = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { value: 500, configurable: true });
+  try {
+    const { toggle } = setup({ withToggle: true });
+    expect(toggle.hidden).toBe(true);
+  } finally {
+    Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
+  }
+});
+
+test("widening restores the stored collapsed state and the toggle", () => {
+  const original = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { value: 500, configurable: true });
+  try {
+    document.body.innerHTML = `
+      <div class="pf-shell">
+        <div class="pf-stage"></div>
+        <div class="pf-rail"></div>
+      </div>`;
+    const shell = document.querySelector(".pf-shell");
+    const rail = document.querySelector(".pf-rail");
+    shell.getBoundingClientRect = () => ({ left: 0, right: 1600, width: 1600, top: 0, bottom: 720, height: 720 });
+    const toggle = document.createElement("button");
+    document.body.append(toggle);
+    const storage = fakeStorage();
+    storage.setItem("partforge:rail", JSON.stringify({ width: 300, collapsed: true }));
+    track(attachRail({ rail, shell, toggle, storage }));
+    expect(rail.hasAttribute("inert")).toBe(false);
+
+    Object.defineProperty(window, "innerWidth", { value: 1200, configurable: true });
+    window.dispatchEvent(new Event("resize"));
+
+    expect(rail.hasAttribute("inert")).toBe(true); // the preference was never lost
+    expect(toggle.hidden).toBe(false);
+  } finally {
+    Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
+  }
+});
+
+test("detach restores the toggle's original hidden state", () => {
+  const original = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { value: 500, configurable: true });
+  try {
+    document.body.innerHTML = `
+      <div class="pf-shell">
+        <div class="pf-stage"></div>
+        <div class="pf-rail"></div>
+      </div>`;
+    const shell = document.querySelector(".pf-shell");
+    const rail = document.querySelector(".pf-rail");
+    shell.getBoundingClientRect = () => ({ left: 0, right: 1600, width: 1600, top: 0, bottom: 720, height: 720 });
+    const toggle = document.createElement("button");
+    toggle.hidden = false;
+    document.body.append(toggle);
+    const handle = track(attachRail({ rail, shell, toggle, storage: fakeStorage() }));
+    expect(toggle.hidden).toBe(true);
+    handle.detach();
+    expect(toggle.hidden).toBe(false);
+  } finally {
+    Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
+  }
+});
