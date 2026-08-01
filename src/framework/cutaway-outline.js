@@ -138,9 +138,30 @@ export function createSectionOutline({ mesh, plane, inkColor, now = defaultNow }
   let visible = false;
   let suppressed = false;
   let disposed = false;
+  // A show transition (setVisible(true) / setSuppressed(false)) must not put
+  // the last slice on screen if the plane or mesh moved while hidden - that
+  // slice belongs to a pose nobody asked to see. Cleared once slice() has
+  // caught up; markShown() below leaves it alone when nothing moved, so an
+  // ordinary show doesn't wait on a needless re-slice.
+  let needsSlice = true;
 
   function applyVisibility() {
-    object.visible = visible && hasSegments && !suppressed && !disposed;
+    object.visible = visible && hasSegments && !suppressed && !disposed && !needsSlice;
+  }
+
+  // Same signature the plane/mesh state is judged by in refresh(), reused so
+  // a show transition can tell "still matches the last slice" from "moved
+  // while hidden" without duplicating that comparison.
+  function signatureMatches(geometry, matrixWorld) {
+    return geometry === lastGeometry
+      && plane.constant === lastConstant
+      && plane.normal.equals(lastNormal)
+      && matrixWorld.equals(lastMatrix);
+  }
+
+  function markShown() {
+    mesh.updateWorldMatrix(true, false);
+    if (!signatureMatches(mesh.geometry, mesh.matrixWorld)) needsSlice = true;
   }
 
   function slice(geometry, matrixWorld) {
@@ -156,6 +177,7 @@ export function createSectionOutline({ mesh, plane, inkColor, now = defaultNow }
     object.geometry = next;
     previous?.dispose();
     lastCost = now() - start;
+    needsSlice = false;
     applyVisibility();
   }
 
@@ -186,11 +208,13 @@ export function createSectionOutline({ mesh, plane, inkColor, now = defaultNow }
     setVisible(on) {
       if (disposed) return;
       visible = Boolean(on);
+      if (visible) markShown();
       applyVisibility();
     },
     setSuppressed(on) {
       if (disposed) return;
       suppressed = Boolean(on);
+      if (!suppressed) markShown();
       applyVisibility();
     },
     setInk(color) {

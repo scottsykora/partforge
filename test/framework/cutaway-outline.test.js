@@ -233,6 +233,23 @@ describe("createSectionOutline", () => {
     expect(outline.refresh()).toBe(true);
   });
 
+  test("withholds stale segments on show until a slice catches up with a plane moved while hidden", () => {
+    const { plane, outline } = createFixture();
+    outline.refresh();
+    expect(outline.object.visible).toBe(true);
+
+    outline.setVisible(false);
+    plane.constant = -100; // moved off the mesh while hidden
+    outline.setVisible(true);
+
+    // The cached segments are from before the plane moved off the mesh; a
+    // show must not put them on screen ahead of a slice that knows better.
+    expect(outline.object.visible).toBe(false);
+
+    expect(outline.refresh()).toBe(true);
+    expect(outline.object.visible).toBe(false);
+  });
+
   test("records the slice cost from the injected clock", () => {
     let clock = 0;
     const { outline } = createFixture({ now: () => (clock += 4) });
