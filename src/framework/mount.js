@@ -4,6 +4,7 @@ import { createViewer } from "./viewer.js";
 import { attachViewerControls } from "./viewer-controls.js";
 import { attachCutawayControls } from "./cutaway-controls.js";
 import { attachRail } from "./rail.js";
+import { attachMobileTabs } from "./mobile-tabs.js";
 import { createTooltipPresenter } from "./tooltip.js";
 import { loadCamera } from "./view-state.js";
 import { buildControls } from "./controls.js";
@@ -25,13 +26,17 @@ import { createExportController } from "./export-controller.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane }) {
   return {
     ready, dispose, setParams,
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
     captureCurrent: (opts) => viewer.captureCurrent(opts),
     listExportableParts,
     exportParts,
+    // Narrow-layout pane selection, for a host that draws its own tab bar
+    // (partforge-cloud does, at the window level). Defaulted to a no-op so the
+    // handle's shape never depends on whether this mount resolved a rail.
+    setHostPane: setHostPane ?? (() => {}),
   };
 }
 
@@ -64,7 +69,7 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.38.0):
+// Embedding contract (0.39.0):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
@@ -78,6 +83,9 @@ function createCleanupStack() {
 //                                         // headless export of a chosen subset; resolves when the file is
 //                                         // written (handed to your onDownload sink, or downloaded directly
 //                                         // if you don't supply one), rejects on failure
+//   runtime.setHostPane("rail");  // narrow layout only: show just the controls
+//                                 // rail ('stage' | 'rail'), suppressing the
+//                                 // built-in tab bar. null hands selection back.
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
@@ -133,6 +141,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // framework itself (no #panel / no elements.rail).
     const railChrome = attachRail({ rail: els.rail, toggle: els.chrome.railToggle, shell: els.shell });
     cleanup.defer(() => railChrome.detach());
+    // Narrow-layout pane tabs. Below RAIL_NARROW_BREAKPOINT the rail cannot sit
+    // beside the viewer, so exactly one pane shows and this bar picks it. Same
+    // resolution and same no-op-when-absent contract as the rail above — the
+    // shell default mirrors attachRail's (rail.parentElement).
+    const paneTabs = attachMobileTabs({
+      shell: els.shell ?? els.rail?.parentElement,
+      stage: els.viewer,
+      rail: els.rail,
+    });
+    cleanup.defer(() => paneTabs.detach());
     const hover = attachHoverLabels(viewer, { part, tooltip }); // always-on hover inspection (no-op on touch-only devices)
     cleanup.defer(() => hover.detach());
     const ui = createStatusUi({ ...els.status, exports: [els.exports.stl, els.exports.step, els.exports.threeMf] });
@@ -448,6 +466,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     return makeHandle({
       ready, dispose, viewer, setParams,
+      setHostPane: paneTabs.setHostPane,
       listExportableParts: () =>
         exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
       exportParts: (opts) => exportCtl.exportParts(opts),
