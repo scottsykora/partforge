@@ -5,6 +5,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { createViewTabs } from "../../src/framework/view-tabs.js";
 
 const part = {
+  meta: { title: "Test part" },
   views: {
     assembly: { label: "Assembly" },
     drum: { label: "Drum" },
@@ -15,6 +16,7 @@ const part = {
 let el;
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   document.body.innerHTML = '<div class="seg" id="part"></div>';
   el = document.getElementById("part");
 });
@@ -34,14 +36,20 @@ test("current() is the first view by default", () => {
 });
 
 test("a saved view is restored and its tab marked active", () => {
-  localStorage.setItem("partforge:view", "drum");
+  sessionStorage.setItem("partforge:view:Test part", "drum");
   const tabs = createViewTabs(el, part, { onChange: () => {} });
   expect(tabs.current()).toBe("drum");
   expect(el.querySelector("button.on").dataset.part).toBe("drum");
 });
 
 test("a saved view that matches no tab is ignored", () => {
-  localStorage.setItem("partforge:view", "retired-view");
+  sessionStorage.setItem("partforge:view:Test part", "retired-view");
+  const tabs = createViewTabs(el, part, { onChange: () => {} });
+  expect(tabs.current()).toBe("assembly");
+});
+
+test("a view saved under another part's key is ignored", () => {
+  sessionStorage.setItem("partforge:view:Other part", "drum");
   const tabs = createViewTabs(el, part, { onChange: () => {} });
   expect(tabs.current()).toBe("assembly");
 });
@@ -52,7 +60,7 @@ test("clicking a tab switches, persists, and notifies", () => {
   el.querySelector('button[data-part="drum"]').click();
   expect(tabs.current()).toBe("drum");
   expect(onChange).toHaveBeenCalledWith("drum");
-  expect(localStorage.getItem("partforge:view")).toBe("drum");
+  expect(sessionStorage.getItem("partforge:view:Test part")).toBe("drum");
   expect(el.querySelector("button.on").dataset.part).toBe("drum");
   expect(el.querySelectorAll("button.on")).toHaveLength(1);
 });
@@ -86,4 +94,12 @@ test("detach() leaves hand-written buttons in place for a part without views", (
   const tabs = createViewTabs(el, { views: undefined }, { onChange: () => {} });
   tabs.detach();
   expect(el.querySelector("button")).not.toBeNull();
+});
+
+test("a part with no meta.title switches tabs but persists nothing", () => {
+  const untitled = { views: { a: { label: "A" }, b: { label: "B" } } };
+  const tabs = createViewTabs(el, untitled, { onChange: () => {} });
+  el.querySelector('button[data-part="b"]').click();
+  expect(tabs.current()).toBe("b");
+  expect(sessionStorage.length).toBe(0);
 });
