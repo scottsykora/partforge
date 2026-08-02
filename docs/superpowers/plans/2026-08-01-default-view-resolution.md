@@ -217,12 +217,14 @@ git commit -m "feat: resolveDefaultView picks a part's opening view"
 ### Task 2: Part-scoped session persistence for the active view
 
 **Files:**
-- Modify: `src/framework/view-state.js:1-19` (header + key map + storage helpers), `:59-65` (`loadView` / `saveView`)
-- Test: `test/view-state.test.js`
+- Modify: `src/framework/view-state.js:1-19` (header + key map + storage helpers), `:59-65` (`loadView` / `saveView`); `src/framework/view-tabs.js:2-6` (header), `:7-8` (derive the part key), `:19` and `:28` (the two call sites)
+- Test: `test/view-state.test.js`, `test/framework/view-tabs.test.js`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `loadView(partKey) → string | null` and `saveView(partKey, name) → void`, both backed by `sessionStorage` under `partforge:view:<partKey>`. Both no-op when `partKey` is not a non-empty string. `loadRotating`, `saveRotating`, `loadCamera`, `saveCamera`, `loadTheme`, `saveTheme` are unchanged and stay on `localStorage`.
+- Produces: `loadView(partKey) → string | null` and `saveView(partKey, name) → void`, both backed by `sessionStorage` under `partforge:view:<partKey>`. Both no-op when `partKey` is not a non-empty string. `loadRotating`, `saveRotating`, `loadCamera`, `saveCamera`, `loadTheme`, `saveTheme` are unchanged and stay on `localStorage`. `createViewTabs`'s signature and return shape are unchanged.
+
+This task changes persistence end-to-end — storage module and its only caller — so the suite is green at the commit. Which view opens by default is NOT part of this task; that is Task 3.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -293,17 +295,85 @@ test("storage that throws → loads return defaults, saves are no-ops", () => {
 });
 ```
 
+Now the tab side. In `test/framework/view-tabs.test.js`, replace the fixture and `beforeEach` (lines 7-20) with:
+
+```js
+const part = {
+  meta: { title: "Test part" },
+  views: {
+    assembly: { label: "Assembly" },
+    drum: { label: "Drum" },
+    bare: {}, // no label → key is the label
+  },
+};
+
+let el;
+beforeEach(() => {
+  localStorage.clear();
+  sessionStorage.clear();
+  document.body.innerHTML = '<div class="seg" id="part"></div>';
+  el = document.getElementById("part");
+});
+```
+
+Replace the two saved-view tests (lines 36-47) with sessionStorage equivalents plus a cross-part case:
+
+```js
+test("a saved view is restored and its tab marked active", () => {
+  sessionStorage.setItem("partforge:view:Test part", "drum");
+  const tabs = createViewTabs(el, part, { onChange: () => {} });
+  expect(tabs.current()).toBe("drum");
+  expect(el.querySelector("button.on").dataset.part).toBe("drum");
+});
+
+test("a saved view that matches no tab is ignored", () => {
+  sessionStorage.setItem("partforge:view:Test part", "retired-view");
+  const tabs = createViewTabs(el, part, { onChange: () => {} });
+  expect(tabs.current()).toBe("assembly");
+});
+
+test("a view saved under another part's key is ignored", () => {
+  sessionStorage.setItem("partforge:view:Other part", "drum");
+  const tabs = createViewTabs(el, part, { onChange: () => {} });
+  expect(tabs.current()).toBe("assembly");
+});
+```
+
+In the click test (lines 49-58), replace the persistence assertion line
+
+```js
+  expect(localStorage.getItem("partforge:view")).toBe("drum");
+```
+
+with
+
+```js
+  expect(sessionStorage.getItem("partforge:view:Test part")).toBe("drum");
+```
+
+Append one more test to the end of the file:
+
+```js
+test("a part with no meta.title switches tabs but persists nothing", () => {
+  const untitled = { views: { a: { label: "A" }, b: { label: "B" } } };
+  const tabs = createViewTabs(el, untitled, { onChange: () => {} });
+  el.querySelector('button[data-part="b"]').click();
+  expect(tabs.current()).toBe("b");
+  expect(sessionStorage.length).toBe(0);
+});
+```
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-npx vitest run test/view-state.test.js
+npx vitest run test/view-state.test.js test/framework/view-tabs.test.js
 ```
 
-Expected: FAIL — the round-trip test gets `null` from `loadView("Planter")` after saving, because the current `saveView` writes the single global `partforge:view` key in `localStorage`.
+Expected: FAIL in both files — `loadView("Planter")` returns `null` after a save because the current `saveView` writes the single global `partforge:view` key in `localStorage`, and the tab tests read a `sessionStorage` key nothing writes yet.
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 3: Update `view-state.js`**
 
-In `src/framework/view-state.js`, replace the header comment (lines 1-5) with:
+Replace the header comment (lines 1-5) with:
 
 ```js
 // Persist a little viewer UI state across browser reloads (notably Vite dev
@@ -343,9 +413,9 @@ function writeSession(key, value) {
 Replace `loadView` / `saveView` (lines 59-65) with:
 
 ```js
-// `partKey` identifies the part — mount passes `meta.title`. Without one there is
-// nothing safe to key on, so both calls no-op rather than falling back to a shared
-// key (the cross-part bleed this scoping exists to remove).
+// `partKey` identifies the part — createViewTabs passes `meta.title`. Without one
+// there is nothing safe to key on, so both calls no-op rather than falling back to a
+// shared key (the cross-part bleed this scoping exists to remove).
 export function loadView(partKey) {
   if (typeof partKey !== "string" || !partKey) return null;
   return readSession(viewKey(partKey)); // raw string or null; caller validates against available tabs
@@ -357,94 +427,73 @@ export function saveView(partKey, name) {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 4: Update the two call sites in `view-tabs.js`**
 
-```bash
-npx vitest run test/view-state.test.js
+Extend the module header (lines 3-6) with a sentence about the new scoping — append to the existing comment block:
+
+```js
+// The active tab persists per part for the rest of the browser session, so a Vite
+// dev reload doesn't throw you back mid-edit.
 ```
 
-Expected: PASS.
+Derive the key once, immediately after the `generated` line (line 8):
 
-`view-tabs.js` still calls the old signatures at this point, so its suite is expected to fail until Task 3. Confirm the failure is only there:
-
-```bash
-npx vitest run test/framework/view-tabs.test.js
+```js
+  const partKey = part?.meta?.title ?? "";
 ```
 
-Expected: FAIL — the two saved-view restore tests and the click-persistence assertion, because `view-tabs.js` still calls `loadView()` / `saveView(view)` with the old signatures. This is the known intermediate state; Task 3 closes it. Nothing else in the suite should be red.
+Change the load call (line 19) from `loadView()` to:
 
-- [ ] **Step 5: Commit**
+```js
+  const saved = loadView(partKey);
+```
+
+Change the save call (line 28) from `saveView(view)` to:
+
+```js
+    saveView(partKey, view);
+```
+
+Nothing else in the file changes in this task.
+
+- [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
-git add src/framework/view-state.js test/view-state.test.js
+npx vitest run test/view-state.test.js test/framework/view-tabs.test.js
+```
+
+Expected: PASS, both files.
+
+- [ ] **Step 6: Run the full suite**
+
+```bash
+npm test
+```
+
+Expected: PASS. No other module imports `loadView` / `saveView`, so nothing else should move.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/framework/view-state.js src/framework/view-tabs.js test/view-state.test.js test/framework/view-tabs.test.js
 git commit -m "feat: scope the persisted view per part in sessionStorage"
 ```
 
 ---
 
-### Task 3: Wire the resolved default into the tab bar
+### Task 3: Open the resolved default view
 
 **Files:**
-- Modify: `src/framework/view-tabs.js` (whole file), `docs/AUTHORING-PARTS.md` (contract block ~line 88, Rules list ~line 112, host-element table ~line 705)
+- Modify: `src/framework/view-tabs.js:1` (import), `:2-6` (header), `:9-13` (button generation), `:17-18` (initial-view comment); `docs/AUTHORING-PARTS.md` (contract block ~line 88, Rules list ~line 112, host-element table ~line 705)
 - Test: `test/framework/view-tabs.test.js`
 
 **Interfaces:**
-- Consumes: `resolveDefaultView(part)` from Task 1; `loadView(partKey)` / `saveView(partKey, name)` from Task 2.
+- Consumes: `resolveDefaultView(part)` from Task 1; the `partKey` local and part-scoped `loadView` / `saveView` wiring from Task 2.
 - Produces: `createViewTabs(el, part, { onChange }) → { current, detach }` — signature and return shape unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
-In `test/framework/view-tabs.test.js`, replace the fixture and `beforeEach` (lines 7-20) with:
-
-```js
-const part = {
-  meta: { title: "Test part" },
-  views: {
-    assembly: { label: "Assembly" },
-    drum: { label: "Drum" },
-    bare: {}, // no label → key is the label
-  },
-};
-
-let el;
-beforeEach(() => {
-  localStorage.clear();
-  sessionStorage.clear();
-  document.body.innerHTML = '<div class="seg" id="part"></div>';
-  el = document.getElementById("part");
-});
-```
-
-Replace the two saved-view tests (lines 36-47) with sessionStorage equivalents:
-
-```js
-test("a saved view is restored and its tab marked active", () => {
-  sessionStorage.setItem("partforge:view:Test part", "drum");
-  const tabs = createViewTabs(el, part, { onChange: () => {} });
-  expect(tabs.current()).toBe("drum");
-  expect(el.querySelector("button.on").dataset.part).toBe("drum");
-});
-
-test("a saved view that matches no tab is ignored", () => {
-  sessionStorage.setItem("partforge:view:Test part", "retired-view");
-  const tabs = createViewTabs(el, part, { onChange: () => {} });
-  expect(tabs.current()).toBe("assembly");
-});
-
-test("a view saved under another part's key is ignored", () => {
-  sessionStorage.setItem("partforge:view:Other part", "drum");
-  const tabs = createViewTabs(el, part, { onChange: () => {} });
-  expect(tabs.current()).toBe("assembly");
-});
-```
-
-In the click test (lines 49-58), replace the persistence assertion:
-
-```js
-  expect(sessionStorage.getItem("partforge:view:Test part")).toBe("drum");
-```
-
-Then append these three tests to the end of the file:
+Append to `test/framework/view-tabs.test.js`:
 
 ```js
 test("the resolved default view opens, not the first key", () => {
@@ -464,7 +513,7 @@ test("the resolved default view opens, not the first key", () => {
   expect(el.querySelectorAll("button.on")).toHaveLength(1);
 });
 
-test("an author's `default: true` view opens", () => {
+test("an author's `default: true` view opens even when a bigger view exists", () => {
   const flagged = {
     meta: { title: "Flagged" },
     defaults: {},
@@ -473,14 +522,20 @@ test("an author's `default: true` view opens", () => {
   };
   const tabs = createViewTabs(el, flagged, { onChange: () => {} });
   expect(tabs.current()).toBe("body");
+  expect(el.querySelector("button.on").dataset.part).toBe("body");
 });
 
-test("a part with no meta.title switches tabs but persists nothing", () => {
-  const untitled = { views: { a: { label: "A" }, b: { label: "B" } } };
-  const tabs = createViewTabs(el, untitled, { onChange: () => {} });
-  el.querySelector('button[data-part="b"]').click();
-  expect(tabs.current()).toBe("b");
-  expect(sessionStorage.length).toBe(0);
+test("a saved view still wins over the resolved default", () => {
+  const multi = {
+    meta: { title: "Multi" },
+    defaults: {},
+    parts: { body: { views: ["body", "assembly"] }, lid: { views: ["assembly"] } },
+    views: { body: { label: "Body" }, assembly: { label: "Assembly" } },
+  };
+  sessionStorage.setItem("partforge:view:Multi", "body");
+  const tabs = createViewTabs(el, multi, { onChange: () => {} });
+  expect(tabs.current()).toBe("body");
+  expect(el.querySelector("button.on").dataset.part).toBe("body");
 });
 ```
 
@@ -490,70 +545,55 @@ test("a part with no meta.title switches tabs but persists nothing", () => {
 npx vitest run test/framework/view-tabs.test.js
 ```
 
-Expected: FAIL — "the resolved default view opens" gets `"body"`, and the saved-view tests get `"assembly"` because `loadView` is still being called with no argument.
+Expected: FAIL — the first two new tests get `"body"` / `"assembly"` respectively, because the bar still marks index 0 active. (The third passes already; it guards the precedence order while the other two change it.)
 
 - [ ] **Step 3: Write the implementation**
 
-Replace `src/framework/view-tabs.js` in full:
+In `src/framework/view-tabs.js`, add the import above the existing `view-state` import:
 
 ```js
 import { resolveDefaultView } from "./default-view.js";
-import { loadView, saveView } from "./view-state.js";
+```
 
-// The view-tab segmented control. When the part declares `views`, the buttons are
-// generated from it (part.views is the single source of truth — host pages leave
-// the #part div empty); a part without `views` keeps whatever buttons the page
-// hand-wrote. Which tab opens is resolveDefaultView's call, not key order. The
-// choice then persists per part for the rest of the browser session, so a Vite dev
-// reload doesn't throw you back to the default mid-edit.
-export function createViewTabs(el, part, { onChange }) {
-  const generated = !!(el && part.views);
-  const partKey = part?.meta?.title ?? "";
+Extend the module header with a sentence on how the opening tab is chosen:
+
+```js
+// Which tab opens is resolveDefaultView's call, not key order.
+```
+
+Resolve the default once, next to `partKey`:
+
+```js
   const resolved = resolveDefaultView(part);
+```
+
+Change button generation to mark the resolved view rather than index 0 — note the `i` parameter is no longer needed:
+
+```js
   if (generated) {
     el.innerHTML = Object.entries(part.views)
       .map(([key, v]) => `<button data-part="${key}"${key === resolved ? ' class="on"' : ""}>${v?.label ?? key}</button>`)
       .join("");
   }
+```
 
-  const setActive = (btn) => { for (const b of el.children) b.classList.toggle("on", b === btn); };
+Update the initial-view comment (lines 17-18) to describe what `button.on` now means:
 
+```js
   // Initial view: the session-saved one if it still matches a tab, else the active
   // button — the resolved default for a generated bar, or whatever the page's own
   // markup marked `on` for a hand-written one.
-  const defaultView = el.querySelector("button.on")?.dataset.part ?? el.querySelector("button")?.dataset.part;
-  const saved = loadView(partKey);
-  const savedBtn = saved ? [...el.querySelectorAll("button[data-part]")].find((b) => b.dataset.part === saved) : null;
-  let view = savedBtn ? saved : defaultView;
-  if (savedBtn) setActive(savedBtn);
-
-  const onClick = (e) => {
-    const btn = e.target.closest("button[data-part]");
-    if (!btn) return;
-    view = btn.dataset.part;
-    saveView(partKey, view);
-    setActive(btn);
-    onChange(view);
-  };
-  el.addEventListener("click", onClick);
-
-  return {
-    current: () => view,
-    detach: () => {
-      el.removeEventListener("click", onClick);
-      if (generated) el.innerHTML = ""; // we generated these buttons; hand-written markup stays
-    },
-  };
-}
 ```
+
+The `defaultView` / `saved` / `savedBtn` lines below it are unchanged.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-npx vitest run test/framework/view-tabs.test.js test/view-state.test.js test/framework/default-view.test.js
+npx vitest run test/framework/view-tabs.test.js test/framework/default-view.test.js
 ```
 
-Expected: PASS, all three files.
+Expected: PASS, both files.
 
 - [ ] **Step 5: Update the authoring docs**
 
@@ -563,18 +603,16 @@ In `docs/AUTHORING-PARTS.md`, in the `PartDefinition` contract block, replace th
   views: { <name>: { label, default? } },  // the view tabs (a view = a set of sub-parts)
 ```
 
-In the **Rules** list directly below, replace this bullet:
+In the **Rules** list directly below, after this existing bullet:
 
 ```markdown
 - A view's sub-parts are derived, never hard-coded: those whose `views` include the view
   and whose `enabled(p)` is true.
 ```
 
-with:
+add:
 
 ```markdown
-- A view's sub-parts are derived, never hard-coded: those whose `views` include the view
-  and whose `enabled(p)` is true.
 - **Which view the viewer opens on** is resolved in this order: the first view flagged
   `default: true`; else the view placing the most sub-parts at `defaults` (counting
   `enabled(defaults)`), which for a multi-view part is normally the assembly; else the
