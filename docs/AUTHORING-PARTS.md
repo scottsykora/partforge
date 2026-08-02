@@ -1011,7 +1011,8 @@ previously didn't; that's the fix working as intended, not a regression.
 ### Rule catalog
 
 **Definition shape** — `missing-meta-title`, `missing-defaults`, `no-buildable-parts`,
-`missing-views`, `part-view-unknown` (all errors); `view-unused` (warning).
+`missing-views`, `part-view-unknown` (all errors); `view-unused`,
+`default-view-ambiguous` (warnings).
 
 **Parameter schema** — `features-requires-sliders`, `control-key-not-in-defaults`,
 `preset-key-not-in-defaults` (errors); `slider-range-excludes-default`,

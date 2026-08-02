@@ -83,4 +83,16 @@ export const SHAPE_RULES = [
           `views.${v}`));
     },
   },
+  {
+    id: "default-view-ambiguous",
+    run: ({ part }) => {
+      if (!isPlainObject(part?.views)) return [];
+      const flagged = Object.keys(part.views).filter((v) => part.views[v]?.default === true);
+      if (flagged.length < 2) return [];
+      return [warn("default-view-ambiguous",
+        `${flagged.length} views set \`default: true\`: ${flagged.map((v) => `"${v}"`).join(", ")}`,
+        `Only one view can open by default. The viewer takes the first one declared — "${flagged[0]}" — and ignores the rest; remove \`default: true\` from the others.`,
+        `views.${flagged[1]}.default`)];
+    },
+  },
 ];
