@@ -1032,6 +1032,9 @@ carries:
 - `hint` — one self-contained corrective sentence (always present),
 - `pattern` — a stable [ERROR-PATTERNS.md](ERROR-PATTERNS.md) entry ID when one
   applies (follow it with `ERROR-PATTERNS.md#<id>`),
+- `note` — an optional caveat about *how* the value was measured, attached
+  whatever the verdict. Today only `minWall` sets one, when the reading came
+  from a sample rather than every triangle (see below),
 - `location` — `[x, y, z]` in mm where the metric has one: `minWall` (thinnest
   sample point) and `overlaps` (the center of the first offending intersection's
   *bounding box* — a nearby indicator, not an exact point: when a pair overlaps in
@@ -1042,7 +1045,20 @@ carries:
 
 Subpart facts include `minWall` (number or `null` — null exactly when no reading
 exists, e.g. the OCCT backend or min-wall measurement turned off, matching
-`minWallAt`'s null) and `minWallAt` (`[x,y,z]` or `null`); overlap entries are
+`minWallAt`'s null) and `minWallAt` (`[x,y,z]` or `null`). Min wall casts one ray
+per triangle, which is unbounded work on a dense mesh, so past 50,000 triangles
+it casts from a spread, deterministic subset instead — `minWallSampled` (boolean)
+and `minWallSamples` (`{ sampled, total }` or `null`) say whether that happened.
+`sampled` is how many triangles the walk *selected*, not how many rays were
+cast: a degenerate (zero-area) triangle has no normal to cast along and is
+skipped. A sampled reading is an **upper bound**: it can miss a thin spot, never
+invent one — and a sampled run that found no wall at all still reports its
+`minWallSamples`, so a null `minWall` there is "we looked and found nothing",
+not "nobody looked". Everything in `src/parts/` is far below the budget and
+reads exactly. The report's top-level `measuredMinWall` says whether this run
+cast min-wall rays at all — the difference between a null `minWall` that means
+"no wall found" and one that means "not measured".
+Overlap entries are
 `{ a, b, volume, location }`. Pair-distance facts are `gaps` (every sub-part
 pair: `{ a, b, distance, at }`, distance 0 = touching or overlapping) and
 `nearMisses` (the pairs with an unintended-looking gap under 0.5 mm).

@@ -1,5 +1,5 @@
 import { buildView } from "./build.js";
-import { buildBVH } from "./bvh.js";
+import { cachedBVH } from "./bvh.js";
 
 // A measured pair distance at or below this (mm) counts as touching — absorbs
 // posing float error while staying far below any real print clearance.
@@ -17,12 +17,15 @@ export const pairKey = (a, b) => [a, b].sort().join("×");
 // meshes ([{ name, mesh }] — buildView output). Distance 0 = touching or
 // interpenetrating surfaces; callers filter. Pairs involving an empty mesh are
 // skipped (the watertight gate owns that failure). Pure mesh math — both backends.
+// `bvhCache` is an optional caller-owned Map — see cachedBVH for the doctrine;
+// measure() draws min-wall's index out of the same one, so each sub-part mesh is
+// indexed once, not twice.
 //   → [{ a, b, distance, at: [x,y,z] }]
-export function meshGaps(built) {
+export function meshGaps(built, { bvhCache } = {}) {
   const hasTris = (m) => (m.indices ? m.indices.length > 0 : m.positions.length > 0);
   const bvhs = built
     .filter(({ mesh }) => hasTris(mesh))
-    .map(({ name, mesh }) => ({ name, bvh: buildBVH(mesh) }));
+    .map(({ name, mesh }) => ({ name, bvh: cachedBVH(mesh, bvhCache) }));
   const out = [];
   for (let i = 0; i < bvhs.length; i++) {
     for (let j = i + 1; j < bvhs.length; j++) {

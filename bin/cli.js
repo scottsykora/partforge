@@ -204,6 +204,9 @@ function printVerify(v) {
     for (const ch of c.checks) {
       const icon = ch.status === "pass" ? "✓" : ch.status === "fail" ? "✗" : ch.status === "warn" ? "⚠" : "·";
       console.log(`    ${icon} ${ch.subpart ?? "_view"} ${ch.metric} ${ch.expr}  (${ch.message})`);
+      // A measurement caveat prints whatever the verdict — "passed, but sampled"
+      // is precisely the line a reader must not miss.
+      if (ch.note) console.log(`        note: ${ch.note}`);
       if (ch.status === "fail" || ch.status === "warn") {
         if (ch.location) console.log(`        at [${ch.location.map((n) => n.toFixed(1)).join(", ")}]`);
         if (ch.hint) console.log(`        hint: ${ch.hint}${ch.pattern ? ` (ERROR-PATTERNS.md#${ch.pattern})` : ""}`);

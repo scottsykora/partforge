@@ -25,6 +25,22 @@ describe("mount handle captureViews", () => {
     expect(out).toBe("data:image/jpeg;base64,AAAA");
   });
 
+  it("delegates setActive to viewer.setActive", () => {
+    const viewer = { captureCanonicalViews: vi.fn(), setActive: vi.fn() };
+    const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer });
+    handle.setActive(false);
+    expect(viewer.setActive).toHaveBeenCalledWith(false);
+  });
+
+  it("delegates onContextLost and hands back the viewer's unsubscribe", () => {
+    const off = vi.fn();
+    const viewer = { captureCanonicalViews: vi.fn(), onContextLost: vi.fn(() => off) };
+    const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer });
+    const listener = vi.fn();
+    expect(handle.onContextLost(listener)).toBe(off);
+    expect(viewer.onContextLost).toHaveBeenCalledWith(listener);
+  });
+
   it("exposes setParams straight through to the caller", () => {
     const viewer = { captureCanonicalViews: vi.fn() };
     const setParams = vi.fn();
