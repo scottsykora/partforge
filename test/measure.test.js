@@ -54,6 +54,16 @@ test("minWall is null unless opts.minWall is set, then it is the measured thickn
   expect(w).toBeCloseTo(5, 1);                                                      // thinnest dimension
 });
 
+test("min-wall facts carry the sample accounting, so a report can tell exact from sampled", () => {
+  const s = measure(k, boxPart, "v", {}, { minWall: true }).subparts[0];
+  expect(s.minWallSampled).toBe(false);
+  expect(s.minWallSamples.total).toBe(s.triangleCount);
+  expect(s.minWallSamples.sampled).toBe(s.triangleCount);
+  const off = measure(k, boxPart, "v").subparts[0];                 // measurement not requested
+  expect(off.minWallSampled).toBe(false);
+  expect(off.minWallSamples).toBe(null);
+});
+
 test("measure reports the near-miss pair with distance and location", () => {
   const r = measure(k, gapPart, "v");                     // gap 0.2
   expect(r.nearMisses).toHaveLength(1);

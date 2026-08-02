@@ -118,14 +118,23 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
   if (actual === null || actual === undefined) {
     if (reg.manifoldOnly) return { ...base, actual, status: "skip", pass: null, message: "n/a (OCCT backend)" };
     if (metric === "minWall") {
-      return { ...base, actual, status: "warn", pass: null, message: "min wall unavailable",
+      const out = { ...base, actual, status: "warn", pass: null, message: "min wall unavailable",
         hint: partHint ?? "no min-wall reading for this mesh — treat thin features as unverified" };
+      // A missing reading still has a HOW: a sampled run whose rays all missed says
+      // so here, rather than reading like a mesh min-wall never looked at.
+      const note = reg.note?.(factsObj);
+      if (note) out.note = note;
+      return out;
     }
     return { ...base, actual, status: "skip", pass: null, message: "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
   const status = pass ? "pass" : reg.kind === "warn" ? "warn" : "fail";
   const out = { ...base, actual, status, pass, message };
+  // A measurement caveat rides along whatever the verdict — a min-wall reading
+  // taken from a sample still passed, but the reader should know it was a sample.
+  const note = reg.note?.(factsObj);
+  if (note) out.note = note;
   if (!pass) {
     out.hint = partHint ?? reg.hint;
     if (reg.pattern) out.pattern = reg.pattern;
@@ -158,7 +167,10 @@ export function evaluateCase(facts, { profile, expect, subPartNames }) {
   return checks;
 }
 
-export function verify(kernel, part, { process, view, measureFn = defaultMeasure } = {}) {
+// `seed` lets a caller that has ALREADY measured this part hand the result in so
+// verify does not recompute it — see the seeding block below for the shape and
+// the one correctness rule that governs it.
+export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed } = {}) {
   view = view ?? Object.keys(part.views)[0];
   const profileSpec = process ?? part.verify?.process;
   const profile = profileSpec ? resolveProfile(profileSpec) : null;
@@ -185,6 +197,50 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
       : [...readKeys.entries()].map(([name, keys]) => `${name}:${relevanceHash([...keys], params)}`).join("|");
 
   const memo = new Map();
+
+  // SEEDING. expandCases always yields a "defaults" case, and the inspect job
+  // (framework/jobs.js) measures those exact params immediately before calling
+  // verify — so without this the oracle rebuilds the same geometry, casts the
+  // same min-wall rays and re-indexes the same meshes a second time. On a
+  // single-case part that is half the job.
+  //   seed = { params, result } — the params the result was measured with, and
+  //   the measure() output itself. Nothing else: every fact the rule below needs
+  //   is read off the artifact, so a caller cannot assert it wrongly.
+  //
+  // THE MIN-WALL SUPERSET RULE, which is the trap here. measureCase asks for
+  // `{ minWall: needMinWall }`, and needMinWall is false whenever no profile and
+  // no expectation mentions min wall. A result measured WITH min wall is a strict
+  // superset of one measured without: the extra fields are only ever read by the
+  // minWall metric, which by definition this run never checks. Reuse in that
+  // direction is free. The reverse is NOT safe — a seed taken without min wall
+  // carries `minWall: null` on every sub-part, which the registry reports as
+  // "min wall unavailable", silently downgrading a real gate to a warning. So the
+  // seed is consulted only when `seed.result.measuredMinWall || !needMinWall` —
+  // and `measuredMinWall` is stamped by measure() itself, not claimed by whoever
+  // holds the result. Otherwise the seed is ignored and the case measured properly.
+  //
+  // ALIASING. A consulted seed is memoized BY REFERENCE, so the caller's result
+  // and every case that hits it are the same object — the inspect job's
+  // `report.measure` and `report.verify.cases[0]`'s facts included. Nothing here
+  // mutates facts (evaluateCase only reads), and that is what makes the sharing
+  // safe; a future check that wants to annotate a fact must copy first.
+  //
+  // Keyed through the SAME signature() the memo uses, never a JSON compare of the
+  // raw params — a separate compare would miss cases that share a signature (a
+  // preset touching only params the build never reads) and, worse, could hit on
+  // params that merely look equal. The seed's params are layered over
+  // part.defaults first because a caller's `{}` and the defaults case's
+  // `{...part.defaults}` build identical geometry but hash differently
+  // (JSON.stringify({}) is not JSON.stringify(defaults), and relevanceHash reads
+  // params[k] straight through). The view is checked too: measure()'s output is
+  // per-view, and a seed from another view would be a silent wrong answer.
+  //
+  // Non-default measure options (a custom `gapThreshold`) are the caller's
+  // responsibility: seed only a measurement taken the way verify would take it.
+  if (seed?.result && (seed.result.measuredMinWall || !needMinWall) && seed.result.view === view) {
+    memo.set(signature({ ...part.defaults, ...(seed.params ?? {}) }), seed.result);
+  }
+
   const measureCase = (params) => {
     const key = signature(params);
     if (!memo.has(key)) memo.set(key, measureFn(kernel, part, view, params, { minWall: needMinWall }));

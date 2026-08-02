@@ -112,8 +112,27 @@ await runtime.ready;   // first successful build (rejects on a first-build error
 runtime.setHostPane("rail");  // narrow layout only: show just the controls
                                // rail ('stage' | 'rail'), suppressing the
                                // built-in tab bar. null hands selection back.
+runtime.setActive(false);      // park the viewer: stop the render loop, release the
+                               // drawing buffer. setActive(true) restores both.
+const off = runtime.onContextLost(() => {});  // WebGL context loss; returns an unsubscribe
 runtime.dispose();     // stops loops, workers, observers, listeners; frees GPU resources
 ```
+
+**Park the viewer when you hide it.** A host that hides the canvas with
+`display: none` needs nothing — the container collapses and the ResizeObserver
+shrinks the drawing buffer for free. A host that hides it any other way
+(`visibility: hidden`, an inactive tab, an off-screen pane) gets no such signal:
+the full-resolution MSAA buffer stays resident and the render loop keeps drawing
+an auto-rotating scene at 60fps that nobody can see. On a phone that is tens of
+megabytes plus continuous GPU work, and it has been enough on its own to get a
+tab killed. Call `runtime.setActive(false)` when the viewer goes off-screen and
+`setActive(true)` when it comes back.
+
+Parking releases both large GPU allocations — the drawing buffer and the cached
+1024² capture target — and stops the render loop. Offscreen captures
+(`captureCurrent`, `captureViews`) keep working while parked and framing is
+unchanged, so a host can still take a build screenshot of a hidden viewer; the
+first capture after parking just re-allocates its target.
 
 Every `elements` entry defaults to the legacy global ID (`#app`, `#controls`,
 `#panel` for `rail`, `#status`/`#busy`/`#phase`, `#part`,

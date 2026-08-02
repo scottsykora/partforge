@@ -94,6 +94,10 @@ export function createViewer(container, part) {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
 
+  // Declared up here, not beside setActive() below, because the initial resize()
+  // runs during construction and reads it.
+  let active = true;
+
   const scene = new THREE.Scene();
 
   // Light/dark scene palettes (the page chrome is themed separately, via CSS on the
@@ -361,6 +365,10 @@ export function createViewer(container, part) {
   // --- resize ---------------------------------------------------------------
   // Size from the host container (not the window) so embedders control the pane.
   function resize() {
+    // Parked (see setActive): the buffer is deliberately 1x1 and must stay that
+    // way. iOS fires resizes constantly as the URL bar collapses, and every one
+    // of them would otherwise re-allocate a full MSAA buffer for a hidden pane.
+    if (!active) return;
     const w = container.clientWidth || 300, h = container.clientHeight || 150;
     renderer.setSize(w, h);
     camera.aspect = w / h;
@@ -481,12 +489,66 @@ export function createViewer(container, part) {
   }
 
   // --- render loop ----------------------------------------------------------
-  renderer.setAnimationLoop(() => {
+  function renderFrame() {
     controls.update();
     if (cutaway.isEnabled) cutaway.updateForCamera();
     renderer.render(scene, camera);
     cutaway.renderOverlay(renderer, camera);
-  });
+  }
+  renderer.setAnimationLoop(renderFrame);
+
+  // --- active / parked ------------------------------------------------------
+  // For a host that HIDES the viewer without unmounting it. partforge's own
+  // narrow layout uses `display: none` on the stage, which zeroes clientWidth
+  // and lets the ResizeObserver above collapse the buffer for free. An embedder
+  // that cannot do that — partforge-cloud's phone tab bar uses
+  // `visibility: hidden`, because the canvas has to keep its size for build
+  // screenshots — gets no such signal: the full-resolution MSAA drawing buffer
+  // stays resident and this loop keeps rendering an auto-rotating scene at
+  // 60fps behind an invisible pane. On an iPhone that is tens of megabytes and
+  // continuous GPU work nobody can see, so the host has to say so explicitly.
+  //
+  // Parking stops the loop and releases the drawing buffer. `setSize(1, 1,
+  // false)` leaves the canvas element's CSS box alone, so the host's layout
+  // does not move and the pane can be revealed again without a reflow.
+  function setActive(next) {
+    const want = next !== false;
+    if (disposed || want === active) return;
+    active = want;
+    if (!active) {
+      renderer.setAnimationLoop(null);
+      renderer.setSize(1, 1, false);
+      // The cached 1024² 4x-MSAA + stencil capture target is the other large
+      // allocation here — on a phone it is comparable to the canvas itself, so
+      // parking that kept it would leave half the memory behind. Dropping it
+      // costs one re-allocation on the next capture, which a parked viewer
+      // barely notices: the cache only ever hits on an exactly-square request,
+      // and a phone's capture aspect is not square, so those captures were
+      // allocating per call regardless.
+      _rt?.dispose();
+      _rt = null;
+      return;
+    }
+    resize(); // rebuild the buffer at whatever size the container is now
+    renderer.setAnimationLoop(renderFrame);
+  }
+
+  // --- context loss ---------------------------------------------------------
+  // Losing the WebGL context is how a memory-starved phone tells you it gave
+  // up. With no handler the canvas just freezes, indistinguishable from a hang,
+  // and three never re-initialises. preventDefault() is what makes the loss
+  // recoverable (three's own listener re-uploads on restore); the subscribers
+  // let an embedder surface it instead of showing a dead rectangle.
+  const contextLostListeners = new Set();
+  const onContextLostEvent = (event) => {
+    event.preventDefault();
+    for (const listener of [...contextLostListeners]) listener();
+  };
+  renderer.domElement.addEventListener("webglcontextlost", onContextLostEvent);
+  function onContextLost(listener) {
+    contextLostListeners.add(listener);
+    return () => contextLostListeners.delete(listener);
+  }
 
   // --- camera state (read/write for persistence; mount.js owns storage) -------
   function getCameraState() {
@@ -528,6 +590,11 @@ export function createViewer(container, part) {
     disposed = true;
     ro.disconnect();
     renderer.setAnimationLoop(null);
+    // Embedder callbacks must not outlive teardown — a disposed viewer has no
+    // context left to lose, and a surviving listener would keep the embedder's
+    // closure (and whatever it captured) alive.
+    renderer.domElement.removeEventListener("webglcontextlost", onContextLostEvent);
+    contextLostListeners.clear();
     controls.dispose();
     for (const t of flashTimers) clearTimeout(t);
     flashTimers.clear();
@@ -558,6 +625,8 @@ export function createViewer(container, part) {
     captureCanonicalViews,
     captureCurrent,
     setAutoRotate,
+    setActive,
+    onContextLost,
     setTheme,
     getCameraState,
     setCameraState,

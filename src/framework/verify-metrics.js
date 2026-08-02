@@ -2,7 +2,9 @@
 // is a hard gate or a warning, and the diagnostics attached to a non-pass check:
 // `hint` (required — the report contract promises one on every fail/warn),
 // `pattern` (optional stable ERROR-PATTERNS.md#<id>), `locate` (optional
-// [x,y,z] source). `manifoldOnly` facts are null on OCCT parts.
+// [x,y,z] source), `note` (optional caveat about HOW the value was measured,
+// attached whatever the status — a passing-but-sampled reading is exactly the
+// case a reader needs told about). `manifoldOnly` facts are null on OCCT parts.
 //
 // This lives in framework/ rather than testing/ deliberately: the set of legal
 // `verify.expect` metrics is part of the PartDefinition CONTRACT, which both the
@@ -32,7 +34,18 @@ export const SUBPART_METRICS = {
   minWall: { kind: "warn", extract: (s) => s.minWall,
     hint: "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
     pattern: "minwall-sliver-triangles",
-    locate: (s) => s.minWallAt },
+    locate: (s) => s.minWallAt,
+    // Two sampled outcomes, and the second is the one that most needs saying: a
+    // sampled run that found NO wall reports minWall null, which without this note
+    // is indistinguishable from a part nobody measured. `sampled` counts triangles
+    // the walk selected, not rays cast — degenerate triangles are skipped.
+    note: (s) => {
+      if (!s.minWallSampled || !s.minWallSamples) return null;
+      const { sampled, total } = s.minWallSamples;
+      return s.minWall == null
+        ? `no reading from the ${sampled} of ${total} triangles sampled — not a clean bill of health; a thin spot may exist between samples`
+        : `sampled ${sampled} of ${total} triangles — an upper bound; a thinner spot may exist between samples`;
+    } },
 };
 export const VIEW_METRICS = {
   bbox: { kind: "gate", extract: (r) => r.aggregate.bbox,
