@@ -103,3 +103,45 @@ test("a part with no meta.title switches tabs but persists nothing", () => {
   expect(tabs.current()).toBe("b");
   expect(sessionStorage.length).toBe(0);
 });
+
+test("the resolved default view opens, not the first key", () => {
+  const multi = {
+    meta: { title: "Multi" },
+    defaults: {},
+    parts: {
+      body: { views: ["body", "assembly"] },
+      lid: { views: ["assembly"] },
+      pin: { views: ["assembly"] },
+    },
+    views: { body: { label: "Body" }, assembly: { label: "Assembly" } },
+  };
+  const tabs = createViewTabs(el, multi, { onChange: () => {} });
+  expect(tabs.current()).toBe("assembly");
+  expect(el.querySelector("button.on").dataset.part).toBe("assembly");
+  expect(el.querySelectorAll("button.on")).toHaveLength(1);
+});
+
+test("an author's `default: true` view opens even when a bigger view exists", () => {
+  const flagged = {
+    meta: { title: "Flagged" },
+    defaults: {},
+    parts: { body: { views: ["body", "assembly"] }, lid: { views: ["assembly"] } },
+    views: { body: { label: "Body", default: true }, assembly: { label: "Assembly" } },
+  };
+  const tabs = createViewTabs(el, flagged, { onChange: () => {} });
+  expect(tabs.current()).toBe("body");
+  expect(el.querySelector("button.on").dataset.part).toBe("body");
+});
+
+test("a saved view still wins over the resolved default", () => {
+  const multi = {
+    meta: { title: "Multi" },
+    defaults: {},
+    parts: { body: { views: ["body", "assembly"] }, lid: { views: ["assembly"] } },
+    views: { body: { label: "Body" }, assembly: { label: "Assembly" } },
+  };
+  sessionStorage.setItem("partforge:view:Multi", "body");
+  const tabs = createViewTabs(el, multi, { onChange: () => {} });
+  expect(tabs.current()).toBe("body");
+  expect(el.querySelector("button.on").dataset.part).toBe("body");
+});

@@ -85,7 +85,7 @@ export default {
       export?: { name },                   // filename/object name on export; defaults to the key
     },
   },
-  views: { <name>: { label } },            // the view tabs (a view = a set of sub-parts)
+  views: { <name>: { label, default? } },  // the view tabs (a view = a set of sub-parts)
 };
 ```
 
@@ -111,6 +111,14 @@ export default {
 - `enabled(p)` gates a conditional sub-part (e.g. only present when a feature is on).
 - A view's sub-parts are derived, never hard-coded: those whose `views` include the view
   and whose `enabled(p)` is true.
+- **Which view the viewer opens on** is resolved in this order: the first view flagged
+  `default: true`; else the view placing the most sub-parts at `defaults` (counting
+  `enabled(defaults)`), which for a multi-view part is normally the assembly; else the
+  first key in `views`. So flag the assembly view `default: true` when you want it to
+  open but sit last in the tab bar. The chosen tab then persists per part for the rest
+  of the browser session. The headless tools are deliberately different: `measure`,
+  `verify` and `render` all default to the **first key** in `views`, ignoring
+  `default: true`, so a CI gate can't move because a sub-part was added to a view.
 - `fonts` declares the outline fonts a part's `k.text2d()` calls need, as `{ name: source
   }` — a source is inline bytes, a URL string, or a thunk (e.g. a Vite `import('./x.ttf')`,
   which resolves to `{ default: url }`). The framework resolves and parses these into
@@ -702,7 +710,7 @@ stylesheet). `mount` looks up these element IDs:
 |---|---|
 | `#app` | viewer canvas mounts here |
 | `#controls` | control panel is built into this |
-| `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` |
+| `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the one `default: true` / the biggest view selects (see the `views` rules above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
 | `#viewbar` with `#pause` / `#reframe` / `#cutaway` / `#theme` | optional viewer controls (omit any you don't want) |
