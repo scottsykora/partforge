@@ -710,7 +710,7 @@ stylesheet). `mount` looks up these element IDs:
 |---|---|
 | `#app` | viewer canvas mounts here |
 | `#controls` | control panel is built into this |
-| `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the one `default: true` / the biggest view selects (see the `views` rules above) |
+| `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
 | `#viewbar` with `#pause` / `#reframe` / `#cutaway` / `#theme` | optional viewer controls (omit any you don't want) |

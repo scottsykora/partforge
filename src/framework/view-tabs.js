@@ -4,9 +4,9 @@ import { loadView, saveView } from "./view-state.js";
 // The view-tab segmented control. When the part declares `views`, the buttons are
 // generated from it (part.views is the single source of truth — host pages leave
 // the #part div empty); a part without `views` keeps whatever buttons the page
-// hand-wrote. The active tab persists per part for the rest of the browser session, so a Vite
-// dev reload doesn't throw you back mid-edit.
-// Which tab opens is resolveDefaultView's call, not key order.
+// hand-wrote. Which tab opens is resolveDefaultView's call, not key order. The
+// active tab then persists per part for the rest of the browser session, so a
+// Vite dev reload doesn't throw you back mid-edit.
 export function createViewTabs(el, part, { onChange }) {
   const generated = !!(el && part.views);
   const partKey = part?.meta?.title ?? "";

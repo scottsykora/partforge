@@ -21,7 +21,7 @@ beforeEach(() => {
   el = document.getElementById("part");
 });
 
-test("generates one button per view; the first is active; labels fall back to the key", () => {
+test("generates one button per view; the resolved default is active; labels fall back to the key", () => {
   createViewTabs(el, part, { onChange: () => {} });
   const btns = [...el.querySelectorAll("button[data-part]")];
   expect(btns.map((b) => b.dataset.part)).toEqual(["assembly", "drum", "bare"]);
@@ -30,7 +30,7 @@ test("generates one button per view; the first is active; labels fall back to th
   expect(btns[1].classList.contains("on")).toBe(false);
 });
 
-test("current() is the first view by default", () => {
+test("current() falls back to the first view when there's no parts map to count", () => {
   const tabs = createViewTabs(el, part, { onChange: () => {} });
   expect(tabs.current()).toBe("assembly");
 });

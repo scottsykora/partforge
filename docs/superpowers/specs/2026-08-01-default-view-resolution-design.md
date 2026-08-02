@@ -164,6 +164,18 @@ itself and cannot name a view that does not exist.
 - **`test/lint-shape.test.js`**: a part with two views flagged `default: true`
   produces one `default-view-ambiguous` warning and no error.
 
+No shipped part in `src/parts/` has more than one view, so the resolution rule
+never runs against a real multi-view part in the Playwright smoke check
+(`npm run check`) — that check only ever exercises the single-view,
+first-key-by-default path. Coverage for the actual rule stops at
+`test/framework/default-view.test.js` and the tab-bar cases in
+`test/framework/view-tabs.test.js`. Adding a second view to one of the demo
+parts purely to give the smoke check something to click was considered and
+rejected: it would turn an example app into test fixture rather than
+something an author would plausibly ship. This gap is accepted for now; a
+future multi-view demo part (should one arise for its own reasons) would pick
+up smoke coverage for free.
+
 ## Risks
 
 - **Hot-reload behavior depends on `meta.title` being present.** A part missing
