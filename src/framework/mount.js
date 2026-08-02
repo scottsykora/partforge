@@ -31,10 +31,11 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     ready, dispose, setParams,
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
     captureCurrent: (opts) => viewer.captureCurrent(opts),
-    // Park/unpark the viewer. For an embedder that hides the canvas without
-    // unmounting it — `visibility: hidden`, an off-screen tab — where nothing
-    // collapses the container and the render loop would otherwise run forever.
-    // See the setActive comment in viewer.js for what it costs on a phone.
+    // Park/unpark the viewer: stops the render loop and frees the drawing
+    // buffer and the cached capture target. For an embedder that hides the
+    // canvas without unmounting it — `visibility: hidden`, an off-screen tab —
+    // where nothing collapses the container and the loop would otherwise run
+    // forever. See the setActive comment in viewer.js for what it costs.
     setActive: (active) => viewer.setActive(active),
     // Subscribe to WebGL context loss (returns an unsubscribe), so a host can
     // say "the 3D view ran out of memory" instead of showing a dead canvas.
@@ -95,11 +96,13 @@ function createCleanupStack() {
 //                                 // rail ('stage' | 'rail'), suppressing the
 //                                 // built-in tab bar. null hands selection back.
 //   runtime.setActive(false);     // park the viewer: stop the render loop and release
-//                                 // the drawing buffer. For a host that hides the canvas
-//                                 // WITHOUT unmounting it (`visibility: hidden`, an
+//                                 // both large GPU allocations (the drawing buffer and
+//                                 // the cached capture target). For a host that hides the
+//                                 // canvas WITHOUT unmounting it (`visibility: hidden`, an
 //                                 // inactive tab) — nothing else can detect that, and the
 //                                 // loop would otherwise render a hidden pane forever.
-//                                 // setActive(true) restores both. Safe after dispose().
+//                                 // Captures still work while parked (they re-allocate).
+//                                 // setActive(true) restores it. Safe after dispose().
 //   const off = runtime.onContextLost(() => …);  // WebGL context loss, i.e. the GPU or the
 //                                 // OS gave up — surface it rather than showing a dead
 //                                 // canvas. Returns an unsubscribe.

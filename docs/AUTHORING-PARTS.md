@@ -1049,8 +1049,15 @@ exists, e.g. the OCCT backend or min-wall measurement turned off, matching
 per triangle, which is unbounded work on a dense mesh, so past 50,000 triangles
 it casts from a spread, deterministic subset instead — `minWallSampled` (boolean)
 and `minWallSamples` (`{ sampled, total }` or `null`) say whether that happened.
-A sampled reading is an **upper bound**: it can miss a thin spot, never invent
-one. Everything in `src/parts/` is far below the budget and reads exactly.
+`sampled` is how many triangles the walk *selected*, not how many rays were
+cast: a degenerate (zero-area) triangle has no normal to cast along and is
+skipped. A sampled reading is an **upper bound**: it can miss a thin spot, never
+invent one — and a sampled run that found no wall at all still reports its
+`minWallSamples`, so a null `minWall` there is "we looked and found nothing",
+not "nobody looked". Everything in `src/parts/` is far below the budget and
+reads exactly. The report's top-level `measuredMinWall` says whether this run
+cast min-wall rays at all — the difference between a null `minWall` that means
+"no wall found" and one that means "not measured".
 Overlap entries are
 `{ a, b, volume, location }`. Pair-distance facts are `gaps` (every sub-part
 pair: `{ a, b, distance, at }`, distance 0 = touching or overlapping) and

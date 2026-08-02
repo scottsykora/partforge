@@ -124,6 +124,18 @@ test("a sampled min-wall reading is annotated, passing or not", () => {
   expect(byKey(pass, "subpart", "minWall").note).toMatch(/sampled/);
 });
 
+test("a sampled run that found NO wall is annotated too, not just 'unavailable'", () => {
+  // The caveat matters most exactly here: minWall is null, so the check warns
+  // "min wall unavailable" — which without the note reads like a mesh nobody
+  // measured rather than one whose 50k sampled rays all missed.
+  const facts = { ...factsThin, subparts: [{ ...factsThin.subparts[0], minWall: null, minWallAt: null,
+    minWallSampled: true, minWallSamples: { sampled: 50000, total: 412338 } }] };
+  const w = byKey(evaluateCase(facts, { profile: resolveProfile("fdm-pla"), expect: {} }), "subpart", "minWall");
+  expect(w.status).toBe("warn");
+  expect(w.message).toBe("min wall unavailable");
+  expect(w.note).toMatch(/50000 of 412338/);
+});
+
 test("an exact min-wall reading carries no sampling note", () => {
   const checks = evaluateCase(factsThin, { profile: resolveProfile("fdm-pla"), expect: {} });
   expect(byKey(checks, "subpart", "minWall").note).toBeUndefined();
@@ -399,7 +411,7 @@ test("a seed matching the defaults case skips that case's measure", () => {
   const part = { ...tube(12, 10), verify: { process: "fdm-pla", cases: ["defaults", "Big"] } };
   const result = measureReal(k, part, "v", {}, { minWall: true });
   const [measureFn, calls] = counted();
-  const v = verify(k, part, { measureFn, seed: { params: {}, minWall: true, result } });
+  const v = verify(k, part, { measureFn, seed: { params: {}, result } });
   expect(calls.n).toBe(1);                            // only "Big" is measured
   expect(v.cases).toHaveLength(2);
   const mw = v.cases[0].checks.find((c) => c.metric === "minWall");
@@ -413,7 +425,7 @@ test("the seed is keyed through the case signature, so it covers every case with
   const part = { ...tube(12, 10), verify: { cases: ["defaults", "Relabel"], expect: { tube: { holes: 1 } } } };
   const result = measureReal(k, part, "v", {}, { minWall: true });
   const [measureFn, calls] = counted();
-  const v = verify(k, part, { measureFn, seed: { params: {}, minWall: true, result } });
+  const v = verify(k, part, { measureFn, seed: { params: {}, result } });
   expect(calls.n).toBe(0);
   expect(v.ok).toBe(true);
 });
@@ -422,7 +434,7 @@ test("a seed for other params misses (no falsely-shared reading)", () => {
   const part = { ...tube(12, 10), verify: { cases: ["defaults"], expect: { tube: { holes: 1 } } } };
   const result = measureReal(k, part, "v", { od: 20, h: 30 }, { minWall: true });
   const [measureFn, calls] = counted();
-  const v = verify(k, part, { measureFn, seed: { params: { od: 20, h: 30 }, minWall: true, result } });
+  const v = verify(k, part, { measureFn, seed: { params: { od: 20, h: 30 }, result } });
   expect(calls.n).toBe(1);
   expect(v.ok).toBe(true);
 });
@@ -431,8 +443,9 @@ test("a seed taken WITHOUT min-wall is ignored when the run needs min-wall", () 
   const part = { ...tube(12, 10), verify: { process: "fdm-pla", cases: ["defaults"] } };
   const result = measureReal(k, part, "v", {}, { minWall: false });
   expect(result.subparts[0].minWall).toBeNull();      // the seed really has no reading
+  expect(result.measuredMinWall).toBe(false);         // and says so itself — no caller assertion
   const [measureFn, calls] = counted();
-  const v = verify(k, part, { measureFn, seed: { params: {}, minWall: false, result } });
+  const v = verify(k, part, { measureFn, seed: { params: {}, result } });
   expect(calls.n).toBe(1);                            // recomputed — the seed is not a superset
   const mw = v.cases[0].checks.find((c) => c.metric === "minWall");
   expect(mw.status).toBe("pass");
@@ -443,7 +456,7 @@ test("a WITH-min-wall seed is reused when the run doesn't need min-wall (superse
   const part = { ...tube(12, 10), verify: { cases: ["defaults"], expect: { tube: { holes: 1 } } } };
   const result = measureReal(k, part, "v", {}, { minWall: true });
   const [measureFn, calls] = counted();
-  const v = verify(k, part, { measureFn, seed: { params: {}, minWall: true, result } });
+  const v = verify(k, part, { measureFn, seed: { params: {}, result } });
   expect(calls.n).toBe(0);
   expect(v.ok).toBe(true);
 });
@@ -458,7 +471,7 @@ test("a seed measured on another view is ignored", () => {
   };
   const result = measureReal(k, twoView, "w", {}, { minWall: true });
   const [measureFn, calls] = counted();
-  const v = verify(k, twoView, { view: "v", measureFn, seed: { params: {}, minWall: true, result } });
+  const v = verify(k, twoView, { view: "v", measureFn, seed: { params: {}, result } });
   expect(calls.n).toBe(1);
   expect(v.ok).toBe(true);
 });
@@ -466,5 +479,5 @@ test("a seed measured on another view is ignored", () => {
 test("seeded and unseeded verify produce identical reports", () => {
   const part = { ...tube(12, 10), verify: { process: "fdm-pla", expect: { tube: { holes: 1 }, _view: { overlaps: 0 } } } };
   const result = measureReal(k, part, "v", {}, { minWall: true });
-  expect(verify(k, part, { seed: { params: {}, minWall: true, result } })).toEqual(verify(k, part));
+  expect(verify(k, part, { seed: { params: {}, result } })).toEqual(verify(k, part));
 });

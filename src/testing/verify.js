@@ -118,8 +118,13 @@ function check(scope, subpart, metric, spec, registry, factsObj) {
   if (actual === null || actual === undefined) {
     if (reg.manifoldOnly) return { ...base, actual, status: "skip", pass: null, message: "n/a (OCCT backend)" };
     if (metric === "minWall") {
-      return { ...base, actual, status: "warn", pass: null, message: "min wall unavailable",
+      const out = { ...base, actual, status: "warn", pass: null, message: "min wall unavailable",
         hint: partHint ?? "no min-wall reading for this mesh — treat thin features as unverified" };
+      // A missing reading still has a HOW: a sampled run whose rays all missed says
+      // so here, rather than reading like a mesh min-wall never looked at.
+      const note = reg.note?.(factsObj);
+      if (note) out.note = note;
+      return out;
     }
     return { ...base, actual, status: "skip", pass: null, message: "unavailable" };
   }
@@ -198,8 +203,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // verify — so without this the oracle rebuilds the same geometry, casts the
   // same min-wall rays and re-indexes the same meshes a second time. On a
   // single-case part that is half the job.
-  //   seed = { params, minWall, result } — the params the result was measured
-  //   with, whether that measurement included min-wall, and the measure() output.
+  //   seed = { params, result } — the params the result was measured with, and
+  //   the measure() output itself. Nothing else: every fact the rule below needs
+  //   is read off the artifact, so a caller cannot assert it wrongly.
   //
   // THE MIN-WALL SUPERSET RULE, which is the trap here. measureCase asks for
   // `{ minWall: needMinWall }`, and needMinWall is false whenever no profile and
@@ -209,9 +215,15 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // direction is free. The reverse is NOT safe — a seed taken without min wall
   // carries `minWall: null` on every sub-part, which the registry reports as
   // "min wall unavailable", silently downgrading a real gate to a warning. So the
-  // seed must declare what it included, and it is consulted only when
-  // `seed.minWall || !needMinWall`; otherwise it is ignored and the case is
-  // measured properly.
+  // seed is consulted only when `seed.result.measuredMinWall || !needMinWall` —
+  // and `measuredMinWall` is stamped by measure() itself, not claimed by whoever
+  // holds the result. Otherwise the seed is ignored and the case measured properly.
+  //
+  // ALIASING. A consulted seed is memoized BY REFERENCE, so the caller's result
+  // and every case that hits it are the same object — the inspect job's
+  // `report.measure` and `report.verify.cases[0]`'s facts included. Nothing here
+  // mutates facts (evaluateCase only reads), and that is what makes the sharing
+  // safe; a future check that wants to annotate a fact must copy first.
   //
   // Keyed through the SAME signature() the memo uses, never a JSON compare of the
   // raw params — a separate compare would miss cases that share a signature (a
@@ -225,7 +237,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   //
   // Non-default measure options (a custom `gapThreshold`) are the caller's
   // responsibility: seed only a measurement taken the way verify would take it.
-  if (seed?.result && (seed.minWall || !needMinWall) && seed.result.view === view) {
+  if (seed?.result && (seed.result.measuredMinWall || !needMinWall) && seed.result.view === view) {
     memo.set(signature({ ...part.defaults, ...(seed.params ?? {}) }), seed.result);
   }
 

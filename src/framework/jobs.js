@@ -153,14 +153,16 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // an unparameterized inspect that case IS this measurement. Seeding it in
       // (see verify.js's seeding block for the min-wall superset rule that makes
       // the reuse sound) stops the oracle from rebuilding the same geometry and
-      // re-casting the same min-wall rays a second time. `minWall: true` here is
-      // what makes the seed usable by any verify run, min-wall gated or not.
+      // re-casting the same min-wall rays a second time. Measuring `{ minWall:
+      // true }` here is what makes the seed usable by any verify run, min-wall
+      // gated or not — the result says so itself (`measuredMinWall`), so this
+      // call and the seed cannot drift apart.
       const measured = measure(kernel, part, msg.view, msg.params ?? {}, { minWall: true });
       const report = {
         measure: measured,
         verify: verify(kernel, part, {
           view: msg.view,
-          seed: { params: msg.params ?? {}, minWall: true, result: measured },
+          seed: { params: msg.params ?? {}, result: measured },
         }),
       };
       post({ type: "report", ...report });

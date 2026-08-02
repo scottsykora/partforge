@@ -35,9 +35,17 @@ export const SUBPART_METRICS = {
     hint: "thinnest wall is at the reported location — increase the governing wall/thickness parameter or reduce the intersecting feature's depth",
     pattern: "minwall-sliver-triangles",
     locate: (s) => s.minWallAt,
-    note: (s) => (s.minWallSampled && s.minWallSamples
-      ? `sampled ${s.minWallSamples.sampled} of ${s.minWallSamples.total} triangles — an upper bound; a thinner spot may exist between samples`
-      : null) },
+    // Two sampled outcomes, and the second is the one that most needs saying: a
+    // sampled run that found NO wall reports minWall null, which without this note
+    // is indistinguishable from a part nobody measured. `sampled` counts triangles
+    // the walk selected, not rays cast — degenerate triangles are skipped.
+    note: (s) => {
+      if (!s.minWallSampled || !s.minWallSamples) return null;
+      const { sampled, total } = s.minWallSamples;
+      return s.minWall == null
+        ? `no reading from the ${sampled} of ${total} triangles sampled — not a clean bill of health; a thin spot may exist between samples`
+        : `sampled ${sampled} of ${total} triangles — an upper bound; a thinner spot may exist between samples`;
+    } },
 };
 export const VIEW_METRICS = {
   bbox: { kind: "gate", extract: (r) => r.aggregate.bbox,

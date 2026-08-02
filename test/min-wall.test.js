@@ -101,15 +101,36 @@ test("the default budget leaves an ordinary part exact", () => {
   expect(r.sampled).toBe(false);
 });
 
-test("minWall reuses a BVH from a caller-supplied cache instead of building its own", () => {
+test("minWall casts through a caller-supplied BVH instead of building its own", () => {
   const mesh = indexedBoxMesh(10, 20, 5);
-  const bvhCache = new Map();
   const bvh = buildBVH(mesh);
-  bvhCache.set(mesh, bvh);
-  expect(minWall(mesh, { bvhCache }).value).toBeCloseTo(5, 1);
-  expect(bvhCache.size).toBe(1);
-  expect(bvhCache.get(mesh)).toBe(bvh);                // reused, not replaced
-  const fresh = new Map();
-  expect(minWall(mesh, { bvhCache: fresh }).value).toBeCloseTo(5, 1);
-  expect(fresh.get(mesh)).toBeTruthy();                // and populated when empty
+  expect(minWall(mesh, { bvh }).value).toBeCloseTo(5, 1);
+  // The supplied index is the one that answered: an index over a DIFFERENT mesh
+  // gives that mesh's reading, so nothing rebuilt behind our back.
+  const thin = buildBVH(indexedBoxMesh(10, 20, 0.4));
+  expect(minWall(indexedBoxMesh(10, 20, 0.4), { bvh: thin }).value).toBeCloseTo(0.4, 2);
+  expect(minWall(mesh).value).toBeCloseTo(5, 1);       // and builds its own without one
+});
+
+test("a mesh whose rays all miss keeps the sampling accounting (not a bare null)", () => {
+  // A lone triangle: the single ray leaves it and hits nothing, so there is no
+  // reading — but "we cast 1 of 1 and found nothing" is not "nobody measured".
+  const r = minWall({ positions: [0, 0, 0, 10, 0, 0, 0, 10, 0] });
+  expect(r).not.toBeNull();
+  expect(r.value).toBeNull();
+  expect(r.location).toBeNull();
+  expect(r.sampled).toBe(false);
+  expect(r.sampledTriangles).toBe(1);
+  expect(r.totalTriangles).toBe(1);
+});
+
+test("a SAMPLED run that finds no wall says how much it looked at", () => {
+  // 40 open triangles, sampled 10 at a time: no closed volume, so every ray misses.
+  const pos = [];
+  for (let i = 0; i < 40; i++) pos.push(i * 20, 0, 0, i * 20 + 10, 0, 0, i * 20, 10, 0);
+  const r = minWall({ positions: pos }, { maxSamples: 10 });
+  expect(r.value).toBeNull();
+  expect(r.sampled).toBe(true);
+  expect(r.sampledTriangles).toBe(10);
+  expect(r.totalTriangles).toBe(40);
 });

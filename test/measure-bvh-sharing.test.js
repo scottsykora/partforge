@@ -50,14 +50,14 @@ test("measure indexes each sub-part mesh ONCE — min-wall and meshGaps share th
   expect(r.subparts).toHaveLength(3);
   expect(r.gaps).toHaveLength(3);                                    // pair distances really ran
   expect(r.subparts.every((s) => typeof s.minWall === "number")).toBe(true);  // and so did min-wall
-  expect(builds).toBe(3);                                            // one index per sub-part, not two
+  expect(builds).toBe(r.subparts.length);                            // one index per sub-part, not two
 });
 
 test("without min-wall only meshGaps indexes, and still just once per sub-part", () => {
   builds = 0;
   const r = measure(k, threeTubes, "v");
   expect(r.gaps).toHaveLength(3);
-  expect(builds).toBe(3);
+  expect(builds).toBe(r.subparts.length);
 });
 
 test("a single-sub-part measure skips meshGaps entirely — one index, min-wall's", () => {

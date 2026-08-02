@@ -19,7 +19,12 @@
 //             widening it would double the footprint without adding a bit of
 //             precision, while a mesh whose positions are plain JS numbers (OCCT,
 //             hand-written fixtures) is kept in a Float64Array. Either copy is
-//             exact, so no reading changes with the representation.
+//             exact, so no reading changes with the representation. Exposed
+//             READ-ONLY: every node bound was computed from these coords at build
+//             time, so writing into the array silently invalidates the whole tree
+//             (queries would prune against boxes that no longer contain their
+//             triangles). Read it through readTriangleInto() rather than
+//             open-coding the stride.
 //   order     Uint32 triangle ids, permuted by the build so each leaf owns a
 //             contiguous run. The vertices themselves never move.
 //   bounds    Float64, 6 per node: [minx,miny,minz, maxx,maxy,maxz]. Kept at double
@@ -33,6 +38,17 @@
 //             node's left child is always the next node.
 
 const LEAF = 4; // max triangles per leaf
+
+// Coords per triangle in a `vertices` store: v0,v1,v2 interleaved. The ONE place
+// this layout is decoded outside the queries below — copy triangle `t` of `V` into
+// `out` (9 numbers: x0,y0,z0, x1,y1,z1, x2,y2,z2) and hand callers a reusable
+// buffer, so nobody else has to know the stride and no per-triangle garbage is
+// made. min-wall casts one ray per triangle through this.
+export function readTriangleInto(V, t, out) {
+  const o = t * 9;
+  for (let i = 0; i < 9; i++) out[i] = V[o + i];
+  return out;
+}
 
 // Triangles as [v0,v1,v2] coord triples, from either a Manifold non-indexed soup
 // (positions = 9 floats/triangle, no indices) or an OCCT indexed mesh (positions =
@@ -255,16 +271,20 @@ function rayTri(ox, oy, oz, dx, dy, dz, V, base, tMin) {
 }
 
 // The BVH for `mesh`, memoized in a CALLER-OWNED Map keyed on the mesh object.
+// THE ONE HOME for the caller-owned-Map doctrine; the callers below just point here.
+//
 // Exists because two passes over the same posed meshes each want an index —
 // min-wall casts rays, meshGaps measures pair distances — and building both is a
-// second full index per sub-part at ~77 bytes/triangle.
+// second full index per sub-part at ~77 bytes/triangle. measure() owns the Map and
+// hands the same one (or, for min-wall, the resolved index) to both passes.
 //
-// `cache` is optional everywhere, and with none this is exactly buildBVH: every
-// direct caller (bin/cli.js, the tests, assemblyGaps) keeps today's behaviour of
-// building fresh. The Map is deliberately the caller's, not a module-level
-// WeakMap: a WeakMap keyed on meshes would keep an index alive for as long as
-// anything held its mesh, which is the quiet retention this pass exists to
-// remove. Here the index's lifetime is visibly the caller's scope.
+// `cache` is optional everywhere, and with none this is exactly buildBVH: the
+// direct callers that have no second pass to share with (assemblyGaps' bare
+// meshGaps, the tests) keep today's behaviour of building fresh. The Map is
+// deliberately the caller's, not a module-level WeakMap: a WeakMap keyed on
+// meshes would keep an index alive for as long as anything held its mesh, which
+// is the quiet retention this pass exists to remove. Here the index's lifetime is
+// visibly the caller's scope.
 export function cachedBVH(mesh, cache) {
   if (!cache) return buildBVH(mesh);
   let bvh = cache.get(mesh);
@@ -317,6 +337,10 @@ export function buildBVH(mesh) {
     const ex = x1 - x0, ey = y1 - y0, ez = z1 - z0;
     const axis = ex >= ey && ex >= ez ? 0 : ey >= ez ? 1 : 2;
     order.subarray(start, start + len).sort((p, q) => cent[p * 3 + axis] - cent[q * 3 + axis]);
+    // No empty-half guard: len > LEAF here (LEAF >= 1), so mid = len>>1 >= 2 and
+    // len - mid >= 3 — both halves always non-empty. The nested-array build this
+    // replaced carried such a check; it was dead code there too, and countNodes()
+    // assumes this same split, so a guard that ever fired would mis-size `bounds`.
     const mid = len >> 1;
     emit(start, mid);
     meta[self * 2] = emit(start + mid, len - mid);
@@ -383,7 +407,7 @@ export function buildBVH(mesh) {
   // distance at leaf pairs; early-exits at 0 (touching/intersecting). The stack
   // holds node-index PAIRS, pushed and popped two entries at a time.
   function distanceTo(other) {
-    const oV = other._verts, oB = other._bounds, oM = other._meta, oO = other._order;
+    const oV = other.vertices, oB = other._bounds, oM = other._meta, oO = other._order;
     let best = { d2: Infinity, a: null, b: null };
     const stack = [0, 0];
     while (stack.length && best.d2 > 0) {
@@ -415,8 +439,25 @@ export function buildBVH(mesh) {
   return {
     raycast, closestPoint, distanceTo,
     triangleCount: count,
-    vertices: verts,      // flat, 9 per triangle, mesh order — min-wall casts from these
-    bytes: verts.byteLength + order.byteLength + bounds.byteLength + meta.byteLength,
-    _verts: verts, _bounds: bounds, _meta: meta, _order: order,
+    // Flat, 9 per triangle, mesh order — min-wall casts from these. READ-ONLY (see
+    // the STORAGE note up top); decode a triangle with readTriangleInto().
+    vertices: verts,
+    // The root node's AABB, [minx,miny,minz, maxx,maxy,maxz] — a copy, so reading
+    // it cannot disturb the tree. It is the mesh's own bounding box over exactly
+    // the vertices the triangles reference, already computed by the build; min-wall
+    // uses it for its default ray cap instead of rescanning mesh.positions.
+    rootBounds: [bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]],
+    // Diagnostic self-report: the four typed arrays' byte lengths, summed at build.
+    // NOT a measurement of retained memory — it counts only what this function
+    // knows it allocated, and cannot see a regression that reintroduces per-triangle
+    // JS objects (test/bvh.test.js weighs that in a child process). What it does
+    // pin, and the child-process bound is too loose to catch, is the index's
+    // COMPOSITION — widening `vertices` to Float64 would show up here.
+    bytesAllocated: verts.byteLength + order.byteLength + bounds.byteLength + meta.byteLength,
+    // Private to this module: only distanceTo reads them, off the OTHER BVH — a
+    // dual traversal walks two trees at once, and JS has no cross-instance private
+    // access to reach for. Nothing outside bvh.js touches them, and nothing should:
+    // they are raw node storage whose meaning is the packing rules in the header.
+    _bounds: bounds, _meta: meta, _order: order,
   };
 }

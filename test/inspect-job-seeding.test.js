@@ -67,10 +67,13 @@ test("inspecting with non-default params does not let the seed answer the defaul
   expect(report.verify.ok).toBe(true);
 });
 
-test("the shipped planter inspect still reports a passing verify over all four cases", async () => {
+test("the shipped planter inspect still reports a passing verify over all its cases", async () => {
   measures = 0;
   const report = await inspect(planter, "planter");
   expect(report.verify.cases.map((c) => c.name)).toEqual(["defaults", "Pen cup", "Planter", "Vase"]);
   expect(report.verify.ok).toBe(true);
-  expect(measures).toBe(4);                                        // was 5 — the defaults case is seeded
+  // One measure per case and no more: the report's own measurement IS the defaults
+  // case. Derived from the case list, so adding a preset to the planter does not
+  // make this test wrong (it was 5 — one case measured twice — before seeding).
+  expect(measures).toBe(report.verify.cases.length);
 });

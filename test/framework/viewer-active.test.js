@@ -20,6 +20,7 @@ vi.mock("three", async (importOriginal) => {
       this.localClippingEnabled = false;
       this.sizes = [];
       this.frames = 0;
+      this.renderTargets = [];
       state.renderer = this;
     }
     getContext() { return { getContextAttributes: () => ({ stencil: true }) }; }
@@ -29,12 +30,44 @@ vi.mock("three", async (importOriginal) => {
     setAnimationLoop(callback) { this.animationLoop = callback; }
     render() { this.frames += 1; }
     get capabilities() { return { maxTextureSize: 8192 }; }
-    setRenderTarget() {}
+    // Record every target rendered into, so a test can see which one the capture
+    // path allocated. The cached target is pushed once per view, so identity —
+    // not length — is what distinguishes a reuse from a fresh allocation.
+    setRenderTarget(target) { if (target) this.renderTargets.push(target); }
     readRenderTargetPixels() {}
     dispose() {}
   }
   return { ...actual, WebGLRenderer: FakeRenderer };
 });
+
+// happy-dom has no 2D canvas and the capture path encodes its readback through
+// one. Same stub as viewer-cutaway.test.js.
+const OriginalGetContext = globalThis.HTMLCanvasElement.prototype.getContext;
+const OriginalToDataURL = globalThis.HTMLCanvasElement.prototype.toDataURL;
+function stubCanvas2D() {
+  globalThis.HTMLCanvasElement.prototype.getContext = function (type, ...rest) {
+    if (type !== "2d") return OriginalGetContext.call(this, type, ...rest);
+    return {
+      createImageData: (width, height) => ({
+        width, height, data: new Uint8ClampedArray(width * height * 4),
+      }),
+      putImageData: () => {},
+    };
+  };
+  globalThis.HTMLCanvasElement.prototype.toDataURL = () => "data:image/jpeg;base64,AAAA";
+}
+
+// captureCanonicalViews short-circuits on empty world bounds, so a capture test
+// needs something visible first.
+function withGeometry(viewer) {
+  viewer.setSubGeometry("body", {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    triangles: 1,
+  });
+  viewer.showAssembly(["body"], { frame: true });
+  return viewer;
+}
 
 import { createViewer } from "../../src/framework/viewer.js";
 
@@ -54,6 +87,7 @@ const lastSize = () => state.renderer.sizes.at(-1);
 beforeEach(() => {
   state.renderer = null;
   state.resize = null;
+  stubCanvas2D();
   globalThis.ResizeObserver = class {
     constructor(callback) { state.resize = callback; }
     observe() {}
@@ -63,6 +97,8 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.ResizeObserver = OriginalResizeObserver;
+  globalThis.HTMLCanvasElement.prototype.getContext = OriginalGetContext;
+  globalThis.HTMLCanvasElement.prototype.toDataURL = OriginalToDataURL;
   document.body.innerHTML = "";
 });
 
@@ -156,6 +192,35 @@ test("context loss is reported to subscribers and preventDefault()ed so it can r
   // black with no way back.
   expect(event.defaultPrevented).toBe(true);
   viewer.dispose();
+});
+
+test("parking also releases the cached capture target", () => {
+  // The 1024² 4x-MSAA + stencil target is the other large allocation, and on a
+  // phone it is comparable to the canvas itself. Parking that freed only the
+  // drawing buffer would leave half the memory behind.
+  const viewer = withGeometry(newViewer());
+  viewer.captureCanonicalViews(["iso"]); // allocates and caches the target
+  const target = state.renderer.renderTargets.at(-1);
+  expect(target).toBeTruthy();
+  const disposed = vi.spyOn(target, "dispose");
+
+  viewer.setActive(false);
+  expect(disposed).toHaveBeenCalled();
+
+  // …and the next capture builds a fresh one rather than reusing a dead target,
+  // so a parked viewer still answers render_part_views correctly.
+  viewer.captureCanonicalViews(["iso"]);
+  expect(state.renderer.renderTargets.at(-1)).not.toBe(target);
+  viewer.dispose();
+});
+
+test("dispose drops context-loss subscribers so they cannot outlive teardown", () => {
+  const viewer = newViewer();
+  const seen = vi.fn();
+  viewer.onContextLost(seen);
+  viewer.dispose();
+  state.renderer.domElement.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+  expect(seen).not.toHaveBeenCalled();
 });
 
 test("onContextLost returns an unsubscribe", () => {

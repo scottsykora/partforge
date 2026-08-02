@@ -17,8 +17,9 @@ export const pairKey = (a, b) => [a, b].sort().join("×");
 // meshes ([{ name, mesh }] — buildView output). Distance 0 = touching or
 // interpenetrating surfaces; callers filter. Pairs involving an empty mesh are
 // skipped (the watertight gate owns that failure). Pure mesh math — both backends.
-// `bvhCache` is an optional caller-owned Map (see cachedBVH): measure() passes
-// the same one to minWall so each sub-part mesh is indexed once, not twice.
+// `bvhCache` is an optional caller-owned Map — see cachedBVH for the doctrine;
+// measure() draws min-wall's index out of the same one, so each sub-part mesh is
+// indexed once, not twice.
 //   → [{ a, b, distance, at: [x,y,z] }]
 export function meshGaps(built, { bvhCache } = {}) {
   const hasTris = (m) => (m.indices ? m.indices.length > 0 : m.positions.length > 0);

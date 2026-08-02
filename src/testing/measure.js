@@ -1,4 +1,5 @@
 import { buildView } from "./build.js";
+import { cachedBVH } from "./bvh.js";
 import { assemblyOverlaps } from "../framework/assembly.js";
 import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea, meshCentroid } from "./mesh.js";
@@ -15,7 +16,8 @@ const unionBounds = (list) => list.reduce(
 // the assembly overlap check plus pair gap distances (near misses are reported,
 // never folded into `ok`). All solid facts are read BEFORE assemblyOverlaps,
 // which frees the shared kernel's objects at its end.
-//   → { part, view, subparts[], aggregate, overlaps[], gaps[], nearMisses[], ok }
+//   → { part, view, measuredMinWall, subparts[], aggregate, overlaps[], gaps[],
+//       nearMisses[], ok }
 export function measure(kernel, part, view = Object.keys(part.views)[0], params = {}, opts = {}) {
   const built = buildView(kernel, part, view, params);
   // ONE BVH per sub-part mesh for this call, shared by the two passes that need
@@ -24,17 +26,19 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // multi-part view was built into a BVH twice — at ~77 bytes/triangle that is a
   // whole second index's worth of build time and peak memory for nothing.
   //
-  // Scoped to this call on purpose, and NOT a module-level WeakMap: a global
-  // cache would keep an index alive for as long as anything held its mesh, which
-  // is exactly the quiet retention this work exists to remove. Here it dies with
-  // the call. Peak memory is unchanged — meshGaps already held every sub-part's
-  // index at once — the cache just fills it earlier.
+  // This Map is the caller-owned cache cachedBVH documents — see there for why it
+  // is a Map of ours and not a module-level WeakMap. It dies with the call. Peak
+  // memory is unchanged (meshGaps already held every sub-part's index at once);
+  // the cache just fills it earlier. min-wall indexes exactly one mesh, so it is
+  // handed the resolved BVH rather than the Map.
   const bvhCache = new Map();
   const subBounds = [];
   const subparts = built.map(({ name, solid, mesh }) => {
     const b = bounds(mesh.positions);
     subBounds.push(b);
-    const mw = opts.minWall ? minWall(mesh, { bvhCache }) : null;
+    // Resolved lazily and only when asked for: without min-wall, a single-sub-part
+    // view (no meshGaps) must still build no index at all.
+    const mw = opts.minWall ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache) }) : null;
     return {
       name,
       bbox: size(b),
@@ -49,7 +53,10 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
       minWallAt: mw?.location ?? null,
       // Sampling accounting, so a report can tell a guaranteed minimum from an
       // upper bound: on a dense mesh min-wall casts from a spread subset rather
-      // than every triangle (see min-wall.js). Exact readings say so explicitly.
+      // than every triangle (see min-wall.js). Exact readings say so explicitly,
+      // and a sampled run that found no wall still fills these in — `minWall`
+      // null with samples accounted for is "looked, found nothing"; null with
+      // `measuredMinWall` false is "never looked".
       minWallSampled: mw?.sampled ?? false,
       minWallSamples: mw ? { sampled: mw.sampledTriangles, total: mw.totalTriangles } : null,
     };
@@ -90,6 +97,12 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   return {
     part: part.meta?.title ?? view,
     view,
+    // Whether this measurement cast min-wall rays at all — stamped by the pass
+    // that did (or didn't) do the work, so a consumer never has to be told. A
+    // result with this false carries `minWall: null` on every sub-part because
+    // nothing measured it, which reads identically to "no reading available";
+    // verify's seeding rule turns on exactly this distinction (see verify.js).
+    measuredMinWall: !!opts.minWall,
     subparts,
     aggregate,
     overlaps,

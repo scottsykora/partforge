@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { expect, test } from "vitest";
-import { buildBVH, cachedBVH, meshTriangles } from "../src/testing/bvh.js";
+import { buildBVH, cachedBVH, meshTriangles, readTriangleInto } from "../src/testing/bvh.js";
 
 // a unit-ish box [0,0,0]..[10,20,5] as a non-indexed triangle soup (12 tris)
 function boxMesh(sx, sy, sz) {
@@ -199,10 +199,15 @@ test("the BVH keeps its triangles in flat typed arrays and accounts for its own 
   expect(bvh.triangleCount).toBe(mesh.positions.length / 9);
   expect(ArrayBuffer.isView(bvh.vertices)).toBe(true);
   expect(bvh.vertices.length).toBe(bvh.triangleCount * 9);
-  expect(bvh.bytes / bvh.triangleCount).toBeLessThan(120);
+  // The self-report, not a memory measurement (the child-process test below is
+  // that). Its job is the index's COMPOSITION: at ~74 B/triangle for a Float32
+  // soup, widening `vertices` to Float64 alone would breach this — and would slip
+  // clean through the 300-byte retention bound below.
+  expect(bvh.bytesAllocated / bvh.triangleCount).toBeLessThan(120);
 });
 
-// The self-reported `bytes` above only counts what the BVH knows it allocated, so
+// The self-reported `bytesAllocated` above only counts what the BVH knows it
+// allocated, so
 // it cannot catch a regression that reintroduces per-triangle JS objects. This one
 // weighs the real thing: a child process with --expose-gc, a full collection either
 // side of the build, and heapUsed + external so typed-array backing stores (which
@@ -221,7 +226,10 @@ test("buildBVH retains ~100 bytes/triangle, not ~1 KB (measured with --expose-gc
     const after = settle();
     console.log(JSON.stringify({ bytesPerTri: (after - before) / bvh.triangleCount }));
   `;
-  const out = execFileSync(process.execPath, ["--expose-gc", "--input-type=module", "-e", src], { encoding: "utf8" });
+  // Assumes process.execPath is the node binary running this suite, so it accepts
+  // --expose-gc; a runner that shells out to something else would fail here loudly.
+  const out = execFileSync(process.execPath, ["--expose-gc", "--input-type=module", "-e", src],
+    { encoding: "utf8", timeout: 120_000, maxBuffer: 1 << 20 });
   const { bytesPerTri } = JSON.parse(out.trim().split("\n").pop());
   expect(bytesPerTri).toBeGreaterThan(0);    // sanity: the measurement saw the build at all
   expect(bytesPerTri).toBeLessThan(300);     // the nested-array representation cost ~950
@@ -242,6 +250,35 @@ function distSqPointTriRef(P, A, B, C) {
   const va = d3*d6 - d5*d4; if (va<=0&&(d4-d3)>=0&&(d5-d6)>=0){const w=(d4-d3)/((d4-d3)+(d5-d6));const q=add(B,mul(sub(C,B),w));const pq=sub(P,q);return dot(pq,pq);}
   const denom=1/(va+vb+vc); const v=vb*denom, w=vc*denom; const q=add(add(A,mul(ab,v)),mul(ac,w)); const pq=sub(P,q); return dot(pq,pq);
 }
+
+// ── the vertex store's public reading contract ────────────────────────────────
+
+test("readTriangleInto decodes triangle t of a vertex store into a reusable buffer", () => {
+  // The one decode of the 9-float v0v1v2 layout outside bvh.js's own queries, so
+  // min-wall never hand-rolls the stride: triangle t must be mesh triangle t.
+  const mesh = boxMesh(10, 20, 5);
+  const bvh = buildBVH(mesh);
+  const out = new Float64Array(9);
+  const tris = meshTriangles(mesh);
+  for (const t of [0, 5, 11]) {
+    expect(readTriangleInto(bvh.vertices, t, out)).toBe(out);      // fills in place
+    expect([...out]).toEqual(tris[t].flat());                      // …with mesh triangle t
+  }
+});
+
+test("rootBounds is the mesh's own AABB, and a copy of it", () => {
+  const bvh = buildBVH(boxMesh(10, 20, 5));
+  expect(bvh.rootBounds).toEqual([0, 0, 0, 10, 20, 5]);
+  bvh.rootBounds[0] = 99;
+  expect(buildBVH(boxMesh(10, 20, 5)).rootBounds[0]).toBe(0);      // nothing shared
+  expect(bvh.raycast([5, 10, -3], [0, 0, 1]).t).toBeCloseTo(3, 5); // tree undisturbed
+});
+
+test("an indexed mesh's rootBounds ignores vertices no triangle references", () => {
+  const mesh = indexedBoxMesh(10, 20, 5);
+  mesh.positions = [...mesh.positions, 500, 500, 500];             // an orphan vertex
+  expect(buildBVH(mesh).rootBounds).toEqual([0, 0, 0, 10, 20, 5]);
+});
 
 // ── cachedBVH: caller-owned, caller-scoped memoization ───────────────────────
 

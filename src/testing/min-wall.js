@@ -14,8 +14,16 @@
 // the result always carries { sampled, sampledTriangles, totalTriangles }, so a
 // report consumer can tell a guaranteed minimum from a lower-confidence one. A
 // sampled reading is an upper bound on the true minimum: it can miss a thin spot,
-// never invent one.
-import { cachedBVH } from "./bvh.js";
+// never invent one. `sampledTriangles` is the SAMPLE BUDGET — how many triangles
+// the walk selected — not a count of rays actually cast: a degenerate (zero-area)
+// triangle has no normal to cast along and is skipped without a ray.
+//
+// Only an EMPTY mesh reads as no result at all (`null`). A mesh whose sampled rays
+// all miss returns the usual object with `value: null`, because the sampling
+// accounting is exactly what a reader needs in that case — "we looked at 50k of
+// 400k triangles and found no wall" is a very different statement from "nobody
+// measured", and the two used to be indistinguishable downstream.
+import { buildBVH, readTriangleInto } from "./bvh.js";
 
 // Triangle budget above which minWall samples. Chosen so the parts people actually
 // author stay exact: everything in src/parts/ is 200–10,000 triangles, and a
@@ -40,22 +48,24 @@ function sampleStride(n) {
   return s;
 }
 
-// `bvhCache` is an optional caller-owned Map (see cachedBVH): pass the one
-// measure() shares with meshGaps to index each mesh once instead of twice. It
-// does not interact with sampling — sampling picks WHICH rays to cast, not how
-// the index is built, so a shared BVH is equally valid sampled or exact.
-export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvhCache } = {}) {
-  const bvh = cachedBVH(mesh, bvhCache);
+// `bvh` is an already-built index for THIS mesh — one mesh, one index, so there is
+// nothing to key here: measure() resolves it out of the Map it shares with meshGaps
+// (see cachedBVH for why that Map is the caller's) and passes the value. Omit it and
+// one is built. It does not interact with sampling — sampling picks WHICH rays to
+// cast, not how the index is built, so a shared BVH is equally valid sampled or exact.
+export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvh = buildBVH(mesh) } = {}) {
   const n = bvh.triangleCount;
   if (n === 0) return null;
   const V = bvh.vertices;
 
-  // bbox diagonal as the default cap (a ray exiting into open air gets no hit anyway).
+  // bbox diagonal as the default cap (a ray exiting into open air gets no hit
+  // anyway). The BVH's root node bounds ARE that box, already computed — rescanning
+  // mesh.positions would be an O(n) pass on the hot path for a number we have. (On
+  // an indexed mesh they are also marginally tighter, since unreferenced vertices
+  // are not in the tree; that only shrinks a ray cap, never a reading.)
   if (maxThickness == null) {
-    const pos = mesh.positions;
-    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-    for (let i = 0; i < pos.length; i += 3) for (let a = 0; a < 3; a++) { if (pos[i + a] < min[a]) min[a] = pos[i + a]; if (pos[i + a] > max[a]) max[a] = pos[i + a]; }
-    maxThickness = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) + 1;
+    const rb = bvh.rootBounds;
+    maxThickness = Math.hypot(rb[3] - rb[0], rb[4] - rb[1], rb[5] - rb[2]) + 1;
   }
 
   // `maxSamples: 0` (or any non-positive) is the explicit "no cap, cast everything"
@@ -65,21 +75,24 @@ export function minWall(mesh, { maxThickness, maxSamples = MAX_SAMPLES, bvhCache
   const stride = sampled ? sampleStride(n) : 1;   // stride 1 = every triangle, in mesh order
 
   let best = Infinity, loc = null, t = 0;
+  const tri = new Float64Array(9);                  // reused per triangle; no per-ray garbage
   for (let s = 0; s < budget; s++, t = t + stride < n ? t + stride : t + stride - n) {
-    const o = t * 9;
-    const v0x = V[o], v0y = V[o + 1], v0z = V[o + 2];
-    const e1x = V[o + 3] - v0x, e1y = V[o + 4] - v0y, e1z = V[o + 5] - v0z;
-    const e2x = V[o + 6] - v0x, e2y = V[o + 7] - v0y, e2z = V[o + 8] - v0z;
+    readTriangleInto(V, t, tri);
+    const v0x = tri[0], v0y = tri[1], v0z = tri[2];
+    const e1x = tri[3] - v0x, e1y = tri[4] - v0y, e1z = tri[5] - v0z;
+    const e2x = tri[6] - v0x, e2y = tri[7] - v0y, e2z = tri[8] - v0z;
     let nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
     const len = Math.hypot(nx, ny, nz);
-    if (len < 1e-9) continue;                       // degenerate triangle
+    if (len < 1e-9) continue;                       // degenerate triangle: no normal, no ray
     nx /= len; ny /= len; nz /= len;                // outward normal (manifold winding)
-    const c = [(v0x + V[o + 3] + V[o + 6]) / 3, (v0y + V[o + 4] + V[o + 7]) / 3, (v0z + V[o + 5] + V[o + 8]) / 3];
+    const c = [(v0x + tri[3] + tri[6]) / 3, (v0y + tri[4] + tri[7]) / 3, (v0z + tri[5] + tri[8]) / 3];
     const dir = [-nx, -ny, -nz];                    // inward
     const origin = [c[0] + dir[0] * 1e-4, c[1] + dir[1] * 1e-4, c[2] + dir[2] * 1e-4];
     const hit = bvh.raycast(origin, dir, { tMax: maxThickness, skipTri: t });
     if (hit && hit.t < best) { best = hit.t; loc = c; }
   }
-  return best === Infinity ? null
-    : { value: best, location: loc, sampled, sampledTriangles: budget, totalTriangles: n };
+  // No hit anywhere still reports HOW it looked (see the header): a `value: null`
+  // with the sampling accounting intact, never a bare null that reads downstream as
+  // "min wall was never measured".
+  return { value: best === Infinity ? null : best, location: loc, sampled, sampledTriangles: budget, totalTriangles: n };
 }

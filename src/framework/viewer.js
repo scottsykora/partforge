@@ -518,6 +518,15 @@ export function createViewer(container, part) {
     if (!active) {
       renderer.setAnimationLoop(null);
       renderer.setSize(1, 1, false);
+      // The cached 1024² 4x-MSAA + stencil capture target is the other large
+      // allocation here — on a phone it is comparable to the canvas itself, so
+      // parking that kept it would leave half the memory behind. Dropping it
+      // costs one re-allocation on the next capture, which a parked viewer
+      // barely notices: the cache only ever hits on an exactly-square request,
+      // and a phone's capture aspect is not square, so those captures were
+      // allocating per call regardless.
+      _rt?.dispose();
+      _rt = null;
       return;
     }
     resize(); // rebuild the buffer at whatever size the container is now
@@ -531,10 +540,11 @@ export function createViewer(container, part) {
   // recoverable (three's own listener re-uploads on restore); the subscribers
   // let an embedder surface it instead of showing a dead rectangle.
   const contextLostListeners = new Set();
-  renderer.domElement.addEventListener("webglcontextlost", (event) => {
+  const onContextLostEvent = (event) => {
     event.preventDefault();
     for (const listener of [...contextLostListeners]) listener();
-  });
+  };
+  renderer.domElement.addEventListener("webglcontextlost", onContextLostEvent);
   function onContextLost(listener) {
     contextLostListeners.add(listener);
     return () => contextLostListeners.delete(listener);
@@ -580,6 +590,11 @@ export function createViewer(container, part) {
     disposed = true;
     ro.disconnect();
     renderer.setAnimationLoop(null);
+    // Embedder callbacks must not outlive teardown — a disposed viewer has no
+    // context left to lose, and a surviving listener would keep the embedder's
+    // closure (and whatever it captured) alive.
+    renderer.domElement.removeEventListener("webglcontextlost", onContextLostEvent);
+    contextLostListeners.clear();
     controls.dispose();
     for (const t of flashTimers) clearTimeout(t);
     flashTimers.clear();
