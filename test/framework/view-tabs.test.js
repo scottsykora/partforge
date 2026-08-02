@@ -125,8 +125,8 @@ test("an author's `default: true` view opens even when a bigger view exists", ()
   const flagged = {
     meta: { title: "Flagged" },
     defaults: {},
-    parts: { body: { views: ["body", "assembly"] }, lid: { views: ["assembly"] } },
-    views: { body: { label: "Body", default: true }, assembly: { label: "Assembly" } },
+    parts: { body: { views: ["assembly", "body"] }, lid: { views: ["assembly"] } },
+    views: { assembly: { label: "Assembly" }, body: { label: "Body", default: true } },
   };
   const tabs = createViewTabs(el, flagged, { onChange: () => {} });
   expect(tabs.current()).toBe("body");
