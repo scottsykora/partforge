@@ -61,6 +61,25 @@ test("a declared view no subpart renders into is a warning, not an error", () =>
   expect(ids(r.errors)).not.toContain("view-unused");
 });
 
+test("two views both flagged default is a warning naming the winner", () => {
+  const part = goodPart();
+  part.views.main.default = true;
+  part.views.extra = { label: "Extra", default: true };
+  part.parts.body.views = ["main", "extra"];
+  const r = lintPart(part);
+  expect(ids(r.warnings)).toContain("default-view-ambiguous");
+  expect(ids(r.errors)).not.toContain("default-view-ambiguous");
+  const f = r.warnings.find((w) => w.rule === "default-view-ambiguous");
+  expect(f.hint).toContain('"main"');
+  expect(f.path).toBe("views.extra.default");
+});
+
+test("a single default-flagged view is not a finding", () => {
+  const part = goodPart();
+  part.views.main.default = true;
+  expect(ids(lintPart(part).warnings)).not.toContain("default-view-ambiguous");
+});
+
 test("every finding carries a rule, severity, message, hint and path", () => {
   const part = goodPart();
   delete part.meta.title;

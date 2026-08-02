@@ -166,6 +166,7 @@ async function mountFixture() {
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   document.body.innerHTML = "";
   fakeViewers.length = 0;
   fakeTooltips.length = 0;
