@@ -170,7 +170,7 @@ export const ANIMATION_RULES = [
             for (const [, v] of kf) {
               if ((typeof r.min === "number" && v < r.min) || (typeof r.max === "number" && v > r.max)) {
                 out.push(err("animation-value-out-of-range",
-                  `animation "${name}" track "${key}" keyframes value ${v}, outside the control's range ${r.min ?? "-∞"}..${r.max ?? "∞"}`,
+                  `animation "${name}" track "${key}" keyframe value ${v}, outside the control's range ${r.min ?? "-∞"}..${r.max ?? "∞"}`,
                   "Keyframe values are applied as-is (the engine does not clamp) — widen the control's range or move the keyframe inside it.",
                   `animations.${name}${a.steps ? `.steps[${i}]` : ""}.tracks.${key}`));
                 break; // one finding per track
