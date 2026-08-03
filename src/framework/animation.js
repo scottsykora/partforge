@@ -117,3 +117,101 @@ export function evaluate(anim, t) {
   for (const key of anim.trackedKeys) values[key] = evaluateTrack(anim, key, tc);
   return { stepIndex: stepIndexAt(anim, tc), values };
 }
+
+// --- playback state machine --------------------------------------------------
+// Owns WHAT the animation is doing (position, status, cue arming); the driver
+// owns WHEN (it feeds dt from the viewer's frame loop) and WHERE the results
+// go (params + camera tweens). Statuses: idle → intro (a governing camera cue
+// is tweening; params hold) → playing → paused/done. "intro" is entered on any
+// play() with an armed, unfired cue at-or-before the current position — that
+// covers both the t=0 intro and play-from-the-middle honoring the governing
+// cue. Cues crossed DURING playback fire without gating (overlapping tween).
+export function createPlayback(anim) {
+  let status = "idle";
+  let t = 0;
+  let armed = true;       // user orbit disarms cues until reset/replay
+  let firedCueT = -1;     // cues with t <= firedCueT already fired this run
+  let stopAt = null;      // stepNext/playStep pause playback on reaching this t
+
+  const snapshot = (cue = null) => ({ t, status, ...evaluate(anim, t), cue });
+
+  const governingCue = () => {
+    if (!armed) return null;
+    let g = null;
+    for (const c of anim.cues) if (c.t <= t && c.t > firedCueT) g = c;
+    return g;
+  };
+
+  function begin() {
+    const cue = governingCue();
+    if (cue) { firedCueT = Math.max(firedCueT, cue.t); status = "intro"; }
+    else status = "playing";
+    return snapshot(cue);
+  }
+
+  function play() {
+    if (status === "playing" || status === "intro") return snapshot();
+    if (t >= 1 && !anim.loop) { t = 0; firedCueT = -1; armed = true; } // replay from start re-arms
+    stopAt = null;
+    return begin();
+  }
+  function pause() {
+    if (status === "playing" || status === "intro") status = "paused";
+    return snapshot();
+  }
+  function introDone() {
+    if (status === "intro") status = "playing";
+    return snapshot();
+  }
+  function seek(v) {
+    t = Math.min(1, Math.max(0, v));
+    status = "paused";
+    stopAt = null;
+    firedCueT = -1; // a later play() re-honors the cue governing the new position
+    return snapshot();
+  }
+  function playStep(i) {
+    const idx = Math.min(anim.steps.length - 1, Math.max(0, i));
+    t = anim.stepStarts[idx];
+    stopAt = idx + 1 < anim.steps.length ? anim.stepStarts[idx + 1] : 1;
+    firedCueT = -1;
+    return begin();
+  }
+  function stepNext() {
+    const cur = stepIndexAt(anim, t);
+    return cur + 1 < anim.steps.length ? playStep(cur + 1) : snapshot();
+  }
+  function stepPrev() {
+    return playStep(Math.max(0, stepIndexAt(anim, t) - 1));
+  }
+  function reset() {
+    t = 0; status = "idle"; stopAt = null; firedCueT = -1; armed = true;
+    return snapshot();
+  }
+  function disarmCues() { armed = false; }
+  function userEdited() { if (status === "playing" || status === "intro") status = "paused"; }
+
+  function tick(dt) {
+    if (status !== "playing" || !(dt > 0)) return null;
+    t += dt / anim.totalDuration;
+    if (anim.loop) {
+      if (t >= 1) t -= Math.floor(t);
+    } else if (stopAt != null && t >= stopAt) {
+      t = stopAt; stopAt = null; status = "paused";
+    } else if (t >= 1) {
+      t = 1; status = "done";
+    }
+    let cue = null;
+    if (armed) {
+      for (const c of anim.cues) if (c.t <= t && c.t > firedCueT) cue = c;
+      if (cue) firedCueT = cue.t;
+    }
+    return snapshot(cue);
+  }
+
+  return {
+    play, pause, toggle: () => (status === "playing" || status === "intro" ? pause() : play()),
+    introDone, seek, stepNext, stepPrev, playStep, reset, disarmCues, userEdited, tick,
+    state: () => ({ status, t, stepIndex: stepIndexAt(anim, t) }),
+  };
+}
