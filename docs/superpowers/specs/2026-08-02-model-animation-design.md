@@ -104,10 +104,13 @@ flow through the regen loop best-effort.
 
 **One targeted regen-loop change:** today `markDirty()` restarts the 180 ms
 debounce on every call, so a param changing every frame would *never* rebuild
-during playback. The regen loop gains a **max-wait** (trailing debounce with a
-cap, used only by the animation driver): while playback is running, a pending
-rebuild fires no later than the max-wait after it first went dirty, at most one
-in flight as today. Typing behavior in the controls is unchanged.
+during playback. `markDirty` gains a `{ debounce: false }` mode (used only by
+the animation driver): the version still bumps, but instead of arming the
+timer the driver kicks the loop directly after the pose fast path has
+repaired — a pose-only frame finds nothing missing and sends no job, while a
+geometry frame dispatches immediately whenever the worker is idle. That gives
+best-effort rebuilds at worker cadence, clock-free, with at most one build in
+flight exactly as today. Typing behavior in the controls is unchanged.
 
 ### Camera cues
 
