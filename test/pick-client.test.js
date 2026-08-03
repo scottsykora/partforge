@@ -22,9 +22,31 @@ beforeEach(() => { globalThis.EventSource = MockES; globalThis.fetch = vi.fn(() 
 afterEach(() => { client?.detach(); document.body.innerHTML = ""; captured = undefined; });
 
 const { createPickRequestClient } = await import("../src/framework/pick-request/client.js");
+const { PICK_SERVER_DEFAULT_URL } = await import("../src/framework/pick-request/endpoint.js");
+
+const SERVER = PICK_SERVER_DEFAULT_URL;
+const TOKEN = "test-token";
+
+// The pick-server is token-gated. EventSource cannot set headers, so the stream takes
+// the token in the query string while POSTs take the header — both must be present or
+// every route answers 401.
+test("the SSE stream carries the token in the query string", () => {
+  client = createPickRequestClient({ serverUrl: SERVER, token: TOKEN, viewer: {}, part: {}, getContext: () => ({}) });
+  expect(MockES.last.url).toBe(`${SERVER}/events?token=${TOKEN}`);
+});
+
+test("POSTs carry the token in the x-pick-token header", () => {
+  client = createPickRequestClient({ serverUrl: SERVER, token: TOKEN, viewer: {}, part: {}, getContext: () => ({}) });
+  MockES.last.emit("prompt", { id: "x", index: 0, total: 1, prompt: "click A" });
+  captured.onPick({ subPart: "spacer" });
+  expect(fetch).toHaveBeenCalledWith(
+    `${SERVER}/resolve`,
+    expect.objectContaining({ headers: expect.objectContaining({ "x-pick-token": TOKEN }) }),
+  );
+});
 
 test("a prompt event shows the banner with index/total and arms the picker", () => {
-  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  client = createPickRequestClient({ serverUrl: SERVER, token: TOKEN, viewer: {}, part: {}, getContext: () => ({}) });
   MockES.last.emit("prompt", { id: "x", index: 1, total: 3, prompt: "click the face to fillet" });
   expect(document.body.textContent).toContain("2 of 3");
   expect(document.body.textContent).toContain("click the face to fillet");
@@ -32,35 +54,35 @@ test("a prompt event shows the banner with index/total and arms the picker", () 
 });
 
 test("a pick POSTs /resolve with the active id+index and the selection", async () => {
-  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  client = createPickRequestClient({ serverUrl: SERVER, token: TOKEN, viewer: {}, part: {}, getContext: () => ({}) });
   MockES.last.emit("prompt", { id: "x", index: 0, total: 1, prompt: "click A" });
   const selection = { subPart: "spacer" };
   captured.onPick(selection);
   expect(fetch).toHaveBeenCalledWith(
-    "http://127.0.0.1:4518/resolve",
+    `${SERVER}/resolve`,
     expect.objectContaining({ method: "POST", body: JSON.stringify({ id: "x", index: 0, selection }) }),
   );
 });
 
 test("the close (×) button POSTs /cancel for the active id", () => {
-  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  client = createPickRequestClient({ serverUrl: SERVER, token: TOKEN, viewer: {}, part: {}, getContext: () => ({}) });
   MockES.last.emit("prompt", { id: "x", index: 0, total: 1, prompt: "click A" });
   document.querySelector("#pf-pick-close").click();
   expect(fetch).toHaveBeenCalledWith(
-    "http://127.0.0.1:4518/cancel",
+    `${SERVER}/cancel`,
     expect.objectContaining({ method: "POST", body: JSON.stringify({ id: "x" }) }),
   );
 });
 
 test("a cleared event hides the banner", () => {
-  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  client = createPickRequestClient({ serverUrl: SERVER, token: TOKEN, viewer: {}, part: {}, getContext: () => ({}) });
   MockES.last.emit("prompt", { id: "x", index: 0, total: 1, prompt: "click A" });
   MockES.last.emit("cleared", {});
   expect(document.querySelector("#pf-pick-banner").style.display).toBe("none");
 });
 
 test("SSE open event clears the error banner when no prompt is active", () => {
-  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  client = createPickRequestClient({ serverUrl: SERVER, token: TOKEN, viewer: {}, part: {}, getContext: () => ({}) });
   const banner = document.querySelector("#pf-pick-banner");
   // onerror shows the banner
   MockES.last.emitError();
@@ -71,7 +93,7 @@ test("SSE open event clears the error banner when no prompt is active", () => {
 });
 
 test("SSE open event does not hide the banner while a prompt is active", () => {
-  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  client = createPickRequestClient({ serverUrl: SERVER, token: TOKEN, viewer: {}, part: {}, getContext: () => ({}) });
   const banner = document.querySelector("#pf-pick-banner");
   // Arm a prompt, then simulate error then reconnect
   MockES.last.emit("prompt", { id: "x", index: 0, total: 1, prompt: "click A" });
@@ -88,7 +110,7 @@ test("a failing /resolve fetch shows error in the banner and does not throw", as
     if (url.includes("/resolve")) return Promise.reject(new Error("network error"));
     return Promise.resolve({ ok: true, json: () => ({}) });
   });
-  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  client = createPickRequestClient({ serverUrl: SERVER, token: TOKEN, viewer: {}, part: {}, getContext: () => ({}) });
   MockES.last.emit("prompt", { id: "x", index: 0, total: 1, prompt: "click A" });
   const banner = document.querySelector("#pf-pick-banner");
 
@@ -109,7 +131,7 @@ test("the copy button copies the agent description and confirms, without the ser
   const writeText = vi.fn();
   Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText }, configurable: true });
 
-  client = createPickRequestClient({ serverUrl: "http://127.0.0.1:4518", viewer: {}, part: {}, getContext: () => ({}) });
+  client = createPickRequestClient({ serverUrl: SERVER, token: TOKEN, viewer: {}, part: {}, getContext: () => ({}) });
   const copy = document.querySelector("#copy");
   expect(copy).toBeTruthy();
 

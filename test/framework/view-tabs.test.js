@@ -30,6 +30,28 @@ test("generates one button per view; the resolved default is active; labels fall
   expect(btns[1].classList.contains("on")).toBe(false);
 });
 
+// A PartDefinition is untrusted data downstream (hosts run LLM-generated and
+// user-supplied parts), so a label must never be parsed as markup.
+test("a malicious label renders as text, not markup", () => {
+  const hostile = {
+    views: {
+      "main": { label: '<img src=x onerror="globalThis.__pwned = true">' },
+      'evil" onclick="globalThis.__pwned = true': { label: "Quoted key" },
+    },
+  };
+  createViewTabs(el, hostile, { onChange: () => {} });
+  const btns = [...el.querySelectorAll("button[data-part]")];
+  expect(btns).toHaveLength(2);
+  expect(el.querySelector("img")).toBeNull();
+  expect(btns[0].textContent).toBe('<img src=x onerror="globalThis.__pwned = true">');
+  expect(btns[0].children).toHaveLength(0);
+  // the quoted key stays one attribute value, and never becomes an onclick
+  expect(btns[1].dataset.part).toBe('evil" onclick="globalThis.__pwned = true');
+  expect(btns[1].getAttribute("onclick")).toBeNull();
+  btns[1].click();
+  expect(globalThis.__pwned).toBeUndefined();
+});
+
 test("current() falls back to the first view when there's no parts map to count", () => {
   const tabs = createViewTabs(el, part, { onChange: () => {} });
   expect(tabs.current()).toBe("assembly");
