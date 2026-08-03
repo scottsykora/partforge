@@ -43,6 +43,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
 
   const pick = document.createElement("select");
   pick.className = "pf-anim-pick";
+  pick.setAttribute("aria-label", "Choose animation");
   for (const a of animations) {
     const o = document.createElement("option");
     o.value = a.name; o.textContent = a.label;
@@ -134,7 +135,14 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   }
 
   const offFrame = viewer.onFrame((dt) => apply(playback.tick(dt)));
-  const offOrbit = viewer.onCameraStart(() => playback.disarmCues()); // viewer already cancelled the tween
+  // User orbit: the viewer has already cancelled any cue tween (its own
+  // "start" handler); disarm the remaining cues, and if an intro tween was
+  // gating playback, settle the gate — cancel() never fires onComplete, so
+  // without this the machine would sit in "intro" forever.
+  const offOrbit = viewer.onCameraStart(() => {
+    playback.disarmCues();
+    if (playback.state().status === "intro") apply(playback.introDone());
+  });
 
   const onPlayClick = () => {
     const active = playback.state().status;

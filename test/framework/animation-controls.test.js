@@ -112,3 +112,74 @@ test("runtime.play(name) switches animation; detach removes the bar", () => {
   ctl.detach();
   expect(container.querySelector(".pf-anim-bar")).toBeNull();
 });
+
+// deferred-tween viewer: unlike fakeViewer() above, tweenCameraTo does NOT
+// fire onComplete synchronously — it's captured so the test controls when
+// (or whether) the tween settles. This is what exposes the "orbit during a
+// gated intro" bug: with an instantly-completing tween, introDone() always
+// fires on its own and the gate never has a chance to strand playback.
+function deferredFakeViewer() {
+  const frameCbs = new Set(); const orbitCbs = new Set();
+  let pendingComplete = null;
+  return {
+    onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
+    onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
+    tweenCameraTo: vi.fn((view, { onComplete } = {}) => { pendingComplete = onComplete ?? null; }),
+    cancelCameraTween: vi.fn(),
+    suppressAutoRotate: vi.fn(),
+    frame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
+    orbit: () => { for (const cb of [...orbitCbs]) cb(); },
+    get pendingComplete() { return pendingComplete; },
+  };
+}
+
+test("orbit during a gated intro settles the gate instead of stranding playback", () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const frameCbs = new Set(); const orbitCbs = new Set();
+  let pendingComplete = null;
+  const viewer = {
+    onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
+    onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
+    tweenCameraTo: vi.fn((view, { onComplete } = {}) => { pendingComplete = onComplete ?? null; }),
+    cancelCameraTween: vi.fn(),
+    suppressAutoRotate: vi.fn(),
+  };
+  const applied = [];
+  const ctl = attachAnimationControls(viewer, part, {
+    container,
+    applyValues: (v) => applied.push({ ...v }),
+    getParamValues: () => ({ lidAngle: 5 }),
+  });
+  handles.push(ctl);
+  ctl.runtime.play(); // "open" has a t=0 cue → status "intro", params hold
+  expect(ctl.runtime.state().status).toBe("intro");
+  const before = applied.length;
+  for (const cb of [...frameCbs]) cb(0.5); // gated: tick() is null, nothing applied
+  expect(applied.length).toBe(before);
+  for (const cb of [...orbitCbs]) cb(); // user grabs the orbit mid-intro
+  expect(ctl.runtime.state().status).toBe("playing"); // gate settled
+  for (const cb of [...frameCbs]) cb(1); // 1s of 2s → t=0.5 → lidAngle 55
+  expect(applied.at(-1).lidAngle).toBeCloseTo(55);
+});
+
+test("orbit while idle changes nothing", () => {
+  const { applied, ctl, viewer } = (() => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const params = { lidAngle: 5, lidLift: 0 };
+    const applied = [];
+    const v = deferredFakeViewer();
+    const ctl = attachAnimationControls(v, part, {
+      container,
+      applyValues: (val) => { applied.push({ ...val }); Object.assign(params, val); },
+      getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
+    });
+    return { applied, ctl, viewer: v };
+  })();
+  handles.push(ctl);
+  expect(ctl.runtime.state().status).toBe("idle");
+  viewer.orbit();
+  expect(ctl.runtime.state().status).toBe("idle");
+  expect(applied.length).toBe(0);
+});

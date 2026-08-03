@@ -217,6 +217,38 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
   #viewbar .pf-cutaway-actions button { min-width: 44px; padding: 0 6px; }
 }
 
+/* animation transport bar (placement: chrome.css's .pf-anim-bar). APPEARANCE
+   is ungated for the same reason as #viewbar above. */
+.pf-anim-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: var(--pf-surface); border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-control); box-shadow: var(--pf-shadow-float);
+}
+.pf-anim-bar button {
+  border: 0; background: transparent; color: var(--pf-muted);
+  cursor: pointer; font-size: 13px; padding: 2px 4px;
+}
+.pf-anim-bar button:hover { color: var(--pf-text-2); }
+.pf-anim-title, .pf-anim-pick {
+  font-family: var(--pf-mono); font-size: 11px; color: var(--pf-text-2);
+}
+.pf-anim-pick {
+  background: var(--pf-input-bg); border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-control); padding: 3px 6px;
+}
+.pf-anim-step {
+  font-family: var(--pf-mono); font-size: 10px; color: var(--pf-muted-2);
+  min-width: 90px; text-align: center; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.pf-anim-scrub-wrap { position: relative; display: inline-flex; align-items: center; width: 140px; }
+.pf-anim-scrub { width: 100%; accent-color: var(--pf-accent); }
+.pf-anim-tick {
+  position: absolute; top: 50%; width: 2px; height: 8px; margin-top: -4px;
+  background: var(--pf-muted); pointer-events: none;
+}
+
 /* Legacy id-only markup only: classed markup's viewbar lives inside .pf-stage
    (bottom-right, see chrome.css's .pf-float-viewbar) so it never meets the
    top-left floating #panel card. Legacy markup still floats #viewbar top-right
