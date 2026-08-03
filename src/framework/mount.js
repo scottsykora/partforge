@@ -414,8 +414,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // forceRegen path: forceRegen() forgets cache stamps WITHOUT bumping the params
     // version, so a repair there would re-stamp everything current off the memoized
     // probe and the forced rebuild would silently no-op.
-    function onParamChange() {
-      loop.markDirty(); // bump the version first: refreshView below must see the parts as stale
+    function onParamChange({ debounce = true } = {}) {
+      loop.markDirty({ debounce }); // bump the version first: refreshView below must see the parts as stale
       // Pose-only edits: re-posed + re-stamped current, no job. Skipped entirely
       // when caching is off — ?debug&nocache is there to measure true uncached
       // rebuilds, which the fast path would otherwise hide.
@@ -435,6 +435,18 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       Object.assign(params, partial);
       panel.syncValues(Object.keys(partial));
       onParamChange();
+    }
+
+    // Animation-frame param entry point: same change path as setParams, minus
+    // the regen debounce. The explicit kick after repair is what makes playback
+    // best-effort — a pose-only frame finds nothing missing (repair re-stamped
+    // it) and sends no job; a geometry frame dispatches immediately when the
+    // worker is idle and is otherwise absorbed until buildDone re-kicks.
+    function applyAnimationValues(values) {
+      Object.assign(params, values);
+      panel.syncValues(Object.keys(values));
+      onParamChange({ debounce: false });
+      loop.kick();
     }
 
     // Re-run the active view under the current caching setting, so toggling the

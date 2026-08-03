@@ -107,3 +107,26 @@ test("after dispose(), ready() and kick() send nothing", () => {
   loop.kick();
   expect(send).not.toHaveBeenCalled();
 });
+
+test("markDirty({debounce:false}) bumps the version without arming a timer", () => {
+  const { loop, send, state } = makeLoop({ missing: [] });
+  loop.ready(); // nothing missing yet, so this doesn't start a build
+  state.missing = ["a"];
+  loop.markDirty({ debounce: false });
+  expect(loop.version()).toBe(1);
+  vi.advanceTimersByTime(1000);
+  expect(send).not.toHaveBeenCalled(); // no debounced kick was armed
+  loop.kick(); // the caller kicks explicitly on this path
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledWith(["a"]);
+});
+
+test("markDirty({debounce:false}) cancels a previously armed debounce", () => {
+  const { loop, send, state } = makeLoop({ missing: [] });
+  loop.ready();
+  state.missing = ["a"];
+  loop.markDirty();                    // arms the 180ms timer
+  loop.markDirty({ debounce: false }); // animation frame takes over; cancels it
+  vi.advanceTimersByTime(1000);
+  expect(send).not.toHaveBeenCalled();
+});
