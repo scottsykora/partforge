@@ -163,6 +163,44 @@ test("orbit during a gated intro settles the gate instead of stranding playback"
   expect(applied.at(-1).lidAngle).toBeCloseTo(55);
 });
 
+// An unknown name is a host bug: playing "whatever is currently selected"
+// instead would be a silent wrong answer.
+test("runtime.play(unknown) warns and plays nothing", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { applied, ctl } = setup(); handles.push(ctl);
+
+  ctl.runtime.play("nope");
+
+  expect(warn).toHaveBeenCalledWith('partforge: unknown animation "nope"');
+  expect(ctl.runtime.state().status).toBe("idle");
+  expect(ctl.runtime.state().animation).toBe("open"); // selection untouched
+  expect(applied).toHaveLength(0);
+  warn.mockRestore();
+});
+
+// The driver runs from the viewer's frame listeners: a bad frame must cost that
+// frame, not every other listener on the loop.
+test("a throwing applyValues degrades the frame instead of killing the loop", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const container = document.createElement("div");
+  document.body.append(container);
+  const viewer = fakeViewer();
+  const ctl = attachAnimationControls(viewer, part, {
+    container,
+    applyValues: () => { throw new Error("bad track"); },
+    getParamValues: () => ({ lidAngle: 5 }),
+  });
+  handles.push(ctl);
+
+  expect(() => ctl.runtime.play()).not.toThrow();
+  expect(() => viewer.frame(0.5)).not.toThrow();
+  expect(() => viewer.frame(0.5)).not.toThrow();
+
+  expect(warn).toHaveBeenCalledWith("partforge: animation frame failed", expect.any(Error));
+  expect(warn.mock.calls.filter((c) => c[0] === "partforge: animation frame failed")).toHaveLength(1); // warned once, not per frame
+  warn.mockRestore();
+});
+
 test("orbit while idle changes nothing", () => {
   const { applied, ctl, viewer } = (() => {
     const container = document.createElement("div");

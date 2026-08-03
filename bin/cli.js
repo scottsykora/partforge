@@ -156,10 +156,13 @@ const commands = {
       const baseParams = flags.params ? JSON.parse(flags.params) : {};
       const outDir = flags.out || "render";
       const views = flags.views ? flags.views.split(",") : undefined;
+      // Usage check BEFORE the kernel: a flag typo shouldn't pay a WASM boot.
+      if (!flags.animation && (flags.at || flags.step)) {
+        die(`--at/--step require --animation\n${usage}`);
+      }
       const kernel = await bootKernel(part);
 
       if (!flags.animation) {
-        if (flags.at || flags.step) die(`--at/--step require --animation\n${usage}`);
         const files = await renderViews(kernel, part, view, { views, out: outDir, params: baseParams });
         for (const f of files) console.log(`wrote ${f}`);
         process.exit(0);

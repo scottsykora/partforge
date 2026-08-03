@@ -25,6 +25,7 @@ export default defineConfig(({ command }) => ({
         nameplate: "nameplate.html",
         bracket: "bracket.html",
         hullSweep: "hull-sweep.html",
+        hingedBox: "hinged-box.html",
       },
     },
   },

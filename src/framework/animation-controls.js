@@ -99,21 +99,34 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   }
 
   // --- driver -----------------------------------------------------------------
+  // A frame that throws — a malformed cue or track that slipped past lint, a
+  // viewer that rejects a view name — must cost that frame, not the render
+  // loop: this callback runs from the viewer's frame listeners, and letting it
+  // propagate would take the other listeners down with it. Warn once, then
+  // stay quiet so a bad frame can't flood the console 60x a second.
+  let frameFailureWarned = false;
   function apply(r) {
     if (!r) return;
-    // First write for this run: remember what the user's params were, so Reset
-    // can put them back.
-    if (snapshot == null && Object.keys(r.values).length) snapshot = getParamValues(current.trackedKeys);
-    applyValues(r.values);
-    if (r.cue) {
-      viewer.tweenCameraTo(r.cue.view, {
-        duration: tweenDuration,
-        // An intro cue gates playback until the tween settles; mid-timeline
-        // cues overlap playback and need no completion signal.
-        onComplete: r.status === "intro" ? () => apply(playback.introDone()) : undefined,
-      });
+    try {
+      // First write for this run: remember what the user's params were, so Reset
+      // can put them back.
+      if (snapshot == null && Object.keys(r.values).length) snapshot = getParamValues(current.trackedKeys);
+      applyValues(r.values);
+      if (r.cue) {
+        viewer.tweenCameraTo(r.cue.view, {
+          duration: tweenDuration,
+          // An intro cue gates playback until the tween settles; mid-timeline
+          // cues overlap playback and need no completion signal.
+          onComplete: r.status === "intro" ? () => apply(playback.introDone()) : undefined,
+        });
+      }
+      syncUi();
+    } catch (err) {
+      if (!frameFailureWarned) {
+        frameFailureWarned = true;
+        console.warn("partforge: animation frame failed", err);
+      }
     }
-    syncUi();
   }
 
   function doReset() {
@@ -168,7 +181,17 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   syncUi();
 
   const runtime = {
-    play(name) { if (name) selectAnimation(name); apply(playback.play()); },
+    // An unknown name is a host bug, not a request to play whatever happens to
+    // be selected — say so and do nothing rather than silently animating
+    // something else.
+    play(name) {
+      if (name != null && !animations.some((a) => a.name === name)) {
+        console.warn(`partforge: unknown animation "${name}"`);
+        return;
+      }
+      if (name) selectAnimation(name);
+      apply(playback.play());
+    },
     pause() { viewer.cancelCameraTween(); apply(playback.pause()); },
     seek(t) { apply(playback.seek(t)); },
     stop() { doReset(); },
