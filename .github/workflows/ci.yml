@@ -24,3 +24,4 @@ jobs:
       - run: CHECK_PORT=5180 node scripts/check-app.mjs planter.html
       - run: CHECK_PORT=5181 node scripts/check-app.mjs filleted-box.html
       - run: CHECK_PORT=5182 node scripts/check-app.mjs text-smoke.html --allow-no-cutaway
+      - run: CHECK_PORT=5183 node scripts/check-app.mjs hinged-box.html
