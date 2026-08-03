@@ -2,6 +2,7 @@ import { meshTo3MF } from "./geometry/threemf.js";
 import { exportablePartNames } from "./export-select.js";
 import { resolveDerived } from "./derive.js";
 import { resolveFonts } from "./fonts.js";
+import { safeName } from "./safe-name.js";
 import { measure } from "../testing/measure.js";
 import { verify } from "../testing/verify.js";
 
@@ -82,7 +83,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       msg.parts
         ? exportablePartNames(part, p).filter((name) => msg.parts.includes(name))
         : exportSubParts(part, msg.view, p);
-    const fileBase = msg.name ?? msg.view; // STEP/3MF single-file name base
+    const fileBase = safeName(msg.name ?? msg.view); // STEP/3MF single-file name base (part-derived → untrusted)
 
     if (msg.type === "generate") {
       const t0 = Date.now();

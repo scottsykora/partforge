@@ -13,7 +13,11 @@ import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { measure } from "../src/testing/measure.js";
 import { verify } from "../src/testing/verify.js";
 import { renderViews } from "../src/testing/render.js";
-import { createPickServer, requestPicks, formatPickResult } from "../src/framework/pick-request/server.js";
+import {
+  createPickServer, requestPicks, formatPickResult,
+  PICK_SERVER_DEFAULT_PORT, PICK_SERVER_DEFAULT_TIMEOUT_MS,
+} from "../src/framework/pick-request/server.js";
+import { savePickToken, loadPickToken, clearPickToken, pickTokenPath } from "../src/framework/pick-request/token-store.js";
 import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
 
@@ -160,19 +164,31 @@ const commands = {
   async "pick-serve"(args) {
     const usage = "usage: partforge pick-serve [--port N] [--timeout <seconds>]";
     const { values: flags } = parse(args, { port: { type: "string" }, timeout: { type: "string" } }, usage);
-    const port = Number(flags.port) || 4518;
-    const timeoutMs = (Number(flags.timeout) || 120) * 1000;
-    const { port: bound } = await createPickServer({ port, timeoutMs }).start();
+    const port = Number(flags.port) || PICK_SERVER_DEFAULT_PORT;
+    const timeoutMs = (Number(flags.timeout) || PICK_SERVER_DEFAULT_TIMEOUT_MS / 1000) * 1000;
+    const srv = createPickServer({ port, timeoutMs });
+    const { port: bound } = await srv.start();
+    // The token is what keeps every other page on the machine out of this server.
+    // `partforge pick` runs in a different process, so drop it in a 0600 file for
+    // that process to find; the browser gets it through the app URL below.
+    savePickToken(bound, srv.token);
+    const stop = () => { clearPickToken(bound); process.exit(0); };
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
     console.log(`partforge pick-server listening on http://127.0.0.1:${bound}`);
+    console.log(`token: ${srv.token}  (also at ${pickTokenPath(bound)})`);
+    console.log(`open the app with: ?pickserver=http://127.0.0.1:${bound}&picktoken=${srv.token}`);
     // no exit — the process stays alive serving requests
   },
 
   async pick(args) {
-    const usage = 'usage: partforge pick "<prompt>" ["<prompt>" …] [--port N]';
-    const { values: flags, positionals: prompts } = parse(args, { port: { type: "string" } }, usage);
+    const usage = 'usage: partforge pick "<prompt>" ["<prompt>" …] [--port N] [--token T]';
+    const { values: flags, positionals: prompts } = parse(args, { port: { type: "string" }, token: { type: "string" } }, usage);
     if (prompts.length === 0) die(usage);
-    const port = Number(flags.port) || 4518;
-    const out = await requestPicks({ port, prompts }).catch((e) => die(e.message));
+    const port = Number(flags.port) || PICK_SERVER_DEFAULT_PORT;
+    const token = flags.token || process.env.PARTFORGE_PICK_TOKEN || loadPickToken(port);
+    if (!token) die(`no pick-server token for port ${port} — start one with \`partforge pick-serve\`, or pass --token`);
+    const out = await requestPicks({ port, prompts, token }).catch((e) => die(e.message));
     console.log(formatPickResult(out));
     process.exit(out.status === "done" ? 0 : 1);
   },

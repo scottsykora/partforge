@@ -12,9 +12,17 @@ export function createViewTabs(el, part, { onChange }) {
   const partKey = part?.meta?.title ?? "";
   const resolved = resolveDefaultView(part);
   if (generated) {
-    el.innerHTML = Object.entries(part.views)
-      .map(([key, v]) => `<button data-part="${key}"${key === resolved ? ' class="on"' : ""}>${v?.label ?? key}</button>`)
-      .join("");
+    // Built node-by-node with textContent/dataset rather than an innerHTML
+    // template — view keys and labels come from the part, which is untrusted
+    // data (hosts run LLM-generated and user-supplied parts), so a label of
+    // `<img src=x onerror=...>` must land as text, not as markup.
+    el.replaceChildren(...Object.entries(part.views).map(([key, v]) => {
+      const btn = document.createElement("button");
+      btn.dataset.part = key;
+      btn.textContent = v?.label ?? key;
+      if (key === resolved) btn.classList.add("on");
+      return btn;
+    }));
   }
 
   const setActive = (btn) => { for (const b of el.children) b.classList.toggle("on", b === btn); };

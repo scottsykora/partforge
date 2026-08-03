@@ -182,8 +182,9 @@ internal params, and keep the interface simple while staying deeply adjustable.
 Locally, `npm run dev` then open `/demo.html`, `/planter.html`, or `/filleted-box.html`.
 
 - **Agent clarification (`request-a-pick`):** an external tool can ask the user to click
-  geometry and get the `Selection` back — serve with `?pickserver`, drive with
-  `partforge pick-serve` + `partforge pick "<prompt>" …`. See
+  geometry and get the `Selection` back — serve with `?pickserver&picktoken=<token>`,
+  drive with `partforge pick-serve` (it prints the token) + `partforge pick "<prompt>" …`.
+  The server is loopback-only and token-gated on every route. See
   `skills/partforge/SKILL.md` and the authoring guide.
 
 ## License

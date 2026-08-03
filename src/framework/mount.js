@@ -20,7 +20,7 @@ import { createPoseFastPath } from "./pose-fast-path.js";
 import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
-import { createPickRequestClient } from "./pick-request/index.js";
+import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
 import { exportablePartNames, partLabel } from "./export-select.js";
 import { createExportController } from "./export-controller.js";
 
@@ -240,10 +240,17 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.defer(() => pickToggle.detach());
     } else if (qs.has("pickserver")) {
       // Agent-driven mode: arm the picker only when the local pick-server asks for a
-      // click. `?pickserver` or `?pickserver=http://host:port`.
-      const serverUrl = typeof qs.get("pickserver") === "string" && qs.get("pickserver")
-        ? qs.get("pickserver") : "http://127.0.0.1:4518";
-      pickClient = createPickRequestClient({ serverUrl, viewer, part, getContext });
+      // click. `?pickserver&picktoken=<token>` or `?pickserver=http://host:port&picktoken=…`.
+      // The URL is attacker-suppliable (anyone can hand the user a link), so a
+      // non-loopback target is refused rather than honoured — otherwise every click,
+      // with its live parameter values, would stream to a remote host.
+      const serverUrl = resolvePickServerUrl(qs.get("pickserver"), {
+        onReject: (raw) => console.warn(
+          `partforge: ignoring non-loopback ?pickserver=${raw} — using ${PICK_SERVER_DEFAULT_URL}`,
+        ),
+      });
+      const token = qs.get("picktoken") || "";
+      pickClient = createPickRequestClient({ serverUrl, token, viewer, part, getContext });
       cleanup.defer(() => pickClient.detach());
     }
 

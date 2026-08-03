@@ -3,6 +3,7 @@
 // replies (progress/download/error) back to the Promise that started them.
 // Pure — no DOM, no worker; `send` and the sink are injected.
 import { triggerDownload, downloadParts } from "./download.js";
+import { safeName } from "./safe-name.js";
 
 export function createExportController({ send, currentView, title, defaultBackend = () => "manifold", currentParams = () => ({}) }) {
   const pending = new Map(); // jobId -> { resolve, reject, onProgress }
@@ -32,7 +33,7 @@ export function createExportController({ send, currentView, title, defaultBacken
     }
     if (m.type === "download-parts") {
       pending.delete(m.jobId);
-      const zipName = `${title() ?? "parts"}.zip`.toLowerCase().replace(/\s+/g, "-");
+      const zipName = `${safeName(title(), "parts")}.zip`; // title() is the part's meta.title — untrusted
       downloadParts(m, zipName, sink);
       entry.resolve();
       return true;

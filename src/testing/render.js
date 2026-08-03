@@ -1,5 +1,6 @@
 import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
+import { safeName } from "../framework/safe-name.js";
 import { buildView } from "./build.js";
 import { bounds } from "./mesh.js";
 
@@ -22,7 +23,6 @@ export const RENDER_ANGLES = {
 };
 export const RENDER_VIEWS = Object.keys(RENDER_ANGLES);
 
-const slug = (s) => String(s).toLowerCase().replace(/\s+/g, "-");
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -54,8 +54,13 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
   const ambient = 0.35, diffuse = 0.75;
   const bias = radius * 0.02;           // edge depth bias so visible edges win ties
 
-  mkdirSync(out, { recursive: true });
-  const name = slug(part.meta?.title ?? view);
+  // `out` is operator-supplied (a CLI flag) and stays verbatim; the part-derived
+  // title and view key are sanitized, since this is the one place a part's
+  // strings reach the filesystem.
+  const outDir = resolve(out);
+  mkdirSync(outDir, { recursive: true });
+  const name = safeName(part.meta?.title ?? view);
+  const viewName = safeName(view);
   const written = [];
 
   for (const angle of views) {
@@ -121,7 +126,11 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
     for (let i = 0; i < W * H; i++) {
       png.data[i * 4] = color[i * 3]; png.data[i * 4 + 1] = color[i * 3 + 1]; png.data[i * 4 + 2] = color[i * 3 + 2]; png.data[i * 4 + 3] = 255;
     }
-    const file = join(out, `${name}-${view}-${angle}.png`);
+    const file = join(out, `${name}-${viewName}-${angle}.png`);
+    // Belt and braces over safeName(): assert the escape never happened rather
+    // than trusting the slug, because a miss here writes bytes to disk. (The
+    // returned paths stay relative to `out` — the CLI echoes them.)
+    if (!resolve(file).startsWith(outDir + sep)) throw new Error(`renderViews: refusing to write outside ${out}`);
     writeFileSync(file, PNG.sync.write(png));
     written.push(file);
   }

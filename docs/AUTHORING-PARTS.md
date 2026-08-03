@@ -1376,12 +1376,22 @@ An external tool (e.g. an AI agent editing your part) can ask the *user* to clic
 geometry and receive the `Selection` back, closing the loop in the other direction
 from `?pick`.
 
-- Serve your app with **`?pickserver`** (or `?pickserver=http://host:port`) to enable
-  it. While idle nothing changes; when the local pick-server requests a click, a banner
-  appears ("🤖 Claude needs you to click …") and the picker arms for one click.
-- The agent side runs `partforge pick-serve` once, then `partforge pick "<prompt>" …`
-  for one or more clicks (collected in order, returned together). The CLI blocks until
-  the user clicks, then prints the `Selection`(s) as JSON.
+- Serve your app with **`?pickserver&picktoken=<token>`** (or
+  `?pickserver=http://127.0.0.1:4518&picktoken=<token>`) to enable it. While idle
+  nothing changes; when the local pick-server requests a click, a banner appears
+  ("🤖 Claude needs you to click …") and the picker arms for one click.
+- The agent side runs `partforge pick-serve` once — it prints the token and the exact
+  URL to open — then `partforge pick "<prompt>" …` for one or more clicks (collected in
+  order, returned together). The CLI blocks until the user clicks, then prints the
+  `Selection`(s) as JSON.
+- **The token is required.** Every route on the pick-server (including the SSE stream)
+  is gated by a random per-process token, requests from non-loopback origins are
+  refused, and the server never reflects an arbitrary `Origin`. Without that, any site
+  the user browsed to while the server was running could read the agent's prompts,
+  inject text into the agent's output, or harvest the user's live parameter values.
+  A `?pickserver=` pointing anywhere but loopback is ignored with a console warning.
+  `partforge pick` finds the token automatically via `~/.partforge/pick-<port>.token`;
+  `--token` and `PARTFORGE_PICK_TOKEN` override it.
 
 See the bundled skill `skills/partforge/SKILL.md` for the agent workflow. This is plain
 click-routing — no LLM logic lives in partforge.
