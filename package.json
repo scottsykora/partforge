@@ -16,21 +16,60 @@
   "files": [
     "src",
     "bin",
+    "types",
     "skills/partforge/SKILL.md",
     "docs/AUTHORING-PARTS.md",
     "docs/ERROR-PATTERNS.md",
     "docs/KERNEL-CONTRACT.md",
     "README.md"
   ],
+  "types": "./types/index.d.ts",
   "exports": {
-    ".": "./src/index.js",
-    "./worker": "./src/framework/worker.js",
-    "./geometry": "./src/framework/geometry/polygon.js",
-    "./lint": "./src/lint.js",
-    "./derive": "./src/framework/derive.js",
-    "./testing": "./src/testing.js",
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./worker": {
+      "types": "./types/worker.d.ts",
+      "default": "./src/framework/worker.js"
+    },
+    "./geometry": {
+      "types": "./types/geometry.d.ts",
+      "default": "./src/framework/geometry/polygon.js"
+    },
+    "./lint": {
+      "types": "./types/lint.d.ts",
+      "default": "./src/lint.js"
+    },
+    "./derive": {
+      "types": "./types/derive.d.ts",
+      "default": "./src/framework/derive.js"
+    },
+    "./testing": {
+      "types": "./types/testing.d.ts",
+      "default": "./src/testing.js"
+    },
     "./tokens.css": "./src/framework/tokens.css",
     "./chrome.css": "./src/framework/chrome.css"
+  },
+  "typesVersions": {
+    "*": {
+      "worker": [
+        "./types/worker.d.ts"
+      ],
+      "geometry": [
+        "./types/geometry.d.ts"
+      ],
+      "lint": [
+        "./types/lint.d.ts"
+      ],
+      "derive": [
+        "./types/derive.d.ts"
+      ],
+      "testing": [
+        "./types/testing.d.ts"
+      ]
+    }
   },
   "bin": {
     "partforge": "./bin/cli.js"
@@ -41,6 +80,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json",
     "check": "node scripts/check-app.mjs"
   },
   "dependencies": {
@@ -60,6 +100,7 @@
     "@fontsource-variable/geist-mono": "^5.3.0",
     "happy-dom": "^20.10.6",
     "playwright": "^1.49.0",
+    "typescript": "^7.0.2",
     "vite": "^8.0.16",
     "vitest": "^4.1.9"
   }
