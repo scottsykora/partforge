@@ -48,6 +48,16 @@ export function clampToRange(raw, min, max) {
 }
 
 // --- info glyph + per-panel popover -----------------------------------------
+// Popover top edge: below the glyph when it fits, flipped above when the
+// viewport bottom would clip it (e.g. the animation transport bar's ⓘ, which
+// sits at the bottom of the stage). Pure, for direct unit testing — happy-dom
+// reports zero layout metrics, so the flip can't be exercised via the DOM.
+export function popoverTop({ glyphTop, glyphBottom, popHeight, viewportHeight }) {
+  const below = glyphBottom + 6;
+  if (below + popHeight <= viewportHeight - 8) return below;
+  return Math.max(8, glyphTop - 6 - popHeight);
+}
+
 // One popover element per panel, shared by all its glyphs (only one open at a
 // time). Document-level dismiss listeners are registered per panel and removed
 // by panel.dispose().
@@ -78,7 +88,7 @@ export function createInfoPopover() {
       owner = glyph;
       glyph.setAttribute("aria-expanded", "true");
       const r = glyph.getBoundingClientRect();
-      pop.style.top = `${r.bottom + 6}px`;
+      pop.style.top = `${popoverTop({ glyphTop: r.top, glyphBottom: r.bottom, popHeight: pop.offsetHeight, viewportHeight: window.innerHeight })}px`;
       pop.style.left = `${Math.max(8, r.left - 8)}px`;
     },
     dispose() {

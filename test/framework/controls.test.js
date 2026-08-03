@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { expect, test } from "vitest";
-import { clampToRange } from "../../src/framework/controls.js";
+import { clampToRange, popoverTop } from "../../src/framework/controls.js";
 
 // The value-commit logic for the editable number boxes (DOM wiring is browser-only).
 test("clampToRange clamps a typed value into [min, max], allowing exact (non-step) values", () => {
@@ -13,6 +13,15 @@ test("clampToRange clamps a typed value into [min, max], allowing exact (non-ste
 test("clampToRange returns null for non-numeric input", () => {
   expect(clampToRange("", 0, 40)).toBeNull();
   expect(clampToRange("abc", 0, 40)).toBeNull();
+});
+
+test("popoverTop places below when it fits, flips above when clipped", () => {
+  // fits below
+  expect(popoverTop({ glyphTop: 100, glyphBottom: 120, popHeight: 200, viewportHeight: 800 })).toBe(126);
+  // would clip the viewport bottom → flips above the glyph
+  expect(popoverTop({ glyphTop: 700, glyphBottom: 720, popHeight: 200, viewportHeight: 800 })).toBe(494);
+  // no room above either → clamps to the 8px margin
+  expect(popoverTop({ glyphTop: 30, glyphBottom: 50, popHeight: 780, viewportHeight: 800 })).toBe(8);
 });
 
 import { buildControls, visibleAdvanced, visibleFeatures, visibleToggles, sectionRenders } from "../../src/framework/controls.js";
