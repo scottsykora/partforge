@@ -230,7 +230,9 @@ export function createViewer(container, part) {
     if (!box || box.isEmpty()) { onComplete?.(); return; }
     const center = box.getCenter(new THREE.Vector3()).toArray();
     const size = box.getSize(new THREE.Vector3());
-    const pose = cameraPoseForView(viewName, { center, radius: Math.max(size.x, size.y, size.z) / 2 || 10 });
+    // radius = full max extent (not half), matching frameTo's framing distance so a
+    // live camera cue doesn't land twice as close as the reframe button and crop the part.
+    const pose = cameraPoseForView(viewName, { center, radius: Math.max(size.x, size.y, size.z) || 12 });
     camTween.start(
       { position: camera.position.toArray(), target: controls.target.toArray() },
       { position: pose.position, target: pose.target },
