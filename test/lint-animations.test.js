@@ -99,3 +99,26 @@ test("classification: pose-only tracks are silent, geometry tracks get a note", 
   expect(notes.map((f) => f.rule)).toContain("animation-track-rebuilds");
   expect(notes[0].severity).toBe("note");
 });
+
+test("classification: a round-trip track on a geometry param still gets a note", () => {
+  const rebuilds = {
+    ...base(),
+    parts: { p: { views: ["v"], build: (k, p) => k.box({ size: [10, 10, 10 + p.a] }) } },
+    animations: { x: { duration: 1, tracks: { a: [[0, 0], [0.5, 100], [1, 0]] } } },
+  };
+  const r = lintPart(rebuilds);
+  expect(r.notes.map((f) => f.rule)).toContain("animation-track-rebuilds");
+  expect(r.ok).toBe(true); // notes never gate
+});
+
+test("classification: a round-trip track on a pose-only param stays silent", () => {
+  const poseOnly = {
+    ...base(),
+    parts: { p: { views: ["v"],
+      build: (k) => k.box({ size: [10, 10, 10] }),
+      place: (s, { p }) => s.rotate(-p.a, [0, 0, 0], [1, 0, 0]),
+    } },
+    animations: { x: { duration: 1, tracks: { a: [[0, 0], [0.5, 100], [1, 0]] } } },
+  };
+  expect(lintPart(poseOnly).notes.map((f) => f.rule)).toEqual([]);
+});

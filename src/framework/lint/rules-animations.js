@@ -319,16 +319,25 @@ export const ANIMATION_RULES = [
       const out = [];
       for (const [name, a] of animEntries(part)) {
         const steps = rawSteps(a);
-        // endpoint values per key: first keyframe of the first segment, last of the last
-        const endpoints = new Map();
+        // value range per key: the min and max across every keyframe value the
+        // key ever takes, over every step that tracks it — not just the first
+        // and last keyframe, so an out-and-back track (e.g. a hinge cycle that
+        // returns to its start) still compares two genuinely different values.
+        const valueRange = new Map();
         for (const s of steps) {
           for (const [key, kf] of Object.entries(isPlainObject(s.tracks) ? s.tracks : {})) {
             if (!validKeyframes(kf)) continue; // keyframes rule already reported it
-            if (!endpoints.has(key)) endpoints.set(key, [kf[0][1], kf[kf.length - 1][1]]);
-            else endpoints.get(key)[1] = kf[kf.length - 1][1];
+            for (const [, v] of kf) {
+              if (!valueRange.has(key)) valueRange.set(key, [v, v]);
+              else {
+                const range = valueRange.get(key);
+                if (v < range[0]) range[0] = v;
+                if (v > range[1]) range[1] = v;
+              }
+            }
           }
         }
-        for (const [key, [v0, v1]] of endpoints) {
+        for (const [key, [v0, v1]] of valueRange) {
           if (typeof part?.defaults?.[key] !== "number") continue; // other rules own that
           const cls = classifyTrack(part, p, key, v0, v1);
           if (cls === "pose") continue;
