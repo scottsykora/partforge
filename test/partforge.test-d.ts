@@ -8,6 +8,9 @@
 
 import { mount } from "partforge";
 import type {
+  AnimationRuntime,
+  AnimationSpec,
+  AnimationState,
   ControlDef,
   ExpectMap,
   GeometryKernel,
@@ -128,6 +131,9 @@ expectType<PartDefinition>(grouped);
 // A sub-part and a control descriptor are usable standalone.
 expectType<SubPartDefinition>(spacer.parts.spacer);
 expectType<ControlDef>({ key: "od", min: 0, max: 1, step: 0.1 });
+// Both animation forms: one anonymous step (`tracks`), and a step list.
+expectType<AnimationSpec>({ duration: 1.2, easing: "ease-in-out", camera: "front", tracks: { h: [[0, 0], [1, 10]] } });
+expectType<AnimationSpec>({ label: "Assemble", steps: [{ label: "Lower", duration: 1, camera: "left", tracks: { h: [[0, 40], [1, 0]] } }] });
 expectType<ExpectMap>({ _view: { overlaps: 0 }, body: { volume: "0.4..0.6cm3" } });
 
 // ---------------------------------------------------------------------------
@@ -246,6 +252,10 @@ expectType<Array<{ name: string; label: string }>>(runtime.listExportableParts()
 expectType<Promise<void>>(runtime.exportParts({ parts: ["spacer"], format: "stl", onProgress: (phase) => void phase }));
 expectType<void>(runtime.setHostPane("rail"));
 expectType<void>(runtime.setHostPane(null));
+// Animation playback: null for a part that declares none, so every call is guarded.
+expectType<AnimationRuntime | null>(runtime.animation);
+expectType<void | undefined>(runtime.animation?.play("open"));
+expectType<AnimationState | undefined>(runtime.animation?.state());
 
 // @ts-expect-error - "sidebar" is not a pane
 runtime.setHostPane("sidebar");
@@ -351,8 +361,9 @@ expectType<Record<string, unknown>>(resolveDerived(spacer, spacer.defaults));
 const report = lintPart(spacer, { params: { h: 40 } });
 expectType<boolean>(report.ok);
 expectType<string>(report.errors[0]!.hint);
-expectType<"error" | "warning">(report.errors[0]!.severity);
+expectType<"error" | "warning" | "note">(report.errors[0]!.severity);
 expectType<string | undefined>(report.warnings[0]!.pattern);
+expectType<string>(report.notes[0]!.message);
 expectType<string>(RULES[0]!.id);
 // lintPart is deliberately total: it accepts anything and never throws.
 expectType<boolean>(lintPart(null).ok);

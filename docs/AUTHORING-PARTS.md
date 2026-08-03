@@ -129,6 +129,66 @@ export default {
 
 ---
 
+## Animations
+
+A part may declare named animations — pure keyframe data that drives **existing
+params** over time. The viewer shows a transport bar (play/scrub/step); hosts
+drive the same engine via `runtime.animation`; `partforge render` can render
+stills at any position. The reference part is `src/parts/hinged-box.js`.
+
+```js
+animations: {
+  open: {
+    label: "Open lid",
+    description: "Optional **CommonMark**, shown behind the ⓘ glyph.",
+    camera: "front",          // optional: intro angle, cue list, or per-step (below)
+    duration: 1.2,            // seconds
+    loop: false,              // true = wraps continuously (single-step only)
+    easing: "ease-in-out",    // linear | ease-in | ease-out | ease-in-out
+    tracks: { lidAngle: [[0, 0], [1, 110]] },   // param -> [t, value] keyframes
+  },
+  assemble: {
+    label: "Assemble",
+    steps: [                  // steps play in order; prev/next navigate them
+      { label: "Lower the lid", camera: "left", duration: 1.0,
+        tracks: { lidLift: [[0, 40], [1, 0]] } },
+      { label: "Open", camera: "iso", duration: 1.0,
+        tracks: { lidAngle: [[0, 0], [1, 110]] } },
+    ],
+  },
+}
+```
+
+Rules (all lint-enforced):
+
+- An animation has **either** `tracks` (a single anonymous step) **or** `steps`.
+- Tracks reference numeric params from `defaults`. Keyframe `t` is normalized
+  per step, strictly ascending from exactly 0 to exactly 1; values must sit
+  inside the owning control's min/max (the engine applies them unclamped).
+- Params not tracked anywhere keep their current values; a param tracked in
+  one step holds its nearest keyframe value while other steps play.
+- Couple motions through `derive` (animate one master param; derive the rest),
+  not by tracking dependent params separately.
+- `camera` cues use the seven canonical angles (`iso front back top bottom
+  left right`). One mechanism per animation: an animation-level name (an intro
+  cue at t=0), an animation-level `[[t, angle], …]` list, or per-step names.
+  Cues fire during play only — scrubbing never moves the camera — and a user
+  orbit disarms the remaining cues for that run.
+- Playback drives params through the real param pipeline: a **pose-only**
+  param (feeds only rigid placement — see "Caching & determinism" below) plays
+  at frame rate; anything else rebuilds best-effort at worker cadence. `lint`
+  prints a note per track that can't take the fast path.
+- Playback pauses when the user edits any control; Reset restores the values
+  the animation found. Because animated values are real params, exporting
+  while paused exports the posed state — by design.
+
+Headless: `partforge render <part> --animation open --at 0,0.5,1` renders
+tagged stills (`--at` is normalized over the animation's total duration, like
+the scrubber); `--step <index|label>` renders a step's end state; stills
+default to the governing camera cue's angle.
+
+---
+
 ## Geometry: the kernel / `Solid` API
 
 `build` receives a backend-agnostic `kernel` (`k`). It returns and combines `Solid`
@@ -1028,6 +1088,29 @@ previously didn't; that's the fix working as intended, not a regression.
 `verify-expect-throws` (all errors). Note `_view` also accepts the pair-wise
 `contacts` / `clearance` keys, which are not scalar view metrics; they are
 validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
+
+**Animations block** — static validation of `animations`, without executing
+`build`: `animations-not-object`, `animation-tracks-or-steps`,
+`animation-unknown-param`, `animation-param-not-numeric`,
+`animation-keyframes-invalid`, `animation-value-out-of-range`,
+`animation-duration-invalid`, `animation-loop-invalid`,
+`animation-step-label-duplicate`, `animation-easing-unknown`,
+`animation-camera-invalid`, `animation-description-invalid` (all errors). One
+more rule does execute `build`, geometry-free: `animation-track-rebuilds` probes
+each track's endpoint values and emits a **note** when the animated param feeds
+real geometry (or the probe can't be trusted), because such a track plays
+best-effort rather than at frame rate. Notes are informational — they never
+affect `ok`, `measure`, or `--strict`.
+
+**Place invariants**, found by running the geometry-free pose probe (the same
+one animation's `animation-track-rebuilds` uses) against each sub-part's
+`place()` — `view-dependent-display-place` (display placement must not depend
+on the active view, since display meshes are cached across views) and
+`place-not-rigid` (display vs. export placement may differ only by a rigid
+motion — translate/rotate — never a reshape) (both errors). An untrusted probe
+(a query op or function selector reached during `build`/`place`) proves
+nothing either way and stays silent, matching `animation-track-rebuilds`'s own
+trust handling.
 
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.

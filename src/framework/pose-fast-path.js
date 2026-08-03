@@ -28,6 +28,17 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
       stamps[name] = probeFor().get(name);
     },
 
+    // Drop a subpart's stamp: the mesh in the viewer is no longer known to
+    // correspond to any probed pose. Used when meshes are SHOWN without being
+    // recorded — a build delivered stale because animation frames kept bumping
+    // the version is displayed best-effort, but its geometry was not built at
+    // the live params, so no stamp may describe it. Without this the next edit
+    // would re-pose that newer mesh off the PREVIOUS delivery's stamp, i.e.
+    // apply a delta measured against geometry that is no longer on screen.
+    forget(name) {
+      delete stamps[name];
+    },
+
     // Re-pose every visible stale subpart whose base geometry is unchanged.
     // Returns the NAMES repaired (empty = nothing pose-only to do). Names, not a
     // count: a slider drag repairs the same subpart on every input event, so only

@@ -11,7 +11,17 @@ vi.mock("../../src/framework/viewer.js", () => ({
   createViewer: vi.fn(() => {
     const built = new Set();
     let cutawayOn = false;
+    // Animation-driver surface: the transport bar subscribes to the frame loop
+    // and to orbit starts. tickFrame(dt) is the test's hand on that loop.
+    const frameCbs = new Set();
+    const orbitCbs = new Set();
     const v = {
+      onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
+      onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
+      tweenCameraTo: vi.fn((view, { onComplete } = {}) => onComplete?.()), // settles instantly
+      cancelCameraTween: vi.fn(),
+      suppressAutoRotate: vi.fn(),
+      tickFrame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
       domElement: document.createElement("div"),
       showAssembly: vi.fn(),
       hideAssembly: vi.fn(),
@@ -860,4 +870,79 @@ test("makeHandle always exposes a callable setHostPane", () => {
     setParams() {}, listExportableParts: () => [], exportParts: async () => {},
   });
   expect(() => handle.setHostPane("rail")).not.toThrow();
+});
+
+// --- animation playback: best-effort geometry ------------------------------
+// Every animation frame bumps the params version, so a worker build dispatched
+// at frame N is already "stale" by the time it lands. Discarding it (the plain
+// stale rule) freezes the model at its pre-play state for the whole run while
+// the worker churns. During playback those meshes must be SHOWN — but never
+// recorded, because they were not built at the live params.
+const makeAnimatedPart = () => {
+  const part = makePart();
+  // `h` is the GEOMETRY param (the box is built from it), so every animation
+  // frame genuinely needs a worker build — the case the fix is about.
+  part.animations = {
+    grow: { label: "Grow", duration: 2, easing: "linear", tracks: { h: [[0, 4], [1, 10]] } },
+  };
+  return part;
+};
+
+test("a build made stale only by playback is shown, but not recorded", () => {
+  const onBuild = vi.fn();
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makeAnimatedPart(), { createWorker, elements: els, onBuild });
+  finishFirstBuild(workers);
+  const viewer = fakeViewers[0];
+  viewer.setSubGeometry.mockClear();
+  onBuild.mockClear();
+
+  handle.animation.play();  // frame-0 apply → version bumps, build dispatched
+  viewer.tickFrame(0.5);    // playback moves on while that build is in flight
+  viewer.tickFrame(0.5);
+  const jobsBefore = workers.manifold.postMessage.mock.calls.length;
+
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+
+  expect(viewer.setSubGeometry).toHaveBeenCalledWith("body", expect.anything()); // shown
+  expect(els.exports.stl.disabled).toBe(true);  // NOT recorded — still stale, export stays off
+  expect(onBuild).not.toHaveBeenCalled();       // and it is not reported as a build at the live params
+  // …and the loop immediately re-kicks a build at the params playback has reached
+  const jobs = workers.manifold.postMessage.mock.calls.slice(jobsBefore).map(([m]) => m);
+  expect(jobs.some((m) => m.type === "generate" && m.params.h > 4)).toBe(true);
+  handle.dispose();
+});
+
+test("a user edit mid-playback still discards the stale meshes", () => {
+  vi.useFakeTimers();
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makeAnimatedPart(), { createWorker, elements: els });
+  finishFirstBuild(workers);
+  const viewer = fakeViewers[0];
+  viewer.setSubGeometry.mockClear();
+
+  handle.animation.play();     // build in flight at the animation's version
+  handle.setParams({ h: 7 });  // the user takes over: playback pauses, version bumps again
+
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+
+  expect(viewer.setSubGeometry).not.toHaveBeenCalled(); // user-stale → discarded, as before
+  expect(handle.animation.state().status).toBe("paused");
+  handle.dispose();
+  vi.useRealTimers();
+});
+
+test("makeHandle.animation defaults to null; a supplied runtime passes through", () => {
+  const fixture = {
+    ready: Promise.resolve(), dispose() {}, viewer: { captureCanonicalViews: () => [] },
+    setParams() {}, listExportableParts: () => [], exportParts: async () => {},
+  };
+  const handle = makeHandle(fixture);
+  expect(handle.animation).toBeNull(); // no animation runtime supplied
+
+  const fakeRuntime = { play() {}, pause() {}, seek() {}, stop() {}, state: () => ({}) };
+  const withAnimation = makeHandle({ ...fixture, animation: fakeRuntime });
+  expect(withAnimation.animation).toBe(fakeRuntime);
 });

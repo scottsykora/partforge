@@ -283,6 +283,65 @@ export interface VerifyBlock<P = ResolvedParams, D = Derived> {
   expect?: ExpectMap | ((p: P, d: D) => ExpectMap);
 }
 
+// --- animations -------------------------------------------------------------
+
+/** A timing curve across a step. Mirrors `EASINGS` in src/framework/animation.js. */
+export type Easing = "linear" | "ease-in" | "ease-out" | "ease-in-out";
+
+/**
+ * `[t, value]` keyframes for one param. `t` is normalized WITHIN the owning
+ * step: strictly ascending, from exactly 0 to exactly 1, at least two entries.
+ * Values must sit inside the owning control's min/max — the engine applies
+ * them unclamped. `partforge lint` enforces all of that.
+ */
+export type Keyframes = Array<[number, number]>;
+
+/**
+ * A camera cue angle: one of the seven canonical angles (`CanonicalView` in the
+ * app entry — `"iso" | "front" | "back" | "top" | "bottom" | "left" | "right"`).
+ * Cues fire during play only; scrubbing never moves the camera.
+ */
+export type CameraCue = string;
+
+/** One step of a multi-step animation. Steps play in order; prev/next navigate them. */
+export interface AnimationStep {
+  /** Shown in the transport bar. Defaults to `"Step <n>"`. */
+  label?: string;
+  /** Seconds. Step durations are relative — they set each step's share of the timeline. */
+  duration: number;
+  easing?: Easing;
+  /** Param key -> keyframes. A param tracked nowhere keeps its current value. */
+  tracks: Record<string, Keyframes>;
+  /** Swing the camera to this angle when the step begins. */
+  camera?: CameraCue;
+}
+
+/**
+ * One named animation: pure keyframe data over EXISTING params. Declare either
+ * `tracks` (one anonymous step) or `steps`, never both. See
+ * docs/AUTHORING-PARTS.md "Animations".
+ */
+export interface AnimationSpec {
+  /** Shown in the transport bar's picker. Defaults to the animation's key. */
+  label?: string;
+  /** CommonMark, shown behind the ⓘ glyph. */
+  description?: string;
+  /** Seconds. Required in the single-step (`tracks`) form. */
+  duration?: number;
+  easing?: Easing;
+  /** Wrap continuously. Single-step animations only. */
+  loop?: boolean;
+  /** The single-step form: param key -> keyframes. */
+  tracks?: Record<string, Keyframes>;
+  /** The multi-step form. */
+  steps?: AnimationStep[];
+  /**
+   * One mechanism per animation: an angle (an intro cue at t=0), a
+   * `[[t, angle], …]` cue list, or per-step `camera` names.
+   */
+  camera?: CameraCue | Array<[number, CameraCue]>;
+}
+
 // --- the part itself --------------------------------------------------------
 
 /**
@@ -309,4 +368,6 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
   views: Record<string, ViewDefinition>;
   /** Self-verification, co-located with the schema. */
   verify?: VerifyBlock<P, D>;
+  /** Named animations: keyframe data driving existing params over time. */
+  animations?: Record<string, AnimationSpec>;
 }

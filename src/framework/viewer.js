@@ -5,6 +5,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { createCutaway } from "./cutaway.js";
+import { createCameraTween } from "./camera-tween.js";
 import { addViewerLights, captureLightPoses, createCaptureLights } from "./viewer-lighting.js";
 import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
 
@@ -214,6 +215,39 @@ export function createViewer(container, part) {
     cutaway.setSubpart(name, subMesh[name], subLines[name]);
   }
 
+  // --- animation hooks --------------------------------------------------------
+  // Frame listeners get dt (seconds, clamped so a background-tab return doesn't
+  // fast-forward playback) inside the render loop — so a parked viewer
+  // (setActive(false)) automatically halts playback too: no loop, no ticks.
+  const frameListeners = new Set();
+  function onFrame(cb) { frameListeners.add(cb); return () => frameListeners.delete(cb); }
+
+  const camTween = createCameraTween();
+  // Tween the orbit camera to a canonical angle, framed on what's visible now.
+  // Presentational only; a caller passing duration 0 gets a jump cut.
+  function tweenCameraTo(viewName, { duration = 0.6, onComplete } = {}) {
+    const box = getVisibleWorldBounds();
+    if (!box || box.isEmpty()) { onComplete?.(); return; }
+    const center = box.getCenter(new THREE.Vector3()).toArray();
+    const size = box.getSize(new THREE.Vector3());
+    // radius = full max extent (not half), matching frameTo's framing distance so a
+    // live camera cue doesn't land twice as close as the reframe button and crop the part.
+    const pose = cameraPoseForView(viewName, { center, radius: Math.max(size.x, size.y, size.z) || 12 });
+    camTween.start(
+      { position: camera.position.toArray(), target: controls.target.toArray() },
+      { position: pose.position, target: pose.target },
+      { duration, onComplete },
+    );
+  }
+  const cancelCameraTween = () => camTween.cancel();
+
+  // User grabbing the orbit cancels any cue tween (the user owns the camera) and
+  // tells subscribers (the animation driver disarms remaining cues).
+  const cameraStartListeners = new Set();
+  const onControlsStart = () => { camTween.cancel(); for (const cb of [...cameraStartListeners]) cb(); };
+  controls.addEventListener("start", onControlsStart);
+  function onCameraStart(cb) { cameraStartListeners.add(cb); return () => cameraStartListeners.delete(cb); }
+
   // Smooth shading within CREASE_ANGLE of a shared edge, hard edge past it — so the
   // round body and helical groove read smooth while bore rims, drum faces, and
   // groove walls stay crisp. Lower = more hard edges; raise toward Math.PI/3 for
@@ -331,11 +365,16 @@ export function createViewer(container, part) {
   }
 
   let autoRotateRequested = true;
+  let autoRotateSuppressed = false; // playback suppresses the turntable, like cutaway does
   function syncAutoRotate() {
-    controls.autoRotate = autoRotateRequested && !cutaway.isEnabled;
+    controls.autoRotate = autoRotateRequested && !cutaway.isEnabled && !autoRotateSuppressed;
   }
   function setAutoRotate(on) {
     autoRotateRequested = !!on;
+    syncAutoRotate();
+  }
+  function suppressAutoRotate(on) {
+    autoRotateSuppressed = !!on;
     syncAutoRotate();
   }
   function setCutawayEnabled(on) {
@@ -489,8 +528,19 @@ export function createViewer(container, part) {
   }
 
   // --- render loop ----------------------------------------------------------
-  function renderFrame() {
+  // The tween is applied after controls.update() so the cue wins the frame, and
+  // the frame listeners run before render so a playback frame draws its own pose.
+  let lastFrameTime = null;
+  function renderFrame(time) {
+    const dt = lastFrameTime == null ? 0 : Math.min(0.1, (time - lastFrameTime) / 1000);
+    lastFrameTime = time;
     controls.update();
+    const tw = camTween.update(dt);
+    if (tw) {
+      camera.position.fromArray(tw.position);
+      controls.target.fromArray(tw.target);
+    }
+    for (const cb of [...frameListeners]) cb(dt);
     if (cutaway.isEnabled) cutaway.updateForCamera();
     renderer.render(scene, camera);
     cutaway.renderOverlay(renderer, camera);
@@ -530,6 +580,7 @@ export function createViewer(container, part) {
       return;
     }
     resize(); // rebuild the buffer at whatever size the container is now
+    lastFrameTime = null; // parked time is not elapsed time — no dt jump on unpark
     renderer.setAnimationLoop(renderFrame);
   }
 
@@ -595,6 +646,10 @@ export function createViewer(container, part) {
     // closure (and whatever it captured) alive.
     renderer.domElement.removeEventListener("webglcontextlost", onContextLostEvent);
     contextLostListeners.clear();
+    controls.removeEventListener("start", onControlsStart);
+    cameraStartListeners.clear();
+    frameListeners.clear();
+    camTween.cancel();
     controls.dispose();
     for (const t of flashTimers) clearTimeout(t);
     flashTimers.clear();
@@ -625,6 +680,11 @@ export function createViewer(container, part) {
     captureCanonicalViews,
     captureCurrent,
     setAutoRotate,
+    suppressAutoRotate,
+    onFrame,
+    tweenCameraTo,
+    cancelCameraTween,
+    onCameraStart,
     setActive,
     onContextLost,
     setTheme,

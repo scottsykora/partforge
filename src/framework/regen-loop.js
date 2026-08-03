@@ -9,7 +9,9 @@
 // - markDirty() bumps the params version and debounces a kick, so dragging a
 //   slider queues one build per pause, not one per pixel;
 // - a build that a mid-flight edit outdated is reported stale by buildDone()
-//   (return false → the caller discards the meshes and kicks a rebuild).
+//   (return false → the caller discards the meshes and kicks a rebuild);
+// - markDirty({debounce:false}) bumps without arming the timer (the animation
+//   fast-apply path kicks explicitly).
 export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
   let kernelReady = false;
   let generating = false;
@@ -30,10 +32,15 @@ export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
   return {
     kick,
     ready() { if (disposed) return; kernelReady = true; kick(); },
-    markDirty() {
+    // `debounce: false` is the animation driver's mode: the version still bumps
+    // (stale in-flight builds are still detected), but no timer is armed — the
+    // driver kicks explicitly after the pose fast path has repaired, so a
+    // pose-only frame sends no job and a geometry frame dispatches immediately
+    // whenever the worker is idle (best-effort at worker cadence, clock-free).
+    markDirty({ debounce = true } = {}) {
       paramsVersion++;
       clearTimeout(timer);
-      timer = setTimeout(kick, debounceMs);
+      if (debounce) timer = setTimeout(kick, debounceMs);
     },
     // The build finished (meshes / needs-occt / error). Returns whether its result
     // is still current; the caller applies the meshes only on true, then kicks.

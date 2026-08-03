@@ -9,3 +9,4 @@ scripts/out/
 .npmrc
 # CLI render output (npx partforge render) — generated, not tracked
 render/
+.claude/launch.json

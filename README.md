@@ -164,6 +164,17 @@ viewer re-poses the meshes it already has — instantly, with no worker rebuild;
 `onBuild` does not fire for those pose-only edits. Anything that changes the
 geometry itself rebuilds as usual.
 
+For parts that declare `animations`, `runtime.animation` exposes the viewer's
+playback engine (`null` otherwise):
+
+```js
+runtime.animation.play("open");   // switch + play (camera cue and all)
+runtime.animation.seek(0.5);      // scrub, normalized 0..1 (pauses)
+runtime.animation.pause();
+runtime.animation.stop();         // reset + restore pre-animation params
+runtime.animation.state();        // { animation, status, t, stepIndex }
+```
+
 `onPick` arms click-to-select permanently: `label` is the feature label (falling
 back to the sub-part label/name) for compact UI, `prompt` is the LLM-ready
 sentence, `token` the compact form, `selection` the raw object. When `onPick` is

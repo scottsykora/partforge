@@ -135,6 +135,38 @@ export interface CaptureCurrentOptions {
   quality?: number;
 }
 
+/** Where playback is: idle, swinging the camera to an intro cue, playing, or paused. */
+export type AnimationStatus = "idle" | "intro" | "playing" | "paused";
+
+export interface AnimationState {
+  /** The selected animation's key. */
+  animation: string;
+  status: AnimationStatus;
+  /** Position on the timeline, 0..1 over the animation's total duration. */
+  t: number;
+  /** Which step `t` falls in; 0 for a single-step animation. */
+  stepIndex: number;
+}
+
+/**
+ * Part-declared animation playback — the same engine the viewer's transport bar
+ * drives. Playback writes real params, so exporting while paused exports the
+ * posed state, and any user or host param edit pauses it.
+ */
+export interface AnimationRuntime {
+  /**
+   * Play, optionally switching to a named animation first. An unknown name
+   * warns and does nothing rather than playing whatever is selected.
+   */
+  play(name?: string): void;
+  pause(): void;
+  /** Jump to a position on the timeline, 0..1. Never moves the camera. */
+  seek(t: number): void;
+  /** Stop and restore the param values the animation started from. */
+  stop(): void;
+  state(): AnimationState;
+}
+
 /** The runtime handle `mount()` returns. See `makeHandle` in src/framework/mount.js. */
 export interface PartRuntime {
   /** Resolves on the first successful build of the default view; rejects on a first-build error. */
@@ -188,6 +220,11 @@ export interface PartRuntime {
    * `null` hands selection back to partforge's built-in bar.
    */
   setHostPane(pane: HostPane): void;
+  /**
+   * Part-declared animation playback, or `null` when the part declares no
+   * `animations` block.
+   */
+  animation: AnimationRuntime | null;
 }
 
 /** Mount a full parametric-part app from a `PartDefinition`. */

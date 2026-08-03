@@ -23,12 +23,16 @@ import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } fr
 import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
 import { exportablePartNames, partLabel } from "./export-select.js";
 import { createExportController, backendForFormat } from "./export-controller.js";
+import { attachAnimationControls } from "./animation-controls.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation }) {
   return {
     ready, dispose, setParams,
+    // Part-declared animation playback (spec 2026-08-02): null when the part
+    // declares no animations. { play(name?), pause(), seek(t), stop(), state() }.
+    animation: animation ?? null,
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
     captureCurrent: (opts) => viewer.captureCurrent(opts),
     // Park/unpark the viewer: stops the render loop and frees the drawing
@@ -78,7 +82,7 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.42.0):
+// Embedding contract (0.43.0):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
@@ -103,6 +107,11 @@ function createCleanupStack() {
 //                                 // loop would otherwise render a hidden pane forever.
 //                                 // Captures still work while parked (they re-allocate).
 //                                 // setActive(true) restores it. Safe after dispose().
+//   runtime.animation?.play("open");  // part-declared animation playback: null when the
+//                                 // part declares no animations, else
+//                                 // { play(name?), pause(), seek(t), stop(), state() }.
+//                                 // play() with an unknown name warns and does nothing;
+//                                 // any user/host param edit pauses playback.
 //   const off = runtime.onContextLost(() => …);  // WebGL context loss, i.e. the GPU or the
 //                                 // OS gave up — surface it rather than showing a dead
 //                                 // canvas. Returns an unsubscribe.
@@ -289,6 +298,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       params, getView: view, getParamsVersion: () => loop.version(),
     });
 
+    // paramsVersion of the most recent animation-frame apply. It is what lets
+    // the meshes handler tell "stale because playback moved on" (show it — that
+    // IS best-effort playback) from "stale because the user edited" (discard).
+    let lastAnimApplyVersion = -1;
+
     // First-build readiness: resolves on the first accepted meshes result, rejects on
     // a first-build error. Guarded against unhandled rejection when never awaited.
     let readySettled = false;
@@ -353,7 +367,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           ui.setStatus(`${data.phase}…`);
           break;
         case "meshes": {
-          if (loop.buildDone()) { // stale results (params changed mid-build) are discarded
+          const fresh = loop.buildDone();
+          if (fresh) { // stale results (params changed mid-build) are discarded
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
               cache.record(m.name);
@@ -370,6 +385,22 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed });
             onBuild?.({ status: "success", ms: data.ms });
             if (!readySettled) { readySettled = true; resolveReady(); }
+          } else if (lastAnimApplyVersion === loop.version()) {
+            // Stale ONLY because animation frames kept bumping the version:
+            // show the delivered meshes anyway — that IS best-effort playback —
+            // but record NOTHING. Cache and fast-path stamps must describe
+            // geometry built at the live params, and this delivery wasn't; the
+            // fast-path stamp is dropped too, so a later pose-only repair can
+            // never re-pose this newer geometry off an older delivery's stamp.
+            // A user edit mid-play pauses playback and bumps the version WITHOUT
+            // touching lastAnimApplyVersion, so a genuinely user-stale result
+            // fails this test and is discarded exactly as before.
+            for (const m of data.meshes) {
+              viewer.setSubGeometry(m.name, m);
+              fastPath.forget(m.name);
+            }
+            ui.hideBusy();
+            refreshView();
           }
           loop.kick(); // stale → rebuild; fresh → the view may still need parts (tab switched mid-build)
           break;
@@ -412,7 +443,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     });
     cleanup.defer(() => exportCtl.dispose("viewer disposed"));
 
-    const panel = buildControls(els.controls, part.parameters, params, onParamChange);
+    let animCtl = null; // assigned below; panel edits must pause active playback
+    const panel = buildControls(els.controls, part.parameters, params, () => {
+      animCtl?.notifyUserEdit();
+      onParamChange();
+    });
     cleanup.defer(() => panel.dispose());
     const updateRelevance = () => panel.applyRelevance(relevantParamKeys(part, view(), params));
     updateRelevance(); // initial view
@@ -421,8 +456,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // forceRegen path: forceRegen() forgets cache stamps WITHOUT bumping the params
     // version, so a repair there would re-stamp everything current off the memoized
     // probe and the forced rebuild would silently no-op.
-    function onParamChange() {
-      loop.markDirty(); // bump the version first: refreshView below must see the parts as stale
+    function onParamChange({ debounce = true } = {}) {
+      loop.markDirty({ debounce }); // bump the version first: refreshView below must see the parts as stale
       // Pose-only edits: re-posed + re-stamped current, no job. Skipped entirely
       // when caching is off — ?debug&nocache is there to measure true uncached
       // rebuilds, which the fast path would otherwise hide.
@@ -439,10 +474,32 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // path as a slider edit: pose-only changes repair synchronously (no worker
     // job, no debounce); geometry changes fall through to the regen loop.
     function setParams(partial) {
+      animCtl?.notifyUserEdit();
       Object.assign(params, partial);
       panel.syncValues(Object.keys(partial));
       onParamChange();
     }
+
+    // Animation-frame param entry point: same change path as setParams, minus
+    // the regen debounce. The explicit kick after repair is what makes playback
+    // best-effort — a pose-only frame finds nothing missing (repair re-stamped
+    // it) and sends no job; a geometry frame dispatches immediately when the
+    // worker is idle and is otherwise absorbed until buildDone re-kicks.
+    function applyAnimationValues(values) {
+      Object.assign(params, values);
+      panel.syncValues(Object.keys(values));
+      onParamChange({ debounce: false });
+      lastAnimApplyVersion = loop.version(); // this version came from playback, not a user edit
+      loop.kick();
+    }
+
+    // Animation transport + driver (no-op null when the part declares none).
+    animCtl = attachAnimationControls(viewer, part, {
+      container: els.viewer,
+      applyValues: applyAnimationValues,
+      getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
+    });
+    if (animCtl) cleanup.defer(() => animCtl.detach());
 
     // Re-run the active view under the current caching setting, so toggling the
     // ?debug switch updates the readout for the same design without a param change.
@@ -497,6 +554,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       listExportableParts: () =>
         exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
       exportParts: (opts) => exportCtl.exportParts(opts),
+      animation: animCtl?.runtime ?? null,
     });
   } catch (error) {
     try {

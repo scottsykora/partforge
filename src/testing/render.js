@@ -33,7 +33,7 @@ const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] 
 // overlays). No native module, no browser. Returns the written file paths.
 // pngjs is lazy-imported so importing the testing barrel for measure never loads it.
 export async function renderViews(kernel, part, view = Object.keys(part.views)[0], {
-  views = ["iso", "front", "top"], out = "render", size = [800, 600], edges = true, params = {},
+  views = ["iso", "front", "top"], out = "render", size = [800, 600], edges = true, params = {}, tag = "",
 } = {}) {
   const { PNG } = await import("pngjs");
   const [W, H] = size;
@@ -126,7 +126,9 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
     for (let i = 0; i < W * H; i++) {
       png.data[i * 4] = color[i * 3]; png.data[i * 4 + 1] = color[i * 3 + 1]; png.data[i * 4 + 2] = color[i * 3 + 2]; png.data[i * 4 + 3] = 255;
     }
-    const file = join(out, `${name}-${viewName}-${angle}.png`);
+    // The animation frame tag goes through safeName() as well — one rule for
+    // every string that reaches a filename here.
+    const file = join(out, `${name}-${viewName}-${angle}${tag ? `-${safeName(tag)}` : ""}.png`);
     // Belt and braces over safeName(): assert the escape never happened rather
     // than trusting the slug, because a miss here writes bytes to disk. (The
     // returned paths stay relative to `out` — the CLI echoes them.)

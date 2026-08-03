@@ -9,9 +9,12 @@ import type { Derived, PartDefinition, ResolvedParams } from "./part.js";
 /**
  * `error` = the part is provably broken (it cannot behave as authored, whether
  * or not that surfaces as a throw). `warning` = suspicious or lossy, but the
- * part behaves as authored; a warning never blocks anything.
+ * part behaves as authored; a warning never blocks anything. `note` = neither
+ * broken nor suspicious — informational context for an authoring agent (e.g.
+ * "this animated track rebuilds geometry"); notes never gate `measure` or
+ * `--strict`.
  */
-export type FindingSeverity = "error" | "warning";
+export type FindingSeverity = "error" | "warning" | "note";
 
 export interface Finding {
   /** The rule id, e.g. `"features-requires-sliders"`. */
@@ -35,6 +38,8 @@ export interface LintReport {
   ok: boolean;
   errors: Finding[];
   warnings: Finding[];
+  /** Informational findings. Never affect `ok`, `measure`, or `--strict`. */
+  notes: Finding[];
 }
 
 /**

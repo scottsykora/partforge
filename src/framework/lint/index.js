@@ -13,8 +13,10 @@ import { SCHEMA_RULES } from "./rules-schema.js";
 import { runValidatingProbe } from "../geometry/probe.js";
 import { BUILD_RULES } from "./rules-build.js";
 import { VERIFY_RULES, resolveExpect } from "./rules-verify.js";
+import { ANIMATION_RULES } from "./rules-animations.js";
+import { PLACE_RULES } from "./rules-place.js";
 
-export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES];
+export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES];
 
 // Every rule runs inside a guard. lintPart is called on a user-facing hosted path
 // (partforge-cloud's sandbox), and a linter that takes down the preview it exists to
@@ -71,7 +73,7 @@ export function lintContext(part, params) {
  * Lint a PartDefinition. Never throws.
  * @param {object} part   the default-exported PartDefinition
  * @param {{params?: object}} [opts]  params layered over part.defaults for the probe pass
- * @returns {{ok: boolean, errors: object[], warnings: object[]}}
+ * @returns {{ok: boolean, errors: object[], warnings: object[], notes: object[]}}
  */
 export function lintPart(part, opts) {
   // `opts` is defaulted here, not via `= {}` on the parameter, because a default
@@ -95,6 +97,7 @@ export function lintPart(part, opts) {
         "This part is too malformed for lint to analyze safely — make sure `defaults`, `params`, and `verify`/`derive` are plain, side-effect-free data rather than throwing getters or hostile Proxies.",
         "")],
       warnings: [],
+      notes: [],
     };
   }
   const findings = runRules(RULES, ctx);
@@ -110,5 +113,6 @@ export function lintPart(part, opts) {
   }
   const errors = findings.filter((f) => f.severity === "error");
   const warnings = findings.filter((f) => f.severity === "warning");
-  return { ok: errors.length === 0, errors, warnings };
+  const notes = findings.filter((f) => f.severity === "note");
+  return { ok: errors.length === 0, errors, warnings, notes };
 }

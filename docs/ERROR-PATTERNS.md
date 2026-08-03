@@ -312,6 +312,12 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 - **Cause:** paper.js returned an unexpected or numerically degenerate path topology for the supplied font outline; the resolver refuses to attach the hole to an arbitrary outer.
 - **Fix:** reduce or normalize degenerate font contours, confirm the correct CFF/TrueType fill rule was selected, and add the glyph as a focused `curve-fill.test.js` regression before changing resolver tolerances.
 
+## animation-plays-choppy
+
+- **Symptom:** An animation stutters or updates a few times a second instead of smoothly; `?debug` shows `rebuilt` counts climbing during playback.
+- **Cause:** A track drives a param that feeds real geometry (or a build the pose probe can't trust — a query op or function selector), so every frame is a worker rebuild instead of a pose repair.
+- **Fix:** Run `npx partforge lint <part>` — the `animation-track-rebuilds` note names the track. Restructure so the param only feeds rigid placement (`place()` or a trailing translate/rotate in `build`), or accept best-effort playback if geometry morphing is the intent. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Animations".
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

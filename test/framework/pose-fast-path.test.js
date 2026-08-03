@@ -133,6 +133,40 @@ test("consecutive pose edits each report the same subpart again", () => {
   expect(hx.fp.repair()).toEqual(["a"]);
 });
 
+// forget() is what keeps a SHOWN-but-unrecorded delivery (mount displays a build
+// that only went stale because animation frames kept bumping the version) from
+// being re-posed later off the previous delivery's stamp.
+test("forget(name) drops the stamp: a later repair leaves that subpart alone", () => {
+  const hx = harness(posedPart);
+  hx.deliver("a");
+  hx.fp.forget("a");
+  hx.edit({ angle: 45 }); // would repair cleanly if the stamp were still there
+  expect(hx.fp.repair()).toEqual([]);
+  expect(hx.current.has("a")).toBe(false); // not re-stamped current — the regen loop still owes a build
+  expect(hx.poses.a).toBe(null);           // never re-posed
+});
+
+test("forget(name) only forgets that name", () => {
+  const twoPart = {
+    ...posedPart,
+    parts: { a: posedPart.parts.a, b: { ...posedPart.parts.a } },
+  };
+  const hx = harness(twoPart);
+  hx.deliver("a");
+  hx.deliver("b");
+  hx.fp.forget("a");
+  hx.edit({ angle: 45 });
+  expect(hx.fp.repair()).toEqual(["b"]);
+});
+
+test("forget on an unknown name is a no-op", () => {
+  const hx = harness(posedPart);
+  hx.deliver("a");
+  expect(() => hx.fp.forget("nope")).not.toThrow();
+  hx.edit({ angle: 45 });
+  expect(hx.fp.repair()).toEqual(["a"]);
+});
+
 test("repair applies the delta against the DELIVERED pose, not the previous frame", () => {
   const hx = harness(posedPart);
   hx.deliver("a");           // delivered at angle 0
