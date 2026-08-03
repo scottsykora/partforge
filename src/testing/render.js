@@ -33,7 +33,7 @@ const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] 
 // overlays). No native module, no browser. Returns the written file paths.
 // pngjs is lazy-imported so importing the testing barrel for measure never loads it.
 export async function renderViews(kernel, part, view = Object.keys(part.views)[0], {
-  views = ["iso", "front", "top"], out = "render", size = [800, 600], edges = true, params = {},
+  views = ["iso", "front", "top"], out = "render", size = [800, 600], edges = true, params = {}, tag = "",
 } = {}) {
   const { PNG } = await import("pngjs");
   const [W, H] = size;
@@ -121,7 +121,7 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
     for (let i = 0; i < W * H; i++) {
       png.data[i * 4] = color[i * 3]; png.data[i * 4 + 1] = color[i * 3 + 1]; png.data[i * 4 + 2] = color[i * 3 + 2]; png.data[i * 4 + 3] = 255;
     }
-    const file = join(out, `${name}-${view}-${angle}.png`);
+    const file = join(out, `${name}-${view}-${angle}${tag ? `-${slug(tag)}` : ""}.png`);
     writeFileSync(file, PNG.sync.write(png));
     written.push(file);
   }

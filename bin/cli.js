@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { resolve, dirname } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { detectBackend } from "../src/framework/geometry/probe.js";
+import { normalizeAnimation, evaluate, cueAt } from "../src/framework/animation.js";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { measure } from "../src/testing/measure.js";
@@ -140,17 +141,68 @@ const commands = {
   },
 
   async render(args) {
-    const usage = "usage: partforge render <part-module> [view] [--views iso,front] [--out <dir>]";
+    const usage = "usage: partforge render <part-module> [view] [--views iso,front] [--out <dir>] " +
+      "[--params <json>] [--animation <name>] [--at <t[,t…]>] [--step <index|label>]";
     const { values: flags, positionals: [partPath, view] } = parse(args, {
       views: { type: "string" },
       out: { type: "string" },
+      params: { type: "string" },
+      animation: { type: "string" },
+      at: { type: "string" },
+      step: { type: "string" },
     }, usage);
     try {
       const part = await loadPart(partPath, usage);
-      const kernel = await bootKernel(part);
+      const baseParams = flags.params ? JSON.parse(flags.params) : {};
+      const outDir = flags.out || "render";
       const views = flags.views ? flags.views.split(",") : undefined;
-      const files = await renderViews(kernel, part, view, { views, out: flags.out || "render" });
-      for (const f of files) console.log(`wrote ${f}`);
+      const kernel = await bootKernel(part);
+
+      if (!flags.animation) {
+        if (flags.at || flags.step) die(`--at/--step require --animation\n${usage}`);
+        const files = await renderViews(kernel, part, view, { views, out: outDir, params: baseParams });
+        for (const f of files) console.log(`wrote ${f}`);
+        process.exit(0);
+      }
+
+      const spec = part.animations?.[flags.animation];
+      if (!spec) {
+        throw new Error(`unknown animation "${flags.animation}" (have: ${Object.keys(part.animations ?? {}).join(", ") || "none"})`);
+      }
+      const anim = normalizeAnimation(flags.animation, spec);
+      // Frames: --step renders one still at the END of that step (its fully
+      // applied state); --at takes positions normalized over the animation's
+      // TOTAL duration (same t as the viewer scrubber / runtime seek).
+      let frames;
+      if (flags.step != null) {
+        const byLabel = anim.steps.findIndex((s) => s.label === flags.step);
+        const idx = byLabel >= 0 ? byLabel : Number(flags.step) - 1;
+        if (!(idx >= 0 && idx < anim.steps.length)) {
+          throw new Error(`unknown step "${flags.step}" (use 1..${anim.steps.length} or a label: ${anim.steps.map((s) => JSON.stringify(s.label)).join(", ")})`);
+        }
+        const end = idx + 1 < anim.steps.length ? anim.stepStarts[idx + 1] : 1;
+        // Values come from the END of the step (fully applied), but the cue
+        // lookup uses the step's own START: cue boundaries belong to the LATER
+        // step (see animation.js stepIndexAt/cueAt), and `end` here IS the next
+        // step's start, so querying the cue at `end` would resolve to the next
+        // step's camera instead of this step's own.
+        frames = [{ t: end, cueT: anim.stepStarts[idx], tag: `${flags.animation}-step${idx + 1}` }];
+      } else {
+        const ts = (flags.at ?? "1").split(",").map(Number);
+        if (!ts.length || ts.some((t) => !Number.isFinite(t) || t < 0 || t > 1)) {
+          die(`--at takes comma-separated positions in 0..1\n${usage}`);
+        }
+        frames = ts.map((t) => ({ t, tag: `${flags.animation}-t${String(Math.round(t * 100)).padStart(3, "0")}` }));
+      }
+      for (const frame of frames) {
+        const { values } = evaluate(anim, frame.t);
+        const cue = cueAt(anim, frame.cueT ?? frame.t);
+        const frameViews = views ?? (cue ? [cue.view] : undefined);
+        const files = await renderViews(kernel, part, view, {
+          views: frameViews, out: outDir, params: { ...baseParams, ...values }, tag: frame.tag,
+        });
+        for (const f of files) console.log(`wrote ${f}`);
+      }
       process.exit(0);
     } catch (e) {
       crash("render", e, false);
