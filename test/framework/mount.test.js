@@ -832,3 +832,16 @@ test("makeHandle always exposes a callable setHostPane", () => {
   });
   expect(() => handle.setHostPane("rail")).not.toThrow();
 });
+
+test("makeHandle.animation defaults to null; a supplied runtime passes through", () => {
+  const fixture = {
+    ready: Promise.resolve(), dispose() {}, viewer: { captureCanonicalViews: () => [] },
+    setParams() {}, listExportableParts: () => [], exportParts: async () => {},
+  };
+  const handle = makeHandle(fixture);
+  expect(handle.animation).toBeNull(); // no animation runtime supplied
+
+  const fakeRuntime = { play() {}, pause() {}, seek() {}, stop() {}, state: () => ({}) };
+  const withAnimation = makeHandle({ ...fixture, animation: fakeRuntime });
+  expect(withAnimation.animation).toBe(fakeRuntime);
+});

@@ -23,12 +23,16 @@ import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } fr
 import { createPickRequestClient } from "./pick-request/index.js";
 import { exportablePartNames, partLabel } from "./export-select.js";
 import { createExportController } from "./export-controller.js";
+import { attachAnimationControls } from "./animation-controls.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation }) {
   return {
     ready, dispose, setParams,
+    // Part-declared animation playback (spec 2026-08-02): null when the part
+    // declares no animations. { play(name?), pause(), seek(t), stop(), state() }.
+    animation: animation ?? null,
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
     captureCurrent: (opts) => viewer.captureCurrent(opts),
     // Park/unpark the viewer: stops the render loop and frees the drawing
@@ -405,7 +409,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     });
     cleanup.defer(() => exportCtl.dispose("viewer disposed"));
 
-    const panel = buildControls(els.controls, part.parameters, params, onParamChange);
+    let animCtl = null; // assigned below; panel edits must pause active playback
+    const panel = buildControls(els.controls, part.parameters, params, () => {
+      animCtl?.notifyUserEdit();
+      onParamChange();
+    });
     cleanup.defer(() => panel.dispose());
     const updateRelevance = () => panel.applyRelevance(relevantParamKeys(part, view(), params));
     updateRelevance(); // initial view
@@ -432,6 +440,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // path as a slider edit: pose-only changes repair synchronously (no worker
     // job, no debounce); geometry changes fall through to the regen loop.
     function setParams(partial) {
+      animCtl?.notifyUserEdit();
       Object.assign(params, partial);
       panel.syncValues(Object.keys(partial));
       onParamChange();
@@ -448,6 +457,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       onParamChange({ debounce: false });
       loop.kick();
     }
+
+    // Animation transport + driver (no-op null when the part declares none).
+    animCtl = attachAnimationControls(viewer, part, {
+      container: els.viewer,
+      applyValues: applyAnimationValues,
+      getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
+    });
+    if (animCtl) cleanup.defer(() => animCtl.detach());
 
     // Re-run the active view under the current caching setting, so toggling the
     // ?debug switch updates the readout for the same design without a param change.
@@ -502,6 +519,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       listExportableParts: () =>
         exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
       exportParts: (opts) => exportCtl.exportParts(opts),
+      animation: animCtl?.runtime ?? null,
     });
   } catch (error) {
     try {
