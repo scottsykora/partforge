@@ -1,10 +1,14 @@
 // Group 5 — the `animations` block (spec 2026-08-02-model-animation-design.md).
-// Everything here is static data validation: the block is pure keyframe data
-// by design, so lint can hold every track to the schema without executing
-// author code. The probe-backed classification note is appended by Task 9.
-import { err } from "./finding.js";
+// Everything but the last rule is static data validation: the block is pure
+// keyframe data by design, so lint can hold every track to the schema without
+// executing author code. `animation-track-rebuilds` is the exception — it runs
+// the geometry-free pose probe to classify each track as pose-only or
+// geometry-rebuilding, and reports the latter at the note tier.
+import { err, note } from "./finding.js";
 import { EASINGS } from "../animation.js";
 import { CANONICAL_VIEWS } from "../view-angles.js";
+import { probeSubPartPose } from "../pose-probe-core.js";
+import { resolveDerived } from "../derive.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 
@@ -306,4 +310,63 @@ export const ANIMATION_RULES = [
         "The description is CommonMark shown behind the ⓘ glyph — supply a string or omit it.",
         `animations.${name}.description`)),
   },
+  {
+    // note tier: performance shape, not correctness. A track whose param feeds
+    // real geometry still plays — just best-effort at worker cadence instead
+    // of frame rate — and the authoring agent should know which it wrote.
+    id: "animation-track-rebuilds",
+    run: ({ part, p }) => {
+      const out = [];
+      for (const [name, a] of animEntries(part)) {
+        const steps = rawSteps(a);
+        // endpoint values per key: first keyframe of the first segment, last of the last
+        const endpoints = new Map();
+        for (const s of steps) {
+          for (const [key, kf] of Object.entries(isPlainObject(s.tracks) ? s.tracks : {})) {
+            if (!validKeyframes(kf)) continue; // keyframes rule already reported it
+            if (!endpoints.has(key)) endpoints.set(key, [kf[0][1], kf[kf.length - 1][1]]);
+            else endpoints.get(key)[1] = kf[kf.length - 1][1];
+          }
+        }
+        for (const [key, [v0, v1]] of endpoints) {
+          if (typeof part?.defaults?.[key] !== "number") continue; // other rules own that
+          const cls = classifyTrack(part, p, key, v0, v1);
+          if (cls === "pose") continue;
+          out.push(note("animation-track-rebuilds",
+            cls === "rebuild"
+              ? `animation "${name}" track "${key}" rebuilds geometry — playback is best-effort, not frame-rate`
+              : `animation "${name}" track "${key}" cannot use the pose fast path (untrusted probe) — playback is best-effort`,
+            "Frame-rate playback needs the param to feed only rigid placement (translate/rotate in `place()` or at the end of `build`). If that's the intent, restructure so the param never feeds a geometry op, a query, or a function selector; if geometry morphing is the intent, this is expected.",
+            `animations.${name}`));
+        }
+      }
+      return out;
+    },
+  },
 ];
+
+// Classify one animated param by probing every sub-part it can show, at the
+// track's two endpoint values: identical trusted baseHashes at both ends →
+// the param only re-poses ("pose"); differing hashes → real geometry
+// ("rebuild"); any untrusted probe → "untrusted" (the fast path will decline
+// it at runtime too). Mirrors the runtime trust model in pose-probe-core.js.
+function classifyTrack(part, p, key, v0, v1) {
+  let result = "pose";
+  for (const view of Object.keys(isPlainObject(part?.views) ? part.views : {})) {
+    for (const sp of Object.values(isPlainObject(part?.parts) ? part.parts : {})) {
+      if (!Array.isArray(sp?.views) || !sp.views.includes(view)) continue;
+      const probes = [];
+      for (const v of [v0, v1]) {
+        const pv = { ...p, [key]: v };
+        let dv;
+        try { dv = resolveDerived(part, pv) ?? {}; } catch { return "untrusted"; }
+        try { if (sp.enabled && !sp.enabled(pv)) { probes.push(null); continue; } } catch { return "untrusted"; }
+        probes.push(probeSubPartPose(sp, { view, purpose: "display", p: pv, d: dv }));
+      }
+      if (probes.some((x) => x && !x.trusted)) return "untrusted";
+      const [a, b] = probes;
+      if (a && b && a.baseHash !== b.baseHash) result = "rebuild";
+    }
+  }
+  return result;
+}

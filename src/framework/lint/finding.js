@@ -18,3 +18,7 @@ const make = (severity) => (rule, message, hint, path = "", pattern) => ({
 export const err = make("error");
 // warning → suspicious or lossy, but the part behaves as authored.
 export const warn = make("warning");
+// note → neither broken nor suspicious; informational context an authoring
+// agent should see (e.g. "this animated track rebuilds geometry"). Notes never
+// gate measure or --strict.
+export const note = make("note");

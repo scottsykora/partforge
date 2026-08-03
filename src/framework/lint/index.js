@@ -72,7 +72,7 @@ export function lintContext(part, params) {
  * Lint a PartDefinition. Never throws.
  * @param {object} part   the default-exported PartDefinition
  * @param {{params?: object}} [opts]  params layered over part.defaults for the probe pass
- * @returns {{ok: boolean, errors: object[], warnings: object[]}}
+ * @returns {{ok: boolean, errors: object[], warnings: object[], notes: object[]}}
  */
 export function lintPart(part, opts) {
   // `opts` is defaulted here, not via `= {}` on the parameter, because a default
@@ -96,6 +96,7 @@ export function lintPart(part, opts) {
         "This part is too malformed for lint to analyze safely — make sure `defaults`, `params`, and `verify`/`derive` are plain, side-effect-free data rather than throwing getters or hostile Proxies.",
         "")],
       warnings: [],
+      notes: [],
     };
   }
   const findings = runRules(RULES, ctx);
@@ -111,5 +112,6 @@ export function lintPart(part, opts) {
   }
   const errors = findings.filter((f) => f.severity === "error");
   const warnings = findings.filter((f) => f.severity === "warning");
-  return { ok: errors.length === 0, errors, warnings };
+  const notes = findings.filter((f) => f.severity === "note");
+  return { ok: errors.length === 0, errors, warnings, notes };
 }

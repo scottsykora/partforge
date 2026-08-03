@@ -218,16 +218,17 @@ function printVerify(v) {
 }
 
 function printLint(r) {
-  const all = [...r.errors, ...r.warnings];
+  const all = [...r.errors, ...r.warnings, ...(r.notes ?? [])];
   if (all.length === 0) { console.log("lint: clean"); return; }
   console.log("lint:");
   for (const f of all) {
-    console.log(`  ${f.severity === "error" ? "✗" : "⚠"} ${f.rule}${f.path ? `  ${f.path}` : ""}`);
+    const icon = f.severity === "error" ? "✗" : f.severity === "warning" ? "⚠" : "·";
+    console.log(`  ${icon} ${f.rule}${f.path ? `  ${f.path}` : ""}`);
     console.log(`      ${f.message}`);
     console.log(`      hint: ${f.hint}${f.pattern ? ` (ERROR-PATTERNS.md#${f.pattern})` : ""}`);
   }
-  const e = r.errors.length, w = r.warnings.length;
-  console.log(`  result: ${e ? `${e} error(s)` : "no errors"}${w ? `, ${w} warning(s)` : ""}`);
+  const e = r.errors.length, w = r.warnings.length, n = (r.notes ?? []).length;
+  console.log(`  result: ${e ? `${e} error(s)` : "no errors"}${w ? `, ${w} warning(s)` : ""}${n ? `, ${n} note(s)` : ""}`);
 }
 
 const [, , cmd, ...args] = process.argv;

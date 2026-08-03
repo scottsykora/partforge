@@ -78,3 +78,24 @@ test("camera: canonical names, sorted in-range cues, one mechanism per animation
   expect(ids(lintPart(withAnim({ ...valid, camera: [[0, "iso"], [0.5, "front"]] })))
     .filter((i) => i === "animation-camera-invalid")).toEqual([]);
 });
+
+test("classification: pose-only tracks are silent, geometry tracks get a note", () => {
+  const poseOnly = {
+    ...base(),
+    parts: { p: { views: ["v"],
+      build: (k) => k.box({ size: [10, 10, 10] }),
+      place: (s, { p }) => s.rotate(-p.a, [0, 0, 0], [1, 0, 0]),
+    } },
+    animations: { x: { duration: 1, tracks: { a: [[0, 0], [1, 100]] } } },
+  };
+  expect(lintPart(poseOnly).notes.map((f) => f.rule)).toEqual([]);
+
+  const rebuilds = {
+    ...base(),
+    parts: { p: { views: ["v"], build: (k, p) => k.box({ size: [10, 10, 10 + p.a] }) } },
+    animations: { x: { duration: 1, tracks: { a: [[0, 0], [1, 100]] } } },
+  };
+  const notes = lintPart(rebuilds).notes;
+  expect(notes.map((f) => f.rule)).toContain("animation-track-rebuilds");
+  expect(notes[0].severity).toBe("note");
+});
