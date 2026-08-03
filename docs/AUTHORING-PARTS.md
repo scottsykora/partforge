@@ -1020,6 +1020,14 @@ previously didn't; that's the fix working as intended, not a regression.
 `contacts` / `clearance` keys, which are not scalar view metrics; they are
 validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
 
+**Animations block** — static validation of `animations`, without executing
+`build`: `animations-not-object`, `animation-tracks-or-steps`,
+`animation-unknown-param`, `animation-param-not-numeric`,
+`animation-keyframes-invalid`, `animation-value-out-of-range`,
+`animation-duration-invalid`, `animation-loop-invalid`,
+`animation-step-label-duplicate`, `animation-easing-unknown`,
+`animation-camera-invalid`, `animation-description-invalid` (all errors).
+
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.
 

@@ -13,8 +13,9 @@ import { SCHEMA_RULES } from "./rules-schema.js";
 import { runValidatingProbe } from "../geometry/probe.js";
 import { BUILD_RULES } from "./rules-build.js";
 import { VERIFY_RULES, resolveExpect } from "./rules-verify.js";
+import { ANIMATION_RULES } from "./rules-animations.js";
 
-export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES];
+export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES];
 
 // Every rule runs inside a guard. lintPart is called on a user-facing hosted path
 // (partforge-cloud's sandbox), and a linter that takes down the preview it exists to
