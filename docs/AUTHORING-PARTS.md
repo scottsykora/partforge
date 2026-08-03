@@ -1033,6 +1033,16 @@ real geometry (or the probe can't be trusted), because such a track plays
 best-effort rather than at frame rate. Notes are informational — they never
 affect `ok`, `measure`, or `--strict`.
 
+**Place invariants**, found by running the geometry-free pose probe (the same
+one animation's `animation-track-rebuilds` uses) against each sub-part's
+`place()` — `view-dependent-display-place` (display placement must not depend
+on the active view, since display meshes are cached across views) and
+`place-not-rigid` (display vs. export placement may differ only by a rigid
+motion — translate/rotate — never a reshape) (both errors). An untrusted probe
+(a query op or function selector reached during `build`/`place`) proves
+nothing either way and stays silent, matching `animation-track-rebuilds`'s own
+trust handling.
+
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.
 
