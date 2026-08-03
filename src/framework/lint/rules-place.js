@@ -53,10 +53,10 @@ export const PLACE_RULES = [
     id: "place-not-rigid",
     run: ({ part, p, d }) => {
       const out = [];
-      for (const view of Object.keys(isPlainObject(part?.views) ? part.views : {})) {
-        for (const name of viewNames(part, view, p)) {
-          const sp = part.parts[name];
-          if (!sp?.place) continue;
+      for (const [name, sp] of Object.entries(isPlainObject(part?.parts) ? part.parts : {})) {
+        if (!sp?.place) continue;
+        for (const view of Object.keys(isPlainObject(part?.views) ? part.views : {})) {
+          if (!viewNames(part, view, p).includes(name)) continue;
           const display = probeSubPartPose(sp, { view, purpose: "display", p, d });
           const exportP = probeSubPartPose(sp, { view, purpose: "export", p, d });
           if (!display.trusted || !exportP.trusted) continue;
@@ -66,7 +66,7 @@ export const PLACE_RULES = [
               "place() may move a solid between purposes (translate/rotate) but never reshape it — a geometry op on one branch means the exported part is not the previewed part. Move the op into build().",
               `parts.${name}.place`,
               "place-not-rigid"));
-            break; // one finding per sub-part
+            break; // one finding per sub-part — further views add nothing
           }
         }
       }

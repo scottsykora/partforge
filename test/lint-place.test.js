@@ -27,6 +27,23 @@ test("display pose depending on view → view-dependent-display-place", () => {
 test("non-rigid display/export delta → place-not-rigid", () => {
   const r = lintPart(mk((s, { purpose }) => (purpose === "export" ? s.scale(2) : s)));
   expect(ids(r)).toContain("place-not-rigid");
+  // fixture part has two views ("v", "w") — this pins the one-finding-per-sub-part dedupe
+  expect(ids(r).filter((i) => i === "place-not-rigid")).toHaveLength(1);
+});
+
+test("two non-rigid sub-parts in one view are both reported", () => {
+  const part = {
+    meta: { title: "T" }, parameters: [], defaults: { a: 1 },
+    parts: {
+      p1: { views: ["v"], build: (k) => k.box({ size: [1, 1, 1] }),
+        place: (s, { purpose }) => (purpose === "export" ? s.scale(2) : s) },
+      p2: { views: ["v"], build: (k) => k.box({ size: [2, 2, 2] }),
+        place: (s, { purpose }) => (purpose === "export" ? s.scale(3) : s) },
+    },
+    views: { v: { label: "V" } },
+  };
+  const found = lintPart(part).errors.filter((f) => f.rule === "place-not-rigid");
+  expect(found.map((f) => f.path).sort()).toEqual(["parts.p1.place", "parts.p2.place"]);
 });
 
 test("a rigid display/export difference is allowed", () => {
