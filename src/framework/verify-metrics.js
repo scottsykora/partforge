@@ -6,11 +6,11 @@
 // attached whatever the status — a passing-but-sampled reading is exactly the
 // case a reader needs told about). `manifoldOnly` facts are null on OCCT parts.
 //
-// This lives in framework/ rather than testing/ deliberately: the set of legal
+// This lives one level above framework/oracle/ deliberately: the set of legal
 // `verify.expect` metrics is part of the PartDefinition CONTRACT, which both the
-// verify runner (testing) and the linter (partforge/lint) must agree on. Keeping
-// it here lets the linter import the vocabulary without reaching measure.js or
-// jobs.js, which pull in the geometry kernels. This module must stay import-free.
+// verify runner (oracle/verify.js) and the linter (partforge/lint) must agree on.
+// Keeping it here lets the linter import the vocabulary without reaching
+// measure.js, which pulls in the geometry kernels. Must stay import-free.
 export const SUBPART_METRICS = {
   holes: { kind: "gate", manifoldOnly: true, extract: (s) => s.holes,
     hint: "genus is wrong — an unintended tunnel exists or an intended bore is blocked; make cut tools pierce fully (overcut past the faces)" },

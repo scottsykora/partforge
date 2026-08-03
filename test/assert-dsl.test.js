@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { parseAssertion, evaluateAssertion } from "../src/testing/assert-dsl.js";
+import { parseAssertion, evaluateAssertion } from "../src/framework/oracle/assert-dsl.js";
 
 test("parses numbers and booleans as equality", () => {
   expect(parseAssertion(1)).toEqual({ op: "eq", value: 1 });

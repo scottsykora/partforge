@@ -1,9 +1,9 @@
 // The verify metric vocabulary must live in a module the linter can import without
-// pulling in a geometry kernel — src/testing/verify.js imports measure.js and jobs.js,
+// pulling in a geometry kernel — src/framework/oracle/verify.js imports measure.js and the part model,
 // which reach manifold-3d/replicad. This test pins both the move and the re-export.
 import { expect, test } from "vitest";
 import { SUBPART_METRICS, VIEW_METRICS } from "../src/framework/verify-metrics.js";
-import { SUBPART_METRICS as reSub, VIEW_METRICS as reView } from "../src/testing/verify.js";
+import { SUBPART_METRICS as reSub, VIEW_METRICS as reView } from "../src/framework/oracle/verify.js";
 import { suggest } from "../src/framework/geometry/op-options.js";
 
 test("verify-metrics exposes the subpart metric vocabulary", () => {

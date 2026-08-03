@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { meshVolume, bboxSize, bounds, meshArea } from "../src/testing/mesh.js";
+import { meshVolume, bboxSize, bounds, meshArea } from "../src/framework/oracle/mesh.js";
 
 // Unit cube: 8 vertices, 12 triangles (outward normals)
 const positions = [0,0,0, 1,0,0, 1,1,0, 0,1,0, 0,0,1, 1,0,1, 1,1,1, 0,1,1];

@@ -1,4 +1,4 @@
-// src/testing/min-wall.js
+// src/framework/oracle/min-wall.js
 // Min wall thickness by ray/shot on a triangle BVH (see the spec's spike: this beat the
 // voxel/SDF approach on both accuracy and speed). For each surface triangle, cast a ray
 // inward (reverse of its outward normal) from the centroid; the nearest hit is the local

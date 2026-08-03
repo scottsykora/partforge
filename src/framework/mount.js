@@ -11,9 +11,9 @@ import { buildControls } from "./controls.js";
 import { relevantParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
-import { viewSubParts } from "./jobs.js";
+import { viewSubParts } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
-import { detectBackend } from "./geometry/probe.js";
+import { detectBackend } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
 import { createPoseFastPath } from "./pose-fast-path.js";
@@ -22,7 +22,7 @@ import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
 import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
 import { exportablePartNames, partLabel } from "./export-select.js";
-import { createExportController } from "./export-controller.js";
+import { createExportController, backendForFormat } from "./export-controller.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
@@ -464,7 +464,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     const onStepClick = () => {
       ui.showBusy("exporting STEP");
-      service.send({ type: "export-step", view: view(), params }, "occt"); // STEP is always OCCT
+      service.send({ type: "export-step", view: view(), params }, backendForFormat("step", backendFor));
     };
     if (els.exports.step) {
       els.exports.step.addEventListener("click", onStepClick);

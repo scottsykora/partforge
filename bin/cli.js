@@ -7,11 +7,11 @@ import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { resolve, dirname } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { detectBackend } from "../src/framework/geometry/probe.js";
+import { detectBackend } from "../src/framework/backend-select.js";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
-import { measure } from "../src/testing/measure.js";
-import { verify } from "../src/testing/verify.js";
+import { measure } from "../src/framework/oracle/measure.js";
+import { verify } from "../src/framework/oracle/verify.js";
 import { renderViews } from "../src/testing/render.js";
 import {
   createPickServer, requestPicks, formatPickResult,

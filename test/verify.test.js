@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
-import { evaluateCase } from "../src/testing/verify.js";
-import { resolveProfile } from "../src/testing/dfm-profiles.js";
-import { measure as measureReal } from "../src/testing/measure.js";
+import { evaluateCase } from "../src/framework/oracle/verify.js";
+import { resolveProfile } from "../src/framework/oracle/dfm-profiles.js";
+import { measure as measureReal } from "../src/framework/oracle/measure.js";
 import { verify as verifyFromEntry } from "../src/testing.js";
 import demo from "../src/parts/demo.js";
 
@@ -49,7 +49,7 @@ test("throws on an unknown metric", () => {
 
 import { beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
-import { verify } from "../src/testing/verify.js";
+import { verify } from "../src/framework/oracle/verify.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });

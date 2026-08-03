@@ -1,7 +1,17 @@
 // test/export-controller.test.js
 import { expect, test, vi } from "vitest";
-import { createExportController } from "../src/framework/export-controller.js";
+import { createExportController, backendForFormat } from "../src/framework/export-controller.js";
 import { triggerDownload, downloadParts } from "../src/framework/download.js";
+
+test("backendForFormat: step always routes to occt regardless of the default", () => {
+  expect(backendForFormat("step", () => "manifold")).toBe("occt");
+  expect(backendForFormat("step", () => "occt")).toBe("occt");
+});
+
+test("backendForFormat: every other format defers to the default backend", () => {
+  expect(backendForFormat("stl", () => "manifold")).toBe("manifold");
+  expect(backendForFormat("3mf", () => "occt")).toBe("occt");
+});
 
 function setup(overrides = {}) {
   const sent = [];

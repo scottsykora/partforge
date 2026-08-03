@@ -3,7 +3,7 @@
 // affect what's visible. Pure — no DOM, no real geometry (reuses the geometry-free
 // probe kernel). Errs toward RELEVANT_ALL whenever it can't analyze a build.
 import { createProbeKernel } from "./geometry/probe.js";
-import { viewSubParts } from "./jobs.js";
+import { viewSubParts } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
 
 export const RELEVANT_ALL = Symbol("relevant-all");

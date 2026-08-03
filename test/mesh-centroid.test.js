@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel, buildView } from "../src/testing.js";
-import { meshCentroid } from "../src/testing/mesh.js";
+import { meshCentroid } from "../src/framework/oracle/mesh.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });

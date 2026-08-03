@@ -1,8 +1,8 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { safeName } from "../framework/safe-name.js";
-import { buildView } from "./build.js";
-import { bounds } from "./mesh.js";
+import { buildView } from "../framework/oracle/build.js";
+import { bounds } from "../framework/oracle/mesh.js";
 
 // Canonical view directions in MODEL space (Z-up). `dir` is the direction from
 // the part centre toward the camera; `up` is the camera up vector.

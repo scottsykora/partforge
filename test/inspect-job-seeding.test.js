@@ -11,7 +11,7 @@
 import { beforeAll, expect, test, vi } from "vitest";
 
 let measures = 0;
-vi.mock("../src/testing/measure.js", async (importOriginal) => {
+vi.mock("../src/framework/oracle/measure.js", async (importOriginal) => {
   const real = await importOriginal();
   return { ...real, measure: (...args) => { measures++; return real.measure(...args); } };
 });

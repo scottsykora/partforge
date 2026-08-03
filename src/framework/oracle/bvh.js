@@ -1,4 +1,4 @@
-// src/testing/bvh.js
+// src/framework/oracle/bvh.js
 // Triangle BVH over a mesh in either Manifold non-indexed soup form (9 floats per
 // triangle, no `indices`) or OCCT indexed form (`positions` = 3 floats/vertex +
 // `indices` = 3 vertex-indices/triangle). A reusable spatial index: nearest ray hit

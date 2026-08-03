@@ -4,8 +4,11 @@ import {
   signedAngleAroundAxis,
   snapQuaternionToAxis,
 } from "./cutaway-math.js";
-import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
+import { buildGizmoScene } from "./cutaway-gizmo-scene.js";
 
+// The single source of truth for gizmo colors: the scene is constructed from
+// `dark` and `updateAppearance` re-derives from whichever mode is active, so a
+// palette edit here reaches the first frame as well as every later one.
 const THEMES = {
   dark: {
     fill: 0x65bff5,
@@ -23,6 +26,8 @@ const THEMES = {
   },
 };
 
+export { THEMES as CUTAWAY_GIZMO_THEMES };
+
 const TRANSLATION_SCREEN_ALIGNMENT = 0.9;
 const ROTATION_SCREEN_ALIGNMENT = 0.15;
 // A 120 px perpendicular drag rotates the plane by 90 degrees.
@@ -30,11 +35,9 @@ const SCREEN_ROTATION_RADIANS_PER_PIXEL = Math.PI / 240;
 const SCREEN_AXIS_EPSILON_SQ = 1e-8;
 // Reserve the visually shared center for the end-on translation handle.
 const TRANSLATE_CENTER_RADIUS_PX = 22;
-const GIZMO_RENDER_ORDER = CUTAWAY_OVERLAY_RENDER_ORDER + 1;
 const GHOST_OFFSET_FACTOR = 0.001;
 const MIN_GHOST_OFFSET = 0.01;
 const MAX_GHOST_OFFSET = 0.25;
-const HANDLE_HOVER_THICKNESS = 1.6;
 const HANDLE_HOVER_WHITE_MIX = 0.28;
 const WHITE = new THREE.Color(0xffffff);
 
@@ -50,210 +53,19 @@ export function createCutawayGizmo({
   onDragChange = () => {},
   pickHandle,
 }) {
-  const group = new THREE.Group();
-  const geometries = new Set();
-  const materials = new Set();
-
-  const fill = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 1),
-    new THREE.MeshBasicMaterial({
-      color: 0x65bff5,
-      opacity: 0.18,
-      transparent: true,
-      depthTest: true,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    }),
-  );
-  geometries.add(fill.geometry);
-  materials.add(fill.material);
-
-  const borderGeometry = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(-0.5, -0.5, 0),
-    new THREE.Vector3(0.5, -0.5, 0),
-    new THREE.Vector3(0.5, 0.5, 0),
-    new THREE.Vector3(-0.5, 0.5, 0),
-  ]);
-  const borderMaterial = new THREE.LineBasicMaterial({
-    color: 0xa8dcff,
-    opacity: 1,
-    transparent: true,
-    depthTest: false,
-    depthWrite: false,
-  });
-  const border = new THREE.LineLoop(borderGeometry, borderMaterial);
-  border.renderOrder = GIZMO_RENDER_ORDER;
-  geometries.add(borderGeometry);
-  materials.add(borderMaterial);
-
-  const handleRoot = new THREE.Group();
-  const translateVisualRoot = new THREE.Group();
-  const arcRoot = new THREE.Group();
-  const translateMaterial = new THREE.MeshBasicMaterial({
-    color: 0x36d399,
-    transparent: true,
-    depthTest: true,
-    depthWrite: true,
-  });
-  const rotateXMaterial = new THREE.MeshBasicMaterial({
-    color: 0xff6b7a,
-    transparent: true,
-    depthTest: true,
-    depthWrite: true,
-  });
-  const rotateYMaterial = new THREE.MeshBasicMaterial({
-    color: 0x5aa9ff,
-    transparent: true,
-    depthTest: true,
-    depthWrite: true,
-  });
-  materials.add(translateMaterial);
-  materials.add(rotateXMaterial);
-  materials.add(rotateYMaterial);
-
-  const shaftGeometry = new THREE.CylinderGeometry(0.025, 0.025, 0.58, 12);
-  const shaftHoverGeometry = new THREE.CylinderGeometry(
-    0.025 * HANDLE_HOVER_THICKNESS,
-    0.025 * HANDLE_HOVER_THICKNESS,
-    0.58,
-    12,
-  );
-  const shaft = new THREE.Mesh(shaftGeometry, translateMaterial);
-  shaft.rotation.x = Math.PI / 2;
-  shaft.position.z = 0.29;
-  const coneGeometry = new THREE.ConeGeometry(0.075, 0.2, 16);
-  const coneHoverGeometry = new THREE.ConeGeometry(
-    0.075 * HANDLE_HOVER_THICKNESS,
-    0.2,
-    16,
-  );
-  const cone = new THREE.Mesh(coneGeometry, translateMaterial);
-  cone.rotation.x = Math.PI / 2;
-  cone.position.z = 0.68;
-  geometries.add(shaftGeometry);
-  geometries.add(shaftHoverGeometry);
-  geometries.add(coneGeometry);
-  geometries.add(coneHoverGeometry);
-
-  const ringXGeometry = new THREE.TorusGeometry(
-    0.42,
-    0.015,
-    8,
-    64,
-    Math.PI,
-  );
-  const ringX = new THREE.Mesh(ringXGeometry, rotateXMaterial);
-  const ringXHoverGeometry = new THREE.TorusGeometry(
-    0.42,
-    0.015 * HANDLE_HOVER_THICKNESS,
-    8,
-    64,
-    Math.PI,
-  );
-  ringX.quaternion
-    .setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2)
-    .multiply(new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(0, 1, 0),
-      Math.PI / 2,
-    ));
-  const ringYGeometry = new THREE.TorusGeometry(
-    0.42,
-    0.015,
-    8,
-    64,
-    Math.PI,
-  );
-  const ringY = new THREE.Mesh(ringYGeometry, rotateYMaterial);
-  const ringYHoverGeometry = new THREE.TorusGeometry(
-    0.42,
-    0.015 * HANDLE_HOVER_THICKNESS,
-    8,
-    64,
-    Math.PI,
-  );
-  ringY.rotation.x = -Math.PI / 2;
-  geometries.add(ringXGeometry);
-  geometries.add(ringXHoverGeometry);
-  geometries.add(ringYGeometry);
-  geometries.add(ringYHoverGeometry);
-
-  const hitMaterial = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    opacity: 0,
-    transparent: true,
-    depthWrite: false,
-  });
-  materials.add(hitMaterial);
-  const translateHitGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.95, 10);
-  const translateHit = new THREE.Mesh(translateHitGeometry, hitMaterial);
-  translateHit.rotation.x = Math.PI / 2;
-  translateHit.position.z = 0.38;
-  translateHit.userData.cutawayHandle = "translate";
-  const rotateXHitGeometry = new THREE.TorusGeometry(
-    0.42,
-    0.12,
-    8,
-    48,
-    Math.PI,
-  );
-  const rotateXHit = new THREE.Mesh(rotateXHitGeometry, hitMaterial);
-  rotateXHit.quaternion.copy(ringX.quaternion);
-  rotateXHit.userData.cutawayHandle = "rotate-x";
-  const rotateYHitGeometry = new THREE.TorusGeometry(
-    0.42,
-    0.12,
-    8,
-    48,
-    Math.PI,
-  );
-  const rotateYHit = new THREE.Mesh(rotateYHitGeometry, hitMaterial);
-  rotateYHit.quaternion.copy(ringY.quaternion);
-  rotateYHit.userData.cutawayHandle = "rotate-y";
-  geometries.add(translateHitGeometry);
-  geometries.add(rotateXHitGeometry);
-  geometries.add(rotateYHitGeometry);
-
-  translateVisualRoot.add(shaft, cone);
-  arcRoot.add(ringX, ringY, rotateXHit, rotateYHit);
-  handleRoot.add(translateVisualRoot, translateHit, arcRoot);
-  group.add(fill, border);
+  const sceneGraph = buildGizmoScene(THEMES.dark);
+  const {
+    group,
+    fill,
+    border,
+    handleRoot,
+    arcRoot,
+    handles,
+    handleVisuals,
+    handleAppearance,
+  } = sceneGraph;
   scene.add(group);
   overlayScene.add(handleRoot);
-
-  const handles = {
-    translate: translateHit,
-    rotateX: rotateXHit,
-    rotateY: rotateYHit,
-  };
-  const handleVisuals = {
-    translate: translateVisualRoot,
-    rotateX: ringX,
-    rotateY: ringY,
-  };
-  const handleAppearance = {
-    translate: {
-      visual: translateVisualRoot,
-      material: translateMaterial,
-      geometryPairs: [
-        { mesh: shaft, normal: shaftGeometry, hovered: shaftHoverGeometry },
-        { mesh: cone, normal: coneGeometry, hovered: coneHoverGeometry },
-      ],
-    },
-    "rotate-x": {
-      visual: ringX,
-      material: rotateXMaterial,
-      geometryPairs: [
-        { mesh: ringX, normal: ringXGeometry, hovered: ringXHoverGeometry },
-      ],
-    },
-    "rotate-y": {
-      visual: ringY,
-      material: rotateYMaterial,
-      geometryPairs: [
-        { mesh: ringY, normal: ringYGeometry, hovered: ringYHoverGeometry },
-      ],
-    },
-  };
 
   let disposed = false;
   let poseSize = 1;
@@ -336,8 +148,8 @@ export function createCutawayGizmo({
     const theme = THEMES[themeMode] ?? THEMES.dark;
     fill.material.color.set(theme.fill);
     fill.material.opacity = activeAppearance ? 0.18 : 0.055;
-    borderMaterial.color.set(theme.border);
-    borderMaterial.opacity = activeAppearance ? 1 : 0.72;
+    border.material.color.set(theme.border);
+    border.material.opacity = activeAppearance ? 1 : 0.72;
 
     for (const [handle, { visual, material, geometryPairs }] of Object.entries(handleAppearance)) {
       const hovered = handle === hoveredHandle;
@@ -396,6 +208,12 @@ export function createCutawayGizmo({
     return camera.getWorldDirection(new THREE.Vector3()).normalize();
   }
 
+  // |axis . view|: 1 when we are staring straight down the axis, 0 when the
+  // axis lies flat in the screen plane. Both drag families branch on it.
+  function axisViewAlignment(position, axis) {
+    return Math.abs(axis.dot(viewDirectionAt(position)));
+  }
+
   function projectToClient(point) {
     const rect = domElement.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
@@ -419,13 +237,9 @@ export function createCutawayGizmo({
     return new THREE.Vector2(-screenAxis.y, screenAxis.x);
   }
 
-  function onPointerDown(event) {
-    if (disposed || drag || !group.visible || (event.button != null && event.button !== 0)) return;
-    const ray = rayFromEvent(event);
-    if (!ray) return;
-    const handle = pick(event, ray);
-    if (!handle) return;
-
+  // The fields every drag carries, before the mode-specific ones are filled in
+  // by beginTranslateDrag / beginRotateDrag.
+  function baseDrag(event, handle) {
     const startPosition = group.position.clone();
     const startQuaternion = group.quaternion.clone();
     const localAxis = handle === "rotate-x"
@@ -433,10 +247,7 @@ export function createCutawayGizmo({
       : handle === "rotate-y"
         ? new THREE.Vector3(0, 1, 0)
         : new THREE.Vector3(0, 0, 1);
-    const axis = localAxis.applyQuaternion(startQuaternion).normalize();
-    const viewDirection = viewDirectionAt(startPosition);
-    const alignment = Math.abs(axis.dot(viewDirection));
-    const nextDrag = {
+    return {
       pointerId: event.pointerId,
       handle,
       orbitEnabled: orbitControls?.enabled,
@@ -445,38 +256,65 @@ export function createCutawayGizmo({
       startClientX: event.clientX,
       startClientY: event.clientY,
       unitsPerPixel: worldUnitsPerPixelAt(startPosition),
-      axis,
+      axis: localAxis.applyQuaternion(startQuaternion).normalize(),
       mode: null,
       startParameter: null,
       rotationPlane: null,
       startRadial: null,
       screenRotationDirection: null,
     };
+  }
 
-    if (handle === "translate") {
-      nextDrag.startParameter = axisParameterFromRay(ray, startPosition, axis);
-      nextDrag.mode = alignment > TRANSLATION_SCREEN_ALIGNMENT
-        || nextDrag.startParameter == null
-        ? "screen-translate"
-        : "axis-translate";
-    } else {
-      const useScreenRotation = alignment < ROTATION_SCREEN_ALIGNMENT;
-      if (!useScreenRotation) {
-        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(axis, startPosition);
-        const point = ray.intersectPlane(plane, new THREE.Vector3());
-        const radial = point?.sub(startPosition);
-        if (radial && radial.lengthSq() >= 1e-12) {
-          nextDrag.mode = "plane-rotate";
-          nextDrag.rotationPlane = plane;
-          nextDrag.startRadial = radial.normalize();
-        }
-      }
-      if (nextDrag.mode !== "plane-rotate") {
-        nextDrag.screenRotationDirection = screenRotationDirection(startPosition, axis);
-        if (!nextDrag.screenRotationDirection) return;
-        nextDrag.mode = "screen-rotate";
+  // Sliding along the plane normal. Pointing the normal at the camera leaves
+  // the axis almost no screen travel to slide along - and the ray may miss it
+  // outright - so vertical pointer motion drives the offset instead.
+  function beginTranslateDrag(record, ray) {
+    const alignment = axisViewAlignment(record.startPosition, record.axis);
+    record.startParameter = axisParameterFromRay(ray, record.startPosition, record.axis);
+    record.mode = alignment > TRANSLATION_SCREEN_ALIGNMENT
+      || record.startParameter == null
+      ? "screen-translate"
+      : "axis-translate";
+    return record;
+  }
+
+  // Spinning about a ring axis. Resolving the drag geometrically against the
+  // rotation plane only works when we are looking down that axis; edge-on, the
+  // plane is nearly parallel to the view and the intersection is useless, so
+  // the angle comes from pointer travel perpendicular to the on-screen axis.
+  // Returns null when neither route is usable, which aborts the press.
+  function beginRotateDrag(record, ray) {
+    const alignment = axisViewAlignment(record.startPosition, record.axis);
+    if (alignment >= ROTATION_SCREEN_ALIGNMENT) {
+      const plane = new THREE.Plane()
+        .setFromNormalAndCoplanarPoint(record.axis, record.startPosition);
+      const point = ray.intersectPlane(plane, new THREE.Vector3());
+      const radial = point?.sub(record.startPosition);
+      if (radial && radial.lengthSq() >= 1e-12) {
+        record.mode = "plane-rotate";
+        record.rotationPlane = plane;
+        record.startRadial = radial.normalize();
+        return record;
       }
     }
+    record.screenRotationDirection = screenRotationDirection(record.startPosition, record.axis);
+    if (!record.screenRotationDirection) return null;
+    record.mode = "screen-rotate";
+    return record;
+  }
+
+  function onPointerDown(event) {
+    if (disposed || drag || !group.visible || (event.button != null && event.button !== 0)) return;
+    const ray = rayFromEvent(event);
+    if (!ray) return;
+    const handle = pick(event, ray);
+    if (!handle) return;
+
+    const record = baseDrag(event, handle);
+    const nextDrag = handle === "translate"
+      ? beginTranslateDrag(record, ray)
+      : beginRotateDrag(record, ray);
+    if (!nextDrag) return;
 
     setHoveredHandle(handle);
     onActivity();
@@ -680,8 +518,7 @@ export function createCutawayGizmo({
       }
       scene.remove(group);
       overlayScene.remove(handleRoot);
-      for (const geometry of geometries) geometry.dispose();
-      for (const material of materials) material.dispose();
+      sceneGraph.dispose();
     }
   }
 
