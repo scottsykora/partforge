@@ -1,21 +1,32 @@
 // Persist a little viewer UI state across browser reloads (notably Vite dev
-// auto-refresh) in localStorage. All keys are global. Reads/writes are guarded:
-// if localStorage is unavailable (private mode, disabled) or a value is corrupt,
-// reads return the documented default and writes are no-ops — persistence never
-// throws.
+// auto-refresh). `rotating`, `camera` and `theme` live in localStorage under global
+// keys — they're viewer preferences, not part state. The active view is different:
+// it's scoped to one part and stored in sessionStorage, so a hot reload keeps your
+// tab but the name can't bleed into another part that happens to share a view name,
+// and a fresh session opens on the part's own default (see default-view.js).
+// Reads/writes are guarded: if storage is unavailable (private mode, disabled) or a
+// value is corrupt, reads return the documented default and writes are no-ops —
+// persistence never throws.
 
 const KEY = {
   rotating: "partforge:rotating",
   camera: "partforge:camera",
-  view: "partforge:view",
   theme: "partforge:theme",
 };
+
+const viewKey = (partKey) => `partforge:view:${partKey}`;
 
 function read(key) {
   try { return localStorage.getItem(key); } catch { return null; }
 }
 function write(key, value) {
   try { localStorage.setItem(key, value); } catch { /* storage unavailable — no-op */ }
+}
+function readSession(key) {
+  try { return sessionStorage.getItem(key); } catch { return null; }
+}
+function writeSession(key, value) {
+  try { sessionStorage.setItem(key, value); } catch { /* storage unavailable — no-op */ }
 }
 
 const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every((n) => Number.isFinite(n));
@@ -56,10 +67,15 @@ export function saveTheme(mode) {
   if (mode === "light" || mode === "dark") write(KEY.theme, mode);
 }
 
-export function loadView() {
-  return read(KEY.view); // raw string or null; caller validates against available tabs
+// `partKey` identifies the part — createViewTabs passes `meta.title`. Without one
+// there is nothing safe to key on, so both calls no-op rather than falling back to a
+// shared key (the cross-part bleed this scoping exists to remove).
+export function loadView(partKey) {
+  if (typeof partKey !== "string" || !partKey) return null;
+  return readSession(viewKey(partKey)); // raw string or null; caller validates against available tabs
 }
 
-export function saveView(name) {
-  if (typeof name === "string" && name) write(KEY.view, name);
+export function saveView(partKey, name) {
+  if (typeof partKey !== "string" || !partKey) return;
+  if (typeof name === "string" && name) writeSession(viewKey(partKey), name);
 }

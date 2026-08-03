@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, expect, test } from "vitest";
 import { rmSync, existsSync, statSync, readFileSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import { PNG } from "pngjs";
 import { bootManifoldKernel } from "../src/testing.js";
 import { renderViews, RENDER_VIEWS } from "../src/testing/render.js";
@@ -53,4 +54,25 @@ test("renderViews handles every canonical angle, and they are not all the same p
   expect(byView.top).not.toBe(byView.front);
   expect(byView.bottom).not.toBe(byView.left);
   expect(byView.iso).not.toBe(byView.front);
+});
+
+// A part is untrusted data (hosts run LLM-generated and user-supplied parts) and
+// meta.title is the only part-derived string that reaches the filesystem here.
+test("a traversal-shaped meta.title cannot write outside the out dir", async () => {
+  const hostile = { ...part, meta: { ...part.meta, title: "../../.ssh/authorized" } };
+  const files = await renderViews(k, hostile, "spacer", { views: ["iso"], out: OUT, size: [64, 48] });
+  expect(files).toHaveLength(1);
+  expect(files[0]).not.toMatch(/\.\./);
+  expect(files[0]).toBe(`${OUT}/ssh-authorized-spacer-iso.png`);
+  expect(resolve(files[0]).startsWith(resolve(OUT) + sep)).toBe(true);
+  expect(existsSync(files[0])).toBe(true);
+  expect(existsSync(resolve(OUT, "../../.ssh/authorized-spacer-iso.png"))).toBe(false);
+});
+
+// A title with nothing sluggable left must still produce a usable filename.
+test("a title that sanitizes to nothing falls back rather than writing a bare name", async () => {
+  const hostile = { ...part, meta: { ...part.meta, title: "…" } };
+  const files = await renderViews(k, hostile, "spacer", { views: ["iso"], out: OUT, size: [64, 48] });
+  expect(files[0]).toBe(`${OUT}/part-spacer-iso.png`);
+  expect(existsSync(files[0])).toBe(true);
 });

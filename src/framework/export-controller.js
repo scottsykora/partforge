@@ -3,6 +3,17 @@
 // replies (progress/download/error) back to the Promise that started them.
 // Pure — no DOM, no worker; `send` and the sink are injected.
 import { triggerDownload, downloadParts } from "./download.js";
+import { safeName } from "./safe-name.js";
+
+// The one place the "which backend does this export format need" policy lives.
+// STEP is always OCCT — only OCCT (OpenCASCADE) emits exact B-rep; Manifold's mesh
+// CSG has no STEP writer. Every other format is free to use whichever backend the
+// caller is already using for preview. Both the UI export buttons (mount.js) and
+// the headless exportParts() API route through this so the rule is never encoded
+// twice.
+export function backendForFormat(format, defaultBackend) {
+  return format === "step" ? "occt" : defaultBackend();
+}
 
 export function createExportController({ send, currentView, title, defaultBackend = () => "manifold", currentParams = () => ({}) }) {
   const pending = new Map(); // jobId -> { resolve, reject, onProgress }
@@ -11,7 +22,7 @@ export function createExportController({ send, currentView, title, defaultBacken
   function exportParts({ parts, format, quality = "print", onProgress } = {}) {
     const jobId = nextId++;
     const type = `export-${format}`;
-    const backend = format === "step" ? "occt" : defaultBackend();
+    const backend = backendForFormat(format, defaultBackend);
     return new Promise((resolve, reject) => {
       pending.set(jobId, { resolve, reject, onProgress });
       send({ type, jobId, parts, view: currentView(), params: currentParams(), name: title(), quality }, backend);
@@ -32,7 +43,7 @@ export function createExportController({ send, currentView, title, defaultBacken
     }
     if (m.type === "download-parts") {
       pending.delete(m.jobId);
-      const zipName = `${title() ?? "parts"}.zip`.toLowerCase().replace(/\s+/g, "-");
+      const zipName = `${safeName(title(), "parts")}.zip`; // title() is the part's meta.title — untrusted
       downloadParts(m, zipName, sink);
       entry.resolve();
       return true;

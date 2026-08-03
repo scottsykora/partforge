@@ -14,8 +14,14 @@ function mockStorage() {
   };
 }
 
-beforeEach(() => { globalThis.localStorage = mockStorage(); });
-afterEach(() => { delete globalThis.localStorage; });
+beforeEach(() => {
+  globalThis.localStorage = mockStorage();
+  globalThis.sessionStorage = mockStorage();
+});
+afterEach(() => {
+  delete globalThis.localStorage;
+  delete globalThis.sessionStorage;
+});
 
 test("rotating round-trips true/false; defaults to true when absent", () => {
   expect(loadRotating()).toBe(true);     // absent → default true
@@ -31,10 +37,31 @@ test("camera round-trips pos/target; null when absent", () => {
   expect(loadCamera()).toEqual({ pos: [1, 2, 3], target: [4, 5, 6] });
 });
 
-test("view round-trips a name; null when absent", () => {
-  expect(loadView()).toBeNull();
-  saveView("assembly");
-  expect(loadView()).toBe("assembly");
+test("view round-trips per part key in sessionStorage; null when absent", () => {
+  expect(loadView("Planter")).toBeNull();
+  saveView("Planter", "assembly");
+  expect(loadView("Planter")).toBe("assembly");
+  expect(globalThis.sessionStorage.getItem("partforge:view:Planter")).toBe("assembly");
+});
+
+test("a view saved for one part is not visible to another", () => {
+  saveView("Planter", "assembly");
+  expect(loadView("Bracket")).toBeNull();
+});
+
+test("the view is never written to localStorage", () => {
+  saveView("Planter", "assembly");
+  expect(globalThis.localStorage.getItem("partforge:view:Planter")).toBeNull();
+  expect(globalThis.localStorage.getItem("partforge:view")).toBeNull();
+});
+
+test("an absent or empty part key is a no-op for load and save", () => {
+  expect(loadView("")).toBeNull();
+  expect(loadView(undefined)).toBeNull();
+  saveView("", "assembly");
+  saveView(undefined, "assembly");
+  expect(globalThis.sessionStorage.getItem("partforge:view:")).toBeNull();
+  expect(globalThis.sessionStorage.getItem("partforge:view:undefined")).toBeNull();
 });
 
 test("theme round-trips light/dark; defaults to dark when absent", () => {
@@ -68,18 +95,20 @@ test("saveCamera skips invalid input (no write, no throw)", () => {
 });
 
 test("storage that throws → loads return defaults, saves are no-ops", () => {
-  globalThis.localStorage = {
+  const throwing = {
     getItem: () => { throw new Error("denied"); },
     setItem: () => { throw new Error("denied"); },
   };
+  globalThis.localStorage = throwing;
+  globalThis.sessionStorage = throwing;
   expect(loadRotating()).toBe(true);
   expect(loadCamera()).toBeNull();
-  expect(loadView()).toBeNull();
+  expect(loadView("Planter")).toBeNull();
   expect(loadTheme()).toBe("dark");
   expect(() => {
     saveRotating(false);
     saveCamera({ pos: [1, 2, 3], target: [0, 0, 0] });
-    saveView("x");
+    saveView("Planter", "x");
     saveTheme("light");
   }).not.toThrow();
 });

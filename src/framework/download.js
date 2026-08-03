@@ -1,4 +1,5 @@
 import { zipSync } from "fflate";
+import { safeName } from "./safe-name.js";
 
 // Browser file-download helpers. Pure DOM/Blob utilities with no app state — the
 // worker produces the bytes; these just hand them to the browser as a download.
@@ -23,9 +24,13 @@ export function triggerDownload(data, filename, mime, sink) {
 // Download a set of built parts: a single part downloads directly; multiple parts
 // are bundled into one flat, store-only (level 0) zip named `zipName`. `sink`, if
 // given, is forwarded to triggerDownload so it receives the final bytes.
+//
+// Sub-part names come from the part's `export.name` — untrusted data — and become
+// zip entry names, so they go through safeName(): the zip must stay flat, and an
+// entry like "../evil.stl" would escape the target directory in naive extractors.
 export function downloadParts({ parts, ext, mime }, zipName, sink) {
-  if (parts.length === 1) return triggerDownload(parts[0].data, `${parts[0].name}.${ext}`, mime, sink);
+  if (parts.length === 1) return triggerDownload(parts[0].data, `${safeName(parts[0].name)}.${ext}`, mime, sink);
   const entries = {};
-  for (const p of parts) entries[`${p.name}.${ext}`] = new Uint8Array(p.data);
+  for (const p of parts) entries[`${safeName(p.name)}.${ext}`] = new Uint8Array(p.data);
   triggerDownload(zipSync(entries, { level: 0 }), zipName, "application/zip", sink);
 }

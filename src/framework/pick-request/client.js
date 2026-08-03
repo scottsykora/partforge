@@ -4,18 +4,26 @@
 // user is working with an agent.
 import { createPromptBanner } from "./prompt-banner.js";
 import { formatSelection } from "../selection/format.js";
+import { PICK_SERVER_DEFAULT_URL } from "./endpoint.js";
 
-export function createPickRequestClient({ serverUrl = "http://127.0.0.1:4518", viewer, part, getContext }) {
+export function createPickRequestClient({ serverUrl = PICK_SERVER_DEFAULT_URL, token = "", viewer, part, getContext }) {
   let active = null; // { id, index } of the agent prompt we're waiting on
   const banner = createPromptBanner({ viewer, part, getContext });
 
+  // Every route on the pick-server is token-gated. POSTs carry it as a header;
+  // EventSource cannot set headers, so the stream carries it in the query string.
   const postJson = (path, body) =>
     fetch(`${serverUrl}${path}`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      method: "POST",
+      headers: { "content-type": "application/json", ...(token ? { "x-pick-token": token } : {}) },
+      body: JSON.stringify(body),
     }).catch(() => banner.message("⚠ couldn't reach pick-server — click not sent"));
 
   // --- agent prompts over SSE -------------------------------------------------
-  const es = new globalThis.EventSource(`${serverUrl}/events`);
+  const eventsUrl = token
+    ? `${serverUrl}/events?token=${encodeURIComponent(token)}`
+    : `${serverUrl}/events`;
+  const es = new globalThis.EventSource(eventsUrl);
   es.addEventListener("prompt", (e) => {
     const v = JSON.parse(e.data);
     active = { id: v.id, index: v.index };

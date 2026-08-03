@@ -1,6 +1,6 @@
 import { buildView } from "./build.js";
 import { cachedBVH } from "./bvh.js";
-import { assemblyOverlaps } from "../framework/assembly.js";
+import { assemblyOverlaps } from "../assembly.js";
 import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall } from "./min-wall.js";

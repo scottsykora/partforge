@@ -1,7 +1,17 @@
 // test/export-controller.test.js
 import { expect, test, vi } from "vitest";
-import { createExportController } from "../src/framework/export-controller.js";
+import { createExportController, backendForFormat } from "../src/framework/export-controller.js";
 import { triggerDownload, downloadParts } from "../src/framework/download.js";
+
+test("backendForFormat: step always routes to occt regardless of the default", () => {
+  expect(backendForFormat("step", () => "manifold")).toBe("occt");
+  expect(backendForFormat("step", () => "occt")).toBe("occt");
+});
+
+test("backendForFormat: every other format defers to the default backend", () => {
+  expect(backendForFormat("stl", () => "manifold")).toBe("manifold");
+  expect(backendForFormat("3mf", () => "occt")).toBe("occt");
+});
 
 function setup(overrides = {}) {
   const sent = [];
@@ -56,6 +66,23 @@ test("progress is routed to onProgress; download resolves + hits the sink", asyn
   ctl.handleMessage({ type: "download-parts", parts: [{ name: "a", data: new Uint8Array([1]).buffer }], ext: "stl", mime: "model/stl", jobId }, sink);
   await expect(done).resolves.toBeUndefined();
   expect(sink).toHaveBeenCalledTimes(1);
+});
+
+// meta.title is untrusted (hosts run LLM-generated and user-supplied parts), and
+// it names the zip the browser saves.
+test("the zip name is slugged from an untrusted title", () => {
+  const cases = [["My Part", "my-part.zip"], ["../../evil", "evil.zip"], ["…", "parts.zip"], [undefined, "parts.zip"]];
+  for (const [title, expected] of cases) {
+    const { ctl, sent } = setup({ title: () => title });
+    const sink = vi.fn();
+    ctl.exportParts({ parts: ["a", "b"], format: "stl", onProgress: vi.fn() });
+    const { jobId } = sent[0].msg;
+    ctl.handleMessage({
+      type: "download-parts", ext: "stl", mime: "model/stl", jobId,
+      parts: [{ name: "a", data: new Uint8Array([1]).buffer }, { name: "b", data: new Uint8Array([2]).buffer }],
+    }, sink);
+    expect(sink.mock.calls[0][0].filename, `title ${title}`).toBe(expected);
+  }
 });
 
 test("error rejects the pending export", async () => {

@@ -1,7 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
-import { measure } from "../src/testing/measure.js";
-import { evaluateCase } from "../src/testing/verify.js";
+import { measure } from "../src/framework/oracle/measure.js";
+import { evaluateCase } from "../src/framework/oracle/verify.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });

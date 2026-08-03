@@ -1,7 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { linearPattern, circularPattern } from "../src/framework/geometry/polygon.js";
-import { bboxSize } from "../src/testing/mesh.js";
+import { bboxSize } from "../src/framework/oracle/mesh.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });

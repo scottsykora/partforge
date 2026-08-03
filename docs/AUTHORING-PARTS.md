@@ -85,7 +85,7 @@ export default {
       export?: { name },                   // filename/object name on export; defaults to the key
     },
   },
-  views: { <name>: { label } },            // the view tabs (a view = a set of sub-parts)
+  views: { <name>: { label, default? } },  // the view tabs (a view = a set of sub-parts)
 };
 ```
 
@@ -111,6 +111,14 @@ export default {
 - `enabled(p)` gates a conditional sub-part (e.g. only present when a feature is on).
 - A view's sub-parts are derived, never hard-coded: those whose `views` include the view
   and whose `enabled(p)` is true.
+- **Which view the viewer opens on** is resolved in this order: the first view flagged
+  `default: true`; else the view placing the most sub-parts at `defaults` (counting
+  `enabled(defaults)`), which for a multi-view part is normally the assembly; else the
+  first key in `views`. So flag the assembly view `default: true` when you want it to
+  open but sit last in the tab bar. The chosen tab then persists per part for the rest
+  of the browser session. The headless tools are deliberately different: `measure`,
+  `verify` and `render` all default to the **first key** in `views`, ignoring
+  `default: true`, so a CI gate can't move because a sub-part was added to a view.
 - `fonts` declares the outline fonts a part's `k.text2d()` calls need, as `{ name: source
   }` — a source is inline bytes, a URL string, or a thunk (e.g. a Vite `import('./x.ttf')`,
   which resolves to `{ default: url }`). The framework resolves and parses these into
@@ -762,7 +770,7 @@ stylesheet). `mount` looks up these element IDs:
 |---|---|
 | `#app` | viewer canvas mounts here |
 | `#controls` | control panel is built into this |
-| `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` |
+| `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
 | `#viewbar` with `#pause` / `#reframe` / `#cutaway` / `#theme` | optional viewer controls (omit any you don't want) |
@@ -1063,7 +1071,8 @@ previously didn't; that's the fix working as intended, not a regression.
 ### Rule catalog
 
 **Definition shape** — `missing-meta-title`, `missing-defaults`, `no-buildable-parts`,
-`missing-views`, `part-view-unknown` (all errors); `view-unused` (warning).
+`missing-views`, `part-view-unknown` (all errors); `view-unused`,
+`default-view-ambiguous` (warnings).
 
 **Parameter schema** — `features-requires-sliders`, `control-key-not-in-defaults`,
 `preset-key-not-in-defaults` (errors); `slider-range-excludes-default`,
@@ -1212,8 +1221,8 @@ verify: {
 **What the profile gives you:** a hard **bed-fit** gate (the view bbox must fit `bed`)
 and a **min-wall** warning. **What `expect` gives you:** per-sub-part assertions on the
 facts `measure` already reports — `holes` (through-bores / genus), `volume`,
-`surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`, `bounds` (per-sub-part
-and aggregate axis-aligned `{min,max}` corner positions — where the geometry sits, vs
+`surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`, `boundsMin` / `boundsMax`
+(the axis-aligned `{min,max}` corner positions — where the geometry sits, vs
 `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
 `volume`, `overlaps`, `centerOfMass`, `boundsMin`, `boundsMax`, plus the pair-wise
@@ -1450,12 +1459,22 @@ An external tool (e.g. an AI agent editing your part) can ask the *user* to clic
 geometry and receive the `Selection` back, closing the loop in the other direction
 from `?pick`.
 
-- Serve your app with **`?pickserver`** (or `?pickserver=http://host:port`) to enable
-  it. While idle nothing changes; when the local pick-server requests a click, a banner
-  appears ("🤖 Claude needs you to click …") and the picker arms for one click.
-- The agent side runs `partforge pick-serve` once, then `partforge pick "<prompt>" …`
-  for one or more clicks (collected in order, returned together). The CLI blocks until
-  the user clicks, then prints the `Selection`(s) as JSON.
+- Serve your app with **`?pickserver&picktoken=<token>`** (or
+  `?pickserver=http://127.0.0.1:4518&picktoken=<token>`) to enable it. While idle
+  nothing changes; when the local pick-server requests a click, a banner appears
+  ("🤖 Claude needs you to click …") and the picker arms for one click.
+- The agent side runs `partforge pick-serve` once — it prints the token and the exact
+  URL to open — then `partforge pick "<prompt>" …` for one or more clicks (collected in
+  order, returned together). The CLI blocks until the user clicks, then prints the
+  `Selection`(s) as JSON.
+- **The token is required.** Every route on the pick-server (including the SSE stream)
+  is gated by a random per-process token, requests from non-loopback origins are
+  refused, and the server never reflects an arbitrary `Origin`. Without that, any site
+  the user browsed to while the server was running could read the agent's prompts,
+  inject text into the agent's output, or harvest the user's live parameter values.
+  A `?pickserver=` pointing anywhere but loopback is ignored with a console warning.
+  `partforge pick` finds the token automatically via `~/.partforge/pick-<port>.token`;
+  `--token` and `PARTFORGE_PICK_TOKEN` override it.
 
 See the bundled skill `skills/partforge/SKILL.md` for the agent workflow. This is plain
 click-routing — no LLM logic lives in partforge.

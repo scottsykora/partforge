@@ -3,7 +3,7 @@
 // rounded-primitives-occt.test.js (the two backends never boot in one process).
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
-import { detectBackend } from "../src/framework/geometry/probe.js";
+import { detectBackend } from "../src/framework/backend-select.js";
 import {
   roundedCylinderVolume, torusVolume, roundedBoxVolume, minkowskiRoundedBoxVolume,
 } from "./fixtures/rounded-oracles.js";

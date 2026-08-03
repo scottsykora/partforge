@@ -1,0 +1,33 @@
+{
+  // Typecheck the SHIPPED DECLARATIONS ONLY. partforge's source stays plain ESM
+  // JavaScript — `checkJs` is deliberately false and no .js file is in `include`.
+  // What this config proves is that types/*.d.ts is internally consistent and
+  // that the type-level tests in types/*.test-d.ts still hold. The declarations'
+  // agreement with the RUNTIME exports is proved separately, and mechanically,
+  // by test/types-surface.test.js.
+  "compilerOptions": {
+    "target": "ES2022",
+    // DOM only — `lib.dom` and `lib.webworker` redeclare hundreds of shared
+    // names and cannot both be loaded. The declarations that describe worker
+    // code (types/worker.d.ts) use no worker-global types, so DOM is enough.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "checkJs": false,
+    "strict": true,
+    "exactOptionalPropertyTypes": false,
+    "noUncheckedIndexedAccess": false,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "types": []
+  },
+  // The type-level tests live under test/, not types/ — `files` in package.json
+  // publishes the whole types/ directory, and a 16 kB test file has no business
+  // in the tarball.
+  "include": ["types/**/*.d.ts", "test/**/*.test-d.ts"]
+}

@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { unzipSync } from "fflate";
 import { triggerDownload, downloadParts } from "../src/framework/download.js";
 
 afterEach(() => { vi.restoreAllMocks(); });
@@ -45,5 +46,25 @@ describe("downloadParts with a sink", () => {
     expect(call.mime).toBe("application/zip");
     expect(call.data).toBeInstanceOf(Uint8Array);
     expect(call.data.length).toBeGreaterThan(0); // real zip bytes
+  });
+
+  // Sub-part export names come from the (untrusted) part definition. A zip entry
+  // of "../evil.stl" is zip-slip: a naive extractor writes it outside the target.
+  it("zip entries stay flat — a traversal-shaped export name is slugged", () => {
+    const sink = vi.fn();
+    downloadParts(
+      { parts: [{ name: "../../evil", data: new Uint8Array([1]) }, { name: "Left Bracket", data: new Uint8Array([2]) }], ext: "stl", mime: "model/stl" },
+      "widget.zip",
+      sink,
+    );
+    const names = Object.keys(unzipSync(sink.mock.calls[0][0].data));
+    expect(names).toEqual(["evil.stl", "left-bracket.stl"]);
+    for (const n of names) expect(n).not.toMatch(/[/\\]|^\./);
+  });
+
+  it("a single traversal-shaped export name is slugged too", () => {
+    const sink = vi.fn();
+    downloadParts({ parts: [{ name: "../../.ssh/authorized", data: new Uint8Array([9]) }], ext: "stl", mime: "model/stl" }, "part.zip", sink);
+    expect(sink.mock.calls[0][0].filename).toBe("ssh-authorized.stl");
   });
 });

@@ -1,22 +1,37 @@
+import { resolveDefaultView } from "./default-view.js";
 import { loadView, saveView } from "./view-state.js";
 
 // The view-tab segmented control. When the part declares `views`, the buttons are
 // generated from it (part.views is the single source of truth — host pages leave
 // the #part div empty); a part without `views` keeps whatever buttons the page
-// hand-wrote. The active view persists across reloads via view-state.
+// hand-wrote. Which tab opens is resolveDefaultView's call, not key order. The
+// active tab then persists per part for the rest of the browser session, so a
+// Vite dev reload doesn't throw you back mid-edit.
 export function createViewTabs(el, part, { onChange }) {
   const generated = !!(el && part.views);
+  const partKey = part?.meta?.title ?? "";
+  const resolved = resolveDefaultView(part);
   if (generated) {
-    el.innerHTML = Object.entries(part.views)
-      .map(([key, v], i) => `<button data-part="${key}"${i === 0 ? ' class="on"' : ""}>${v?.label ?? key}</button>`)
-      .join("");
+    // Built node-by-node with textContent/dataset rather than an innerHTML
+    // template — view keys and labels come from the part, which is untrusted
+    // data (hosts run LLM-generated and user-supplied parts), so a label of
+    // `<img src=x onerror=...>` must land as text, not as markup.
+    el.replaceChildren(...Object.entries(part.views).map(([key, v]) => {
+      const btn = document.createElement("button");
+      btn.dataset.part = key;
+      btn.textContent = v?.label ?? key;
+      if (key === resolved) btn.classList.add("on");
+      return btn;
+    }));
   }
 
   const setActive = (btn) => { for (const b of el.children) b.classList.toggle("on", b === btn); };
 
-  // Initial view: the saved one if it still matches a tab, else the active (first) tab.
+  // Initial view: the session-saved one if it still matches a tab, else the active
+  // button — the resolved default for a generated bar, or whatever the page's own
+  // markup marked `on` for a hand-written one.
   const defaultView = el.querySelector("button.on")?.dataset.part ?? el.querySelector("button")?.dataset.part;
-  const saved = loadView();
+  const saved = loadView(partKey);
   const savedBtn = saved ? [...el.querySelectorAll("button[data-part]")].find((b) => b.dataset.part === saved) : null;
   let view = savedBtn ? saved : defaultView;
   if (savedBtn) setActive(savedBtn);
@@ -25,7 +40,7 @@ export function createViewTabs(el, part, { onChange }) {
     const btn = e.target.closest("button[data-part]");
     if (!btn) return;
     view = btn.dataset.part;
-    saveView(view);
+    saveView(partKey, view);
     setActive(btn);
     onChange(view);
   };

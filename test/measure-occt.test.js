@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
-import { measure } from "../src/testing/measure.js";
+import { measure } from "../src/framework/oracle/measure.js";
 import part from "../src/parts/filleted-box.js";
 import gapPart from "./fixtures/gap-part.js";
 

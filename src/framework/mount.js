@@ -11,18 +11,18 @@ import { buildControls } from "./controls.js";
 import { relevantParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
-import { viewSubParts } from "./jobs.js";
+import { viewSubParts } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
-import { detectBackend } from "./geometry/probe.js";
+import { detectBackend } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
 import { createPoseFastPath } from "./pose-fast-path.js";
 import { createStatusUi } from "./status-ui.js";
 import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
-import { createPickRequestClient } from "./pick-request/index.js";
+import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
 import { exportablePartNames, partLabel } from "./export-select.js";
-import { createExportController } from "./export-controller.js";
+import { createExportController, backendForFormat } from "./export-controller.js";
 import { attachAnimationControls } from "./animation-controls.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
@@ -82,7 +82,7 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.42.0):
+// Embedding contract (0.43.0):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
@@ -249,10 +249,17 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.defer(() => pickToggle.detach());
     } else if (qs.has("pickserver")) {
       // Agent-driven mode: arm the picker only when the local pick-server asks for a
-      // click. `?pickserver` or `?pickserver=http://host:port`.
-      const serverUrl = typeof qs.get("pickserver") === "string" && qs.get("pickserver")
-        ? qs.get("pickserver") : "http://127.0.0.1:4518";
-      pickClient = createPickRequestClient({ serverUrl, viewer, part, getContext });
+      // click. `?pickserver&picktoken=<token>` or `?pickserver=http://host:port&picktoken=…`.
+      // The URL is attacker-suppliable (anyone can hand the user a link), so a
+      // non-loopback target is refused rather than honoured — otherwise every click,
+      // with its live parameter values, would stream to a remote host.
+      const serverUrl = resolvePickServerUrl(qs.get("pickserver"), {
+        onReject: (raw) => console.warn(
+          `partforge: ignoring non-loopback ?pickserver=${raw} — using ${PICK_SERVER_DEFAULT_URL}`,
+        ),
+      });
+      const token = qs.get("picktoken") || "";
+      pickClient = createPickRequestClient({ serverUrl, token, viewer, part, getContext });
       cleanup.defer(() => pickClient.detach());
     }
 
@@ -514,7 +521,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     const onStepClick = () => {
       ui.showBusy("exporting STEP");
-      service.send({ type: "export-step", view: view(), params }, "occt"); // STEP is always OCCT
+      service.send({ type: "export-step", view: view(), params }, backendForFormat("step", backendFor));
     };
     if (els.exports.step) {
       els.exports.step.addEventListener("click", onStepClick);

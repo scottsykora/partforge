@@ -3,7 +3,8 @@
 // regrows a drum-specific assumption, this breaks.
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../../src/testing.js";
-import { handle, viewSubParts } from "../../src/framework/jobs.js";
+import { handle } from "../../src/framework/jobs.js";
+import { viewSubParts } from "../../src/framework/part-model.js";
 import demo from "../../src/parts/demo.js";
 
 let k;

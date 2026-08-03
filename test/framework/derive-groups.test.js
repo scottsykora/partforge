@@ -1,8 +1,8 @@
 import { expect, test } from "vitest";
 import { resolveDerived } from "../../src/framework/derive.js";
 import { relevantParamKeys, subPartReadKeys, RELEVANT_ALL } from "../../src/framework/param-deps.js";
-import { resolveParams } from "../../src/framework/jobs.js";
-import { detectBackend } from "../../src/framework/geometry/probe.js";
+import { resolveParams } from "../../src/framework/part-model.js";
+import { detectBackend } from "../../src/framework/backend-select.js";
 
 // A part with a grouped derive: two independent groups plus one chained off the
 // first. `usesCore` touches only the core group; `usesChained` pulls in the

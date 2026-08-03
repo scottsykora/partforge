@@ -65,7 +65,10 @@ vi.mock("../../src/framework/selection/index.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../src/framework/pick-request/index.js", () => ({
+// Only the client is faked — the loopback gate mount() applies to ?pickserver is the
+// real one, so the tests below exercise the actual URL validation.
+vi.mock("../../src/framework/pick-request/index.js", async () => ({
+  ...(await import("../../src/framework/pick-request/endpoint.js")),
   createPickRequestClient: vi.fn(() => ({ detach: vi.fn() })),
 }));
 
@@ -176,6 +179,7 @@ async function mountFixture() {
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   document.body.innerHTML = "";
   fakeViewers.length = 0;
   fakeTooltips.length = 0;
@@ -547,6 +551,31 @@ test("onPick wins over ?pick and ?pickserver (one click listener ever live)", as
   expect(attachPicker).toHaveBeenCalledTimes(1);
   expect(attachPickToggle).not.toHaveBeenCalled();
   expect(createPickRequestClient).not.toHaveBeenCalled();
+});
+
+test("?pickserver passes the loopback URL and ?picktoken through to the client", async () => {
+  vi.stubGlobal("location", { search: "?pickserver=http://localhost:9999&picktoken=abc123" });
+  const { createPickRequestClient } = await import("../../src/framework/pick-request/index.js");
+  const { createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: makeElements() });
+  expect(createPickRequestClient).toHaveBeenCalledWith(
+    expect.objectContaining({ serverUrl: "http://localhost:9999", token: "abc123" }),
+  );
+});
+
+// A link is all it takes to set ?pickserver, and every click carries the user's live
+// parameter values — a non-loopback target must never be dialled.
+test("a non-loopback ?pickserver is refused and falls back to the default", async () => {
+  vi.stubGlobal("location", { search: "?pickserver=https://evil.example&picktoken=abc123" });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { createPickRequestClient } = await import("../../src/framework/pick-request/index.js");
+  const { createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: makeElements() });
+  expect(createPickRequestClient).toHaveBeenCalledWith(
+    expect.objectContaining({ serverUrl: "http://127.0.0.1:4518" }),
+  );
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining("evil.example"));
+  warn.mockRestore();
 });
 
 test("without onPick, ?pick still enables the clipboard toggle", () => {

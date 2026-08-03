@@ -3,7 +3,10 @@ import { afterEach, expect, test, vi } from "vitest";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-import { createCutawayGizmo } from "../../src/framework/cutaway-gizmo.js";
+import {
+  CUTAWAY_GIZMO_THEMES,
+  createCutawayGizmo,
+} from "../../src/framework/cutaway-gizmo.js";
 import { initialCutawayPose } from "../../src/framework/cutaway-math.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../../src/framework/cutaway-render.js";
 
@@ -372,6 +375,39 @@ test("reports hover, focus, and successful handle presses only while visible and
   domElement.dispatchEvent(new FocusEvent("focus"));
   pointer(domElement, "pointerdown");
   expect(onActivity).toHaveBeenCalledTimes(4);
+});
+
+// The colors a gizmo is constructed with have to come from the theme table
+// rather than repeated hex literals, or editing the table leaves the very
+// first rendered frame painted in the old palette until something happens to
+// trigger an appearance update.
+test("the first frame is painted from the dark theme table, not from baked-in literals", () => {
+  const { gizmo } = createFixture();
+  const dark = CUTAWAY_GIZMO_THEMES.dark;
+  const constructed = () => ({
+    fill: gizmo.fill.material.color.getHex(),
+    border: gizmo.border.material.color.getHex(),
+    shaft: gizmo.handleVisuals.translate.children[0].material.color.getHex(),
+    cone: gizmo.handleVisuals.translate.children[1].material.color.getHex(),
+    rotateX: gizmo.handleVisuals.rotateX.material.color.getHex(),
+    rotateY: gizmo.handleVisuals.rotateY.material.color.getHex(),
+  });
+  const expected = {
+    fill: dark.fill,
+    border: dark.border,
+    shaft: dark.translate,
+    cone: dark.translate,
+    rotateX: dark.rotateX,
+    rotateY: dark.rotateY,
+  };
+
+  expect(constructed()).toEqual(expected);
+
+  // Re-deriving the same theme must be a no-op, which is only true when
+  // construction and updateAppearance read the same source.
+  gizmo.setTheme("dark");
+
+  expect(constructed()).toEqual(expected);
 });
 
 test("theme changes the fill, border, and visible handle colors in place", () => {

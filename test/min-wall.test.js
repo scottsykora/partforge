@@ -1,7 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
-import { minWall } from "../src/testing/min-wall.js";
-import { buildBVH } from "../src/testing/bvh.js";
+import { minWall } from "../src/framework/oracle/min-wall.js";
+import { buildBVH } from "../src/framework/oracle/bvh.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });

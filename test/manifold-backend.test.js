@@ -1,5 +1,5 @@
 import { beforeAll, expect, test } from "vitest";
-import { bboxSize } from "../src/testing/mesh.js";
+import { bboxSize } from "../src/framework/oracle/mesh.js";
 import { circleProfile, regularPolygon, filletPolygon, roundedProfile, offsetPolygon } from "../src/framework/geometry/polygon.js";
 import { bootManifoldKernel } from "../src/testing.js";
 

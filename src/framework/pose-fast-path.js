@@ -4,7 +4,7 @@
 // unchanged gets its delivered mesh re-posed in the viewer (delta vs. the
 // delivered pose) and is re-stamped current — no worker job. Everything else
 // falls through to the normal regen loop.
-import { viewSubParts } from "./jobs.js";
+import { viewSubParts } from "./part-model.js";
 import { probePoses } from "./pose-probe.js";
 import { poseDelta } from "./geometry/pose.js";
 

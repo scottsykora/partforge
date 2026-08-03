@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing/occt.js";
-import { buildView } from "../src/testing/build.js";
+import { buildView } from "../src/framework/oracle/build.js";
 import part from "../src/parts/filleted-box.js";
 
 let k;

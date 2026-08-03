@@ -3,7 +3,7 @@
 // when `mode === "bad"`. The lint gate's `verify-unknown-metric` rule only resolves
 // `expect` once, with the part's *defaults* (mode: "ok") — so it sees `{ holes: 1 }`,
 // which is valid, and passes clean. verify() itself expands every case (defaults +
-// each preset, see src/testing/cases.js) and re-resolves `expect(p, d)` per case, so
+// each preset, see src/framework/oracle/cases.js) and re-resolves `expect(p, d)` per case, so
 // the "Bad" preset's case still throws `unknown subpart metric "bogusMetric"` — but
 // only after measure() has already printed and `--out` has already been written once.
 // This keeps test/cli.test.js's "--out writes the measure half even when a later

@@ -1,4 +1,4 @@
-import { viewSubParts, resolveParams, buildPosed } from "./jobs.js";
+import { viewSubParts, resolveParams, buildPosed } from "./part-model.js";
 
 // Collision check for an assembled view: build each sub-part in its display
 // (assembly) pose and return the pairs whose solid-intersection volume exceeds

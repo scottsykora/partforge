@@ -3,7 +3,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel, handle } from "../src/testing.js";
 import planter from "../src/parts/planter.js";
-import { resolveParams, buildPosed } from "../src/framework/jobs.js";
+import { resolveParams, buildPosed } from "../src/framework/part-model.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });

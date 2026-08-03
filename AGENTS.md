@@ -15,9 +15,12 @@ import handling.
 
 This directory is its **own git repo** (`scottsykora/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; the parts here are `demo.js` (minimal spacer),
-`planter.js` (rich - facets/taper/twist/verify block), and `filleted-box.js`
-(OCCT fillet/chamfer).
+separate Drum-Machine repo; `src/parts/` now has eight: `demo.js` (minimal
+spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
+(OCCT fillet/chamfer), `bracket.js` (Shape2D union/intersect/cut toolkit),
+`faceted-vase.js` (k.loft silhouette body), `hull-sweep.js` (k.hull/hullChain),
+`nameplate.js` (k.text2d emboss/deboss), and `text-smoke.js` (worker text-render
+CI fixture).
 
 ## Node version
 
@@ -47,9 +50,10 @@ npx partforge render  src/parts/<part>.js [view]   # canonical-angle PNGs -> ren
 npx partforge pick-serve                           # request-a-pick: agent asks user to click geometry
 ```
 
-CI (`.github/workflows/ci.yml`) runs `npm test` then the smoke check against all
-three demo apps. Playwright's Chromium is required for the smoke check only:
-`npm i -D playwright && npx playwright install chromium`.
+CI (`.github/workflows/ci.yml`) runs `npm test` then the smoke check against
+four apps (demo, planter, filleted-box, text-smoke). Playwright's Chromium is
+required for the smoke check only: `npm i -D playwright && npx playwright
+install chromium`.
 
 ## Releasing
 
@@ -74,7 +78,10 @@ the installed package, so publish before bumping the dep there.
 - **`src/framework/`** - the reusable engine (part-agnostic): `mount.js` (app
   entry), `controls.js` + `param-deps.js` (relevance-aware control panel),
   `viewer.js` (three.js), `worker.js` / `jobs.js` / `geometry-service.js` (job
-  loop across workers), `assembly.js` (collision checking), `geometry/` (the
+  loop across workers), `part-model.js` (the pure part model - `viewSubParts` /
+  `resolveParams` / `buildPosed`; a deliberate leaf so the job loop, the
+  collision check and the oracle can share it without a cycle), `assembly.js`
+  (collision checking), `oracle/` (see below), `geometry/` (the
   kernel), and `app.css` / `chrome.css` (the shell/rail layout - `rail.js` binds
   it to the DOM, `rail-state.js` is its pure drag/collapse state machine).
   Below `RAIL_NARROW_BREAKPOINT` (720px) the rail cannot sit beside the viewer:
@@ -85,9 +92,21 @@ the installed package, so publish before bumping the dep there.
   suspended at that width — `rail.js` ignores a persisted `collapsed` flag there
   rather than clearing it.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
-- **`src/testing.js`** + **`src/testing/`** - headless helpers
-  (`createManifoldKernel`, `measure`, `verify`, `assemblyOverlaps`,
-  `bootOcctKernel`, `renderViews`, ...).
+- **`src/framework/oracle/`** - the geometric oracle: `measure.js`, `verify.js`,
+  `build.js`, `gaps.js`, `min-wall.js`, `bvh.js`, `mesh.js`, `assert-dsl.js`,
+  `dfm-profiles.js`, `cases.js`. Despite reading like test code this is shared
+  runtime: the browser worker runs it for the `inspect` job, and `lint` reads
+  its DFM profiles and assertion grammar. It is therefore DOM-free, `three`-free
+  and `node:`-free, same as the rest of the worker graph
+  (`test/worker-layering.test.js` enforces that).
+- **`src/testing/`** - the genuinely Node-only harness, and only that:
+  `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
+  PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these
+  from `src/framework/`.
+- **`src/testing.js`** - the published `partforge/testing` entry point. A barrel
+  over both of the above (`createManifoldKernel`, `measure`, `verify`,
+  `assemblyOverlaps`, `bootOcctKernel`, `renderViews`, ...); downstream sees one
+  surface and not the split.
 - **`bin/cli.js`** - the `partforge` CLI dispatch.
 
 **`docs/AUTHORING-PARTS.md` is the authoritative guide** - read it before

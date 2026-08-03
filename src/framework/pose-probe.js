@@ -1,9 +1,9 @@
 // Geometry-free pose probe over a view — see pose-probe-core.js for the probe
 // session itself and the trust model. This wrapper resolves params/derive and
 // walks the view's sub-parts; it stays separate so lint can import the core
-// without dragging in jobs.js (purity).
+// without dragging in the part-model/jobs layer (purity).
 import { probeSubPartPose } from "./pose-probe-core.js";
-import { viewSubParts, resolveParams } from "./jobs.js";
+import { viewSubParts, resolveParams } from "./part-model.js";
 
 // Probe every subpart the view shows. Never throws; a failing/queried/weird
 // subpart yields { trusted: false } and the others still probe.

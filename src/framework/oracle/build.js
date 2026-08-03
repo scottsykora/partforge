@@ -1,4 +1,4 @@
-import { viewSubParts, resolveParams, buildPosed } from "../framework/jobs.js";
+import { viewSubParts, resolveParams, buildPosed } from "../part-model.js";
 
 // Build every sub-part of a view in its display (assembly) pose with the given
 // Manifold kernel, returning live solids + copied-out meshes. Mirrors the

@@ -1,7 +1,7 @@
 // test/manifold-cache.test.js
 import { beforeAll, beforeEach, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
-import { meshVolume, bboxSize } from "../src/testing/mesh.js";
+import { meshVolume, bboxSize } from "../src/framework/oracle/mesh.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });

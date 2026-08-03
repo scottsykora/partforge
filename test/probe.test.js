@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { detectBackend } from "../src/framework/geometry/probe.js";
+import { detectBackend } from "../src/framework/backend-select.js";
 
 const view = { v: { label: "V" } };
 const plain = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box({ min: [0, 0, 0], max: [1, 1, 1] }) } } };

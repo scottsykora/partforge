@@ -1,0 +1,373 @@
+// The `PartDefinition` contract — the central type of partforge.
+//
+// Derived from docs/AUTHORING-PARTS.md ("The PartDefinition contract"), from the
+// eight parts in src/parts/, and above all from what the framework actually
+// READS: src/framework/part-model.js (views/enabled/place/defaults/derive),
+// src/framework/derive.js, src/framework/controls.js (the parameter schema),
+// src/framework/lint/rules-{shape,schema}.js (which fields are required vs.
+// ignored), src/framework/export-select.js (`exportable`/`export.name`), and
+// src/framework/oracle/verify.js + src/framework/verify-metrics.js (the `verify`
+// block's metric vocabulary).
+
+import type { BackendName, GeometryKernel, Solid } from "./kernel.js";
+
+/**
+ * A value the control panel can hold. Sliders and number boxes write numbers;
+ * `text`/`textarea` controls write strings; toggles write `on` or `0`.
+ */
+export type ParamValue = number | string | boolean;
+
+/**
+ * The flat parameter object a part's `defaults` seeds and the control panel
+ * mutates in place.
+ */
+export type Defaults = Record<string, ParamValue>;
+
+/**
+ * The resolved parameters a build sees: `{ ...part.defaults, ...userParams }`.
+ *
+ * Deliberately loose. Parts index it with computed keys and do arithmetic on
+ * every read, and partforge does not (yet) infer a per-part params type from
+ * `defaults` — narrowing this to `ParamValue` would make `p.h / 2` an error in
+ * every part ever written. Supply the `P` type argument of `PartDefinition` to
+ * get a checked params object.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see the doc comment
+export type ResolvedParams = Record<string, any>;
+
+/** The derived-values object `derive` produces and every build receives as `d`. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- part-defined, unconstrained
+export type Derived = Record<string, any>;
+
+// --- meta -------------------------------------------------------------------
+
+export interface PartMeta {
+  /** Names the part in the viewer and in export filenames. Required (lint errors without it). */
+  title: string;
+  /** Display units; partforge geometry is always millimetres. */
+  units?: string;
+  /** Scene background as `0xRRGGBB`. */
+  background?: number;
+  /** Pin a backend instead of letting the probe route the part. */
+  backend?: BackendName;
+}
+
+// --- the parameter schema ---------------------------------------------------
+
+/** Which input a control renders as. Omit for a slider + number box. */
+export type ControlKind = "slider" | "number" | "text" | "textarea";
+
+/**
+ * One parameter control. The recognised field list mirrors
+ * `CONTROL_FIELDS` in src/framework/lint/rules-schema.js — anything else is
+ * ignored by the panel and warned about by `partforge lint`.
+ */
+export interface ControlDef {
+  /** Must exist in `defaults`, or the control is silently dead. */
+  key: string;
+  label?: string;
+  /** Suffix shown beside the value box, e.g. `"mm"`. */
+  unit?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  control?: ControlKind;
+  /** Omit from the panel; the key still exists and still drives the geometry. */
+  hidden?: boolean;
+  /** CommonMark shown in a click-open ⓘ popover. */
+  description?: string;
+}
+
+/**
+ * A feature: a checkbox that sets `key` to `on` (or `0`) and reveals its own
+ * controls. `sliders` is REQUIRED — the panel reads `feat.sliders.filter(...)`
+ * unguarded. A bare on/off control belongs in `toggles` instead.
+ */
+export interface FeatureDef {
+  key: string;
+  label?: string;
+  /** The value written when the box is checked. */
+  on: number;
+  sliders: ControlDef[];
+  hidden?: boolean;
+  description?: string;
+}
+
+/**
+ * A standalone on/off checkbox shown below the preset picker, outside the
+ * Advanced fold. Checked writes `on` (default `1`); unchecked writes `0`.
+ */
+export interface ToggleDef {
+  key: string;
+  label?: string;
+  on?: number;
+  hidden?: boolean;
+  description?: string;
+}
+
+/** Fields every section kind shares. */
+interface SectionBase {
+  id?: string;
+  title?: string;
+  description?: string;
+  /** Omit the whole section from the panel. */
+  hidden?: boolean;
+}
+
+/** A preset picker plus optional toggles and an Advanced block. */
+export interface PresetSection extends SectionBase {
+  /** Preset name → the param overrides it applies. */
+  presets?: Record<string, Record<string, ParamValue>>;
+  toggles?: ToggleDef[];
+  /** Controls revealed under "Advanced". */
+  advanced?: ControlDef[];
+  /** A section with `features` is a feature section; `advanced` is ignored there. */
+  features?: undefined;
+}
+
+/** A feature-toggle section: each feature is a checkbox plus its own controls. */
+export interface FeatureSection extends SectionBase {
+  features: FeatureDef[];
+}
+
+export type ParameterSection = PresetSection | FeatureSection;
+
+// --- fonts ------------------------------------------------------------------
+
+/**
+ * One entry of a part's `fonts` map: raw bytes, a URL string, or a thunk
+ * returning either (a Vite `() => import("./x.ttf")` resolves to
+ * `{ default: url }`). Resolved before the synchronous `build` runs.
+ */
+export type FontSource =
+  | string
+  | ArrayBuffer
+  | ArrayBufferView
+  | (() => FontSourceValue | Promise<FontSourceValue>);
+
+type FontSourceValue = string | ArrayBuffer | ArrayBufferView | { default: string };
+
+// --- derive -----------------------------------------------------------------
+
+/**
+ * A part's `derive`. Either one function computed in a single pass, or named
+ * GROUPS run in declaration order — each group receives the params plus the
+ * merged outputs of the groups before it. The grouped form is what lets the
+ * relevance layer attribute each derived value to just its own group's inputs.
+ *
+ * A group that reads a key no earlier group produced throws.
+ */
+export type DeriveSpec<P = ResolvedParams, D = Derived> =
+  | ((p: P) => D | void)
+  | Record<string, (p: P, d: D) => D | void>;
+
+// --- sub-parts --------------------------------------------------------------
+
+export interface PlaceContext<P = ResolvedParams, D = Derived> {
+  /** The active view. Display placement must NOT depend on it. */
+  view: string;
+  purpose: "display" | "export";
+  p: P;
+  d: D;
+}
+
+export interface SubPartDefinition<P = ResolvedParams, D = Derived> {
+  /** Display name in tabs/progress; defaults to the key. */
+  label?: string;
+  /**
+   * The canonical solid, built at the origin. The only required function.
+   * `onProgress?.("phase")` surfaces per-feature progress during export.
+   */
+  build: (k: GeometryKernel, p: P, d: D, onProgress?: (phase: string) => void) => Solid;
+  /**
+   * Optional reposition (default identity), for a part whose display pose
+   * differs from its export pose. Any such difference must be a RIGID motion.
+   */
+  place?: (solid: Solid, ctx: PlaceContext<P, D>) => Solid;
+  /** Which views show this sub-part. Every name must exist in `views`. */
+  views: string[];
+  /** Gate a conditional sub-part. Coerced with `!!`. */
+  enabled?: (p: P) => unknown;
+  /** `false` = reference/preview-only: shown in the viewer, never exported. */
+  exportable?: boolean;
+  /** Viewer-only override — `color` is `0xRRGGBB`, `opacity` is 0..1. */
+  display?: { color?: number; opacity?: number };
+  /** Filename / object name on export; defaults to the key. */
+  export?: { name: string };
+}
+
+export interface ViewDefinition {
+  label: string;
+}
+
+// --- the verify block -------------------------------------------------------
+
+/** A built-in design-for-manufacturing process profile. */
+export type DfmProfileName = "fdm-pla" | "fdm-petg" | "resin";
+
+/** An inline DFM profile, optionally extending a named one. */
+export interface DfmProfile {
+  /** Build volume `[x, y, z]` in mm — a hard bbox-fit gate. */
+  bed?: [number, number, number];
+  /** Minimum wall in mm — a warning, never a gate. */
+  minWall?: number;
+  /** Carried for a future gap check; not enforced yet. */
+  clearance?: number;
+  /** Inherit from a named profile and override the rest. */
+  base?: DfmProfileName | DfmProfile;
+}
+
+/**
+ * One assertion in the verify DSL: a bare number/boolean means equality;
+ * a string is `">=n"`, `"<=n"`, `">n"`, `"<n"`, a range `"a..b"` (optional
+ * `mm`/`cm`/`mm3`/`cm3` suffix), or a componentwise vector `"<=[x,y,z]"` where
+ * `*` skips an axis.
+ */
+export type AssertionExpr = number | string | boolean;
+
+/** An expectation, optionally carrying a part-authored corrective `hint`. */
+export type Expectation = AssertionExpr | { expr: AssertionExpr; hint?: string };
+
+/**
+ * Per-sub-part expectations. The keys are exactly `SUBPART_METRICS` in
+ * src/framework/verify-metrics.js. `holes`/`watertight` are Manifold-only and
+ * SKIP on an OCCT part; `minWall` is a warning, never a gate.
+ */
+export interface SubPartExpectations {
+  holes?: Expectation;
+  watertight?: Expectation;
+  volume?: Expectation;
+  surfaceArea?: Expectation;
+  triangleCount?: Expectation;
+  bbox?: Expectation;
+  centerOfMass?: Expectation;
+  boundsMin?: Expectation;
+  boundsMax?: Expectation;
+  minWall?: Expectation;
+}
+
+/**
+ * Whole-view expectations, under the reserved `_view` key. The scalar metrics
+ * are exactly `VIEW_METRICS`; `contacts`/`clearance` are pair-wise and handled
+ * separately by verify.js.
+ */
+export interface ViewExpectations {
+  bbox?: Expectation;
+  volume?: Expectation;
+  overlaps?: Expectation;
+  centerOfMass?: Expectation;
+  boundsMin?: Expectation;
+  boundsMax?: Expectation;
+  /** Pairs that must touch, as `[["a", "b"], …]`. */
+  contacts?: Array<[string, string]>;
+  /** Intended free fits, keyed `"a×b"` (order-insensitive). */
+  clearance?: Record<string, Expectation>;
+}
+
+/** `verify.expect`: sub-part names plus the reserved `_view` key. */
+export interface ExpectMap {
+  _view?: ViewExpectations;
+  [subPart: string]: SubPartExpectations | ViewExpectations | undefined;
+}
+
+export interface VerifyBlock<P = ResolvedParams, D = Derived> {
+  /** A named DFM profile or an inline one. */
+  process?: DfmProfileName | DfmProfile;
+  /** Which cases to check; default is `"defaults"` plus every preset name. */
+  cases?: string[];
+  /**
+   * Design intent, by sub-part name (plus `_view`). Declare it as a pure
+   * function of the case's resolved `(p, d)` when a preset legitimately changes
+   * an asserted fact.
+   */
+  expect?: ExpectMap | ((p: P, d: D) => ExpectMap);
+}
+
+// --- animations -------------------------------------------------------------
+
+/** A timing curve across a step. Mirrors `EASINGS` in src/framework/animation.js. */
+export type Easing = "linear" | "ease-in" | "ease-out" | "ease-in-out";
+
+/**
+ * `[t, value]` keyframes for one param. `t` is normalized WITHIN the owning
+ * step: strictly ascending, from exactly 0 to exactly 1, at least two entries.
+ * Values must sit inside the owning control's min/max — the engine applies
+ * them unclamped. `partforge lint` enforces all of that.
+ */
+export type Keyframes = Array<[number, number]>;
+
+/**
+ * A camera cue angle: one of the seven canonical angles (`CanonicalView` in the
+ * app entry — `"iso" | "front" | "back" | "top" | "bottom" | "left" | "right"`).
+ * Cues fire during play only; scrubbing never moves the camera.
+ */
+export type CameraCue = string;
+
+/** One step of a multi-step animation. Steps play in order; prev/next navigate them. */
+export interface AnimationStep {
+  /** Shown in the transport bar. Defaults to `"Step <n>"`. */
+  label?: string;
+  /** Seconds. Step durations are relative — they set each step's share of the timeline. */
+  duration: number;
+  easing?: Easing;
+  /** Param key -> keyframes. A param tracked nowhere keeps its current value. */
+  tracks: Record<string, Keyframes>;
+  /** Swing the camera to this angle when the step begins. */
+  camera?: CameraCue;
+}
+
+/**
+ * One named animation: pure keyframe data over EXISTING params. Declare either
+ * `tracks` (one anonymous step) or `steps`, never both. See
+ * docs/AUTHORING-PARTS.md "Animations".
+ */
+export interface AnimationSpec {
+  /** Shown in the transport bar's picker. Defaults to the animation's key. */
+  label?: string;
+  /** CommonMark, shown behind the ⓘ glyph. */
+  description?: string;
+  /** Seconds. Required in the single-step (`tracks`) form. */
+  duration?: number;
+  easing?: Easing;
+  /** Wrap continuously. Single-step animations only. */
+  loop?: boolean;
+  /** The single-step form: param key -> keyframes. */
+  tracks?: Record<string, Keyframes>;
+  /** The multi-step form. */
+  steps?: AnimationStep[];
+  /**
+   * One mechanism per animation: an angle (an intro cue at t=0), a
+   * `[[t, angle], …]` cue list, or per-step `camera` names.
+   */
+  camera?: CameraCue | Array<[number, CameraCue]>;
+}
+
+// --- the part itself --------------------------------------------------------
+
+/**
+ * A parametric part: plain data plus pure functions, default-exported from a
+ * DOM-free, side-effect-free module. `build` must be a pure function of
+ * `(k, p, d)` — the preview kernel memoizes geometry by content hash.
+ *
+ * @typeParam P - the resolved params shape; defaults to an open record.
+ * @typeParam D - the derived-values shape; defaults to an open record.
+ */
+export interface PartDefinition<P = ResolvedParams, D = Derived> {
+  meta: PartMeta;
+  /** The control-panel schema: an array of sections. */
+  parameters: ParameterSection[];
+  /** Flat starting values — seeds `params` and every control. */
+  defaults: Defaults;
+  /** Outline fonts a part's `k.text2d()` calls need, as `{ name: source }`. */
+  fonts?: Record<string, FontSource>;
+  /** Dependent values computed once per build. */
+  derive?: DeriveSpec<P, D>;
+  /** Named sub-parts; each builds exactly one solid. */
+  parts: Record<string, SubPartDefinition<P, D>>;
+  /** The view tabs. A view is a set of sub-parts. */
+  views: Record<string, ViewDefinition>;
+  /** Self-verification, co-located with the schema. */
+  verify?: VerifyBlock<P, D>;
+  /** Named animations: keyframe data driving existing params over time. */
+  animations?: Record<string, AnimationSpec>;
+}

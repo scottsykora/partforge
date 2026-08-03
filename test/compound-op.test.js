@@ -2,7 +2,7 @@
 import { beforeAll, beforeEach, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { createProbeKernel } from "../src/framework/geometry/probe.js";
-import { meshVolume } from "../src/testing/mesh.js";
+import { meshVolume } from "../src/framework/oracle/mesh.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
