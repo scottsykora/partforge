@@ -286,6 +286,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       params, getView: view, getParamsVersion: () => loop.version(),
     });
 
+    // paramsVersion of the most recent animation-frame apply. It is what lets
+    // the meshes handler tell "stale because playback moved on" (show it — that
+    // IS best-effort playback) from "stale because the user edited" (discard).
+    let lastAnimApplyVersion = -1;
+
     // First-build readiness: resolves on the first accepted meshes result, rejects on
     // a first-build error. Guarded against unhandled rejection when never awaited.
     let readySettled = false;
@@ -350,7 +355,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           ui.setStatus(`${data.phase}…`);
           break;
         case "meshes": {
-          if (loop.buildDone()) { // stale results (params changed mid-build) are discarded
+          const fresh = loop.buildDone();
+          if (fresh) { // stale results (params changed mid-build) are discarded
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
               cache.record(m.name);
@@ -367,6 +373,22 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed });
             onBuild?.({ status: "success", ms: data.ms });
             if (!readySettled) { readySettled = true; resolveReady(); }
+          } else if (lastAnimApplyVersion === loop.version()) {
+            // Stale ONLY because animation frames kept bumping the version:
+            // show the delivered meshes anyway — that IS best-effort playback —
+            // but record NOTHING. Cache and fast-path stamps must describe
+            // geometry built at the live params, and this delivery wasn't; the
+            // fast-path stamp is dropped too, so a later pose-only repair can
+            // never re-pose this newer geometry off an older delivery's stamp.
+            // A user edit mid-play pauses playback and bumps the version WITHOUT
+            // touching lastAnimApplyVersion, so a genuinely user-stale result
+            // fails this test and is discarded exactly as before.
+            for (const m of data.meshes) {
+              viewer.setSubGeometry(m.name, m);
+              fastPath.forget(m.name);
+            }
+            ui.hideBusy();
+            refreshView();
           }
           loop.kick(); // stale → rebuild; fresh → the view may still need parts (tab switched mid-build)
           break;
@@ -455,6 +477,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       Object.assign(params, values);
       panel.syncValues(Object.keys(values));
       onParamChange({ debounce: false });
+      lastAnimApplyVersion = loop.version(); // this version came from playback, not a user edit
       loop.kick();
     }
 
