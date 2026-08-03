@@ -51,7 +51,7 @@ export function clampToRange(raw, min, max) {
 // One popover element per panel, shared by all its glyphs (only one open at a
 // time). Document-level dismiss listeners are registered per panel and removed
 // by panel.dispose().
-function createInfoPopover() {
+export function createInfoPopover() {
   const pop = el("div", "popover");
   pop.hidden = true;
   document.body.append(pop);
@@ -91,7 +91,7 @@ function createInfoPopover() {
 
 // Append a focusable ⓘ glyph to `container` that toggles the panel's shared
 // popover with `description` (Markdown). No-op when description is empty.
-function attachInfo(container, description, info) {
+export function attachInfo(container, description, info) {
   if (typeof description !== "string" || !description.trim()) return;
   const glyph = document.createElement("button");
   glyph.type = "button";
