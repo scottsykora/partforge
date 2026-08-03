@@ -1415,7 +1415,9 @@ git add src/framework/mount.js test/framework/mount.test.js
 git commit -m "feat(animation): mount wiring + runtime.animation surface"
 ```
 
----### Task 7: Hinged-box example part + app glue + smoke
+---
+
+### Task 7: Hinged-box example part + app glue + smoke
 
 **Files:**
 - Create: `src/parts/hinged-box.js`, `hinged-box.html`, `src/app-hinged-box.js`, `src/hinged-box-worker.js`
