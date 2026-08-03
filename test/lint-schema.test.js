@@ -39,6 +39,39 @@ test("a features entry with no sliders is an error", () => {
   expect(find(r, "features-requires-sliders").hint).toMatch(/toggles/);
 });
 
+// controls.js:342 does `params[feat.key] = feat.on` with no fallback, unlike the
+// toggle path one screen up which uses `t.on ?? 1`. A feature's `on` is the real
+// value its parameter takes when switched on (demo's flange is 16mm, planter's
+// drain is 8mm), so defaulting it would quietly build the wrong part rather than
+// no part — which is why this is caught at lint time instead of patched at runtime.
+test("a features entry with no `on` is an error", () => {
+  const part = goodPart();
+  delete part.parameters[0].features[0].on;
+  const r = lintPart(part);
+  expect(ids(r.errors)).toContain("features-requires-on");
+  expect(find(r, "features-requires-on").path).toBe("parameters[0].features[0]");
+  expect(find(r, "features-requires-on").message).toMatch(/flange_d/);
+});
+
+test("a features entry whose `on` can never read as enabled is an error", () => {
+  // The panel's enabled test is `params[key] > 0`, so 0 or a negative writes a
+  // value it immediately reads back as "off" — the checkbox won't stay ticked.
+  for (const on of [0, -4, Number.NaN, "16"]) {
+    const part = goodPart();
+    part.parameters[0].features[0].on = on;
+    expect(ids(lintPart(part).errors), `on: ${String(on)}`).toContain("features-requires-on");
+  }
+});
+
+test("a hidden feature with no `on` is not an error — the panel never renders it", () => {
+  const part = goodPart();
+  delete part.parameters[0].features[0].on;
+  part.parameters[0].features[0].hidden = true;
+  part.parameters[0].features.push({ key: "flange_d", label: "Flange", on: 16,
+    sliders: [{ key: "flange_d", label: "Flange diameter", min: 8, max: 50, step: 1 }] });
+  expect(ids(lintPart(part).errors)).not.toContain("features-requires-on");
+});
+
 test("a hidden feature with no sliders is not an error, even if its section still renders", () => {
   // controls.js only iterates visibleFeatures(sec), which filters out `hidden:
   // true` — the unguarded feat.sliders.filter(...) the rule protects against is

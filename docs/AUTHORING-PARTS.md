@@ -474,6 +474,12 @@ choosing a preset updates both numeric and text fields.
 Every `key` used must exist in `defaults`. `src/parts/demo.js` is the worked example for
 everything below.
 
+A feature's `on` is **required and must be greater than 0** — it is the real value the
+parameter takes when the box is ticked (a diameter, a count), and the panel reads
+`> 0` as "enabled", so there is nothing sensible to fall back to. `partforge lint`
+reports a missing or non-positive one as `features-requires-on`. A `toggles` entry is
+the exception: its `on` is just a flag and defaults to 1.
+
 **Standalone toggles** (a plain on/off checkbox, no accompanying sliders): add a
 `toggles` array to a preset section — shown below the preset picker, outside the
 Advanced fold, so it stays visible:
@@ -1074,9 +1080,10 @@ previously didn't; that's the fix working as intended, not a regression.
 `missing-views`, `part-view-unknown` (all errors); `view-unused`,
 `default-view-ambiguous` (warnings).
 
-**Parameter schema** — `features-requires-sliders`, `control-key-not-in-defaults`,
-`preset-key-not-in-defaults` (errors); `slider-range-excludes-default`,
-`unknown-control-field`, `duplicate-control-key`, `default-not-exposed` (warnings).
+**Parameter schema** — `features-requires-sliders`, `features-requires-on`,
+`control-key-not-in-defaults`, `preset-key-not-in-defaults` (errors);
+`slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
+`default-not-exposed` (warnings).
 
 **Kernel API**, found by executing `build()` against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,
