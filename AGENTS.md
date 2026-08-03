@@ -15,9 +15,12 @@ import handling.
 
 This directory is its **own git repo** (`scottsykora/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; the parts here are `demo.js` (minimal spacer),
-`planter.js` (rich - facets/taper/twist/verify block), and `filleted-box.js`
-(OCCT fillet/chamfer).
+separate Drum-Machine repo; `src/parts/` now has eight: `demo.js` (minimal
+spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
+(OCCT fillet/chamfer), `bracket.js` (Shape2D union/intersect/cut toolkit),
+`faceted-vase.js` (k.loft silhouette body), `hull-sweep.js` (k.hull/hullChain),
+`nameplate.js` (k.text2d emboss/deboss), and `text-smoke.js` (worker text-render
+CI fixture).
 
 ## Node version
 
@@ -47,9 +50,10 @@ npx partforge render  src/parts/<part>.js [view]   # canonical-angle PNGs -> ren
 npx partforge pick-serve                           # request-a-pick: agent asks user to click geometry
 ```
 
-CI (`.github/workflows/ci.yml`) runs `npm test` then the smoke check against all
-three demo apps. Playwright's Chromium is required for the smoke check only:
-`npm i -D playwright && npx playwright install chromium`.
+CI (`.github/workflows/ci.yml`) runs `npm test` then the smoke check against
+four apps (demo, planter, filleted-box, text-smoke). Playwright's Chromium is
+required for the smoke check only: `npm i -D playwright && npx playwright
+install chromium`.
 
 ## Releasing
 
