@@ -3,7 +3,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing.js";
 import filletedBox from "../src/parts/filleted-box.js";
-import { resolveParams, buildPosed } from "../src/framework/jobs.js";
+import { resolveParams, buildPosed } from "../src/framework/part-model.js";
 
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); }, 120000);

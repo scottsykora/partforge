@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
-import { measure } from "../src/testing/measure.js";
+import { measure } from "../src/framework/oracle/measure.js";
 import gapPart from "./fixtures/gap-part.js";
 
 let k;

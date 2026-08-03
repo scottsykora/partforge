@@ -12,7 +12,7 @@
 import { beforeAll, expect, test, vi } from "vitest";
 
 let builds = 0;
-vi.mock("../src/testing/bvh.js", async (importOriginal) => {
+vi.mock("../src/framework/oracle/bvh.js", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
@@ -25,7 +25,7 @@ vi.mock("../src/testing/bvh.js", async (importOriginal) => {
 });
 
 const { bootManifoldKernel } = await import("../src/testing/manifold.js");
-const { measure } = await import("../src/testing/measure.js");
+const { measure } = await import("../src/framework/oracle/measure.js");
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });

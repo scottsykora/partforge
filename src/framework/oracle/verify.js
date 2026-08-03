@@ -3,9 +3,9 @@ import { measure as defaultMeasure } from "./measure.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { resolveProfile } from "./dfm-profiles.js";
 import { expandCases } from "./cases.js";
-import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../framework/param-deps.js";
-import { resolveParams } from "../framework/jobs.js";
-import { SUBPART_METRICS, VIEW_METRICS } from "../framework/verify-metrics.js";
+import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../param-deps.js";
+import { resolveParams } from "../part-model.js";
+import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
 
 // Re-exported for backwards compatibility: the registries moved to framework/ so
 // the linter can read the metric vocabulary without importing a geometry kernel.

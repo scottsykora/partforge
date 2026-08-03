@@ -7,11 +7,11 @@ import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { resolve, dirname } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { detectBackend } from "../src/framework/geometry/probe.js";
+import { detectBackend } from "../src/framework/backend-select.js";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
-import { measure } from "../src/testing/measure.js";
-import { verify } from "../src/testing/verify.js";
+import { measure } from "../src/framework/oracle/measure.js";
+import { verify } from "../src/framework/oracle/verify.js";
 import { renderViews } from "../src/testing/render.js";
 import {
   createPickServer, requestPicks, formatPickResult,
@@ -26,12 +26,13 @@ const USAGE = "usage: partforge <lint|measure|render|pick-serve|pick> …";
 
 // Crash contract (issue #27): with --json, a thrown error becomes structured
 // stdout JSON; either way the message is matched against ERROR-PATTERNS.md and
-// the pattern's fix is surfaced. Exit 1 always. NOTE on stdout purity: crash
-// JSON is the only thing on stdout for errors thrown before any report printing
-// (load/boot/measure). But verify() runs after printMeasure and can throw (an
-// unknown metric in verify.expect, or a per-case build crash), so a throw after
-// printing appends the JSON after the human lines — it is not pure. Consumers
-// should prefer --out for robust machine parsing.
+// the pattern's fix is surfaced. Exit 1 always. NOTE on stdout purity: in --json
+// mode every human-readable printer (printLint/printMeasure/printVerify) is
+// gated behind `!flags.json`, so crash JSON is the only thing that ever reaches
+// stdout — including when verify() throws (an unknown metric in verify.expect,
+// or a per-case build crash) after measure's report has already been computed.
+// Without --json there is no purity contract: human lines print as each stage
+// completes, so a later crash's message lands after them, not instead of them.
 function crash(cmd, e, jsonMode) {
   const message = e?.message || String(e);
   const m = matchPattern(message);
@@ -117,7 +118,7 @@ const commands = {
       }
       const kernel = await bootKernel(part);
       const report = measure(kernel, part, view);
-      printMeasure(report);
+      if (!flags.json) printMeasure(report);
       // Write --out right after measure succeeds, then re-write once verify has
       // attached report.verify. If verify throws (unknown metric, per-case build
       // crash) the file already holds the measure half (no `verify` key) — matching
@@ -130,7 +131,7 @@ const commands = {
       let vok = true;
       if ((part.verify || flags.process) && !flags["no-verify"]) {
         const v = verify(kernel, part, { process: flags.process, view });
-        printVerify(v);
+        if (!flags.json) printVerify(v);
         report.verify = v;
         vok = v.ok;
         if (flags.out) writeOut();

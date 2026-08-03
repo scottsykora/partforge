@@ -18,7 +18,7 @@ import { h } from "./geometry/solid-hash.js";
 import { addSugar } from "./geometry/solid-sugar.js";
 import { SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS, OCCT_ONLY_OPS } from "./geometry/kernel.js";
 import { MAX_PROBE_OPS, ProbeRunawayError } from "./geometry/probe.js";
-import { viewSubParts, resolveParams } from "./jobs.js";
+import { viewSubParts, resolveParams } from "./part-model.js";
 
 const NAN3 = () => [NaN, NaN, NaN];
 

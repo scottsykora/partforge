@@ -101,7 +101,7 @@ test("--out writes the measure half even when a later verify throw crashes the r
   // non-default preset case; the lint gate only resolves `expect` once, against
   // the part's defaults (see resolveExpectOnce/lintContext), so it sees a clean
   // `{ holes: 1 }` and passes, while verify() itself still expands every case
-  // (src/testing/cases.js) and re-resolves `expect` per case, hitting the bad
+  // (src/framework/oracle/cases.js) and re-resolves `expect` per case, hitting the bad
   // metric name — after measure() has already printed and `--out` has already
   // been written once. This keeps the test on a real lint-enabled production path
   // instead of requiring --no-lint.

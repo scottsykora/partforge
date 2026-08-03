@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
-import { buildView } from "../src/testing/build.js";
+import { buildView } from "../src/framework/oracle/build.js";
 import part from "../src/parts/demo.js";
 
 let k;

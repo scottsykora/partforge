@@ -5,7 +5,8 @@
 import { expect, test } from "vitest";
 import { createValidatingProbe, runValidatingProbe, ProbeRunawayError, MAX_PROBE_OPS }
   from "../src/framework/geometry/probe.js";
-import { createProbeKernel, detectBackend } from "../src/framework/geometry/probe.js";
+import { createProbeKernel } from "../src/framework/geometry/probe.js";
+import { detectBackend } from "../src/framework/backend-select.js";
 
 const partWith = (build) => ({
   defaults: {}, views: { main: {} },

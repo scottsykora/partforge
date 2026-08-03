@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { resolveProfile, PROFILES } from "../src/testing/dfm-profiles.js";
+import { resolveProfile, PROFILES } from "../src/framework/oracle/dfm-profiles.js";
 
 test("resolves a built-in profile by name", () => {
   expect(resolveProfile("fdm-pla")).toEqual({ bed: [220, 220, 250], minWall: 1.2, clearance: 0.2 });

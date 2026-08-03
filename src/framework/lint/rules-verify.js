@@ -4,8 +4,8 @@
 // Catching them statically removes both the wasted boot and the stdout caveat.
 import { err } from "./finding.js";
 import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
-import { PROFILES } from "../../testing/dfm-profiles.js";
-import { parseAssertion } from "../../testing/assert-dsl.js";
+import { PROFILES } from "../oracle/dfm-profiles.js";
+import { parseAssertion } from "../oracle/assert-dsl.js";
 import { suggest } from "../geometry/op-options.js";
 
 // Resolve `expect` to a plain object. The function form (p, d) => ({…}) is invoked

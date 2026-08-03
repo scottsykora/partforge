@@ -1,7 +1,7 @@
 // Geometry-free build execution. Two consumers share one Proxy implementation:
 //
-//  • createProbeKernel() — records op NAMES so detectBackend() can route a part to
-//    OCCT when it uses fillet/chamfer/shell.
+//  • createProbeKernel() — records op NAMES so ../backend-select.js's
+//    detectBackend() can route a part to OCCT when it uses fillet/chamfer/shell.
 //  • createValidatingProbe() — additionally checks op names against the kernel
 //    contract's op lists and routes options-form calls through the same op-options
 //    normalizers the real backends use, so partforge/lint can catch a bad call in
@@ -14,13 +14,10 @@
 // validating probe DOES need an allowlist, so it takes one from kernel.js's op
 // lists, which test/kernel-contract.test.js pins to both backend implementations.
 import {
-  OCCT_ONLY_OPS, KERNEL_OPS, KERNEL_OPTIONAL_OPS,
+  KERNEL_OPS, KERNEL_OPTIONAL_OPS,
   SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS,
 } from "./kernel.js";
 import { KERNEL_OP_SPECS, SOLID_OP_SPECS, isPlainOptions } from "./op-options.js";
-import { resolveDerived } from "../derive.js";
-
-const OCCT_ONLY = new Set(OCCT_ONLY_OPS);
 
 // The probe returns ONE chainable handle for every non-query op, so it cannot tell a
 // Solid from a Shape2D — k.box() and k.shape2d() yield the same object. The solid-scope
@@ -144,20 +141,4 @@ export function runValidatingProbe(part, p, d, { maxOps = MAX_PROBE_OPS } = {}) 
     }
   }
   return { calls: probe.calls, issues: probe.issues, used: probe.used, throws, runaway };
-}
-
-export function detectBackend(part, params = {}) {
-  if (part.meta?.backend) return part.meta.backend;
-  const p = { ...part.defaults, ...params };
-  let d = {};
-  // A throwing derive must not escape here — this runs on the main thread mid
-  // regen (after the busy spinner goes up). Probe with an empty `d`; the worker
-  // build hits the same throw and posts a proper error for the UI.
-  try { d = resolveDerived(part, p); } catch { /* fall through with d = {} */ }
-  const { kernel, used } = createProbeKernel();
-  for (const name of Object.keys(part.parts)) {
-    try { part.parts[name].build(kernel, p, d); } catch { /* probe miss → capability backstop covers it */ }
-  }
-  for (const op of used) if (OCCT_ONLY.has(op)) return "occt";
-  return "manifold";
 }

@@ -5,7 +5,7 @@
 // suite — the positional spellings here pin the v1 compat shim until contract v2.
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
-import { detectBackend } from "../src/framework/geometry/probe.js";
+import { detectBackend } from "../src/framework/backend-select.js";
 import { KernelCapabilityError } from "../src/framework/geometry/errors.js";
 
 let k;

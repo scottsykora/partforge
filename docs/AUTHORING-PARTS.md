@@ -1138,8 +1138,8 @@ verify: {
 **What the profile gives you:** a hard **bed-fit** gate (the view bbox must fit `bed`)
 and a **min-wall** warning. **What `expect` gives you:** per-sub-part assertions on the
 facts `measure` already reports — `holes` (through-bores / genus), `volume`,
-`surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`, `bounds` (per-sub-part
-and aggregate axis-aligned `{min,max}` corner positions — where the geometry sits, vs
+`surfaceArea`, `triangleCount`, `bbox`, `watertight`, `minWall`, `boundsMin` / `boundsMax`
+(the axis-aligned `{min,max}` corner positions — where the geometry sits, vs
 `bbox` which is only its size) and `centerOfMass` (`[x,y,z]`, the volume-weighted
 centroid; `null` for a degenerate/zero-volume sub-part); and `_view` assertions `bbox`,
 `volume`, `overlaps`, `centerOfMass`, `boundsMin`, `boundsMax`, plus the pair-wise

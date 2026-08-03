@@ -1,46 +1,14 @@
+// The worker's job protocol. The pure part model it runs over — viewSubParts /
+// exportSubParts / resolveParams / buildPosed — lives in part-model.js, a leaf, so
+// the oracle and the collision check can share it without importing this async,
+// kernel-bound module back.
 import { meshTo3MF } from "./geometry/threemf.js";
 import { exportablePartNames } from "./export-select.js";
-import { resolveDerived } from "./derive.js";
 import { resolveFonts } from "./fonts.js";
 import { safeName } from "./safe-name.js";
-import { measure } from "../testing/measure.js";
-import { verify } from "../testing/verify.js";
-
-// Names of the sub-parts a view shows: declared in the view and enabled for these
-// params. Order follows Object.keys(part.parts) (definition order).
-export function viewSubParts(part, view, params) {
-  return Object.keys(part.parts).filter((name) => {
-    const sp = part.parts[name];
-    const inView = sp.views.includes(view);
-    const on = sp.enabled ? !!sp.enabled(params) : true;
-    return inView && on;
-  });
-}
-
-// Sub-parts to include in an EXPORT of this view: the visible sub-parts, minus any
-// flagged `exportable: false` (reference/preview-only parts — motor ghosts, bearing
-// placeholders, etc.). They still show in the viewer; they're just never written to
-// an STL/STEP/3MF file, so the user never has to toggle them off before exporting.
-export function exportSubParts(part, view, params) {
-  return viewSubParts(part, view, params).filter((name) => part.parts[name].exportable !== false);
-}
-
-// Resolve a part's effective params + derived values for a build: the user's params
-// layered over the part defaults, and derive() run once over the result.
-export function resolveParams(part, params) {
-  const p = { ...part.defaults, ...params };
-  return { p, d: resolveDerived(part, p) };
-}
-
-// Build one sub-part and apply its optional place() for the given purpose/view.
-// `p`/`d` come from resolveParams(). This is the SINGLE definition of "a posed
-// sub-part solid" — the worker, the collision check, and the test harness all call
-// it, so display/export poses can never drift between the app and its tests.
-export function buildPosed(kernel, part, name, { purpose, view, p, d, onProgress } = {}) {
-  const sp = part.parts[name];
-  const solid = sp.build(kernel, p, d, onProgress);
-  return sp.place ? sp.place(solid, { view, purpose, p, d }) : solid;
-}
+import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
+import { measure } from "./oracle/measure.js";
+import { verify } from "./oracle/verify.js";
 
 // Handle one geometry job, posting results/progress via `post(msg, transfer?)`.
 // Backend-agnostic and part-agnostic: every part specific comes through `part`.

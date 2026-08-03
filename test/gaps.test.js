@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel, buildView, assemblyGaps, meshGaps } from "../src/testing.js";
-import { buildBVH } from "../src/testing/bvh.js";
+import { buildBVH } from "../src/framework/oracle/bvh.js";
 import gapPart from "./fixtures/gap-part.js";
 
 let k;

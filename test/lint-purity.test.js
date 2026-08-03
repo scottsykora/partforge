@@ -1,62 +1,16 @@
 // partforge/lint must load in a browser sandbox iframe and in Deno, so its transitive
 // import closure may never reach a WASM geometry kernel or the DOM viewer. This is the
 // property that silently regresses the first time someone adds a convenient import —
-// e.g. pulling SUBPART_METRICS from src/testing/verify.js, which imports measure.js
-// and jobs.js. Walk the graph and prove it.
-import { readFileSync, existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+// e.g. pulling SUBPART_METRICS from src/framework/oracle/verify.js, which imports
+// measure.js and the part model. Walk the graph and prove it.
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
+import { walk as walkGraph } from "./helpers/import-graph.js";
 
 const BANNED = ["three", "manifold-3d", "replicad", "replicad-opencascadejs"];
 const ENTRY = fileURLToPath(new URL("../src/lint.js", import.meta.url));
 
-// Collect every static import specifier in a module — including side-effect-only
-// imports (`import "three";`), which have no `from` clause and so are invisible to
-// the first pattern below. Order doesn't risk double-counting: a specifier with
-// `from` never matches the side-effect pattern (it requires a quote immediately
-// after `import`), and vice versa.
-const importsOf = (src) =>
-  [...src.matchAll(/^\s*(?:import|export)[\s\S]*?from\s*["']([^"']+)["']/gm)].map((m) => m[1])
-    .concat([...src.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g)].map((m) => m[1]))
-    .concat([...src.matchAll(/^\s*import\s*["']([^"']+)["']/gm)].map((m) => m[1]));
-
-// Resolve a relative specifier the way Vite/Node ESM resolution would for an
-// extensionless import: exact path, then `.js`, then `/index.js`.
-function resolveRelative(path) {
-  if (existsSync(path)) return path;
-  if (existsSync(`${path}.js`)) return `${path}.js`;
-  if (existsSync(`${path}/index.js`)) return `${path}/index.js`;
-  return null;
-}
-
-function walk(entry) {
-  const seen = new Set();
-  const bare = new Set();
-  const queue = [entry];
-  while (queue.length) {
-    const file = queue.pop();
-    if (seen.has(file)) continue;
-    seen.add(file);
-    for (const spec of importsOf(readFileSync(file, "utf8"))) {
-      if (spec.startsWith(".")) {
-        const next = resolveRelative(resolve(dirname(file), spec));
-        // An unresolvable relative import must never be silently dropped — Vite
-        // resolves extensionless specifiers fine at runtime, so a `continue` here
-        // would let an entire unexamined subtree (and whatever it imports) pass
-        // the purity check for free. Fail loudly instead: this walker exists to
-        // catch exactly this class of drift, so it must itself be trustworthy.
-        if (!next) {
-          throw new Error(`lint-purity walk: cannot resolve "${spec}" imported from ${file} (tried the exact path, "${spec}.js", and "${spec}/index.js")`);
-        }
-        queue.push(next);
-      } else {
-        bare.add(spec);
-      }
-    }
-  }
-  return { files: seen, bare };
-}
+const walk = (entry) => walkGraph(entry, "lint-purity walk");
 
 test("the lint import closure reaches no geometry kernel or renderer", () => {
   const { bare } = walk(ENTRY);
@@ -67,7 +21,7 @@ test("the lint import closure reaches no geometry kernel or renderer", () => {
 
 test("the lint import closure does not reach the kernel-importing modules", () => {
   const { files } = walk(ENTRY);
-  const forbidden = ["src/testing/verify.js", "src/testing/measure.js", "src/framework/jobs.js", "src/index.js"];
+  const forbidden = ["src/framework/oracle/verify.js", "src/framework/oracle/measure.js", "src/framework/jobs.js", "src/index.js"];
   for (const f of forbidden) {
     expect([...files].some((p) => p.endsWith(f)), `partforge/lint must not reach ${f}`).toBe(false);
   }

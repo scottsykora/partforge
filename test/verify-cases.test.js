@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { expandCases } from "../src/testing/cases.js";
+import { expandCases } from "../src/framework/oracle/cases.js";
 
 const part = {
   defaults: { od: 8, bore: 3.4, h: 10 },

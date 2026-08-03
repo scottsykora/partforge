@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { viewSubParts, exportSubParts } from "../../src/framework/jobs.js";
+import { viewSubParts, exportSubParts } from "../../src/framework/part-model.js";
 import demo from "../fixtures/demo-part.js";
 
 test("viewSubParts returns sub-parts in the view whose enabled() passes", () => {

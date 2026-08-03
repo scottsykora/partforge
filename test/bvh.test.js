@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { expect, test } from "vitest";
-import { buildBVH, cachedBVH, meshTriangles, readTriangleInto } from "../src/testing/bvh.js";
+import { buildBVH, cachedBVH, meshTriangles, readTriangleInto } from "../src/framework/oracle/bvh.js";
 
 // a unit-ish box [0,0,0]..[10,20,5] as a non-indexed triangle soup (12 tris)
 function boxMesh(sx, sy, sz) {
@@ -215,7 +215,7 @@ test("the BVH keeps its triangles in flat typed arrays and accounts for its own 
 // while the BVH is still reachable makes it a retention number, not a peak — stable
 // to a few bytes per triangle run to run, which is why a 300-byte bound is safe.
 test("buildBVH retains ~100 bytes/triangle, not ~1 KB (measured with --expose-gc)", () => {
-  const bvhUrl = new URL("../src/testing/bvh.js", import.meta.url).href;
+  const bvhUrl = new URL("../src/framework/oracle/bvh.js", import.meta.url).href;
   const src = `
     ${tubeSoup.toString()}
     const { buildBVH } = await import(${JSON.stringify(bvhUrl)});
