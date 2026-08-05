@@ -1095,7 +1095,8 @@ validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
 `animation-keyframes-invalid`, `animation-value-out-of-range`,
 `animation-duration-invalid`, `animation-loop-invalid`,
 `animation-step-label-duplicate`, `animation-easing-unknown`,
-`animation-camera-invalid`, `animation-description-invalid` (all errors). One
+`animation-camera-invalid`, `animation-description-invalid`,
+`animation-autoplay-invalid` (all errors). One
 more rule does execute `build`, geometry-free: `animation-track-rebuilds` probes
 each track's endpoint values and emits a **note** when the animated param feeds
 real geometry (or the probe can't be trusted), because such a track plays

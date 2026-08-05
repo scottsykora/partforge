@@ -352,6 +352,29 @@ export const ANIMATION_RULES = [
       return out;
     },
   },
+  {
+    id: "animation-autoplay-invalid",
+    run: ({ part }) => {
+      const out = [];
+      let first = null;
+      for (const [name, a] of animEntries(part)) {
+        if (a.autoplay !== undefined && typeof a.autoplay !== "boolean") {
+          out.push(err("animation-autoplay-invalid",
+            `animation "${name}" \`autoplay\` is not a boolean`,
+            "Use `autoplay: true` on the one animation that should start on its own.",
+            `animations.${name}.autoplay`));
+          continue;
+        }
+        if (a.autoplay !== true) continue;
+        if (first == null) { first = name; continue; }
+        out.push(err("animation-autoplay-invalid",
+          `animations "${first}" and "${name}" both declare \`autoplay\``,
+          "Only one animation can auto-start — remove `autoplay` from all but one.",
+          `animations.${name}.autoplay`));
+      }
+      return out;
+    },
+  },
 ];
 
 // Classify one animated param by probing every sub-part it can show, at the
