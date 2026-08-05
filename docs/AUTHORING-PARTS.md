@@ -890,7 +890,6 @@ mount(part, {
   elements: {
     rail,
     chrome: {
-      pause,
       reframe,
       cutaway,
       theme,
