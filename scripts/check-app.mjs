@@ -389,6 +389,19 @@ async function checkNarrowPaneTabs(narrowWidth, wideWidth) {
   }
 }
 
+// Idle pages are static since the turntable's removal, but an `autoplay`
+// animation (e.g. hinged-box's looping "cycle") may be running on this page —
+// pause it the same way a person would, same trick the removed turntable
+// #pause button used to need. Idempotent: once paused the glyph is ▶ and this
+// is a harmless no-op, so callers that both precede and follow a given check
+// can call it freely.
+async function pauseTransportIfPlaying() {
+  const animPlayButton = page.locator(".pf-anim-play");
+  if (await animPlayButton.count() && await animPlayButton.textContent() === "⏸") {
+    await animPlayButton.click();
+  }
+}
+
 // Showcase capture (runtime.captureCurrent): a page that stashes its mount handle
 // on window.__pfRuntime (demo.html does) gets the capture exercised the way an
 // embedder would. Asserts the real-GL properties the faked-renderer unit tests
@@ -397,14 +410,11 @@ async function checkNarrowPaneTabs(narrowWidth, wideWidth) {
 // target, lights, and grid all restored). Pages without the handle are skipped.
 async function checkCaptureCurrent() {
   if (!await page.evaluate(() => Boolean(window.__pfRuntime?.captureCurrent))) return;
-  // An autoplay animation (e.g. hinged-box's looping "cycle") can be running,
-  // and a looping canvas never satisfies the identical-screenshots baseline
-  // below — pause it the same way a person would, same trick the removed
-  // turntable #pause button used to need.
-  const animPlayButton = page.locator(".pf-anim-play");
-  if (await animPlayButton.count() && await animPlayButton.textContent() === "⏸") {
-    await animPlayButton.click();
-  }
+  // A looping canvas never satisfies the identical-screenshots baseline below
+  // — the cutaway check already paused the transport before its own baseline
+  // screenshot, so this is normally a no-op; kept here too in case this is
+  // reached without the cutaway check having run.
+  await pauseTransportIfPlaying();
   // The idle canvas is static now (no turntable), but any residual
   // OrbitControls damping from the setup above (e.g. the cutaway check) still
   // needs to settle — so on a slow software-GL runner (CI) a wall-clock sleep
@@ -576,8 +586,13 @@ try {
   if (await cutawayButton.count()) {
     cutawayControl = await cutawayButton.isDisabled() ? "disabled" : "ready";
     if (cutawayControl === "ready") {
-      // The idle canvas is static now (no turntable) — this sleep is just
-      // cheap insurance against any in-flight damping settling.
+      // Idle pages are static now (no turntable), but an `autoplay` animation
+      // may be running — pause the transport before the baseline screenshot,
+      // or a looping canvas makes the "did the canvas change" comparison
+      // below vacuous (it would already be changing every frame regardless
+      // of cutaway). This sleep is just cheap insurance against any
+      // remaining in-flight damping settling.
+      await pauseTransportIfPlaying();
       await sleep(250);
       frameBeforeCutaway = await page.locator("#app canvas").screenshot();
       await cutawayButton.click();

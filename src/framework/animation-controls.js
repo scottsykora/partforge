@@ -38,10 +38,11 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   let snapshot = null; // tracked-param values before this animation first drove them
 
   // Autoplay: at most one animation declares it (lint-enforced). Armed until
-  // the user manually touches the transport — after that, view switches stop
-  // restarting it so it never fights the user.
+  // the user manually touches the transport — and never armed at all under
+  // prefers-reduced-motion: self-starting motion is exactly what that setting
+  // opts out of. The transport still plays everything on request.
   const autoplayAnim = animations.find((a) => a.autoplay) ?? null;
-  let autoplayArmed = !!autoplayAnim;
+  let autoplayArmed = !!autoplayAnim && !reducedMotion;
   const disarmAutoplay = () => { autoplayArmed = false; };
 
   // --- DOM --------------------------------------------------------------------

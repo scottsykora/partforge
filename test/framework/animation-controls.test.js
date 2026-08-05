@@ -262,3 +262,29 @@ test("no autoplay animation → autoplayKick is a harmless no-op", () => {
   ctl.autoplayKick();
   expect(ctl.runtime.state().status).toBe("idle");
 });
+
+test("reset BUTTON disarms autoplay, but autoplayKick's own selectAnimation path never does", () => {
+  const { container, ctl } = setup(autoPart); handles.push(ctl);
+  // Kick from the non-autoplay animation: exercises selectAnimation → doReset internally.
+  ctl.runtime.state(); // (read-only, must not disarm)
+  ctl.autoplayKick();
+  expect(ctl.runtime.state()).toMatchObject({ animation: "cycle", status: "playing" });
+  // A second kick still works (the internal path did not disarm)…
+  ctl.autoplayKick();
+  expect(ctl.runtime.state().status).toBe("playing");
+  // …but the reset BUTTON does disarm.
+  container.querySelector(".pf-anim-reset").click();
+  ctl.autoplayKick();
+  expect(ctl.runtime.state().status).toBe("idle");
+});
+
+test("prefers-reduced-motion: autoplay never arms; manual play still works", () => {
+  const spy = vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true });
+  try {
+    const { ctl } = setup(autoPart); handles.push(ctl);
+    ctl.autoplayKick();
+    expect(ctl.runtime.state().status).toBe("idle");
+    ctl.runtime.play("cycle");
+    expect(ctl.runtime.state().status).toBe("playing");
+  } finally { spy.mockRestore(); }
+});
