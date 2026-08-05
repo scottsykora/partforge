@@ -397,6 +397,14 @@ async function checkNarrowPaneTabs(narrowWidth, wideWidth) {
 // target, lights, and grid all restored). Pages without the handle are skipped.
 async function checkCaptureCurrent() {
   if (!await page.evaluate(() => Boolean(window.__pfRuntime?.captureCurrent))) return;
+  // An autoplay animation (e.g. hinged-box's looping "cycle") can be running,
+  // and a looping canvas never satisfies the identical-screenshots baseline
+  // below — pause it the same way a person would, same trick the removed
+  // turntable #pause button used to need.
+  const animPlayButton = page.locator(".pf-anim-play");
+  if (await animPlayButton.count() && await animPlayButton.textContent() === "⏸") {
+    await animPlayButton.click();
+  }
   // The idle canvas is static now (no turntable), but any residual
   // OrbitControls damping from the setup above (e.g. the cutaway check) still
   // needs to settle — so on a slow software-GL runner (CI) a wall-clock sleep

@@ -216,3 +216,49 @@ test("orbit while idle changes nothing", () => {
   expect(ctl.runtime.state().status).toBe("idle");
   expect(applied.length).toBe(0);
 });
+
+const autoPart = {
+  animations: {
+    open: part.animations.open,
+    cycle: { label: "Cycle", duration: 2, loop: true, easing: "linear", autoplay: true,
+      tracks: { lidAngle: [[0, 0], [0.5, 110], [1, 0]] } },
+  },
+};
+
+test("autoplayKick selects and plays the autoplay animation", () => {
+  const { ctl } = setup(autoPart); handles.push(ctl);
+  ctl.autoplayKick();
+  expect(ctl.runtime.state()).toMatchObject({ animation: "cycle", status: "playing" }); // no cue → straight to playing
+});
+
+test("autoplayKick while already playing is a no-op; re-kick after a view switch keeps the loop running", () => {
+  const { ctl } = setup(autoPart); handles.push(ctl);
+  ctl.autoplayKick();
+  ctl.__viewer.frame(0.5);
+  const t = ctl.runtime.state().t;
+  ctl.autoplayKick(); // tab switch while looping
+  expect(ctl.runtime.state().status).toBe("playing");
+  expect(ctl.runtime.state().t).toBeCloseTo(t); // not restarted
+});
+
+test("manual interaction disarms autoplay for the session", () => {
+  const { container, ctl } = setup(autoPart); handles.push(ctl);
+  ctl.autoplayKick();
+  container.querySelector(".pf-anim-play").click(); // user pauses
+  ctl.autoplayKick(); // next tab switch
+  expect(ctl.runtime.state().status).toBe("paused"); // stayed paused
+});
+
+test("a param edit that pauses playback also disarms autoplay", () => {
+  const { ctl } = setup(autoPart); handles.push(ctl);
+  ctl.autoplayKick();
+  ctl.notifyUserEdit();
+  ctl.autoplayKick();
+  expect(ctl.runtime.state().status).toBe("paused");
+});
+
+test("no autoplay animation → autoplayKick is a harmless no-op", () => {
+  const { ctl } = setup(); handles.push(ctl); // original two-animation part, no autoplay
+  ctl.autoplayKick();
+  expect(ctl.runtime.state().status).toBe("idle");
+});

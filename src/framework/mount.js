@@ -211,7 +211,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // View tabs (generated from part.views) + live params. A tab switch shows the
     // cached assembly instantly if it's current, else auto-builds what's missing.
     const tabsCtl = createViewTabs(els.tabs, part, {
-      onChange: () => { pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); },
+      onChange: () => { pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); animCtl?.autoplayKick(); },
     });
     cleanup.defer(() => tabsCtl.detach());
     const view = () => tabsCtl.current();
@@ -383,7 +383,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             }
             dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed });
             onBuild?.({ status: "success", ms: data.ms });
-            if (!readySettled) { readySettled = true; resolveReady(); }
+            if (!readySettled) { readySettled = true; resolveReady(); animCtl?.autoplayKick(); }
           } else if (lastAnimApplyVersion === loop.version()) {
             // Stale ONLY because animation frames kept bumping the version:
             // show the delivered meshes anyway — that IS best-effort playback —
