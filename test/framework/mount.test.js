@@ -931,6 +931,24 @@ test("a user edit mid-playback still discards the stale meshes", () => {
   vi.useRealTimers();
 });
 
+test("autoplay still fires on first show when the first build errored", () => {
+  // Regression: the kick used to be latched to readySettled, which the error
+  // branch also sets — so a part whose first build fails permanently lost
+  // autoplay even if a later build for the same view succeeded.
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const part = makeAnimatedPart();
+  part.animations.grow.autoplay = true;
+  const handle = mount(part, { createWorker, elements: els });
+
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "error", message: "boom" } }); // first build fails
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } }); // retry succeeds
+
+  expect(handle.animation.state().status).toBe("playing"); // autoplay still kicked
+  handle.dispose();
+});
+
 test("makeHandle.animation defaults to null; a supplied runtime passes through", () => {
   const fixture = {
     ready: Promise.resolve(), dispose() {}, viewer: { captureCanonicalViews: () => [] },

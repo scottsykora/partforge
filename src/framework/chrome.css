@@ -240,7 +240,7 @@
   /* Lift the transport bar clear of the viewbar. On a phone the bar is nearly
      the full stage width (max-width: 100% - 24px) while #viewbar sits at the
      bottom-right of the same stage, at the same z-index — so at bottom: 14px
-     the transport bar paints straight over cutaway/pause/reframe/theme and
+     the transport bar paints straight over cutaway/reframe/theme and
      makes them unclickable. The viewbar occupies 12px…56px from the bottom
      (12px offset + 4px padding + 34px button + 4px padding + 2px border);
      64px clears it with an 8px gap. */

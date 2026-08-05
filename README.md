@@ -178,10 +178,11 @@ runtime.animation.state();        // { animation, status, t, stepIndex }
 
 A part can mark at most one animation `autoplay: true` to start it
 automatically on first show and again on every view switch — until the user
-touches the transport (play/pause, scrub, step, reset) or edits a param that
-pauses playback, after which autoplay stays disarmed for the session. This
-replaces the old idle turntable as the "something is moving" cue for a
-part-app; see the authoring guide for the full contract.
+touches the transport — or anything writes params (`runtime.setParams`
+included) or calls a `runtime.animation` method; any of those disarms
+auto-start for the session. This replaces the old idle turntable as the
+"something is moving" cue for a part-app; see the authoring guide for the
+full contract.
 
 `onPick` arms click-to-select permanently: `label` is the feature label (falling
 back to the sub-part label/name) for compact UI, `prompt` is the LLM-ready

@@ -308,6 +308,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // First-build readiness: resolves on the first accepted meshes result, rejects on
     // a first-build error. Guarded against unhandled rejection when never awaited.
     let readySettled = false;
+    // First-show autoplay latch: separate from `readySettled`, which the error
+    // branch also settles — a part whose first build fails but whose retry
+    // succeeds still deserves its autoplay.
+    let autoplayKicked = false;
     let resolveReady, rejectReady;
     const ready = new Promise((res, rej) => { resolveReady = res; rejectReady = rej; });
     ready.catch(() => {});
@@ -386,7 +390,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             }
             dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed });
             onBuild?.({ status: "success", ms: data.ms });
-            if (!readySettled) { readySettled = true; resolveReady(); animCtl?.autoplayKick(); }
+            if (!readySettled) { readySettled = true; resolveReady(); }
+            // First-show autoplay: latched separately from `ready`, which the
+            // error branch also settles — a part whose first build fails but
+            // whose retry succeeds still deserves its autoplay.
+            if (!autoplayKicked) { autoplayKicked = true; animCtl?.autoplayKick(); }
           } else if (lastAnimApplyVersion === loop.version()) {
             // Stale ONLY because animation frames kept bumping the version:
             // show the delivered meshes anyway — that IS best-effort playback —

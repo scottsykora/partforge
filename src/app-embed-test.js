@@ -22,7 +22,7 @@ const elements = {
   status: { status: byId("pf-status"), busy: byId("pf-busy"), phase: byId("pf-phase") },
   tabs: byId("pf-tabs"),
   exports: { stl: byId("pf-stl"), step: byId("pf-step") }, // no 3MF button on purpose (optional)
-  chrome: { pause: byId("pf-pause"), reframe: byId("pf-reframe"), theme: byId("pf-theme") },
+  chrome: { reframe: byId("pf-reframe"), theme: byId("pf-theme") },
 };
 
 let runtime = null;
