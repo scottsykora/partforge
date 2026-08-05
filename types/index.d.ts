@@ -58,7 +58,7 @@ export interface DownloadPayload {
 /**
  * Element references. Every entry falls back to the legacy global-ID lookup
  * (`#app`, `#controls`, `#panel`, `#part`, `#download*`, `#status`/`#busy`/
- * `#phase`, `#pause`/`#reframe`/`#theme`/`#cutaway`/`#rail-toggle`), resolved
+ * `#phase`, `#reframe`/`#theme`/`#cutaway`/`#rail-toggle`), resolved
  * exactly once at mount.
  */
 export interface MountElements {
@@ -87,7 +87,6 @@ export interface MountElements {
     threeMf?: HTMLElement | null;
   };
   chrome?: {
-    pause?: HTMLElement | null;
     reframe?: HTMLElement | null;
     theme?: HTMLElement | null;
     cutaway?: HTMLElement | null;

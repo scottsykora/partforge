@@ -82,7 +82,7 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.43.0):
+// Embedding contract (0.44.0):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
@@ -111,7 +111,10 @@ function createCleanupStack() {
 //                                 // part declares no animations, else
 //                                 // { play(name?), pause(), seek(t), stop(), state() }.
 //                                 // play() with an unknown name warns and does nothing;
-//                                 // any user/host param edit pauses playback.
+//                                 // any user/host param edit pauses playback. A part's
+//                                 // `autoplay: true` animation self-starts on first show
+//                                 // and each view switch until the user touches the
+//                                 // transport — no runtime call needed for that part.
 //   const off = runtime.onContextLost(() => …);  // WebGL context loss, i.e. the GPU or the
 //                                 // OS gave up — surface it rather than showing a dead
 //                                 // canvas. Returns an unsubscribe.

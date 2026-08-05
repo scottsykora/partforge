@@ -181,6 +181,11 @@ Rules (all lint-enforced):
 - Playback pauses when the user edits any control; Reset restores the values
   the animation found. Because animated values are real params, exporting
   while paused exports the posed state — by design.
+- `autoplay: true` (optional, one animation at most) starts that animation on
+  first show and again on each view switch, until the user touches the
+  transport. Lint: `animation-autoplay-invalid`. It is not armed when the
+  browser reports `prefers-reduced-motion: reduce` — self-starting motion is
+  exactly what that setting asks a page not to do.
 
 Headless: `partforge render <part> --animation open --at 0,0.5,1` renders
 tagged stills (`--at` is normalized over the animation's total duration, like

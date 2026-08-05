@@ -103,7 +103,7 @@ const runtime = mount(part, {
     status: { status, busy, phase },        // status chrome
     tabs,                                   // view-tab segmented control
     exports: { stl, step, threeMf },        // export buttons
-    chrome: { pause, reframe, theme, railToggle }, // viewer buttons + rail collapse/restore
+    chrome: { reframe, theme, railToggle }, // viewer buttons + rail collapse/restore
   },
   onBuild: ({ status, ms, error }) => {},   // per accepted build: "success" | "error"
   onPick: ({ selection, label, prompt, token }) => {}, // programmatic click-to-select
@@ -122,10 +122,12 @@ runtime.dispose();     // stops loops, workers, observers, listeners; frees GPU 
 `display: none` needs nothing — the container collapses and the ResizeObserver
 shrinks the drawing buffer for free. A host that hides it any other way
 (`visibility: hidden`, an inactive tab, an off-screen pane) gets no such signal:
-the full-resolution MSAA buffer stays resident and the render loop keeps drawing
-an auto-rotating scene at 60fps that nobody can see. On a phone that is tens of
-megabytes plus continuous GPU work, and it has been enough on its own to get a
-tab killed. Call `runtime.setActive(false)` when the viewer goes off-screen and
+the full-resolution MSAA buffer stays resident and the render loop keeps
+redrawing an unchanging scene at 60fps that nobody can see (a part with an
+`autoplay` animation running is the same story, just with something actually
+moving off-screen). On a phone that is tens of megabytes plus continuous GPU
+work, and it has been enough on its own to get a tab killed. Call
+`runtime.setActive(false)` when the viewer goes off-screen and
 `setActive(true)` when it comes back.
 
 Parking releases both large GPU allocations — the drawing buffer and the cached
@@ -137,9 +139,8 @@ first capture after parking just re-allocates its target.
 Every `elements` entry defaults to the legacy global ID (`#app`, `#controls`,
 `#panel` for `rail`, `#status`/`#busy`/`#phase`, `#part`,
 `#download`/`#download-step`/`#download-3mf`,
-`#pause`/`#reframe`/`#theme`/`#rail-toggle`), so a classic host page needs no
-changes. The viewer sizes from its container via ResizeObserver — no window
-coupling.
+`#reframe`/`#theme`/`#rail-toggle`), so a classic host page needs no changes.
+The viewer sizes from its container via ResizeObserver — no window coupling.
 
 `rail` is the full-height controls rail introduced by the resizable-panel
 layout (`docs/superpowers/specs/2026-07-26-controls-rail-layout-design.md`);
@@ -174,6 +175,13 @@ runtime.animation.pause();
 runtime.animation.stop();         // reset + restore pre-animation params
 runtime.animation.state();        // { animation, status, t, stepIndex }
 ```
+
+A part can mark at most one animation `autoplay: true` to start it
+automatically on first show and again on every view switch — until the user
+touches the transport (play/pause, scrub, step, reset) or edits a param that
+pauses playback, after which autoplay stays disarmed for the session. This
+replaces the old idle turntable as the "something is moving" cue for a
+part-app; see the authoring guide for the full contract.
 
 `onPick` arms click-to-select permanently: `label` is the feature label (falling
 back to the sub-part label/name) for compact UI, `prompt` is the LLM-ready
