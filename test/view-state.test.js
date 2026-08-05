@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
 import {
-  loadRotating, saveRotating, loadCamera, saveCamera, loadView, saveView,
+  loadCamera, saveCamera, loadView, saveView,
   loadTheme, saveTheme,
 } from "../src/framework/view-state.js";
 
@@ -21,14 +21,6 @@ beforeEach(() => {
 afterEach(() => {
   delete globalThis.localStorage;
   delete globalThis.sessionStorage;
-});
-
-test("rotating round-trips true/false; defaults to true when absent", () => {
-  expect(loadRotating()).toBe(true);     // absent → default true
-  saveRotating(false);
-  expect(loadRotating()).toBe(false);
-  saveRotating(true);
-  expect(loadRotating()).toBe(true);
 });
 
 test("camera round-trips pos/target; null when absent", () => {
@@ -101,12 +93,10 @@ test("storage that throws → loads return defaults, saves are no-ops", () => {
   };
   globalThis.localStorage = throwing;
   globalThis.sessionStorage = throwing;
-  expect(loadRotating()).toBe(true);
   expect(loadCamera()).toBeNull();
   expect(loadView("Planter")).toBeNull();
   expect(loadTheme()).toBe("dark");
   expect(() => {
-    saveRotating(false);
     saveCamera({ pos: [1, 2, 3], target: [0, 0, 0] });
     saveView("Planter", "x");
     saveTheme("light");

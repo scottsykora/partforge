@@ -148,7 +148,6 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       threeMf: elements.exports?.threeMf ?? byId("download-3mf"),
     },
     chrome: {
-      pause: elements.chrome?.pause ?? byId("pause"),
       reframe: elements.chrome?.reframe ?? byId("reframe"),
       theme: elements.chrome?.theme ?? byId("theme"),
       cutaway: elements.chrome?.cutaway ?? byId("cutaway"),
@@ -537,7 +536,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.defer(() => els.exports.threeMf.removeEventListener("click", on3mfClick));
     }
 
-    // Optional host-page viewer chrome (pause / reframe / theme) + camera persistence.
+    // Optional host-page viewer chrome (reframe / theme) + camera persistence.
     const chrome = attachViewerControls(viewer, els.chrome, { tooltip });
     cleanup.defer(() => chrome.detach());
 

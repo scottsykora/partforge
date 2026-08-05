@@ -20,7 +20,6 @@ vi.mock("../../src/framework/viewer.js", () => ({
       onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
       tweenCameraTo: vi.fn((view, { onComplete } = {}) => onComplete?.()), // settles instantly
       cancelCameraTween: vi.fn(),
-      suppressAutoRotate: vi.fn(),
       tickFrame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
       domElement: document.createElement("div"),
       showAssembly: vi.fn(),
@@ -30,7 +29,6 @@ vi.mock("../../src/framework/viewer.js", () => ({
       hasSubMesh: (name) => built.has(name),
       subTriangles: () => 0,
       frame: vi.fn(),
-      setAutoRotate: vi.fn(),
       setTheme: vi.fn(),
       getCameraState: vi.fn(() => ({ pos: [0, 0, 0], target: [0, 0, 0] })),
       setCameraState: vi.fn(),
@@ -141,7 +139,6 @@ function makeElements() {
     tabs: mk(),
     exports: { stl: mk("button"), step: mk("button"), threeMf: mk("button") },
     chrome: {
-      pause: mk("button"),
       reframe: mk("button"),
       theme: mk("button"),
       cutaway: mk("button"),
@@ -151,7 +148,7 @@ function makeElements() {
   document.body.append(els.viewer, els.controls, els.rail, els.tabs,
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
-    els.chrome.pause, els.chrome.reframe, els.chrome.theme, els.chrome.cutaway,
+    els.chrome.reframe, els.chrome.theme, els.chrome.cutaway,
     els.chrome.railToggle);
   return els;
 }

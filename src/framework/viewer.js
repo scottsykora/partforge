@@ -114,8 +114,6 @@ export function createViewer(container, part) {
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.autoRotate = true;
-  controls.autoRotateSpeed = 1.6;
 
   // --- lights + grid --------------------------------------------------------
   const liveLights = addViewerLights(scene);
@@ -364,23 +362,8 @@ export function createViewer(container, part) {
     frameTo(names.filter((n) => subMesh[n].visible && subCache[n]));
   }
 
-  let autoRotateRequested = true;
-  let autoRotateSuppressed = false; // playback suppresses the turntable, like cutaway does
-  function syncAutoRotate() {
-    controls.autoRotate = autoRotateRequested && !cutaway.isEnabled && !autoRotateSuppressed;
-  }
-  function setAutoRotate(on) {
-    autoRotateRequested = !!on;
-    syncAutoRotate();
-  }
-  function suppressAutoRotate(on) {
-    autoRotateSuppressed = !!on;
-    syncAutoRotate();
-  }
   function setCutawayEnabled(on) {
-    const changed = cutaway.setEnabled(on);
-    syncAutoRotate();
-    return changed;
+    return cutaway.setEnabled(on);
   }
 
   // Swap the scene background, grid, and edge-line colors for the given theme.
@@ -554,8 +537,8 @@ export function createViewer(container, part) {
   // that cannot do that — partforge-cloud's phone tab bar uses
   // `visibility: hidden`, because the canvas has to keep its size for build
   // screenshots — gets no such signal: the full-resolution MSAA drawing buffer
-  // stays resident and this loop keeps rendering an auto-rotating scene at
-  // 60fps behind an invisible pane. On an iPhone that is tens of megabytes and
+  // stays resident and this loop keeps rendering the scene at 60fps behind an
+  // invisible pane. On an iPhone that is tens of megabytes and
   // continuous GPU work nobody can see, so the host has to say so explicitly.
   //
   // Parking stops the loop and releases the drawing buffer. `setSize(1, 1,
@@ -679,8 +662,6 @@ export function createViewer(container, part) {
     frame,
     captureCanonicalViews,
     captureCurrent,
-    setAutoRotate,
-    suppressAutoRotate,
     onFrame,
     tweenCameraTo,
     cancelCameraTween,

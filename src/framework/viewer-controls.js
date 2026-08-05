@@ -1,17 +1,17 @@
-import { loadRotating, saveRotating, saveCamera, loadTheme, saveTheme } from "./view-state.js";
+import { saveCamera, loadTheme, saveTheme } from "./view-state.js";
 import { attachButtonTooltips } from "./tooltip.js";
 
-// Wire the optional viewer-chrome buttons (pause / reframe / theme) to the viewer,
+// Wire the optional viewer-chrome buttons (reframe / theme) to the viewer,
 // plus persist the camera pose. Element refs in (mount resolves defaults); each
 // button is optional — pass nothing and its behavior is simply absent. Returns
 // { detach } removing every listener this attached.
 export function attachViewerControls(
   viewer,
-  { pause: pauseBtn, reframe: reframeBtn, theme: themeBtn } = {},
+  { reframe: reframeBtn, theme: themeBtn } = {},
   { tooltip } = {},
 ) {
   const tooltipBinding = tooltip
-    ? attachButtonTooltips(tooltip, [pauseBtn, reframeBtn, themeBtn].map((element) => ({ element })))
+    ? attachButtonTooltips(tooltip, [reframeBtn, themeBtn].map((element) => ({ element })))
     : null;
 
   // Theme: toggle the page chrome (CSS vars keyed off <html data-theme>) and the
@@ -34,26 +34,6 @@ export function attachViewerControls(
   const onThemeClick = () => applyTheme(theme === "light" ? "dark" : "light");
   themeBtn?.addEventListener("click", onThemeClick);
 
-  // Pause/resume the idle auto-rotation.
-  let rotating = loadRotating();
-  viewer.setAutoRotate(rotating);
-  const syncPause = () => {
-    if (!pauseBtn) return;
-    pauseBtn.textContent = rotating ? "⏸" : "▶";
-    const label = rotating ? "Pause rotation" : "Resume rotation";
-    pauseBtn.setAttribute("aria-label", label);
-    if (!tooltip) pauseBtn.title = label;
-    tooltipBinding?.sync();
-  };
-  syncPause();
-  const onPauseClick = () => {
-    rotating = !rotating;
-    viewer.setAutoRotate(rotating);
-    syncPause();
-    saveRotating(rotating);
-  };
-  pauseBtn?.addEventListener("click", onPauseClick);
-
   // Re-fit the camera to the current view.
   if (reframeBtn) {
     reframeBtn.setAttribute("aria-label", "Re-frame model");
@@ -63,7 +43,7 @@ export function attachViewerControls(
   reframeBtn?.addEventListener("click", onReframeClick);
 
   // Persist the camera when the user finishes an orbit/zoom, and right before a
-  // reload (captures the latest pose, including auto-rotation drift).
+  // reload (captures the latest pose).
   viewer.onCameraEnd(() => saveCamera(viewer.getCameraState()));
   const onPageHide = () => saveCamera(viewer.getCameraState());
   window.addEventListener("pagehide", onPageHide);
@@ -71,7 +51,6 @@ export function attachViewerControls(
   return {
     detach: () => {
       themeBtn?.removeEventListener("click", onThemeClick);
-      pauseBtn?.removeEventListener("click", onPauseClick);
       reframeBtn?.removeEventListener("click", onReframeClick);
       window.removeEventListener("pagehide", onPageHide);
       tooltipBinding?.detach();

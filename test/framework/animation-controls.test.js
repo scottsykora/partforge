@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 // test/framework/animation-controls.test.js
 // Transport bar + driver against a fake viewer: play/pause/scrub/step wiring,
-// cue → tween dispatch, intro gating, auto-rotate suppression, snapshot/reset,
-// user-edit pause, and the runtime surface.
+// cue → tween dispatch, intro gating, snapshot/reset, user-edit pause, and the
+// runtime surface.
 import { afterEach, expect, test, vi } from "vitest";
 import { attachAnimationControls } from "../../src/framework/animation-controls.js";
 
@@ -13,7 +13,6 @@ function fakeViewer() {
     onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
     tweenCameraTo: vi.fn((view, { onComplete } = {}) => onComplete?.()), // completes instantly
     cancelCameraTween: vi.fn(),
-    suppressAutoRotate: vi.fn(),
     frame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
     orbit: () => { for (const cb of [...orbitCbs]) cb(); },
   };
@@ -64,7 +63,6 @@ test("play runs the intro tween, then frames drive param values", () => {
   const viewer = ctl.__viewer;
   ctl.runtime.play();
   expect(viewer.tweenCameraTo).toHaveBeenCalledWith("front", expect.anything());
-  expect(viewer.suppressAutoRotate).toHaveBeenLastCalledWith(true);
   viewer.frame(1); // 1s of 2s → t=0.5 → lidAngle 55
   expect(applied.at(-1).lidAngle).toBeCloseTo(55);
 });
@@ -84,7 +82,6 @@ test("user orbit disarms cues; user edit pauses", () => {
   viewer.orbit();
   ctl.notifyUserEdit();
   expect(ctl.runtime.state().status).toBe("paused");
-  expect(viewer.suppressAutoRotate).toHaveBeenLastCalledWith(false);
 });
 
 test("scrubbing applies values without moving the camera", () => {
@@ -126,7 +123,6 @@ function deferredFakeViewer() {
     onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
     tweenCameraTo: vi.fn((view, { onComplete } = {}) => { pendingComplete = onComplete ?? null; }),
     cancelCameraTween: vi.fn(),
-    suppressAutoRotate: vi.fn(),
     frame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
     orbit: () => { for (const cb of [...orbitCbs]) cb(); },
     get pendingComplete() { return pendingComplete; },
@@ -143,7 +139,6 @@ test("orbit during a gated intro settles the gate instead of stranding playback"
     onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
     tweenCameraTo: vi.fn((view, { onComplete } = {}) => { pendingComplete = onComplete ?? null; }),
     cancelCameraTween: vi.fn(),
-    suppressAutoRotate: vi.fn(),
   };
   const applied = [];
   const ctl = attachAnimationControls(viewer, part, {

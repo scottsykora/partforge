@@ -95,7 +95,6 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       const step = current.steps[stepIndex];
       stepLabel.textContent = `${stepIndex + 1}/${current.steps.length} · ${step.label}`;
     }
-    viewer.suppressAutoRotate(active);
   }
 
   // --- driver -----------------------------------------------------------------
@@ -218,7 +217,6 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       resetBtn.removeEventListener("click", doReset);
       info.dispose();
       bar.remove();
-      viewer.suppressAutoRotate(false);
     },
     __viewer: viewer, // test hook only
   };

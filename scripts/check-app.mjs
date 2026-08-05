@@ -397,19 +397,13 @@ async function checkNarrowPaneTabs(narrowWidth, wideWidth) {
 // target, lights, and grid all restored). Pages without the handle are skipped.
 async function checkCaptureCurrent() {
   if (!await page.evaluate(() => Boolean(window.__pfRuntime?.captureCurrent))) return;
-  // Stop auto-rotation so the before/after frames are comparable (same trick as
-  // the cutaway check; a no-op if an earlier check already paused it).
-  const pauseButton = page.locator("#pause");
-  if (await pauseButton.count() && await pauseButton.textContent() === "⏸") {
-    await pauseButton.click();
-  }
-  // Baseline only once the canvas is actually static. Auto-rotation feeds
-  // OrbitControls' damping delta every frame, and after the pause it decays by
-  // ~5% per RENDERED frame — so on a slow software-GL runner (CI) a wall-clock
-  // sleep under-waits and the residual sub-pixel drift keeps accumulating
-  // between the baseline and after-capture screenshots. Wait the decay out in
-  // frames (machine-speed independent), then still demand consecutive
-  // identical screenshots before trusting the baseline.
+  // The idle canvas is static now (no turntable), but any residual
+  // OrbitControls damping from the setup above (e.g. the cutaway check) still
+  // needs to settle — so on a slow software-GL runner (CI) a wall-clock sleep
+  // under-waits and the residual sub-pixel drift keeps accumulating between
+  // the baseline and after-capture screenshots. Wait the decay out in frames
+  // (machine-speed independent), then still demand consecutive identical
+  // screenshots before trusting the baseline.
   await page.evaluate(() => new Promise((resolve) => {
     let n = 0;
     const tick = () => (++n >= 120 ? resolve() : requestAnimationFrame(tick));
@@ -574,10 +568,8 @@ try {
   if (await cutawayButton.count()) {
     cutawayControl = await cutawayButton.isDisabled() ? "disabled" : "ready";
     if (cutawayControl === "ready") {
-      const pauseButton = page.locator("#pause");
-      if (await pauseButton.count() && await pauseButton.textContent() === "⏸") {
-        await pauseButton.click();
-      }
+      // The idle canvas is static now (no turntable) — this sleep is just
+      // cheap insurance against any in-flight damping settling.
       await sleep(250);
       frameBeforeCutaway = await page.locator("#app canvas").screenshot();
       await cutawayButton.click();

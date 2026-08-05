@@ -1,5 +1,5 @@
 // Persist a little viewer UI state across browser reloads (notably Vite dev
-// auto-refresh). `rotating`, `camera` and `theme` live in localStorage under global
+// auto-refresh). `camera` and `theme` live in localStorage under global
 // keys — they're viewer preferences, not part state. The active view is different:
 // it's scoped to one part and stored in sessionStorage, so a hot reload keeps your
 // tab but the name can't bleed into another part that happens to share a view name,
@@ -9,7 +9,6 @@
 // persistence never throws.
 
 const KEY = {
-  rotating: "partforge:rotating",
   camera: "partforge:camera",
   theme: "partforge:theme",
 };
@@ -30,17 +29,6 @@ function writeSession(key, value) {
 }
 
 const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every((n) => Number.isFinite(n));
-
-export function loadRotating() {
-  const raw = read(KEY.rotating);
-  if (raw === "false") return false;
-  if (raw === "true") return true;
-  return true; // default: auto-rotate on (matches the viewer's default)
-}
-
-export function saveRotating(on) {
-  write(KEY.rotating, on ? "true" : "false");
-}
 
 export function loadCamera() {
   const raw = read(KEY.camera);
