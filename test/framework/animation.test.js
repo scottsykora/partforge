@@ -91,3 +91,49 @@ test("normalizeAnimation carries autoplay as a boolean, default false", () => {
   expect(normalizeAnimation("x", { duration: 1, tracks: { k: [[0, 0], [1, 1]] } }).autoplay).toBe(false);
   expect(normalizeAnimation("x", { duration: 1, autoplay: true, tracks: { k: [[0, 0], [1, 1]] } }).autoplay).toBe(true);
 });
+
+// --- totality: the model runs inside the render loop, so it must not throw ------
+// A throw from evaluate() reaches three's frame callback, and three re-arms
+// requestAnimationFrame only after that callback returns — so one throw freezes
+// the viewer for good. Lint reports each of these shapes, but an unlinted part
+// must still degrade rather than take the app down.
+
+test("a track with unusable keyframes is dropped from trackedKeys, not evaluated", () => {
+  for (const bad of [null, undefined, 0, "", []]) {
+    const a = normalizeAnimation("x", { duration: 1, tracks: { k: bad } });
+    expect(a.trackedKeys, `tracks: { k: ${JSON.stringify(bad)} }`).toEqual([]);
+    expect(() => evaluate(a, 0.5)).not.toThrow();
+    expect(evaluate(a, 0.5).values).toEqual({});
+  }
+});
+
+test("a usable track alongside an unusable one still evaluates", () => {
+  const a = normalizeAnimation("x", { duration: 1, tracks: { good: [[0, 0], [1, 10]], bad: null } });
+  expect(a.trackedKeys).toEqual(["good"]);
+  expect(evaluate(a, 1).values).toEqual({ good: 10 });
+});
+
+test("easing is looked up by own key, so Object.prototype members fall back", () => {
+  // `"toString" in EASINGS` is true, so an `in`-based lookup resolves a function
+  // that returns garbage, and "__proto__" resolves to a non-function that throws.
+  const linear = normalizeAnimation("ok", { duration: 1, easing: "linear", tracks: { k: [[0, 0], [1, 100]] } });
+  for (const easing of ["__proto__", "toString", "isPrototypeOf", "constructor", "nonsense"]) {
+    const a = normalizeAnimation("x", { duration: 1, easing, tracks: { k: [[0, 0], [1, 100]] } });
+    expect(() => evaluate(a, 0.5), `easing: ${easing}`).not.toThrow();
+    // Falls back to DEFAULT_EASING, which at the midpoint is the same 50 linear gives.
+    expect(evaluate(a, 0.5).values.k, `easing: ${easing}`).toBe(evaluate(linear, 0.5).values.k);
+    expect(evaluate(a, 0).values.k).toBe(0);
+    expect(evaluate(a, 1).values.k).toBe(100);
+  }
+});
+
+test("a non-finite t folds to 0 instead of propagating NaN", () => {
+  const a = normalizeAnimation("x", { duration: 1, easing: "linear", tracks: { k: [[0, 0], [1, 100]] } });
+  for (const t of [NaN, undefined, Infinity, -Infinity]) {
+    const r = evaluate(a, t);
+    expect(Number.isFinite(r.values.k), `t: ${String(t)}`).toBe(true);
+  }
+  expect(evaluate(a, NaN).values.k).toBe(0);
+  expect(evaluate(a, Infinity).values.k).toBe(100); // clamps to 1, still finite
+  expect(stepIndexAt(a, NaN)).toBe(0);
+});

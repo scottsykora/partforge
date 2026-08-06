@@ -523,7 +523,13 @@ export function createViewer(container, part) {
       camera.position.fromArray(tw.position);
       controls.target.fromArray(tw.target);
     }
-    for (const cb of [...frameListeners]) cb(dt);
+    // Per-listener guard, because three re-arms requestAnimationFrame only AFTER
+    // this callback returns (WebGLAnimation.onAnimationFrame): a listener that
+    // throws would stop the rAF chain outright and freeze the viewer for good, not
+    // just skip a frame. Containment belongs here rather than in every subscriber.
+    for (const cb of [...frameListeners]) {
+      try { cb(dt); } catch (e) { console.warn("partforge: frame listener failed", e); }
+    }
     if (cutaway.isEnabled) cutaway.updateForCamera();
     renderer.render(scene, camera);
     cutaway.renderOverlay(renderer, camera);
