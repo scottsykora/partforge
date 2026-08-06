@@ -331,11 +331,9 @@ export interface AnimationStep {
 }
 
 /**
- * One named animation: pure keyframe data over EXISTING params. Declare either
- * `tracks` (one anonymous step) or `steps`, never both. See
- * docs/AUTHORING-PARTS.md "Animations".
+ * The fields both animation forms share. Exported so a host can extend it —
+ * `AnimationSpec` itself is a union and cannot be `extends`-ed.
  */
-/** Everything both animation forms share. */
 export interface AnimationSpecCommon {
   /** Shown in the transport bar's picker. Defaults to the animation's key. */
   label?: string;

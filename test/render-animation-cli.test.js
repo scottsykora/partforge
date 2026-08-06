@@ -76,15 +76,37 @@ test("--at and --step together is a conflict, not a silent preference", () => {
   expect(r.stderr).toMatch(/--at and --step are alternatives/);
 });
 
-test("--at positions that collide in the filename are rejected", () => {
+test("--at positions closer than the tag's precision still get one file each", () => {
   const dir = out();
-  // Tags carry two decimals, so 0.001 and 0.004 both render "…-t000.png" and the
-  // second silently overwrote the first — one file for two requested frames.
-  const r = cliFails(["render", "src/parts/hinged-box.js", "--out", dir,
+  // At two decimals 0.001 and 0.004 both tag "t000", and the second render
+  // silently overwrote the first — one file for two requested frames. The tag
+  // widens for this request rather than the request being refused.
+  cli(["render", "src/parts/hinged-box.js", "--out", dir,
     "--animation", "open", "--at", "0.001,0.004"]);
-  expect(r.code).toBe(1);
-  expect(r.stderr).toMatch(/both render to/);
-  expect(readdirSync(dir)).toEqual([]);
+  expect(readdirSync(dir).sort()).toEqual([
+    "hinged-box-box-front-open-t0001.png",
+    "hinged-box-box-front-open-t0004.png",
+  ]);
+});
+
+test("the usual positions keep their two-decimal names", () => {
+  const dir = out();
+  // Widening must be scoped to the request that needs it: a plain run must not
+  // have its filenames churned.
+  cli(["render", "src/parts/hinged-box.js", "--out", dir, "--animation", "open", "--at", "0,0.5,1"]);
+  expect(readdirSync(dir).sort()).toEqual([
+    "hinged-box-box-front-open-t000.png",
+    "hinged-box-box-front-open-t050.png",
+    "hinged-box-box-front-open-t100.png",
+  ]);
+});
+
+test("the same --at position listed twice is rejected", () => {
+  const dir = out();
+  const r = cliFails(["render", "src/parts/hinged-box.js", "--out", dir,
+    "--animation", "open", "--at", "0.5,0.5"]);
+  expect(r.code).toBe(1); // no precision separates them
+  expect(r.stderr).toMatch(/same position more than once/);
 });
 
 test("--params must be a JSON object", () => {
@@ -104,4 +126,17 @@ test("an unknown positional view is rejected, not rendered blank", () => {
   expect(r.code).toBe(1);
   expect(r.stderr).toMatch(/unknown view "notaview"/);
   expect(readdirSync(dir)).toEqual([]);
+});
+
+test("a view named after an Object.prototype member is rejected too", () => {
+  // `part.views?.["constructor"]` resolves through the prototype chain, so a
+  // plain truthiness lookup waved these straight back into the blank render the
+  // guard exists to stop.
+  for (const view of ["constructor", "toString", "__proto__", "valueOf"]) {
+    const dir = out();
+    const r = cliFails(["render", "src/parts/hinged-box.js", view, "--views", "iso", "--out", dir]);
+    expect(r.code, `view: ${view}`).toBe(1);
+    expect(r.stderr, `view: ${view}`).toMatch(/unknown view/);
+    expect(readdirSync(dir), `view: ${view}`).toEqual([]);
+  }
 });
