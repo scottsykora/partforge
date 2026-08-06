@@ -76,7 +76,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(factor:number, center?:number[]) => Solid} scale   uniform scale about center (default origin)
  * @property {() => number} volume                   solid volume in mm³ (both backends; used by collision/overlap tests)
  * @property {(opts?: {quality?: "preview"|"print"}) => {positions:Float32Array, normals:Float32Array, indices?:Uint32Array, triangles:number, edges?:Float32Array}} toMesh
- *           `edges` = feature-edge line segments (Manifold); quality is advisory — the Manifold kernel bakes it at creation
+ *           `normals`/`edges` are authoritative shading intent from both backends — see docs/KERNEL-CONTRACT.md "Shading intent"; quality is advisory — the Manifold kernel bakes it at creation
  * @property {(opts?: {quality?: "preview"|"print"}) => Promise<ArrayBuffer>} toSTL
  * @property {() => {positions:Float32Array, indices:Uint32Array}} toIndexedMesh   indexed mesh, for 3MF
  * @property {(r:number|{r:number,edges?:object}) => Solid} fillet    round edges (OCCT only); fillet(3) or fillet({r,edges}); legacy (r,selector) accepted until v2
