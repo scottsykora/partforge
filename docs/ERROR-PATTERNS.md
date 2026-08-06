@@ -318,6 +318,25 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 - **Cause:** A track drives a param that feeds real geometry (or a build the pose probe can't trust — a query op or function selector), so every frame is a worker rebuild instead of a pose repair.
 - **Fix:** Run `npx partforge lint <part>` — the `animation-track-rebuilds` note names the track. Restructure so the param only feeds rigid placement (`place()` or a trailing translate/rotate in `build`), or accept best-effort playback if geometry morphing is the intent. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Animations".
 
+## phantom-edges-on-curved-surface
+
+- **Symptom:** edge lines or hard-shaded patches appear scattered on a smooth
+  curved surface (a sphere, fillet, or blend) in the viewer or in `render` PNGs.
+- **Cause:** the mesh reached the viewer without kernel `normals`/`edges`, so a
+  consumer fell back to dihedral-angle guessing on coarse preview tessellation.
+- **Fix:** the backend's `toMesh` must return analytic normals and filtered
+  feature edges ([KERNEL-CONTRACT.md](KERNEL-CONTRACT.md) "Shading intent") —
+  fix the backend or payload plumbing; do not tune viewer angle thresholds.
+
+## faceted-loft-previews-smooth
+
+- **Symptom:** an intentionally faceted loft (low-side-count rings) previews
+  smooth-shaded, but exports/prints show flat facets.
+- **Cause:** the loft's shading policy resolved to smooth — a `smooth: true`
+  hint, `ruled: false`, or rings with 32+ sides.
+- **Fix:** pass `smooth: false` to `k.loft` (or drop the smooth-implying
+  option) per [AUTHORING-PARTS.md](AUTHORING-PARTS.md) shading-intent note.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

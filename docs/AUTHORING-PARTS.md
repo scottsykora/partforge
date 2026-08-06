@@ -234,7 +234,7 @@ future contract v2 — but are not shown here; see `docs/KERNEL-CONTRACT.md`
 | `k.box({ size, center? })` · `k.box({ min, max })` | `{size:[x,y,z]}` = centered X/Y, base at z=0 (`center:true` also centers Z); `{min,max}` = explicit `[x,y,z]` corners |
 | `k.prism({ points, h, twist?, scaleTop? })` | extrude a 2-D polygon (or an **arc profile** from `roundedProfile`) from z=0; optional `twist` (degrees over the height) and `scaleTop` (uniform top taper: 1 straight, <1 taper in, 0 → point/cone) |
 | `k.extrude({ profile, h, twist?, scaleTop? })` | extrude a **polygon-with-holes** region from z=0 in one op — `profile` is `{ outer, holes? }` where each contour is a points array **or an arc profile** (`roundedProfile`, for true STEP fillets), or a bare points array / arc profile for outer-only; same `twist`/`scaleTop` as `prism` (both backends) |
-| `k.loft({ rings, ruled?, closed? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls |
+| `k.loft({ rings, ruled?, closed?, smooth? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls. `smooth?: boolean` overrides facet/smooth shading inference (default: <32-side rings shade as flat facets, no facet edge lines; ≥32 sides shade smooth) |
 | `k.sweep({ profile, path, cornerRadius?, closed?, ruled?, smooth? })` | sweep a fixed 2-D profile along a 3-D polyline path — sharp mitered corners (or `cornerRadius` fillets), capped ends (both backends). `closed:true` capless loops and `smooth:true` (OCCT-native swept B-rep, STEP-exact / preview-faceted) are backend-specific, like loft's `closed`/`ruled:false`. `closed:true` loops must be **planar** — RMF frame-transport holonomy can seam-twist a non-planar closed loop where the last station rejoins the first, so only planar closed loops are supported/tested |
 | `k.sphere({ r\|d })` | sphere centred at the origin; bare `k.sphere(r)` also stays valid |
 | `k.roundedBox({ size, center?, round })` | box with rounded edges — `round` = number (all edges) or `{ side?, top?, bottom? }` (vertical edges / rims); stays on Manifold (no OCCT routing, unlike `fillet`); `side` must be 0 or ≥ the rim radii (between clamps with a warning); with `side > 0`, `top + bottom` must be strictly `< h` |
@@ -1389,6 +1389,13 @@ of your `build` to see whether it uses a CAD-only op, and routes accordingly —
 everything else (so sweep-heavy parts, e.g. helical grooves, stay fast). Force it with
 `meta.backend: "occt" | "manifold"` if you ever need to. Because an OCCT part is built
 entirely on OCCT, its fillets are exact in the STEP **and** present in the printed STL.
+
+**Shading intent.** The kernel decides what shades smooth and where edge lines
+draw — spheres, cylinders and fillets are smooth by construction; boolean cut
+seams always shade hard and draw a line; a loft's facets shade flat when its
+rings have fewer than 32 sides (`smooth: true|false` on `k.loft` overrides the
+inference either way). If your part previews smooth but would print faceted —
+or the reverse — set the hint rather than changing facet counts.
 
 > Trade-off: OCCT is much slower on heavy swept geometry (helical grooves), so don't reach for
 > `fillet`/`chamfer` on a sweep-heavy part — design those edges in, or keep the part on Manifold.

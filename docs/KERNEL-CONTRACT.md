@@ -267,6 +267,31 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 speed and a backend may bake it at kernel creation (Manifold does). A part must never
 depend on triangle counts, segment counts, or normals being present.
 
+### Shading intent (toMesh normals and edges)
+
+`toMesh` output is the authoritative statement of how a solid SHADES and which
+edges are FEATURE edges — consumers (viewer, CLI renderer) must draw what they
+are given and must not re-derive either from dihedral angles when the fields
+are present:
+
+- `normals` — per-vertex shading normals. Smooth within one surface, hard
+  across boolean-cut seams. OCCT ships analytic B-rep normals; Manifold ships
+  the policy-aware crease pass (`src/framework/geometry/creased-normals.js`).
+- `edges` — flat feature-edge segment pairs (6 floats per segment). An EMPTY
+  array means "this solid has no feature edges"; it is not "unknown". OCCT
+  ships true B-rep edges with tangent edges (fillet blends, seam lines)
+  filtered out; Manifold ships policy-gated sharp/seam segments.
+
+`loft` accepts `smooth?: boolean` to override facet-vs-smooth inference: by
+default, rings with fewer than 32 sides shade as intentional flat facets with
+no same-surface edge lines, while rings with 32+ sides (and `ruled: false`
+lofts) shade smooth. `smooth: true` forces smooth shading; `smooth: false`
+forces facets. Thresholds live in `src/framework/geometry/shading-policy.js`.
+
+Known limitation: the OCCT backend ignores `smooth` — a loft forced to OCCT
+via `meta.backend` draws its facet corner edges as B-rep feature lines. The
+hint is honored on the Manifold path, which is where lofts preview by default.
+
 **Selectors** (`fillet`/`chamfer` `edges` selector, `shell` `open` face selector) are
 declarative objects, criteria AND-combined:
 
