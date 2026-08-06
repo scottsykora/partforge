@@ -20,7 +20,7 @@ const TANGENT_COS = cosDeg(TANGENT_ANGLE);
 const MIN_EDGE2 = MIN_EDGE * MIN_EDGE;
 
 export function filterBrepEdges(mesh, meshEdges) {
-  const { vertices, normals, triangles, faceGroups } = mesh;
+  const { vertices, normals, triangles = [], faceGroups = [] } = mesh;
   const { lines, edgeGroups } = meshEdges;
 
   // vertex index → owning face's id (-1 if unknown/not supplied).
@@ -81,15 +81,30 @@ export function filterBrepEdges(mesh, meshEdges) {
       // IDENTITY instead: the edge's two true adjacent faces are whichever
       // faceIds are actually present at BOTH corners, independent of how much
       // their normal varies between the two samples.
+      //
+      // A closed surface's seam ruling (cylinder/cone/bore) has the SAME
+      // faceId on both sides of the seam, so a corner can carry two copies of
+      // one persisting id rather than two distinct ids. Count persistence as a
+      // MULTISET intersection (tally occurrences per corner, sum the min per
+      // shared id) so that case still reaches persisting >= 2, instead of a
+      // Set intersection whose size tops out at 1 for a single repeated id.
       const n0 = normalsAt(g, 0), n1 = normalsAt(g, 1);
       if (n0 && n1) {
-        const ids1 = new Set(n1.map((e) => e[3]).filter((id) => id !== -1));
-        const commonIds = new Set(n0.map((e) => e[3]).filter((id) => id !== -1 && ids1.has(id)));
-        if (commonIds.size >= 2) {
+        const count0 = new Map();
+        for (const e of n0) if (e[3] !== -1) count0.set(e[3], (count0.get(e[3]) || 0) + 1);
+        const count1 = new Map();
+        for (const e of n1) if (e[3] !== -1) count1.set(e[3], (count1.get(e[3]) || 0) + 1);
+        const sharedIds = new Set();
+        let persisting = 0;
+        for (const [id, c0] of count0) {
+          const c1 = count1.get(id);
+          if (c1) { persisting += Math.min(c0, c1); sharedIds.add(id); }
+        }
+        if (persisting >= 2) {
           conclusive = true;
-          const atCommonFaces = (ns) => ns.filter((e) => commonIds.has(e[3]));
-          sharp = disagrees(atCommonFaces(n0)) || disagrees(atCommonFaces(n1));
-        } // else: fewer than 2 confirmed persisting faces — inconclusive, KEPT
+          const atSharedFaces = (ns) => ns.filter((e) => sharedIds.has(e[3]));
+          sharp = disagrees(atSharedFaces(n0)) || disagrees(atSharedFaces(n1));
+        } // else: fewer than 2 confirmed persisting face copies — inconclusive, KEPT
       } // else: one or both corners have no evidence at all — inconclusive, KEPT (fail-open)
     }
     if (conclusive && !sharp) continue; // tangent edge — not a visual feature

@@ -113,6 +113,39 @@ test("2-point sharp edge is kept even when a non-developable face's normal swing
   expect(filterBrepEdges(m, e).length).toBe(6);
 });
 
+test("self-adjacent seam is dropped: same faceId twice at both corners with agreeing normals", () => {
+  // Reproduces the phantom cylinder-seam line: a closed surface's ruling seam
+  // has the SAME face on both sides, so each corner carries TWO copies of one
+  // faceId (plus a cap face unique to that corner) rather than two distinct
+  // ids. A Set-based intersection of faceIds tops out at size 1 here (only id
+  // 5 is shared) and never reaches the "conclusive" threshold, leaving the
+  // seam KEPT forever. The multiset count must see two persisting copies of
+  // id 5 (min(2,2) = 2) and correctly drop this tangent seam.
+  const n = [1, 0, 0];
+  const m = mesh([
+    { id: 5, verts: [A, B], normals: [n, n] },          // cylinder face, seam side 1
+    { id: 5, verts: [A, B], normals: [n, n] },          // cylinder face, seam side 2 (same faceId)
+    { id: 3, verts: [A], normals: [[0, 0, -1]] },        // bottom cap — touches only corner A
+    { id: 4, verts: [B], normals: [[0, 0, 1]] },         // top cap — touches only corner B
+  ]);
+  const e = { lines: seg(A, B), edgeGroups: [{ start: 0, count: 2, edgeId: 1 }] };
+  expect(filterBrepEdges(m, e).length).toBe(0);
+});
+
+test("2-point edge with evidence at both corners but no persisting faceId pair is kept (inconclusive)", () => {
+  // Each corner has two distinct faceIds, but all four ids across both
+  // corners are different — nothing persists between the corners at all, so
+  // persisting stays 0 and the edge must be treated as inconclusive (kept).
+  const m = mesh([
+    { id: 1, verts: [A], normals: [[0, 0, 1]] },
+    { id: 2, verts: [A], normals: [[0, -1, 0]] },
+    { id: 3, verts: [B], normals: [[1, 0, 0]] },
+    { id: 4, verts: [B], normals: [[0, 1, 0]] },
+  ]);
+  const e = { lines: seg(A, B), edgeGroups: [{ start: 0, count: 2, edgeId: 1 }] };
+  expect(filterBrepEdges(m, e).length).toBe(6);
+});
+
 test("sub-MIN_EDGE segments are dropped even on kept edges (degenerate pole edges)", () => {
   const C = [0.005, 0, 0]; // 0.005mm from A — below the 0.01mm floor
   const m = mesh([
