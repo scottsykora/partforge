@@ -22,3 +22,48 @@ test("handleMessage ignores non-capture and unknown-jobId messages", () => {
   expect(cb.handleMessage({ type: "meshes", meshes: [] })).toBe(false);
   expect(cb.handleMessage({ type: "capture-meshes", jobId: 999, meshes: [] })).toBe(false);
 });
+
+test("an error reply for a pending capture job resolves request() to null", async () => {
+  const sent = [];
+  const cb = createCaptureBuild({ send: (msg) => sent.push(msg) });
+
+  const p = cb.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" });
+  const { jobId } = sent[0];
+
+  const consumed = cb.handleMessage({ type: "error", jobId, message: "derive blew up" });
+  expect(consumed).toBe(true);
+  await expect(p).resolves.toBeNull();
+});
+
+test("a needs-occt reply for a pending capture job resolves request() to null", async () => {
+  const sent = [];
+  const cb = createCaptureBuild({ send: (msg) => sent.push(msg) });
+
+  const p = cb.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" });
+  const { jobId } = sent[0];
+
+  const consumed = cb.handleMessage({ type: "needs-occt", jobId });
+  expect(consumed).toBe(true);
+  await expect(p).resolves.toBeNull();
+});
+
+test("capture jobIds are namespaced strings, so they can't collide with export-controller's numeric jobIds", () => {
+  const sent = [];
+  const cb = createCaptureBuild({ send: (msg) => sent.push(msg) });
+
+  cb.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" });
+
+  const { jobId } = sent[0];
+  expect(typeof jobId).toBe("string");
+  expect(jobId).toMatch(/^cap-/);
+  // An export-style numeric jobId of the same ordinal must not match — a
+  // shared-key collision would let one channel's reply settle the other's promise.
+  expect(cb.handleMessage({ type: "capture-meshes", jobId: 1, meshes: [] })).toBe(false);
+});
+
+test("dispose() settles any outstanding request() to null instead of leaving it pending forever", async () => {
+  const cb = createCaptureBuild({ send: () => {} });
+  const p = cb.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" });
+  cb.dispose();
+  await expect(p).resolves.toBeNull();
+});
