@@ -39,7 +39,7 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     getView,
     // Programmatic tab switch; false for a name the part doesn't declare.
     setView,
-    // Offscreen render of a named view (default when omitted). See Task 4.
+    // Offscreen render of a named view (default when omitted, or on an unknown name).
     captureView,
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
     captureCurrent: (opts) => viewer.captureCurrent(opts),
@@ -90,10 +90,17 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.44.0):
+// Embedding contract (0.45.0):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload, onViewChange });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
+//   runtime.getView();     // active view name (string), never null once mounted
+//   runtime.setView("lid");       // switch tab programmatically; returns false (and leaves the
+//                                 // active tab untouched) for a name the part doesn't declare
+//   await runtime.captureView();  // JPEG data URL of the DEFAULT view rendered offscreen (pass
+//                                 // a name for a specific view, falling back to the default for
+//                                 // an unknown one), never disturbing the active tab or the live
+//                                 // scene; null on failure (never throws)
 //   runtime.captureCurrent({ size: 2048 });  // one offscreen render of the user's current
 //                                         // framing (live camera pose + viewport aspect) at the
 //                                         // given long-edge resolution → JPEG data URL, or null
@@ -131,7 +138,7 @@ function createCleanupStack() {
 // those are repaired in the viewer and produce no build at all.
 // onViewChange fires once synchronously during mount with the initial resolved
 // view (before ready), then again on every subsequent view change (user click
-// or, once Task 3 lands, a programmatic setView) — always the new view name.
+// or a programmatic setView) — always the new view name.
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
