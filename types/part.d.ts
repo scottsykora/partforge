@@ -310,8 +310,15 @@ export interface AnimationStep {
   /** Seconds. Step durations are relative — they set each step's share of the timeline. */
   duration: number;
   easing?: Easing;
-  /** Param key -> keyframes. A param tracked nowhere keeps its current value. */
-  tracks: Record<string, Keyframes>;
+  /**
+   * Param key -> keyframes. A param tracked nowhere keeps its current value.
+   *
+   * Optional so a step can move only the camera — an establishing shot that
+   * holds the pose while the view swings round. `partforge lint` still requires
+   * that at least one step in the animation carries tracks, which is a
+   * whole-animation rule the type system can't express per step.
+   */
+  tracks?: Record<string, Keyframes>;
   /** Swing the camera to this angle when the step begins. */
   camera?: CameraCue;
 }

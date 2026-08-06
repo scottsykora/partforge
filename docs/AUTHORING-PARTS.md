@@ -167,6 +167,13 @@ Rules (all lint-enforced):
   inside the owning control's min/max (the engine applies them unclamped).
 - Params not tracked anywhere keep their current values; a param tracked in
   one step holds its nearest keyframe value while other steps play.
+- A step may declare a `camera` and **no** `tracks` — an establishing shot that
+  swings the view while the model holds still. At least one step still has to
+  carry tracks, or the animation animates nothing. Note the holding value is the
+  nearest keyframe, not whatever the user last set: a leading camera-only step
+  shows the animation's opening pose, the same one `t = 0` would show.
+- `loop` and `autoplay` must be literal booleans. Anything else is reported by
+  lint and treated as `false` at runtime, so `loop: "false"` never means "loop".
 - Couple motions through `derive` (animate one master param; derive the rest),
   not by tracking dependent params separately.
 - `camera` cues use the seven canonical angles (`iso front back top bottom

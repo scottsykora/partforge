@@ -11,6 +11,7 @@ import type {
   AnimationRuntime,
   AnimationSpec,
   AnimationState,
+  AnimationStep,
   ControlDef,
   ExpectMap,
   GeometryKernel,
@@ -406,3 +407,15 @@ if (relevant !== RELEVANT_ALL) expectType<boolean>(relevant.has("od"));
 
 // @ts-expect-error - measure's `view` is a string, not a number
 measure(kernel, spacer, 0);
+
+// A step may carry only a camera — an establishing shot that holds the pose while
+// the view swings round. `partforge lint` allows it and the runtime plays it, so
+// the published type has to as well; this is the case that caught them disagreeing.
+const cameraOnlyStep: AnimationStep = { label: "Look", camera: "iso", duration: 1 };
+const trackedStep: AnimationStep = {
+  label: "Move", duration: 1, tracks: { lidAngle: [[0, 0], [1, 110]] },
+};
+// @ts-expect-error — duration is still required on every step
+const noDuration: AnimationStep = { label: "Nope", camera: "iso" };
+
+export { cameraOnlyStep, trackedStep, noDuration };
