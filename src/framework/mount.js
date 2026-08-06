@@ -83,7 +83,7 @@ function createCleanupStack() {
 // so Vite can bundle the worker (see geometry-service.js).
 //
 // Embedding contract (0.44.0):
-//   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
+//   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload, onViewChange });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
 //   runtime.captureCurrent({ size: 2048 });  // one offscreen render of the user's current
@@ -121,10 +121,13 @@ function createCleanupStack() {
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
+// onViewChange fires once synchronously during mount with the initial resolved
+// view (before ready), then again on every subsequent view change (user click
+// or, once Task 3 lands, a programmatic setView) — always the new view name.
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
-export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload,
+export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange,
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
@@ -214,10 +217,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // View tabs (generated from part.views) + live params. A tab switch shows the
     // cached assembly instantly if it's current, else auto-builds what's missing.
     const tabsCtl = createViewTabs(els.tabs, part, {
-      onChange: () => { pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); animCtl?.autoplayKick(); },
+      onChange: (name) => {
+        pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); animCtl?.autoplayKick();
+        onViewChange?.(name);
+      },
     });
     cleanup.defer(() => tabsCtl.detach());
     const view = () => tabsCtl.current();
+    // Tell the embedder the starting tab exactly once, synchronously, so a host
+    // (partforge-cloud) never has to poll getView() to learn where we opened.
+    onViewChange?.(tabsCtl.current());
     const params = { ...part.defaults };
 
     // Current selection context for the pickers: the active view + live params +

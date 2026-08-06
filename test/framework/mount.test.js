@@ -949,6 +949,33 @@ test("autoplay still fires on first show when the first build errored", () => {
   handle.dispose();
 });
 
+// --- onViewChange embedder callback -----------------------------------------
+// Fires once synchronously during mount (before any build) with the initial
+// resolved view, then again on every subsequent view change.
+test("onViewChange fires once on mount with the initial view, then on each change", () => {
+  const part = makePart();
+  part.views.other = { label: "Other" };
+  part.parts.body.views = ["main", "other"];
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const seen = [];
+
+  const runtime = mount(part, {
+    createWorker, elements: els,
+    onViewChange: (name) => seen.push(name),
+  });
+
+  // Synchronous initial emit, before any build has completed.
+  expect(seen).toEqual(["main"]);
+
+  [...els.tabs.querySelectorAll("button")]
+    .find((button) => button.textContent === "Other")
+    .click();
+
+  expect(seen).toEqual(["main", "other"]);
+  runtime.dispose();
+});
+
 test("makeHandle.animation defaults to null; a supplied runtime passes through", () => {
   const fixture = {
     ready: Promise.resolve(), dispose() {}, viewer: { captureCanonicalViews: () => [] },
