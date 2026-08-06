@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   renderer: null,
   lastRenderScene: null,
   disposeCounts: null,
+  disposedMaterials: null,
 }));
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
@@ -39,10 +40,12 @@ vi.mock("three", async (importOriginal) => {
       this.frames += 1;
       state.lastRenderScene = scene;
       state.disposeCounts = { geo: 0, edges: 0 };
+      state.disposedMaterials = new Set();
       scene.traverse((o) => {
         if (!o.isMesh || !o.geometry) return;
         o.geometry.addEventListener("dispose", () => { state.disposeCounts.geo += 1; });
         o.geometry.userData.edges?.addEventListener("dispose", () => { state.disposeCounts.edges += 1; });
+        o.material?.addEventListener("dispose", () => { state.disposedMaterials.add(o.material); });
       });
     }
     get capabilities() { return { maxTextureSize: 8192 }; }
@@ -84,6 +87,7 @@ beforeEach(() => {
   state.renderer = null;
   state.lastRenderScene = null;
   state.disposeCounts = null;
+  state.disposedMaterials = null;
   globalThis.ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -147,6 +151,35 @@ test("renderMeshPayloads disposes geometry even for multiple payloads", () => {
   expect(state.disposeCounts).toEqual({ geo: 2, edges: 2 });
   expect(viewer.hasSubMesh("a")).toBe(false);
   expect(viewer.hasSubMesh("b")).toBe(false);
+
+  viewer.dispose();
+});
+
+test("renderMeshPayloads disposes a display-override clone material but not the shared singleton", () => {
+  // A part with a `display` override makes materialFor return a fresh material.clone();
+  // a plain part reuses the shared singleton. The clone must be disposed (else it leaks
+  // one MeshStandardMaterial + its compiled program per call); the singleton must not.
+  const viewer = createViewer(createContainer(), {
+    meta: {},
+    parts: { a: {}, ghost: { display: { color: 0xff2244 } } },
+  });
+  // "a" is plain, so its live sub-mesh material IS the shared singleton.
+  const sharedMaterial = viewer._subMeshes.a.material;
+
+  viewer.renderMeshPayloads([cubePayload("a"), cubePayload("ghost")], { size: 64 });
+
+  const meshes = [];
+  state.lastRenderScene.traverse((o) => { if (o.isMesh && o.geometry) meshes.push(o); });
+  const plain = meshes.filter((m) => m.material === sharedMaterial);
+  const clones = meshes.filter((m) => m.material !== sharedMaterial);
+  expect(plain).toHaveLength(1);   // the "a" payload reused the singleton
+  expect(clones).toHaveLength(1);  // the "ghost" payload got a clone
+
+  // the clone is disposed; the shared singleton is left intact for the live view
+  expect(state.disposedMaterials.has(clones[0].material)).toBe(true);
+  expect(state.disposedMaterials.has(sharedMaterial)).toBe(false);
+  // geometry disposal unaffected by the material fix
+  expect(state.disposeCounts).toEqual({ geo: 2, edges: 2 });
 
   viewer.dispose();
 });

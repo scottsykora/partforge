@@ -554,6 +554,7 @@ export function createViewer(container, part) {
       for (const mesh of built) {
         mesh.geometry.userData.edges?.dispose();
         mesh.geometry.dispose();
+        if (mesh.material !== material) mesh.material.dispose(); // clone only — never the shared singleton
       }
       capLights.key.dispose?.();
       capLights.fill.dispose?.();
