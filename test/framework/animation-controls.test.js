@@ -122,9 +122,14 @@ function deferredFakeViewer() {
     onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
     onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
     tweenCameraTo: vi.fn((view, { onComplete } = {}) => { pendingComplete = onComplete ?? null; }),
-    cancelCameraTween: vi.fn(),
+    // Models the real camera-tween: cancel() DROPS onComplete rather than firing
+    // it. A stub that keeps the callback alive hides every bug where something
+    // cancels a gating tween and nothing ever settles the gate.
+    cancelCameraTween: vi.fn(() => { pendingComplete = null; }),
+    suppressAutoRotate: vi.fn(),
     frame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
     orbit: () => { for (const cb of [...orbitCbs]) cb(); },
+    settle: () => { const c = pendingComplete; pendingComplete = null; c?.(); },
     get pendingComplete() { return pendingComplete; },
   };
 }
@@ -287,4 +292,40 @@ test("prefers-reduced-motion: autoplay never arms; manual play still works", () 
     ctl.runtime.play("cycle");
     expect(ctl.runtime.state().status).toBe("playing");
   } finally { spy.mockRestore(); }
+});
+
+// An intro cue gates playback until its tween settles, and pausing cancels that
+// tween — which drops onComplete. If the cue were retired when the intro started,
+// resuming would issue no cue at all and the camera would stay wherever the
+// cancelled sweep abandoned it, for the rest of the run.
+test("pausing mid-intro and resuming re-issues the camera cue", () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const params = { lidAngle: 5, lidLift: 0 };
+  const viewer = deferredFakeViewer();
+  const ctl = attachAnimationControls(viewer, part, {
+    container,
+    applyValues: (val) => Object.assign(params, val),
+    getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
+  });
+  handles.push(ctl);
+
+  ctl.runtime.play("open");
+  expect(ctl.runtime.state().status).toBe("intro");
+  expect(viewer.tweenCameraTo).toHaveBeenCalledTimes(1);
+
+  ctl.runtime.pause(); // cancels the sweep; onComplete is dropped
+  expect(ctl.runtime.state().status).toBe("paused");
+  expect(viewer.pendingComplete).toBeNull();
+
+  ctl.runtime.play();
+  expect(ctl.runtime.state().status).toBe("intro");
+  expect(viewer.tweenCameraTo).toHaveBeenCalledTimes(2);
+  expect(viewer.tweenCameraTo.mock.calls[1][0]).toBe("front");
+
+  // And once it does settle, playback starts and the cue is not issued again.
+  viewer.settle();
+  expect(ctl.runtime.state().status).toBe("playing");
+  viewer.frame(0.1);
+  expect(viewer.tweenCameraTo).toHaveBeenCalledTimes(2);
 });

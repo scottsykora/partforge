@@ -121,3 +121,36 @@ test("reset returns to idle at t=0", () => {
   const r = pb.reset();
   expect(r).toMatchObject({ t: 0, status: "idle", stepIndex: 0 });
 });
+
+// --- an intro cue is only retired once its tween actually settles --------------
+// camera-tween's cancel() drops onComplete, so a cue retired at begin() would
+// never be re-issued: pausing mid-sweep left the camera stranded wherever the
+// cancelled tween stopped, for the rest of the run.
+
+test("pausing mid-intro re-issues the cue on resume", () => {
+  const pb = createPlayback(open);
+  expect(pb.play().cue).toEqual({ t: 0, view: "front" });
+  expect(pb.pause().status).toBe("paused");
+  const again = pb.play();
+  expect(again.status).toBe("intro");
+  expect(again.cue).toEqual({ t: 0, view: "front" });
+});
+
+test("a settled intro cue is not re-issued by a later pause/play", () => {
+  const pb = createPlayback(open);
+  expect(pb.play().cue).toEqual({ t: 0, view: "front" });
+  expect(pb.introDone().status).toBe("playing");
+  pb.pause();
+  const again = pb.play();
+  expect(again.status).toBe("playing"); // no gate: nothing left to tween
+  expect(again.cue).toBeNull();
+});
+
+test("seek(NaN) folds to 0 rather than stalling playback forever", () => {
+  const pb = createPlayback(plain);
+  expect(pb.seek(NaN).t).toBe(0);
+  pb.play();
+  const r = pb.tick(100); // well past the 2s duration
+  expect(r.t).toBe(1);
+  expect(r.status).toBe("done"); // an unclamped NaN never satisfies t >= 1
+});
