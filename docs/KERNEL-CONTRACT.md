@@ -292,6 +292,10 @@ Known limitation: the OCCT backend ignores `smooth` — a loft forced to OCCT
 via `meta.backend` draws its facet corner edges as B-rep feature lines. The
 hint is honored on the Manifold path, which is where lofts preview by default.
 
+`label()`ing a compound solid (one spanning more than one original surface)
+collapses it to a single shading surface that inherits the majority policy of
+its registered constituent surfaces, weighted by triangle count.
+
 **Selectors** (`fillet`/`chamfer` `edges` selector, `shell` `open` face selector) are
 declarative objects, criteria AND-combined:
 

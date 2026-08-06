@@ -166,12 +166,39 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // distinct policy is registered among the surfaces feeding this mesh, that's
         // unambiguously the one to inherit (a plain tool like a box registers none).
         let inherited = prevId !== -1 ? oidPolicies.get(prevId) : undefined;
-        if (inherited === undefined && prevId === -1) {
+        // Skip the mesh scan entirely when no surface anywhere has a registered
+        // policy (e.g. planter's labeled prism compound) — getMesh() forces a
+        // full mesh materialization and parts with no lofts must not pay for it.
+        if (inherited === undefined && prevId === -1 && oidPolicies.size > 0) {
           const g = m.getMesh();
-          const found = new Set();
-          for (const oid of g.runOriginalID) { const pol = oidPolicies.get(oid); if (pol) found.add(pol); }
+          // Triangle-count-weighted majority: walk the run table with runIndex
+          // (each run r spans triangles ri[r]/3..ri[r+1]/3 — same arithmetic
+          // creased-normals.js uses) and tally triangle counts per registered
+          // policy, keyed by VALUE (creaseAngle/sameSurfaceLines), not object
+          // reference — a majority-by-object-identity check would silently
+          // break if policies were ever constructed per-op instead of shared
+          // singletons. Runs whose original surface has no registered policy
+          // (plain boolean tools) contribute no weight — they have no opinion.
+          // The policy spanning the most triangles wins; an exact tie favors
+          // the FACETED-like policy (sameSurfaceLines: false) — deterministic,
+          // and biased toward honest-print rendering over silently smoothing
+          // facets away.
+          const ri = g.runIndex, roid = g.runOriginalID;
+          const weightByKey = new Map();  // policy key -> triangle count
+          const policyByKey = new Map();  // policy key -> policy object
+          let bestKey, bestWeight = -1, bestPol;
+          for (let r = 0; r < roid.length; r++) {
+            const pol = oidPolicies.get(roid[r]);
+            if (!pol) continue;
+            const key = `${pol.creaseAngle}/${pol.sameSurfaceLines}`;
+            const weight = (weightByKey.get(key) || 0) + (ri[r + 1] / 3 - ri[r] / 3);
+            weightByKey.set(key, weight);
+            if (!policyByKey.has(key)) policyByKey.set(key, pol);
+            const better = weight > bestWeight || (weight === bestWeight && !pol.sameSurfaceLines && bestPol?.sameSurfaceLines);
+            if (better) { bestKey = key; bestWeight = weight; bestPol = pol; }
+          }
           g.delete?.();
-          if (found.size === 1) inherited = [...found][0];
+          if (bestKey !== undefined) inherited = policyByKey.get(bestKey);
         }
         if (inherited !== undefined) oidPolicies.set(id, inherited);
         return { value: wrap(o, lh), pin: o, dispose: () => { featureLabels.delete(id); oidPolicies.delete(id); o.delete?.(); } };

@@ -90,4 +90,37 @@ test("label() after an intermediate boolean still recovers the loft's policy (va
   expect(w.total).toBeGreaterThan(0);
   expect(w.flat).toBe(w.total);
   expect(m.edges.length).toBe(0); // faceted policy still wins — no same-surface lines
+  expect(m.features).toEqual(["Faceted wall"]); // labeled compound reports the label as its feature
+});
+
+// Regression: union() of two lofts with DIFFERENT inferred policies also collapses to
+// -1 ("mixed") originalID under label(), same as the intersect-hollowing case above —
+// but here there's no unambiguous single policy to inherit (unlike a plain box tool,
+// both surfaces are policy-bearing). Majority-by-triangle-count breaks the tie: a 2-ring
+// loft has 2*sides wall+cap triangles regardless of size (a geometric fact, not a size
+// one), so a 12-sided 2-ring loft (48 tris, faceted) is smaller than a 64-sided 2-ring
+// loft (256 tris, smooth) — SMOOTH would win a naive vote. Give the 12-sided loft many
+// more RINGS (not more sides — that would also just increase facet count fairly) so its
+// wall-quad count dominates: 16 rings * 12 sides * 2 = 384 wall tris + 24 cap tris = 408,
+// comfortably ahead of the 64-sided loft's 256.
+//
+// The deciding observable is `edges` rather than `wallTris().flat`: after label()
+// every surviving triangle shares ONE originalID, so `sameSurfaceLines` is either on
+// for the WHOLE mesh or off for the WHOLE mesh — FACETED (sameSurfaceLines:false)
+// winning means zero edges anywhere, including the 90°-bend cap rims that a SMOOTH
+// win would always draw. (`wallTris().flat` alone doesn't discriminate here: even
+// FACETED's 10° creaseAngle is wide enough to still smooth the 64-gon's ~5.6°
+// between-facet corners, so some triangles read "flat" under either policy.)
+test("label() on a union of differently-shaded lofts inherits the majority policy by triangle count", () => {
+  const manyRingsFaceted = [];
+  for (let i = 0; i < 16; i++) manyRingsFaceted.push({ sides: 12, radius: 20, z: i * 2 });
+  const facetedLoft = k.loft({ rings: manyRingsFaceted }); // 16 rings * 12 sides * 2 = 384 wall tris + 24 cap = 408 tris, FACETED (< 32 sides)
+  const smoothLoft = k
+    .loft({ rings: [{ sides: 64, radius: 20, z: 0 }, { sides: 64, radius: 20, z: 10 }] }) // 256 tris, SMOOTH (>= 32 sides)
+    .translate([100, 0, 0]); // keep the two solids disjoint so union() doesn't reshape either
+  const m = facetedLoft.union(smoothLoft).label("Body").toMesh();
+  const w = wallTris(m);
+  expect(w.total).toBeGreaterThan(0);
+  expect(m.edges.length).toBe(0); // FACETED's majority weight wins — same-surface lines fully suppressed
+  expect(m.features).toEqual(["Body"]);
 });

@@ -398,6 +398,10 @@ if (p.drain > 0) s = s.cut(k.cylinder({ r: d.drainR, h: p.floor + 4 }).at([0, 0,
   a cutting tool's label lands on the faces it leaves behind (the hole's wall).
 - Label **after** shaping compound tools (e.g. after an `intersect` clip) and
   either before or after transforms — labels ride through `at`/`rotate`/etc.
+  Labeling a compound collapses it to ONE shading surface — the majority
+  policy of its registered surfaces (by triangle count) applies to the whole
+  solid, so a faceted policy also suppresses line-drawing on the compound's
+  internal seams.
 - **Same label merges; distinct siblings need distinct names.** The same label on
   several solids merges into one feature — label a ring of four bolt holes
   `"Mounting holes"` and they hover/highlight as one. Conversely, when two similar
