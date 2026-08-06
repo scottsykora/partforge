@@ -157,8 +157,23 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         const o = T(m.asOriginal());
         const id = o.originalID();
         featureLabels.set(id, name);
-        // labeling re-stamps the originalID — carry the surface's shading policy along
-        if (prevId !== -1 && oidPolicies.has(prevId)) oidPolicies.set(id, oidPolicies.get(prevId));
+        // labeling re-stamps the originalID — carry the surface's shading policy along.
+        // A boolean upstream of this label() (e.g. a faceted loft().intersect(tool),
+        // as the vase does to hollow itself) leaves the solid spanning more than one
+        // original surface, so originalID() reports -1 ("mixed") rather than a single
+        // id — the direct lookup below misses even though the loft's policy is right
+        // there. Fall back to the mesh's own run table and recover it: if exactly one
+        // distinct policy is registered among the surfaces feeding this mesh, that's
+        // unambiguously the one to inherit (a plain tool like a box registers none).
+        let inherited = prevId !== -1 ? oidPolicies.get(prevId) : undefined;
+        if (inherited === undefined && prevId === -1) {
+          const g = m.getMesh();
+          const found = new Set();
+          for (const oid of g.runOriginalID) { const pol = oidPolicies.get(oid); if (pol) found.add(pol); }
+          g.delete?.();
+          if (found.size === 1) inherited = [...found][0];
+        }
+        if (inherited !== undefined) oidPolicies.set(id, inherited);
         return { value: wrap(o, lh), pin: o, dispose: () => { featureLabels.delete(id); oidPolicies.delete(id); o.delete?.(); } };
       });
     },

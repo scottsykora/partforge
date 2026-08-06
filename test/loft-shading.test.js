@@ -75,3 +75,19 @@ test("booleans keep per-surface policy: faceted loft cut by a box stays flat, se
 test("smooth is rejected on other ops (option list is per-op)", () => {
   expect(() => k.sphere({ r: 5, smooth: true })).toThrow(/unknown option/);
 });
+
+// Regression: the faceted-vase hollows itself with loft().intersect(box).label(...)
+// — label() runs on the INTERSECT's result, not directly on the loft, so the
+// solid's own originalID() is "mixed" (-1) at that point (it now spans the
+// loft's surface plus the box's). The naive carry-forward only checked a single
+// prior id and silently dropped the policy whenever it was -1, so the labeled
+// solid fell back to the SMOOTH default and its own facet creases (very much
+// bent, by construction) all drew lines — a spiral wireframe.
+test("label() after an intermediate boolean still recovers the loft's policy (vase hollowing)", () => {
+  const tool = k.box({ min: [-30, -30, 2], max: [30, 30, 15] }); // no policy of its own
+  const m = k.loft({ rings: RINGS }).intersect(tool).label("Faceted wall").toMesh();
+  const w = wallTris(m);
+  expect(w.total).toBeGreaterThan(0);
+  expect(w.flat).toBe(w.total);
+  expect(m.edges.length).toBe(0); // faceted policy still wins — no same-surface lines
+});
