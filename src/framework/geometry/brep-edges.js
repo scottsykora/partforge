@@ -9,6 +9,9 @@
 //   one copy per adjacent face, each carrying that face's analytic normal, and
 //   edge polyline nodes reuse the exact face-triangulation coordinates — so an
 //   exact-position key connects an edge point to every adjacent face normal.
+// - mesh() also returns `triangles` (flat vertex-index list) and `faceGroups`
+//   ({start,count,faceId} spans into `triangles`, in index units) — every
+//   vertex index belongs to exactly one face, so this gives a vertex→faceId map.
 // - meshEdges().lines is already flat segment PAIRS ((p0,p1),(p1,p2),…);
 //   edgeGroups {start,count} span one B-rep edge, in points (count = 2·segs).
 import { TANGENT_ANGLE, MIN_EDGE, cosDeg } from "./shading-policy.js";
@@ -17,19 +20,24 @@ const TANGENT_COS = cosDeg(TANGENT_ANGLE);
 const MIN_EDGE2 = MIN_EDGE * MIN_EDGE;
 
 export function filterBrepEdges(mesh, meshEdges) {
-  const { vertices, normals } = mesh;
+  const { vertices, normals, triangles, faceGroups } = mesh;
   const { lines, edgeGroups } = meshEdges;
 
-  // exact-position key → the normals of every face copy of that vertex
+  // vertex index → owning face's id (-1 if unknown/not supplied).
+  const vface = new Int32Array(vertices.length / 3).fill(-1);
+  for (const fg of faceGroups)
+    for (let i = fg.start; i < fg.start + fg.count; i++) vface[triangles[i]] = fg.faceId;
+
+  // exact-position key → [nx, ny, nz, faceId] for every face copy of that vertex
   const byPos = new Map();
   for (let i = 0; i + 2 < vertices.length; i += 3) {
     const key = `${vertices[i]},${vertices[i + 1]},${vertices[i + 2]}`;
     let arr = byPos.get(key);
     if (!arr) byPos.set(key, arr = []);
-    arr.push([normals[i], normals[i + 1], normals[i + 2]]);
+    arr.push([normals[i], normals[i + 1], normals[i + 2], vface[i / 3]]);
   }
 
-  // Any pair of normals in `ns` disagreeing past TANGENT_COS makes the sample sharp.
+  // Any pair of entries in `ns` whose normals disagree past TANGENT_COS makes the sample sharp.
   const disagrees = (ns) => {
     for (let a = 0; a < ns.length; a++)
       for (let b = a + 1; b < ns.length; b++) {
@@ -42,9 +50,6 @@ export function filterBrepEdges(mesh, meshEdges) {
     const o = (g.start + p) * 3;
     return byPos.get(`${lines[o]},${lines[o + 1]},${lines[o + 2]}`);
   };
-  // Normals from `n0` that reappear (near-parallel) in `n1` — the faces that
-  // persist across BOTH samples, as opposed to a one-off face touching only one.
-  const common = (n0, n1) => n0.filter((a) => n1.some((b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > TANGENT_COS));
 
   const out = [];
   for (const g of edgeGroups) {
@@ -66,21 +71,26 @@ export function filterBrepEdges(mesh, meshEdges) {
     } else {
       // No interior points exist — BOTH samples are corners, each possibly
       // touching its OWN unrelated third face (e.g. a fillet seam's top rim
-      // touches the top cap, its bottom rim touches the bottom cap). The
-      // edge's true two adjacent faces run its full straight length, so their
-      // normals persist at BOTH corners; a one-off corner face does not.
-      // Comparing only the normals common to both ends filters that noise —
-      // this is the fix for the phantom-sphere/fillet-seam bug: previously
-      // any pairing (including the unrelated third face) could flag "sharp".
+      // touches the top cap, its bottom rim touches the bottom cap). Matching
+      // normals BY DIRECTION across the two corners (near-parallel) is unsound:
+      // a non-developable adjacent face's normal can legitimately swing along
+      // the edge, so it fails to "match itself" between corners, while an
+      // unrelated coplanar fragment touching only one corner can spuriously
+      // match — silently reading a genuinely sharp edge as tangent (fail-
+      // invisible, which this module must never do). Key persistence on FACE
+      // IDENTITY instead: the edge's two true adjacent faces are whichever
+      // faceIds are actually present at BOTH corners, independent of how much
+      // their normal varies between the two samples.
       const n0 = normalsAt(g, 0), n1 = normalsAt(g, 1);
       if (n0 && n1) {
-        const both = common(n0, n1);
-        if (both.length >= 2) { conclusive = true; sharp = disagrees(both); }
-        else if (n0.length >= 2 || n1.length >= 2) { conclusive = true; sharp = true; } // no persistent pair found — ambiguous, kept
-      } else {
-        const ns = n0 || n1; // one side has no evidence — fall back to the other alone
-        if (ns && ns.length >= 2) { conclusive = true; sharp = disagrees(ns); }
-      }
+        const ids1 = new Set(n1.map((e) => e[3]).filter((id) => id !== -1));
+        const commonIds = new Set(n0.map((e) => e[3]).filter((id) => id !== -1 && ids1.has(id)));
+        if (commonIds.size >= 2) {
+          conclusive = true;
+          const atCommonFaces = (ns) => ns.filter((e) => commonIds.has(e[3]));
+          sharp = disagrees(atCommonFaces(n0)) || disagrees(atCommonFaces(n1));
+        } // else: fewer than 2 confirmed persisting faces — inconclusive, KEPT
+      } // else: one or both corners have no evidence at all — inconclusive, KEPT (fail-open)
     }
     if (conclusive && !sharp) continue; // tangent edge — not a visual feature
 

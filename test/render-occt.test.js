@@ -10,11 +10,12 @@ const OUT = "test/.render-occt";
 beforeAll(async () => { k = await bootOcctKernel(); });
 afterAll(() => rmSync(OUT, { recursive: true, force: true }));
 
-// OCCT meshes are INDEXED and carry NO normals. A naive rasterizer that assumes a
-// non-indexed soup with per-vertex normals produces a black, scrambled image. This
-// asserts the part renders AND is actually lit (mean brightness of the rendered
-// pixels is high) — a plain non-blank check passes on the black garbage.
-test("renders an OCCT (indexed, normal-less) part as a lit, non-blank image", async () => {
+// OCCT meshes are INDEXED (unlike Manifold's non-indexed soup) and carry real
+// analytic per-vertex normals. A rasterizer that assumes the wrong layout (or
+// mishandles the indices) produces a black, scrambled image. This asserts the
+// part renders AND is actually lit (mean brightness of the rendered pixels is
+// high) — a plain non-blank check passes on the black garbage.
+test("renders an OCCT (indexed) part as a lit, non-blank image", async () => {
   const files = await renderViews(k, part, "box", { views: ["iso"], out: OUT, size: [240, 180] });
   expect(files).toHaveLength(1);
   const png = PNG.sync.read(readFileSync(files[0]));
