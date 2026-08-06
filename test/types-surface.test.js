@@ -235,6 +235,17 @@ describe("the verify declarations mirror the metric registries", () => {
   });
 
   test("CanonicalView declares exactly the viewer's canonical angles", () => {
-    expect(sorted(unionMembers("types/index.d.ts", "CanonicalView"))).toEqual(sorted(CANONICAL_VIEWS));
+    // Defined in part.d.ts so CameraCue can alias it without an import cycle; the
+    // app entry re-exports it through `export * from "./part.js"`.
+    expect(sorted(unionMembers("types/part.d.ts", "CanonicalView"))).toEqual(sorted(CANONICAL_VIEWS));
+  });
+
+  test("CameraCue is the canonical angle union, not a bare string", () => {
+    // lint's animation-camera-invalid rejects anything else, so a bare `string`
+    // here would let the declarations accept a cue lint refuses. Asserted on the
+    // alias text rather than via unionMembers, which reads literal members only.
+    const rhs = /^export type CameraCue\s*=([^;]+);/m.exec(stripComments(read("types/part.d.ts")));
+    expect(rhs, "types/part.d.ts declares no type CameraCue").not.toBeNull();
+    expect(rhs[1].trim()).toBe("CanonicalView");
   });
 });

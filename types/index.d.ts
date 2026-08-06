@@ -5,13 +5,10 @@
 // their geometry helpers from "partforge/geometry".
 
 import type { BackendName } from "./kernel.js";
-import type { ParamValue, PartDefinition } from "./part.js";
+import type { CanonicalView, ParamValue, PartDefinition } from "./part.js";
 
 export * from "./kernel.js";
 export * from "./part.js";
-
-/** A canonical capture angle. */
-export type CanonicalView = "iso" | "front" | "back" | "left" | "right" | "top" | "bottom";
 
 /** Which pane a narrow layout shows. `null` hands selection back to partforge. */
 export type HostPane = "stage" | "rail" | null;

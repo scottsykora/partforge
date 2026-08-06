@@ -159,15 +159,32 @@ const commands = {
     try {
       const part = await loadPart(partPath, usage);
       const baseParams = flags.params ? JSON.parse(flags.params) : {};
+      // `--params '[1,2]'` or '42' parses fine and then merges into nothing, so the
+      // flag silently does nothing. Only an object can carry param overrides.
+      if (baseParams === null || typeof baseParams !== "object" || Array.isArray(baseParams)) {
+        die(`--params takes a JSON object of param overrides\n${usage}`);
+      }
       const outDir = flags.out || "render";
       const views = flags.views ? flags.views.split(",") : undefined;
-      // Usage check BEFORE the kernel: a flag typo shouldn't pay a WASM boot.
-      if (!flags.animation && (flags.at || flags.step)) {
+      // Usage checks BEFORE the kernel: a flag typo shouldn't pay a WASM boot.
+      // Test `=== undefined`, not falsiness: `--animation ""` is a flag the user
+      // passed and got wrong (an unset shell variable, typically), not one they
+      // omitted, and silently rendering a non-animation still hides the mistake.
+      if (flags.animation !== undefined && flags.animation.trim() === "") {
+        die(`--animation needs an animation name\n${usage}`);
+      }
+      if (flags.animation === undefined && (flags.at || flags.step)) {
         die(`--at/--step require --animation\n${usage}`);
+      }
+      if (flags.at != null && flags.step != null) {
+        die(`--at and --step are alternatives — pass one, not both\n${usage}`);
+      }
+      if (view !== undefined && !part.views?.[view]) {
+        die(`unknown view "${view}" (have: ${Object.keys(part.views ?? {}).join(", ") || "none"})\n${usage}`);
       }
       const kernel = await bootKernel(part);
 
-      if (!flags.animation) {
+      if (flags.animation === undefined) {
         const files = await renderViews(kernel, part, view, { views, out: outDir, params: baseParams });
         for (const f of files) console.log(`wrote ${f}`);
         process.exit(0);
@@ -196,11 +213,27 @@ const commands = {
         // step's camera instead of this step's own.
         frames = [{ t: end, cueT: anim.stepStarts[idx], tag: `${flags.animation}-step${idx + 1}` }];
       } else {
-        const ts = (flags.at ?? "1").split(",").map(Number);
+        // Split first and reject blanks: Number("") is 0, so "0.2,,0.8" would
+        // otherwise slip a silent extra frame at t=0 past the range check.
+        const raw = (flags.at ?? "1").split(",");
+        const ts = raw.map((s) => (s.trim() === "" ? Number.NaN : Number(s)));
         if (!ts.length || ts.some((t) => !Number.isFinite(t) || t < 0 || t > 1)) {
           die(`--at takes comma-separated positions in 0..1\n${usage}`);
         }
         frames = ts.map((t) => ({ t, tag: `${flags.animation}-t${String(Math.round(t * 100)).padStart(3, "0")}` }));
+        // The tag is the only thing distinguishing one frame's file from another,
+        // and it carries two decimal places. Positions closer together than that
+        // collide, and the later render silently overwrites the earlier one — so
+        // say so instead of quietly returning fewer files than were asked for.
+        const seen = new Map();
+        for (let i = 0; i < frames.length; i++) {
+          const prev = seen.get(frames[i].tag);
+          if (prev !== undefined) {
+            die(`--at ${ts[prev]} and ${ts[i]} both render to "${frames[i].tag}.png" — `
+              + `frame tags carry two decimal places, so keep positions at least 0.01 apart\n${usage}`);
+          }
+          seen.set(frames[i].tag, i);
+        }
       }
       for (const frame of frames) {
         const { values } = evaluate(anim, frame.t);

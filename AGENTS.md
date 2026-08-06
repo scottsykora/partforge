@@ -15,12 +15,13 @@ import handling.
 
 This directory is its **own git repo** (`scottsykora/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has eight: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has nine: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (OCCT fillet/chamfer), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `faceted-vase.js` (k.loft silhouette body), `hull-sweep.js` (k.hull/hullChain),
-`nameplate.js` (k.text2d emboss/deboss), and `text-smoke.js` (worker text-render
-CI fixture).
+`nameplate.js` (k.text2d emboss/deboss), `hinged-box.js` (the `animations`
+reference part - stepped timeline, camera cues, pose-only tracks), and
+`text-smoke.js` (worker text-render CI fixture).
 
 ## Node version
 
