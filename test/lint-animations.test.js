@@ -122,3 +122,13 @@ test("classification: a round-trip track on a pose-only param stays silent", () 
   };
   expect(lintPart(poseOnly).notes.map((f) => f.rule)).toEqual([]);
 });
+
+test("autoplay must be boolean and unique", () => {
+  expect(ids(lintPart(withAnim({ ...valid, autoplay: "yes" })))).toContain("animation-autoplay-invalid");
+  const two = { ...base(), animations: {
+    a: { duration: 1, autoplay: true, tracks: { a: [[0, 0], [1, 1]] } },
+    b: { duration: 1, autoplay: true, tracks: { a: [[0, 1], [1, 0]] } },
+  } };
+  expect(ids(lintPart(two))).toContain("animation-autoplay-invalid");
+  expect(ids(lintPart(withAnim({ ...valid, autoplay: true }))).filter((i) => i === "animation-autoplay-invalid")).toEqual([]);
+});

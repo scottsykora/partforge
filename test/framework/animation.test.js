@@ -86,3 +86,8 @@ test("normalizeAnimations reads part.animations, tolerates absence", () => {
 test("EASINGS endpoints are exact", () => {
   for (const fn of Object.values(EASINGS)) { expect(fn(0)).toBe(0); expect(fn(1)).toBe(1); }
 });
+
+test("normalizeAnimation carries autoplay as a boolean, default false", () => {
+  expect(normalizeAnimation("x", { duration: 1, tracks: { k: [[0, 0], [1, 1]] } }).autoplay).toBe(false);
+  expect(normalizeAnimation("x", { duration: 1, autoplay: true, tracks: { k: [[0, 0], [1, 1]] } }).autoplay).toBe(true);
+});

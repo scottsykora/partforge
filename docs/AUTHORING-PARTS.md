@@ -181,6 +181,16 @@ Rules (all lint-enforced):
 - Playback pauses when the user edits any control; Reset restores the values
   the animation found. Because animated values are real params, exporting
   while paused exports the posed state — by design.
+- `autoplay: true` (optional, one animation at most) starts that animation on
+  first show and again on each view switch, until the user touches the
+  transport — or anything writes params (`runtime.setParams` included) or
+  calls a `runtime.animation` method; any of those disarms auto-start for the
+  session. Lint: `animation-autoplay-invalid`. It is not armed when the
+  browser reports `prefers-reduced-motion: reduce` — self-starting motion is
+  exactly what that setting asks a page not to do. An autoplay animation that
+  declares a `camera` cue will sweep the camera away from the user's
+  persisted framing on every page load, so choose cues for autoplay
+  deliberately — the shipped example's `cycle` animation has none.
 
 Headless: `partforge render <part> --animation open --at 0,0.5,1` renders
 tagged stills (`--at` is normalized over the animation's total duration, like
@@ -779,9 +789,9 @@ stylesheet). `mount` looks up these element IDs:
 | `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
-| `#viewbar` with `#pause` / `#reframe` / `#cutaway` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#viewbar` with `#reframe` / `#cutaway` / `#theme` | optional viewer controls (omit any you don't want) |
 | `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
-| `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#pause`/`#theme` |
+| `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme` |
 
 Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
@@ -891,7 +901,6 @@ mount(part, {
   elements: {
     rail,
     chrome: {
-      pause,
       reframe,
       cutaway,
       theme,
@@ -1102,7 +1111,8 @@ validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
 `animation-keyframes-invalid`, `animation-value-out-of-range`,
 `animation-duration-invalid`, `animation-loop-invalid`,
 `animation-step-label-duplicate`, `animation-easing-unknown`,
-`animation-camera-invalid`, `animation-description-invalid` (all errors). One
+`animation-camera-invalid`, `animation-description-invalid`,
+`animation-autoplay-invalid` (all errors). One
 more rule does execute `build`, geometry-free: `animation-track-rebuilds` probes
 each track's endpoint values and emits a **note** when the animated param feeds
 real geometry (or the probe can't be trusted), because such a track plays

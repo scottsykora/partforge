@@ -82,7 +82,7 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.43.0):
+// Embedding contract (0.44.0):
 //   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
@@ -111,7 +111,10 @@ function createCleanupStack() {
 //                                 // part declares no animations, else
 //                                 // { play(name?), pause(), seek(t), stop(), state() }.
 //                                 // play() with an unknown name warns and does nothing;
-//                                 // any user/host param edit pauses playback.
+//                                 // any user/host param edit pauses playback. A part's
+//                                 // `autoplay: true` animation self-starts on first show
+//                                 // and each view switch until the user touches the
+//                                 // transport — no runtime call needed for that part.
 //   const off = runtime.onContextLost(() => …);  // WebGL context loss, i.e. the GPU or the
 //                                 // OS gave up — surface it rather than showing a dead
 //                                 // canvas. Returns an unsubscribe.
@@ -148,7 +151,6 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       threeMf: elements.exports?.threeMf ?? byId("download-3mf"),
     },
     chrome: {
-      pause: elements.chrome?.pause ?? byId("pause"),
       reframe: elements.chrome?.reframe ?? byId("reframe"),
       theme: elements.chrome?.theme ?? byId("theme"),
       cutaway: elements.chrome?.cutaway ?? byId("cutaway"),
@@ -212,7 +214,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // View tabs (generated from part.views) + live params. A tab switch shows the
     // cached assembly instantly if it's current, else auto-builds what's missing.
     const tabsCtl = createViewTabs(els.tabs, part, {
-      onChange: () => { pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); },
+      onChange: () => { pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); animCtl?.autoplayKick(); },
     });
     cleanup.defer(() => tabsCtl.detach());
     const view = () => tabsCtl.current();
@@ -306,6 +308,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // First-build readiness: resolves on the first accepted meshes result, rejects on
     // a first-build error. Guarded against unhandled rejection when never awaited.
     let readySettled = false;
+    // First-show autoplay latch: separate from `readySettled`, which the error
+    // branch also settles — a part whose first build fails but whose retry
+    // succeeds still deserves its autoplay.
+    let autoplayKicked = false;
     let resolveReady, rejectReady;
     const ready = new Promise((res, rej) => { resolveReady = res; rejectReady = rej; });
     ready.catch(() => {});
@@ -385,6 +391,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed });
             onBuild?.({ status: "success", ms: data.ms });
             if (!readySettled) { readySettled = true; resolveReady(); }
+            // First-show autoplay: latched separately from `ready`, which the
+            // error branch also settles — a part whose first build fails but
+            // whose retry succeeds still deserves its autoplay.
+            if (!autoplayKicked) { autoplayKicked = true; animCtl?.autoplayKick(); }
           } else if (lastAnimApplyVersion === loop.version()) {
             // Stale ONLY because animation frames kept bumping the version:
             // show the delivered meshes anyway — that IS best-effort playback —
@@ -537,7 +547,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.defer(() => els.exports.threeMf.removeEventListener("click", on3mfClick));
     }
 
-    // Optional host-page viewer chrome (pause / reframe / theme) + camera persistence.
+    // Optional host-page viewer chrome (reframe / theme) + camera persistence.
     const chrome = attachViewerControls(viewer, els.chrome, { tooltip });
     cleanup.defer(() => chrome.detach());
 

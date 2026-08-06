@@ -340,6 +340,14 @@ export interface AnimationSpec {
    * `[[t, angle], …]` cue list, or per-step `camera` names.
    */
   camera?: CameraCue | Array<[number, CameraCue]>;
+  /**
+   * Start this animation automatically on first show and again on each view
+   * switch, until the user touches the transport. At most one animation per
+   * part may set this; `partforge lint` enforces it
+   * (`animation-autoplay-invalid`). Not armed when the browser reports
+   * `prefers-reduced-motion: reduce`.
+   */
+  autoplay?: boolean;
 }
 
 // --- the part itself --------------------------------------------------------

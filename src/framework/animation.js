@@ -42,7 +42,7 @@ export function normalizeAnimation(name, spec) {
   const trackedKeys = [...new Set(steps.flatMap((s) => Object.keys(s.tracks)))];
   return {
     name, label: spec.label ?? name, description: spec.description ?? null,
-    loop: !!spec.loop, steps, stepStarts, totalDuration, cues, trackedKeys,
+    loop: !!spec.loop, autoplay: !!spec.autoplay, steps, stepStarts, totalDuration, cues, trackedKeys,
   };
 }
 
