@@ -332,9 +332,9 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 
 - **Symptom:** an intentionally faceted loft (low-side-count rings) previews
   smooth-shaded, but exports/prints show flat facets.
-- **Cause:** the loft's shading policy resolved to smooth — a `smooth: true`
-  hint, `ruled: false`, or rings with 32+ sides.
-- **Fix:** pass `smooth: false` to `k.loft` (or drop the smooth-implying
+- **Cause:** the loft's shading policy resolved to smooth — a `shading:
+  "smooth"` hint, `ruled: false`, or rings with 32+ sides.
+- **Fix:** pass `shading: "faceted"` to `k.loft` (or drop the smooth-implying
   option) per [AUTHORING-PARTS.md](AUTHORING-PARTS.md) shading-intent note.
 
 # Hardware library

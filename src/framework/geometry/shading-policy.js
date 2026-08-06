@@ -19,12 +19,13 @@ export const SMOOTH_SIDES_MIN = 32;
 
 export const cosDeg = (deg) => Math.cos((deg * Math.PI) / 180);
 
-// Loft shading inference. An explicit `smooth` hint wins; `ruled:false` asks
+// Loft shading inference. An explicit `shading` hint wins; `ruled:false` asks
 // OCCT for a smoothly blended surface, so the Manifold preview of the same part
 // must shade smooth too; otherwise low-side-count rings are intentional facets.
-export function loftShadingPolicy(rings, { smooth, ruled } = {}) {
-  if (smooth === true) return SMOOTH;
-  if (smooth === false) return FACETED;
+export function loftShadingPolicy(rings, { shading, ruled } = {}) {
+  if (shading === "smooth") return SMOOTH;
+  if (shading === "faceted") return FACETED;
+  if (shading != null) throw new Error('loft: shading must be "smooth" | "faceted"');
   if (ruled === false) return SMOOTH;
   let maxSides = 0;
   if (Array.isArray(rings)) for (const r of rings) {

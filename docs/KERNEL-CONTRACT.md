@@ -282,13 +282,14 @@ are present:
   ships true B-rep edges with tangent edges (fillet blends, seam lines)
   filtered out; Manifold ships policy-gated sharp/seam segments.
 
-`loft` accepts `smooth?: boolean` to override facet-vs-smooth inference: by
-default, rings with fewer than 32 sides shade as intentional flat facets with
-no same-surface edge lines, while rings with 32+ sides (and `ruled: false`
-lofts) shade smooth. `smooth: true` forces smooth shading; `smooth: false`
-forces facets. Thresholds live in `src/framework/geometry/shading-policy.js`.
+`loft` accepts `shading?: "smooth" | "faceted"` to override facet-vs-smooth
+inference: by default, rings with fewer than 32 sides shade as intentional flat
+facets with no same-surface edge lines, while rings with 32+ sides (and
+`ruled: false` lofts) shade smooth. `shading: "smooth"` forces smooth shading;
+`shading: "faceted"` forces facets; any other non-nullish value throws.
+Thresholds live in `src/framework/geometry/shading-policy.js`.
 
-Known limitation: the OCCT backend ignores `smooth` — a loft forced to OCCT
+Known limitation: the OCCT backend ignores `shading` — a loft forced to OCCT
 via `meta.backend` draws its facet corner edges as B-rep feature lines. The
 hint is honored on the Manifold path, which is where lofts preview by default.
 

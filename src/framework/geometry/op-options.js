@@ -116,8 +116,8 @@ export function revolveArgs(o) {
 }
 
 export function loftArgs(o) {
-  checkKeys("loft", o, ["rings", "ruled", "closed", "smooth"]);
-  return [req("loft", o, "rings"), ...tail(o, ["ruled", "closed", "smooth"])];
+  checkKeys("loft", o, ["rings", "ruled", "closed", "shading"]);
+  return [req("loft", o, "rings"), ...tail(o, ["ruled", "closed", "shading"])];
 }
 
 export function sweepArgs(o) {

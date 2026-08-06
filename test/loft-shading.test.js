@@ -39,8 +39,8 @@ test("12-sided loft defaults to faceted: every wall triangle flat, zero edge lin
   expect(m.edges.length).toBe(0); // no same-surface lines — not even the 90° cap rims
 });
 
-test("smooth:true overrides inference: corners averaged, cap-rim lines return", () => {
-  const m = k.loft({ rings: RINGS, smooth: true }).toMesh();
+test("shading:\"smooth\" overrides inference: corners averaged, cap-rim lines return", () => {
+  const m = k.loft({ rings: RINGS, shading: "smooth" }).toMesh();
   const w = wallTris(m);
   expect(w.total).toBeGreaterThan(0);
   expect(w.flat).toBe(0); // every wall vertex is a facet corner — all averaged at 30° < 35°
@@ -72,8 +72,19 @@ test("booleans keep per-surface policy: faceted loft cut by a box stays flat, se
   expect(m.edges.length).toBeGreaterThan(0); // the cut seam draws lines
 });
 
-test("smooth is rejected on other ops (option list is per-op)", () => {
-  expect(() => k.sphere({ r: 5, smooth: true })).toThrow(/unknown option/);
+test("shading is rejected on other ops (option list is per-op)", () => {
+  expect(() => k.sphere({ r: 5, shading: "smooth" })).toThrow(/unknown option/);
+});
+
+test("the old smooth option name is gone: loft rejects it as unknown", () => {
+  // The did-you-mean suggester doesn't fire here ("smooth" isn't a prefix of
+  // "shading" and their edit distance exceeds the cap), so this only pins the
+  // baseline unknown-option error, not a "did you mean shading?" hint.
+  expect(() => k.loft({ rings: RINGS, smooth: true })).toThrow(/unknown option "smooth"/);
+});
+
+test("an invalid shading enum value throws the loud enum error", () => {
+  expect(() => k.loft({ rings: RINGS, shading: "flat" })).toThrow('loft: shading must be "smooth" | "faceted"');
 });
 
 // Regression: the faceted-vase hollows itself with loft().intersect(box).label(...)

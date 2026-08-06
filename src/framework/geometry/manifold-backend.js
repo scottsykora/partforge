@@ -287,9 +287,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     // Ring loft: hand-meshed via the shared ring-mesh helpers (helix-tube recipe).
     // Cached atomically; the hash folds every ring's points/z/rotate/scale and the
-    // opts (including `smooth`, so toggling the hint is a fresh cache node).
+    // opts (including `shading`, so toggling the hint is a fresh cache node).
     // asOriginal() stamps a stable originalID; the shading policy (inferred from
-    // the rings, or forced by `smooth`) registers under it for the crease pass
+    // the rings, or forced by `shading`) registers under it for the crease pass
     // and lives exactly as long as the cache pins the solid.
     loft: (rings, opts = {}) => {
       const key = h("loft", rings, opts);

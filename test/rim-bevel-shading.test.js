@@ -5,7 +5,7 @@
 // drops the bevel band's own corner crease lines and (b), via label()'s
 // triangle-count majority vote, can strip ALL edge lines from a labeled
 // beveled solid (the bevel band outweighs the box body's flat-cap-only faces).
-// rim-bevel.js now passes smooth: true on its three internal loft() calls —
+// rim-bevel.js now passes shading: "smooth" on its three internal loft() calls —
 // a bevel band inherits the profile's shading intent, not loft's own facet
 // inference — so a beveled solid keeps its edge lines both unlabeled and
 // labeled.

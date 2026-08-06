@@ -13,12 +13,17 @@ test("cosDeg converts degrees to a cosine", () => {
   expect(cosDeg(60)).toBeCloseTo(0.5, 10);
 });
 
-test("explicit smooth hint wins in both directions", () => {
+test("explicit shading hint wins in both directions", () => {
   const rings = [{ sides: 12, radius: 20, z: 0 }, { sides: 12, radius: 20, z: 10 }];
-  expect(loftShadingPolicy(rings, { smooth: true })).toBe(SMOOTH);
-  expect(loftShadingPolicy(rings, { smooth: false })).toBe(FACETED);
+  expect(loftShadingPolicy(rings, { shading: "smooth" })).toBe(SMOOTH);
+  expect(loftShadingPolicy(rings, { shading: "faceted" })).toBe(FACETED);
   const many = [{ sides: 64, radius: 20, z: 0 }, { sides: 64, radius: 20, z: 10 }];
-  expect(loftShadingPolicy(many, { smooth: false })).toBe(FACETED);
+  expect(loftShadingPolicy(many, { shading: "faceted" })).toBe(FACETED);
+});
+
+test("an invalid shading value throws a loud, specific error", () => {
+  const rings = [{ sides: 12, radius: 20, z: 0 }, { sides: 12, radius: 20, z: 10 }];
+  expect(() => loftShadingPolicy(rings, { shading: "flat" })).toThrow('loft: shading must be "smooth" | "faceted"');
 });
 
 test("ruled:false (OCCT smooth blend) implies smooth shading intent", () => {
