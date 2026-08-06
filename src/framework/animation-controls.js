@@ -112,6 +112,11 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   // propagate would take the other listeners down with it. Warn once, then
   // stay quiet so a bad frame can't flood the console 60x a second.
   let frameFailureWarned = false;
+  function warnFrameFailure(err) {
+    if (frameFailureWarned) return;
+    frameFailureWarned = true;
+    console.warn("partforge: animation frame failed", err);
+  }
   function apply(r) {
     if (!r) return;
     try {
@@ -124,16 +129,22 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
           duration: tweenDuration,
           // An intro cue gates playback until the tween settles; mid-timeline
           // cues overlap playback and need no completion signal.
-          onComplete: r.status === "intro" ? () => apply(playback.introDone()) : undefined,
+          onComplete: r.status === "intro" ? () => guarded(() => playback.introDone()) : undefined,
         });
       }
       syncUi();
     } catch (err) {
-      if (!frameFailureWarned) {
-        frameFailureWarned = true;
-        console.warn("partforge: animation frame failed", err);
-      }
+      warnFrameFailure(err);
     }
+  }
+
+  // Every transport entry point goes through here so the STATE-MACHINE call is
+  // inside the guard too, not just apply(). playback.tick() is evaluated in the
+  // render loop, and three re-arms requestAnimationFrame only after the frame
+  // callback returns — a throw escaping from there stops the rAF chain and
+  // freezes the viewer permanently instead of costing one frame.
+  function guarded(produce) {
+    try { apply(produce()); } catch (err) { warnFrameFailure(err); }
   }
 
   function doReset() {
@@ -154,14 +165,14 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     syncUi();
   }
 
-  const offFrame = viewer.onFrame((dt) => apply(playback.tick(dt)));
+  const offFrame = viewer.onFrame((dt) => guarded(() => playback.tick(dt)));
   // User orbit: the viewer has already cancelled any cue tween (its own
   // "start" handler); disarm the remaining cues, and if an intro tween was
   // gating playback, settle the gate — cancel() never fires onComplete, so
   // without this the machine would sit in "intro" forever.
   const offOrbit = viewer.onCameraStart(() => {
     playback.disarmCues();
-    if (playback.state().status === "intro") apply(playback.introDone());
+    if (playback.state().status === "intro") guarded(() => playback.introDone());
   });
 
   const onPlayClick = () => {
@@ -169,14 +180,14 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     const active = playback.state().status;
     if (active === "playing" || active === "intro") {
       viewer.cancelCameraTween();
-      apply(playback.pause());
+      guarded(() => playback.pause());
     } else {
-      apply(playback.play());
+      guarded(() => playback.play());
     }
   };
-  const onScrub = () => { disarmAutoplay(); apply(playback.seek(Number(scrub.value) / 1000)); };
-  const onPrev = () => { disarmAutoplay(); apply(playback.stepPrev()); };
-  const onNext = () => { disarmAutoplay(); apply(playback.stepNext()); };
+  const onScrub = () => { disarmAutoplay(); guarded(() => playback.seek(Number(scrub.value) / 1000)); };
+  const onPrev = () => { disarmAutoplay(); guarded(() => playback.stepPrev()); };
+  const onNext = () => { disarmAutoplay(); guarded(() => playback.stepNext()); };
   const onPick = () => { disarmAutoplay(); selectAnimation(pick.value); };
   const onResetClick = () => { disarmAutoplay(); doReset(); };
   playBtn.addEventListener("click", onPlayClick);
@@ -200,10 +211,10 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
         return;
       }
       if (name) selectAnimation(name);
-      apply(playback.play());
+      guarded(() => playback.play());
     },
-    pause() { disarmAutoplay(); viewer.cancelCameraTween(); apply(playback.pause()); },
-    seek(t) { disarmAutoplay(); apply(playback.seek(t)); },
+    pause() { disarmAutoplay(); viewer.cancelCameraTween(); guarded(() => playback.pause()); },
+    seek(t) { disarmAutoplay(); guarded(() => playback.seek(t)); },
     stop() { disarmAutoplay(); doReset(); },
     state: () => ({ animation: current.name, ...playback.state() }),
   };
@@ -223,7 +234,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       if (!autoplayArmed || !autoplayAnim) return;
       if (current !== autoplayAnim) selectAnimation(autoplayAnim.name);
       const { status } = playback.state();
-      if (status !== "playing" && status !== "intro") apply(playback.play());
+      if (status !== "playing" && status !== "intro") guarded(() => playback.play());
     },
     detach() {
       offFrame();

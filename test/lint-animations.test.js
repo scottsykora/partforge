@@ -132,3 +132,12 @@ test("autoplay must be boolean and unique", () => {
   expect(ids(lintPart(two))).toContain("animation-autoplay-invalid");
   expect(ids(lintPart(withAnim({ ...valid, autoplay: true }))).filter((i) => i === "animation-autoplay-invalid")).toEqual([]);
 });
+
+test("an easing named after an Object.prototype member is rejected", () => {
+  // `easing in EASINGS` is true for every prototype member, so an `in`-based
+  // check waved these through to a runtime that then threw mid-frame.
+  for (const easing of ["__proto__", "toString", "constructor", "isPrototypeOf"]) {
+    const r = lintPart(withAnim({ ...valid, easing }));
+    expect(ids(r), `easing: ${easing}`).toContain("animation-easing-unknown");
+  }
+});

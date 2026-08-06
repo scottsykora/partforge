@@ -235,7 +235,11 @@ export const ANIMATION_RULES = [
     run: ({ part }) => {
       const out = [];
       const check = (easing, path) => {
-        if (easing !== undefined && !(easing in EASINGS)) {
+        // Own-key test, not `in`: `"toString" in EASINGS` is true, so `in` would
+        // wave through every Object.prototype member. The runtime (easingFor)
+        // applies the same test and falls back to the default, so these names are
+        // caught here rather than silently mis-animating or throwing mid-frame.
+        if (easing !== undefined && !Object.hasOwn(EASINGS, easing)) {
           out.push(err("animation-easing-unknown",
             `unknown easing "${easing}"`,
             `Use one of: ${Object.keys(EASINGS).join(", ")}.`,
