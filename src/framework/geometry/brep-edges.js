@@ -88,6 +88,10 @@ export function filterBrepEdges(mesh, meshEdges) {
       // MULTISET intersection (tally occurrences per corner, sum the min per
       // shared id) so that case still reaches persisting >= 2, instead of a
       // Set intersection whose size tops out at 1 for a single repeated id.
+      // This assumes every adjacent face contributes a vertex copy at each
+      // corner it touches (replicad guarantees this); if that ever didn't
+      // hold, a corner could show persistence only against itself and this
+      // could drop a genuinely sharp edge.
       const n0 = normalsAt(g, 0), n1 = normalsAt(g, 1);
       if (n0 && n1) {
         const count0 = new Map();

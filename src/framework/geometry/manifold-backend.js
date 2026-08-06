@@ -11,7 +11,7 @@ import { assembleRegions } from "./shape2d-regions.js";
 import { finishKernel } from "./kernel-front.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
-import { loftShadingPolicy } from "./shading-policy.js";
+import { loftShadingPolicy, SMOOTH } from "./shading-policy.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
@@ -162,9 +162,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // as the vase does to hollow itself) leaves the solid spanning more than one
         // original surface, so originalID() reports -1 ("mixed") rather than a single
         // id — the direct lookup below misses even though the loft's policy is right
-        // there. Fall back to the mesh's own run table and recover it: if exactly one
-        // distinct policy is registered among the surfaces feeding this mesh, that's
-        // unambiguously the one to inherit (a plain tool like a box registers none).
+        // there. Fall back to the mesh's own run table and recover it via a
+        // triangle-count-weighted majority vote across all surfaces feeding this
+        // mesh (a plain tool like a box has no registered policy of its own, but
+        // still votes SMOOTH — see below).
         let inherited = prevId !== -1 ? oidPolicies.get(prevId) : undefined;
         // Skip the mesh scan entirely when no surface anywhere has a registered
         // policy (e.g. planter's labeled prism compound) — getMesh() forces a
@@ -177,28 +178,28 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
           // policy, keyed by VALUE (creaseAngle/sameSurfaceLines), not object
           // reference — a majority-by-object-identity check would silently
           // break if policies were ever constructed per-op instead of shared
-          // singletons. Runs whose original surface has no registered policy
-          // (plain boolean tools) contribute no weight — they have no opinion.
-          // The policy spanning the most triangles wins; an exact tie favors
-          // the FACETED-like policy (sameSurfaceLines: false) — deterministic,
-          // and biased toward honest-print rendering over silently smoothing
-          // facets away.
+          // singletons. A run whose original surface has NO registered policy
+          // (a plain boolean tool, e.g. a box) still gets a vote: at render
+          // time an unregistered surface shades SMOOTH (buildGeometry's
+          // default), so counting it as an abstention would let the vote
+          // disagree with what's actually drawn — it contributes its triangle
+          // weight to SMOOTH instead. The policy spanning the most triangles
+          // wins; an exact tie favors the FACETED-like policy
+          // (sameSurfaceLines: false) — deterministic, and biased toward
+          // honest-print rendering over silently smoothing facets away.
           const ri = g.runIndex, roid = g.runOriginalID;
           const weightByKey = new Map();  // policy key -> triangle count
-          const policyByKey = new Map();  // policy key -> policy object
-          let bestKey, bestWeight = -1, bestPol;
+          let bestWeight = -1, bestPol;
           for (let r = 0; r < roid.length; r++) {
-            const pol = oidPolicies.get(roid[r]);
-            if (!pol) continue;
+            const pol = oidPolicies.get(roid[r]) ?? SMOOTH;
             const key = `${pol.creaseAngle}/${pol.sameSurfaceLines}`;
             const weight = (weightByKey.get(key) || 0) + (ri[r + 1] / 3 - ri[r] / 3);
             weightByKey.set(key, weight);
-            if (!policyByKey.has(key)) policyByKey.set(key, pol);
             const better = weight > bestWeight || (weight === bestWeight && !pol.sameSurfaceLines && bestPol?.sameSurfaceLines);
-            if (better) { bestKey = key; bestWeight = weight; bestPol = pol; }
+            if (better) { bestWeight = weight; bestPol = pol; }
           }
           g.delete?.();
-          if (bestKey !== undefined) inherited = policyByKey.get(bestKey);
+          inherited = bestPol;
         }
         if (inherited !== undefined) oidPolicies.set(id, inherited);
         return { value: wrap(o, lh), pin: o, dispose: () => { featureLabels.delete(id); oidPolicies.delete(id); o.delete?.(); } };

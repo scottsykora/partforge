@@ -294,7 +294,10 @@ hint is honored on the Manifold path, which is where lofts preview by default.
 
 `label()`ing a compound solid (one spanning more than one original surface)
 collapses it to a single shading surface that inherits the majority policy of
-its registered constituent surfaces, weighted by triangle count.
+its registered constituent surfaces, weighted by triangle count. A constituent
+with no registered policy of its own (e.g. a plain boolean tool) still votes,
+as SMOOTH — the policy it actually renders with — and an exact tie resolves to
+the no-lines (faceted) policy.
 
 **Selectors** (`fillet`/`chamfer` `edges` selector, `shell` `open` face selector) are
 declarative objects, criteria AND-combined:

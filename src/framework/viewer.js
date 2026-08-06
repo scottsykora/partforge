@@ -267,7 +267,7 @@ export function createViewer(container, part) {
       geo.computeBoundingBox();
       out = geo;
     } else {
-      // fallback (no kernel normals, e.g. OCCT): crease from the triangle soup
+      // fallback (payload with no kernel normals — no current backend does this): crease from the triangle soup
       out = toCreasedNormals(geo, CREASE_ANGLE);
       out.computeBoundingBox();
     }
@@ -278,7 +278,7 @@ export function createViewer(container, part) {
     // draw none rather than falling back. Only a payload with NO edge data at
     // all (edges === undefined; no current backend does this) derives by angle.
     const lg = new LineSegmentsGeometry();
-    if (edges) lg.setPositions(edges.length ? edges : new Float32Array(0));
+    if (edges) lg.setPositions(edges); // edges is already a well-formed (possibly zero-length) Float32Array
     else lg.fromEdgesGeometry(new THREE.EdgesGeometry(out, EDGE_ANGLE));
     out.userData.edges = lg;
     return out;

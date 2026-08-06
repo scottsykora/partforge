@@ -101,8 +101,8 @@ test("label() after an intermediate boolean still recovers the loft's policy (va
 // one), so a 12-sided 2-ring loft (48 tris, faceted) is smaller than a 64-sided 2-ring
 // loft (256 tris, smooth) — SMOOTH would win a naive vote. Give the 12-sided loft many
 // more RINGS (not more sides — that would also just increase facet count fairly) so its
-// wall-quad count dominates: 16 rings * 12 sides * 2 = 384 wall tris + 24 cap tris = 408,
-// comfortably ahead of the 64-sided loft's 256.
+// wall-quad count dominates: 16 rings = 15 gaps, 15 gaps * 12 sides * 2 = 360 wall tris +
+// 24 cap tris = 384 total, comfortably ahead of the 64-sided loft's 256.
 //
 // The deciding observable is `edges` rather than `wallTris().flat`: after label()
 // every surviving triangle shares ONE originalID, so `sameSurfaceLines` is either on
@@ -114,7 +114,7 @@ test("label() after an intermediate boolean still recovers the loft's policy (va
 test("label() on a union of differently-shaded lofts inherits the majority policy by triangle count", () => {
   const manyRingsFaceted = [];
   for (let i = 0; i < 16; i++) manyRingsFaceted.push({ sides: 12, radius: 20, z: i * 2 });
-  const facetedLoft = k.loft({ rings: manyRingsFaceted }); // 16 rings * 12 sides * 2 = 384 wall tris + 24 cap = 408 tris, FACETED (< 32 sides)
+  const facetedLoft = k.loft({ rings: manyRingsFaceted }); // 15 gaps * 12 sides * 2 = 360 wall tris + 24 cap = 384 tris, FACETED (< 32 sides)
   const smoothLoft = k
     .loft({ rings: [{ sides: 64, radius: 20, z: 0 }, { sides: 64, radius: 20, z: 10 }] }) // 256 tris, SMOOTH (>= 32 sides)
     .translate([100, 0, 0]); // keep the two solids disjoint so union() doesn't reshape either

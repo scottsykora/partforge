@@ -102,17 +102,24 @@ const bevelRegion = (k, region, h, bottom, top) => {
   let s = k.extrude({ profile: holes.length ? { outer, holes } : outer, h });
   const b = bottom > 0 ? fit(outer, -bottom, "profile") : null;
   const t = top > 0 ? fit(outer, -top, "profile") : null;
-  if (b || t) s = s.intersect(k.loft({ rings: outerRings(outer, h, b, t) }));
+  // smooth: true on all three internal lofts — a bevel band inherits the
+  // profile's own shading intent (sharp corners at the bevel's start/end
+  // rings, as a real chamfer would look), not the loft op's own facet-vs-
+  // smooth ring-count inference. Left to infer, a <32-point profile (any
+  // ordinary polygon) registers FACETED, which drops the bevel band's own
+  // corner crease lines and, via label()'s majority vote, can strip ALL
+  // edge lines from a labeled beveled solid.
+  if (b || t) s = s.intersect(k.loft({ rings: outerRings(outer, h, b, t), smooth: true }));
   const cutters = [];
   for (const hole of holes) {
     const hb = bottom > 0 ? fit(hole, bottom, "hole") : null;
     if (hb) cutters.push(k.loft({ rings: [
       { polygon: hb.ring, z: -1 }, { polygon: hb.ring, z: 0 }, { polygon: hole, z: hb.c },
-    ] }));
+    ], smooth: true }));
     const ht = top > 0 ? fit(hole, top, "hole") : null;
     if (ht) cutters.push(k.loft({ rings: [
       { polygon: hole, z: h - ht.c }, { polygon: ht.ring, z: h }, { polygon: ht.ring, z: h + 1 },
-    ] }));
+    ], smooth: true }));
   }
   return cutters.length ? s.cutAll(cutters) : s;
 };
