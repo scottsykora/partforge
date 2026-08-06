@@ -166,7 +166,7 @@ export function createViewer(container, part) {
   }
 
   // CAD-style feature edge lines (anti-aliased "fat" lines), one per sub-part.
-  const EDGE_ANGLE = 35; // deg — OCCT fallback threshold (Manifold supplies seam-aware edges)
+  const EDGE_ANGLE = 35; // deg — last-ditch threshold for payloads with no kernel edge data
   const lineMaterial = new LineMaterial({ color: THEME.dark.line, linewidth: 1.0 }); // ~10% lighter, 1 px
   lineMaterial.resolution.set(1, 1); // real size set by resize() below
   const subLines = Object.fromEntries(
@@ -246,10 +246,10 @@ export function createViewer(container, part) {
   controls.addEventListener("start", onControlsStart);
   function onCameraStart(cb) { cameraStartListeners.add(cb); return () => cameraStartListeners.delete(cb); }
 
-  // Smooth shading within CREASE_ANGLE of a shared edge, hard edge past it — so the
-  // round body and helical groove read smooth while bore rims, drum faces, and
-  // groove walls stay crisp. Lower = more hard edges; raise toward Math.PI/3 for
-  // softer. (Worker normals are ignored; we recompute per the crease threshold.)
+  // Fallback creasing for payloads with no kernel normals. Both backends now
+  // ship authoritative normals (Manifold: policy-aware crease pass; OCCT:
+  // analytic B-rep normals), so this path is last-ditch only — it must not be
+  // "improved" in lieu of fixing a backend that stopped sending normals.
   const CREASE_ANGLE = Math.PI / 6; // 30°
 
   // --- geometry builder -----------------------------------------------------
@@ -262,7 +262,7 @@ export function createViewer(container, part) {
     const triCount = triangles ?? (indices ? indices.length : positions.length / 3) / 3;
     let out;
     if (normals?.length) {
-      // kernel-computed normals (Manifold) — smooth within a surface, hard at cut seams
+      // kernel-computed normals (both backends) — smooth within a surface, hard at cut seams
       geo.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
       geo.computeBoundingBox();
       out = geo;
@@ -273,9 +273,12 @@ export function createViewer(container, part) {
     }
     out.userData.triangles = triCount;
     if (featureIds) { out.userData.featureIds = featureIds; out.userData.features = features; }
-    // feature edge lines: Manifold supplies seam-aware segments; else derive by angle
+    // feature edge lines: kernel-supplied segments are authoritative — an EMPTY
+    // array means "this solid has no feature edges" (e.g. a lone sphere), so
+    // draw none rather than falling back. Only a payload with NO edge data at
+    // all (edges === undefined; no current backend does this) derives by angle.
     const lg = new LineSegmentsGeometry();
-    if (edges?.length) lg.setPositions(edges);
+    if (edges) { if (edges.length) lg.setPositions(edges); }
     else lg.fromEdgesGeometry(new THREE.EdgesGeometry(out, EDGE_ANGLE));
     out.userData.edges = lg;
     return out;
