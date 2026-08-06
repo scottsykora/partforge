@@ -84,6 +84,28 @@ export const SCHEMA_RULES = [
     },
   },
   {
+    id: "features-requires-on",
+    run: ({ part }) => {
+      const out = [];
+      sections(part).forEach((sec, si) => {
+        if (!sectionRenders(sec)) return;
+        arr(sec?.features).forEach((f, i) => {
+          // The panel treats "enabled" as `params[key] > 0`, so `on` has to be a
+          // positive number: a missing one writes undefined (NaN in the build),
+          // and 0 or a negative writes a value the panel reads straight back as
+          // "still off", leaving a checkbox that won't stay ticked.
+          if (f && !f.hidden && !(typeof f.on === "number" && f.on > 0)) {
+            out.push(err("features-requires-on",
+              `section "${sec.id ?? si}" feature ${i}${f.key ? ` ("${f.key}")` : ""} has no positive numeric \`on\` value`,
+              "Ticking a feature's checkbox writes `on` into the feature's own parameter, so a missing one writes `undefined` and the build reads it as NaN. Unlike a `toggles` entry — a plain flag that falls back to 1 — a feature's `on` is the real value the parameter takes when enabled (a diameter, a count), so there is no safe default to guess. It must be greater than 0, because the panel reads `> 0` as \"enabled\". Give the feature the value it should switch on to.",
+              `parameters[${si}].features[${i}]`));
+          }
+        });
+      });
+      return out;
+    },
+  },
+  {
     id: "control-key-not-in-defaults",
     run: ({ part }) => {
       // Only skip when `defaults` isn't a plain object at all (missing-defaults
