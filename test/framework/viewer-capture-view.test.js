@@ -44,6 +44,7 @@ vi.mock("three", async (importOriginal) => {
       state.disposeCounts = { geo: 0, edges: 0 };
       state.disposedMaterials = new Set();
       scene.traverse((o) => {
+        if (o.isLineSegments2) return; // edge lines (LineSegments2 extends Mesh) — counted via their surface mesh's userData.edges
         if (!o.isMesh || !o.geometry) return;
         o.geometry.addEventListener("dispose", () => { state.disposeCounts.geo += 1; });
         o.geometry.userData.edges?.addEventListener("dispose", () => { state.disposeCounts.edges += 1; });
@@ -137,7 +138,7 @@ test("renderMeshPayloads returns a JPEG data URL and never touches the live scen
   expect(state.renderer.frames).toBe(1);
   expect(state.lastRenderScene).not.toBe(liveScene);
   const rendered = [];
-  state.lastRenderScene.traverse((o) => { if (o.isMesh && o.geometry) rendered.push(o); });
+  state.lastRenderScene.traverse((o) => { if (o.isMesh && o.geometry && !o.isLineSegments2) rendered.push(o); });
   expect(rendered).toHaveLength(1);
   expect(rendered[0].geometry.userData.triangles).toBe(1);
 
@@ -173,7 +174,7 @@ test("renderMeshPayloads disposes a display-override clone material but not the 
   viewer.renderMeshPayloads([cubePayload("a"), cubePayload("ghost")], { size: 64 });
 
   const meshes = [];
-  state.lastRenderScene.traverse((o) => { if (o.isMesh && o.geometry) meshes.push(o); });
+  state.lastRenderScene.traverse((o) => { if (o.isMesh && o.geometry && !o.isLineSegments2) meshes.push(o); });
   const plain = meshes.filter((m) => m.material === sharedMaterial);
   const clones = meshes.filter((m) => m.material !== sharedMaterial);
   expect(plain).toHaveLength(1);   // the "a" payload reused the singleton
@@ -237,4 +238,33 @@ test("renderMeshPayloads returns null after the viewer is disposed", () => {
 
   expect(viewer.renderMeshPayloads([cubePayload("a")], { size: 64 })).toBeNull();
   expect(state.lastRenderScene).toBeNull(); // never reached the renderer
+});
+
+// Review fix 6: the thumbnail must carry the part's CAD feature-edge outlines, like the
+// live viewer — the surface mesh alone loses hole/seam/chamfer lines.
+test("renderMeshPayloads adds feature-edge lines to the temp scene", () => {
+  const viewer = newViewer();
+
+  viewer.renderMeshPayloads([cubePayload("a")], { size: 64 });
+
+  const lines = [];
+  state.lastRenderScene.traverse((o) => { if (o.isLineSegments2) lines.push(o); });
+  expect(lines).toHaveLength(1); // one edge-line object for the one payload
+  // the edge geometry is still disposed with its surface mesh (no double count)
+  expect(state.disposeCounts).toEqual({ geo: 1, edges: 1 });
+
+  viewer.dispose();
+});
+
+// Review fix 7: render at the live camera's fov (45°, which cameraPoseForView's distance is
+// tuned to), not the old 35° that cropped long, thin parts.
+test("renderMeshPayloads renders at the live camera's fov, not a narrower one", () => {
+  const viewer = newViewer();
+
+  viewer.renderMeshPayloads([cubePayload("a")], { size: 64 });
+
+  expect(state.lastCamera.fov).toBe(viewer.camera.fov); // 45, matching captureViews/captureCurrent
+  expect(state.lastCamera.fov).toBe(45);
+
+  viewer.dispose();
 });

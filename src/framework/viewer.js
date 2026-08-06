@@ -554,14 +554,27 @@ export function createViewer(container, part) {
     }
     tmpScene.add(hemi, capLights.key, capLights.key.target, capLights.fill, capLights.fill.target);
 
+    // Feature-edge lines, so the thumbnail carries the same hole/seam/chamfer outlines the
+    // live viewer shows. A dedicated LineMaterial at the render resolution (the live one is
+    // sized to the on-screen canvas); added after framing so it can't perturb the bbox.
+    const lineMat = new LineMaterial({ color: THEME.dark.line, linewidth: 1.0 });
+    lineMat.resolution.set(size, size);
+    for (const mesh of built) {
+      const edges = mesh.geometry.userData.edges;
+      if (edges) tmpPivot.add(new LineSegments2(edges, lineMat));
+    }
+
     try {
-      return renderOffscreen(pose, { width: size, height: size, fov: 35, quality }, tmpScene);
+      // fov matches the live camera (and captureViews/captureCurrent) — cameraPoseForView's
+      // distance is tuned to it, so a narrower fov would crop long, thin parts.
+      return renderOffscreen(pose, { width: size, height: size, fov: camera.fov, quality }, tmpScene);
     } finally {
       for (const mesh of built) {
         mesh.geometry.userData.edges?.dispose();
         mesh.geometry.dispose();
         if (mesh.material !== material) mesh.material.dispose(); // clone only — never the shared singleton
       }
+      lineMat.dispose();
       hemi.dispose?.();
       capLights.key.dispose?.();
       capLights.fill.dispose?.();
