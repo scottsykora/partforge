@@ -278,7 +278,7 @@ export function createViewer(container, part) {
     // draw none rather than falling back. Only a payload with NO edge data at
     // all (edges === undefined; no current backend does this) derives by angle.
     const lg = new LineSegmentsGeometry();
-    if (edges) { if (edges.length) lg.setPositions(edges); }
+    if (edges) lg.setPositions(edges.length ? edges : new Float32Array(0));
     else lg.fromEdgesGeometry(new THREE.EdgesGeometry(out, EDGE_ANGLE));
     out.userData.edges = lg;
     return out;
