@@ -27,12 +27,18 @@ import { attachAnimationControls } from "./animation-controls.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): null when the part
     // declares no animations. { play(name?), pause(), seek(t), stop(), state() }.
     animation: animation ?? null,
+    // Active view name (never null once mounted). See onViewChange for the push side.
+    getView,
+    // Programmatic tab switch; false for a name the part doesn't declare.
+    setView,
+    // Offscreen render of a named view (default when omitted). See Task 4.
+    captureView,
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
     captureCurrent: (opts) => viewer.captureCurrent(opts),
     // Park/unpark the viewer: stops the render loop and frees the drawing
@@ -567,9 +573,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.dispose();
     }
 
+    // TEMPORARY stub — Task 4 replaces this with a real offscreen capture.
+    const captureView = async () => null;
+
     return makeHandle({
       ready, dispose, viewer, setParams,
       setHostPane: paneTabs.setHostPane,
+      getView: view,                         // () => tabsCtl.current()
+      setView: (name) => tabsCtl.select(name),
+      captureView,
       listExportableParts: () =>
         exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
       exportParts: (opts) => exportCtl.exportParts(opts),

@@ -865,8 +865,12 @@ test("makeHandle always exposes a callable setHostPane", () => {
   const handle = makeHandle({
     ready: Promise.resolve(), dispose() {}, viewer: { captureCanonicalViews: () => [] },
     setParams() {}, listExportableParts: () => [], exportParts: async () => {},
+    getView: () => "a", setView: () => true, captureView: async () => null,
   });
   expect(() => handle.setHostPane("rail")).not.toThrow();
+  expect(typeof handle.getView).toBe("function");
+  expect(typeof handle.setView).toBe("function");
+  expect(typeof handle.captureView).toBe("function"); // added in Task 4
 });
 
 // --- animation playback: best-effort geometry ------------------------------
@@ -973,6 +977,30 @@ test("onViewChange fires once on mount with the initial view, then on each chang
     .click();
 
   expect(seen).toEqual(["main", "other"]);
+  runtime.dispose();
+});
+
+// --- getView / setView on the runtime handle -------------------------------
+test("getView returns the active view; setView switches it and rejects unknowns", async () => {
+  const part = makePart();
+  part.views.other = { label: "Other" };
+  part.parts.body.views = ["main", "other"];
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(part, { createWorker, elements: els });
+  finishFirstBuild(workers);
+  await runtime.ready;
+
+  const start = runtime.getView();
+  expect(typeof start).toBe("string");
+  expect(start).toBe("main");
+
+  expect(runtime.setView("other")).toBe(true);
+  expect(runtime.getView()).toBe("other");
+
+  expect(runtime.setView("does-not-exist")).toBe(false);
+  expect(runtime.getView()).toBe("other"); // unchanged
+
   runtime.dispose();
 });
 
