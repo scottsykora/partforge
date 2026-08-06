@@ -23,16 +23,24 @@ import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } fr
 import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
 import { exportablePartNames, partLabel } from "./export-select.js";
 import { createExportController, backendForFormat } from "./export-controller.js";
+import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
+import { resolveDefaultView } from "./default-view.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): null when the part
     // declares no animations. { play(name?), pause(), seek(t), stop(), state() }.
     animation: animation ?? null,
+    // Active view name (never null once mounted). See onViewChange for the push side.
+    getView,
+    // Programmatic tab switch; false for a name the part doesn't declare.
+    setView,
+    // Offscreen render of a named view (default when omitted, or on an unknown name).
+    captureView,
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
     captureCurrent: (opts) => viewer.captureCurrent(opts),
     // Park/unpark the viewer: stops the render loop and frees the drawing
@@ -82,10 +90,17 @@ function createCleanupStack() {
 // mesh-validity cache, and the geometry workers. The app supplies `createWorker(name)`
 // so Vite can bundle the worker (see geometry-service.js).
 //
-// Embedding contract (0.44.0):
-//   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload });
+// Embedding contract (0.45.0):
+//   const runtime = mount(part, { createWorker, elements, onBuild, onPick, onDownload, onViewChange });
 //   await runtime.ready;   // first successful build of the default view
 //   runtime.setParams({ openAngle: 45 }); // programmatic edit; pose-only changes apply instantly
+//   runtime.getView();     // active view name (string), never null once mounted
+//   runtime.setView("lid");       // switch tab programmatically; returns false (and leaves the
+//                                 // active tab untouched) for a name the part doesn't declare
+//   await runtime.captureView();  // JPEG data URL of the DEFAULT view rendered offscreen (pass
+//                                 // a name for a specific view, falling back to the default for
+//                                 // an unknown one), never disturbing the active tab or the live
+//                                 // scene; null on failure (never throws)
 //   runtime.captureCurrent({ size: 2048 });  // one offscreen render of the user's current
 //                                         // framing (live camera pose + viewport aspect) at the
 //                                         // given long-edge resolution → JPEG data URL, or null
@@ -121,10 +136,13 @@ function createCleanupStack() {
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
+// onViewChange fires once synchronously during mount with the initial resolved
+// view (before ready), then again on every subsequent view change (user click
+// or a programmatic setView) — always the new view name.
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
-export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload,
+export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange,
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
@@ -214,10 +232,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // View tabs (generated from part.views) + live params. A tab switch shows the
     // cached assembly instantly if it's current, else auto-builds what's missing.
     const tabsCtl = createViewTabs(els.tabs, part, {
-      onChange: () => { pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); animCtl?.autoplayKick(); },
+      onChange: (name) => {
+        pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); animCtl?.autoplayKick();
+        onViewChange?.(name);
+      },
     });
     cleanup.defer(() => tabsCtl.detach());
     const view = () => tabsCtl.current();
+    // Tell the embedder the starting tab exactly once, synchronously, so a host
+    // (partforge-cloud) never has to poll getView() to learn where we opened.
+    onViewChange?.(tabsCtl.current());
     const params = { ...part.defaults };
 
     // Current selection context for the pickers: the active view + live params +
@@ -364,6 +388,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     function onWorkerMessage({ data }) {
       // Headless exportParts() correlation: consume its own replies first.
       if (exportCtl.handleMessage(data, onDownload)) return;
+      // captureView's off-loop build channel: consume its replies before the
+      // live `meshes` case — capture-meshes must never touch live cache/display.
+      if (captureBuild.handleMessage(data)) return;
       switch (data.type) {
         case "ready":
           loop.ready(); // auto-build the default view (keeps the busy spinner up)
@@ -443,6 +470,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     const service = createGeometryService({ createWorker, onMessage: onWorkerMessage });
     cleanup.defer(() => service.terminate());
+
+    const captureBuild = createCaptureBuild({ send: (msg, backend) => service.send(msg, backend) });
+    cleanup.defer(() => captureBuild.dispose());
 
     const exportCtl = createExportController({
       send: (msg, backend) => service.send(msg, backend),
@@ -558,9 +588,31 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.dispose();
     }
 
+    // Off-loop offscreen thumbnail: builds `viewName` (or the part's resolved
+    // default when omitted/unknown) via captureBuild's correlated channel, then
+    // renders it in a throwaway scene via viewer.renderMeshPayloads. Never
+    // touches the active tab, getView(), or the live scene — best-effort: any
+    // failure, including a resolved-null from a worker build failure (4A
+    // settles rather than throwing), returns null.
+    const captureView = async (viewName, opts = {}) => {
+      try {
+        const target = (viewName && part.views?.[viewName]) ? viewName : resolveDefaultView(part);
+        const subparts = viewSubParts(part, target, params);
+        if (!subparts.length) return null;
+        const meshes = await captureBuild.request({ subparts, view: target, params, backend: backendFor() });
+        if (!meshes || !meshes.length) return null; // 4A resolves null on a worker build failure
+        return viewer.renderMeshPayloads(meshes, { size: 640, quality: 0.8, angle: "iso", ...opts });
+      } catch {
+        return null; // best-effort: a failed thumbnail never breaks the caller
+      }
+    };
+
     return makeHandle({
       ready, dispose, viewer, setParams,
       setHostPane: paneTabs.setHostPane,
+      getView: view,                         // () => tabsCtl.current()
+      setView: (name) => tabsCtl.select(name),
+      captureView,
       listExportableParts: () =>
         exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
       exportParts: (opts) => exportCtl.exportParts(opts),

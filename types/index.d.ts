@@ -107,6 +107,8 @@ export interface MountOptions {
   onPick?: (event: PickEvent) => void;
   /** Receive exported bytes instead of partforge's own DOM download. */
   onDownload?: (file: DownloadPayload) => void;
+  /** The active view (tab) name — emitted once on mount, then on every change. */
+  onViewChange?: (view: string) => void;
   /** @deprecated alias for `elements.viewer`. */
   container?: HTMLElement | null;
   /** @deprecated alias for `elements.controls`. */
@@ -129,6 +131,15 @@ export interface CaptureCurrentOptions {
   hideGrid?: boolean;
   /** JPEG quality, 0..1. */
   quality?: number;
+}
+
+export interface CaptureViewOptions {
+  /** Square render resolution in px. Default 640. */
+  size?: number;
+  /** JPEG quality, 0..1. Default 0.8. */
+  quality?: number;
+  /** Canonical angle to render from. Default `"iso"`. */
+  angle?: CanonicalView | string;
 }
 
 /** Where playback is: idle, swinging the camera to an intro cue, playing, or paused. */
@@ -187,6 +198,17 @@ export interface PartRuntime {
    * when disposed or nothing is built yet. Never throws.
    */
   captureCurrent(opts?: CaptureCurrentOptions): string | null;
+  /** The active view (tab) name. Never null once mounted. */
+  getView(): string;
+  /** Switch the active view; `false` if the part declares no such view. Persists per part for the session. */
+  setView(name: string): boolean;
+  /**
+   * Render a named view OFFSCREEN → a `data:image/jpeg;base64,…` string, or `null` on
+   * failure (a build error, a view with no sub-parts, or a disposed runtime). Omit
+   * `viewName` — or pass an unknown one — to render the part's DEFAULT view. Never
+   * disturbs the active tab, the live camera, or the on-screen scene.
+   */
+  captureView(viewName?: string, opts?: CaptureViewOptions): Promise<string | null>;
   /**
    * Park/unpark the viewer: stops the render loop and releases the drawing
    * buffer and cached capture target. For a host that hides the canvas without

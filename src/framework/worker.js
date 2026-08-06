@@ -110,7 +110,11 @@ export function runWorker(part) {
           await handle(kernel, job.part, job.data, gated, { isStale });
         } catch (err) {
           // Same shape jobs.js posts for a failed build, so hosts need no new branch.
-          postMessage({ type: "error", message: String(err?.message || err) });
+          // Carry the job's jobId when it has one (capture/export are correlated by it):
+          // a boot failure hitting kernelFor here must reach the right controller, or a
+          // correlated caller (captureView, exportParts) would hang instead of settling.
+          const jobId = job.data?.jobId;
+          postMessage({ type: "error", message: String(err?.message || err), ...(jobId != null ? { jobId } : {}) });
         }
       }
     } finally {
