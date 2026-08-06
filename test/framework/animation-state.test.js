@@ -154,3 +154,45 @@ test("seek(NaN) folds to 0 rather than stalling playback forever", () => {
   expect(r.t).toBe(1);
   expect(r.status).toBe("done"); // an unclamped NaN never satisfies t >= 1
 });
+
+test("a pending step boundary outranks looping", () => {
+  // Lint rejects loop on a stepped animation, so these rarely coexist — but an
+  // explicit "play this step" must still stop where it was told rather than being
+  // swallowed by the wrap and running forever.
+  const loopedSteps = normalizeAnimation("x", { loop: true, steps: [
+    { label: "One", duration: 1, easing: "linear", tracks: { k: [[0, 0], [1, 50]] } },
+    { label: "Two", duration: 1, easing: "linear", tracks: { k: [[0, 50], [1, 100]] } },
+  ] });
+  const pb = createPlayback(loopedSteps);
+  pb.playStep(0);
+  let r;
+  for (let i = 0; i < 20; i++) r = pb.tick(0.2) ?? r;
+  expect(r.status).toBe("paused");
+  expect(r.t).toBeCloseTo(0.5);
+});
+
+// `loop` and `autoplay` fail CLOSED: only a literal `true` turns them on. Lint
+// reports a non-boolean, but a part can mount in a browser without ever having
+// been linted, and coercing with `!!` reads `loop: "false"` as "loop forever" —
+// the worst available reading of that typo.
+test("only a literal true enables looping", () => {
+  for (const loop of [1, "false", "no", {}, []]) {
+    const a = normalizeAnimation("x", { loop, duration: 1, easing: "linear", tracks: { k: [[0, 0], [1, 100]] } });
+    expect(a.loop, `loop: ${JSON.stringify(loop)}`).toBe(false);
+    const pb = createPlayback(a);
+    pb.play();
+    let r;
+    for (let i = 0; i < 15; i++) r = pb.tick(0.2) ?? r; // 3s over a 1s animation
+    expect(r.status, `loop: ${JSON.stringify(loop)}`).toBe("done"); // not wrapping
+    expect(r.t).toBe(1);
+  }
+  expect(normalizeAnimation("x", { loop: true, duration: 1, tracks: { k: [[0, 0], [1, 1]] } }).loop).toBe(true);
+});
+
+test("only a literal true enables autoplay", () => {
+  for (const autoplay of [1, "false", "no", {}]) {
+    const a = normalizeAnimation("x", { autoplay, duration: 1, tracks: { k: [[0, 0], [1, 1]] } });
+    expect(a.autoplay, `autoplay: ${JSON.stringify(autoplay)}`).toBe(false);
+  }
+  expect(normalizeAnimation("x", { autoplay: true, duration: 1, tracks: { k: [[0, 0], [1, 1]] } }).autoplay).toBe(true);
+});
