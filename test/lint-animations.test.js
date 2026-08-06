@@ -150,8 +150,8 @@ const twoStep = (extra) => ({ ...extra, steps: [
 ] });
 
 test("a truthy non-boolean `loop` is rejected, not waved through", () => {
-  // normalizeAnimation stores `!!spec.loop`, so `loop: 1` really does loop — and
-  // on a stepped animation that makes the step-boundary stop unreachable.
+  // The runtime fails closed, so `loop: 1` silently means "don't loop" rather than
+  // looping — the author still needs to be told the value was not understood.
   for (const loop of [1, "yes", {}, []]) {
     expect(ids(lintPart(withAnim(twoStep({ loop })))), `loop: ${JSON.stringify(loop)}`)
       .toContain("animation-loop-invalid");

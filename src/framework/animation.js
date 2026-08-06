@@ -69,7 +69,14 @@ export function normalizeAnimation(name, spec) {
     Object.entries(s.tracks).filter(([, kf]) => usableKeyframes(kf)).map(([key]) => key)))];
   return {
     name, label: spec.label ?? name, description: spec.description ?? null,
-    loop: !!spec.loop, autoplay: !!spec.autoplay, steps, stepStarts, totalDuration, cues, trackedKeys,
+    // Fail CLOSED on both flags: only a literal `true` turns them on. Coercing
+    // with `!!` reads `loop: "false"` as "loop forever", which is the worst
+    // available reading of that typo, and nothing downstream would catch it —
+    // lint reports non-booleans, but a part can mount in a browser without ever
+    // having been linted. An invalid flag therefore does the quiet thing here and
+    // is reported there.
+    loop: spec.loop === true, autoplay: spec.autoplay === true,
+    steps, stepStarts, totalDuration, cues, trackedKeys,
   };
 }
 

@@ -217,10 +217,11 @@ export const ANIMATION_RULES = [
       const out = [];
       for (const [name, a] of animEntries(part)) {
         if (a.loop === undefined) continue;
-        // Type first, like `autoplay`. normalizeAnimation stores `!!spec.loop`, so
-        // a truthy non-boolean (`loop: 1`) becomes a real loop at runtime while an
-        // `=== true` rule waves it through — and on a stepped animation that makes
-        // the step-boundary stop unreachable, so "next step" never stops.
+        // Type first, like `autoplay`. The runtime fails closed (normalizeAnimation
+        // reads `spec.loop === true`), so a truthy non-boolean does NOT loop — it
+        // silently means `false`. That is the safe default but not an obvious one,
+        // so the author has to hear about it here rather than wonder why `loop: 1`
+        // does nothing.
         if (typeof a.loop !== "boolean") {
           out.push(err("animation-loop-invalid",
             `animation "${name}" has a non-boolean \`loop\``,

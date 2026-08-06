@@ -170,3 +170,29 @@ test("a pending step boundary outranks looping", () => {
   expect(r.status).toBe("paused");
   expect(r.t).toBeCloseTo(0.5);
 });
+
+// `loop` and `autoplay` fail CLOSED: only a literal `true` turns them on. Lint
+// reports a non-boolean, but a part can mount in a browser without ever having
+// been linted, and coercing with `!!` reads `loop: "false"` as "loop forever" —
+// the worst available reading of that typo.
+test("only a literal true enables looping", () => {
+  for (const loop of [1, "false", "no", {}, []]) {
+    const a = normalizeAnimation("x", { loop, duration: 1, easing: "linear", tracks: { k: [[0, 0], [1, 100]] } });
+    expect(a.loop, `loop: ${JSON.stringify(loop)}`).toBe(false);
+    const pb = createPlayback(a);
+    pb.play();
+    let r;
+    for (let i = 0; i < 15; i++) r = pb.tick(0.2) ?? r; // 3s over a 1s animation
+    expect(r.status, `loop: ${JSON.stringify(loop)}`).toBe("done"); // not wrapping
+    expect(r.t).toBe(1);
+  }
+  expect(normalizeAnimation("x", { loop: true, duration: 1, tracks: { k: [[0, 0], [1, 1]] } }).loop).toBe(true);
+});
+
+test("only a literal true enables autoplay", () => {
+  for (const autoplay of [1, "false", "no", {}]) {
+    const a = normalizeAnimation("x", { autoplay, duration: 1, tracks: { k: [[0, 0], [1, 1]] } });
+    expect(a.autoplay, `autoplay: ${JSON.stringify(autoplay)}`).toBe(false);
+  }
+  expect(normalizeAnimation("x", { autoplay: true, duration: 1, tracks: { k: [[0, 0], [1, 1]] } }).autoplay).toBe(true);
+});
