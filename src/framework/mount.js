@@ -25,6 +25,7 @@ import { exportablePartNames, partLabel } from "./export-select.js";
 import { createExportController, backendForFormat } from "./export-controller.js";
 import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
+import { resolveDefaultView } from "./default-view.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
@@ -580,8 +581,24 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       cleanup.dispose();
     }
 
-    // TEMPORARY stub — Task 4 replaces this with a real offscreen capture.
-    const captureView = async () => null;
+    // Off-loop offscreen thumbnail: builds `viewName` (or the part's resolved
+    // default when omitted/unknown) via captureBuild's correlated channel, then
+    // renders it in a throwaway scene via viewer.renderMeshPayloads. Never
+    // touches the active tab, getView(), or the live scene — best-effort: any
+    // failure, including a resolved-null from a worker build failure (4A
+    // settles rather than throwing), returns null.
+    const captureView = async (viewName, opts = {}) => {
+      try {
+        const target = (viewName && part.views?.[viewName]) ? viewName : resolveDefaultView(part);
+        const subparts = viewSubParts(part, target, params);
+        if (!subparts.length) return null;
+        const meshes = await captureBuild.request({ subparts, view: target, params, backend: backendFor() });
+        if (!meshes || !meshes.length) return null; // 4A resolves null on a worker build failure
+        return viewer.renderMeshPayloads(meshes, { size: 640, quality: 0.8, angle: "iso", ...opts });
+      } catch {
+        return null; // best-effort: a failed thumbnail never breaks the caller
+      }
+    };
 
     return makeHandle({
       ready, dispose, viewer, setParams,
