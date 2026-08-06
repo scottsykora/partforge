@@ -42,6 +42,7 @@ const BASELINE_IDS = [
   "occt-holes-watertight-na",
   "html-page-missing-in-prod",
   "cutaway-capture-hatch-flood",
+  "animation-plays-choppy",
 ];
 
 const entries = parsePatterns(doc);
