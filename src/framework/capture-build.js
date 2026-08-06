@@ -4,9 +4,14 @@
 // reply arrives. Pure — no DOM, no worker; `send` is injected.
 export function createCaptureBuild({ send }) {
   let nextId = 1;
+  let disposed = false;
   const pending = new Map(); // jobId -> resolve
 
   function request({ subparts, view, params, backend }) {
+    // After teardown the workers are gone, so a fresh send would post to a terminated
+    // worker (a silent no-op) and its promise would hang forever. Resolve null instead
+    // — captureView's documented "disposed runtime resolves null" contract.
+    if (disposed) return Promise.resolve(null);
     // String-namespaced ("cap-N") so a capture jobId can never collide with
     // export-controller's numeric jobIds — both share the same worker message
     // space, and exportCtl.handleMessage does a raw pending.get(m.jobId) before
@@ -45,6 +50,7 @@ export function createCaptureBuild({ send }) {
   // of leaving its promise permanently pending (a caller awaiting captureView
   // across a viewer dispose must still get an answer, even a negative one).
   function dispose() {
+    disposed = true;
     for (const resolve of pending.values()) resolve(null);
     pending.clear();
   }

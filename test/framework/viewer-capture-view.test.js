@@ -14,6 +14,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 const state = vi.hoisted(() => ({
   renderer: null,
   lastRenderScene: null,
+  lastCamera: null,
   disposeCounts: null,
   disposedMaterials: null,
 }));
@@ -36,9 +37,10 @@ vi.mock("three", async (importOriginal) => {
     setAnimationLoop(callback) { this.animationLoop = callback; }
     // Record which scene was handed to render(), and arm dispose counters on the
     // meshes present at draw time — the finally-block disposal fires afterwards.
-    render(scene) {
+    render(scene, camera) {
       this.frames += 1;
       state.lastRenderScene = scene;
+      state.lastCamera = camera;
       state.disposeCounts = { geo: 0, edges: 0 };
       state.disposedMaterials = new Set();
       scene.traverse((o) => {
@@ -57,6 +59,7 @@ vi.mock("three", async (importOriginal) => {
 });
 
 import { createViewer } from "../../src/framework/viewer.js";
+import { cameraPoseForView } from "../../src/framework/view-angles.js";
 
 function createContainer() {
   const container = document.createElement("div");
@@ -86,6 +89,7 @@ let origToDataURL;
 beforeEach(() => {
   state.renderer = null;
   state.lastRenderScene = null;
+  state.lastCamera = null;
   state.disposeCounts = null;
   state.disposedMaterials = null;
   globalThis.ResizeObserver = class {
@@ -182,4 +186,55 @@ test("renderMeshPayloads disposes a display-override clone material but not the 
   expect(state.disposeCounts).toEqual({ geo: 2, edges: 2 });
 
   viewer.dispose();
+});
+
+// Review fix 1: the throwaway scene must carry its own ambient hemisphere + camera-relative
+// key/fill. renderOffscreen's capture lights (and the persistent hemisphere) live in the LIVE
+// scene, which is never rendered here, so without these the thumbnail comes back near-black.
+test("renderMeshPayloads lights the temp scene with a hemisphere plus key/fill", () => {
+  const viewer = newViewer();
+
+  viewer.renderMeshPayloads([cubePayload("a")], { size: 64 });
+
+  const lights = [];
+  state.lastRenderScene.traverse((o) => { if (o.isLight) lights.push(o); });
+  expect(lights.some((l) => l.isHemisphereLight)).toBe(true);
+  expect(lights.filter((l) => l.isDirectionalLight)).toHaveLength(2);
+
+  viewer.dispose();
+});
+
+// Review fix 2: geometry is rotated by tmpPivot (-90° X), so the camera must be framed on the
+// WORLD-space centre. A model-space bbox centre would aim at the wrong point and render an
+// off-origin part off-centre or blank. This triangle sits at model z=10 → world y=10 after the
+// pivot, so a model-space bug would target z≈10 instead.
+test("renderMeshPayloads frames the camera on the world-space centre (after the pivot)", () => {
+  const viewer = newViewer();
+  const atZ10 = {
+    name: "a",
+    positions: new Float32Array([0, 0, 10, 1, 0, 10, 0, 1, 10]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    triangles: 1,
+  };
+
+  viewer.renderMeshPayloads([atZ10], { angle: "iso", size: 64 });
+
+  // model bbox centre (0.5,0.5,10) maps to world (0.5,10,-0.5) under (x,y,z)->(x,z,-y);
+  // size (1,1,0) is rotation-invariant in length, so radius is unchanged.
+  const expected = cameraPoseForView("iso", { center: [0.5, 10, -0.5], radius: Math.hypot(1, 1, 0) / 2 });
+  const round = (v) => v.map((n) => +n.toFixed(3));
+  expect(round(state.lastCamera.position.toArray())).toEqual(round(expected.position));
+
+  viewer.dispose();
+});
+
+// Review fix 3: same disposed-guard the sibling capture functions carry — never render through
+// a torn-down WebGLRenderer; captureView's documented contract is "resolves null on a disposed
+// runtime".
+test("renderMeshPayloads returns null after the viewer is disposed", () => {
+  const viewer = newViewer();
+  viewer.dispose();
+
+  expect(viewer.renderMeshPayloads([cubePayload("a")], { size: 64 })).toBeNull();
+  expect(state.lastRenderScene).toBeNull(); // never reached the renderer
 });

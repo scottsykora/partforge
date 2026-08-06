@@ -67,3 +67,15 @@ test("dispose() settles any outstanding request() to null instead of leaving it 
   cb.dispose();
   await expect(p).resolves.toBeNull();
 });
+
+// Review fix 3: a request() made AFTER dispose (the workers are already terminated, so a send
+// would post into the void and hang forever) must resolve null without sending anything —
+// captureView's documented "disposed runtime resolves null".
+test("request() after dispose resolves null and does not send", async () => {
+  const sent = [];
+  const cb = createCaptureBuild({ send: (msg) => sent.push(msg) });
+  cb.dispose();
+
+  await expect(cb.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" })).resolves.toBeNull();
+  expect(sent).toHaveLength(0);
+});

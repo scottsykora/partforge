@@ -6,7 +6,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { createCutaway } from "./cutaway.js";
 import { createCameraTween } from "./camera-tween.js";
-import { addViewerLights, captureLightPoses, createCaptureLights } from "./viewer-lighting.js";
+import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
 import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
 
 // three renders into a render target in the LINEAR working colour space: as of r184
@@ -518,27 +518,33 @@ export function createViewer(container, part) {
   // is the worker's [{name, positions, normals, indices, …}] array — placement is
   // already baked into shared-frame coords, so meshes are NOT recentred.
   function renderMeshPayloads(payloads, { angle = "iso", size = 640, quality = 0.8 } = {}) {
+    if (disposed) return null; // same guard as captureCurrent/captureCanonicalViews — never touch a torn-down renderer
     const tmpScene = new THREE.Scene();
     const tmpPivot = new THREE.Group();
     tmpPivot.rotation.x = -Math.PI / 2; // model Z (CAD up) -> vertical, same as live pivot
     tmpScene.add(tmpPivot);
 
     const built = [];
-    const box = new THREE.Box3();
     for (const payload of payloads) {
       const geo = buildGeometry(payload); // shared-frame coords, NOT recentred
       const mesh = new THREE.Mesh(geo, materialFor(payload.name));
       tmpPivot.add(mesh);
       built.push(mesh);
-      geo.computeBoundingBox();
-      box.union(geo.boundingBox);
     }
+
+    // Frame in WORLD space, AFTER the pivot rotation. The meshes are built in model
+    // coords but rendered rotated by tmpPivot, so a model-space bbox centre would aim
+    // the camera at the wrong point — an off-origin part would render off-centre or blank.
+    tmpPivot.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(tmpPivot);
     const center = box.getCenter(new THREE.Vector3()).toArray();
     const radius = box.getSize(new THREE.Vector3()).length() / 2 || 1;
     const pose = cameraPoseForView(angle, { center, radius });
 
-    // Camera-relative capture lights, in the temp scene (renderOffscreen's own capture
-    // lights go in the live scene and so cannot illuminate this throwaway one).
+    // Light the throwaway scene ourselves: renderOffscreen's own key/fill (and the
+    // persistent hemisphere) live in the LIVE scene, which is never rendered here — so
+    // without our own ambient + camera-relative key/fill it comes back near-black.
+    const hemi = createHemisphereLight();
     const capLights = createCaptureLights();
     const poses = captureLightPoses(pose);
     capLights.key.position.set(poses.key[0], poses.key[1], poses.key[2]);
@@ -546,7 +552,7 @@ export function createViewer(container, part) {
     for (const light of [capLights.key, capLights.fill]) {
       light.target.position.set(pose.target[0], pose.target[1], pose.target[2]);
     }
-    tmpScene.add(capLights.key, capLights.key.target, capLights.fill, capLights.fill.target);
+    tmpScene.add(hemi, capLights.key, capLights.key.target, capLights.fill, capLights.fill.target);
 
     try {
       return renderOffscreen(pose, { width: size, height: size, fov: 35, quality }, tmpScene);
@@ -556,6 +562,7 @@ export function createViewer(container, part) {
         mesh.geometry.dispose();
         if (mesh.material !== material) mesh.material.dispose(); // clone only — never the shared singleton
       }
+      hemi.dispose?.();
       capLights.key.dispose?.();
       capLights.fill.dispose?.();
     }
