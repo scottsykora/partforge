@@ -6,7 +6,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { createCutaway } from "./cutaway.js";
 import { createCameraTween } from "./camera-tween.js";
-import { addViewerLights, captureLightPoses, createCaptureLights } from "./viewer-lighting.js";
+import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
 import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
 
 // three renders into a render target in the LINEAR working colour space: as of r184
@@ -427,7 +427,8 @@ export function createViewer(container, part) {
   // no error, live view unaffected, wrong only in the capture.
   const RT_OPTIONS = { samples: 4, stencilBuffer: true };
   function renderOffscreen({ position, up, target },
-                           { width = _rtSize, height = _rtSize, fov = 45, quality = 0.9 } = {}) {
+                           { width = _rtSize, height = _rtSize, fov = 45, quality = 0.9 } = {},
+                           renderScene = scene) {
     const cachedSize = width === _rtSize && height === _rtSize;
     const rt = cachedSize
       ? (_rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize, RT_OPTIONS))
@@ -451,7 +452,7 @@ export function createViewer(container, part) {
     scene.add(capKey, capKey.target, capFill, capFill.target);
     try {
       renderer.setRenderTarget(rt);
-      renderer.render(scene, cam);
+      renderer.render(renderScene, cam);
       // render() resolves the multisample renderbuffer into the target texture, so this
       // reads antialiased pixels.
       renderer.readRenderTargetPixels(rt, 0, 0, width, height, buf);
@@ -508,6 +509,76 @@ export function createViewer(container, part) {
       grid,
       maxTextureSize: renderer.capabilities?.maxTextureSize,
     });
+  }
+
+  // Offscreen render of an arbitrary mesh set (a non-active view), for thumbnails.
+  // Assembles a THROWAWAY scene mirroring the live pivot convention, frames it from a
+  // canonical angle, renders through the parameterized renderOffscreen, and disposes
+  // everything. Never touches the live scene, camera, subMesh, or subCache. `payloads`
+  // is the worker's [{name, positions, normals, indices, …}] array — placement is
+  // already baked into shared-frame coords, so meshes are NOT recentred.
+  function renderMeshPayloads(payloads, { angle = "iso", size = 640, quality = 0.8 } = {}) {
+    if (disposed) return null; // same guard as captureCurrent/captureCanonicalViews — never touch a torn-down renderer
+    const tmpScene = new THREE.Scene();
+    const tmpPivot = new THREE.Group();
+    tmpPivot.rotation.x = -Math.PI / 2; // model Z (CAD up) -> vertical, same as live pivot
+    tmpScene.add(tmpPivot);
+
+    const built = [];
+    for (const payload of payloads) {
+      const geo = buildGeometry(payload); // shared-frame coords, NOT recentred
+      const mesh = new THREE.Mesh(geo, materialFor(payload.name));
+      tmpPivot.add(mesh);
+      built.push(mesh);
+    }
+
+    // Frame in WORLD space, AFTER the pivot rotation. The meshes are built in model
+    // coords but rendered rotated by tmpPivot, so a model-space bbox centre would aim
+    // the camera at the wrong point — an off-origin part would render off-centre or blank.
+    tmpPivot.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(tmpPivot);
+    const center = box.getCenter(new THREE.Vector3()).toArray();
+    const radius = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+    const pose = cameraPoseForView(angle, { center, radius });
+
+    // Light the throwaway scene ourselves: renderOffscreen's own key/fill (and the
+    // persistent hemisphere) live in the LIVE scene, which is never rendered here — so
+    // without our own ambient + camera-relative key/fill it comes back near-black.
+    const hemi = createHemisphereLight();
+    const capLights = createCaptureLights();
+    const poses = captureLightPoses(pose);
+    capLights.key.position.set(poses.key[0], poses.key[1], poses.key[2]);
+    capLights.fill.position.set(poses.fill[0], poses.fill[1], poses.fill[2]);
+    for (const light of [capLights.key, capLights.fill]) {
+      light.target.position.set(pose.target[0], pose.target[1], pose.target[2]);
+    }
+    tmpScene.add(hemi, capLights.key, capLights.key.target, capLights.fill, capLights.fill.target);
+
+    // Feature-edge lines, so the thumbnail carries the same hole/seam/chamfer outlines the
+    // live viewer shows. A dedicated LineMaterial at the render resolution (the live one is
+    // sized to the on-screen canvas); added after framing so it can't perturb the bbox.
+    const lineMat = new LineMaterial({ color: THEME.dark.line, linewidth: 1.0 });
+    lineMat.resolution.set(size, size);
+    for (const mesh of built) {
+      const edges = mesh.geometry.userData.edges;
+      if (edges) tmpPivot.add(new LineSegments2(edges, lineMat));
+    }
+
+    try {
+      // fov matches the live camera (and captureViews/captureCurrent) — cameraPoseForView's
+      // distance is tuned to it, so a narrower fov would crop long, thin parts.
+      return renderOffscreen(pose, { width: size, height: size, fov: camera.fov, quality }, tmpScene);
+    } finally {
+      for (const mesh of built) {
+        mesh.geometry.userData.edges?.dispose();
+        mesh.geometry.dispose();
+        if (mesh.material !== material) mesh.material.dispose(); // clone only — never the shared singleton
+      }
+      lineMat.dispose();
+      hemi.dispose?.();
+      capLights.key.dispose?.();
+      capLights.fill.dispose?.();
+    }
   }
 
   // --- render loop ----------------------------------------------------------
@@ -668,6 +739,7 @@ export function createViewer(container, part) {
     frame,
     captureCanonicalViews,
     captureCurrent,
+    renderMeshPayloads,
     onFrame,
     tweenCameraTo,
     cancelCameraTween,
