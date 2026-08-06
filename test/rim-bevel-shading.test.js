@@ -16,10 +16,36 @@ let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
 const SQUARE = [[0, 0], [20, 0], [20, 20], [0, 20]];
+const H = 10;
+const BEVEL = 2;
+
+// `edges.length > 0` alone doesn't pin the bevel-band-crease half of the bug:
+// the box's own cap-rim perimeter lines already give a nonzero count even
+// pre-fix. Count only the segments that are (a) genuinely vertical-ish (their
+// two endpoints differ in z — a purely horizontal cap-rim segment does not)
+// and (b) fall within one of the two bevel bands (z in [0, BEVEL] or
+// [H - BEVEL, H]) — these are exactly the 4-corner crease lines of the
+// bevel band's own sloped wall, one per corner per rim (4 corners * 2 rims =
+// 8), which pre-fix (FACETED bevel band, no same-surface lines at all) is 0.
+function bevelBandCreaseCount(edges) {
+  let count = 0;
+  for (let i = 0; i + 5 < edges.length; i += 6) {
+    const z1 = edges[i + 2], z2 = edges[i + 5];
+    if (Math.abs(z1 - z2) < 1e-6) continue; // horizontal — not a corner crease
+    const zMin = Math.min(z1, z2), zMax = Math.max(z1, z2);
+    const inBottomBand = zMin >= -1e-6 && zMax <= BEVEL + 1e-6;
+    const inTopBand = zMin >= H - BEVEL - 1e-6 && zMax <= H + 1e-6;
+    if (inBottomBand || inTopBand) count++;
+  }
+  return count;
+}
 
 test("a beveled extrude keeps edge lines (bevel band inherits smooth shading)", () => {
-  const s = k.extrude({ profile: SQUARE, h: 10, bevel: 2 });
-  expect(s.toMesh().edges.length).toBeGreaterThan(0);
+  const s = k.extrude({ profile: SQUARE, h: H, bevel: BEVEL });
+  const edges = s.toMesh().edges;
+  expect(edges.length).toBeGreaterThan(0);
+  // The bevel-band-specific pin: 4 rectangle corners * 2 rims (bottom + top).
+  expect(bevelBandCreaseCount(edges)).toBe(8);
 });
 
 test("a beveled extrude keeps edge lines after label() too", () => {
