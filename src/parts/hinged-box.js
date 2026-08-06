@@ -72,6 +72,7 @@ export default {
       duration: 2.4,
       loop: true,
       easing: "linear",
+      autoplay: true,
       tracks: { lidAngle: [[0, 0], [0.5, 110], [1, 0]] },
     },
     assemble: {

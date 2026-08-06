@@ -223,7 +223,7 @@ const options: MountOptions = {
     tabs: el,
     status: { status: el, busy: el, phase: el },
     exports: { stl: el, step: el, threeMf: el },
-    chrome: { pause: el, reframe: el, theme: el, cutaway: el, railToggle: el },
+    chrome: { reframe: el, theme: el, cutaway: el, railToggle: el },
   },
   onBuild: (e) => {
     if (e.status === "success") expectType<number | undefined>(e.ms);

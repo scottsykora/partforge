@@ -37,6 +37,14 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   let playback = createPlayback(current);
   let snapshot = null; // tracked-param values before this animation first drove them
 
+  // Autoplay: at most one animation declares it (lint-enforced). Armed until
+  // the user manually touches the transport — and never armed at all under
+  // prefers-reduced-motion: self-starting motion is exactly what that setting
+  // opts out of. The transport still plays everything on request.
+  const autoplayAnim = animations.find((a) => a.autoplay) ?? null;
+  let autoplayArmed = !!autoplayAnim && !reducedMotion;
+  const disarmAutoplay = () => { autoplayArmed = false; };
+
   // --- DOM --------------------------------------------------------------------
   const bar = el("div", "pf-anim-bar");
   const info = createInfoPopover();
@@ -95,7 +103,6 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       const step = current.steps[stepIndex];
       stepLabel.textContent = `${stepIndex + 1}/${current.steps.length} · ${step.label}`;
     }
-    viewer.suppressAutoRotate(active);
   }
 
   // --- driver -----------------------------------------------------------------
@@ -158,6 +165,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   });
 
   const onPlayClick = () => {
+    disarmAutoplay();
     const active = playback.state().status;
     if (active === "playing" || active === "intro") {
       viewer.cancelCameraTween();
@@ -166,16 +174,17 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       apply(playback.play());
     }
   };
-  const onScrub = () => apply(playback.seek(Number(scrub.value) / 1000));
-  const onPrev = () => apply(playback.stepPrev());
-  const onNext = () => apply(playback.stepNext());
-  const onPick = () => selectAnimation(pick.value);
+  const onScrub = () => { disarmAutoplay(); apply(playback.seek(Number(scrub.value) / 1000)); };
+  const onPrev = () => { disarmAutoplay(); apply(playback.stepPrev()); };
+  const onNext = () => { disarmAutoplay(); apply(playback.stepNext()); };
+  const onPick = () => { disarmAutoplay(); selectAnimation(pick.value); };
+  const onResetClick = () => { disarmAutoplay(); doReset(); };
   playBtn.addEventListener("click", onPlayClick);
   scrub.addEventListener("input", onScrub);
   prevBtn.addEventListener("click", onPrev);
   nextBtn.addEventListener("click", onNext);
   pick.addEventListener("change", onPick);
-  resetBtn.addEventListener("click", doReset);
+  resetBtn.addEventListener("click", onResetClick);
 
   syncStructure();
   syncUi();
@@ -185,6 +194,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     // be selected — say so and do nothing rather than silently animating
     // something else.
     play(name) {
+      disarmAutoplay();
       if (name != null && !animations.some((a) => a.name === name)) {
         console.warn(`partforge: unknown animation "${name}"`);
         return;
@@ -192,9 +202,9 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       if (name) selectAnimation(name);
       apply(playback.play());
     },
-    pause() { viewer.cancelCameraTween(); apply(playback.pause()); },
-    seek(t) { apply(playback.seek(t)); },
-    stop() { doReset(); },
+    pause() { disarmAutoplay(); viewer.cancelCameraTween(); apply(playback.pause()); },
+    seek(t) { disarmAutoplay(); apply(playback.seek(t)); },
+    stop() { disarmAutoplay(); doReset(); },
     state: () => ({ animation: current.name, ...playback.state() }),
   };
 
@@ -203,9 +213,17 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     // A user edit to any control (or a host setParams) takes over the params:
     // pause playback rather than fight over them.
     notifyUserEdit() {
+      disarmAutoplay();
       viewer.cancelCameraTween();
       playback.userEdited();
       syncUi();
+    },
+    // Mount calls this on first ready and on every view/tab switch.
+    autoplayKick() {
+      if (!autoplayArmed || !autoplayAnim) return;
+      if (current !== autoplayAnim) selectAnimation(autoplayAnim.name);
+      const { status } = playback.state();
+      if (status !== "playing" && status !== "intro") apply(playback.play());
     },
     detach() {
       offFrame();
@@ -215,10 +233,9 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       prevBtn.removeEventListener("click", onPrev);
       nextBtn.removeEventListener("click", onNext);
       pick.removeEventListener("change", onPick);
-      resetBtn.removeEventListener("click", doReset);
+      resetBtn.removeEventListener("click", onResetClick);
       info.dispose();
       bar.remove();
-      viewer.suppressAutoRotate(false);
     },
     __viewer: viewer, // test hook only
   };

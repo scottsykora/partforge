@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 // test/framework/animation-controls.test.js
 // Transport bar + driver against a fake viewer: play/pause/scrub/step wiring,
-// cue → tween dispatch, intro gating, auto-rotate suppression, snapshot/reset,
-// user-edit pause, and the runtime surface.
+// cue → tween dispatch, intro gating, snapshot/reset, user-edit pause, and the
+// runtime surface.
 import { afterEach, expect, test, vi } from "vitest";
 import { attachAnimationControls } from "../../src/framework/animation-controls.js";
 
@@ -13,7 +13,6 @@ function fakeViewer() {
     onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
     tweenCameraTo: vi.fn((view, { onComplete } = {}) => onComplete?.()), // completes instantly
     cancelCameraTween: vi.fn(),
-    suppressAutoRotate: vi.fn(),
     frame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
     orbit: () => { for (const cb of [...orbitCbs]) cb(); },
   };
@@ -64,7 +63,6 @@ test("play runs the intro tween, then frames drive param values", () => {
   const viewer = ctl.__viewer;
   ctl.runtime.play();
   expect(viewer.tweenCameraTo).toHaveBeenCalledWith("front", expect.anything());
-  expect(viewer.suppressAutoRotate).toHaveBeenLastCalledWith(true);
   viewer.frame(1); // 1s of 2s → t=0.5 → lidAngle 55
   expect(applied.at(-1).lidAngle).toBeCloseTo(55);
 });
@@ -84,7 +82,6 @@ test("user orbit disarms cues; user edit pauses", () => {
   viewer.orbit();
   ctl.notifyUserEdit();
   expect(ctl.runtime.state().status).toBe("paused");
-  expect(viewer.suppressAutoRotate).toHaveBeenLastCalledWith(false);
 });
 
 test("scrubbing applies values without moving the camera", () => {
@@ -126,7 +123,6 @@ function deferredFakeViewer() {
     onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
     tweenCameraTo: vi.fn((view, { onComplete } = {}) => { pendingComplete = onComplete ?? null; }),
     cancelCameraTween: vi.fn(),
-    suppressAutoRotate: vi.fn(),
     frame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
     orbit: () => { for (const cb of [...orbitCbs]) cb(); },
     get pendingComplete() { return pendingComplete; },
@@ -143,7 +139,6 @@ test("orbit during a gated intro settles the gate instead of stranding playback"
     onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
     tweenCameraTo: vi.fn((view, { onComplete } = {}) => { pendingComplete = onComplete ?? null; }),
     cancelCameraTween: vi.fn(),
-    suppressAutoRotate: vi.fn(),
   };
   const applied = [];
   const ctl = attachAnimationControls(viewer, part, {
@@ -220,4 +215,76 @@ test("orbit while idle changes nothing", () => {
   viewer.orbit();
   expect(ctl.runtime.state().status).toBe("idle");
   expect(applied.length).toBe(0);
+});
+
+const autoPart = {
+  animations: {
+    open: part.animations.open,
+    cycle: { label: "Cycle", duration: 2, loop: true, easing: "linear", autoplay: true,
+      tracks: { lidAngle: [[0, 0], [0.5, 110], [1, 0]] } },
+  },
+};
+
+test("autoplayKick selects and plays the autoplay animation", () => {
+  const { ctl } = setup(autoPart); handles.push(ctl);
+  ctl.autoplayKick();
+  expect(ctl.runtime.state()).toMatchObject({ animation: "cycle", status: "playing" }); // no cue → straight to playing
+});
+
+test("autoplayKick while already playing is a no-op; re-kick after a view switch keeps the loop running", () => {
+  const { ctl } = setup(autoPart); handles.push(ctl);
+  ctl.autoplayKick();
+  ctl.__viewer.frame(0.5);
+  const t = ctl.runtime.state().t;
+  ctl.autoplayKick(); // tab switch while looping
+  expect(ctl.runtime.state().status).toBe("playing");
+  expect(ctl.runtime.state().t).toBeCloseTo(t); // not restarted
+});
+
+test("manual interaction disarms autoplay for the session", () => {
+  const { container, ctl } = setup(autoPart); handles.push(ctl);
+  ctl.autoplayKick();
+  container.querySelector(".pf-anim-play").click(); // user pauses
+  ctl.autoplayKick(); // next tab switch
+  expect(ctl.runtime.state().status).toBe("paused"); // stayed paused
+});
+
+test("a param edit that pauses playback also disarms autoplay", () => {
+  const { ctl } = setup(autoPart); handles.push(ctl);
+  ctl.autoplayKick();
+  ctl.notifyUserEdit();
+  ctl.autoplayKick();
+  expect(ctl.runtime.state().status).toBe("paused");
+});
+
+test("no autoplay animation → autoplayKick is a harmless no-op", () => {
+  const { ctl } = setup(); handles.push(ctl); // original two-animation part, no autoplay
+  ctl.autoplayKick();
+  expect(ctl.runtime.state().status).toBe("idle");
+});
+
+test("reset BUTTON disarms autoplay, but autoplayKick's own selectAnimation path never does", () => {
+  const { container, ctl } = setup(autoPart); handles.push(ctl);
+  // Kick from the non-autoplay animation: exercises selectAnimation → doReset internally.
+  ctl.runtime.state(); // (read-only, must not disarm)
+  ctl.autoplayKick();
+  expect(ctl.runtime.state()).toMatchObject({ animation: "cycle", status: "playing" });
+  // A second kick still works (the internal path did not disarm)…
+  ctl.autoplayKick();
+  expect(ctl.runtime.state().status).toBe("playing");
+  // …but the reset BUTTON does disarm.
+  container.querySelector(".pf-anim-reset").click();
+  ctl.autoplayKick();
+  expect(ctl.runtime.state().status).toBe("idle");
+});
+
+test("prefers-reduced-motion: autoplay never arms; manual play still works", () => {
+  const spy = vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true });
+  try {
+    const { ctl } = setup(autoPart); handles.push(ctl);
+    ctl.autoplayKick();
+    expect(ctl.runtime.state().status).toBe("idle");
+    ctl.runtime.play("cycle");
+    expect(ctl.runtime.state().status).toBe("playing");
+  } finally { spy.mockRestore(); }
 });
