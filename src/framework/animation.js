@@ -237,10 +237,14 @@ export function createPlayback(anim) {
   function tick(dt) {
     if (status !== "playing" || !(dt > 0)) return null;
     t += dt / anim.totalDuration;
-    if (anim.loop) {
-      if (t >= 1) t -= Math.floor(t);
-    } else if (stopAt != null && t >= stopAt) {
+    // A pending step boundary outranks looping. Lint rejects loop on a stepped
+    // animation, so the two rarely coexist — but when they do, an explicit
+    // "play this step" must still stop where it was told to, rather than being
+    // swallowed by the wrap and running forever.
+    if (stopAt != null && t >= stopAt) {
       t = stopAt; stopAt = null; status = "paused";
+    } else if (anim.loop) {
+      if (t >= 1) t -= Math.floor(t);
     } else if (t >= 1) {
       t = 1; status = "done";
     }

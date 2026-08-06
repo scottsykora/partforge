@@ -141,3 +141,57 @@ test("an easing named after an Object.prototype member is rejected", () => {
     expect(ids(r), `easing: ${easing}`).toContain("animation-easing-unknown");
   }
 });
+
+// --- lint and the runtime have to agree about what a valid block is -----------
+
+const twoStep = (extra) => ({ ...extra, steps: [
+  { label: "One", duration: 1, tracks: { a: [[0, 0], [1, 50]] } },
+  { label: "Two", duration: 1, tracks: { a: [[0, 50], [1, 100]] } },
+] });
+
+test("a truthy non-boolean `loop` is rejected, not waved through", () => {
+  // normalizeAnimation stores `!!spec.loop`, so `loop: 1` really does loop — and
+  // on a stepped animation that makes the step-boundary stop unreachable.
+  for (const loop of [1, "yes", {}, []]) {
+    expect(ids(lintPart(withAnim(twoStep({ loop })))), `loop: ${JSON.stringify(loop)}`)
+      .toContain("animation-loop-invalid");
+  }
+  expect(ids(lintPart(withAnim({ ...valid, loop: false })))).not.toContain("animation-loop-invalid");
+  expect(ids(lintPart(withAnim({ ...valid, loop: true })))).not.toContain("animation-loop-invalid");
+});
+
+test("a truthy non-boolean `loop` is caught on a SINGLE-step animation too", () => {
+  // The multi-step rule would flag `loop: 1` anyway (it tests truthiness), so this
+  // single-phase case is what actually pins the type check: nothing else can fire.
+  expect(ids(lintPart(withAnim({ ...valid, loop: 1 })))).toContain("animation-loop-invalid");
+  expect(ids(lintPart(withAnim({ ...valid, loop: "yes" })))).toContain("animation-loop-invalid");
+});
+
+test("a non-boolean `loop` reports once, not twice", () => {
+  const found = ids(lintPart(withAnim(twoStep({ loop: 1 })))).filter((i) => i === "animation-loop-invalid");
+  expect(found).toHaveLength(1); // the type error supersedes the multi-step check
+});
+
+test("a camera-only step is allowed — it holds the pose and moves the camera", () => {
+  const part = withAnim({ steps: [
+    { label: "Look", camera: "iso", duration: 1 },
+    { label: "Move", duration: 1, tracks: { a: [[0, 0], [1, 100]] } },
+  ] });
+  expect(ids(lintPart(part))).not.toContain("animation-tracks-or-steps");
+});
+
+test("an animation where no step has tracks is still rejected", () => {
+  const part = withAnim({ steps: [
+    { label: "Look", camera: "iso", duration: 1 },
+    { label: "Also look", camera: "front", duration: 1 },
+  ] });
+  expect(ids(lintPart(part))).toContain("animation-tracks-or-steps");
+});
+
+test("an explicit `camera: null` reads as no camera, not as a malformed one", () => {
+  const part = withAnim({ camera: null, steps: [
+    { label: "One", camera: "iso", duration: 1, tracks: { a: [[0, 0], [1, 50]] } },
+    { label: "Two", camera: "front", duration: 1, tracks: { a: [[0, 50], [1, 100]] } },
+  ] });
+  expect(ids(lintPart(part))).not.toContain("animation-camera-invalid");
+});

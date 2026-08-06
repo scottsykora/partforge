@@ -84,14 +84,26 @@ export const ANIMATION_RULES = [
             `animations.${name}.steps`));
           continue;
         }
-        rawSteps(a).forEach((s, i) => {
-          const path = hasSteps ? `animations.${name}.steps[${i}].tracks` : `animations.${name}.tracks`;
-          if (!isPlainObject(s.tracks) || Object.keys(s.tracks).length === 0) {
-            out.push(err("animation-tracks-or-steps",
-              `animation "${name}"${hasSteps ? ` step ${i}` : ""} has no tracks`,
-              "Every step needs a non-empty `tracks` object mapping a param key to keyframes.",
-              path));
-          }
+        const steps = rawSteps(a);
+        const trackful = (s) => isPlainObject(s.tracks) && Object.keys(s.tracks).length > 0;
+        if (!steps.some(trackful)) {
+          out.push(err("animation-tracks-or-steps",
+            `animation "${name}" animates nothing`,
+            "At least one step needs a non-empty `tracks` object mapping a param key to keyframes.",
+            hasSteps ? `animations.${name}.steps` : `animations.${name}.tracks`));
+          continue;
+        }
+        steps.forEach((s, i) => {
+          if (trackful(s)) return;
+          // A camera-only step is legal: it holds the pose and just moves the
+          // camera — an establishing shot before the motion starts. The runtime
+          // emits its cue and evaluate() holds the surrounding values, so lint
+          // must not reject what plays correctly.
+          if (hasSteps && s.camera != null) return;
+          out.push(err("animation-tracks-or-steps",
+            `animation "${name}"${hasSteps ? ` step ${i}` : ""} has no tracks`,
+            "Every step needs a non-empty `tracks` object mapping a param key to keyframes — or, for a step that only moves the camera, a `camera` angle.",
+            hasSteps ? `animations.${name}.steps[${i}].tracks` : `animations.${name}.tracks`));
         });
       }
       return out;
@@ -201,12 +213,30 @@ export const ANIMATION_RULES = [
   },
   {
     id: "animation-loop-invalid",
-    run: ({ part }) => animEntries(part)
-      .filter(([, a]) => a.loop === true && Array.isArray(a.steps) && a.steps.length > 1)
-      .map(([name]) => err("animation-loop-invalid",
-        `animation "${name}" sets \`loop: true\` on a multi-step animation`,
-        "Loop is for continuous single-phase motion (gears). A stepped sequence replays via the transport instead — drop `loop` or collapse to one step.",
-        `animations.${name}.loop`)),
+    run: ({ part }) => {
+      const out = [];
+      for (const [name, a] of animEntries(part)) {
+        if (a.loop === undefined) continue;
+        // Type first, like `autoplay`. normalizeAnimation stores `!!spec.loop`, so
+        // a truthy non-boolean (`loop: 1`) becomes a real loop at runtime while an
+        // `=== true` rule waves it through — and on a stepped animation that makes
+        // the step-boundary stop unreachable, so "next step" never stops.
+        if (typeof a.loop !== "boolean") {
+          out.push(err("animation-loop-invalid",
+            `animation "${name}" has a non-boolean \`loop\``,
+            "`loop` must be `true` or `false`. Any other truthy value still loops at runtime, so it cannot be left to mean something else.",
+            `animations.${name}.loop`));
+          continue; // one error per field: the check below assumes a real boolean
+        }
+        if (a.loop && Array.isArray(a.steps) && a.steps.length > 1) {
+          out.push(err("animation-loop-invalid",
+            `animation "${name}" sets \`loop: true\` on a multi-step animation`,
+            "Loop is for continuous single-phase motion (gears). A stepped sequence replays via the transport instead — drop `loop` or collapse to one step.",
+            `animations.${name}.loop`));
+        }
+      }
+      return out;
+    },
   },
   {
     id: "animation-step-label-duplicate",
@@ -262,7 +292,7 @@ export const ANIMATION_RULES = [
         const stepCameras = Array.isArray(a.steps)
           ? a.steps.map((s, i) => [s?.camera, i]).filter(([c]) => c !== undefined && c !== null)
           : [];
-        if (a.camera !== undefined && stepCameras.length) {
+        if (a.camera != null && stepCameras.length) {
           out.push(err("animation-camera-invalid",
             `animation "${name}" mixes an animation-level \`camera\` with per-step cameras`,
             "One camera mechanism per animation: either the animation-level name/cue-list, or per-step names — not both.",
@@ -276,7 +306,9 @@ export const ANIMATION_RULES = [
               `animations.${name}.steps[${i}].camera`));
           }
         }
-        if (a.camera === undefined) continue;
+        // An explicit `camera: null` is "no camera", which is how
+        // normalizeAnimation reads it — not a malformed value to report.
+        if (a.camera == null) continue;
         if (typeof a.camera === "string") {
           if (badName(a.camera)) {
             out.push(err("animation-camera-invalid",

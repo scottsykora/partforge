@@ -154,3 +154,19 @@ test("seek(NaN) folds to 0 rather than stalling playback forever", () => {
   expect(r.t).toBe(1);
   expect(r.status).toBe("done"); // an unclamped NaN never satisfies t >= 1
 });
+
+test("a pending step boundary outranks looping", () => {
+  // Lint rejects loop on a stepped animation, so these rarely coexist — but an
+  // explicit "play this step" must still stop where it was told rather than being
+  // swallowed by the wrap and running forever.
+  const loopedSteps = normalizeAnimation("x", { loop: true, steps: [
+    { label: "One", duration: 1, easing: "linear", tracks: { k: [[0, 0], [1, 50]] } },
+    { label: "Two", duration: 1, easing: "linear", tracks: { k: [[0, 50], [1, 100]] } },
+  ] });
+  const pb = createPlayback(loopedSteps);
+  pb.playStep(0);
+  let r;
+  for (let i = 0; i < 20; i++) r = pb.tick(0.2) ?? r;
+  expect(r.status).toBe("paused");
+  expect(r.t).toBeCloseTo(0.5);
+});
