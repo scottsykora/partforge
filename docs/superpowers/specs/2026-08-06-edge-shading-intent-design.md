@@ -108,7 +108,33 @@ policy** registered at primitive creation:
   emission. Cut-seam behavior is unchanged: different OIDs → hard shading,
   line emitted when bent more than the 5° coplanar threshold.
 
-### 3. Viewer and CLI integration
+### 3. Module layout (modularity)
+
+The new logic lands as small pure modules rather than growing the two backend
+files; the backends shrink to wiring. All new modules are DOM-free,
+`three`-free and `node:`-free (the worker-layering test keeps passing
+unchanged).
+
+- **`geometry/creased-normals.js`** — `creasedNormals` moves out of
+  manifold-backend.js. Pure function over plain arrays (`vertProperties`,
+  `triVerts`, run tables, merge maps) plus a per-OID policy map; returns
+  `{ positions, normals, edges, featureIds?, features? }`. Unit-testable with
+  tiny synthetic meshes, no Manifold WASM boot required.
+- **`geometry/shading-policy.js`** — the policy shape, named defaults
+  (`SMOOTH` = 35°/lines, `FACETED` = 10°/no lines), the coplanar-seam
+  threshold, and the loft inference rule (max sides < 32 → faceted; `smooth`
+  hint overrides). The single home for every shading threshold; backends and
+  tests import it.
+- **`geometry/brep-edges.js`** — the OCCT tangent-edge filter: input is
+  replicad's `mesh()` output + `meshEdges()` output, output the filtered flat
+  segment array (including polyline → segment-pair conversion). Pure
+  array-in/array-out, so its edge cases are testable without booting OCCT —
+  keeping OCCT-boot tests isolated per the repo invariant.
+- **`geometry/pose.js`** — gains `rotateNormals` (rotation-only pose
+  application) beside the existing `transformPositions`/`composePose`, rather
+  than inlining that subtlety in occt-backend.js.
+
+### 4. Viewer and CLI integration
 
 `src/framework/viewer.js` already prefers kernel normals and kernel edge
 segments when present; OCCT meshes now take that path too. The
@@ -117,7 +143,7 @@ meshes carrying no kernel data, with a comment marking it fallback-only. The
 CLI renderer (`src/testing/render.js`) needs no changes. The cutaway outline
 system is untouched (it derives its own cut-face outlines).
 
-### 4. Contract, docs, versioning
+### 5. Contract, docs, versioning
 
 - **KERNEL-CONTRACT.md:** new section on `toMesh` shading semantics — both
   backends return authoritative `normals` and `edges`; the loft `smooth` hint
@@ -132,11 +158,17 @@ system is untouched (it derives its own cut-face outlines).
 
 ## Testing
 
-- **Unit (OCCT):** `toMesh` returns non-empty normals and edges; posed normals
-  are rotated correctly; a sphere-bored box mesh has zero edge segments away
-  from the bore seam; the tangent filter drops fillet boundaries but keeps
-  chamfer boundaries.
-- **Unit (Manifold/loft):** faceted policy → facet-interior triangles share
+- **Unit (pure, no WASM boot):** `creased-normals.js` against tiny synthetic
+  meshes — policy application, seam hardness, per-OID line gating;
+  `brep-edges.js` against hand-built fixtures — tangent drop, sharp keep,
+  polyline conversion; `pose.js` `rotateNormals` — rotation applied,
+  translation ignored; `shading-policy.js` loft inference rule and hint
+  override.
+- **Unit (OCCT, isolated file):** `toMesh` returns non-empty normals and
+  edges; posed normals are rotated correctly; a sphere-bored box mesh has zero
+  edge segments away from the bore seam; the tangent filter drops fillet
+  boundaries but keeps chamfer boundaries.
+- **Unit (Manifold):** faceted policy → facet-interior triangles share
   flat normals at 12 facets; `smooth: true` restores smoothing;
   ring-to-ring edges stay smooth under the faceted policy; no same-OID edge
   segments are emitted for faceted lofts.
