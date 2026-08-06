@@ -48,6 +48,19 @@ export function createViewTabs(el, part, { onChange }) {
 
   return {
     current: () => view,
+    // Programmatic switch — the click path without the click. Used by an
+    // embedder (mount's handle.setView) to change tabs from outside the DOM.
+    // Returns false for a name that isn't a tab so callers can validate.
+    select: (name) => {
+      if (name === view) return true; // already active — nothing to do
+      const btn = [...el.querySelectorAll("button[data-part]")].find((b) => b.dataset.part === name);
+      if (!btn) return false;
+      view = name;
+      saveView(partKey, view);
+      setActive(btn);
+      onChange(view);
+      return true;
+    },
     detach: () => {
       el.removeEventListener("click", onClick);
       if (generated) el.innerHTML = ""; // we generated these buttons; hand-written markup stays

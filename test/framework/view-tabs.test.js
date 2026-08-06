@@ -167,3 +167,42 @@ test("a saved view still wins over the resolved default", () => {
   expect(tabs.current()).toBe("body");
   expect(el.querySelector("button.on").dataset.part).toBe("body");
 });
+
+test("select(name) switches the active tab, persists it, and fires onChange", () => {
+  const onChange = vi.fn();
+  const ctl = createViewTabs(el, part, { onChange });
+  onChange.mockClear(); // ignore any construction-time calls
+
+  const ok = ctl.select("drum");
+
+  expect(ok).toBe(true);
+  expect(ctl.current()).toBe("drum");
+  expect(el.querySelector("button.on").dataset.part).toBe("drum");
+  expect(sessionStorage.getItem("partforge:view:Test part")).toBe("drum");
+  expect(onChange).toHaveBeenCalledWith("drum");
+});
+
+test("select(unknown) is rejected with false and changes nothing", () => {
+  const onChange = vi.fn();
+  const ctl = createViewTabs(el, part, { onChange });
+  const before = ctl.current();
+  onChange.mockClear();
+
+  const ok = ctl.select("nope");
+
+  expect(ok).toBe(false);
+  expect(ctl.current()).toBe(before);
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+test("select(current) is a no-op that still reports true", () => {
+  const onChange = vi.fn();
+  const ctl = createViewTabs(el, part, { onChange });
+  const current = ctl.current();
+  onChange.mockClear();
+
+  const ok = ctl.select(current);
+
+  expect(ok).toBe(true);
+  expect(onChange).not.toHaveBeenCalled();
+});
