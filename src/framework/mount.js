@@ -23,6 +23,7 @@ import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } fr
 import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
 import { exportablePartNames, partLabel } from "./export-select.js";
 import { createExportController, backendForFormat } from "./export-controller.js";
+import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
@@ -379,6 +380,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     function onWorkerMessage({ data }) {
       // Headless exportParts() correlation: consume its own replies first.
       if (exportCtl.handleMessage(data, onDownload)) return;
+      // captureView's off-loop build channel: consume its replies before the
+      // live `meshes` case — capture-meshes must never touch live cache/display.
+      if (captureBuild.handleMessage(data)) return;
       switch (data.type) {
         case "ready":
           loop.ready(); // auto-build the default view (keeps the busy spinner up)
@@ -458,6 +462,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     const service = createGeometryService({ createWorker, onMessage: onWorkerMessage });
     cleanup.defer(() => service.terminate());
+
+    const captureBuild = createCaptureBuild({ send: (msg, backend) => service.send(msg, backend) });
+    cleanup.defer(() => captureBuild.dispose());
 
     const exportCtl = createExportController({
       send: (msg, backend) => service.send(msg, backend),
