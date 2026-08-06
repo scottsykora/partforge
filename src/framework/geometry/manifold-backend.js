@@ -11,6 +11,7 @@ import { assembleRegions } from "./shape2d-regions.js";
 import { finishKernel } from "./kernel-front.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
+import { loftShadingPolicy } from "./shading-policy.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
@@ -44,6 +45,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
 
   const cache = createSolidCache();
   const featureLabels = new Map(); // originalID -> label string (grows per label(); tiny)
+  const oidPolicies = new Map();   // originalID -> shading policy (grows per faceted/hinted loft; tiny)
   // Boundary ops route through cache.lookup; on a miss `make` runs the WASM op,
   // tracks the result, and returns the triple the cache needs to pin/dispose it.
   const cached = (hash, computeM) => cache.lookup(hash, () => {
@@ -112,7 +114,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // transient mesh handle.
   function meshOut(m, asStl) {
     const g = m.getMesh();
-    const r = asStl ? stlFromMesh(g) : creasedNormals(g, { featureLabels });
+    const r = asStl ? stlFromMesh(g) : creasedNormals(g, { policies: oidPolicies, featureLabels });
     g.delete?.();
     return r;
   }
@@ -151,10 +153,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     label: (name) => {
       const lh = h("label", hash, name);
       return cache.lookup(lh, () => {
+        const prevId = typeof m.originalID === "function" ? m.originalID() : -1;
         const o = T(m.asOriginal());
         const id = o.originalID();
         featureLabels.set(id, name);
-        return { value: wrap(o, lh), pin: o, dispose: () => { featureLabels.delete(id); o.delete?.(); } };
+        // labeling re-stamps the originalID — carry the surface's shading policy along
+        if (prevId !== -1 && oidPolicies.has(prevId)) oidPolicies.set(id, oidPolicies.get(prevId));
+        return { value: wrap(o, lh), pin: o, dispose: () => { featureLabels.delete(id); oidPolicies.delete(id); o.delete?.(); } };
       });
     },
     boundingBox: () => {
@@ -238,8 +243,21 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       });
     },
     // Ring loft: hand-meshed via the shared ring-mesh helpers (helix-tube recipe).
-    // Cached atomically; the hash folds every ring's points/z/rotate/scale and the opts.
-    loft: (rings, opts = {}) => cached(h("loft", rings, opts), () => T(loftMesh(wasm, rings, opts))),
+    // Cached atomically; the hash folds every ring's points/z/rotate/scale and the
+    // opts (including `smooth`, so toggling the hint is a fresh cache node).
+    // asOriginal() stamps a stable originalID; the shading policy (inferred from
+    // the rings, or forced by `smooth`) registers under it for the crease pass
+    // and lives exactly as long as the cache pins the solid.
+    loft: (rings, opts = {}) => {
+      const key = h("loft", rings, opts);
+      return cache.lookup(key, () => {
+        const raw = T(loftMesh(wasm, rings, opts));
+        const m = T(raw.asOriginal());
+        const id = m.originalID();
+        oidPolicies.set(id, loftShadingPolicy(rings, opts));
+        return { value: wrap(m, key), pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
+      });
+    },
     // Sweep a fixed 2-D profile along a 3-D polyline: hand-meshed from the shared station
     // list (sweep.js), so it agrees with OCCT's ruled loft of the same stations by
     // construction. Cached atomically; the hash folds profile pts, path pts, and opts
