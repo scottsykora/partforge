@@ -29,9 +29,10 @@ import { normalizeProfile } from "./profile.js";
 import { roundedRectContour } from "./rounded-solids.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
-import { composePose, transformPositions } from "./pose.js";
+import { composePose, transformPositions, rotateNormals } from "./pose.js";
+import { filterBrepEdges } from "./brep-edges.js";
 import { meshToStl } from "./mesh-stl.js";
-const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.5 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
+const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.25 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
@@ -87,6 +88,8 @@ export function createOcctKernel(replicad) {
       const m = shape.mesh(MESH[quality]);
       const out = {
         positions: Float32Array.from(m.vertices),
+        normals: Float32Array.from(m.normals),   // analytic per-face-vertex normals — smooth by construction
+        edges: filterBrepEdges(m, shape.meshEdges(MESH[quality])), // true B-rep edges, tangent-filtered
         indices: Uint32Array.from(m.triangles),
         triangles: m.triangles.length / 3,
       };
@@ -105,6 +108,16 @@ export function createOcctKernel(replicad) {
       const positions = Float32Array.from(base.positions);
       if (pose.length) transformPositions(positions, composePose(pose));
       return positions;
+    };
+    const posedNormals = (base) => {
+      const normals = Float32Array.from(base.normals);
+      if (pose.length) rotateNormals(normals, composePose(pose)); // rotation only — normals are directions
+      return normals;
+    };
+    const posedEdges = (base) => {
+      const edges = Float32Array.from(base.edges);
+      if (pose.length) transformPositions(edges, composePose(pose)); // segment endpoints pose like positions
+      return edges;
     };
 
     const self = addSugar({
@@ -179,7 +192,8 @@ export function createOcctKernel(replicad) {
         const base = baseMesh(quality);
         const out = {
           positions: posedPositions(base),
-          normals: new Float32Array(0), // let the main thread crease (matches prior look)
+          normals: posedNormals(base), // analytic — the viewer must NOT re-crease these
+          edges: posedEdges(base),     // empty array = "no feature edges", not "unknown"
           indices: Uint32Array.from(base.indices),
           triangles: base.triangles,
         };

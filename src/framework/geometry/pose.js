@@ -77,3 +77,16 @@ export const poseDelta = (newSteps, oldSteps) => {
   const inv = invertRigid(composePose(oldSteps));
   return mulMat4(target, inv);
 };
+
+// Apply ONLY the rotation block of a rigid mat4 to interleaved xyz normals, in
+// place. composePose matrices are rigid (orthonormal 3x3 block), so normals
+// transform by the same block — no inverse-transpose — and stay unit length.
+// Translation columns are deliberately ignored: normals are directions.
+export function rotateNormals(normals, m) {
+  for (let i = 0; i < normals.length; i += 3) {
+    const x = normals[i], y = normals[i + 1], z = normals[i + 2];
+    normals[i] = m[0] * x + m[4] * y + m[8] * z;
+    normals[i + 1] = m[1] * x + m[5] * y + m[9] * z;
+    normals[i + 2] = m[2] * x + m[6] * y + m[10] * z;
+  }
+}

@@ -86,8 +86,8 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
 
     for (const m of meshes) {
       const P = m.positions, N = m.normals, ind = m.indices;
-      // Manifold meshes are a non-indexed soup (3 consecutive verts/triangle) with
-      // per-vertex normals; OCCT meshes are indexed and carry no normals.
+      // Manifold meshes are a non-indexed soup (3 consecutive verts/triangle);
+      // OCCT meshes are indexed. Both carry per-vertex normals.
       const triCount = ind?.length ? ind.length / 3 : P.length / 9;
       for (let t = 0; t < triCount; t++) {
         const ai = ind?.length ? ind[t * 3] * 3 : t * 9;

@@ -1,7 +1,7 @@
 // Pure rigid-pose math (no kernel boot): the OCCT backend's lazy translate/rotate
 // steps composed into a mat4 and applied to cached mesh vertices.
 import { expect, test } from "vitest";
-import { composePose, transformPositions, invertRigid, poseDelta } from "../src/framework/geometry/pose.js";
+import { composePose, transformPositions, invertRigid, poseDelta, rotateNormals } from "../src/framework/geometry/pose.js";
 
 const apply = (steps, p) => {
   const positions = Float32Array.from(p);
@@ -77,4 +77,17 @@ test("poseDelta multiplies in the order new · old⁻¹, not the reverse", () =>
   const expected = Float32Array.from([1, 2, 3]);
   transformPositions(expected, composePose(now));
   for (let i = 0; i < 3; i++) expect(delivered[i]).toBeCloseTo(expected[i], 5);
+});
+
+test("rotateNormals applies the rotation block and ignores translation", () => {
+  const m = composePose([
+    { t: "rotate", deg: 90, center: [5, 5, 5], axis: [0, 0, 1] }, // off-origin center: translation parts must not leak
+    { t: "translate", v: [100, -3, 7] },
+  ]);
+  const n = Float32Array.from([1, 0, 0, 0, 0, 1]);
+  rotateNormals(n, m);
+  expect(n[0]).toBeCloseTo(0, 6); // +X → +Y under 90° about Z
+  expect(n[1]).toBeCloseTo(1, 6);
+  expect(n[2]).toBeCloseTo(0, 6);
+  expect([n[3], n[4], n[5]]).toEqual([0, 0, 1]); // +Z unchanged by a Z rotation, untouched by translation
 });

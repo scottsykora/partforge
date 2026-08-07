@@ -258,7 +258,7 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 | `boundingBox()` | `{min, max, center, size}`; `center`/`size` are derived by `addSugar` from the backend's `{min, max}`. |
 | `volume()` | Solid volume in mm³. |
 | `genus()` / `isEmpty()` | Optional (`SOLID_OPTIONAL_OPS`): mesh-topology queries — through-hole count / no-geometry test. The mesh backend provides them; OCCT has no cheap equivalent. |
-| `toMesh({quality?})` | Render mesh: `{positions, normals, indices?, triangles, edges?, featureIds?, features?}`. `indices` optional (a backend may emit soup or indexed); `normals` may be empty (`length 0`) to delegate creasing to the viewer; `edges` (feature-line segments) and the feature fields are optional metadata. |
+| `toMesh({quality?})` | Render mesh: `{positions, normals, indices?, triangles, edges?, featureIds?, features?}`. `indices` optional (a backend may emit soup or indexed); `normals` and `edges` are authoritative shading intent from both backends — see [Shading intent](#shading-intent-tomesh-normals-and-edges) below; `featureIds`/`features` are optional metadata. |
 | `toSTL({quality?})` | `Promise<ArrayBuffer>`, binary STL, outward CCW winding. Stored facet normals may be zero — slicers recompute them (the mesh backend happens to write them). |
 | `toIndexedMesh({quality?})` | `{positions, indices}` indexed mesh (3MF path); defaults to `"print"` like `toSTL`. Coincident vertices need NOT be welded — the 3MF writer welds, because that format reads topology from the indices rather than re-stitching soup by position the way an STL consumer does. |
 | `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | B-rep class (core throws `KernelCapabilityError`). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` hollows inward, keeping outer dimensions; `open` (face selector) is required. |
@@ -266,6 +266,39 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 `quality` (`"preview"` | `"print"`) is **advisory**: it trades tessellation density for
 speed and a backend may bake it at kernel creation (Manifold does). A part must never
 depend on triangle counts, segment counts, or normals being present.
+
+### Shading intent (toMesh normals and edges)
+
+`toMesh` output is the authoritative statement of how a solid SHADES and which
+edges are FEATURE edges — consumers (viewer, CLI renderer) must draw what they
+are given and must not re-derive either from dihedral angles when the fields
+are present:
+
+- `normals` — per-vertex shading normals. Smooth within one surface, hard
+  across boolean-cut seams. OCCT ships analytic B-rep normals; Manifold ships
+  the policy-aware crease pass (`src/framework/geometry/creased-normals.js`).
+- `edges` — flat feature-edge segment pairs (6 floats per segment). An EMPTY
+  array means "this solid has no feature edges"; it is not "unknown". OCCT
+  ships true B-rep edges with tangent edges (fillet blends, seam lines)
+  filtered out; Manifold ships policy-gated sharp/seam segments.
+
+`loft` accepts `shading?: "smooth" | "faceted"` to override facet-vs-smooth
+inference: by default, rings with fewer than 32 sides shade as intentional flat
+facets with no same-surface edge lines, while rings with 32+ sides (and
+`ruled: false` lofts) shade smooth. `shading: "smooth"` forces smooth shading;
+`shading: "faceted"` forces facets; any other non-nullish value throws.
+Thresholds live in `src/framework/geometry/shading-policy.js`.
+
+Known limitation: the OCCT backend ignores `shading` — a loft forced to OCCT
+via `meta.backend` draws its facet corner edges as B-rep feature lines. The
+hint is honored on the Manifold path, which is where lofts preview by default.
+
+`label()`ing a compound solid (one spanning more than one original surface)
+collapses it to a single shading surface that inherits the majority policy of
+its registered constituent surfaces, weighted by triangle count. A constituent
+with no registered policy of its own (e.g. a plain boolean tool) still votes,
+as SMOOTH — the policy it actually renders with — and an exact tie resolves to
+the no-lines (faceted) policy.
 
 **Selectors** (`fillet`/`chamfer` `edges` selector, `shell` `open` face selector) are
 declarative objects, criteria AND-combined:
