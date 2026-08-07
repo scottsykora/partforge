@@ -312,7 +312,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         return cached(h("revolve", pts._hash, degrees, segs), () => T(pts._cs.revolve(segs, degrees)));
       return cached(h("revolve", pts, degrees, segs), () => T(Manifold.revolve([pts], segs, degrees)));
     },
-    union: (solids) => cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
+    // A one-solid union is an identity — no new WASM / cache entry (avoids double-free):
+    // unionRaw's reduce returns the operand's own Manifold untouched, so caching it
+    // would pin one WASM object under two entries and eviction would dispose it twice.
+    union: (solids) => solids.length === 1
+      ? solids[0]
+      : cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
     shape2d,
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
