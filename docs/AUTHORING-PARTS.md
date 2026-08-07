@@ -808,6 +808,27 @@ Copy `demo.html` and change the title, the panel heading, and the `<script src>`
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
 `"occt"` for STEP — handled for you).
 
+**View control (the mount handle).** For an embedder driving the view tabs from its own UI
+instead of (or in addition to) the built-in `#part` bar:
+
+- `runtime.getView() → string` — the active view name; never null once the runtime is ready
+  (mount resolves a default before first build — see "Which view the viewer opens on" above).
+- `runtime.setView(name) → boolean` — switch tabs programmatically, the same path as clicking
+  a tab. Returns `false` (and leaves the active tab untouched) for a name the part doesn't
+  declare in `views`; `true` otherwise, including when `name` is already active.
+- `await runtime.captureView(viewName?, opts?) → Promise<string | null>` — a JPEG data URL of
+  `viewName` rendered offscreen (falling back to the resolved default view — see
+  `resolveDefaultView` / `default-view.js` — when `viewName` is omitted or names a view the
+  part doesn't declare). Never disturbs the active tab, the live camera, or the on-screen
+  scene; `opts` forwards to the underlying render (size, quality, angle). Resolves `null` on
+  failure rather than throwing (a build error, a part with no sub-parts in that view, a
+  disposed runtime).
+
+Pass `onViewChange(name)` to `mount()` to be told the active view: it fires once
+synchronously during mount with the initial resolved view (before `runtime.ready` settles),
+then again on every subsequent change — a tab click or a `setView` call — always with the
+new view name.
+
 **Headless export (the mount handle).** The `#download*` buttons above are the built-in,
 view-bound export UI. An embedder that wants its own export UI (e.g. a "pick which parts,
 pick a format" modal) can skip those buttons and drive export off the handle `mount()`

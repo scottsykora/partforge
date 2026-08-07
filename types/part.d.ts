@@ -297,11 +297,18 @@ export type Easing = "linear" | "ease-in" | "ease-out" | "ease-in-out";
 export type Keyframes = Array<[number, number]>;
 
 /**
- * A camera cue angle: one of the seven canonical angles (`CanonicalView` in the
- * app entry — `"iso" | "front" | "back" | "top" | "bottom" | "left" | "right"`).
- * Cues fire during play only; scrubbing never moves the camera.
+ * The seven angles the viewer can frame a part from. Defined here rather than in
+ * the app entry so `CameraCue` can be the real union without an import cycle —
+ * the app entry re-exports it under its own name.
  */
-export type CameraCue = string;
+export type CanonicalView = "iso" | "front" | "back" | "left" | "right" | "top" | "bottom";
+
+/**
+ * A camera cue angle. `partforge lint` rejects anything outside the canonical
+ * seven (`animation-camera-invalid`), so the type says so too. Cues fire during
+ * play only; scrubbing never moves the camera.
+ */
+export type CameraCue = CanonicalView;
 
 /** One step of a multi-step animation. Steps play in order; prev/next navigate them. */
 export interface AnimationStep {
@@ -324,24 +331,17 @@ export interface AnimationStep {
 }
 
 /**
- * One named animation: pure keyframe data over EXISTING params. Declare either
- * `tracks` (one anonymous step) or `steps`, never both. See
- * docs/AUTHORING-PARTS.md "Animations".
+ * The fields both animation forms share. Exported so a host can extend it —
+ * `AnimationSpec` itself is a union and cannot be `extends`-ed.
  */
-export interface AnimationSpec {
+export interface AnimationSpecCommon {
   /** Shown in the transport bar's picker. Defaults to the animation's key. */
   label?: string;
   /** CommonMark, shown behind the ⓘ glyph. */
   description?: string;
-  /** Seconds. Required in the single-step (`tracks`) form. */
-  duration?: number;
   easing?: Easing;
   /** Wrap continuously. Single-step animations only. */
   loop?: boolean;
-  /** The single-step form: param key -> keyframes. */
-  tracks?: Record<string, Keyframes>;
-  /** The multi-step form. */
-  steps?: AnimationStep[];
   /**
    * One mechanism per animation: an angle (an intro cue at t=0), a
    * `[[t, angle], …]` cue list, or per-step `camera` names.
@@ -356,6 +356,27 @@ export interface AnimationSpec {
    */
   autoplay?: boolean;
 }
+
+/**
+ * An animation is EITHER single-phase (`tracks` + `duration`) OR stepped
+ * (`steps`) — never both, never neither. `partforge lint` enforces that
+ * (`animation-tracks-or-steps`), and the union says the same thing, so a block
+ * carrying both is rejected before it ever reaches lint.
+ */
+export type AnimationSpec =
+  | (AnimationSpecCommon & {
+      /** Seconds — the whole animation's duration in the single-phase form. */
+      duration: number;
+      /** Param key -> keyframes. */
+      tracks: Record<string, Keyframes>;
+      steps?: never;
+    })
+  | (AnimationSpecCommon & {
+      /** The multi-step form; each step carries its own relative `duration`. */
+      steps: AnimationStep[];
+      tracks?: never;
+      duration?: never;
+    });
 
 // --- the part itself --------------------------------------------------------
 

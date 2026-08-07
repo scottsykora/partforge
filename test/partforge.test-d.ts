@@ -419,3 +419,23 @@ const trackedStep: AnimationStep = {
 const noDuration: AnimationStep = { label: "Nope", camera: "iso" };
 
 export { cameraOnlyStep, trackedStep, noDuration };
+
+// `tracks` XOR `steps`, and camera cues limited to the canonical seven — both are
+// rules `partforge lint` already enforces, so the declarations enforce them too
+// rather than accepting blocks lint would reject.
+const singlePhase: AnimationSpec = { duration: 1, tracks: { lidAngle: [[0, 0], [1, 110]] } };
+const steppedSpec: AnimationSpec = {
+  steps: [{ label: "Open", duration: 1, tracks: { lidAngle: [[0, 0], [1, 110]] } }],
+};
+const withCue: AnimationSpec = { duration: 1, camera: "iso", tracks: { a: [[0, 0], [1, 1]] } };
+const withCueList: AnimationSpec = {
+  duration: 1, camera: [[0, "front"], [0.5, "top"]], tracks: { a: [[0, 0], [1, 1]] },
+};
+// @ts-expect-error — both forms at once
+const bothForms: AnimationSpec = { duration: 1, tracks: { a: [[0, 0], [1, 1]] }, steps: [] };
+// @ts-expect-error — neither form
+const neitherForm: AnimationSpec = { duration: 1 };
+// @ts-expect-error — not one of the seven canonical angles
+const badCue: AnimationSpec = { duration: 1, camera: "north-east-ish", tracks: { a: [[0, 0], [1, 1]] } };
+
+export { singlePhase, steppedSpec, withCue, withCueList, bothForms, neitherForm, badCue };

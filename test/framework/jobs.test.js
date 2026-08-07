@@ -15,6 +15,18 @@ test("generate posts one mesh per requested sub-part", async () => {
   expect(meshes.meshes[0].triangles).toBeGreaterThan(0);
 });
 
+test("capture-generate posts capture-meshes (not meshes) with the requesting jobId, transfer buffers included", async () => {
+  const posted = [];
+  await handle(k, demo, { type: "capture-generate", jobId: 42, subparts: ["base"], view: "all", params: {}, cache: true },
+    (m, transfer = []) => posted.push([m, transfer]));
+  expect(posted.some(([m]) => m.type === "meshes")).toBe(false);
+  const [capture, transfer] = posted.find(([m]) => m.type === "capture-meshes");
+  expect(capture.jobId).toBe(42);
+  expect(capture.meshes.map((x) => x.name)).toEqual(["base"]);
+  expect(capture.meshes[0].triangles).toBeGreaterThan(0);
+  expect(transfer).toContain(capture.meshes[0].positions.buffer);
+});
+
 test("export-stl builds the view's enabled sub-parts and names them via export.name", async () => {
   const posted = [];
   await handle(k, demo, { type: "export-stl", view: "all", params: { with_lid: 1 } }, (m) => posted.push(m));

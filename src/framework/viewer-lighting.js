@@ -3,8 +3,15 @@ import * as THREE from "three";
 const KEY_COLOR = 0xffffff, KEY_INTENSITY = 1.45;
 const FILL_COLOR = 0xe5efff, FILL_INTENSITY = 0.65;
 
+// The persistent sky/ground ambient. Shared with the offscreen thumbnail path
+// (viewer.js renderMeshPayloads), which builds its own throwaway scene and so needs
+// the same hemisphere fill to avoid rendering faces outside the key/fill cones near-black.
+export function createHemisphereLight() {
+  return new THREE.HemisphereLight(0xdce9ff, 0x687586, 1.35);
+}
+
 export function addViewerLights(scene) {
-  const hemisphere = new THREE.HemisphereLight(0xdce9ff, 0x687586, 1.35);
+  const hemisphere = createHemisphereLight();
   const key = new THREE.DirectionalLight(KEY_COLOR, KEY_INTENSITY);
   key.position.set(8, 14, 10);
   const fill = new THREE.DirectionalLight(FILL_COLOR, FILL_INTENSITY);

@@ -80,6 +80,27 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const transfer = meshes.flatMap((m) =>
         [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
       post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.() }, transfer);
+    } else if (msg.type === "capture-generate") {
+      // A private, job-correlated one-shot channel for captureView — builds a
+      // (possibly non-active) view's meshes off the regen loop, so it can never
+      // race or clobber live state. Same per-sub-part build+cache-round as
+      // `generate` above (cache:true reuses the worker's geometry memo), but no
+      // isStale/superseded polling — there's nothing to supersede a one-shot.
+      const useCache = msg.cache !== false;
+      const meshes = [];
+      for (const name of msg.subparts) {
+        if (useCache) kernel.beginSubPart?.(name);
+        try {
+          const m = posed(name, "display").toMesh({ quality: "preview" });
+          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features });
+        } finally {
+          if (useCache) kernel.endSubPart?.();
+          kernel.cleanup?.();
+        }
+      }
+      const captureTransfer = meshes.flatMap((m) =>
+        [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
+      post({ type: "capture-meshes", jobId: msg.jobId, meshes }, captureTransfer);
     } else if (msg.type === "export-stl") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
