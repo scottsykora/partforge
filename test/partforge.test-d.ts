@@ -290,6 +290,10 @@ expectType<Solid>(k.prism({ points: roundedRectPolygon(40, 30, 4), h: 10, twist:
 expectType<Solid>(k.extrude({ profile: { outer: roundedRectPolygon(40, 30, 4), holes: [circleProfile(6)] }, h: 10 }));
 expectType<Solid>(k.extrude({ profile: roundedProfile(roundedRectPolygon(40, 30, 0), 3), h: 5, bevel: { top: 0.6 } }));
 expectType<Solid>(k.loft({ rings: [{ sides: 6, radius: 30, z: 0 }, { sides: 6, radius: 22, z: 120, rotate: 90 }] }));
+expectType<Solid>(k.loft({ rings: [{ sides: 64, radius: 30, z: 0 }, { sides: 64, radius: 22, z: 120 }], shading: "smooth" }));
+expectType<Solid>(k.loft({ rings: [{ sides: 64, radius: 30, z: 0 }, { sides: 64, radius: 22, z: 120 }], shading: "faceted" }));
+// @ts-expect-error - shading only accepts "smooth" | "faceted"
+k.loft({ rings: [{ sides: 6, radius: 30, z: 0 }, { sides: 6, radius: 22, z: 120 }], shading: "flat" });
 expectType<Solid>(k.sweep({ profile: circleProfile(3), path: [[0, 0, 0], [0, 0, 20], [15, 0, 20]], cornerRadius: 5 }));
 expectType<Solid>(k.revolve({ profile: [[0, 0], [10, 0], [10, 20]], degrees: 180 }));
 expectType<Solid>(k.helixSweptTube({ pathR: 20, profileR: 2, pitch: 6, turns: 4, z0: 0, lefthand: false }));

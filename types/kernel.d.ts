@@ -267,6 +267,8 @@ export interface LoftOptions {
   ruled?: boolean;
   /** Capless loop — Manifold only. */
   closed?: boolean;
+  /** Overrides the facet-vs-smooth shading inference. */
+  shading?: "smooth" | "faceted";
 }
 
 export interface SweepOptions {
