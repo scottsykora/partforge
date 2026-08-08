@@ -22,6 +22,20 @@ function btn(className, text, label) {
   return b;
 }
 
+// Where the transport bar may sit, given the stage width, the bar's natural
+// width, and the viewbar's left edge (all px, viewbarLeft stage-relative).
+// null → the CSS default (centered) already clears the viewbar. Otherwise
+// inline overrides: `left` slides the bar toward the stage's `margin`, and
+// when even that isn't enough, `maxWidth` caps the bar so the `gap` holds.
+export function planAnimBarPlacement({ stageWidth, barWidth, viewbarLeft }, { gap = 10, margin = 12 } = {}) {
+  const centeredLeft = (stageWidth - barWidth) / 2;
+  const limit = viewbarLeft - gap - barWidth;
+  if (centeredLeft <= limit) return null;
+  const left = Math.max(margin, limit);
+  const available = Math.max(0, viewbarLeft - gap - margin);
+  return barWidth > available ? { left, maxWidth: available } : { left };
+}
+
 export function attachAnimationControls(viewer, part, { container, applyValues, getParamValues }) {
   // A malformed animations block must degrade to "no transport bar", never a
   // crashed mount — lint reports the specifics; the viewer just goes without.

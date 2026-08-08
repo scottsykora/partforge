@@ -4,7 +4,7 @@
 // cue → tween dispatch, intro gating, snapshot/reset, user-edit pause, and the
 // runtime surface.
 import { afterEach, expect, test, vi } from "vitest";
-import { attachAnimationControls } from "../../src/framework/animation-controls.js";
+import { attachAnimationControls, planAnimBarPlacement } from "../../src/framework/animation-controls.js";
 
 function fakeViewer() {
   const frameCbs = new Set(); const orbitCbs = new Set();
@@ -328,4 +328,44 @@ test("pausing mid-intro and resuming re-issues the camera cue", () => {
   expect(ctl.runtime.state().status).toBe("playing");
   viewer.frame(0.1);
   expect(viewer.tweenCameraTo).toHaveBeenCalledTimes(2);
+});
+
+// --- planAnimBarPlacement: pure clamp math ----------------------------------
+// stage-relative px in, inline-override plan out. null = the CSS default
+// (centered) already clears the viewbar.
+
+test("placement: centered when there is room", () => {
+  // centeredLeft 300 ≤ limit 800−10−400 = 390
+  expect(planAnimBarPlacement({ stageWidth: 1000, barWidth: 400, viewbarLeft: 800 })).toBeNull();
+});
+
+test("placement: exactly touching the gap is still centered", () => {
+  // centeredLeft 300 === limit 710−10−400 = 300
+  expect(planAnimBarPlacement({ stageWidth: 1000, barWidth: 400, viewbarLeft: 710 })).toBeNull();
+});
+
+test("placement: slides left to hold the 10px gap", () => {
+  // centeredLeft 300 > limit 700−10−400 = 290
+  expect(planAnimBarPlacement({ stageWidth: 1000, barWidth: 400, viewbarLeft: 700 }))
+    .toEqual({ left: 290 });
+});
+
+test("placement: never crosses the 12px stage margin", () => {
+  // limit 430−10−400 = 20 → still above margin
+  expect(planAnimBarPlacement({ stageWidth: 600, barWidth: 400, viewbarLeft: 430 }))
+    .toEqual({ left: 20 });
+  // limit 415−10−400 = 5 → clamped to 12, and 400 > available 415−10−12 = 393 → capped
+  expect(planAnimBarPlacement({ stageWidth: 600, barWidth: 400, viewbarLeft: 415 }))
+    .toEqual({ left: 12, maxWidth: 393 });
+});
+
+test("placement: cap never goes negative", () => {
+  // viewbar hugging the left edge: available 15−10−12 < 0 → cap at 0
+  expect(planAnimBarPlacement({ stageWidth: 600, barWidth: 400, viewbarLeft: 15 }))
+    .toEqual({ left: 12, maxWidth: 0 });
+});
+
+test("placement: honours custom gap and margin", () => {
+  expect(planAnimBarPlacement({ stageWidth: 1000, barWidth: 400, viewbarLeft: 700 }, { gap: 20, margin: 30 }))
+    .toEqual({ left: 280 });
 });
