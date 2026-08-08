@@ -132,9 +132,10 @@ export default {
 ## Animations
 
 A part may declare named animations — pure keyframe data that drives **existing
-params** over time. The viewer shows a transport bar (play/scrub/step); hosts
-drive the same engine via `runtime.animation`; `partforge render` can render
-stills at any position. The reference part is `src/parts/hinged-box.js`.
+params** over time. The viewer shows a transport bar (play/scrub, with ‹ ›
+pagers between animations); hosts drive the same engine via
+`runtime.animation`; `partforge render` can render stills at any position. The
+reference part is `src/parts/hinged-box.js`.
 
 ```js
 animations: {
@@ -149,7 +150,7 @@ animations: {
   },
   assemble: {
     label: "Assemble",
-    steps: [                  // steps play in order; prev/next navigate them
+    steps: [                  // steps play in order; named on the scrubber as you hover/drag
       { label: "Lower the lid", camera: "left", duration: 1.0,
         tracks: { lidLift: [[0, 40], [1, 0]] } },
       { label: "Open", camera: "iso", duration: 1.0,
