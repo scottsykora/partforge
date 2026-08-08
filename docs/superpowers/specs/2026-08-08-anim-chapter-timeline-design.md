@@ -68,7 +68,8 @@ animations.
 
 ### Top-level animation pager (animations > 1 only)
 
-- `‹` and `›` buttons flanking the dropdown picker: `[‹][picker ▾][›]`.
+- `‹` and `›` buttons bookending the whole card — `‹` is the bar's first
+  element and `›` its last: `[‹][picker ▾][ⓘ][▶][scrub][↺][›]`.
 - They cycle with wrap-around (`›` on the last animation returns to the
   first), through the exact same `selectAnimation` path as the picker —
   reset, structure rebuild, and autoplay disarm included — and update the
