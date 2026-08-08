@@ -151,21 +151,31 @@ test("changing the glyph mutates the button's text node rather than replacing it
 // readout blank, so the swap has to invalidate them rather than trust them.
 test("switching animations re-renders chrome the caches would have skipped", () => {
   const { ctl, container } = harness();
+  const playBtn = container.querySelector(".pf-anim-play");
   const pick = container.querySelector(".pf-anim-pick");
-  const stepLabel = container.querySelector(".pf-anim-step");
 
   const select = (name) => { pick.value = name; pick.dispatchEvent(new Event("change", { bubbles: true })); };
 
-  expect(stepLabel.hidden).toBe(true); // "a" is not stepped
+  // "a" playing, glyph "⏸". selectAnimation("b") calls doReset, so the
+  // incoming animation is idle, not playing — the glyph must re-render to
+  // "▶" even though a stale `shownActive` cache would have skipped it.
+  playBtn.click();
+  expect(playBtn.textContent).toBe("⏸");
   select("b");
-  expect(stepLabel.hidden).toBe(false);
-  expect(stepLabel.textContent).toBe("1/2 · up");
+  expect(playBtn.textContent).toBe("▶");
+  expect(container.querySelectorAll(".pf-anim-tick")).toHaveLength(1); // b has 2 steps -> one interior boundary
 
-  // The case the cache actually swallows: stepped -> stepped. Both sit at step
-  // 0 with the same status, so a trusted cache skips the redraw and leaves the
-  // previous animation's step name on screen.
+  // Same again the other way: play "b", switch to "c" (also stepped), glyph
+  // must drop back to "▶".
+  playBtn.click();
+  expect(playBtn.textContent).toBe("⏸");
   select("c");
-  expect(stepLabel.textContent).toBe("1/2 · raise");
+  expect(playBtn.textContent).toBe("▶");
+
+  // Structural chrome (ticks) rebuilds too: back to unstepped "a" clears them.
+  select("a");
+  expect(container.querySelectorAll(".pf-anim-tick")).toHaveLength(0);
+
   ctl.detach();
 });
 
