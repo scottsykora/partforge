@@ -121,6 +121,37 @@ test("chapter bubble follows hover over the scrubber and names the chapter", () 
   expect(bubble.classList.contains("pf-show")).toBe(false);
 });
 
+test("a drag's transient scrub reveal does not steal the bubble from an in-progress hover", () => {
+  vi.useFakeTimers();
+  try {
+    const { container, ctl } = setup(); handles.push(ctl);
+    container.querySelector(".pf-anim-pick").value = "assemble";
+    container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+    const wrap = container.querySelector(".pf-anim-scrub-wrap");
+    wrap.getBoundingClientRect = () => ({ left: 0, right: 220, top: 0, bottom: 14, width: 220, height: 14 });
+    const scrub = container.querySelector(".pf-anim-scrub");
+    const bubble = container.querySelector(".pf-anim-chapter");
+
+    // A drag: pointermove (hover claims the bubble) then the scrub `input` that
+    // follows it on every step — the same order a real mouse/touch drag fires.
+    wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 55, bubbles: true }));
+    scrub.value = "250";
+    scrub.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(bubble.classList.contains("pf-show")).toBe(true);
+
+    // The transient reveal must not have armed a fade: the pointer still owns
+    // the bubble, so holding the thumb still past 1s must not hide it.
+    vi.advanceTimersByTime(1100);
+    expect(bubble.classList.contains("pf-show")).toBe(true);
+
+    // Only pointerleave ends a hover-owned reveal.
+    wrap.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+    expect(bubble.classList.contains("pf-show")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("scrub input reveals the bubble at the playhead and it fades after the hold", () => {
   vi.useFakeTimers();
   try {

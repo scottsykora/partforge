@@ -130,7 +130,16 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
 
   // transient = a keyboard/scrub reveal with no pointerleave to end it — it
   // fades on its own instead. A hover reveal stays until the pointer leaves.
+  //
+  // The pointer OWNS the bubble while it's inside the wrap: pointerleave is the
+  // only thing allowed to end a hover reveal. A drag fires pointermove then an
+  // `input` on every step, so the transient fade (armed by the `input` handler)
+  // is always the last timer set — without hoverInside a held-still thumb (or a
+  // click-seek followed by motionless hovering) would fade out from under a
+  // pointer that never left. So a transient reveal only arms its fade when the
+  // pointer isn't the one holding the bubble.
   let bubbleFadeTimer = 0;
+  let hoverInside = false;
   function showChapterBubble(fraction, { transient = false } = {}) {
     if (current.steps.length <= 1) return;
     const f = Math.min(1, Math.max(0, fraction));
@@ -140,7 +149,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     chapterBubble.classList.add("pf-show");
     clearTimeout(bubbleFadeTimer);
     bubbleFadeTimer = 0;
-    if (transient) bubbleFadeTimer = setTimeout(hideChapterBubble, 1000);
+    if (transient && !hoverInside) bubbleFadeTimer = setTimeout(hideChapterBubble, 1000);
   }
   function hideChapterBubble() {
     clearTimeout(bubbleFadeTimer);
@@ -148,14 +157,19 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     chapterBubble.classList.remove("pf-show");
   }
   const onWrapPointerMove = (e) => {
+    hoverInside = true;
     const rect = scrubWrap.getBoundingClientRect();
     if (!rect.width) return;
     showChapterBubble((e.clientX - rect.left) / rect.width);
   };
+  const onWrapPointerLeave = () => {
+    hoverInside = false;
+    hideChapterBubble();
+  };
   scrubWrap.addEventListener("pointermove", onWrapPointerMove);
-  scrubWrap.addEventListener("pointerleave", hideChapterBubble);
+  scrubWrap.addEventListener("pointerleave", onWrapPointerLeave);
 
-  // Per-animation chrome: title, ⓘ description, step buttons, scrubber ticks.
+  // Per-animation chrome: title, ⓘ description, scrubber ticks.
   function syncStructure() {
     title.textContent = current.label;
     hideChapterBubble();
@@ -397,9 +411,9 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     if (typeof requestAnimationFrame !== "function") return applyPlacement();
     if (!placementRaf) placementRaf = requestAnimationFrame(applyPlacement);
   }
-  // Observing the bar itself catches content-driven width changes (step label
-  // text, animation switch); the viewbar, cutaway's actions; the stage, rail
-  // drags and window resizes.
+  // Observing the bar itself catches content-driven width changes (animation
+  // switch changing the picker/title width); the viewbar, cutaway's actions;
+  // the stage, rail drags and window resizes.
   const placementObserver = typeof ResizeObserver === "function"
     ? new ResizeObserver(schedulePlacement) : null;
   if (placementObserver) {
@@ -459,7 +473,8 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       placementObserver?.disconnect();
       if (placementRaf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placementRaf);
       scrubWrap.removeEventListener("pointermove", onWrapPointerMove);
-      scrubWrap.removeEventListener("pointerleave", hideChapterBubble);
+      scrubWrap.removeEventListener("pointerleave", onWrapPointerLeave);
+      hoverInside = false;
       hideChapterBubble();
       bar.remove();
     },
