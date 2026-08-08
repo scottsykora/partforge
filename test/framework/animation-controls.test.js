@@ -418,12 +418,23 @@ test("placement wiring: clamps against the viewbar, clears when roomy, disconnec
     expect(bar.style.left).toBe("290px");
     expect(bar.style.transform).toBe("none");
     expect(bar.style.maxWidth).toBe("");
+    expect(bar.style.overflow).toBe("");
+
+    // capped: even the 12px margin isn't enough (300−10−12 = 278 < barWidth
+    // 400) → left pins to the margin and maxWidth caps the bar, clipping its
+    // over-minimum flex children instead of spilling onto #viewbar
+    viewbarLeft = 300;
+    roCallback(); await nextFrame();
+    expect(bar.style.left).toBe("12px");
+    expect(bar.style.maxWidth).toBe("278px");
+    expect(bar.style.overflow).toBe("hidden");
 
     // roomy again → overrides cleared, chrome.css back in charge
     viewbarLeft = 800;
     roCallback(); await nextFrame();
     expect(bar.style.left).toBe("");
     expect(bar.style.transform).toBe("");
+    expect(bar.style.overflow).toBe("");
 
     ctl.detach();
     expect(disconnected).toBe(true);

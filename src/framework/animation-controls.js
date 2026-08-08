@@ -234,6 +234,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     bar.style.left = "";
     bar.style.transform = "";
     bar.style.maxWidth = "";
+    bar.style.overflow = "";
     const vb = viewbarEl?.getBoundingClientRect();
     const barRect = bar.getBoundingClientRect();
     if (!vb || barRect.top >= vb.bottom || barRect.bottom <= vb.top) return;
@@ -246,7 +247,15 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     if (!plan) return;
     bar.style.left = `${plan.left}px`;
     bar.style.transform = "none";
-    if (plan.maxWidth != null) bar.style.maxWidth = `${plan.maxWidth}px`;
+    // maxWidth is the last resort, only reached when even the margin can't
+    // hold the gap — and the bar's flex children have hard minimums (~320px)
+    // that don't shrink to fit a tighter cap. overflow:hidden only applies
+    // here, inline, because a static rule in app.css would also clip the ⓘ
+    // info popover in the (far more common) uncapped state.
+    if (plan.maxWidth != null) {
+      bar.style.maxWidth = `${plan.maxWidth}px`;
+      bar.style.overflow = "hidden";
+    }
   }
   function schedulePlacement() {
     if (typeof requestAnimationFrame !== "function") return applyPlacement();

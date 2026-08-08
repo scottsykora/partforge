@@ -293,7 +293,10 @@ async function checkAnimBarLayout(widths) {
         viewbarHeight: v.height,
         centerOffset: (b.left + b.right) / 2 - (s.left + s.right) / 2,
         // from measured widths, would the CSS-centered position collide?
-        wouldCollideCentered: verticalHit && (s.width + b.width) / 2 > (v.left - s.left) - 10,
+        // the +1 requires a >=1px margin before demanding a slide, so a
+        // future geometry colliding by less than the -0.5 tolerance below
+        // isn't held to sliding by an imperceptible amount.
+        wouldCollideCentered: verticalHit && (s.width + b.width) / 2 > (v.left - s.left) - 10 + 1,
       };
     });
     if (!result) { errors.push(`anim bar ${width}px: missing .pf-anim-bar, #app, or #viewbar`); continue; }
