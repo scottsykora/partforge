@@ -215,8 +215,6 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
   #viewbar button { width: 30px; height: 30px; font-size: 13px; }
   #viewbar .pf-cutaway-actions { gap: 3px; }
   #viewbar .pf-cutaway-actions button { min-width: 44px; padding: 0 6px; }
-  /* #viewbar's card is 40px here (30px buttons) — keep the floor in step. */
-  .pf-anim-bar { min-height: 40px; }
 }
 
 /* animation transport bar (placement: chrome.css's .pf-anim-bar). APPEARANCE
@@ -252,6 +250,11 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 .pf-anim-tick {
   position: absolute; top: 50%; width: 2px; height: 8px; margin-top: -4px;
   background: var(--pf-muted); pointer-events: none;
+}
+
+@media (max-width: 360px) {
+  /* #viewbar's card is 40px here (30px buttons) — keep the floor in step. */
+  .pf-anim-bar { min-height: 40px; }
 }
 
 /* Legacy id-only markup only: classed markup's viewbar lives inside .pf-stage
