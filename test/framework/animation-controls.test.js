@@ -566,3 +566,34 @@ test("PageUp/PageDown jump chapter boundaries; no-ops for single-step", () => {
   expect(ev.defaultPrevented).toBe(false);
   expect(ctl.runtime.state().t).toBeCloseTo(0);
 });
+
+test("animation pager bookends the card and cycles with wrap", () => {
+  const { container, ctl } = setup(); handles.push(ctl); // two animations
+  const bar = container.querySelector(".pf-anim-bar");
+  const pagers = bar.querySelectorAll(".pf-anim-page");
+  expect(pagers).toHaveLength(2);
+  expect(bar.firstElementChild).toBe(pagers[0]);
+  expect(bar.lastElementChild).toBe(pagers[1]);
+  expect(pagers[0].getAttribute("aria-label")).toBe("Previous animation");
+  expect(pagers[1].getAttribute("aria-label")).toBe("Next animation");
+  const pick = container.querySelector(".pf-anim-pick");
+  pagers[1].click();                                   // open → assemble
+  expect(ctl.runtime.state().animation).toBe("assemble");
+  expect(pick.value).toBe("assemble");
+  pagers[1].click();                                   // assemble → wraps to open
+  expect(ctl.runtime.state().animation).toBe("open");
+  pagers[0].click();                                   // open → wraps back to assemble
+  expect(ctl.runtime.state().animation).toBe("assemble");
+});
+
+test("single-animation part gets no pager", () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const solo = { animations: { open: { label: "Open lid", duration: 1, easing: "linear",
+    tracks: { lidAngle: [[0, 0], [1, 110]] } } } };
+  const ctl = attachAnimationControls(fakeViewer(), solo, {
+    container, applyValues: () => {}, getParamValues: () => ({}),
+  });
+  handles.push(ctl);
+  expect(container.querySelectorAll(".pf-anim-page")).toHaveLength(0);
+});

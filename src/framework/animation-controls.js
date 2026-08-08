@@ -99,7 +99,13 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     pick.append(o);
   }
   const title = el("span", "pf-anim-title", "");
-  bar.append(animations.length > 1 ? pick : title);
+  // Multi-animation parts page with ‹ › at the card's outer edges — whole
+  // animations only, never chapters (chapters are the bubble + PageUp/Down).
+  const paged = animations.length > 1;
+  const prevAnimBtn = paged ? btn("pf-anim-page", "‹", "Previous animation") : null;
+  const nextAnimBtn = paged ? btn("pf-anim-page", "›", "Next animation") : null;
+  if (prevAnimBtn) bar.append(prevAnimBtn);
+  bar.append(paged ? pick : title);
   const infoSlot = el("span", "pf-anim-info");
   const playBtn = btn("pf-anim-play", "▶", "Play animation");
   const scrubWrap = el("span", "pf-anim-scrub-wrap");
@@ -119,6 +125,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   scrubWrap.append(chapterBubble);
   const resetBtn = btn("pf-anim-reset", "↺", "Reset animation");
   bar.append(infoSlot, playBtn, scrubWrap, resetBtn);
+  if (nextAnimBtn) bar.append(nextAnimBtn);
   container.append(bar);
 
   // transient = a keyboard/scrub reveal with no pointerleave to end it — it
@@ -323,8 +330,17 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     showChapterBubble(target, { transient: true });
     guarded(() => playback.seek(target));
   };
+  const cycleAnimation = (dir) => {
+    disarmAutoplay();
+    const i = animations.indexOf(current);
+    selectAnimation(animations[(i + dir + animations.length) % animations.length].name);
+  };
+  const onPrevAnim = () => cycleAnimation(-1);
+  const onNextAnim = () => cycleAnimation(1);
   const onPick = () => { disarmAutoplay(); selectAnimation(pick.value); };
   const onResetClick = () => { disarmAutoplay(); doReset(); };
+  prevAnimBtn?.addEventListener("click", onPrevAnim);
+  nextAnimBtn?.addEventListener("click", onNextAnim);
   playBtn.addEventListener("click", onPlayClick);
   scrub.addEventListener("input", onScrub);
   scrub.addEventListener("keydown", onScrubKeydown);
@@ -432,6 +448,8 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     detach() {
       offFrame();
       offOrbit();
+      prevAnimBtn?.removeEventListener("click", onPrevAnim);
+      nextAnimBtn?.removeEventListener("click", onNextAnim);
       playBtn.removeEventListener("click", onPlayClick);
       scrub.removeEventListener("input", onScrub);
       scrub.removeEventListener("keydown", onScrubKeydown);
