@@ -48,7 +48,9 @@ to move between them — no quick next/previous.
   entrance animation beyond a fast opacity fade, suppressed under
   `prefers-reduced-motion`. Ticks and playhead are untouched.
 - **Content:** the chapter's label, nothing else.
-- Single-step animations get no bubble and no hover handlers.
+- Single-step animations get no bubble — the reveal path no-ops (the
+  handlers stay attached, since the picker can switch between stepped and
+  un-stepped animations at runtime).
 
 ### Scrubber width
 
