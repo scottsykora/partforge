@@ -4,7 +4,7 @@
 // cue → tween dispatch, intro gating, snapshot/reset, user-edit pause, and the
 // runtime surface.
 import { afterEach, expect, test, vi } from "vitest";
-import { attachAnimationControls } from "../../src/framework/animation-controls.js";
+import { attachAnimationControls, planAnimBarPlacement } from "../../src/framework/animation-controls.js";
 
 function fakeViewer() {
   const frameCbs = new Set(); const orbitCbs = new Set();
@@ -328,4 +328,150 @@ test("pausing mid-intro and resuming re-issues the camera cue", () => {
   expect(ctl.runtime.state().status).toBe("playing");
   viewer.frame(0.1);
   expect(viewer.tweenCameraTo).toHaveBeenCalledTimes(2);
+});
+
+// --- planAnimBarPlacement: pure clamp math ----------------------------------
+// stage-relative px in, inline-override plan out. null = the CSS default
+// (centered) already clears the viewbar.
+
+test("placement: centered when there is room", () => {
+  // centeredLeft 300 ≤ limit 800−10−400 = 390
+  expect(planAnimBarPlacement({ stageWidth: 1000, barWidth: 400, viewbarLeft: 800 })).toBeNull();
+});
+
+test("placement: exactly touching the gap is still centered", () => {
+  // centeredLeft 300 === limit 710−10−400 = 300
+  expect(planAnimBarPlacement({ stageWidth: 1000, barWidth: 400, viewbarLeft: 710 })).toBeNull();
+});
+
+test("placement: slides left to hold the 10px gap", () => {
+  // centeredLeft 300 > limit 700−10−400 = 290
+  expect(planAnimBarPlacement({ stageWidth: 1000, barWidth: 400, viewbarLeft: 700 }))
+    .toEqual({ left: 290 });
+});
+
+test("placement: never crosses the 12px stage margin", () => {
+  // limit 430−10−400 = 20 → still above margin
+  expect(planAnimBarPlacement({ stageWidth: 600, barWidth: 400, viewbarLeft: 430 }))
+    .toEqual({ left: 20 });
+  // limit 415−10−400 = 5 → clamped to 12, and 400 > available 415−10−12 = 393 → capped
+  expect(planAnimBarPlacement({ stageWidth: 600, barWidth: 400, viewbarLeft: 415 }))
+    .toEqual({ left: 12, maxWidth: 393 });
+});
+
+test("placement: cap never goes negative", () => {
+  // viewbar hugging the left edge: available 15−10−12 < 0 → cap at 0
+  expect(planAnimBarPlacement({ stageWidth: 600, barWidth: 400, viewbarLeft: 15 }))
+    .toEqual({ left: 12, maxWidth: 0 });
+});
+
+test("placement: honours custom gap and margin", () => {
+  expect(planAnimBarPlacement({ stageWidth: 1000, barWidth: 400, viewbarLeft: 700 }, { gap: 20, margin: 30 }))
+    .toEqual({ left: 280 });
+});
+
+// --- placement wiring: ResizeObserver → measured clamp -----------------------
+// happy-dom has no layout, so rects are stubbed; the viewer-pose tests use the
+// same globalThis.ResizeObserver stub pattern.
+
+const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+
+test("placement wiring: clamps against the viewbar, clears when roomy, disconnects on detach", async () => {
+  const OriginalRO = globalThis.ResizeObserver;
+  let roCallback;
+  const observed = new Set();
+  let disconnected = false;
+  globalThis.ResizeObserver = class {
+    constructor(fn) { roCallback = fn; }
+    observe(el) { observed.add(el); }
+    disconnect() { disconnected = true; }
+  };
+  try {
+    const container = document.createElement("div");
+    const viewbar = document.createElement("div");
+    viewbar.id = "viewbar";
+    container.append(viewbar);
+    document.body.append(container);
+    container.getBoundingClientRect = () =>
+      ({ left: 0, right: 1000, top: 0, bottom: 700, width: 1000, height: 700 });
+    let viewbarLeft = 800;
+    viewbar.getBoundingClientRect = () =>
+      ({ left: viewbarLeft, right: viewbarLeft + 190, top: 650, bottom: 694, width: 190, height: 44 });
+    const ctl = attachAnimationControls(fakeViewer(), part, {
+      container, applyValues: () => {}, getParamValues: () => ({}),
+    });
+    handles.push(ctl);
+    const bar = container.querySelector(".pf-anim-bar");
+    bar.getBoundingClientRect = () =>
+      ({ left: 300, right: 700, top: 656, bottom: 692, width: 400, height: 36 });
+    expect(observed.has(container)).toBe(true);
+    expect(observed.has(bar)).toBe(true);
+    expect(observed.has(viewbar)).toBe(true);
+
+    // roomy: centeredLeft 300 ≤ limit 800−10−400 → no overrides
+    roCallback(); await nextFrame();
+    expect(bar.style.left).toBe("");
+
+    // squeezed: limit 700−10−400 = 290 < centeredLeft 300 → slide left
+    viewbarLeft = 700;
+    roCallback(); await nextFrame();
+    expect(bar.style.left).toBe("290px");
+    expect(bar.style.transform).toBe("none");
+    expect(bar.style.maxWidth).toBe("");
+    expect(bar.style.overflow).toBe("");
+
+    // capped: even the 12px margin isn't enough (300−10−12 = 278 < barWidth
+    // 400) → left pins to the margin and maxWidth caps the bar, clipping its
+    // over-minimum flex children instead of spilling onto #viewbar
+    viewbarLeft = 300;
+    roCallback(); await nextFrame();
+    expect(bar.style.left).toBe("12px");
+    expect(bar.style.maxWidth).toBe("278px");
+    expect(bar.style.overflow).toBe("hidden");
+
+    // roomy again → overrides cleared, chrome.css back in charge
+    viewbarLeft = 800;
+    roCallback(); await nextFrame();
+    expect(bar.style.left).toBe("");
+    expect(bar.style.transform).toBe("");
+    expect(bar.style.overflow).toBe("");
+
+    ctl.detach();
+    expect(disconnected).toBe(true);
+  } finally {
+    globalThis.ResizeObserver = OriginalRO;
+  }
+});
+
+test("placement wiring: no-op when the bars' vertical bands do not intersect", async () => {
+  const OriginalRO = globalThis.ResizeObserver;
+  let roCallback;
+  globalThis.ResizeObserver = class {
+    constructor(fn) { roCallback = fn; }
+    observe() {}
+    disconnect() {}
+  };
+  try {
+    const container = document.createElement("div");
+    const viewbar = document.createElement("div");
+    viewbar.id = "viewbar";
+    container.append(viewbar);
+    document.body.append(container);
+    container.getBoundingClientRect = () =>
+      ({ left: 0, right: 500, top: 0, bottom: 700, width: 500, height: 700 });
+    // viewbar in the bottom band, bar lifted above it (narrow layout's bottom: 64px)
+    viewbar.getBoundingClientRect = () =>
+      ({ left: 100, right: 490, top: 650, bottom: 694, width: 390, height: 44 });
+    const ctl = attachAnimationControls(fakeViewer(), part, {
+      container, applyValues: () => {}, getParamValues: () => ({}),
+    });
+    handles.push(ctl);
+    const bar = container.querySelector(".pf-anim-bar");
+    bar.getBoundingClientRect = () =>
+      ({ left: 50, right: 450, top: 600, bottom: 636, width: 400, height: 36 });
+    roCallback(); await nextFrame();
+    expect(bar.style.left).toBe(""); // would collide horizontally, but bands don't meet
+  } finally {
+    globalThis.ResizeObserver = OriginalRO;
+  }
 });

@@ -22,6 +22,20 @@ function btn(className, text, label) {
   return b;
 }
 
+// Where the transport bar may sit, given the stage width, the bar's natural
+// width, and the viewbar's left edge (all px, viewbarLeft stage-relative).
+// null → the CSS default (centered) already clears the viewbar. Otherwise
+// inline overrides: `left` slides the bar toward the stage's `margin`, and
+// when even that isn't enough, `maxWidth` caps the bar so the `gap` holds.
+export function planAnimBarPlacement({ stageWidth, barWidth, viewbarLeft }, { gap = 10, margin = 12 } = {}) {
+  const centeredLeft = (stageWidth - barWidth) / 2;
+  const limit = viewbarLeft - gap - barWidth;
+  if (centeredLeft <= limit) return null;
+  const left = Math.max(margin, limit);
+  const available = Math.max(0, viewbarLeft - gap - margin);
+  return barWidth > available ? { left, maxWidth: available } : { left };
+}
+
 // A setter for an element's text that MUTATES its existing text node instead of
 // replacing it. `el.textContent = x` always replaces the node, and WebKit will
 // not dispatch a `click` on an element whose text node was replaced between
@@ -260,6 +274,65 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   syncStructure();
   syncUi();
 
+  // --- placement: keep clear of the viewbar ---------------------------------
+  // chrome.css centers the bar (left: 50% / translateX(-50%)), and nothing in
+  // CSS can stop that centered position sliding under #viewbar when the stage
+  // narrows — the viewbar's width is dynamic (cutaway's Flip/Reset appear and
+  // disappear), so a static reservation would either overlap or waste centre
+  // space. Measure instead: when the two bars' vertical bands intersect, clamp
+  // the bar's left so a 10px gap to the viewbar holds, capping its width if
+  // even the stage's 12px margin isn't enough. Overrides are inline and
+  // cleared at the top of every pass, so chrome.css (or a host that
+  // re-anchors either bar out of the shared band) stays authoritative the
+  // moment the constraint stops binding. The clear-measure-apply sequence is
+  // loop-safe: it settles within one frame, so ResizeObserver — which reports
+  // rendered sizes at frame boundaries — never sees the intermediate state.
+  const viewbarEl = container.querySelector("#viewbar");
+  let placementRaf = 0;
+  function applyPlacement() {
+    placementRaf = 0;
+    bar.style.left = "";
+    bar.style.transform = "";
+    bar.style.maxWidth = "";
+    bar.style.overflow = "";
+    const vb = viewbarEl?.getBoundingClientRect();
+    const barRect = bar.getBoundingClientRect();
+    if (!vb || barRect.top >= vb.bottom || barRect.bottom <= vb.top) return;
+    const stageRect = container.getBoundingClientRect();
+    const plan = planAnimBarPlacement({
+      stageWidth: stageRect.width,
+      barWidth: barRect.width,
+      viewbarLeft: vb.left - stageRect.left,
+    });
+    if (!plan) return;
+    bar.style.left = `${plan.left}px`;
+    bar.style.transform = "none";
+    // maxWidth is the last resort, only reached when even the margin can't
+    // hold the gap — and the bar's flex children have hard minimums (~320px)
+    // that don't shrink to fit a tighter cap. overflow:hidden only applies
+    // here, inline, because a static rule in app.css would also clip the ⓘ
+    // info popover in the (far more common) uncapped state.
+    if (plan.maxWidth != null) {
+      bar.style.maxWidth = `${plan.maxWidth}px`;
+      bar.style.overflow = "hidden";
+    }
+  }
+  function schedulePlacement() {
+    if (typeof requestAnimationFrame !== "function") return applyPlacement();
+    if (!placementRaf) placementRaf = requestAnimationFrame(applyPlacement);
+  }
+  // Observing the bar itself catches content-driven width changes (step label
+  // text, animation switch); the viewbar, cutaway's actions; the stage, rail
+  // drags and window resizes.
+  const placementObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(schedulePlacement) : null;
+  if (placementObserver) {
+    placementObserver.observe(container);
+    placementObserver.observe(bar);
+    if (viewbarEl) placementObserver.observe(viewbarEl);
+  }
+  schedulePlacement();
+
   const runtime = {
     // An unknown name is a host bug, not a request to play whatever happens to
     // be selected — say so and do nothing rather than silently animating
@@ -306,6 +379,8 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       pick.removeEventListener("change", onPick);
       resetBtn.removeEventListener("click", onResetClick);
       info.dispose();
+      placementObserver?.disconnect();
+      if (placementRaf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placementRaf);
       bar.remove();
     },
     __viewer: viewer, // test hook only

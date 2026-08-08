@@ -222,6 +222,9 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 .pf-anim-bar {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 10px;
+  /* Never shorter than #viewbar's card sharing the same bottom edge:
+     34px button + 2×4px padding + 2×1px border (border-box). */
+  min-height: 44px;
   background: var(--pf-surface); border: 1px solid var(--pf-border);
   border-radius: var(--pf-radius-control); box-shadow: var(--pf-shadow-float);
 }
@@ -247,6 +250,11 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 .pf-anim-tick {
   position: absolute; top: 50%; width: 2px; height: 8px; margin-top: -4px;
   background: var(--pf-muted); pointer-events: none;
+}
+
+@media (max-width: 360px) {
+  /* #viewbar's card is 40px here (30px buttons) — keep the floor in step. */
+  .pf-anim-bar { min-height: 40px; }
 }
 
 /* Legacy id-only markup only: classed markup's viewbar lives inside .pf-stage

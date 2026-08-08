@@ -260,6 +260,70 @@ async function checkRailLayout(width) {
   await resetRail();
 }
 
+// The animation transport bar (.pf-anim-bar) floats centered on the stage's
+// bottom edge while #viewbar floats bottom-right in the same band —
+// animation-controls.js clamps the bar left of the viewbar with a 10px gap
+// and app.css floors its height at the viewbar's (see
+// docs/superpowers/specs/2026-08-07-animation-bar-layout-design.md). Headless
+// unit tests stub every rect, so the rendered invariants are asserted here:
+// no overlap, the gap, the 12px left margin, the height floor, centered when
+// roomy — and, at least once across the widths, that the clamp actually
+// engaged (all-roomy widths would make this check prove nothing).
+async function checkAnimBarLayout(widths) {
+  if (!await page.locator(".pf-anim-bar").count()) return; // part declares no animations
+  await pauseTransportIfPlaying(); // step-label text changes width mid-playback
+  let sawSqueeze = false;
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: 720 });
+    await sleep(50);
+    const result = await page.evaluate(() => {
+      const bar = document.querySelector(".pf-anim-bar");
+      const stage = document.getElementById("app");
+      const viewbar = document.getElementById("viewbar");
+      if (!bar || !stage || !viewbar) return null;
+      const b = bar.getBoundingClientRect();
+      const s = stage.getBoundingClientRect();
+      const v = viewbar.getBoundingClientRect();
+      const verticalHit = b.top < v.bottom && b.bottom > v.top;
+      return {
+        verticalHit,
+        gap: v.left - b.right,
+        leftMargin: b.left - s.left,
+        barHeight: b.height,
+        viewbarHeight: v.height,
+        centerOffset: (b.left + b.right) / 2 - (s.left + s.right) / 2,
+        // from measured widths, would the CSS-centered position collide?
+        // the +1 requires a >=1px margin before demanding a slide, so a
+        // future geometry colliding by less than the -0.5 tolerance below
+        // isn't held to sliding by an imperceptible amount.
+        wouldCollideCentered: verticalHit && (s.width + b.width) / 2 > (v.left - s.left) - 10 + 1,
+      };
+    });
+    if (!result) { errors.push(`anim bar ${width}px: missing .pf-anim-bar, #app, or #viewbar`); continue; }
+    if (result.barHeight < result.viewbarHeight - 0.5) {
+      errors.push(`anim bar ${width}px: bar is ${result.barHeight}px tall, shorter than #viewbar's ${result.viewbarHeight}px`);
+    }
+    if (!result.verticalHit) continue; // narrow layout lifts the bar above the viewbar
+    if (result.gap < 9.5) {
+      errors.push(`anim bar ${width}px: gap to #viewbar is ${Math.round(result.gap)}px, expected ≥ 10`);
+    }
+    if (result.leftMargin < 11.5) {
+      errors.push(`anim bar ${width}px: bar sits ${Math.round(result.leftMargin)}px from the stage's left edge, expected ≥ 12`);
+    }
+    if (result.wouldCollideCentered) {
+      sawSqueeze = true;
+      if (result.centerOffset > -0.5) {
+        errors.push(`anim bar ${width}px: centered placement would overlap #viewbar but the bar did not slide left`);
+      }
+    } else if (Math.abs(result.centerOffset) > 1) {
+      errors.push(`anim bar ${width}px: bar is ${Math.round(result.centerOffset)}px off stage-centre with room to spare`);
+    }
+  }
+  if (!sawSqueeze) {
+    errors.push("anim bar: no tested width squeezed the bar — use a narrower width so the clamp path is exercised");
+  }
+}
+
 // Reset through the rail's own API — a dblclick on the seam routes through
 // rail.js's commit(), which resets to the 288px default — so the DOM and
 // rail.js's in-memory `state` agree. The old approach (clear localStorage,
@@ -615,6 +679,7 @@ try {
       await checkCompactLayout(320);
     }
     await checkNarrowPaneTabs(400, 1024);
+    await checkAnimBarLayout([1600, 1280, 1024]);
     if (viewport) await page.setViewportSize(viewport);
   }
   await checkCaptureCurrent(); // before checkDebugOverlay — that one navigates away
