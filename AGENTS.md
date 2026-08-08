@@ -58,21 +58,25 @@ install chromium`.
 
 ## Releasing
 
-Publishing to npm is tag-driven — never run `npm publish` by hand. The
-version in `package.json` is bumped on the feature branch (part of the PR);
-after that PR merges to `main`, tag the merge commit `v<version>` (matching
-`package.json` exactly) and push the tag:
+Releasing is automatic — never run `npm publish`, and don't tag by hand. **Bump
+`package.json` on the feature branch, as part of the PR.** When that PR merges
+to `main`, `.github/workflows/publish.yml` tags the merge commit `v<version>`
+and publishes to npm on its own.
 
-```bash
-git fetch origin main
-git tag v0.33.0 origin/main   # tag name = "v" + package.json version
-git push origin v0.33.0
-```
+Forgetting the bump is the failure mode, and it is quiet: the merge lands, the
+version already exists on npm, and the workflow correctly does nothing — the
+work simply never ships. The fix is a follow-up PR bumping the version (see
+#103 and #108 for the shape); the previous number is already published and
+cannot be reused.
 
-`.github/workflows/publish.yml` triggers on `v*` tags and publishes to npm.
+The gate is npm itself — "is this version already published?" — not a diff of
+`package.json`, so re-runs and merges that don't touch the version are no-ops
+rather than errors. Pushing a `v*` tag by hand still works as an escape hatch
+for re-running a release, and hits the same guard.
+
 Verify with `npm view partforge version` once the run completes. Downstream
 (partforge-cloud) pins `^<version>` and regenerates its prompt corpus against
-the installed package, so publish before bumping the dep there.
+the installed package, so let the publish finish before bumping the dep there.
 
 ## Architecture
 
