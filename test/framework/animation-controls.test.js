@@ -530,3 +530,39 @@ test("placement wiring: no-op when the bars' vertical bands do not intersect", a
     globalThis.ResizeObserver = OriginalRO;
   }
 });
+
+test("aria-valuetext announces chapter and percent", () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  const scrub = container.querySelector(".pf-anim-scrub");
+  expect(scrub.getAttribute("aria-valuetext")).toBe("0%"); // single-step: percent only
+  container.querySelector(".pf-anim-pick").value = "assemble";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  expect(scrub.getAttribute("aria-valuetext")).toBe("Lower — 0%");
+  scrub.value = "750";
+  scrub.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(scrub.getAttribute("aria-valuetext")).toBe("Open — 75%");
+});
+
+test("PageUp/PageDown jump chapter boundaries; no-ops for single-step", () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  const scrub = container.querySelector(".pf-anim-scrub");
+  container.querySelector(".pf-anim-pick").value = "assemble";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  // From t=0, PageUp lands on the next boundary (0.5), PageUp again on the end (1).
+  scrub.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp", bubbles: true, cancelable: true }));
+  expect(ctl.runtime.state().t).toBeCloseTo(0.5);
+  scrub.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp", bubbles: true, cancelable: true }));
+  expect(ctl.runtime.state().t).toBeCloseTo(1);
+  // PageDown walks back.
+  scrub.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true }));
+  expect(ctl.runtime.state().t).toBeCloseTo(0.5);
+  scrub.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true }));
+  expect(ctl.runtime.state().t).toBeCloseTo(0);
+  // Single-step: the key is left to the browser's native coarse seek.
+  container.querySelector(".pf-anim-pick").value = "open";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  const ev = new KeyboardEvent("keydown", { key: "PageUp", bubbles: true, cancelable: true });
+  scrub.dispatchEvent(ev);
+  expect(ev.defaultPrevented).toBe(false);
+  expect(ctl.runtime.state().t).toBeCloseTo(0);
+});

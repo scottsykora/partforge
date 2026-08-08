@@ -195,18 +195,28 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     playBtn.title = label;
   }
 
+  // aria-valuetext runs on every frame like the scrubber value; an attribute
+  // write never eats clicks (see the WebKit note above), but skipping
+  // unchanged values keeps a playing transport from redundant DOM work.
+  let shownValuetext = null;
+  function renderValuetext(t, stepIndex) {
+    const pct = `${Math.round(t * 100)}%`;
+    const text = current.steps.length > 1 ? `${current.steps[stepIndex].label} — ${pct}` : pct;
+    if (text === shownValuetext) return;
+    shownValuetext = text;
+    scrub.setAttribute("aria-valuetext", text);
+  }
+
   function syncUi() {
-    const { status, t } = playback.state();
-    // The scrubber is the one thing that genuinely moves every frame. Assigning
-    // `.value` updates a property rather than replacing a child node, so it
-    // costs no clicks — and it is not what anyone reaches for mid-playback.
+    const { status, t, stepIndex } = playback.state();
     scrub.value = String(Math.round(t * 1000));
     renderPlayButton(status === "playing" || status === "intro");
+    renderValuetext(t, stepIndex);
   }
 
   // selectAnimation swaps in a fresh playback whose state can coincide with the
   // outgoing one; the chrome still has to re-render for the new animation.
-  function invalidateUi() { shownActive = null; }
+  function invalidateUi() { shownActive = null; shownValuetext = null; }
 
   // --- driver -----------------------------------------------------------------
   // A frame that throws — a malformed cue or track that slipped past lint, a
@@ -296,10 +306,28 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     showChapterBubble(f, { transient: true });
     guarded(() => playback.seek(f));
   };
+  // PageUp/PageDown jump whole chapters — the keyboard replacement for the
+  // removed step buttons. PageUp goes FORWARD, matching the key's native
+  // slider direction (it increases the value). Single-step animations keep
+  // the browser's native coarse seek instead.
+  const onScrubKeydown = (e) => {
+    if (current.steps.length <= 1) return;
+    if (e.key !== "PageUp" && e.key !== "PageDown") return;
+    e.preventDefault();
+    disarmAutoplay();
+    const { t } = playback.state();
+    const starts = current.stepStarts;
+    const target = e.key === "PageUp"
+      ? (starts.find((s) => s > t + 1e-6) ?? 1)
+      : ([...starts].reverse().find((s) => s < t - 1e-6) ?? 0);
+    showChapterBubble(target, { transient: true });
+    guarded(() => playback.seek(target));
+  };
   const onPick = () => { disarmAutoplay(); selectAnimation(pick.value); };
   const onResetClick = () => { disarmAutoplay(); doReset(); };
   playBtn.addEventListener("click", onPlayClick);
   scrub.addEventListener("input", onScrub);
+  scrub.addEventListener("keydown", onScrubKeydown);
   pick.addEventListener("change", onPick);
   resetBtn.addEventListener("click", onResetClick);
 
@@ -406,6 +434,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       offOrbit();
       playBtn.removeEventListener("click", onPlayClick);
       scrub.removeEventListener("input", onScrub);
+      scrub.removeEventListener("keydown", onScrubKeydown);
       pick.removeEventListener("change", onPick);
       resetBtn.removeEventListener("click", onResetClick);
       info.dispose();
