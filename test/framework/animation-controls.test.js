@@ -4,7 +4,7 @@
 // cue → tween dispatch, intro gating, snapshot/reset, user-edit pause, and the
 // runtime surface.
 import { afterEach, expect, test, vi } from "vitest";
-import { attachAnimationControls, planAnimBarPlacement } from "../../src/framework/animation-controls.js";
+import { attachAnimationControls, planAnimBarPlacement, clampBubbleX } from "../../src/framework/animation-controls.js";
 
 function fakeViewer() {
   const frameCbs = new Set(); const orbitCbs = new Set();
@@ -94,12 +94,67 @@ test("scrubbing applies values without moving the camera", () => {
   expect(viewer.tweenCameraTo).not.toHaveBeenCalled();
 });
 
-test("stepped animation shows step chrome and step ticks", () => {
+test("stepped animation shows ticks but no step label or step buttons", () => {
   const { container, ctl } = setup(); handles.push(ctl);
   container.querySelector(".pf-anim-pick").value = "assemble";
   container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
-  expect(container.querySelector(".pf-anim-step").hidden).toBe(false);
+  expect(container.querySelector(".pf-anim-step")).toBeNull();
   expect(container.querySelectorAll(".pf-anim-tick")).toHaveLength(1); // one interior boundary
+});
+
+test("chapter bubble follows hover over the scrubber and names the chapter", () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  container.querySelector(".pf-anim-pick").value = "assemble";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  const wrap = container.querySelector(".pf-anim-scrub-wrap");
+  wrap.getBoundingClientRect = () => ({ left: 0, right: 220, top: 0, bottom: 14, width: 220, height: 14 });
+  const bubble = container.querySelector(".pf-anim-chapter");
+  expect(bubble.classList.contains("pf-show")).toBe(false);
+  // assemble: steps Lower (0..0.5) and Open (0.5..1). Hover at 25% → Lower.
+  wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 55, bubbles: true }));
+  expect(bubble.classList.contains("pf-show")).toBe(true);
+  expect(bubble.textContent).toBe("Lower");
+  // Hover at 75% → Open.
+  wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 165, bubbles: true }));
+  expect(bubble.textContent).toBe("Open");
+  wrap.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+  expect(bubble.classList.contains("pf-show")).toBe(false);
+});
+
+test("scrub input reveals the bubble at the playhead and it fades after the hold", () => {
+  vi.useFakeTimers();
+  try {
+    const { container, ctl } = setup(); handles.push(ctl);
+    container.querySelector(".pf-anim-pick").value = "assemble";
+    container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+    const scrub = container.querySelector(".pf-anim-scrub");
+    const bubble = container.querySelector(".pf-anim-chapter");
+    scrub.value = "750";
+    scrub.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(bubble.classList.contains("pf-show")).toBe(true);
+    expect(bubble.textContent).toBe("Open");
+    vi.advanceTimersByTime(1100);
+    expect(bubble.classList.contains("pf-show")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("single-step animation never shows a bubble", () => {
+  const { container, ctl } = setup(); handles.push(ctl); // default animation "open" has one step
+  const wrap = container.querySelector(".pf-anim-scrub-wrap");
+  wrap.getBoundingClientRect = () => ({ left: 0, right: 220, top: 0, bottom: 14, width: 220, height: 14 });
+  wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 110, bubbles: true }));
+  expect(container.querySelector(".pf-anim-chapter").classList.contains("pf-show")).toBe(false);
+});
+
+// --- clampBubbleX: pure center-x clamp --------------------------------------
+test("clampBubbleX centers, clamps at both ends, and degrades on a too-narrow wrap", () => {
+  expect(clampBubbleX(0.5, 220, 60)).toBe(110);   // free middle
+  expect(clampBubbleX(0, 220, 60)).toBe(30);      // clamped at the left end
+  expect(clampBubbleX(1, 220, 60)).toBe(190);     // clamped at the right end
+  expect(clampBubbleX(0.9, 220, 60)).toBe(190);   // clamp engages before the end
+  expect(clampBubbleX(0.5, 40, 60)).toBe(20);     // bubble wider than wrap → center it
 });
 
 test("runtime.play(name) switches animation; detach removes the bar", () => {

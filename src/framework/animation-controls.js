@@ -5,7 +5,7 @@
 // through the mount-supplied applyValues hook — the same path as a slider
 // edit, minus the regen debounce. Returns null when the part declares no
 // (valid) animations, so mount can wire it unconditionally.
-import { normalizeAnimations, createPlayback } from "./animation.js";
+import { normalizeAnimations, createPlayback, stepIndexAt } from "./animation.js";
 import { createInfoPopover, attachInfo } from "./controls.js";
 
 function el(tag, className, text) {
@@ -34,6 +34,15 @@ export function planAnimBarPlacement({ stageWidth, barWidth, viewbarLeft }, { ga
   const left = Math.max(margin, limit);
   const available = Math.max(0, viewbarLeft - gap - margin);
   return barWidth > available ? { left, maxWidth: available } : { left };
+}
+
+// Center-x for the chapter bubble, in px within the scrub wrap: the bubble
+// tracks `fraction` along the timeline but never hangs past either end. A
+// wrap narrower than the bubble has no legal band — park it in the middle.
+export function clampBubbleX(fraction, wrapWidth, bubbleWidth) {
+  if (wrapWidth <= bubbleWidth) return wrapWidth / 2;
+  const half = bubbleWidth / 2;
+  return Math.min(Math.max(fraction * wrapWidth, half), wrapWidth - half);
 }
 
 // A setter for an element's text that MUTATES its existing text node instead of
@@ -93,9 +102,6 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   bar.append(animations.length > 1 ? pick : title);
   const infoSlot = el("span", "pf-anim-info");
   const playBtn = btn("pf-anim-play", "▶", "Play animation");
-  const prevBtn = btn("pf-anim-step-btn", "‹", "Previous step");
-  const stepLabel = el("span", "pf-anim-step", "");
-  const nextBtn = btn("pf-anim-step-btn", "›", "Next step");
   const scrubWrap = el("span", "pf-anim-scrub-wrap");
   const scrub = document.createElement("input");
   scrub.type = "range";
@@ -103,17 +109,52 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   scrub.className = "pf-anim-scrub";
   scrub.setAttribute("aria-label", "Animation position");
   scrubWrap.append(scrub);
+  // Chapter bubble: floats above the scrubber naming the chapter under the
+  // pointer (hover) or playhead (scrub). Out-of-flow so it never changes the
+  // bar's size — the placement ResizeObserver must not see it. Non-interactive
+  // and aria-hidden: the accessible chapter channel is the scrubber's
+  // aria-valuetext, not this flag.
+  const chapterBubble = el("span", "pf-anim-chapter");
+  chapterBubble.setAttribute("aria-hidden", "true");
+  scrubWrap.append(chapterBubble);
   const resetBtn = btn("pf-anim-reset", "↺", "Reset animation");
-  bar.append(infoSlot, playBtn, prevBtn, stepLabel, nextBtn, scrubWrap, resetBtn);
+  bar.append(infoSlot, playBtn, scrubWrap, resetBtn);
   container.append(bar);
+
+  // transient = a keyboard/scrub reveal with no pointerleave to end it — it
+  // fades on its own instead. A hover reveal stays until the pointer leaves.
+  let bubbleFadeTimer = 0;
+  function showChapterBubble(fraction, { transient = false } = {}) {
+    if (current.steps.length <= 1) return;
+    const f = Math.min(1, Math.max(0, fraction));
+    chapterBubble.textContent = current.steps[stepIndexAt(current, f)].label;
+    const wrapWidth = scrubWrap.clientWidth;
+    chapterBubble.style.left = `${clampBubbleX(f, wrapWidth, chapterBubble.offsetWidth)}px`;
+    chapterBubble.classList.add("pf-show");
+    clearTimeout(bubbleFadeTimer);
+    bubbleFadeTimer = 0;
+    if (transient) bubbleFadeTimer = setTimeout(hideChapterBubble, 1000);
+  }
+  function hideChapterBubble() {
+    clearTimeout(bubbleFadeTimer);
+    bubbleFadeTimer = 0;
+    chapterBubble.classList.remove("pf-show");
+  }
+  const onWrapPointerMove = (e) => {
+    const rect = scrubWrap.getBoundingClientRect();
+    if (!rect.width) return;
+    showChapterBubble((e.clientX - rect.left) / rect.width);
+  };
+  scrubWrap.addEventListener("pointermove", onWrapPointerMove);
+  scrubWrap.addEventListener("pointerleave", hideChapterBubble);
 
   // Per-animation chrome: title, ⓘ description, step buttons, scrubber ticks.
   function syncStructure() {
     title.textContent = current.label;
+    hideChapterBubble();
     infoSlot.replaceChildren();
     attachInfo(infoSlot, current.description ?? "", info);
     const stepped = current.steps.length > 1;
-    prevBtn.hidden = nextBtn.hidden = stepLabel.hidden = !stepped;
     for (const n of scrubWrap.querySelectorAll(".pf-anim-tick")) n.remove();
     if (stepped) {
       for (const t of current.stepStarts.slice(1)) {
@@ -143,9 +184,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   // ~100ms; a synthetic 0ms one survives, which is why automated clicking never
   // saw it). Reset was never affected: nothing rewrites that button per frame.
   const setPlayGlyph = textSetter(playBtn);
-  const setStepText = textSetter(stepLabel);
   let shownActive = null;
-  let shownStep = null;
 
   function renderPlayButton(active) {
     if (active === shownActive) return;
@@ -156,26 +195,18 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     playBtn.title = label;
   }
 
-  function renderStepLabel(stepIndex) {
-    if (current.steps.length <= 1 || stepIndex === shownStep) return;
-    shownStep = stepIndex;
-    const step = current.steps[stepIndex];
-    setStepText(`${stepIndex + 1}/${current.steps.length} · ${step.label}`);
-  }
-
   function syncUi() {
-    const { status, t, stepIndex } = playback.state();
+    const { status, t } = playback.state();
     // The scrubber is the one thing that genuinely moves every frame. Assigning
     // `.value` updates a property rather than replacing a child node, so it
     // costs no clicks — and it is not what anyone reaches for mid-playback.
     scrub.value = String(Math.round(t * 1000));
     renderPlayButton(status === "playing" || status === "intro");
-    renderStepLabel(stepIndex);
   }
 
   // selectAnimation swaps in a fresh playback whose state can coincide with the
   // outgoing one; the chrome still has to re-render for the new animation.
-  function invalidateUi() { shownActive = null; shownStep = null; }
+  function invalidateUi() { shownActive = null; }
 
   // --- driver -----------------------------------------------------------------
   // A frame that throws — a malformed cue or track that slipped past lint, a
@@ -259,15 +290,16 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       guarded(() => playback.play());
     }
   };
-  const onScrub = () => { disarmAutoplay(); guarded(() => playback.seek(Number(scrub.value) / 1000)); };
-  const onPrev = () => { disarmAutoplay(); guarded(() => playback.stepPrev()); };
-  const onNext = () => { disarmAutoplay(); guarded(() => playback.stepNext()); };
+  const onScrub = () => {
+    disarmAutoplay();
+    const f = Number(scrub.value) / 1000;
+    showChapterBubble(f, { transient: true });
+    guarded(() => playback.seek(f));
+  };
   const onPick = () => { disarmAutoplay(); selectAnimation(pick.value); };
   const onResetClick = () => { disarmAutoplay(); doReset(); };
   playBtn.addEventListener("click", onPlayClick);
   scrub.addEventListener("input", onScrub);
-  prevBtn.addEventListener("click", onPrev);
-  nextBtn.addEventListener("click", onNext);
   pick.addEventListener("change", onPick);
   resetBtn.addEventListener("click", onResetClick);
 
@@ -374,13 +406,14 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       offOrbit();
       playBtn.removeEventListener("click", onPlayClick);
       scrub.removeEventListener("input", onScrub);
-      prevBtn.removeEventListener("click", onPrev);
-      nextBtn.removeEventListener("click", onNext);
       pick.removeEventListener("change", onPick);
       resetBtn.removeEventListener("click", onResetClick);
       info.dispose();
       placementObserver?.disconnect();
       if (placementRaf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placementRaf);
+      scrubWrap.removeEventListener("pointermove", onWrapPointerMove);
+      scrubWrap.removeEventListener("pointerleave", hideChapterBubble);
+      hideChapterBubble();
       bar.remove();
     },
     __viewer: viewer, // test hook only
