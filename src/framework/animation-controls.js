@@ -22,6 +22,24 @@ function btn(className, text, label) {
   return b;
 }
 
+// A setter for an element's text that MUTATES its existing text node instead of
+// replacing it. `el.textContent = x` always replaces the node, and WebKit will
+// not dispatch a `click` on an element whose text node was replaced between
+// mousedown and mouseup — so a label that can change while the user is pressing
+// it must be written this way or the press is silently swallowed. Isolated in
+// WebKit on a 120ms press: `textContent = <identical string>` loses the click,
+// `node.data = <same>` never does, and neither does an attribute write.
+//
+// This is what makes the transport's glyph safe even when it legitimately flips
+// mid-press (playback ending under the user's finger), which no amount of
+// skipping redundant writes can cover.
+function textSetter(element) {
+  const node = element.firstChild?.nodeType === 3
+    ? element.firstChild
+    : element.appendChild(document.createTextNode(""));
+  return (value) => { if (node.data !== value) node.data = value; };
+}
+
 export function attachAnimationControls(viewer, part, { container, applyValues, getParamValues }) {
   // A malformed animations block must degrade to "no transport bar", never a
   // crashed mount — lint reports the specifics; the viewer just goes without.
@@ -92,18 +110,58 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     }
   }
 
+  // syncUi() runs on every playback frame. Two rules keep that from eating the
+  // user's clicks, and they are independent:
+  //
+  // 1. Text goes through textSetter (see above), so the button's text node is
+  //    mutated and never replaced. This is the one that matters, because it
+  //    holds even when the glyph legitimately changes under a held finger —
+  //    playback ending, or a step boundary crossing, mid-press.
+  // 2. Each element has its own renderer that leaves early when its own value
+  //    is unchanged, so a playing transport does no DOM work per frame at all.
+  //    Per ELEMENT, not per write: driving several elements off one shared
+  //    state key means a step change also redraws the button, which was still
+  //    enough to lose the click before rule 1 was in place.
+  //
+  // Without rule 1 this cost the pause click outright: press, release, no click
+  // event at all, and only ever while playing — the one moment the button is
+  // for. Measured in WebKit, any press held >= 40ms lost it (a real click is
+  // ~100ms; a synthetic 0ms one survives, which is why automated clicking never
+  // saw it). Reset was never affected: nothing rewrites that button per frame.
+  const setPlayGlyph = textSetter(playBtn);
+  const setStepText = textSetter(stepLabel);
+  let shownActive = null;
+  let shownStep = null;
+
+  function renderPlayButton(active) {
+    if (active === shownActive) return;
+    shownActive = active;
+    setPlayGlyph(active ? "⏸" : "▶");
+    const label = active ? "Pause animation" : "Play animation";
+    playBtn.setAttribute("aria-label", label);
+    playBtn.title = label;
+  }
+
+  function renderStepLabel(stepIndex) {
+    if (current.steps.length <= 1 || stepIndex === shownStep) return;
+    shownStep = stepIndex;
+    const step = current.steps[stepIndex];
+    setStepText(`${stepIndex + 1}/${current.steps.length} · ${step.label}`);
+  }
+
   function syncUi() {
     const { status, t, stepIndex } = playback.state();
-    const active = status === "playing" || status === "intro";
-    playBtn.textContent = active ? "⏸" : "▶";
-    playBtn.setAttribute("aria-label", active ? "Pause animation" : "Play animation");
-    playBtn.title = playBtn.getAttribute("aria-label");
+    // The scrubber is the one thing that genuinely moves every frame. Assigning
+    // `.value` updates a property rather than replacing a child node, so it
+    // costs no clicks — and it is not what anyone reaches for mid-playback.
     scrub.value = String(Math.round(t * 1000));
-    if (current.steps.length > 1) {
-      const step = current.steps[stepIndex];
-      stepLabel.textContent = `${stepIndex + 1}/${current.steps.length} · ${step.label}`;
-    }
+    renderPlayButton(status === "playing" || status === "intro");
+    renderStepLabel(stepIndex);
   }
+
+  // selectAnimation swaps in a fresh playback whose state can coincide with the
+  // outgoing one; the chrome still has to re-render for the new animation.
+  function invalidateUi() { shownActive = null; shownStep = null; }
 
   // --- driver -----------------------------------------------------------------
   // A frame that throws — a malformed cue or track that slipped past lint, a
@@ -162,6 +220,8 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     playback = createPlayback(current);
     if (animations.length > 1) pick.value = name;
     syncStructure();
+    invalidateUi(); // a fresh playback starts idle at step 0 — the same key the
+                    // outgoing one may have been showing, but for another animation
     syncUi();
   }
 
