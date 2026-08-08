@@ -92,16 +92,35 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     }
   }
 
+  // Runs on EVERY playback frame, so every write here must be conditional.
+  // `el.textContent = x` replaces the element's child text node even when the
+  // string is identical, and WebKit will not dispatch a `click` on an element
+  // whose text node was replaced between mousedown and mouseup. Rewriting the
+  // glyph 60x/second therefore ate the pause click outright: press, release,
+  // no click event at all — and only ever while playing, which is the one
+  // moment the button is for. It reproduces on any press held ~40ms or longer
+  // (a real click is ~100ms; a synthetic 0ms one survives, which is why this
+  // hid from automated clicking), Safari only. Reset was never affected
+  // because nothing rewrites that button per frame.
   function syncUi() {
     const { status, t, stepIndex } = playback.state();
     const active = status === "playing" || status === "intro";
-    playBtn.textContent = active ? "⏸" : "▶";
-    playBtn.setAttribute("aria-label", active ? "Pause animation" : "Play animation");
-    playBtn.title = playBtn.getAttribute("aria-label");
-    scrub.value = String(Math.round(t * 1000));
+    const glyph = active ? "⏸" : "▶";
+    if (playBtn.textContent !== glyph) {
+      playBtn.textContent = glyph;
+      const label = active ? "Pause animation" : "Play animation";
+      playBtn.setAttribute("aria-label", label);
+      playBtn.title = label;
+    }
+    // The scrubber genuinely changes every frame, but assigning `.value` mutates
+    // an attribute rather than replacing a child node, and it is a different
+    // element from the button — neither costs the click.
+    const pos = String(Math.round(t * 1000));
+    if (scrub.value !== pos) scrub.value = pos;
     if (current.steps.length > 1) {
       const step = current.steps[stepIndex];
-      stepLabel.textContent = `${stepIndex + 1}/${current.steps.length} · ${step.label}`;
+      const text = `${stepIndex + 1}/${current.steps.length} · ${step.label}`;
+      if (stepLabel.textContent !== text) stepLabel.textContent = text;
     }
   }
 
