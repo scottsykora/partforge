@@ -551,6 +551,12 @@ advanced: [
 ],
 ```
 
+**Collapsing.** Each section is a disclosure. A panel with **three or fewer
+sections opens every section and every Advanced fold on load**; beyond that they
+all start closed, because the rail is a fixed-height column and a long part
+otherwise scrolls forever. Set `collapsed: true` or `collapsed: false` on a
+section to override the rule in either direction.
+
 ---
 
 ## Designing the control panel

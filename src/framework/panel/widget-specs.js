@@ -1,0 +1,36 @@
+// The control-type registry. Declaring a type here is what makes it real: the
+// renderer looks up its DOM factory by type, and partforge/lint derives its
+// accepted-field list from `fields` instead of hardcoding one.
+//
+// Before this existed, rules-schema.js carried three hand-maintained allow-lists
+// (CONTROL_FIELDS / FEATURE_FIELDS / TOGGLE_FIELDS) that had to be edited in
+// lockstep with the renderer — and when they weren't, `unknown-control-field`
+// warned on legitimate fields. Adding a type or a field is now one edit here.
+//
+// The lists deliberately mirror the legacy lint allow-lists EXACTLY: `when`,
+// `whenFalse` and `type` are NOT accepted yet — they join when the phases that
+// make them functional land (type: phase 4; when/whenFalse: phase 6). Accepting
+// a field the panel ignores would trade one silent-dead-field bug for another.
+//
+// Imports nothing: lint consumes this and test/lint-purity.test.js requires a
+// dependency-free closure.
+
+// What legacy rules-schema.js called CONTROL_FIELDS: every descriptor that can
+// appear in `advanced` or a feature's `sliders`, whatever its `control` value.
+const LEGACY_CONTROL = ["key", "label", "unit", "min", "max", "step", "control", "hidden", "description"];
+// What it called TOGGLE_FIELDS.
+const LEGACY_TOGGLE = ["key", "label", "on", "hidden", "description"];
+
+export const WIDGET_SPECS = [
+  { type: "slider", kind: "control", fields: LEGACY_CONTROL },
+  { type: "number", kind: "control", fields: LEGACY_CONTROL },
+  { type: "text", kind: "control", fields: LEGACY_CONTROL },
+  { type: "textarea", kind: "control", fields: LEGACY_CONTROL },
+  { type: "checkbox", kind: "control", fields: LEGACY_TOGGLE },
+];
+
+const BY_TYPE = new Map(WIDGET_SPECS.map((s) => [s.type, s]));
+
+export const WIDGET_TYPES = WIDGET_SPECS.map((s) => s.type);
+export const specFor = (type) => BY_TYPE.get(type);
+export const fieldsFor = (type) => BY_TYPE.get(type)?.fields ?? [];

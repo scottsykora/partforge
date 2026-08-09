@@ -4,11 +4,11 @@
 // resolve against `defaults`, which produce a control that silently does nothing.
 import { err, warn } from "./finding.js";
 import { suggest } from "../geometry/op-options.js";
+import { fieldsFor } from "../panel/widget-specs.js";
+import { sectionRenders } from "../panel/legacy.js";
 
-// Fields controls.js reads on a slider/number descriptor.
-const CONTROL_FIELDS = ["key", "label", "unit", "min", "max", "step", "control", "hidden", "description"];
+// Legacy container descriptors aren't widget types, so they keep explicit lists.
 const FEATURE_FIELDS = ["key", "label", "on", "sliders", "hidden", "description"];
-const TOGGLE_FIELDS = ["key", "label", "on", "hidden", "description"];
 
 const sections = (part) => (Array.isArray(part?.parameters) ? part.parameters : []);
 const arr = (x) => (Array.isArray(x) ? x : []);
@@ -21,7 +21,7 @@ function collectDescriptors(part) {
   const out = [];
   sections(part).forEach((sec, si) => {
     arr(sec?.advanced).forEach((d, i) => {
-      if (d) out.push({ d, path: `parameters[${si}].advanced[${i}]`, fields: CONTROL_FIELDS });
+      if (d) out.push({ d, path: `parameters[${si}].advanced[${i}]`, fields: fieldsFor("slider") });
     });
     arr(sec?.features).forEach((f, i) => {
       if (!f) return;
@@ -31,11 +31,11 @@ function collectDescriptors(part) {
         // recognise the demo.js flange_d pattern below: a slider sharing its key
         // with the feature is not an independent parameter, it's the feature's own
         // magnitude, and `defaults[key] === 0` there means "off", not "out of range".
-        if (s) out.push({ d: s, path: `parameters[${si}].features[${i}].sliders[${j}]`, fields: CONTROL_FIELDS, featureKey: f.key });
+        if (s) out.push({ d: s, path: `parameters[${si}].features[${i}].sliders[${j}]`, fields: fieldsFor("slider"), featureKey: f.key });
       });
     });
     arr(sec?.toggles).forEach((t, i) => {
-      if (t) out.push({ d: t, path: `parameters[${si}].toggles[${i}]`, fields: TOGGLE_FIELDS });
+      if (t) out.push({ d: t, path: `parameters[${si}].toggles[${i}]`, fields: fieldsFor("checkbox") });
     });
   });
   return out;
@@ -43,21 +43,10 @@ function collectDescriptors(part) {
 
 const defaultKeys = (part) => new Set(Object.keys(part?.defaults ?? {}));
 
-// Mirrors src/framework/controls.js's own visibility predicates (visibleFeatures /
-// sectionRenders, controls.js:32,36-41) — NOT imported, because controls.js pulls in
-// `marked`/`dompurify` (via markdown.js) for its description popovers, which would
-// break partforge/lint's zero-bare-dependency purity guarantee (test/lint-purity.test.js).
-// `features-requires-sliders` must not flag a `feat.sliders.filter(...)` the panel
-// will never reach: controls.js only iterates `visibleFeatures(sec)` (skipping any
-// feature marked `hidden: true`), and only builds a section at all when
-// `sectionRenders(sec)` is true.
-const visibleFeatures = (sec) => arr(sec?.features).filter((f) => f && !f.hidden);
-function sectionRenders(sec) {
-  if (sec?.hidden) return false;
-  if (sec?.features) return visibleFeatures(sec).length > 0;
-  const hasPresets = sec?.presets && Object.keys(sec.presets).length > 0;
-  return !!hasPresets || arr(sec?.advanced).some((d) => d && !d.hidden) || arr(sec?.toggles).some((t) => t && !t.hidden);
-}
+// These used to be hand-copied from controls.js, because importing it would have
+// dragged `marked`/`dompurify` into partforge/lint and broken its zero-dependency
+// guarantee. panel/legacy.js imports nothing, so lint can share the real
+// implementation and the two can no longer drift.
 
 export const SCHEMA_RULES = [
   {
