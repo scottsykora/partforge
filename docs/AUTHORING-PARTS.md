@@ -1138,7 +1138,8 @@ previously didn't; that's the fix working as intended, not a regression.
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,
 `control-key-not-in-defaults`, `preset-key-not-in-defaults`, `mixed-section-shape`,
 `duplicate-preset-name`, `duplicate-node-id`, `select-options-missing`,
-`select-default-not-in-options`, `log-scale-needs-positive-min` (errors);
+`select-default-not-in-options`, `log-scale-needs-positive-min`,
+`when-key-not-in-defaults`, `when-unknown-operator` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
 `default-not-exposed`, `readout-unknown-derived-key`, `slider-refinement-invalid`
 (warnings). The `readout` one checks a `{ type: "readout" }` entry's `derivedKey`
@@ -1154,6 +1155,15 @@ nearest tick) and `recommended` (an `[lo, hi]` band tinted on the track, with
 the value box warning outside it): a tick outside `[min, max]`, a `recommended`
 that isn't exactly `[lo, hi]` with `lo < hi`, or either of them combined with
 `scale: "log"` (ticks and the band render on a linear track only) all warn.
+`when-key-not-in-defaults` and `when-unknown-operator` walk every authored
+`when` (on a control, a group, a preset, a readout, or a section itself) —
+`allOf`/`anyOf`/`not` recurse — and check each condition against the two things
+that make it real: the param key must be one `defaults` actually declares, and
+each comparison operator (`{ gt: 0 }`, `{ in: [...] }`, …) must be one
+`evalWhen` recognises. Both are silent failure modes — an unknown key reads
+`undefined` and an unknown operator is treated as false, so either way the
+condition is always false and the node never shows — which is why both are
+errors rather than warnings.
 
 **Kernel API**, found by executing `build()` against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,

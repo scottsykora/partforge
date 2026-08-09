@@ -4,9 +4,9 @@
 // resolve against `defaults`, which produce a control that silently does nothing.
 import { err, warn } from "./finding.js";
 import { suggest } from "../geometry/op-options.js";
-import { fieldsFor, authorFieldsFor, GROUP_FIELDS, PRESET_FIELDS, normalizeOptions } from "../panel/widget-specs.js";
+import { fieldsFor, authorFieldsFor, GROUP_FIELDS, PRESET_FIELDS, SECTION_FIELDS, normalizeOptions } from "../panel/widget-specs.js";
 import { sectionRenders, desugar } from "../panel/legacy.js";
-import { buildTree } from "../panel/model.js";
+import { buildTree, WHEN_OPS } from "../panel/model.js";
 import { resolveDerived } from "../derive.js";
 
 // Legacy container descriptors aren't widget types, so they keep explicit lists.
@@ -41,7 +41,15 @@ function collectDescriptors(part) {
         }
       });
     }
-    if (Array.isArray(sec?.controls)) { walkAuthored(sec.controls, `parameters[${si}].controls`); return; }
+    if (Array.isArray(sec?.controls)) {
+      // The section itself is a descriptor too, but only worth collecting when
+      // it carries a `when` — unknown-control-field already validates section
+      // shape elsewhere, and pushing every section unconditionally would double
+      // up on that. `when`-only rules just need it present when relevant.
+      if (sec?.when !== undefined) out.push({ d: sec, path: `parameters[${si}]`, fields: SECTION_FIELDS, container: true });
+      walkAuthored(sec.controls, `parameters[${si}].controls`);
+      return;
+    }
 
     arr(sec?.advanced).forEach((d, i) => {
       if (d) out.push({ d, path: `parameters[${si}].advanced[${i}]`, fields: fieldsFor("slider") });
@@ -89,6 +97,25 @@ function collectPresetBundles(part) {
 }
 
 const defaultKeys = (part) => new Set(Object.keys(part?.defaults ?? {}));
+
+// Walk one WhenCondition, calling onKey(key) for every param key it reads and
+// onOp(op) for every operator name it uses. allOf/anyOf/not recurse; a bare
+// `{ key: value }` entry counts as reading `key` with no operator to check.
+function walkWhen(cond, onKey, onOp) {
+  if (cond === null || typeof cond !== "object" || Array.isArray(cond)) return;
+  for (const [key, want] of Object.entries(cond)) {
+    if (key === "allOf" || key === "anyOf") {
+      for (const c of Array.isArray(want) ? want : []) walkWhen(c, onKey, onOp);
+    } else if (key === "not") {
+      walkWhen(want, onKey, onOp);
+    } else {
+      onKey(key);
+      if (want !== null && typeof want === "object" && !Array.isArray(want)) {
+        for (const op of Object.keys(want)) onOp(op);
+      }
+    }
+  }
+}
 
 // These used to be hand-copied from controls.js, because importing it would have
 // dragged `marked`/`dompurify` into partforge/lint and broken its zero-dependency
@@ -407,6 +434,47 @@ export const SCHEMA_RULES = [
             "Ticks and the recommended band render on a linear track only; on a log slider they are ignored. Drop one or the other.",
             `${path}.scale`));
         }
+      }
+      return out;
+    },
+  },
+  {
+    id: "when-key-not-in-defaults",
+    run: ({ part }) => {
+      if (!isPlainObject(part?.defaults)) return [];
+      const known = defaultKeys(part);
+      const out = [];
+      for (const { d, path } of collectDescriptors(part)) {
+        if (!d.when) continue;
+        walkWhen(d.when, (key) => {
+          if (!known.has(key)) {
+            const hint = suggest(key, [...known]);
+            out.push(err("when-key-not-in-defaults",
+              `\`when\` references "${key}", which is not in \`defaults\``,
+              `Conditions read raw parameter keys only${hint ? ` — did you mean "${hint}"?` : "."} A key defaults doesn't have always reads undefined, so the condition is always false and the node never shows.`,
+              `${path}.when`));
+          }
+        }, () => {});
+      }
+      return out;
+    },
+  },
+  {
+    id: "when-unknown-operator",
+    run: ({ part }) => {
+      const ops = Object.keys(WHEN_OPS);
+      const out = [];
+      for (const { d, path } of collectDescriptors(part)) {
+        if (!d.when) continue;
+        walkWhen(d.when, () => {}, (op) => {
+          if (!ops.includes(op)) {
+            const hint = suggest(op, ops);
+            out.push(err("when-unknown-operator",
+              `\`when\` uses unknown operator "${op}"`,
+              `evalWhen treats an unknown operator as false, so the node silently never shows. Recognised: ${ops.join(", ")}${hint ? ` — did you mean "${hint}"?` : "."}`,
+              `${path}.when`));
+          }
+        });
       }
       return out;
     },

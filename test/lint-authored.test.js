@@ -167,3 +167,37 @@ test("out-of-range ticks and an inverted recommended band warn", () => {
   const found = ids(lintPart(part).warnings).filter((r) => r === "slider-refinement-invalid");
   expect(found).toHaveLength(2);
 });
+
+test("a when condition naming a key not in defaults errors, on any node kind", () => {
+  const part = authoredPart();
+  part.parameters[0].controls[3].when = { nope: { gt: 0 } };            // group
+  part.parameters[0].controls[1].when = { missing: 1 };                 // control
+  const errs = lintPart(part).errors.filter((f) => f.rule === "when-key-not-in-defaults");
+  expect(errs).toHaveLength(2);
+  expect(errs.map((f) => f.path).sort()).toEqual([
+    "parameters[0].controls[1].when", "parameters[0].controls[3].when",
+  ]);
+});
+
+test("allOf/anyOf/not recurse; keys inside them are checked too", () => {
+  const part = authoredPart();
+  part.parameters[0].controls[1].when = { allOf: [{ show: 1 }, { not: { ghost: 1 } }] };
+  const errs = lintPart(part).errors.filter((f) => f.rule === "when-key-not-in-defaults");
+  expect(errs).toHaveLength(1);           // `ghost` only — `show` is real
+});
+
+test("an unknown operator errors with a did-you-mean", () => {
+  const part = authoredPart();
+  part.parameters[0].controls[1].when = { show: { gte1: 1 } };
+  const f = lintPart(part).errors.find((f) => f.rule === "when-unknown-operator");
+  expect(f).toBeTruthy();
+  expect(f.hint).toMatch(/Recognised: gt, gte/);   // the operator list comes from WHEN_OPS
+});
+
+test("a valid condition produces no when findings", () => {
+  const part = authoredPart();
+  part.parameters[0].controls[1].when = { show: { gt: 0 }, wall: { in: [1, 2] } };
+  const r = lintPart(part);
+  expect(ids(r.errors)).not.toContain("when-key-not-in-defaults");
+  expect(ids(r.errors)).not.toContain("when-unknown-operator");
+});

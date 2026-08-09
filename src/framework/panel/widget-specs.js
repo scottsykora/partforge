@@ -70,6 +70,10 @@ export const GROUP_FIELDS = ["type", "id", "title", "collapsed", "bare", "when",
 // NB: no "description" — renderGroup has nowhere to hang an info glyph (the
 // toggle is itself a button). Sections keep descriptions (SECTION_FIELDS).
 export const PRESET_FIELDS = ["type", "id", "label", "presets", "when", "whenFalse", "hidden"];
+// A section itself, in the authored shape — collectDescriptors pushes it as a
+// descriptor only when it carries a `when`, so `when-key-not-in-defaults` and
+// `when-unknown-operator` cover section-level conditions too.
+export const SECTION_FIELDS = ["id", "title", "description", "hidden", "collapsed", "when", "whenFalse", "controls"];
 
 // select/radio option normalization: long form [{ value, label?, description? }]
 // or shorthand ["round", 8, ...] where each entry is both value and label. Lives
