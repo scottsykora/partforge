@@ -9,6 +9,8 @@ import { sectionRenders, desugar } from "../panel/legacy.js";
 import { buildTree, WHEN_OPS } from "../panel/model.js";
 import { resolveDerived } from "../derive.js";
 
+export const SECTION_CONTROL_BUDGET = 12;
+
 // Legacy container descriptors aren't widget types, so they keep explicit lists.
 const FEATURE_FIELDS = ["key", "label", "on", "sliders", "hidden", "description"];
 
@@ -476,6 +478,56 @@ export const SCHEMA_RULES = [
           }
         });
       }
+      return out;
+    },
+  },
+  {
+    id: "group-depth",
+    run: ({ part }) => {
+      // Depth counts AUTHORED nesting only, so it needs source paths — walk the
+      // raw sections, not the desugared tree (which adds the legacy Advanced
+      // group an author never wrote).
+      const out = [];
+      sections(part).forEach((sec, si) => {
+        const walk = (list, base, depth) => arr(list).forEach((entry, i) => {
+          if (!entry || entry.type !== "group") return;
+          const path = `${base}[${i}]`;
+          if (depth >= 2) {
+            out.push(warn("group-depth",
+              `group "${entry.title ?? i}" is nested ${depth + 1} levels deep`,
+              "Two levels (a section, one fold inside it) is as deep as a 300px rail stays readable. Flatten: promote the inner group to its own section, or fold its controls into the parent.",
+              path));
+          }
+          walk(entry.controls, `${path}.controls`, depth + 1);
+        });
+        walk(sec?.controls, `parameters[${si}].controls`, 1);
+      });
+      return out;
+    },
+  },
+  {
+    id: "section-too-many-controls",
+    run: ({ part }) => {
+      const out = [];
+      const countControls = (nodes) => {
+        let n = 0;
+        for (const node of nodes ?? []) {
+          if (node.hidden) continue;
+          if (node.kind === "group") n += countControls(node.children);
+          else if (node.kind === "control") n += 1;
+        }
+        return n;
+      };
+      desugar(part?.parameters ?? []).forEach((sec, si) => {
+        if (sec.hidden) return;
+        const n = countControls(sec.children);
+        if (n > SECTION_CONTROL_BUDGET) {
+          out.push(warn("section-too-many-controls",
+            `section "${sec.id ?? si}" shows ${n} controls`,
+            `More than ${SECTION_CONTROL_BUDGET} visible controls in one section reads as a wall. Group related controls (\`{ type: "group", collapsed: "auto" }\`), split the section, or hide internals (\`hidden: true\`).`,
+            `parameters[${si}]`));
+        }
+      });
       return out;
     },
   },

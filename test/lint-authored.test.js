@@ -201,3 +201,33 @@ test("a valid condition produces no when findings", () => {
   expect(ids(r.errors)).not.toContain("when-key-not-in-defaults");
   expect(ids(r.errors)).not.toContain("when-unknown-operator");
 });
+
+test("nesting groups past two levels warns", () => {
+  const part = authoredPart();
+  part.parameters[0].controls = [{ type: "group", title: "L1", controls: [
+    { type: "group", title: "L2", controls: [
+      { type: "group", title: "L3", controls: [{ key: "od", min: 1, max: 10, step: 1 }] },
+    ] },
+  ] }];
+  const found = lintPart(part).warnings.filter((f) => f.rule === "group-depth");
+  expect(found).toHaveLength(2);                          // L2 (depth 2) and L3 (depth 3)
+  expect(found[0].path).toBe("parameters[0].controls[0].controls[0]");
+});
+
+test("a section showing more than twelve visible controls warns", () => {
+  const part = authoredPart();
+  part.parameters[0].controls = Array.from({ length: 13 }, (_, i) => (
+    { key: `k${i}`, type: "slider", min: 0, max: 1, step: 1 }));
+  for (let i = 0; i < 13; i++) part.defaults[`k${i}`] = 0;
+  expect(ids(lintPart(part).warnings)).toContain("section-too-many-controls");
+  part.parameters[0].controls[12].hidden = true;            // 12 visible → fine
+  expect(ids(lintPart(part).warnings)).not.toContain("section-too-many-controls");
+});
+
+test("a legacy section is measured too — features and toggles count as controls", () => {
+  const part = authoredPart();
+  part.parameters[0] = { id: "big", advanced: Array.from({ length: 13 }, (_, i) => (
+    { key: `k${i}`, min: 0, max: 1, step: 1 })) };
+  for (let i = 0; i < 13; i++) part.defaults[`k${i}`] = 0;
+  expect(ids(lintPart(part).warnings)).toContain("section-too-many-controls");
+});

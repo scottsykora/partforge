@@ -1141,7 +1141,8 @@ previously didn't; that's the fix working as intended, not a regression.
 `select-default-not-in-options`, `log-scale-needs-positive-min`,
 `when-key-not-in-defaults`, `when-unknown-operator` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
-`default-not-exposed`, `readout-unknown-derived-key`, `slider-refinement-invalid`
+`default-not-exposed`, `readout-unknown-derived-key`, `slider-refinement-invalid`,
+`group-depth`, `section-too-many-controls`
 (warnings). The `readout` one checks a `{ type: "readout" }` entry's `derivedKey`
 against the keys `derive()` actually produces (resolved once against `defaults`)
 — a readout naming a key no group returns shows an em-dash forever, so it warns
@@ -1155,6 +1156,15 @@ nearest tick) and `recommended` (an `[lo, hi]` band tinted on the track, with
 the value box warning outside it): a tick outside `[min, max]`, a `recommended`
 that isn't exactly `[lo, hi]` with `lo < hi`, or either of them combined with
 `scale: "log"` (ticks and the band render on a linear track only) all warn.
+`group-depth` warns when authored groups nest more than two levels deep — a
+section plus one inner fold is as deep as a 300px panel stays readable. Flatten
+by promoting the innermost group to its own section, or folding its controls into
+the parent.
+`section-too-many-controls` warns when a section (authored or legacy, desugared
+to a common format) shows more than 12 visible controls — the budget is
+deliberately conservative, revisable against real LLM-authored parts. More than a
+dozen in one section reads as a wall; group related controls, split into multiple
+sections, or hide internals (`hidden: true`).
 `when-key-not-in-defaults` and `when-unknown-operator` walk every authored
 `when` (on a control, a group, a preset, a readout, or a section itself) —
 `allOf`/`anyOf`/`not` recurse — and check each condition against the two things
