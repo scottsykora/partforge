@@ -62,18 +62,22 @@ Every task below assumes these. `desugar` produces them with `hidden` nodes **re
 
 ```js
 // Group — a container. Top-level groups are the sections.
-{ kind: "group", id, title, description, presets, collapsed, when, whenFalse, hidden, bare, children: [] }
+{ kind: "group", id, title, description, collapsed, when, whenFalse, hidden, bare, children: [] }
 
 // Control — a leaf bound to one key in `defaults`.
 { kind: "control", key, type, label, description, unit, min, max, step,
-  on, preserveOn, customOnSync, when, whenFalse, hidden }
+  on, preserveOn, marksCustom, when, whenFalse, hidden }
+
+// Preset — a picker that writes a bundle of parameters at once.
+{ kind: "preset", id, label, presets, when, whenFalse, hidden }
 ```
 
 Field notes that matter for parity:
 
 - `bare: true` on a group means "render as a plain `<div class="feat-group">`, no title, no disclosure". Used for a legacy feature's slider group.
 - `preserveOn: true` on a checkbox means "on enable, only write `on` if the current value isn't already `> 0`" — the legacy **feature** behavior (`controls.js:352`). `false` means "always write `on`" — the legacy **toggle** behavior (`controls.js:286`).
-- `customOnSync: true` means "when `syncValues()` touches this control, also drop the section's preset picker to `Custom`" — the legacy behavior for preset-section `advanced` controls (`controls.js:302`), which feature sliders deliberately do *not* have (`controls.js:346`).
+- `marksCustom: true` means "any edit to this control drops its section's preset picker to `Custom`" — covering **both** a user edit (`controls.js:296`) and an external `syncValues()` (`controls.js:302`), which behave identically in the legacy code. Preset-section `advanced` controls have it; a feature's own sliders (`controls.js:346`) and toggles (`controls.js:286`) deliberately do not.
+- A **preset application** must never mark itself Custom, which is why the picker applies bundles through the `rawSyncs` map — the widget's own `sync`, without `markCustom` — rather than through `syncFns` (`controls.js:298`, `controls.test.js:366`).
 
 **`when` is internal in this plan.** Authors do not get it until phase 5. But legacy `features` desugar to it, so every existing part with a feature section exercises it from Task 2 onward. That is deliberate: the conditions engine ships battle-tested against real parts before it is ever exposed.
 
@@ -178,7 +182,7 @@ Create `test/framework/panel/legacy.test.js`. No `@vitest-environment` line — 
 import { expect, test } from "vitest";
 import { desugar } from "../../../src/framework/panel/legacy.js";
 
-test("a preset section becomes a group with an Advanced child group", () => {
+test("a preset section becomes a group with a preset node and an Advanced group", () => {
   const tree = desugar([{
     id: "body", title: "Body", presets: { A: { od: 5 } },
     advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }],
@@ -187,14 +191,36 @@ test("a preset section becomes a group with an Advanced child group", () => {
   const sec = tree[0];
   expect(sec.kind).toBe("group");
   expect(sec.title).toBe("Body");
-  expect(sec.presets).toEqual({ A: { od: 5 } });
-  expect(sec.children).toHaveLength(1);
-  const adv = sec.children[0];
+  expect(sec.presets).toBeUndefined();          // the field is gone; it's a node now
+  expect(sec.children).toHaveLength(2);
+  expect(sec.children[0]).toMatchObject({ kind: "preset", presets: { A: { od: 5 } } });
+  const adv = sec.children[1];
   expect(adv).toMatchObject({ kind: "group", title: "Advanced", collapsed: "auto" });
   expect(adv.children).toEqual([
     expect.objectContaining({ kind: "control", type: "slider", key: "od", label: "OD",
-      min: 1, max: 10, step: 1, customOnSync: true }),
+      min: 1, max: 10, step: 1, marksCustom: true }),
   ]);
+});
+
+test("the legacy preset field lands at position 0, where the picker renders today", () => {
+  const [sec] = desugar([{
+    id: "m", presets: { A: {} },
+    toggles: [{ key: "show", label: "Show" }],
+    advanced: [{ key: "od", min: 0, max: 10, step: 1 }],
+  }]);
+  expect(sec.children.map((c) => c.kind)).toEqual(["preset", "control", "group"]);
+});
+
+test("a section with no presets gets no preset node", () => {
+  const [sec] = desugar([{ id: "m", toggles: [{ key: "show", label: "Show" }] }]);
+  expect(sec.children.map((c) => c.kind)).toEqual(["control"]);
+});
+
+test("an empty presets object gets no preset node", () => {
+  // sectionRenders treated `presets: {}` as "no presets" (controls.js:39), and a
+  // picker with nothing but "Custom" in it is useless.
+  const [sec] = desugar([{ id: "m", presets: {}, toggles: [{ key: "s", label: "S" }] }]);
+  expect(sec.children.map((c) => c.kind)).toEqual(["control"]);
 });
 
 test("toggles become checkbox controls placed before the Advanced group", () => {
@@ -229,7 +255,7 @@ test("a feature becomes a checkbox plus a conditional bare group", () => {
   expect(group).toMatchObject({ kind: "group", bare: true,
     when: { flange_d: { gt: 0 } } });
   expect(group.children).toEqual([
-    expect.objectContaining({ key: "flange_d", type: "slider", customOnSync: false }),
+    expect.objectContaining({ key: "flange_d", type: "slider", marksCustom: false }),
   ]);
 });
 
@@ -255,9 +281,9 @@ test("a feature with no sliders array does not throw", () => {
   expect(() => desugar([{ id: "f", features: [{ key: "k", on: 1 }] }])).not.toThrow();
 });
 
-test("a section with no legacy arrays yields a group with no children", () => {
+test("a preset-only section yields exactly one child — the picker", () => {
   const [sec] = desugar([{ id: "p", presets: { A: {} } }]);
-  expect(sec.children).toEqual([]);
+  expect(sec.children.map((c) => c.kind)).toEqual(["preset"]);
 });
 ```
 
@@ -295,10 +321,10 @@ export function sectionRenders(sec) {
 
 // --- desugaring -------------------------------------------------------------
 
-// One legacy control descriptor -> a control node. `customOnSync` records the
+// One legacy control descriptor -> a control node. `marksCustom` records the
 // legacy split at controls.js:302 vs :346 — a preset-section control drops its
 // picker to "Custom" when synced externally, a feature's own slider does not.
-const toControl = (d, customOnSync) => ({
+const toControl = (d, marksCustom) => ({
   kind: "control",
   key: d.key,
   type: d.control ?? "slider",
@@ -309,7 +335,7 @@ const toControl = (d, customOnSync) => ({
   max: d.max,
   step: d.step,
   hidden: !!d.hidden,
-  customOnSync,
+  marksCustom,
 });
 
 const toCheckbox = (d, { preserveOn, on }) => ({
@@ -342,6 +368,14 @@ export function desugar(parameters) {
   return arr(parameters).map((sec) => {
     const children = [];
 
+    // The picker is a node like everything else, placed first — which is exactly
+    // where controls.js:264-274 rendered it, so an existing part is unchanged
+    // while a new-style part can position one anywhere in `controls`.
+    const presetNames = sec?.presets ? Object.keys(sec.presets) : [];
+    if (presetNames.length) {
+      children.push({ kind: "preset", presets: sec.presets, hidden: false });
+    }
+
     // Toggles sit directly in the section, before the Advanced fold, exactly as
     // controls.js:278-289 rendered them.
     for (const t of arr(sec?.toggles)) {
@@ -363,7 +397,6 @@ export function desugar(parameters) {
       id: sec?.id,
       title: sec?.title,
       description: sec?.description,
-      presets: sec?.presets,
       collapsed: "auto",
       hidden: !!sec?.hidden,
       children,
@@ -426,9 +459,15 @@ test("buildTree drops hidden controls, hidden groups, and groups left empty", ()
   expect(tree[0].children.map((c) => c.key)).toEqual(["a"]);
 });
 
-test("a group with presets survives even with no visible children", () => {
-  const tree = buildTree([group({ title: "P", presets: { A: {} }, children: [] })]);
+test("a preset-only group survives — the picker is a child like anything else", () => {
+  const tree = buildTree([group({ title: "P", children: [{ kind: "preset", presets: { A: {} } }] })]);
   expect(tree).toHaveLength(1);
+  expect(tree[0].children[0].id).toBe("0/0");
+});
+
+test("a group whose only child is hidden is dropped", () => {
+  const tree = buildTree([group({ title: "P", children: [control("x", { hidden: true })] })]);
+  expect(tree).toEqual([]);
 });
 
 test("buildTree assigns stable positional ids, honouring an authored id", () => {
@@ -560,12 +599,10 @@ export function evalWhen(cond, params) {
 
 // --- tree building ----------------------------------------------------------
 
-const renders = (node) => {
-  if (node.hidden) return false;
-  if (node.kind !== "group") return true;
-  if (node.presets && Object.keys(node.presets).length > 0) return true;
-  return node.children.length > 0;
-};
+// A group earns its place if anything survived inside it. Simpler than the
+// predicate it replaces (controls.js:36-41), which needed a "has presets but no
+// controls" special case — now a preset-only section just has one child.
+const renders = (node) => node.kind !== "group" || node.children.length > 0;
 
 // Drop hidden nodes and groups left empty, and stamp a stable id on everything.
 // Ids are positional, so they are stable across rebuilds of the same schema; an
@@ -1038,6 +1075,16 @@ test("a section with at least one relevant control is not dimmed", () => {
   const st = computeState(tree(), { params: { gate: 1 }, relevant: new Set(["plain"]) });
   expect(st.get("s").dimmed).toBe(false);
 });
+
+test("a section with NO control keys dims under any relevance set", () => {
+  // Legacy parity, and it is genuinely what controls.js:25 does: `keys` is empty,
+  // so `[...keys].some(...)` is false and the section gets .section-hidden. Only a
+  // preset-only section can hit this. Do not "fix" it here — a behavior change in
+  // a phase whose whole claim is that nothing changed is how a refactor goes bad.
+  const t = buildTree([group({ id: "p", children: [{ kind: "preset", presets: { A: {} } }] })]);
+  expect(computeState(t, { params: {}, relevant: new Set(["anything"]) }).get("p").dimmed).toBe(true);
+  expect(computeState(t, { params: {}, relevant: null }).get("p").dimmed).toBe(false);
+});
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
@@ -1076,7 +1123,7 @@ export function computeState(tree, { params, relevant }) {
         // A group is dimmed when nothing inside it is relevant — the
         // .section-hidden behavior, generalized from sections to any group.
         const keys = controlNodes([node]).map((c) => c.key);
-        const dimmed = !showAll && keys.length > 0 && !keys.some((k) => relevant.has(k));
+        const dimmed = !showAll && !keys.some((k) => relevant.has(k));
         state.set(node.id, { visible, disabled, dimmed });
         walk(node.children, visible);
       } else {
@@ -1204,12 +1251,49 @@ export function buildControls(root, parameters, params, onDirty) {
     container.append(wrap);
   }
 
+  // The preset picker. Applying a preset overwrites its keys and refreshes the
+  // section's controls through their RAW syncs — a preset application must not
+  // mark itself Custom (controls.test.js:366).
+  function renderPreset(node, container, sectionCtx) {
+    const names = Object.keys(node.presets);
+    const select = document.createElement("select");
+    select.className = "preset";
+    for (const name of [...names, "Custom"]) {
+      const o = document.createElement("option");
+      o.value = name; o.textContent = name; select.append(o);
+    }
+    select.value = names[0];
+    select.addEventListener("change", () => {
+      const bundle = node.presets[select.value];
+      if (!bundle) return; // "Custom"
+      Object.assign(params, bundle);
+      for (const [key, sync] of rawSyncs.get(sectionCtx.id)) if (key in params) sync();
+      onEdit();
+    });
+    // The section's controls need a handle on the picker to drop it to Custom
+    // when one of them is edited. First picker in the section wins.
+    if (sectionCtx && !sectionCtx.preset) sectionCtx.preset = select;
+    nodeEls.set(node.id, select);
+    container.append(select);
+  }
+
   function renderNode(node, container, sectionCtx) {
     if (node.kind === "group") { renderGroup(node, container, sectionCtx); return; }
+    if (node.kind === "preset") { renderPreset(node, container, sectionCtx); return; }
 
     const factory = WIDGET_FACTORIES[node.type];
     if (!factory) return; // unknown type: lint reports it; the panel skips it
-    const widget = factory(node, params, { onChange: onEdit, info });
+
+    // Editing a control in a preset section diverges from the preset, so the
+    // picker falls back to Custom (controls.js:296). A feature's own slider and a
+    // toggle do NOT — `marksCustom` is false for them.
+    const markCustom = () => {
+      if (node.marksCustom && sectionCtx?.preset) sectionCtx.preset.value = "Custom";
+    };
+    const widget = factory(node, params, {
+      onChange: () => { markCustom(); onEdit(); },
+      info,
+    });
     nodeEls.set(node.id, widget.el);
     container.append(widget.el);
 
@@ -1221,10 +1305,7 @@ export function buildControls(root, parameters, params, onDirty) {
     if (sectionCtx) rawSyncs.get(sectionCtx.id).set(node.key, widget.sync);
     syncFns.push({
       key: node.key,
-      sync: () => {
-        widget.sync();
-        if (node.customOnSync && sectionCtx?.preset) sectionCtx.preset.value = "Custom";
-      },
+      sync: () => { widget.sync(); markCustom(); },
     });
   }
 
@@ -1236,28 +1317,10 @@ export function buildControls(root, parameters, params, onDirty) {
     attachInfo(title, section.description, info);
     secEl.append(title);
 
+    // `preset` is filled in when a preset node renders. Controls read it late, so
+    // one appearing after them in the children array still works.
     const ctx = { id: section.id, preset: null };
     rawSyncs.set(section.id, new Map());
-
-    const presetNames = section.presets ? Object.keys(section.presets) : [];
-    if (presetNames.length) {
-      const preset = document.createElement("select");
-      preset.className = "preset";
-      for (const name of [...presetNames, "Custom"]) {
-        const o = document.createElement("option");
-        o.value = name; o.textContent = name; preset.append(o);
-      }
-      preset.value = presetNames[0];
-      preset.addEventListener("change", () => {
-        const bundle = section.presets[preset.value];
-        if (!bundle) return; // "Custom"
-        Object.assign(params, bundle);
-        for (const [key, sync] of rawSyncs.get(section.id)) if (key in params) sync();
-        onEdit();
-      });
-      ctx.preset = preset;
-      secEl.append(preset);
-    }
 
     for (const child of section.children) renderNode(child, secEl, ctx);
     root.append(secEl);
@@ -1293,7 +1356,7 @@ In `panel-state.js`, replace the whole `walk` function and its call:
 
       if (node.kind === "group") {
         const keys = controlNodes([node]).map((c) => c.key);
-        const dimmed = !showAll && keys.length > 0 && !keys.some((k) => relevant.has(k));
+        const dimmed = !showAll && !keys.some((k) => relevant.has(k));
         // Only a TOP-LEVEL group gets `.section-hidden` (display:none). An inner
         // group merely dims, because collapsing an inner group out of the layout
         // on a relevance change makes the panel jump under the user's cursor.
@@ -1920,12 +1983,15 @@ PR description: plain-language summary of what changes for a user (sections now 
 
 ---
 
-## What phases 4–6 will cover
+## What phases 4–7 will cover
 
 Not planned here, deliberately: their code depends on exactly how the modules above land, and writing bite-sized steps against modules that don't exist yet produces the placeholder tasks this plan format forbids. Write that plan after Task 12 merges.
 
-- **Phase 4 — Widgets.** `select`, `radio`, `checkbox` (authorable directly), `readout` as a `display` node kind, plus `scale: "log"`, `ticks`/`snap`, and `recommended: [lo, hi]`. Each arrives as one `widget-specs.js` entry, one factory in `widgets/`, one validator, and one type.
-- **Phase 5 — Conditions, exposed.** `when` / `whenFalse` become authorable; `panel.refresh({ relevant, derived })`; lint rules `when-key-not-in-defaults`, `when-unknown-operator`, `select-options-missing`, `select-default-not-in-options`. The engine itself already ships in Task 3.
-- **Phase 6 — Authoring surface.** Rewrite `AUTHORING-PARTS.md:446-545` around the node model; the structural rules `group-depth`, `section-too-many-controls`, `mixed-section-shape`, `presets-not-top-level`; `ERROR-PATTERNS.md` entries; enrich `bracket.js` and `planter.js`. The rest of the parts stay on legacy shapes as live proof compatibility holds.
+- **Phase 4 — The authorable shape.** Accept `controls`, nested groups, `collapsed`, and `preset` nodes directly from authors, instead of only via `desugar`. `oracle/cases.js`'s `presetMap` (`cases.js:4-14`) walks the desugared tree for `kind === "preset"` rather than reading `section.presets`, keeping its duplicate-name guard. Lint gains `mixed-section-shape` and `duplicate-preset-name`; types gain the node interfaces. **This is the phase that delivers flat sections with no Advanced fold and presets positioned among controls** — the visible payoff of the whole design.
+- **Phase 5 — Widgets.** `select`, `radio`, `checkbox` (authorable directly), `readout` as a `display` node kind, plus `scale: "log"`, `ticks`/`snap`, and `recommended: [lo, hi]`. Each arrives as one `widget-specs.js` entry, one factory in `widgets/`, one validator, and one type.
+- **Phase 6 — Conditions, exposed.** `when` / `whenFalse` become authorable; `panel.refresh({ relevant, derived })`; lint rules `when-key-not-in-defaults`, `when-unknown-operator`, `select-options-missing`, `select-default-not-in-options`. The engine itself already ships in Task 3.
+- **Phase 7 — Authoring surface.** Rewrite `AUTHORING-PARTS.md:446-545` around the node model; the structural rules `group-depth` and `section-too-many-controls`; `ERROR-PATTERNS.md` entries; enrich `bracket.js` and `planter.js`. The rest of the parts stay on legacy shapes as live proof compatibility holds.
+
+Phase 4 comes **before** widgets on purpose. A new control type with nowhere good to put it is half a feature, and an author gains more from a flat section with an opt-in fold than from any single new widget.
 
 **Carry this constraint forward:** no phase ships a schema capability without the lint rule that guards it. Every new field is a field an LLM can get wrong, so deferring validators to phase 6 would make authoring measurably worse in the interim.

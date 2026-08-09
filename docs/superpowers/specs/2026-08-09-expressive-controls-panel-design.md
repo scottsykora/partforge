@@ -85,15 +85,15 @@ one, otherwise a path derived from position (`body/advanced/2`). Ids are what th
 state pass (§7) keys its output on, and what the disclosure buttons use for
 `aria-controls`. They must be stable across a re-render of the same schema.
 
-The tree has exactly three node kinds.
+The tree has exactly four node kinds.
 
 **Group** — a container.
 
 ```js
 { kind: "group",
   id, title, description,
-  presets,              // name -> param override bundle (top-level groups only)
   collapsed,            // true | false | "auto"
+  bare,                 // no title, no disclosure — just an indented block
   when, whenFalse,
   children: Node[] }
 ```
@@ -123,11 +123,31 @@ over parameter keys), and can never be the target of a preset. Modelling it as a
 control would put a `key == null` branch in all five of those paths. Splitting the
 kind means each path simply filters to `kind === "control"` once.
 
-Top-level groups are the sections. Groups nest. Controls and displays are leaves.
+**Preset** — a picker that writes a bundle of parameters at once.
 
-`presets` stays a group-level field rather than becoming a node, because
-`oracle/cases.js` reads `section.presets` directly to expand verify cases, and
-that path should not have to change.
+```js
+{ kind: "preset", id, label, presets, when, whenFalse, hidden }
+// presets: { "Pen cup": { dia: 80, height: 100 }, Vase: { … } }
+```
+
+Top-level groups are the sections. Groups nest. Controls, displays, and presets
+are leaves.
+
+Making the picker a node — rather than a `presets` field pinned to the top of a
+section, which is where an earlier draft left it — is what lets a section put a
+preset *among* its controls, and lets one section carry more than one. It also
+removes the last thing in the schema that wasn't a node, so "everything in the
+panel is a node in `children`" becomes true without exception.
+
+The cost is `oracle/cases.js`, which expands one verify case per declared preset
+and today reads `section.presets` directly (`presetMap`, `cases.js:4-14`). It
+switches to walking the desugared tree for `kind === "preset"` nodes. That is ten
+lines, and it keeps its existing guard that a preset name may not repeat across
+the part.
+
+Because the legacy `presets` field desugars to a node at position 0, an existing
+part's picker lands exactly where it renders today — first, right under the
+section title — while a new-style part is free to place one anywhere.
 
 ### What an author writes
 
@@ -136,8 +156,9 @@ parameters: [
   {
     id: "body",
     title: "Body",
-    presets: { "Pen cup": { … }, Vase: { … } },
     controls: [
+      { type: "preset", presets: { "Pen cup": { … }, Vase: { … } } },
+
       { key: "profile", type: "select", label: "Profile",
         options: [
           { value: "round",  label: "Round" },
@@ -159,7 +180,11 @@ parameters: [
 ```
 
 A group's children live in `controls`. `type` replaces the old `control` field.
-Authored order is render order.
+**Authored order is render order** — which is the whole answer to "can presets and
+settings sit together?" They can, in whatever order you write them, and a section
+has a collapsible fold only if you nest a group with `collapsed: true`. There is
+no "Advanced" concept in the model; it exists solely as the shape legacy
+`advanced: [...]` desugars into.
 
 ---
 
@@ -173,8 +198,9 @@ in-repo parts and every downstream part keep working indefinitely.
 | `advanced: [...]` | a child group `{ title: "Advanced", collapsed: "auto", children: [...] }` |
 | `toggles: [{ key, label, on }]` | checkbox controls placed directly in the section, before the Advanced group |
 | `features: [{ key, on, sliders }]` | per feature: a checkbox control, followed by a group of its sliders carrying `when: { [key]: { gt: 0 } }` — both inside the Advanced group |
+| `presets: {...}` | a `preset` node at position 0 — first child, exactly where the picker renders today |
 | `control: "slider"` etc. | `type: "slider"` |
-| `hidden: true` | node omitted from the tree entirely |
+| `hidden: true` | kept by `desugar` (lint needs it), dropped by `buildTree` |
 
 The `features` row is the point of the whole exercise. A feature stops being a
 special renderer path and becomes an ordinary conditional group.
@@ -187,8 +213,10 @@ Sugar and the new shape may be mixed within one part but not within one section:
 a section that has both `controls` and any of `advanced` / `toggles` / `features`
 is a lint error, because the resulting order would be arbitrary.
 
-A group with no visible children and no presets is dropped from the tree — the
-generalization of today's `sectionRenders`.
+A group with no visible children is dropped from the tree — the generalization of
+today's `sectionRenders`. Note this gets *simpler* once the picker is a node: the
+old predicate had to special-case "has presets but no controls", and now a
+preset-only section simply has one child.
 
 ---
 
@@ -352,7 +380,7 @@ New rules:
 | `select-default-not-in-options` | error | the default value can't be selected |
 | `readout-unknown-derived-key` | warn | `derivedKey` no `derive()` group produces |
 | `mixed-section-shape` | error | one section using both `controls` and legacy arrays |
-| `presets-not-top-level` | error | `presets` on a nested group, where nothing reads it |
+| `duplicate-preset-name` | error | the same preset name twice in one part — today this throws from `cases.js:9` at verify time, which is a worse place to find out |
 | `group-depth` | warn | nesting past two levels |
 | `section-too-many-controls` | warn | one section showing more than ~12 visible controls, suggesting groups |
 
@@ -489,11 +517,22 @@ branch.
 3. **Collapsible sections.** Disclosure markup, `collapsed`, the auto-open rule.
    The first phase with a visible change, and the only one that touches
    `app.css`.
-4. **Widgets.** `select`, `radio`, `checkbox`, `readout`, and the three slider
+4. **The authorable shape.** Accept `controls`, nested groups, `collapsed`, and
+   `preset` nodes from authors; `oracle/cases.js` walks the tree; types and the
+   `mixed-section-shape` and `duplicate-preset-name` lint rules.
+5. **Widgets.** `select`, `radio`, `checkbox`, `readout`, and the three slider
    refinements — each with its registry spec, lint validator, and type.
-5. **Conditions.** `when` / `whenFalse`, `refresh`, the four condition lint rules.
-6. **Docs and parts.** Rewrite the authoring guide, add the structural lint
-   rules, enrich `bracket.js` and `planter.js`.
+6. **Conditions.** `when` / `whenFalse`, `refresh`, the four condition lint rules.
+7. **Docs and parts.** Rewrite the authoring guide, add the remaining structural
+   lint rules, enrich `bracket.js` and `planter.js`.
+
+**Phase 4 was missing from an earlier draft of this spec**, which went straight
+from collapsible sections to widgets. Nothing in it made the new shape
+*authorable* — `desugar` handled the old shapes and no phase handled the new one,
+so the design's central feature was unscheduled. It belongs before widgets, not
+after: a new control type with nowhere good to put it is half a feature, and
+flat sections with opt-in folds are worth more to an author than any single
+widget.
 
 Phases 1–3 replace what an earlier draft called a single "model + parity" phase.
 That phase bundled a module extraction, a desugaring layer, a rendering rewrite,
