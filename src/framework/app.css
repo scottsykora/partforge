@@ -58,10 +58,11 @@ canvas { display: block; }
 /* Divider BETWEEN visible sections. `~` walks all preceding siblings, and a
    relevance-hidden section (.section-hidden, display:none) fails the :not(),
    so the topmost VISIBLE section never draws a hairline under the rail header.
-   Do not simplify this to `.section:first-child { border-top: 0 }` — that
+   Condition-hidden sections (.hidden, a `when` that evaluated false) are excluded
+   for the same reason. Do not simplify this to `.section:first-child { border-top: 0 }` — that
    matches DOM position rather than visibility, and leaves a stray divider
    floating at the top whenever applyRelevance hides the first section. */
-.section:not(.section-hidden) ~ .section:not(.section-hidden) {
+.section:not(.section-hidden):not(.hidden) ~ .section:not(.section-hidden):not(.hidden) {
   border-top: 1px solid var(--pf-border);
 }
 .sec-header { display: flex; align-items: center; gap: 4px; }
