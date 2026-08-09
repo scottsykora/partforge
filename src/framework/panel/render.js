@@ -35,6 +35,10 @@ export function buildControls(root, parameters, params, onDirty) {
   const nodeById = new Map();     // id -> node, for the reveal re-sync
   const lastVisible = new Map();  // id -> previous `visible`, to detect a reveal
   const lastDisabled = new Map(); // id -> previous `disabled`, to skip a no-op input pass
+  // Containers that own a disclosure: sections, and titled inner groups (the
+  // legacy "Advanced" fold). `label` is set only for the inner groups, whose
+  // button text carries the ▾/▴ instead of a chevron span.
+  const disclosures = new Map(); // id -> { body, button, label }
   indexNodes(tree, nodeById);
   let relevant = null;
 
@@ -44,8 +48,25 @@ export function buildControls(root, parameters, params, onDirty) {
   // subtree that just went from hidden to visible, so a just-revealed slider
   // shows the freshly-written value instead of a stale one (legacy
   // controls.js ran `syncs.forEach((s) => s())` on a feature tick).
+  // The FIRST computed state decides which sections/folds start open, per the
+  // auto-open rule and any explicit `collapsed`. After that, the user's own
+  // clicks own it — re-running this on every param change would otherwise
+  // snap a section the user opened shut on the next slider drag.
+  let openApplied = false;
+  const applyOpenState = (state) => {
+    if (openApplied) return;
+    openApplied = true;
+    for (const [id, d] of disclosures) {
+      const open = state.get(id)?.open ?? true;
+      d.body.classList.toggle("hidden", !open);
+      d.button.setAttribute("aria-expanded", String(open));
+      if (d.label) d.button.textContent = open ? `${d.label} ▴` : `${d.label} ▾`;
+    }
+  };
+
   const applyState = () => {
     const state = computeState(tree, { params, relevant });
+    applyOpenState(state);
     for (const [id, node] of nodeEls) {
       const s = state.get(id);
       if (!s) continue;
@@ -112,6 +133,7 @@ export function buildControls(root, parameters, params, onDirty) {
     for (const child of node.children) renderNode(child, body, sectionCtx);
     wrap.append(toggle, body);
     nodeEls.set(node.id, wrap);             // conditions act on the wrapper
+    disclosures.set(node.id, { body, button: toggle, label: node.title });
     container.append(wrap);
   }
 
@@ -179,16 +201,36 @@ export function buildControls(root, parameters, params, onDirty) {
     const secEl = el("div", "section");
     nodeEls.set(section.id, secEl);
 
-    const title = el("div", "sec-title", section.title);
-    attachInfo(title, section.description, info);
-    secEl.append(title);
+    const header = el("div", "sec-header");
+    const title = el("button", "sec-title");
+    title.type = "button";
+    // The chev span carries NO text — its glyph comes from CSS (::before) —
+    // because sectionByTitle-style lookups match `.sec-title` by exact
+    // textContent === title (controls.test.js:210), and a text chevron here
+    // would break that match.
+    title.append(el("span", "sec-name", section.title ?? ""), el("span", "chev"));
+    header.append(title);
+    // The ⓘ is a SIBLING of the button, never a child: attachInfo appends a
+    // <button>, and a button nested in a button is invalid HTML that never
+    // receives clicks.
+    attachInfo(header, section.description, info);
+    secEl.append(header);
+
+    const body = el("div", "sec-body");
+    secEl.append(body);
+
+    title.addEventListener("click", () => {
+      const nowHidden = body.classList.toggle("hidden");
+      title.setAttribute("aria-expanded", String(!nowHidden));
+    });
+    disclosures.set(section.id, { body, button: title, label: null });
 
     // `preset` is filled in when a preset node renders. Controls read it late, so
     // one appearing after them in the children array still works.
     const ctx = { id: section.id, preset: null };
     rawSyncs.set(section.id, new Map());
 
-    for (const child of section.children) renderNode(child, secEl, ctx);
+    for (const child of section.children) renderNode(child, body, ctx);
     root.append(secEl);
   }
 
