@@ -16,6 +16,7 @@ import type {
   ExpectMap,
   GeometryKernel,
   MountOptions,
+  ParameterSection,
   PartDefinition,
   PartRuntime,
   Shape2D,
@@ -441,5 +442,18 @@ const bothForms: AnimationSpec = { duration: 1, tracks: { a: [[0, 0], [1, 1]] },
 const neitherForm: AnimationSpec = { duration: 1 };
 // @ts-expect-error — not one of the seven canonical angles
 const badCue: AnimationSpec = { duration: 1, camera: "north-east-ish", tracks: { a: [[0, 0], [1, 1]] } };
+
+// The authored controls shape typechecks.
+const nodeSection: ParameterSection = {
+  id: "body", title: "Body",
+  controls: [
+    { type: "preset", presets: { A: { od: 5 } } },
+    { key: "od", type: "slider", min: 1, max: 10, step: 1, recommended: [2, 8] },
+    { type: "group", title: "Wall", collapsed: "auto", controls: [
+      { key: "wall", min: 0.8, max: 4, step: 0.1, when: { od: { gt: 2 } } },
+    ] },
+  ],
+};
+void nodeSection;
 
 export { singlePhase, steppedSpec, withCue, withCueList, bothForms, neitherForm, badCue };
