@@ -260,6 +260,36 @@ async function checkRailLayout(width) {
   await resetRail();
 }
 
+// The bar's placement lands one or more FRAMES after a resize —
+// animation-controls.js applies it from a ResizeObserver via
+// requestAnimationFrame — so a wall-clock wait before measuring is a race, and
+// on a slow runner it loses: the measurement then describes the PREVIOUS
+// width's placement. That reads as nonsense ("off stage-centre with room to
+// spare", because the inline `left` pinned for a narrow stage is still on the
+// bar at 1600px), which is worse than a plain failure. Wait in frames instead,
+// the same machine-speed-independent approach as the capture baseline below:
+// let the bar's own geometry hold still, with a floor of a few frames so a rect
+// that has not been touched YET can't pass as one that has settled.
+async function settleAnimBar() {
+  await page.evaluate(() => new Promise((resolve) => {
+    const bar = document.querySelector(".pf-anim-bar");
+    if (!bar) return resolve();
+    let last = "", stable = 0, frames = 0;
+    const tick = () => {
+      const r = bar.getBoundingClientRect();
+      const key = `${Math.round(r.left)}:${Math.round(r.width)}`;
+      stable = key === last ? stable + 1 : 0;
+      last = key;
+      frames++;
+      // 240 frames is a bail-out, not an expectation: something is wrong if the
+      // bar never holds still, and the assertions should report that, not hang.
+      if ((frames >= 6 && stable >= 3) || frames > 240) return resolve();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }));
+}
+
 // The animation transport bar (.pf-anim-bar) floats centered on the stage's
 // bottom edge while #viewbar floats bottom-right in the same band —
 // animation-controls.js clamps the bar left of the viewbar with a 10px gap
@@ -277,7 +307,7 @@ async function checkAnimBarLayout(widths) {
   let sawSqueeze = false;
   for (const width of widths) {
     await page.setViewportSize({ width, height: 720 });
-    await sleep(50);
+    await settleAnimBar();
     const result = await page.evaluate(() => {
       const bar = document.querySelector(".pf-anim-bar");
       const stage = document.getElementById("app");
