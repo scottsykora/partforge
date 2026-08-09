@@ -114,6 +114,17 @@ test("two nodes resolving to the same id is an error", () => {
   expect(f).toBeTruthy();
 });
 
+test("duplicate-node-id points at the true section index even when an earlier section is hidden", () => {
+  const part = authoredPart();
+  part.parameters.unshift({ id: "ghost", hidden: true, controls: [
+    { key: "od", type: "slider", min: 1, max: 10, step: 1 },
+  ] });
+  part.parameters[1].controls[3].id = "body";   // collides with the section id "body"
+  const f = lintPart(part).errors.find((f) => f.rule === "duplicate-node-id");
+  expect(f).toBeTruthy();
+  expect(f.path).toBe("parameters[1]");
+});
+
 test("a clean authored part still lints clean after the new rules", () => {
   expect(lintPart(authoredPart()).errors).toEqual([]);
 });

@@ -299,9 +299,19 @@ export const SCHEMA_RULES = [
       // Ids key the renderer's element/state/disclosure maps — a collision
       // silently cross-wires two nodes (one picker syncing another section's
       // widgets). Catch it statically: build the tree and look for repeats.
+      const canonical = desugar(part?.parameters ?? []);
+      // A top-level section's built id is (authored ?? String(canonical index)),
+      // so this maps each built section back to its TRUE parameters[] index even
+      // after buildTree drops hidden/empty siblings.
+      const sourceIndex = new Map();
+      canonical.forEach((sec, i) => {
+        const key = sec.id ?? String(i);
+        if (!sourceIndex.has(key)) sourceIndex.set(key, i);
+      });
       const seen = new Map(); // id -> [sectionIndex, ...]
-      const tree = buildTree(desugar(part?.parameters ?? []));
-      tree.forEach((section, si) => {
+      const tree = buildTree(canonical);
+      tree.forEach((section) => {
+        const si = sourceIndex.get(section.id) ?? 0;
         const walk = (nodes) => {
           for (const n of nodes ?? []) {
             if (!seen.has(n.id)) seen.set(n.id, []);
