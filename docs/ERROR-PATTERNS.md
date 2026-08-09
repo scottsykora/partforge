@@ -339,7 +339,7 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 
 ## duplicate-preset-name-throws
 
-- **Symptom:** `duplicate preset name across sections: "..."` thrown from verify/measure.
+- **Symptom:** `duplicate preset name across sections:` thrown from verify/measure, naming the repeated preset (e.g. `duplicate preset name across sections: "Compact"`).
 - **Cause:** The same preset name is declared twice — once via the legacy `presets` field, once as a `{ type: "preset" }` node, or twice within either.
 - **Fix:** Rename one of them; `npx partforge lint` reports it statically as `duplicate-preset-name` before verify ever runs. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Rule catalog".
 

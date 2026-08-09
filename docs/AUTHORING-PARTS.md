@@ -1189,7 +1189,7 @@ the value box warning outside it): a tick outside `[min, max]`, a `recommended`
 that isn't exactly `[lo, hi]` with `lo < hi`, or either of them combined with
 `scale: "log"` (ticks and the band render on a linear track only) all warn.
 `group-depth` warns when authored groups nest more than two levels deep — a
-section plus one inner fold is as deep as a 300px panel can stay readable.
+section plus one inner fold is as deep as a 300px rail can stay readable.
 Flatten by promoting the innermost group to its own section, or folding its
 controls into the parent.
 `section-too-many-controls` warns when a section (authored or legacy, desugared
