@@ -132,9 +132,17 @@ export default {
 ## Animations
 
 A part may declare named animations — pure keyframe data that drives **existing
-params** over time. The viewer shows a transport bar (play/scrub/step); hosts
-drive the same engine via `runtime.animation`; `partforge render` can render
-stills at any position. The reference part is `src/parts/hinged-box.js`.
+params** over time. The viewer shows a transport bar (play/scrub, with ‹ ›
+pagers between animations); hosts drive the same engine via
+`runtime.animation`; `partforge render` can render stills at any position. The
+reference part is `src/parts/hinged-box.js`.
+
+Step labels surface on the scrubber rather than in a readout: hovering or
+dragging along the timeline names the chapter under the pointer, and with the
+scrubber focused **PageUp / PageDown jump whole chapters** (PageUp forward,
+matching the key's native slider direction). Screen readers get the same
+information from the scrubber's `aria-valuetext`, which reads
+`"<step label> — <percent>"`.
 
 ```js
 animations: {
@@ -149,7 +157,7 @@ animations: {
   },
   assemble: {
     label: "Assemble",
-    steps: [                  // steps play in order; prev/next navigate them
+    steps: [                  // steps play in order; named on the scrubber as you hover/drag
       { label: "Lower the lid", camera: "left", duration: 1.0,
         tracks: { lidLift: [[0, 40], [1, 0]] } },
       { label: "Open", camera: "iso", duration: 1.0,

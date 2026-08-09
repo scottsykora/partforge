@@ -4,7 +4,7 @@
 // cue → tween dispatch, intro gating, snapshot/reset, user-edit pause, and the
 // runtime surface.
 import { afterEach, expect, test, vi } from "vitest";
-import { attachAnimationControls, planAnimBarPlacement } from "../../src/framework/animation-controls.js";
+import { attachAnimationControls, planAnimBarPlacement, clampBubbleX, snapUpToScrubGrid } from "../../src/framework/animation-controls.js";
 
 function fakeViewer() {
   const frameCbs = new Set(); const orbitCbs = new Set();
@@ -94,12 +94,186 @@ test("scrubbing applies values without moving the camera", () => {
   expect(viewer.tweenCameraTo).not.toHaveBeenCalled();
 });
 
-test("stepped animation shows step chrome and step ticks", () => {
+test("stepped animation shows ticks but no step label or step buttons", () => {
   const { container, ctl } = setup(); handles.push(ctl);
   container.querySelector(".pf-anim-pick").value = "assemble";
   container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
-  expect(container.querySelector(".pf-anim-step").hidden).toBe(false);
+  expect(container.querySelector(".pf-anim-step")).toBeNull();
+  expect(container.querySelector(".pf-anim-step-btn")).toBeNull();
   expect(container.querySelectorAll(".pf-anim-tick")).toHaveLength(1); // one interior boundary
+});
+
+// The bar caps its own width and sets overflow:hidden when it runs out of room
+// (see the placement test below), so anything floating ABOVE it that lives
+// INSIDE it is clipped away — which is what happened to the bubble in exactly
+// the narrow layouts that need it. It belongs to the stage instead, like the
+// ⓘ popover belongs to document.body.
+test("the chapter bubble lives on the stage, outside the bar the cap clips", () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  const bar = container.querySelector(".pf-anim-bar");
+  const bubble = container.querySelector(".pf-anim-chapter");
+  expect(bubble).toBeTruthy();
+  expect(bar.contains(bubble)).toBe(false);
+  expect(bubble.parentElement).toBe(container);
+  // ...and it still leaves with the rest of the chrome, since the bar removing
+  // itself no longer takes the bubble with it.
+  ctl.detach();
+  expect(container.querySelector(".pf-anim-chapter")).toBeNull();
+});
+
+test("chapter bubble follows hover over the scrubber and names the chapter", () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  container.querySelector(".pf-anim-pick").value = "assemble";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  const wrap = container.querySelector(".pf-anim-scrub-wrap");
+  wrap.getBoundingClientRect = () => ({ left: 0, right: 220, top: 0, bottom: 14, width: 220, height: 14 });
+  const bubble = container.querySelector(".pf-anim-chapter");
+  expect(bubble.classList.contains("pf-show")).toBe(false);
+  // assemble: steps Lower (0..0.5) and Open (0.5..1). Hover at 25% → Lower.
+  wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 55, bubbles: true }));
+  expect(bubble.classList.contains("pf-show")).toBe(true);
+  expect(bubble.textContent).toBe("Lower");
+  // Hover at 75% → Open.
+  wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 165, bubbles: true }));
+  expect(bubble.textContent).toBe("Open");
+  wrap.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+  expect(bubble.classList.contains("pf-show")).toBe(false);
+});
+
+test("a drag's transient scrub reveal does not steal the bubble from an in-progress hover", () => {
+  vi.useFakeTimers();
+  try {
+    const { container, ctl } = setup(); handles.push(ctl);
+    container.querySelector(".pf-anim-pick").value = "assemble";
+    container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+    const wrap = container.querySelector(".pf-anim-scrub-wrap");
+    wrap.getBoundingClientRect = () => ({ left: 0, right: 220, top: 0, bottom: 14, width: 220, height: 14 });
+    const scrub = container.querySelector(".pf-anim-scrub");
+    const bubble = container.querySelector(".pf-anim-chapter");
+
+    // A drag: pointermove (hover claims the bubble) then the scrub `input` that
+    // follows it on every step — the same order a real mouse/touch drag fires.
+    wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 55, bubbles: true }));
+    scrub.value = "250";
+    scrub.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(bubble.classList.contains("pf-show")).toBe(true);
+
+    // The transient reveal must not have armed a fade: the pointer still owns
+    // the bubble, so holding the thumb still past 1s must not hide it.
+    vi.advanceTimersByTime(1100);
+    expect(bubble.classList.contains("pf-show")).toBe(true);
+
+    // Only pointerleave ends a hover-owned reveal.
+    wrap.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+    expect(bubble.classList.contains("pf-show")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("scrub input reveals the bubble at the playhead and it fades after the hold", () => {
+  vi.useFakeTimers();
+  try {
+    const { container, ctl } = setup(); handles.push(ctl);
+    container.querySelector(".pf-anim-pick").value = "assemble";
+    container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+    const scrub = container.querySelector(".pf-anim-scrub");
+    const bubble = container.querySelector(".pf-anim-chapter");
+    scrub.value = "750";
+    scrub.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(bubble.classList.contains("pf-show")).toBe(true);
+    expect(bubble.textContent).toBe("Open");
+    vi.advanceTimersByTime(1100);
+    expect(bubble.classList.contains("pf-show")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// A touch "leave" arrives with the finger lift, so hiding outright would blank
+// the label the tap just asked for — and touch has no hover to read it with.
+test("a touch pointer leaving fades the bubble instead of blanking it", () => {
+  vi.useFakeTimers();
+  try {
+    const { container, ctl } = setup(); handles.push(ctl);
+    container.querySelector(".pf-anim-pick").value = "assemble";
+    container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+    const wrap = container.querySelector(".pf-anim-scrub-wrap");
+    wrap.getBoundingClientRect = () => ({ left: 0, right: 220, top: 0, bottom: 14, width: 220, height: 14 });
+    const bubble = container.querySelector(".pf-anim-chapter");
+
+    wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 165, pointerType: "touch", bubbles: true }));
+    expect(bubble.textContent).toBe("Open");
+    wrap.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "touch", bubbles: true }));
+    expect(bubble.classList.contains("pf-show")).toBe(true);   // still readable
+    vi.advanceTimersByTime(1100);
+    expect(bubble.classList.contains("pf-show")).toBe(false);  // then fades itself
+
+    // A mouse leave still dismisses at once — the pointer moving away IS the
+    // dismissal, and there is a cursor to re-hover with.
+    wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 165, pointerType: "mouse", bubbles: true }));
+    wrap.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse", bubbles: true }));
+    expect(bubble.classList.contains("pf-show")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// The hover latch suppresses transient fades; if it outlived the reveal it
+// guards, a later keyboard reveal would arm no fade and stick forever.
+test("the hover latch never outlives the bubble it guards", () => {
+  vi.useFakeTimers();
+  try {
+    const { container, ctl } = setup(); handles.push(ctl);
+    const pick = container.querySelector(".pf-anim-pick");
+    pick.value = "assemble"; pick.dispatchEvent(new Event("change", { bubbles: true }));
+    const wrap = container.querySelector(".pf-anim-scrub-wrap");
+    wrap.getBoundingClientRect = () => ({ left: 0, right: 220, top: 0, bottom: 14, width: 220, height: 14 });
+    const scrub = container.querySelector(".pf-anim-scrub");
+    const bubble = container.querySelector(".pf-anim-chapter");
+
+    // Hover claims the bubble, then an animation switch hides it out from under
+    // the still-parked pointer (a host-driven select, or autoplay on a view
+    // change). The latch has to clear with it.
+    wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 55, bubbles: true }));
+    expect(bubble.classList.contains("pf-show")).toBe(true);
+    pick.value = "open"; pick.dispatchEvent(new Event("change", { bubbles: true }));
+    pick.value = "assemble"; pick.dispatchEvent(new Event("change", { bubbles: true }));
+
+    // A transient reveal now must fade on its own.
+    scrub.value = "750";
+    scrub.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(bubble.classList.contains("pf-show")).toBe(true);
+    vi.advanceTimersByTime(1100);
+    expect(bubble.classList.contains("pf-show")).toBe(false);
+
+    // pointercancel (a gesture the browser steals for scrolling) releases it too.
+    wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 55, bubbles: true }));
+    wrap.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true }));
+    scrub.value = "250";
+    scrub.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(1100);
+    expect(bubble.classList.contains("pf-show")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("single-step animation never shows a bubble", () => {
+  const { container, ctl } = setup(); handles.push(ctl); // default animation "open" has one step
+  const wrap = container.querySelector(".pf-anim-scrub-wrap");
+  wrap.getBoundingClientRect = () => ({ left: 0, right: 220, top: 0, bottom: 14, width: 220, height: 14 });
+  wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 110, bubbles: true }));
+  expect(container.querySelector(".pf-anim-chapter").classList.contains("pf-show")).toBe(false);
+});
+
+// --- clampBubbleX: pure center-x clamp --------------------------------------
+test("clampBubbleX centers, clamps at both ends, and degrades on a too-narrow wrap", () => {
+  expect(clampBubbleX(0.5, 220, 60)).toBe(110);   // free middle
+  expect(clampBubbleX(0, 220, 60)).toBe(30);      // clamped at the left end
+  expect(clampBubbleX(1, 220, 60)).toBe(190);     // clamped at the right end
+  expect(clampBubbleX(0.9, 220, 60)).toBe(190);   // clamp engages before the end
+  expect(clampBubbleX(0.5, 40, 60)).toBe(20);     // bubble wider than wrap → center it
 });
 
 test("runtime.play(name) switches animation; detach removes the bar", () => {
@@ -419,6 +593,7 @@ test("placement wiring: clamps against the viewbar, clears when roomy, disconnec
     expect(bar.style.transform).toBe("none");
     expect(bar.style.maxWidth).toBe("");
     expect(bar.style.overflow).toBe("");
+    expect(bar.classList.contains("pf-squeezed")).toBe(false); // sliding is not squeezing
 
     // capped: even the 12px margin isn't enough (300−10−12 = 278 < barWidth
     // 400) → left pins to the margin and maxWidth caps the bar, clipping its
@@ -428,6 +603,9 @@ test("placement wiring: clamps against the viewbar, clears when roomy, disconnec
     expect(bar.style.left).toBe("12px");
     expect(bar.style.maxWidth).toBe("278px");
     expect(bar.style.overflow).toBe("hidden");
+    // ...and the bar sheds the pagers, so their width goes to the timeline
+    // rather than the timeline collapsing to keep them.
+    expect(bar.classList.contains("pf-squeezed")).toBe(true);
 
     // roomy again → overrides cleared, chrome.css back in charge
     viewbarLeft = 800;
@@ -435,6 +613,7 @@ test("placement wiring: clamps against the viewbar, clears when roomy, disconnec
     expect(bar.style.left).toBe("");
     expect(bar.style.transform).toBe("");
     expect(bar.style.overflow).toBe("");
+    expect(bar.classList.contains("pf-squeezed")).toBe(false);
 
     ctl.detach();
     expect(disconnected).toBe(true);
@@ -474,4 +653,190 @@ test("placement wiring: no-op when the bars' vertical bands do not intersect", a
   } finally {
     globalThis.ResizeObserver = OriginalRO;
   }
+});
+
+test("aria-valuetext announces chapter and percent", () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  const scrub = container.querySelector(".pf-anim-scrub");
+  expect(scrub.getAttribute("aria-valuetext")).toBe("0%"); // single-step: percent only
+  container.querySelector(".pf-anim-pick").value = "assemble";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  expect(scrub.getAttribute("aria-valuetext")).toBe("Lower — 0%");
+  scrub.value = "750";
+  scrub.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(scrub.getAttribute("aria-valuetext")).toBe("Open — 75%");
+});
+
+test("PageUp/PageDown jump chapter boundaries; no-ops for single-step", () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  const scrub = container.querySelector(".pf-anim-scrub");
+  container.querySelector(".pf-anim-pick").value = "assemble";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  // From t=0, PageUp lands on the next boundary (0.5), PageUp again on the end (1).
+  scrub.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp", bubbles: true, cancelable: true }));
+  expect(ctl.runtime.state().t).toBeCloseTo(0.5);
+  scrub.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp", bubbles: true, cancelable: true }));
+  expect(ctl.runtime.state().t).toBeCloseTo(1);
+  // PageDown walks back.
+  scrub.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true }));
+  expect(ctl.runtime.state().t).toBeCloseTo(0.5);
+  scrub.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true }));
+  expect(ctl.runtime.state().t).toBeCloseTo(0);
+  // Single-step: the key is left to the browser's native coarse seek.
+  container.querySelector(".pf-anim-pick").value = "open";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  const ev = new KeyboardEvent("keydown", { key: "PageUp", bubbles: true, cancelable: true });
+  scrub.dispatchEvent(ev);
+  expect(ev.defaultPrevented).toBe(false);
+  expect(ctl.runtime.state().t).toBeCloseTo(0);
+});
+
+// Three EQUAL chapters, so every boundary (1/3, 2/3) falls between two steps of
+// the scrubber's 1/1000 grid — the case that exposes a jump landing on a `t`
+// the scrubber cannot represent.
+function thirdsHarness() {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const thirds = { animations: { m: { label: "M", steps: [
+    { label: "A", duration: 1, easing: "linear", tracks: { lidAngle: [[0, 0], [1, 1]] } },
+    { label: "B", duration: 1, easing: "linear", tracks: { lidAngle: [[0, 1], [1, 2]] } },
+    { label: "C", duration: 1, easing: "linear", tracks: { lidAngle: [[0, 2], [1, 3]] } },
+  ] } } };
+  const ctl = attachAnimationControls(fakeViewer(), thirds, {
+    container, applyValues: () => {}, getParamValues: () => ({ lidAngle: 0 }),
+  });
+  handles.push(ctl);
+  const scrub = container.querySelector(".pf-anim-scrub");
+  const press = (key) => scrub.dispatchEvent(
+    new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  // The chapter the bar is REPORTING, which is the thing the user perceives.
+  const chapter = () => scrub.getAttribute("aria-valuetext").split(" — ")[0];
+  return { ctl, scrub, press, chapter };
+}
+
+// PageDown's rule: restart the chapter you are inside, step back from the one
+// you are at the top of. The 1e-6 is the at-the-boundary tolerance deciding
+// which of those you are in.
+test("PageDown restarts the current chapter, or steps back from its start", () => {
+  const { ctl, press, chapter } = thirdsHarness();
+
+  ctl.runtime.seek(0.8);                       // well inside C
+  press("PageDown");
+  expect(chapter()).toBe("C");                 // restarts C, does not leave it
+  press("PageDown");
+  expect(chapter()).toBe("B");                 // at C's start, so step back
+  // Anything the scrubber would round onto B's start counts as being AT it,
+  // not inside it — the tolerance is one step of the grid, not an epsilon.
+  ctl.runtime.seek(1 / 3 + 1e-5);
+  press("PageDown");
+  expect(chapter()).toBe("A");
+  ctl.runtime.seek(1 / 3 + 0.05);              // genuinely inside B
+  press("PageDown");
+  expect(chapter()).toBe("B");                 // so B restarts
+  ctl.runtime.seek(0);
+  press("PageDown");
+  expect(ctl.runtime.state().t).toBe(0);       // nowhere left to go
+});
+
+// A jump used to land on the exact boundary (1/3), which syncUi rounds DOWN to
+// 333 — a value that reads back as the PREVIOUS chapter. The bar then reported
+// a chapter the playhead was not in, and any later arrow-key nudge re-derived
+// `t` from that rounded value and silently moved the user a chapter.
+test("a chapter jump lands where the scrubber can report it", () => {
+  const { ctl, scrub, press, chapter } = thirdsHarness();
+
+  press("PageUp");
+  expect(chapter()).toBe("B");
+  // The thumb's own value must agree with the playhead about the chapter...
+  const shown = Number(scrub.value) / 1000;
+  expect(shown).toBeGreaterThanOrEqual(1 / 3);
+  expect(shown).toBeLessThan(2 / 3);
+  // ...so a net-zero arrow round-trip reports the same chapter it started in.
+  const nudge = (d) => {
+    scrub.value = String(Number(scrub.value) + d);   // what the browser does
+    scrub.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  nudge(-1); nudge(+1);
+  expect(chapter()).toBe("B");
+
+  press("PageUp");                                    // B → C
+  expect(chapter()).toBe("C");
+  nudge(-1); nudge(+1);
+  expect(chapter()).toBe("C");
+});
+
+test("snapUpToScrubGrid keeps a target on its own side of a boundary", () => {
+  expect(snapUpToScrubGrid(1 / 3)).toBeCloseTo(0.334, 10);   // up, not down to .333
+  expect(snapUpToScrubGrid(2 / 3)).toBeCloseTo(0.667, 10);
+  expect(snapUpToScrubGrid(0.5)).toBe(0.5);                  // already on the grid
+  expect(snapUpToScrubGrid(0)).toBe(0);                      // and no -0
+  expect(Object.is(snapUpToScrubGrid(0), -0)).toBe(false);
+  expect(snapUpToScrubGrid(1)).toBe(1);                      // never past the end
+  expect(snapUpToScrubGrid(1.4)).toBe(1);
+});
+
+test("a chapter jump cancels an in-flight camera tween", () => {
+  const { container, ctl, viewer } = setup(); handles.push(ctl);
+  container.querySelector(".pf-anim-pick").value = "assemble";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  const scrub = container.querySelector(".pf-anim-scrub");
+  viewer.cancelCameraTween.mockClear();
+  scrub.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp", bubbles: true, cancelable: true }));
+  // seek() abandons the pending cue but cannot touch the camera; without this
+  // the tween keeps travelling to the position the user just left.
+  expect(viewer.cancelCameraTween).toHaveBeenCalled();
+});
+
+// aria-valuetext is the only accessible chapter channel, and a screen reader
+// announces every change — an exact percentage chatters ~100 times per run.
+test("aria-valuetext reports coarse percent while playing, exact when seeking", () => {
+  const { container, ctl, viewer } = setup(); handles.push(ctl);
+  const scrub = container.querySelector(".pf-anim-scrub");
+  container.querySelector(".pf-anim-play").click();     // "open", 2s, single-step
+  const writes = new Set();
+  for (let i = 0; i < 40; i++) { viewer.frame(0.05); writes.add(scrub.getAttribute("aria-valuetext")); }
+  expect([...writes].every((v) => /^\d*0%$/.test(v))).toBe(true); // 10% steps only
+  expect(writes.size).toBeLessThanOrEqual(11);
+
+  // A user-driven seek reports the exact position — that precision is the
+  // feedback they asked for.
+  container.querySelector(".pf-anim-play").click();     // pause
+  scrub.value = "247";
+  scrub.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(scrub.getAttribute("aria-valuetext")).toBe("25%");
+});
+
+test("animation pager bookends the card and cycles with wrap", () => {
+  const { container, ctl } = setup(); handles.push(ctl); // two animations
+  const bar = container.querySelector(".pf-anim-bar");
+  const pagers = bar.querySelectorAll(".pf-anim-page");
+  expect(pagers).toHaveLength(2);
+  expect(bar.firstElementChild).toBe(pagers[0]);
+  expect(bar.lastElementChild).toBe(pagers[1]);
+  // The label names the destination: activating a pager keeps focus on it and
+  // leaves its glyph alone, so this is all a screen reader has to go on.
+  expect(pagers[0].getAttribute("aria-label")).toBe("Previous animation: Assemble");
+  expect(pagers[1].getAttribute("aria-label")).toBe("Next animation: Assemble");
+  const pick = container.querySelector(".pf-anim-pick");
+  pagers[1].click();                                   // open → assemble
+  expect(ctl.runtime.state().animation).toBe("assemble");
+  expect(pick.value).toBe("assemble");
+  // ...and the labels re-point at the new destination.
+  expect(pagers[1].getAttribute("aria-label")).toBe("Next animation: Open lid");
+  pagers[1].click();                                   // assemble → wraps to open
+  expect(ctl.runtime.state().animation).toBe("open");
+  pagers[0].click();                                   // open → wraps back to assemble
+  expect(ctl.runtime.state().animation).toBe("assemble");
+});
+
+test("single-animation part gets no pager", () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const solo = { animations: { open: { label: "Open lid", duration: 1, easing: "linear",
+    tracks: { lidAngle: [[0, 0], [1, 110]] } } } };
+  const ctl = attachAnimationControls(fakeViewer(), solo, {
+    container, applyValues: () => {}, getParamValues: () => ({}),
+  });
+  handles.push(ctl);
+  expect(container.querySelectorAll(".pf-anim-page")).toHaveLength(0);
 });
