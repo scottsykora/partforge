@@ -30,3 +30,12 @@ test("specFor returns undefined for an unknown type", () => {
   expect(specFor("nope")).toBeUndefined();
   expect(fieldsFor("nope")).toEqual([]);
 });
+
+import { WIDGET_FACTORIES } from "../../../src/framework/panel/widgets/index.js";
+
+test("every registered type has a DOM factory, and every factory a spec", () => {
+  expect(Object.keys(WIDGET_FACTORIES).sort()).toEqual([...WIDGET_TYPES].sort());
+  for (const type of WIDGET_TYPES) {
+    expect(typeof WIDGET_FACTORIES[type], `${type} factory`).toBe("function");
+  }
+});
