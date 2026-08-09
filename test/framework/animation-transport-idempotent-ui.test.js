@@ -148,24 +148,44 @@ test("changing the glyph mutates the button's text node rather than replacing it
 // Switching animations installs a fresh playback that starts idle at step 0 —
 // the very values the outgoing animation was already showing. The per-element
 // caches would therefore skip the redraw, leaving the incoming animation's step
-// readout blank, so the swap has to invalidate them rather than trust them.
+// readout blank, so the swap has to invalidate them rather than trust them. The
+// cache invalidateUi actually still guards here is `shownValuetext`: a glyph
+// flip from playing→idle would re-render regardless (the value itself
+// changed), but a stepped→stepped switch that lands on the same t needs the
+// invalidation, or the incoming animation's chapter name never reaches
+// aria-valuetext.
 test("switching animations re-renders chrome the caches would have skipped", () => {
   const { ctl, container } = harness();
+  const playBtn = container.querySelector(".pf-anim-play");
   const pick = container.querySelector(".pf-anim-pick");
-  const stepLabel = container.querySelector(".pf-anim-step");
+  const scrub = container.querySelector(".pf-anim-scrub");
 
   const select = (name) => { pick.value = name; pick.dispatchEvent(new Event("change", { bubbles: true })); };
 
-  expect(stepLabel.hidden).toBe(true); // "a" is not stepped
+  // "a" playing, glyph "⏸". selectAnimation("b") calls doReset, so the
+  // incoming animation is idle, not playing — the glyph must re-render to
+  // "▶" even though a stale `shownActive` cache would have skipped it.
+  playBtn.click();
+  expect(playBtn.textContent).toBe("⏸");
   select("b");
-  expect(stepLabel.hidden).toBe(false);
-  expect(stepLabel.textContent).toBe("1/2 · up");
+  expect(playBtn.textContent).toBe("▶");
+  expect(container.querySelectorAll(".pf-anim-tick")).toHaveLength(1); // b has 2 steps -> one interior boundary
+  expect(scrub.getAttribute("aria-valuetext")).toBe("up — 0%");
 
-  // The case the cache actually swallows: stepped -> stepped. Both sit at step
-  // 0 with the same status, so a trusted cache skips the redraw and leaves the
-  // previous animation's step name on screen.
+  // Same again the other way: play "b", switch to "c" (also stepped), glyph
+  // must drop back to "▶". "b" and "c" are both idle at t=0 — same value
+  // `shownValuetext` would already hold — so this only re-renders because
+  // invalidateUi reset the cache; a stale one would leave "up — 0%" showing.
+  playBtn.click();
+  expect(playBtn.textContent).toBe("⏸");
   select("c");
-  expect(stepLabel.textContent).toBe("1/2 · raise");
+  expect(playBtn.textContent).toBe("▶");
+  expect(scrub.getAttribute("aria-valuetext")).toBe("raise — 0%");
+
+  // Structural chrome (ticks) rebuilds too: back to unstepped "a" clears them.
+  select("a");
+  expect(container.querySelectorAll(".pf-anim-tick")).toHaveLength(0);
+
   ctl.detach();
 });
 
