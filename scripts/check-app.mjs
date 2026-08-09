@@ -356,6 +356,101 @@ async function checkAnimBarLayout(widths) {
   }
 }
 
+// checkAnimBarLayout above sizes and places the BAR; this sizes the controls
+// inside it. They were authored at mouse scale — a 13px glyph in 2px/4px of
+// padding is ~20x20, 8px apart. Measured on a 390px stage: a tap 12px off the
+// pause button's centre, ordinary finger error, hit the bar's background and
+// did nothing; a little further hit a ‹ › pager, which SWITCHES ANIMATION.
+// Hence a size floor, and a separation floor so the enlarged targets cannot
+// overlap into one another — a wrong action is worse than a dead one.
+//
+// Only pages declaring animations grow a bar, so this is a no-op elsewhere.
+const TAP_TARGET_MIN = 44; // iOS HIG minimum (Material asks 48; 44 is the floor)
+async function checkTransportTargets(width) {
+  await page.setViewportSize({ width, height: 720 });
+  await sleep(50);
+  const result = await page.evaluate(async (min) => {
+    const bar = document.querySelector(".pf-anim-bar");
+    if (!bar) return null; // no animations on this page
+    const problems = [];
+    // Measure under EVERY animation, not just the selected one: the ⓘ info
+    // button only renders for animations with a description, so a single-shot
+    // measurement can miss the most crowded row.
+    const pick = bar.querySelector(".pf-anim-pick");
+    const names = pick ? [...pick.options].map((o) => o.value) : [null];
+    for (const name of names) {
+      if (name != null) {
+        pick.value = name;
+        pick.dispatchEvent(new Event("change", { bubbles: true }));
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      measure(name);
+      checkBubbleClearsBar(name);
+    }
+    return { problems };
+
+    // The chapter bubble floats ABOVE the bar while the user scrubs — and on a
+    // stepped animation that is the exact moment the whole transport matters.
+    // The bar wraps into rows at these widths, so "above the timeline" and
+    // "above the bar" stopped being the same place; assert the revealed bubble
+    // never covers the bar's controls.
+    function checkBubbleClearsBar(name) {
+      const where = name ? `[${name}] ` : "";
+      const wrap = bar.querySelector(".pf-anim-scrub-wrap");
+      const w = wrap.getBoundingClientRect();
+      wrap.dispatchEvent(new PointerEvent("pointermove", {
+        clientX: w.left + w.width / 2, bubbles: true,
+      }));
+      const bubble = document.querySelector(".pf-anim-chapter.pf-show");
+      if (bubble) {
+        const b = bubble.getBoundingClientRect();
+        const barRect = bar.getBoundingClientRect();
+        if (b.bottom > barRect.top + 0.5) {
+          problems.push(`${where}the chapter bubble overlaps the bar (bubble bottom ${Math.round(b.bottom)}, bar top ${Math.round(barRect.top)})`);
+        }
+      }
+      wrap.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+    }
+
+    function measure(name) {
+      const where = name ? `[${name}] ` : "";
+      const boxes = [];
+      // Measure the range INPUT, not its wrap: the wrap is inert, so height
+      // on the wrap alone leaves a native-height input as the real target and
+      // taps in the wrap's slack dead.
+      for (const el of bar.querySelectorAll("button, .pf-anim-scrub, select")) {
+        if (el.hidden || el.offsetParent === null) continue;
+        const r = el.getBoundingClientRect();
+        boxes.push({ name: el.className || el.tagName, r });
+        // The scrubber is a track, not a target: it has to be TALL enough to
+        // grab and wide enough to aim along, so its width is checked apart.
+        const wide = el.classList.contains("pf-anim-scrub") ? 120 : min;
+        if (r.width + 0.5 < wide || r.height + 0.5 < min) {
+          problems.push(`${where}${el.className || el.tagName} is ${Math.round(r.width)}x${Math.round(r.height)}, below ${wide}x${min}`);
+        }
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) {
+          const a = boxes[i].r, b = boxes[j].r;
+          if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) {
+            problems.push(`${where}${boxes[i].name} overlaps ${boxes[j].name}`);
+          }
+        }
+      }
+      const stage = document.querySelector(".pf-stage")?.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      if (stage && (barRect.left < stage.left - 0.5 || barRect.right > stage.right + 0.5)) {
+        problems.push(`${where}the bar escapes the stage horizontally`);
+      }
+      if (stage && barRect.top < stage.top - 0.5) {
+        problems.push(`${where}the bar is taller than the stage`);
+      }
+    }
+  }, TAP_TARGET_MIN);
+  if (!result) return;
+  for (const problem of result.problems) errors.push(`transport ${width}px: ${problem}`);
+}
+
 // Reset through the rail's own API — a dblclick on the seam routes through
 // rail.js's commit(), which resets to the 288px default — so the DOM and
 // rail.js's in-memory `state` agree. The old approach (clear localStorage,
@@ -712,6 +807,8 @@ try {
     }
     await checkNarrowPaneTabs(400, 1024);
     await checkAnimBarLayout([1600, 1280, 1024]);
+    await checkTransportTargets(390); // a phone in portrait
+    await checkTransportTargets(320); // the narrowest phone still supported
     if (viewport) await page.setViewportSize(viewport);
   }
   await checkCaptureCurrent(); // before checkDebugOverlay — that one navigates away

@@ -197,12 +197,16 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       bubbleWidth = chapterBubble.offsetWidth;
     }
     // Stage-relative, because the bubble lives on the stage rather than in the
-    // wrap: track the point along the timeline, then lift clear of the bar.
+    // wrap: track the point along the timeline, then lift clear of the bar —
+    // the BAR's top, not the wrap's. The touch layout wraps the bar into rows
+    // with the timeline on the lower one, so "above the wrap" would sit the
+    // bubble on the chooser row. checkTransportTargets pins this.
     const wrapRect = scrubWrap.getBoundingClientRect();
+    const barRect = bar.getBoundingClientRect();
     const stageRect = container.getBoundingClientRect();
     chapterBubble.style.left =
       `${wrapRect.left - stageRect.left + clampBubbleX(f, wrapRect.width, bubbleWidth)}px`;
-    chapterBubble.style.bottom = `${stageRect.bottom - wrapRect.top + 8}px`;
+    chapterBubble.style.bottom = `${stageRect.bottom - barRect.top + 8}px`;
     chapterBubble.classList.add("pf-show");
     clearTimeout(bubbleFadeTimer);
     bubbleFadeTimer = 0;
