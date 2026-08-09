@@ -43,6 +43,10 @@ const BASELINE_IDS = [
   "html-page-missing-in-prod",
   "cutaway-capture-hatch-flood",
   "animation-plays-choppy",
+  "duplicate-preset-name-throws",
+  "when-condition-never-true",
+  "readout-shows-em-dash",
+  "select-default-unreachable",
 ];
 
 const entries = parsePatterns(doc);

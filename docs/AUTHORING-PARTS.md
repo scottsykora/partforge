@@ -1142,29 +1142,32 @@ previously didn't; that's the fix working as intended, not a regression.
 `when-key-not-in-defaults`, `when-unknown-operator` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
 `default-not-exposed`, `readout-unknown-derived-key`, `slider-refinement-invalid`,
-`group-depth`, `section-too-many-controls`
-(warnings). The `readout` one checks a `{ type: "readout" }` entry's `derivedKey`
-against the keys `derive()` actually produces (resolved once against `defaults`)
-— a readout naming a key no group returns shows an em-dash forever, so it warns
-rather than errors.
+`group-depth`, `section-too-many-controls` (warnings).
+
+`mixed-section-shape` fires when a section mixes the new `controls` array with
+a legacy field (`advanced`, `toggles`, `features`, `presets`) — the two shapes
+can't coexist, since mixing them would make the render order arbitrary. Move
+the legacy entries into `controls` (a toggle becomes a checkbox control,
+`advanced` becomes a nested group, `presets` becomes `{ type: "preset" }`
+nodes), or drop `controls` and stay legacy.
+`duplicate-preset-name` fires when the same preset name is declared twice
+(legacy `presets` and/or `{ type: "preset" }` nodes both count) — preset names
+are global to the part, and `verify()` expands one case per name and throws on
+a repeat, a worse place to find out. Rename one of them.
+`duplicate-node-id` fires when two panel nodes (sections, groups, or controls)
+share an `id` — the renderer keys its element and state maps on ids, and a
+collision silently cross-wires the two nodes. Rename one `id`, or drop it to
+use the positional default.
+`select-options-missing` fires when a `select`/`radio` control has no
+`options` array — with none the control renders empty and its parameter can
+never change.
+`select-default-not-in-options` fires when `defaults[key]` is not one of a
+`select`/`radio`'s option values (watch value types — `12` is not `"12"`) —
+without this the panel opens showing a value the user can never get back to.
+Add the value to `options`, or change the default.
 `log-scale-needs-positive-min` fires when a slider/number sets `scale: "log"`
 without a positive `min` — `log(0)` is `-Infinity` and the thumb-to-value mapping
 breaks, so raise `min` above 0 or drop `scale`.
-`slider-refinement-invalid` covers a slider/number's optional `ticks` (native
-datalist marks; combine with `snap: true` to quantize slider drags to the
-nearest tick) and `recommended` (an `[lo, hi]` band tinted on the track, with
-the value box warning outside it): a tick outside `[min, max]`, a `recommended`
-that isn't exactly `[lo, hi]` with `lo < hi`, or either of them combined with
-`scale: "log"` (ticks and the band render on a linear track only) all warn.
-`group-depth` warns when authored groups nest more than two levels deep — a
-section plus one inner fold is as deep as a 300px panel stays readable. Flatten
-by promoting the innermost group to its own section, or folding its controls into
-the parent.
-`section-too-many-controls` warns when a section (authored or legacy, desugared
-to a common format) shows more than 12 visible controls — the budget is
-deliberately conservative, revisable against real LLM-authored parts. More than a
-dozen in one section reads as a wall; group related controls, split into multiple
-sections, or hide internals (`hidden: true`).
 `when-key-not-in-defaults` and `when-unknown-operator` walk every authored
 `when` (on a control, a group, a preset, a readout, or a section itself) —
 `allOf`/`anyOf`/`not` recurse — and check each condition against the two things
@@ -1174,6 +1177,26 @@ each comparison operator (`{ gt: 0 }`, `{ in: [...] }`, …) must be one
 `undefined` and an unknown operator is treated as false, so either way the
 condition is always false and the node never shows — which is why both are
 errors rather than warnings.
+
+`readout-unknown-derived-key` checks a `{ type: "readout" }` entry's `derivedKey`
+against the keys `derive()` actually produces (resolved once against `defaults`)
+— a readout naming a key no group returns shows an em-dash forever, so it warns
+rather than errors.
+`slider-refinement-invalid` covers a slider/number's optional `ticks` (native
+datalist marks; combine with `snap: true` to quantize slider drags to the
+nearest tick) and `recommended` (an `[lo, hi]` band tinted on the track, with
+the value box warning outside it): a tick outside `[min, max]`, a `recommended`
+that isn't exactly `[lo, hi]` with `lo < hi`, or either of them combined with
+`scale: "log"` (ticks and the band render on a linear track only) all warn.
+`group-depth` warns when authored groups nest more than two levels deep — a
+section plus one inner fold is as deep as a 300px panel can stay readable.
+Flatten by promoting the innermost group to its own section, or folding its
+controls into the parent.
+`section-too-many-controls` warns when a section (authored or legacy, desugared
+to a common format) shows more than 12 visible controls — the budget is
+deliberately conservative, revisable against real LLM-authored parts. More than a
+dozen in one section reads as a wall; group related controls, split into multiple
+sections, or hide internals (`hidden: true`).
 
 **Kernel API**, found by executing `build()` against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,
