@@ -131,11 +131,8 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   // Multi-animation parts page with ‹ › at the card's outer edges — whole
   // animations only, never chapters (chapters are the bubble + PageUp/Down).
   const paged = animations.length > 1;
-  // pf-anim-page carries the shared styling; the direction classes let the
-  // touch layout in app.css pull › in beside the chooser without reordering
-  // the DOM, so the wide-pointer outer-edge placement stays the source order.
-  const prevAnimBtn = paged ? btn("pf-anim-page pf-anim-page-prev", "‹", "Previous animation") : null;
-  const nextAnimBtn = paged ? btn("pf-anim-page pf-anim-page-next", "›", "Next animation") : null;
+  const prevAnimBtn = paged ? btn("pf-anim-page", "‹", "Previous animation") : null;
+  const nextAnimBtn = paged ? btn("pf-anim-page", "›", "Next animation") : null;
   if (prevAnimBtn) bar.append(prevAnimBtn);
   bar.append(paged ? pick : title);
   const infoSlot = el("span", "pf-anim-info");

@@ -305,17 +305,19 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
    an iframe sized to a phone-width card gets it too); the pointer half catches
    a phone in landscape, wider than 720px and still all thumbs.
 
-   The bar stays a single flat flex line; `order` and the wrap restack it into
-   rows without touching the DOM, so the wide-pointer layout above is the
-   source order, untouched:
+   The bar stays a single flat flex line that WRAPS, in source order — no
+   `order` overrides, deliberately: a reordered flex row splits visual order
+   from DOM order, and with it from focus order, so a keyboard on a narrow
+   window would tab in spatial zigzags. Wrapping in source order keeps
+   reading, tab and touch order one sequence, and keeps the pagers bracketing
+   the bar's ends like the wide layout:
 
-       ‹ [ animation v ] ›  (i)       <- chooser, its pagers pulled in beside it
-       ▶  [==·==·==o==]  ↺            <- transport + timeline, 44px each
+       ‹ [ animation v ] (i) ▶        <- wraps where the width runs out
+         [===·===·==o===]  ↺ ›
 
-   The timeline shares that last row while it can hold 120px and drops to a
-   full-width row of its own when it cannot — around a 360px stage on a
-   multi-animation part. scripts/check-app.mjs's checkTransportTargets pins
-   the result. */
+   The timeline takes whatever width its row has left and drops to a wider
+   row of its own below ~360px. scripts/check-app.mjs's checkTransportTargets
+   pins the result. */
 @media (max-width: 719px), (pointer: coarse) {
   .pf-anim-bar {
     flex-wrap: wrap; justify-content: center;
@@ -325,16 +327,18 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
     min-width: 44px; min-height: 44px; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
   }
-  /* ‹ keeps its default order 0, ahead of the chooser as in source order; ›
-     jumps from the bar's far end to the chooser's other side. */
-  .pf-anim-title, .pf-anim-pick { order: 1; min-width: 0; }
+  .pf-anim-title, .pf-anim-pick { min-width: 0; }
   /* The picker is a target too, not a caption — it opens the animation list. */
   .pf-anim-pick { max-width: 100%; min-height: 44px; padding: 3px 10px; }
-  .pf-anim-page-next { order: 2; }
-  .pf-anim-info { order: 3; }
-  .pf-anim-play { order: 5; }
-  .pf-anim-reset { order: 9; } /* after the scrubber, as on a wide pointer */
-  .pf-anim-scrub-wrap { order: 8; flex: 1 1 120px; min-width: 120px; width: auto; min-height: 44px; }
+  /* The 200px basis makes the timeline BID for real room: at a phone width it
+     loses the bid, wraps, and inherits most of a row; 120px is the floor it
+     can be squeezed to when sharing one. */
+  .pf-anim-scrub-wrap { flex: 1 1 200px; min-width: 120px; width: auto; min-height: 44px; }
+  /* The INPUT is the thing a finger has to land on — height on the wrap alone
+     leaves an ~18px native strip as the real target, with dead slack around
+     it. The track paints centered, so this is invisible; only the hit area
+     grows. */
+  .pf-anim-scrub { min-height: 44px; }
 }
 
 /* Legacy id-only markup only: classed markup's viewbar lives inside .pf-stage

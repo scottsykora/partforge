@@ -415,13 +415,16 @@ async function checkTransportTargets(width) {
     function measure(name) {
       const where = name ? `[${name}] ` : "";
       const boxes = [];
-      for (const el of bar.querySelectorAll("button, .pf-anim-scrub-wrap, select")) {
+      // Measure the range INPUT, not its wrap: the wrap is inert, so height
+      // on the wrap alone leaves a native-height input as the real target and
+      // taps in the wrap's slack dead.
+      for (const el of bar.querySelectorAll("button, .pf-anim-scrub, select")) {
         if (el.hidden || el.offsetParent === null) continue;
         const r = el.getBoundingClientRect();
         boxes.push({ name: el.className || el.tagName, r });
         // The scrubber is a track, not a target: it has to be TALL enough to
         // grab and wide enough to aim along, so its width is checked apart.
-        const wide = el.classList.contains("pf-anim-scrub-wrap") ? 120 : min;
+        const wide = el.classList.contains("pf-anim-scrub") ? 120 : min;
         if (r.width + 0.5 < wide || r.height + 0.5 < min) {
           problems.push(`${where}${el.className || el.tagName} is ${Math.round(r.width)}x${Math.round(r.height)}, below ${wide}x${min}`);
         }
