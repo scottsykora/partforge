@@ -4,9 +4,11 @@
 // retired, this is one file to delete rather than an archaeology dig through the
 // model.
 //
-// Imports nothing, on purpose: partforge/lint consumes desugar() and
+// Imports author.js, on purpose: partforge/lint consumes desugar() and
 // test/lint-purity.test.js asserts lint's whole import closure has zero bare
 // dependencies.
+
+import { authoredSection } from "./author.js";
 
 const arr = (x) => (Array.isArray(x) ? x : []);
 
@@ -74,6 +76,12 @@ function featureNodes(f) {
 
 export function desugar(parameters) {
   return arr(parameters).map((sec) => {
+    // The NEW shape: children live in `controls`. author.js owns it entirely;
+    // when both `controls` and legacy arrays appear (a lint error,
+    // mixed-section-shape), `controls` wins — same winner-takes-all routing the
+    // features branch below applies to the legacy shapes.
+    if (Array.isArray(sec?.controls)) return authoredSection(sec);
+
     const children = [];
 
     // controls.js:180 routes any section with a truthy `features` field
