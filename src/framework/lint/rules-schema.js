@@ -4,7 +4,7 @@
 // resolve against `defaults`, which produce a control that silently does nothing.
 import { err, warn } from "./finding.js";
 import { suggest } from "../geometry/op-options.js";
-import { fieldsFor, authorFieldsFor, GROUP_FIELDS, PRESET_FIELDS } from "../panel/widget-specs.js";
+import { fieldsFor, authorFieldsFor, GROUP_FIELDS, PRESET_FIELDS, normalizeOptions } from "../panel/widget-specs.js";
 import { sectionRenders, desugar } from "../panel/legacy.js";
 import { buildTree } from "../panel/model.js";
 
@@ -291,6 +291,33 @@ export const SCHEMA_RULES = [
         } else seen.set(name, path);
       }
       return out;
+    },
+  },
+  {
+    id: "select-options-missing",
+    run: ({ part }) => collectDescriptors(part)
+      .filter(({ d, container }) => !container && (d.type === "select" || d.type === "radio"))
+      .filter(({ d }) => normalizeOptions(d.options).length === 0)
+      .map(({ d, path }) => err("select-options-missing",
+        `${d.type} "${d.key}" has no options`,
+        "A `select` or `radio` needs an `options` array — either strings/numbers (value doubles as label) or `{ value, label }` objects. With none, the control renders empty and the parameter can never change.",
+        `${path}.options`)),
+  },
+  {
+    id: "select-default-not-in-options",
+    run: ({ part }) => {
+      if (!isPlainObject(part?.defaults)) return [];
+      return collectDescriptors(part)
+        .filter(({ d, container }) => !container && (d.type === "select" || d.type === "radio"))
+        .filter(({ d }) => {
+          const opts = normalizeOptions(d.options);
+          return opts.length > 0 && typeof d.key === "string" && d.key in part.defaults
+            && !opts.some((o) => o.value === part.defaults[d.key]);
+        })
+        .map(({ d, path }) => err("select-default-not-in-options",
+          `\`defaults.${d.key}\` is ${JSON.stringify(part.defaults[d.key])}, which is not one of the ${d.type}'s options`,
+          "The default value must be selectable, or the panel opens showing a value the user can never get back to. Add it to `options` or change the default.",
+          `${path}.options`));
     },
   },
   {

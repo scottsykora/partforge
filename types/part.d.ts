@@ -58,7 +58,7 @@ export interface PartMeta {
 export type ControlKind = "slider" | "number" | "text" | "textarea";
 
 /** Every control type the panel can render. */
-export type ControlType = "slider" | "number" | "text" | "textarea" | "checkbox";
+export type ControlType = "slider" | "number" | "text" | "textarea" | "checkbox" | "select" | "radio";
 
 /** A declarative visibility condition, evaluated against raw parameters. */
 export type WhenCondition =

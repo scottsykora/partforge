@@ -128,3 +128,16 @@ test("duplicate-node-id points at the true section index even when an earlier se
 test("a clean authored part still lints clean after the new rules", () => {
   expect(lintPart(authoredPart()).errors).toEqual([]);
 });
+
+test("select with no options errors; default outside options errors", () => {
+  const part = authoredPart();
+  part.defaults.profile = "round";
+  part.parameters[0].controls.push({ key: "profile", type: "select", options: [] });
+  expect(ids(lintPart(part).errors)).toContain("select-options-missing");
+  part.parameters[0].controls.at(-1).options = ["faceted", "hex"];
+  expect(ids(lintPart(part).errors)).toContain("select-default-not-in-options");
+  part.parameters[0].controls.at(-1).options = ["faceted", "round"];
+  const r = lintPart(part);
+  expect(ids(r.errors)).not.toContain("select-options-missing");
+  expect(ids(r.errors)).not.toContain("select-default-not-in-options");
+});

@@ -1137,7 +1137,8 @@ previously didn't; that's the fix working as intended, not a regression.
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,
 `control-key-not-in-defaults`, `preset-key-not-in-defaults`, `mixed-section-shape`,
-`duplicate-preset-name`, `duplicate-node-id` (errors);
+`duplicate-preset-name`, `duplicate-node-id`, `select-options-missing`,
+`select-default-not-in-options` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
 `default-not-exposed` (warnings).
 

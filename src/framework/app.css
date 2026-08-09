@@ -82,6 +82,11 @@ select.preset {
   border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); padding: 7px 9px;
   font-family: var(--pf-mono); font-size: 11px;
 }
+select.select-input {
+  width: 100%; background: var(--pf-input-bg); color: var(--pf-text-2);
+  border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); padding: 7px 9px;
+  font-family: var(--pf-mono); font-size: 11px;
+}
 .feat { display: flex; align-items: center; gap: 8px; margin: 6px 0;
   color: var(--pf-text-2); cursor: pointer; }
 .feat input { cursor: pointer; accent-color: var(--pf-accent); }

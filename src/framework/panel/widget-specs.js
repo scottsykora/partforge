@@ -21,12 +21,21 @@ const LEGACY_CONTROL = ["key", "label", "unit", "min", "max", "step", "control",
 // What it called TOGGLE_FIELDS.
 const LEGACY_TOGGLE = ["key", "label", "on", "hidden", "description"];
 
+// The authored shape (author.js's normalized node tree): every control carries
+// `type`, and `when`/`whenFalse` are real fields there (phase 6 landed them for
+// this shape only — the legacy lists above stay frozen so a legacy `when` still
+// warns). select/radio are new-shape-only types (no legacy equivalent), so
+// their WIDGET_SPECS `fields` use this list directly rather than a legacy one.
+const AUTHOR_COMMON = ["key", "type", "label", "description", "hidden", "when", "whenFalse"];
+
 export const WIDGET_SPECS = [
   { type: "slider", kind: "control", fields: LEGACY_CONTROL },
   { type: "number", kind: "control", fields: LEGACY_CONTROL },
   { type: "text", kind: "control", fields: LEGACY_CONTROL },
   { type: "textarea", kind: "control", fields: LEGACY_CONTROL },
   { type: "checkbox", kind: "control", fields: LEGACY_TOGGLE },
+  { type: "select", kind: "control", fields: [...AUTHOR_COMMON, "options"] },
+  { type: "radio", kind: "control", fields: [...AUTHOR_COMMON, "options"] },
 ];
 
 const BY_TYPE = new Map(WIDGET_SPECS.map((s) => [s.type, s]));
@@ -35,18 +44,15 @@ export const WIDGET_TYPES = WIDGET_SPECS.map((s) => s.type);
 export const specFor = (type) => BY_TYPE.get(type);
 export const fieldsFor = (type) => BY_TYPE.get(type)?.fields ?? [];
 
-// The authored shape (author.js's normalized node tree): every control carries
-// `type`, and `when`/`whenFalse` are real fields there (phase 6 landed them for
-// this shape only — the legacy lists above stay frozen so a legacy `when` still
-// warns). Per-type extras beyond AUTHOR_COMMON; select/radio/readout join
-// AUTHOR_EXTRAS in Tasks 7 and 8.
-const AUTHOR_COMMON = ["key", "type", "label", "description", "hidden", "when", "whenFalse"];
+// Per-type extras beyond AUTHOR_COMMON; readout joins AUTHOR_EXTRAS in Task 8.
 const AUTHOR_EXTRAS = {
   slider: ["unit", "min", "max", "step", "scale", "ticks", "snap", "recommended"],
   number: ["unit", "min", "max", "step", "scale", "ticks", "snap", "recommended"],
   text: [],
   textarea: [],
   checkbox: ["on"],
+  select: ["options"],
+  radio: ["options"],
 };
 const AUTHOR_FIELDS = new Map(Object.entries(AUTHOR_EXTRAS).map(
   ([type, extra]) => [type, [...AUTHOR_COMMON, ...extra]]));
@@ -59,3 +65,15 @@ export const GROUP_FIELDS = ["type", "id", "title", "collapsed", "bare", "when",
 // NB: no "description" — renderGroup has nowhere to hang an info glyph (the
 // toggle is itself a button). Sections keep descriptions (SECTION_FIELDS).
 export const PRESET_FIELDS = ["type", "id", "label", "presets", "when", "whenFalse", "hidden"];
+
+// select/radio option normalization: long form [{ value, label?, description? }]
+// or shorthand ["round", 8, ...] where each entry is both value and label. Lives
+// here rather than in the select widget because lint's validators consume it
+// and must stay DOM-free (widgets/select.js imports info.js -> markdown.js).
+export function normalizeOptions(options) {
+  return (Array.isArray(options) ? options : [])
+    .filter((o) => o != null)
+    .map((o) => (typeof o === "object"
+      ? { value: o.value, label: o.label ?? String(o.value), description: o.description }
+      : { value: o, label: String(o) }));
+}
