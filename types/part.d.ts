@@ -144,9 +144,10 @@ export interface PanelReadoutEntry {
 }
 
 /**
- * One parameter control. The recognised field list mirrors
- * `CONTROL_FIELDS` in src/framework/lint/rules-schema.js — anything else is
- * ignored by the panel and warned about by `partforge lint`.
+ * One parameter control in a legacy `advanced` / `sliders` array. The recognised
+ * field list is the registry's, `fieldsFor("slider")` in
+ * src/framework/panel/widget-specs.js — anything else is ignored by the panel and
+ * warned about by `partforge lint`.
  *
  * @deprecated Prefer a `controls` array of control nodes. Still fully supported.
  */

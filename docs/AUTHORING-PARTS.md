@@ -453,109 +453,339 @@ even at animation rates (see `runtime.setParams`).
 
 ## Parameters: the control-panel schema
 
-`parameters` is an **array of sections**; the framework builds the panel from it and
-binds each control to a key in `defaults`. Two section kinds:
+`parameters` is an **array of sections**. Each section is a node with a `controls`
+array, and **authored order is render order** — what you write top-to-bottom is what
+the user reads top-to-bottom:
 
-**Preset + controls section:**
+```js
+{
+  id: "body",              // optional; also the node id (see "Ids" below)
+  title: "Body",
+  description: "...",      // CommonMark, behind the section's ⓘ glyph
+  collapsed: "auto",       // true | false | "auto" (default)
+  when: { ... },           // optional condition — see "Conditions" below
+  controls: [ /* entries, in render order */ ],
+}
+```
+
+Every entry in `controls` is one of four things, told apart by its `type`:
+
+- a **control** — bound to one key in `defaults` (`type` defaults to `"slider"`,
+  so a plain `{ key, label, min, max, step }` is a slider);
+- **`type: "group"`** — a nested container with its own `controls` array;
+- **`type: "preset"`** — a picker that writes a bundle of parameters at once;
+- **`type: "readout"`** — a read-only display of a `derive()` output.
+
+Groups nest, but **two levels is the limit** — a section plus one fold inside it is
+as deep as a 300 px rail stays readable, and `partforge lint` warns (`group-depth`)
+past that. Flatten by promoting the inner group to its own section.
+
+A complete section, exercising most of the model:
+
+```js
+defaults: { profile: "round", facets: 6, dia: 80, wall: 2, feet: 0 },
+derive: (p) => ({ innerDia: p.dia - 2 * p.wall }),
+
+parameters: [
+  {
+    id: "body",
+    title: "Body",
+    description: "Silhouette and size of the vessel.",
+    controls: [
+      { type: "preset", presets: {
+          "Pen cup": { dia: 80,  wall: 2,   profile: "round" },
+          Vase:      { dia: 120, wall: 2.4, profile: "faceted", facets: 8 },
+      } },
+
+      { key: "profile", type: "radio", label: "Profile",
+        options: [{ value: "round", label: "Round" }, { value: "faceted", label: "Faceted" }],
+        description: "**Round** revolves the silhouette; **faceted** prisms it." },
+
+      { key: "facets", type: "slider", label: "Facets", min: 3, max: 12, step: 1,
+        when: { profile: "faceted" },              // only shown on a faceted profile
+        description: "Sides of the prism. 6–8 reads as faceted without looking coarse." },
+
+      { key: "dia", type: "slider", label: "Diameter", unit: "mm", min: 30, max: 150, step: 1,
+        description: "Outer diameter at the widest point; 60–100 mm suits a pen cup." },
+
+      { type: "group", title: "Wall", collapsed: "auto", controls: [
+        { key: "wall", type: "slider", label: "Thickness", unit: "mm",
+          min: 0.8, max: 4, step: 0.1, recommended: [1.2, 4],
+          description: "Wall thickness. Under 1.2 mm an FDM print gets fragile." },
+
+        { type: "readout", label: "Inner diameter", derivedKey: "innerDia", unit: "mm",
+          description: "Diameter minus both walls — the space something actually has to fit into." },
+
+        { key: "feet", type: "checkbox", label: "Raised feet", on: 3,
+          description: "Lift the base on four 3 mm feet so it drains and de-moulds cleanly." },
+      ] },
+    ],
+  },
+]
+```
+
+Every control `key` must exist in `defaults`, or the control is silently dead —
+`control-key-not-in-defaults` is an error for exactly that reason.
+
+**Ids.** A section, a group and a preset may carry an `id`; the renderer keys its
+element, state and disclosure maps on ids, so they must be unique across the whole
+panel (`duplicate-node-id`). A **control** entry's `id` is ignored — controls get
+positional ids — and lint reports it as an unknown field. Leave `id` off unless you
+need a stable handle.
+
+### Control types
+
+Every control accepts `key`, `type`, `label`, `description`, `hidden`, `when` and
+`whenFalse`. Beyond those:
+
+| `type` | Renders as | Extra fields |
+|---|---|---|
+| `"slider"` (default) | a range track plus an editable number box | `unit`, `min`, `max`, `step`, and the refinements below |
+| `"number"` | the number box alone — for precise or very wide ranges | `unit`, `min`, `max`, `step` |
+| `"text"` | a single-line string field | — |
+| `"textarea"` | a multiline string field; line breaks are preserved | — |
+| `"checkbox"` | an on/off box: ticked writes `on`, cleared writes `0` | `on` (default `1`) |
+| `"select"` | a dropdown | `options` |
+| `"radio"` | a segmented button row | `options` |
+
+Numeric controls always show the number box: drag the slider *or* type an exact
+value. Typed values may be finer than `step` and clamp to `[min, max]` on commit.
+Text fields write `params` on every keystroke, so the rebuild loop previews the new
+string immediately; give every text key a string default (empty strings are valid,
+and the build decides whether its geometry tolerates one).
+
+**`options`** (select/radio) takes either the shorthand `["round", "faceted"]` —
+each entry is both value and label — or the long form
+`[{ value, label, description? }]`. Values may be strings or numbers, and
+`defaults[key]` **must be one of them** (`select-default-not-in-options`; watch
+types, `12` is not `"12"`). An option's `description` surfaces as a hover tooltip
+on that one option, not as a ⓘ popover.
+
+**`"readout"` is not a control.** It has no `key`, never writes `params`, and can
+never be a preset target. It displays one output of `derive()`, named by
+`derivedKey`, refreshed on every parameter change; `unit` is appended to numeric
+values. A `derivedKey` no `derive` group returns shows an em-dash forever, which
+`readout-unknown-derived-key` warns about. Readouts are how a panel closes the loop
+on design intent — show the user the clearance, the inner diameter, the resulting
+wall — without adding a parameter nobody should edit.
+
+**A `group`** takes `type`, `id`, `title`, `collapsed`, `bare`, `controls`,
+`hidden`, `when` and `whenFalse`. It deliberately takes **no `description`**: the
+fold's title is itself a button, and there is nowhere to hang an ⓘ glyph beside it.
+Put the explanation on the section or on the controls inside. `bare: true` drops the
+title and the disclosure entirely, leaving an indented block — useful for a run of
+controls that appear and disappear together under one `when`.
+
+### Control metadata
+
+- `description` — a CommonMark string shown in a click-open **ⓘ** popover beside the
+  label. Supports **bold/italic**, lists, `code`, links and images (for diagrams);
+  links open in a new tab and the rendered HTML is sanitized. Write one for every
+  control — see "A description for every control" below.
+- `hidden: true` — omits the node from the panel. Its `key` must still exist in
+  `defaults` and still drives the geometry: this is *no UI*, not *no parameter*. Use
+  it for internal constants the end user shouldn't edit. A group left with no visible
+  children doesn't render at all, and neither does an empty section.
+
+### Slider refinements
+
+Three optional fields shape how a numeric track behaves. All three are worth reaching
+for when a raw linear slider misrepresents the parameter.
+
+- **`scale: "log"`** — the thumb travels geometrically, so a 0.1–100 range gives each
+  decade equal width instead of burying everything below 10 in the first pixel. The
+  number box stays linear and exact, so typing `0.5` still works. `min` **must be
+  greater than 0** (`log(0)` is `-Infinity` and the mapping breaks); lint reports
+  `log-scale-needs-positive-min`.
+- **`ticks: [...]`** — marked values on the track (a native `datalist`). Every tick
+  must sit inside `[min, max]`. Add **`snap: true`** to quantize *slider drags* to the
+  nearest tick; the number box stays free, so an off-tick value is always still
+  typeable. Use it for stock sizes: M3/M4/M5, 3 mm / 6 mm plate.
+- **`recommended: [lo, hi]`** — tints that span of the track and puts a warning border
+  on the number box when the value sits outside it. This is the **visual companion to
+  the DFM checks**: the band is where the process the part targets is comfortable
+  (minimum wall, nozzle multiples, sane clearances), and `verify`'s `minWall` /
+  process checks are the same judgement enforced at measure time. It is advisory —
+  outside values remain selectable, because a user who knows their printer should not
+  be blocked by a default profile.
+
+`ticks`, `snap` and `recommended` render on a **linear track only**; combined with
+`scale: "log"` they are ignored, and `slider-refinement-invalid` warns. On a
+`"number"` control there is no track at all: `recommended` still tints the box on an
+out-of-band value, while `scale`, `ticks` and `snap` do nothing.
+
+### Conditions: `when` and `whenFalse`
+
+`when` is valid on **any** node — a control, a group, a preset, a readout, or a
+section itself. It is a plain data condition evaluated against raw parameters:
+
+```js
+when: { profile: "faceted" }                            // equality
+when: { wall: { gte: 1.2 } }                            // gt | gte | lt | lte | ne
+when: { style: { in: ["cup", "vase"] } }                // membership
+when: { drain: { gt: 0 }, mode: "planter" }             // multiple keys are ANDed
+when: { allOf: [{ drain: { gt: 0 } }, { mode: "planter" }] }
+when: { anyOf: [{ style: "cup" }, { style: "vase" }] }
+when: { not: { style: "plain" } }
+```
+
+The operators are `gt`, `gte`, `lt`, `lte`, `ne` and `in`; the combinators are
+`allOf`, `anyOf` and `not`. Two rules make conditions statically checkable, and both
+are enforced as **errors** because either failure is silent at runtime:
+
+- **Raw parameter keys only.** A `when` reads keys from `defaults`, never derived
+  values — that is what lets lint check every referenced key against `defaults`
+  (`when-key-not-in-defaults`), which no predicate function could support. Readouts
+  reach derived values through their own `derivedKey`, so there is never any doubt
+  which namespace a name is in.
+- **Known operators only.** `evalWhen` treats an unrecognised operator as false, so a
+  typo would hide the node forever; `when-unknown-operator` catches it first.
+
+A malformed condition evaluates to `false` rather than throwing — a control that
+hides is better than a panel that crashes.
+
+When the condition is false the node is **removed from the layout**, taking its
+subtree with it if it is a group. Set **`whenFalse: "disable"`** to grey it in place
+instead, for the case where the user should see that an option exists but needs
+something else switched on first. Disabling propagates through the whole subtree and
+sets real `disabled` attributes, so a disabled control cannot be focused or dragged.
+
+**`when` is not relevance dimming.** The panel also dims controls automatically, and
+the two are different mechanisms that must stay visually distinct:
+
+| | Relevance dimming | `when` |
+|---|---|---|
+| Answers | "does the geometry on screen actually read this parameter?" | "did the author say this applies right now?" |
+| Comes from | probing the build — automatic, nothing to write | your `when` condition |
+| Looks like | faded but fully usable, with a "doesn't affect the parts in the current view" tooltip | gone from the layout, or genuinely disabled |
+
+A control can be relevant but conditioned away, or conditioned in but irrelevant.
+Both recompute on the same tick as any parameter change. Don't reach for `when` to
+reproduce dimming — you'd be hand-maintaining something the framework already knows.
+
+### Collapsing
+
+Every section and every titled group is a disclosure, controlled by `collapsed`:
+`true` (start closed), `false` (start open), or `"auto"` (the default). `"auto"`
+defers to one rule:
+
+> A panel with **three or fewer visible top-level sections** opens every `"auto"`
+> section and fold on load. Beyond that, they all start closed.
+
+The rail is a fixed-height column, and a long part otherwise scrolls forever; three
+sections is a panel the user can take in at a glance. Sections are counted after
+`hidden` and empty ones are dropped, so the number you see is the number that counts.
+Only the **first** render applies it — after that the user's own clicks own the folds,
+and a slider drag never snaps a section they opened back shut. A `bare: true` group
+has no disclosure at all and is never collapsed.
+
+### Presets
+
+A preset picker is a node like any other:
+
+```js
+{ type: "preset", label: "Size", presets: {
+    M3: { od: 8,  bore: 3.4, h: 10 },
+    M5: { od: 12, bore: 5.4, h: 16 },
+} }
+```
+
+Each key of `presets` is a name, each value a bundle of parameter overrides (every
+key of which must exist in `defaults` — `preset-key-not-in-defaults`). The picker
+lists the names plus **Custom**, and opens on the first name. Choosing a preset
+assigns its overrides over `params` and refreshes that section's controls; editing
+any control in the section afterwards drops the picker to **Custom**.
+
+Because it is a node, a picker can sit **anywhere** in `controls` — among the
+controls it affects, not necessarily at the top — and a section may carry more than
+one. Note that Custom-marking tracks the section's **first** picker only, so if two
+pickers in one section both need to show divergence, give each its own section.
+
+**Preset names are global to the part**, not to the section: `verify()` expands one
+case per preset name (so every preset gets measured), and a repeated name throws
+there. `duplicate-preset-name` catches it at lint time instead.
+
+### Legacy section shapes (still supported)
+
+Everything above is what a **new part should write**. The original array-based shapes
+predate the node model, still work exactly as they always did, and are not going
+away — most of the in-repo parts are deliberately left on them as live proof. They
+are sugar: `desugar()` normalizes them into the very same nodes, so conditions,
+collapsing and lint apply to them uniformly.
+
+| Legacy | Normalizes to |
+|---|---|
+| `presets: {...}` | a `{ type: "preset" }` node, first child of the section |
+| `toggles: [{ key, label, on }]` | `"checkbox"` controls placed directly in the section, after the picker and before the Advanced fold |
+| `advanced: [...]` | a nested group titled **Advanced**, `collapsed: "auto"` |
+| `features: [{ key, on, sliders }]` | per feature: a `"checkbox"`, followed by a `bare` group of its sliders carrying `when: { [key]: { gt: 0 } }` — both inside the Advanced group |
+| `control: "number"` | `type: "number"` |
+| `hidden: true` | kept through desugaring (lint needs it), dropped when the render tree is built |
+
+**Preset + controls section** — a picker, standalone toggles, and an Advanced fold:
 
 ```js
 {
   id: "body",
   title: "Body",
-  presets: { M3: { od: 8, bore: 3.4, h: 10 }, M5: { od: 12, bore: 5.4, h: 16 } }, // name → param overrides
+  presets: { M3: { od: 8, bore: 3.4, h: 10 }, M5: { od: 12, bore: 5.4, h: 16 } },
+  toggles: [
+    { key: "clip", label: "Clip arms to a disc (intersect)", on: 1,
+      description: "**Intersect** the cross with a circle so the arm tips round off." },
+  ],
   advanced: [                                  // controls revealed under "Advanced"
     { key: "od",   label: "Outer diameter", unit: "mm", min: 4, max: 40, step: 0.5 },
-    { key: "bore", label: "Bore",           unit: "mm", min: 1, max: 30, step: 0.1, control: "number" },
+    { key: "bore", label: "Bore", unit: "mm", min: 1, max: 30, step: 0.1, control: "number" },
     { key: "title", label: "Title", control: "text" },
-    { key: "label", label: "Label", control: "textarea" },
   ],
 }
 ```
 
-Numeric slider/feature controls show an **editable number box** beside them — drag the
-slider or type an exact value (finer than `step` is allowed; typed values clamp to
-`[min, max]`). Optional `control` per parameter chooses the input:
+`control` is the legacy spelling of `type` and takes `"slider"` (the default),
+`"number"`, `"text"` or `"textarea"` — the newer `"checkbox"`, `"select"`, `"radio"`
+and `"readout"` types exist only in the `controls` shape. A `toggles` entry is
+`{ key, label, on?, hidden?, description? }`: checked writes `on` (default `1`),
+unchecked writes `0`. It is the right home for a bare boolean in this shape.
 
-- omit it (or use `"slider"`) for a slider + number box;
-- `"number"` for a number box only (handy for precise or wide-range values);
-- `"text"` for a single-line string field;
-- `"textarea"` for a multiline string field whose line breaks are preserved.
-
-Text fields update `params` live on every edit, so the existing rebuild loop previews
-the new string immediately. Give every text key a string value in `defaults`; empty
-strings are valid control values, while the part's build function decides whether its
-geometry supports them. Editing any control in a preset section selects `Custom`, and
-choosing a preset updates both numeric and text fields.
-
-**Feature-toggle section** (checkbox enables a feature + reveals its sliders; `0` = off):
+**Feature-toggle section** — a checkbox that enables a feature *and* reveals its own
+sliders (`0` = off):
 
 ```js
 {
   id: "flange",
   title: "Flange",
   features: [
-    { label: "Base flange", key: "flange_d", on: 16,    // checked → set key to `on`; unchecked → 0
+    { label: "Base flange", key: "flange_d", on: 16,
       sliders: [{ key: "flange_d", label: "Flange diameter", unit: "mm", min: 8, max: 50, step: 1 }] },
   ],
 }
 ```
 
-Every `key` used must exist in `defaults`. `src/parts/demo.js` is the worked example for
-everything below.
-
 A feature's `on` is **required and must be greater than 0** — it is the real value the
 parameter takes when the box is ticked (a diameter, a count), and the panel reads
-`> 0` as "enabled", so there is nothing sensible to fall back to. `partforge lint`
-reports a missing or non-positive one as `features-requires-on`. A `toggles` entry is
-the exception: its `on` is just a flag and defaults to 1.
+`> 0` as "enabled", so there is nothing sensible to fall back to
+(`features-requires-on`). `sliders` is required too (`features-requires-sliders`) — it
+is what the checkbox reveals, and a feature with nothing to reveal belongs in
+`toggles` instead. A section carrying `features` renders *only* its features — its
+`presets`, `toggles` and `advanced` are ignored.
 
-**Standalone toggles** (a plain on/off checkbox, no accompanying sliders): add a
-`toggles` array to a preset section — shown below the preset picker, outside the
-Advanced fold, so it stays visible:
+Three behaviours differ between the shapes, and they are frozen that way on purpose:
 
-```js
-{
-  id: "shape",
-  title: "Shape ops",
-  toggles: [
-    { key: "clip", label: "Clip arms to a disc (intersect)", on: 1,
-      description: "**Intersect** the cross with a circle so the four arm tips are rounded off to a common radius." },
-  ],
-}
-```
+- A legacy **feature** checkbox restores the magnitude the user had dialled in when
+  re-ticked; an authored `"checkbox"` always writes `on`. The node-model way to get a
+  feature is a checkbox plus a group gated on `when: { key: { gt: 0 } }` — which is
+  exactly what `features` desugars to.
+- **Every** control in a `controls` section marks the section's picker Custom when
+  edited. In the legacy shapes, feature sliders and toggles do not.
+- `collapsed` is honoured on `controls`-shape sections and on authored groups only. A
+  legacy-shaped section, and the "Advanced" fold it desugars to, are always `"auto"` —
+  they follow the three-section rule and nothing else.
 
-Each entry is `{ key, label, on?, hidden?, description? }`: checked sets `key` to `on`
-(default `1`); unchecked sets it to `0`. This is the correct home for a bare boolean —
-a `features` entry *requires* a `sliders` array (the panel reads `feat.sliders.filter(...)`
-unguarded and throws if it's missing), so a feature with nothing to reveal belongs in
-`toggles` instead. `src/parts/bracket.js`'s `clip` toggle (shown above) is the worked
-example.
-
-**Control metadata (optional — on any control def, feature, or section):**
-
-- `description` — a CommonMark string shown in a click-open **ⓘ** popover beside the
-  label. Supports **bold/italic**, lists, `code`, links, and images (for diagrams);
-  links open in a new tab and the rendered HTML is sanitized. Write one for every
-  control — see "A description for every control" below.
-- `hidden: true` — omits the control/feature/section from the panel. Its `key` must still
-  exist in `defaults` and still drives the geometry: use it for internal constants the
-  end user shouldn't edit (it is *no UI*, not *no parameter*). A section left with no
-  presets and no visible controls doesn't render at all.
-
-```js
-advanced: [
-  { key: "od", label: "Outer diameter", unit: "mm", min: 4, max: 40, step: 0.5,
-    description: "Barrel OD. Keep it larger than the bore so a wall remains. See the [guide](https://example.com)." },
-  { key: "wall_seg", min: 8, max: 256, step: 1, hidden: true,   // internal constant; no UI, still in defaults
-    description: "Facet count — fixed by the design." },
-],
-```
-
-**Collapsing.** Each section is a disclosure. A panel with **three or fewer
-sections opens every section and every Advanced fold on load**; beyond that they
-all start closed, because the rail is a fixed-height column and a long part
-otherwise scrolls forever. Set `collapsed: true` or `collapsed: false` on a
-section to override the rule in either direction.
+**A section is one shape or the other.** Mixing `controls` with `advanced`,
+`toggles`, `features` or `presets` is the error `mixed-section-shape` — the render
+order of the mixture would be arbitrary. (`controls` wins if you do it anyway.) A
+single *part* may mix freely, one shape per section, so migration can go section by
+section.
 
 ---
 
@@ -611,12 +841,47 @@ coherently:
 Tier the controls so the default view is uncluttered:
 
 1. **Presets** for the common cases — the first thing most users pick.
-2. A **few primary sliders** for the dimensions users change most.
-3. **`Advanced`** (the collapsible block) for the rest.
-4. **`hidden`** for internal constants the end user shouldn't edit.
+2. A **few primary controls** for the dimensions users change most, sitting loose in
+   the section.
+3. **A nested group** (`{ type: "group", title: "...", collapsed: "auto" }`) for the
+   rest — one per idea, titled for what it is (`Wall`, `Lid`, `Mounting`), not
+   "Advanced". Two levels is the ceiling.
+4. **`hidden: true`** for internal constants the end user shouldn't edit.
 
-Aim for a panel with a few visible controls that still exposes the full design when
-someone opens Advanced.
+Keep a section to **12 visible controls or fewer** — past that `section-too-many-controls`
+warns, because more than a dozen in one column reads as a wall rather than a set of
+choices. If a section is over budget, the fix is almost always that two ideas are
+sharing it: split the section, or fold one idea into a group.
+
+Aim for a panel whose first screen is a handful of controls, and whose full design is
+one click away in a fold.
+
+### Choosing a control
+
+The type carries meaning, so pick the one that matches the parameter rather than
+defaulting everything to a slider:
+
+- **A continuous dimension** → `"slider"`. Add `recommended` when there's a
+  manufacturable band, `ticks` + `snap` when real-world stock sizes exist, and
+  `scale: "log"` when the range spans decades.
+- **A precise or very wide number** (a count, a tolerance, a coordinate) →
+  `"number"`, so the user types rather than hunts.
+- **A discrete choice** → `"select"` when the values are a list, or `"radio"` when
+  there are **2–4** of them and seeing all the options at once is part of the
+  decision. Never fake either one with a slider over magic integers.
+- **A boolean** → `"checkbox"`. Ticked writes `on`, cleared writes `0`; there is no
+  reason for a two-position slider to exist.
+- **A computed value the user should see but not set** → `"readout"`. It costs no
+  parameter and answers the "so what did that do?" question in place.
+
+Then gate what doesn't always apply. A control that is meaningless in the current mode
+should carry a **`when`** rather than sit there inert — hide it by default, or use
+`whenFalse: "disable"` when its existence is itself the information ("Lid hinge:
+enable a lid first"). Conditions are also the cheapest way to keep a section under
+budget: three mode-specific controls that are never all relevant at once cost the
+reader one.
+
+Finally, **every control gets a `description`** — see below.
 
 ### A description for every control
 
@@ -643,6 +908,9 @@ parameters change. You don't wire this up; it's automatic. To get the most from 
 - Scope a parameter to the **views/sub-parts that read it** — a control read by no
   on-screen part shows dimmed, which is a useful signal that it's vestigial or
   misplaced.
+
+This is a separate mechanism from `when`, and stays visually distinct from it on
+purpose — see "Conditions: `when` and `whenFalse`" above for the split.
 
 ---
 
