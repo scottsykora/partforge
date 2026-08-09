@@ -14,7 +14,8 @@
 
 - **Node 24.** `source ~/.nvm/nvm.sh && nvm use` in every shell before npm/npx/node. The default shell Node is too old and geometry/tests fail confusingly.
 - **Zero new dependencies.** `test/lint-purity.test.js` asserts the entire `src/lint.js` import closure has no bare imports. Everything lint reaches — `panel/legacy.js`, `panel/author.js`, `panel/model.js`, `panel/widget-specs.js`, `src/framework/derive.js` — must import nothing bare. If a smoke check needs Playwright: `npm i --no-save playwright@1.61.0` (browsers are cached); never commit a package.json/package-lock.json change other than the version bump.
-- **Legacy parts change NOTHING.** Every 0.47.0 behavior for legacy-shaped parts is frozen. `test/framework/controls.test.js` (31 tests), `test/lint-schema.test.js` (19), `test/lint-animations.test.js` (19), `test/lint-purity.test.js` (3), and `test/framework/mount.test.js` pass **unmodified** throughout. The panel test files created by the foundation plan (`test/framework/panel/*.test.js`) may gain tests in any task; their existing assertions may be amended ONLY where a task explicitly says so (the single such case is Task 8's registry `kind` assertion).
+- **Legacy parts change NOTHING.** Every 0.47.0 behavior for legacy-shaped parts is frozen. `test/framework/controls.test.js` (31 tests), `test/lint-schema.test.js` (19), `test/lint-animations.test.js` (19), `test/lint-purity.test.js` (3), and `test/framework/mount.test.js` pass **unmodified** throughout. The panel test files created by the foundation plan (`test/framework/panel/*.test.js`) may gain tests in any task; their existing assertions may be amended ONLY where a task explicitly says so. The complete list: `test/framework/panel/registry.test.js`'s `WIDGET_TYPES` expected list (Task 7 adds select/radio, Task 8 adds readout), its per-spec `kind` assertion (Task 8: `["control","display"]`), and its factory-coherence assertion (Task 8: filter to `kind === "control"`). No other assertion in any existing test file may be edited.
+- **Every rule-adding task appends its rule's row(s) to the `### Rule catalog` table in `docs/AUTHORING-PARTS.md` (~line 1132) in the SAME task and commit** — `test/lint-registry.test.js` asserts every rule id appears in the docs, and its full-suite gate runs inside each task. Task 14 only adds ERROR-PATTERNS entries and polishes catalog wording.
 - **No capability without its guard rule.** Every field this plan makes authorable ships in the same task as (or before) the lint rule that validates it. This is the spec's standing constraint; do not defer a validator to a later task than its field.
 - **Public exports of `controls.js` must not shrink**: `buildControls`, `popoverTop`, `createInfoPopover`, `attachInfo`, `clampToRange`, `sectionRenders`, `visibleAdvanced`, `visibleFeatures`, `visibleToggles`.
 - **Lint findings carry source paths** (`parameters[0].controls[2].controls[1]`) rooted at the PartDefinition — never node ids. `collectDescriptors` extends; it is never replaced by `desugar` (same reasoning as the foundation plan's Task 8).
@@ -42,8 +43,6 @@
 | File | Change |
 |---|---|
 | `src/framework/panel/legacy.js` | `desugar` routes `controls`-bearing sections to `authoredSection` (3 lines + import). |
-| `src/framework/panel/model.js` | `buildTree`/`controlNodes` learn the `display` kind (Task 8). |
-| `src/framework/panel/panel-state.js` | `display` leaves get state entries (Task 8). |
 | `src/framework/panel/widget-specs.js` | `authorFieldsFor`, new specs (`select`, `radio`, `readout`), refinement fields. |
 | `src/framework/panel/widgets/numeric.js` | `scale:"log"`, `ticks`/`snap`, `recommended` band + warn tint. |
 | `src/framework/panel/widgets/index.js` | New factories registered. |
@@ -260,8 +259,10 @@ function authoredPreset(p) {
 }
 
 function authoredGroup(g) {
+  // No description on inner groups: the fold toggle is itself a button, so
+  // there is nowhere to hang an info glyph. Sections keep theirs.
   return {
-    kind: "group", id: g.id, title: g.title, description: g.description,
+    kind: "group", id: g.id, title: g.title,
     collapsed: g.collapsed ?? "auto", bare: !!g.bare, hidden: !!g.hidden,
     when: g.when, whenFalse: g.whenFalse,
     children: authoredChildren(g.controls),
@@ -289,6 +290,11 @@ export function authoredSection(sec) {
     children: authoredChildren(sec?.controls),
   };
 }
+// NB until Task 8 lands: a `{ type: "readout" }` entry falls through
+// authoredChildren's else-branch to authoredControl, yielding a keyless control
+// node the renderer skips (no factory) — harmless in the intermediate commits.
+// Authored `id` is honored on containers only; a control entry's `id` is
+// dropped (positional ids serve) and lint warns on the unknown field.
 ```
 
 - [ ] **Step 4: Route `desugar` through it**
@@ -412,7 +418,7 @@ Expected: the four new tests FAIL (multi-preset order works only partially; aria
 
 In `src/framework/panel/render.js`:
 
-1. Change `rawSyncs` to hold arrays: `const rawSyncs = new Map(); // sectionId -> [{ key, sync }]`, initialize with `rawSyncs.set(section.id, [])`, register in `renderNode` with `rawSyncs.get(sectionCtx.id).push({ key: node.key, sync: widget.sync })`, and apply in `renderPreset`'s change handler:
+1. Change `rawSyncs` to hold arrays: `const rawSyncs = new Map(); // sectionId -> [{ key, sync }]`, initialize with `rawSyncs.set(section.id, [])`, register in `renderNode` with `if (sectionCtx) rawSyncs.get(sectionCtx.id).push({ key: node.key, sync: widget.sync });` (keep the existing null guard), and apply in `renderPreset`'s change handler:
 
 ```js
       Object.assign(params, bundle);
@@ -420,9 +426,19 @@ In `src/framework/panel/render.js`:
       onEdit();
 ```
 
-(Behavior identical for legacy parts: same syncs run, in render order instead of Map-insertion order — the two are the same order.)
+(Behavior for legacy parts: the same syncs run in the same order, plus previously key-shadowed duplicates now both register — e.g. demo.js's `flange_d` checkbox AND slider. Both syncs are idempotent reads of `params`, so running both is a no-op difference.)
 
-2. In the section loop, give the body an id and the button `aria-controls`:
+2. In `renderPreset`, render an authored `label` (legacy pickers have none and are unaffected) — a preset node's `label` field must not be silently dead:
+
+```js
+    if (node.label) {
+      const row = el("div", "row");
+      row.append(el("label", "", node.label));
+      container.append(row);
+    }
+```
+
+3. In the section loop, give the body an id and the button `aria-controls`:
 
 ```js
     const body = el("div", "sec-body");
@@ -430,7 +446,7 @@ In `src/framework/panel/render.js`:
     title.setAttribute("aria-controls", body.id);
 ```
 
-and in `renderGroup`'s non-bare branch:
+4. In `renderGroup`'s non-bare branch:
 
 ```js
     body.id = `pf-fold-${node.id.replaceAll("/", "-")}`;
@@ -555,7 +571,9 @@ const AUTHOR_COMMON = ["key", "type", "label", "description", "hidden", "when", 
 //   select/radio: options            (specs land in Task 7)
 //   readout: label,unit,derivedKey   (spec lands in Task 8)
 export const authorFieldsFor = (type) => AUTHOR_FIELDS.get(type) ?? [];
-export const GROUP_FIELDS = ["type", "id", "title", "description", "collapsed", "bare", "when", "whenFalse", "hidden", "controls"];
+export const GROUP_FIELDS = ["type", "id", "title", "collapsed", "bare", "when", "whenFalse", "hidden", "controls"];
+// NB: no "description" — renderGroup has nowhere to hang an info glyph (the
+// toggle is itself a button). Sections keep descriptions (SECTION_FIELDS).
 export const PRESET_FIELDS = ["type", "id", "label", "presets", "when", "whenFalse", "hidden"];
 ```
 
@@ -595,7 +613,8 @@ const authoredPart = () => ({
       { key: "wall", type: "slider", label: "Wall", min: 0.8, max: 4, step: 0.1 },
     ] },
   ] }],
-  parts: { main: { build: (k, p) => k.box({ size: [p.od, p.od, p.od] }) } },
+  parts: { main: { views: ["main"], build: (k, p) => k.box({ size: [p.od, p.od, p.od] }) } },
+  views: { main: { label: "Main" } },
 });
 
 test("a clean authored part lints clean", () => {
@@ -724,7 +743,7 @@ function collectPresetBundles(part) {
 }
 ```
 
-3. Rewrite `preset-key-not-in-defaults` and the preset half of `default-not-exposed` to consume `collectPresetBundles` (finding text unchanged; path becomes `${path}["${name}"].${key}` — keep the existing `JSON.stringify(name)` quoting).
+3. Rewrite `preset-key-not-in-defaults` and the preset half of `default-not-exposed` to consume `collectPresetBundles`. Finding text unchanged; the path is `` `${path}[${JSON.stringify(name)}].${key}` `` — `JSON.stringify` supplies the quotes, do not add more (the expected form is `parameters[0].controls[0].presets["A"].odd`).
 
 - [ ] **Step 4: Gates**
 
@@ -832,19 +851,24 @@ test("a clean authored part still lints clean after the new rules", () => {
       // Ids key the renderer's element/state/disclosure maps — a collision
       // silently cross-wires two nodes (one picker syncing another section's
       // widgets). Catch it statically: build the tree and look for repeats.
-      const seen = new Map(); // id -> count
-      const walk = (nodes) => {
-        for (const n of nodes ?? []) {
-          seen.set(n.id, (seen.get(n.id) ?? 0) + 1);
-          if (n.kind === "group") walk(n.children);
-        }
-      };
-      walk(buildTree(desugar(part?.parameters ?? [])));
-      return [...seen].filter(([, count]) => count > 1).map(([id]) =>
+      const seen = new Map(); // id -> [sectionIndex, ...]
+      const tree = buildTree(desugar(part?.parameters ?? []));
+      tree.forEach((section, si) => {
+        const walk = (nodes) => {
+          for (const n of nodes ?? []) {
+            if (!seen.has(n.id)) seen.set(n.id, []);
+            seen.get(n.id).push(si);
+            if (n.kind === "group") walk(n.children);
+          }
+        };
+        seen.set(section.id, [...(seen.get(section.id) ?? []), si]);
+        walk(section.children);
+      });
+      return [...seen].filter(([, secs]) => secs.length > 1).map(([id, secs]) =>
         err("duplicate-node-id",
           `two panel nodes share the id "${id}"`,
           "Node ids must be unique across the whole panel — the renderer keys its element and state maps on them, and a collision silently cross-wires the two nodes. Rename one `id` (or drop it to use the positional default).",
-          ""));
+          `parameters[${secs[0]}]`));
     },
   },
 ```
@@ -856,15 +880,17 @@ import { desugar } from "../panel/legacy.js";
 import { buildTree } from "../panel/model.js";
 ```
 
-- [ ] **Step 4: Gates**
+- [ ] **Step 4: Add the three rule-catalog rows** to `### Rule catalog` in `docs/AUTHORING-PARTS.md` (`test/lint-registry.test.js` requires every rule id in the docs; its gate runs next step).
 
-Run: `npx vitest run test/lint-authored.test.js test/lint-schema.test.js test/lint-purity.test.js && npx vitest run`
+- [ ] **Step 5: Gates**
+
+Run: `npx vitest run test/lint-authored.test.js test/lint-schema.test.js test/lint-purity.test.js test/lint-registry.test.js && npx vitest run`
 Expected: all PASS, lint-schema 19 unmodified, purity green (all new imports are pure).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/framework/lint/rules-schema.js test/lint-authored.test.js
+git add src/framework/lint/rules-schema.js docs/AUTHORING-PARTS.md test/lint-authored.test.js
 git commit -m "Lint: mixed-section-shape, duplicate-preset-name, duplicate-node-id"
 ```
 
@@ -920,7 +946,6 @@ export interface PanelGroupEntry {
   type: "group";
   id?: string;
   title?: string;
-  description?: string;
   collapsed?: boolean | "auto";
   /** No title, no disclosure — just an indented block. */
   bare?: boolean;
@@ -1117,15 +1142,7 @@ function el(tag, className, text) {
   return node;
 }
 
-// Long form [{ value, label?, description? }] or shorthand ["round", 8, ...]
-// where each entry is both value and label. Exported for lint's validators.
-export function normalizeOptions(options) {
-  return (Array.isArray(options) ? options : [])
-    .filter((o) => o != null)
-    .map((o) => (typeof o === "object"
-      ? { value: o.value, label: o.label ?? String(o.value), description: o.description }
-      : { value: o, label: String(o) }));
-}
+import { normalizeOptions } from "../widget-specs.js";
 
 function labeledRow(node, info) {
   const wrap = el("div", "slider");
@@ -1147,6 +1164,7 @@ export function makeSelect(node, params, { onChange, info }) {
     const opt = document.createElement("option");
     opt.value = String(o.value);
     opt.textContent = o.label;
+    if (o.description) opt.title = o.description; // long-form option descriptions surface as tooltips
     select.append(opt);
   }
   select.value = String(params[node.key]);
@@ -1166,6 +1184,7 @@ export function makeRadio(node, params, { onChange, info }) {
   const buttons = opts.map((o) => {
     const b = el("button", "", o.label);
     b.type = "button";
+    if (o.description) b.title = o.description;
     b.addEventListener("click", () => {
       params[node.key] = o.value;
       paint();
@@ -1199,7 +1218,22 @@ select.select-input {
 
 (`.seg` styling already exists at the top of app.css — radio reuses it unchanged.)
 
-- [ ] **Step 4: The validators.** Lint must stay DOM-free and `widgets/select.js` imports `info.js` (which pulls `markdown.js`), so lint may never import the widget file. Therefore `normalizeOptions` LIVES in `widget-specs.js` (pure, already in lint's closure): define and export it there, have `widgets/select.js` import it via `import { normalizeOptions } from "../widget-specs.js";` (adjust Step 3 accordingly — do not define it twice), and in `rules-schema.js` add `import { normalizeOptions } from "../panel/widget-specs.js";`. Then append to `SCHEMA_RULES`:
+- [ ] **Step 4: The validators.** Lint must stay DOM-free and `widgets/select.js` imports `info.js` (which pulls `markdown.js`), so lint may never import the widget file. `normalizeOptions` therefore LIVES in `widget-specs.js` (pure, already in lint's closure) — define and export it there:
+
+```js
+// Long form [{ value, label?, description? }] or shorthand ["round", 8, ...]
+// where each entry is both value and label. Lives here rather than in the
+// select widget because lint's validators consume it and must stay DOM-free.
+export function normalizeOptions(options) {
+  return (Array.isArray(options) ? options : [])
+    .filter((o) => o != null)
+    .map((o) => (typeof o === "object"
+      ? { value: o.value, label: o.label ?? String(o.value), description: o.description }
+      : { value: o, label: String(o) }));
+}
+```
+
+In `rules-schema.js` add `import { normalizeOptions } from "../panel/widget-specs.js";`, then append to `SCHEMA_RULES`:
 
 ```js
   {
@@ -1256,9 +1290,11 @@ Expected: all PASS (purity holds — `normalizeOptions` lives in the pure regist
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/framework/panel/widgets/ src/framework/panel/widget-specs.js src/framework/lint/rules-schema.js src/framework/app.css types/part.d.ts test/framework/panel/ test/lint-authored.test.js
+git add src/framework/panel/widgets/ src/framework/panel/widget-specs.js src/framework/lint/rules-schema.js src/framework/app.css types/part.d.ts docs/AUTHORING-PARTS.md test/framework/panel/ test/lint-authored.test.js
 git commit -m "Add select and radio widgets with their validators"
 ```
+
+(Per the Global Constraints, this commit includes the `select-options-missing` and `select-default-not-in-options` catalog rows in AUTHORING-PARTS.md — `test/lint-registry.test.js` gates on them.)
 
 ---
 
@@ -1268,7 +1304,7 @@ A readout shows a `derive()` output; it is a `display` node, not a control (no k
 
 **Files:**
 - Create: `src/framework/panel/widgets/readout.js`
-- Modify: `src/framework/panel/author.js` (readout entries → display nodes), `src/framework/panel/model.js` (`displayNodes` helper), `src/framework/panel/panel-state.js` (display leaves), `src/framework/panel/render.js` (display rendering + `refresh`), `src/framework/mount.js` (`updateRelevance` body), `src/framework/panel/widget-specs.js` (readout spec, `kind: "display"`), `src/framework/lint/rules-schema.js` (`readout-unknown-derived-key`), `types/part.d.ts` (readout entry type)
+- Modify: `src/framework/panel/author.js` (readout entries → display nodes), `src/framework/panel/render.js` (display rendering + `refresh`), `src/framework/mount.js` (`updateRelevance` body), `src/framework/panel/widget-specs.js` (readout spec, `kind: "display"`), `src/framework/lint/rules-schema.js` (`readout-unknown-derived-key`), `types/part.d.ts` (readout entry type)
 - Test: `test/framework/panel/widgets.test.js`, `test/framework/panel/author.test.js`, `test/lint-authored.test.js` (append); `test/framework/panel/registry.test.js` — amend the "every spec declares a kind" assertion from `toBe("control")` to `expect(["control", "display"]).toContain(spec.kind)` (**the explicitly authorized amendment** from the Global Constraints)
 
 **Interfaces:**
@@ -1354,24 +1390,7 @@ test("a readout whose derivedKey no derive() group produces warns", () => {
     });
 ```
 
-`model.js` — `buildTree` already passes non-group nodes through; add beside `controlNodes`:
-
-```js
-// Depth-first flat walk of the display leaves (readouts).
-export function displayNodes(tree) {
-  const out = [];
-  const walk = (nodes) => {
-    for (const n of nodes ?? []) {
-      if (n.kind === "group") walk(n.children);
-      else if (n.kind === "display") out.push(n);
-    }
-  };
-  walk(tree);
-  return out;
-}
-```
-
-`panel-state.js` — the leaf branch already handles any non-group kind (`dimmed` is control-only, so displays get `dimmed: false` and honor `when`). Verify by reading; no change expected — if the branch special-cases `kind === "control"` for anything besides `dimmed`, extend it so displays get `{ visible, disabled, dimmed: false, dimmedSection: false, open: true }`.
+`model.js` and `panel-state.js` need NO changes: `buildTree` already passes non-group nodes through untouched, `controlNodes` already filters to `kind === "control"`, and the state pass's leaf branch already gives any non-control leaf `dimmed: false` while honoring `when`. Verify all three by reading before moving on. (Known quirk, deliberate: a section whose only leaves are readouts has zero control keys, so under any relevance `Set` it dims — the same pinned legacy behavior as a preset-only section. Ledger it; do not fix here.)
 
 `widgets/readout.js`:
 
@@ -1444,13 +1463,19 @@ and rework the handle:
 `mount.js` — find `const updateRelevance = () => panel.applyRelevance(relevantParamKeys(part, view(), params));` and change the body to:
 
 ```js
-    const updateRelevance = () =>
-      panel.refresh({ relevant: relevantParamKeys(part, view(), params), derived: resolveDerived(part, params) });
+    const updateRelevance = () => {
+      // A throwing derive() must not break every slider drag — mount's pick
+      // flow already guards its own resolveDerived call the same way
+      // (mount.js ~:250). Readouts simply stay em-dashed.
+      let derived = {};
+      try { derived = resolveDerived(part, params); } catch { /* diagnosed by lint/build */ }
+      panel.refresh({ relevant: relevantParamKeys(part, view(), params), derived });
+    };
 ```
 
-adding `resolveDerived` to mount's imports from `./derive.js` if absent (grep first — `param-deps.js` uses it, mount may not import it directly).
+`resolveDerived` is already imported in mount.js (verify — it is used by the pick flow around line 250).
 
-`widget-specs.js` — add `{ type: "readout", kind: "display", fields: ["type", "label", "description", "unit", "derivedKey", "hidden", "when", "whenFalse"] }` and the matching `AUTHOR_EXTRAS`/`AUTHOR_FIELDS` entry (readout's author fields ARE its spec fields). Amend the registry test's kind assertion as authorized. The factory-coherence test maps CONTROL types to factories; readout's factory lives outside `WIDGET_FACTORIES` (different signature), so exclude `kind: "display"` specs from that assertion — amend it to filter `WIDGET_SPECS.filter((s) => s.kind === "control")`.
+`widget-specs.js` — add `{ type: "readout", kind: "display", fields: ["type", "label", "description", "unit", "derivedKey", "hidden", "when", "whenFalse"] }` and the matching `AUTHOR_EXTRAS`/`AUTHOR_FIELDS` entry (readout's author fields ARE its spec fields). Three authorized registry-test amendments land here: (1) the kind assertion becomes `expect(["control", "display"]).toContain(spec.kind)`; (2) the `WIDGET_TYPES` expected list gains `"readout"` (sorted: `["checkbox","number","radio","readout","select","slider","text","textarea"]`); (3) the factory-coherence assertion filters to control kinds — readout's factory has a different signature and lives outside `WIDGET_FACTORIES` — i.e. compare against `WIDGET_SPECS.filter((s) => s.kind === "control").map((s) => s.type)`.
 
 `rules-schema.js` — the rule (uses `resolveDerived` against defaults; wrap in try/catch — a throwing derive is another rule's problem):
 
@@ -1502,9 +1527,11 @@ Expected: all PASS. mount.test.js unmodified — `applyRelevance` still exists a
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/framework/panel/ src/framework/mount.js src/framework/lint/rules-schema.js types/part.d.ts test/
+git add src/framework/panel/ src/framework/mount.js src/framework/lint/rules-schema.js types/part.d.ts docs/AUTHORING-PARTS.md test/
 git commit -m "Add the readout display node and panel.refresh({relevant, derived})"
 ```
+
+(Includes the `readout-unknown-derived-key` catalog row — the lint-registry gate requires it.)
 
 ---
 
@@ -1530,9 +1557,10 @@ test("a log slider maps its track logarithmically and round-trips through sync",
   const slider = root.querySelector('input[type="range"]');
   expect(slider.min).toBe("0");
   expect(slider.max).toBe("1000");
-  // position 500 is the geometric midpoint: sqrt(0.1 * 100) ≈ 3.1623
+  // position 500 is the geometric midpoint: sqrt(0.1 * 100) ≈ 3.1623.
+  // No step-rounding on the log path — the value is the exact mapping.
   slider.value = "500"; slider.dispatchEvent(new Event("input"));
-  expect(params.r).toBeCloseTo(Math.sqrt(0.1 * 100), 3);
+  expect(params.r).toBeCloseTo(Math.sqrt(0.1 * 100), 6);
   // syncing back after a programmatic change lands the thumb where the value is
   params.r = 100; panel.syncValues(["r"]);
   expect(slider.value).toBe("1000");
@@ -1576,9 +1604,18 @@ In `makeNumeric`, branch on `node.scale === "log"`. Keep every existing linear p
 ```
 
 - slider setup: `slider.min = log ? 0 : node.min; slider.max = log ? LOG_STEPS : node.max; slider.step = log ? 1 : node.step; slider.value = log ? toPos(params[node.key]) : params[node.key];`
-- slider input handler: `const v = log ? toValue(+slider.value) : +slider.value;` then round to the declared `step` (`Math.round(v / node.step) * node.step`) before writing params and the box.
-- box input/change handlers: after writing params, `if (slider) slider.value = log ? toPos(v) : v;`
-- `sync`: same mapping.
+- slider input handler: `const v = log ? toValue(+slider.value) : +slider.value;` — **no step-rounding on either branch**: the linear path stays byte-identical to today (it writes `+slider.value` exactly), and a log track's whole point is resolution that varies with magnitude (`numStr` already trims display noise).
+- box input/change handlers: after writing params, `if (slider) slider.value = log ? toPosSafe(v) : v;` where `toPosSafe` guards the unclamped live-typed value — `toPos(0)` is `-Infinity` and a non-finite assignment makes the browser snap the thumb to mid-track:
+
+```js
+  const toPosSafe = (v) => {
+    if (!(v > 0)) return 0;
+    const t = toPos(v);
+    return Math.max(0, Math.min(LOG_STEPS, Number.isFinite(t) ? t : 0));
+  };
+```
+
+- `sync`: `slider.value = log ? toPosSafe(params[node.key]) : params[node.key];`
 
 Validator in rules-schema.js:
 
@@ -1600,9 +1637,11 @@ Run: `npx vitest run test/framework/panel/widgets.test.js test/framework/control
 Expected: PASS; the linear path untouched (controls.test.js 31 unmodified).
 
 ```bash
-git add src/framework/panel/widgets/numeric.js src/framework/lint/rules-schema.js test/
+git add src/framework/panel/widgets/numeric.js src/framework/lint/rules-schema.js docs/AUTHORING-PARTS.md test/
 git commit -m "Logarithmic slider scale, guarded by lint"
 ```
+
+(Includes the `log-scale-needs-positive-min` catalog row.)
 
 ---
 
@@ -1675,11 +1714,13 @@ test("out-of-range ticks and an inverted recommended band warn", () => {
 
 In `makeNumeric` (linear path; ticks/band are not offered on log sliders — document in the spec fields, lint stays silent since a log slider with ticks simply ignores them... **no, be strict**: fold "ticks/recommended on a log slider" into `slider-refinement-invalid` as a third case):
 
+Place this AFTER the `if (!numeric) { ... }` block that creates `slider` — a `type: "number"` control has `slider === null` and must skip ticks entirely:
+
 ```js
   // ticks: native datalist marks; snap quantizes input to the nearest tick.
   // The datalist id derives from the node id (assigned by buildTree before
   // factories run) — stable across re-renders, no randomness.
-  if (!log && Array.isArray(node.ticks) && node.ticks.length) {
+  if (slider && !log && Array.isArray(node.ticks) && node.ticks.length) {
     const dl = document.createElement("datalist");
     dl.id = `pf-ticks-${node.id.replaceAll("/", "-")}`;
     for (const t of node.ticks) {
@@ -1776,9 +1817,11 @@ Validator:
 Run: `npx vitest run test/framework/panel/widgets.test.js test/framework/controls.test.js test/lint-authored.test.js && npx vitest run`
 
 ```bash
-git add src/framework/panel/widgets/numeric.js src/framework/app.css src/framework/lint/rules-schema.js test/
+git add src/framework/panel/widgets/numeric.js src/framework/app.css src/framework/lint/rules-schema.js docs/AUTHORING-PARTS.md test/
 git commit -m "Slider ticks, snap, and the recommended band"
 ```
+
+(Includes the `slider-refinement-invalid` catalog row.)
 
 ---
 
@@ -1822,7 +1865,7 @@ test("an unknown operator errors with a did-you-mean", () => {
   part.parameters[0].controls[1].when = { show: { gte1: 1 } };
   const f = lintPart(part).errors.find((f) => f.rule === "when-unknown-operator");
   expect(f).toBeTruthy();
-  expect(f.hint).toMatch(/gte/);
+  expect(f.hint).toMatch(/Recognised: gt, gte/);   // the operator list comes from WHEN_OPS
 });
 
 test("a valid condition produces no when findings", () => {
@@ -1907,9 +1950,11 @@ function walkWhen(cond, onKey, onOp) {
 Run: `npx vitest run test/lint-authored.test.js test/lint-schema.test.js test/lint-purity.test.js && npx vitest run`
 
 ```bash
-git add src/framework/lint/rules-schema.js src/framework/panel/widget-specs.js test/lint-authored.test.js
+git add src/framework/lint/rules-schema.js src/framework/panel/widget-specs.js docs/AUTHORING-PARTS.md test/lint-authored.test.js
 git commit -m "Lint validates when conditions: keys against defaults, operators against WHEN_OPS"
 ```
+
+(Includes the `when-key-not-in-defaults` and `when-unknown-operator` catalog rows.)
 
 ---
 
@@ -1945,7 +1990,8 @@ test("a condition-hidden control and section carry .hidden, and a disabled prese
   const preset = root.querySelector("select.preset");
   expect(preset.classList.contains("disabled")).toBe(true);
   expect(preset.disabled).toBe(true);                       // the ATTRIBUTE, not just the class
-  root.querySelector('input[type="checkbox"]').click();
+  const box = root.querySelector('input[type="checkbox"]');
+  box.checked = true; box.dispatchEvent(new Event("change"));   // the file's established idiom
   expect(odWrap.classList.contains("hidden")).toBe(false);
   expect(preset.disabled).toBe(false);
   panel.dispose();
@@ -2010,9 +2056,9 @@ test("nesting groups past two levels warns", () => {
       { type: "group", title: "L3", controls: [{ key: "od", min: 1, max: 10, step: 1 }] },
     ] },
   ] }];
-  const f = lintPart(part).warnings.find((f) => f.rule === "group-depth");
-  expect(f).toBeTruthy();
-  expect(f.path).toBe("parameters[0].controls[0].controls[0].controls[0]");
+  const found = lintPart(part).warnings.filter((f) => f.rule === "group-depth");
+  expect(found).toHaveLength(2);                          // L2 (depth 2) and L3 (depth 3)
+  expect(found[0].path).toBe("parameters[0].controls[0].controls[0]");
 });
 
 test("a section showing more than twelve visible controls warns", () => {
@@ -2097,27 +2143,29 @@ Run: `npx vitest run test/lint-authored.test.js test/lint-schema.test.js && npx 
 Expected: PASS; the nine in-repo parts stay clean (none exceeds the budget).
 
 ```bash
-git add src/framework/lint/rules-schema.js test/lint-authored.test.js
+git add src/framework/lint/rules-schema.js docs/AUTHORING-PARTS.md test/lint-authored.test.js
 git commit -m "Structural lint: group-depth and section-too-many-controls"
 ```
+
+(Includes the `group-depth` and `section-too-many-controls` catalog rows.)
 
 ---
 
 ### Task 14: ERROR-PATTERNS entries and the rule catalog
 
 **Files:**
-- Modify: `docs/ERROR-PATTERNS.md`, `docs/AUTHORING-PARTS.md` (rule catalog section, `### Rule catalog` near line 1124)
+- Modify: `docs/ERROR-PATTERNS.md`, `docs/AUTHORING-PARTS.md` (rule catalog section, `### Rule catalog` near line 1132)
 
 - [ ] **Step 1: Read both files' existing formats first.** ERROR-PATTERNS is one `##` per pattern mapping literal symptom → cause → fix; the rule catalog is a table. Match them exactly.
 
-- [ ] **Step 2: Add a rule-catalog row for every rule this plan added** — `mixed-section-shape` (error), `duplicate-preset-name` (error), `duplicate-node-id` (error), `select-options-missing` (error), `select-default-not-in-options` (error), `readout-unknown-derived-key` (warn), `log-scale-needs-positive-min` (error), `slider-refinement-invalid` (warn), `when-key-not-in-defaults` (error), `when-unknown-operator` (error), `group-depth` (warn), `section-too-many-controls` (warn) — one line each, wording lifted from each rule's hint.
+- [ ] **Step 2: Polish the rule-catalog rows the earlier tasks appended.** Each rule task added its own row(s) as it landed (the lint-registry gate forces that); this step reads the full catalog for consistency — same voice, severity column correct (errors: mixed-section-shape, duplicate-preset-name, duplicate-node-id, select-options-missing, select-default-not-in-options, log-scale-needs-positive-min, when-key-not-in-defaults, when-unknown-operator; warns: readout-unknown-derived-key, slider-refinement-invalid, group-depth, section-too-many-controls) — and tightens wording where rows were written in haste.
 
-- [ ] **Step 3: Add ERROR-PATTERNS entries** for the failure modes an agent will actually hit as literal text:
+- [ ] **Step 3: Add ERROR-PATTERNS entries.** `test/error-patterns.test.js` enforces the format: each entry is a kebab-case `##` heading with `Symptom` / `Cause` / `Fix` in order, and every id must be appended to that test's `BASELINE_IDS` list (ids are permanent). Add four entries with exactly these ids, and append the four ids to `BASELINE_IDS`:
 
-- `duplicate preset name across sections` (the cases.js throw) → cause: same preset name in two sections/nodes → fix: rename; lint `duplicate-preset-name` catches it earlier.
-- `a control renders but never changes the geometry` → cause: `when` referencing a key not in defaults / select value type mismatch (string "12" vs number 12) → fix: run `npx partforge lint`; conditions read raw defaults keys; option values keep their JS type.
-- `readout shows an em-dash forever` → cause: `derivedKey` not produced by `derive()` → fix: name a key a derive group returns (`readout-unknown-derived-key`).
-- `the panel opens on a value the picker can't reproduce` → cause: default not in select options → fix per `select-default-not-in-options`.
+- `## duplicate-preset-name-throws` — Symptom: `duplicate preset name across sections: "..."` thrown from verify/measure. Cause: the same preset name declared twice (legacy field or preset node). Fix: rename one; `npx partforge lint` reports `duplicate-preset-name` before verify ever runs.
+- `## when-condition-never-true` — Symptom: a control with `when` never appears, no error anywhere. Cause: the condition references a key not in `defaults` (reads undefined, always false) or a typo'd operator (evalWhen treats unknown operators as false). Fix: run lint — `when-key-not-in-defaults` / `when-unknown-operator` name the key/operator.
+- `## readout-shows-em-dash` — Symptom: a readout renders "—" forever. Cause: `derivedKey` names a key no `derive()` group produces. Fix: name a produced key or add it to `derive`; lint warns via `readout-unknown-derived-key`.
+- `## select-default-unreachable` — Symptom: the panel opens showing a value the select/radio can never get back to. Cause: `defaults[key]` is not among the options (watch value types — `12` ≠ `"12"`). Fix: add the default to `options` or change the default; lint errors via `select-default-not-in-options`.
 
 - [ ] **Step 4: Commit**
 
@@ -2130,7 +2178,7 @@ git commit -m "Document the new lint rules in the catalog and error patterns"
 
 ### Task 15: rewrite the Parameters authoring guide
 
-The LLM-facing payoff. `docs/AUTHORING-PARTS.md` "Parameters: the control-panel schema" (`## Parameters` at ~line 446 through the `---` before `## Designing the control panel`) gets rewritten around the node model; the legacy shapes move to a clearly-marked compatibility subsection at the end of it. "Designing the control panel" gains when-to-reach-for guidance.
+The LLM-facing payoff. `docs/AUTHORING-PARTS.md` "Parameters: the control-panel schema" (`## Parameters: the control-panel schema` at ~line 454 through the `---` before `## Designing the control panel`) gets rewritten around the node model; the legacy shapes move to a clearly-marked compatibility subsection at the end of it. "Designing the control panel" gains when-to-reach-for guidance.
 
 **Files:**
 - Modify: `docs/AUTHORING-PARTS.md`
@@ -2222,7 +2270,9 @@ Two in-repo parts move to the new shape as live proof and corpus examples; the o
     {
       id: "body",
       title: "Body",
-      description: "…keep the existing description…",
+      description:
+        "The faceted vessel. Pick a preset to start, or dial exact dimensions below — " +
+        "**Facets** and **Twist** are pure styling; open **Wall** for the one that decides whether it prints cleanly.",
       controls: [
         { type: "preset", presets: { /* the existing three presets, unchanged */ } },
         { key: "facets", type: "slider", label: "Facets", min: 3, max: 12, step: 1, description: "…" },
