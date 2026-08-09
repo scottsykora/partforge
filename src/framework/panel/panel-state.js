@@ -15,12 +15,15 @@ export function computeState(tree, { params, relevant }) {
   const state = new Map();
   const showAll = !(relevant instanceof Set);
 
-  const walk = (nodes, parentVisible, isTop) => {
+  const walk = (nodes, parentVisible, isTop, parentDisabled) => {
     for (const node of nodes) {
       const passes = evalWhen(node.when, params);
       const hideOnFail = node.whenFalse !== "disable";
       const visible = parentVisible && (passes || !hideOnFail);
-      const disabled = !passes && !hideOnFail;
+      // Disabled propagates like visible does: a disabled group disables its
+      // whole subtree in the state itself, so render.js never has to walk
+      // descendants (and get bitten by their sibling ordering) to apply it.
+      const disabled = parentDisabled || (!passes && !hideOnFail);
 
       if (node.kind === "group") {
         // A group is dimmed when nothing inside it is relevant — the
@@ -31,7 +34,7 @@ export function computeState(tree, { params, relevant }) {
         // group merely dims, because collapsing an inner group out of the layout
         // on a relevance change makes the panel jump under the user's cursor.
         state.set(node.id, { visible, disabled, dimmed, dimmedSection: dimmed && isTop });
-        walk(node.children, visible, false);
+        walk(node.children, visible, false, disabled);
       } else {
         state.set(node.id, {
           visible, disabled, dimmedSection: false,
@@ -44,6 +47,6 @@ export function computeState(tree, { params, relevant }) {
     }
   };
 
-  walk(tree, true, true);
+  walk(tree, true, true, false);
   return state;
 }

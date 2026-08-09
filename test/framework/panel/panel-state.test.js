@@ -89,3 +89,21 @@ test("only a TOP-LEVEL group reports dimmedSection — inner groups just dim", (
   expect(st.get("s").dimmedSection).toBe(true);
   expect(st.get("s/g").dimmedSection).toBe(false);
 });
+
+test("a disabled group disables every control inside it, not just itself", () => {
+  // Pins the fix for the order-dependent input-disabling bug: render.js used to
+  // apply `disabled` to descendant inputs itself, walking `nodeEls` in
+  // insertion order — a later sibling pass (or a child's own pass) could
+  // silently re-enable an input a group had just disabled. Propagating
+  // `disabled` through computeState instead makes the state itself the source
+  // of truth, so render.js only ever needs to read a leaf's own `disabled`.
+  const t = buildTree([group({ id: "g", when: { m: "x" }, whenFalse: "disable", children: [
+    control("a"),
+    group({ id: "g/inner", bare: true, children: [control("b")] }),
+  ] })]);
+  const st = computeState(t, { params: { m: "y" }, relevant: null });
+  expect(st.get("g").disabled).toBe(true);
+  expect(st.get("g/0").disabled).toBe(true);       // control "a"
+  expect(st.get("g/inner").disabled).toBe(true);   // inner group
+  expect(st.get("g/inner/0").disabled).toBe(true); // control "b", two levels down
+});

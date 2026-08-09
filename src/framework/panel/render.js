@@ -34,6 +34,7 @@ export function buildControls(root, parameters, params, onDirty) {
   const widgetSyncs = new Map();  // id -> the RAW widget sync (no markCustom)
   const nodeById = new Map();     // id -> node, for the reveal re-sync
   const lastVisible = new Map();  // id -> previous `visible`, to detect a reveal
+  const lastDisabled = new Map(); // id -> previous `disabled`, to skip a no-op input pass
   indexNodes(tree, nodeById);
   let relevant = null;
 
@@ -53,8 +54,19 @@ export function buildControls(root, parameters, params, onDirty) {
       node.classList.toggle("section-hidden", !!s.dimmedSection);
       node.classList.toggle("irrelevant", !isGroup && s.dimmed && !s.dimmedSection);
       node.classList.toggle("disabled", s.disabled);
-      for (const input of node.querySelectorAll("input, select, textarea")) {
-        input.disabled = s.disabled;
+      // Only a control leaf's own inputs get `.disabled` written. `disabled`
+      // already propagates through the whole subtree in computeState, so a
+      // group never needs to (and must not) walk its descendants here — doing
+      // so made the outcome depend on `nodeEls` insertion order, which differs
+      // between a bare group/section (registers before its children) and a
+      // titled group (registers after, via its wrapper). Skipping the query
+      // entirely when `disabled` hasn't changed also keeps this off the hot
+      // path (applyState runs on every slider drag and relevance update).
+      if (!isGroup && lastDisabled.get(id) !== s.disabled) {
+        for (const input of node.querySelectorAll("input, select, textarea")) {
+          input.disabled = s.disabled;
+        }
+        lastDisabled.set(id, s.disabled);
       }
       if (!isGroup && s.dimmed && !s.dimmedSection) node.title = "Doesn't affect the parts in the current view";
       else node.removeAttribute("title");
