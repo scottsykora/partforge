@@ -9,6 +9,8 @@ import { EASINGS } from "../animation.js";
 import { CANONICAL_VIEWS } from "../view-angles.js";
 import { probeSubPartPose } from "../pose-probe-core.js";
 import { resolveDerived } from "../derive.js";
+import { desugar } from "../panel/legacy.js";
+import { controlNodes } from "../panel/model.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 
@@ -22,20 +24,19 @@ const animEntries = (part) =>
 // rule checks its own slice). A bare-tracks animation is one anonymous step.
 const rawSteps = (a) => (Array.isArray(a.steps) ? a.steps.filter(isPlainObject) : [{ ...a, label: null }]);
 
-// The control descriptor ranges, for value-in-range checks. Mirrors
-// rules-schema.js's collectDescriptors walk (not shared: each group owns its
-// own walk by design — see lint/index.js header).
+// The control descriptor ranges, for value-in-range checks. Walks the shared
+// panel model rather than re-implementing the schema walk — before that model
+// existed this duplicated rules-schema.js's collectDescriptors by design, and
+// the two could drift.
+//
+// desugar() is used directly, WITHOUT buildTree(): hidden controls must stay in,
+// because an animation may legitimately drive a parameter with no visible UI.
 function paramRanges(part) {
   const ranges = new Map();
-  const secs = Array.isArray(part?.parameters) ? part.parameters : [];
-  const add = (d) => {
-    if (d && typeof d.key === "string" && !ranges.has(d.key)) ranges.set(d.key, { min: d.min, max: d.max });
-  };
-  for (const sec of secs) {
-    for (const d of Array.isArray(sec?.advanced) ? sec.advanced : []) add(d);
-    for (const f of Array.isArray(sec?.features) ? sec.features : []) {
-      for (const s of Array.isArray(f?.sliders) ? f.sliders : []) add(s);
-    }
+  for (const c of controlNodes(desugar(part?.parameters))) {
+    // A checkbox has no range; only numeric controls constrain a keyframe.
+    if (c.type === "checkbox") continue;
+    if (typeof c.key === "string" && !ranges.has(c.key)) ranges.set(c.key, { min: c.min, max: c.max });
   }
   return ranges;
 }

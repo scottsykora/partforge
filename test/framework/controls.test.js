@@ -400,7 +400,71 @@ test("sections stay flat siblings so the rail can divide them with hairlines", (
     expect(section.querySelector(".section")).toBeNull();
     expect(section.parentElement).toBe(root);
   }
-  // The Advanced fold survives — this task changes appearance, not behavior.
+  // The Advanced fold survives. With two sections, the auto-open rule now
+  // opens it on load — the one deliberate visible change of this release.
   expect(sections[0].querySelector(".adv-toggle")).not.toBeNull();
-  expect(sections[0].querySelector(".adv.hidden")).not.toBeNull();
+  const adv = sections[0].querySelector(".adv");
+  expect(adv).not.toBeNull();
+  expect(adv.classList.contains("hidden")).toBe(false);
+});
+
+test("a section title is a disclosure button that toggles its body", () => {
+  const root = document.createElement("div");
+  buildControls(root, [presetSec()], { od: 5, secret: 0 }, () => {});
+  const btn = root.querySelector("button.sec-title");
+  expect(btn).toBeTruthy();
+  expect(btn.getAttribute("aria-expanded")).toBe("true");   // 1 section → auto-open
+  const body = root.querySelector(".sec-body");
+  expect(body.classList.contains("hidden")).toBe(false);
+  btn.click();
+  expect(btn.getAttribute("aria-expanded")).toBe("false");
+  expect(body.classList.contains("hidden")).toBe(true);
+});
+
+test("the section ⓘ is a sibling of the title button, not nested inside it", () => {
+  const root = document.createElement("div");
+  buildControls(root, [presetSec({ description: "about the body" })], { od: 5, secret: 0 }, () => {});
+  const btn = root.querySelector("button.sec-title");
+  expect(btn.querySelector(".info")).toBeNull();            // a button inside a button never gets clicks
+  expect(root.querySelector(".sec-header .info")).toBeTruthy();
+});
+
+test("four sections start collapsed; three start open", () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({
+    id: `s${i}`, title: `S${i}`, advanced: [{ key: `k${i}`, label: "K", min: 0, max: 9, step: 1 }],
+  }));
+  const params = Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`k${i}`, 1]));
+
+  const three = document.createElement("div");
+  buildControls(three, mk(3), params, () => {});
+  expect([...three.querySelectorAll("button.sec-title")].map((b) => b.getAttribute("aria-expanded")))
+    .toEqual(["true", "true", "true"]);
+
+  const four = document.createElement("div");
+  buildControls(four, mk(4), params, () => {});
+  expect([...four.querySelectorAll("button.sec-title")].map((b) => b.getAttribute("aria-expanded")))
+    .toEqual(["false", "false", "false", "false"]);
+});
+
+test("the legacy Advanced fold opens with a small panel", () => {
+  const root = document.createElement("div");
+  buildControls(root, [presetSec()], { od: 5, secret: 0 }, () => {});
+  expect(root.querySelector(".adv").classList.contains("hidden")).toBe(false);
+  expect(root.querySelector(".adv-toggle").textContent).toBe("Advanced ▴");
+});
+
+test("a section the user closed stays closed across applyState re-runs (the openApplied latch)", () => {
+  const root = document.createElement("div");
+  const params = { od: 5, secret: 0 };
+  const panel = buildControls(root, [presetSec()], params, () => {});
+  const btn = root.querySelector("button.sec-title");
+  const body = root.querySelector(".sec-body");
+  expect(body.classList.contains("hidden")).toBe(false); // auto-open
+  btn.click();                                            // user closes it
+  expect(body.classList.contains("hidden")).toBe(true);
+  panel.syncValues();                                     // runs applyState — must NOT reopen
+  expect(body.classList.contains("hidden")).toBe(true);
+  panel.applyRelevance(new Set(["od"]));                  // also runs applyState
+  expect(body.classList.contains("hidden")).toBe(true);
+  panel.dispose();
 });
