@@ -4,7 +4,7 @@
 // resolve against `defaults`, which produce a control that silently does nothing.
 import { err, warn } from "./finding.js";
 import { suggest } from "../geometry/op-options.js";
-import { fieldsFor } from "../panel/widget-specs.js";
+import { fieldsFor, authorFieldsFor, GROUP_FIELDS, PRESET_FIELDS } from "../panel/widget-specs.js";
 import { sectionRenders } from "../panel/legacy.js";
 
 // Legacy container descriptors aren't widget types, so they keep explicit lists.
@@ -20,6 +20,27 @@ const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArr
 function collectDescriptors(part) {
   const out = [];
   sections(part).forEach((sec, si) => {
+    // The authored shape: children in `controls`, recursively. Field lists are
+    // the authored ones (authorFieldsFor) — the legacy lists stay untouched so
+    // `when` on a legacy descriptor still warns. A section routes to one shape
+    // or the other (desugar's winner-takes-all), so `return` before the legacy
+    // loops below rather than falling through to them.
+    function walkAuthored(list, base) {
+      arr(list).forEach((entry, i) => {
+        if (!entry) return;
+        const path = `${base}[${i}]`;
+        if (entry.type === "group") {
+          out.push({ d: entry, path, fields: GROUP_FIELDS, container: true });
+          walkAuthored(entry.controls, `${path}.controls`);
+        } else if (entry.type === "preset") {
+          out.push({ d: entry, path, fields: PRESET_FIELDS, container: true });
+        } else {
+          out.push({ d: entry, path, fields: authorFieldsFor(entry.type ?? "slider") });
+        }
+      });
+    }
+    if (Array.isArray(sec?.controls)) { walkAuthored(sec.controls, `parameters[${si}].controls`); return; }
+
     arr(sec?.advanced).forEach((d, i) => {
       if (d) out.push({ d, path: `parameters[${si}].advanced[${i}]`, fields: fieldsFor("slider") });
     });
@@ -37,6 +58,30 @@ function collectDescriptors(part) {
     arr(sec?.toggles).forEach((t, i) => {
       if (t) out.push({ d: t, path: `parameters[${si}].toggles[${i}]`, fields: fieldsFor("checkbox") });
     });
+  });
+  return out;
+}
+
+// Every preset bundle with its source path — the legacy `presets:` field and
+// authored `{ type: "preset" }` nodes both count.
+function collectPresetBundles(part) {
+  const out = [];
+  sections(part).forEach((sec, si) => {
+    if (isPlainObject(sec?.presets) && !Array.isArray(sec?.controls)) {
+      for (const [name, bundle] of Object.entries(sec.presets)) {
+        out.push({ name, bundle, path: `parameters[${si}].presets` });
+      }
+    }
+    const walk = (list, base) => arr(list).forEach((entry, i) => {
+      if (!entry) return;
+      if (entry.type === "group") walk(entry.controls, `${base}[${i}].controls`);
+      else if (entry.type === "preset" && isPlainObject(entry.presets)) {
+        for (const [name, bundle] of Object.entries(entry.presets)) {
+          out.push({ name, bundle, path: `${base}[${i}].presets` });
+        }
+      }
+    });
+    walk(sec?.controls, `parameters[${si}].controls`);
   });
   return out;
 }
@@ -103,6 +148,7 @@ export const SCHEMA_RULES = [
       if (!isPlainObject(part?.defaults)) return [];
       const known = defaultKeys(part);
       return collectDescriptors(part)
+        .filter(({ container }) => !container)
         .filter(({ d }) => typeof d.key === "string" && !known.has(d.key))
         .map(({ d, path }) => err("control-key-not-in-defaults",
           `control key "${d.key}" is not in \`defaults\``,
@@ -118,21 +164,17 @@ export const SCHEMA_RULES = [
       if (!isPlainObject(part?.defaults)) return [];
       const known = defaultKeys(part);
       const out = [];
-      sections(part).forEach((sec, si) => {
-        const presets = sec?.presets;
-        if (!presets || typeof presets !== "object") return;
-        for (const [name, bundle] of Object.entries(presets)) {
-          if (!bundle || typeof bundle !== "object") continue;
-          for (const key of Object.keys(bundle)) {
-            if (known.has(key)) continue;
-            const hint = suggest(key, [...known]);
-            out.push(err("preset-key-not-in-defaults",
-              `preset "${name}" sets "${key}", which is not in \`defaults\``,
-              `Add "${key}" to \`defaults\`${hint ? `, or correct it to "${hint}"` : ""} — a preset field absent from defaults is dropped, so selecting the preset silently does nothing for it.`,
-              `parameters[${si}].presets[${JSON.stringify(name)}].${key}`));
-          }
+      for (const { name, bundle, path } of collectPresetBundles(part)) {
+        if (!bundle || typeof bundle !== "object") continue;
+        for (const key of Object.keys(bundle)) {
+          if (known.has(key)) continue;
+          const hint = suggest(key, [...known]);
+          out.push(err("preset-key-not-in-defaults",
+            `preset "${name}" sets "${key}", which is not in \`defaults\``,
+            `Add "${key}" to \`defaults\`${hint ? `, or correct it to "${hint}"` : ""} — a preset field absent from defaults is dropped, so selecting the preset silently does nothing for it.`,
+            `${path}[${JSON.stringify(name)}].${key}`));
         }
-      });
+      }
       return out;
     },
   },
@@ -141,6 +183,7 @@ export const SCHEMA_RULES = [
     run: ({ part }) => {
       const defaults = part?.defaults ?? {};
       return collectDescriptors(part)
+        .filter(({ container }) => !container)
         // A slider that shares its key with the feature that owns it (demo.js's
         // flange_d) is exempt ONLY when the default is actually the feature's
         // off-sentinel: controls.js sets `params[feat.key] = 0` on uncheck (and
@@ -182,7 +225,8 @@ export const SCHEMA_RULES = [
     run: ({ part }) => {
       const seen = new Map();
       const out = [];
-      for (const { d, path } of collectDescriptors(part)) {
+      for (const { d, path, container } of collectDescriptors(part)) {
+        if (container) continue;
         if (typeof d.key !== "string") continue;
         // A feature and its own slider legitimately share a key (see demo.js's
         // flange_d), so only flag a repeat that crosses to a different owner path.
@@ -204,10 +248,8 @@ export const SCHEMA_RULES = [
     run: ({ part }) => {
       if (sections(part).length === 0) return []; // no panel declared at all — nothing to expose
       const exposed = new Set(collectDescriptors(part).map(({ d }) => d.key).filter(Boolean));
-      for (const sec of sections(part)) {
-        for (const bundle of Object.values(sec?.presets ?? {})) {
-          for (const key of Object.keys(bundle ?? {})) exposed.add(key);
-        }
+      for (const { bundle } of collectPresetBundles(part)) {
+        for (const key of Object.keys(bundle ?? {})) exposed.add(key);
       }
       return Object.keys(part?.defaults ?? {})
         .filter((key) => !exposed.has(key))

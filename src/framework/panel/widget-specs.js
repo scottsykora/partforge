@@ -34,3 +34,28 @@ const BY_TYPE = new Map(WIDGET_SPECS.map((s) => [s.type, s]));
 export const WIDGET_TYPES = WIDGET_SPECS.map((s) => s.type);
 export const specFor = (type) => BY_TYPE.get(type);
 export const fieldsFor = (type) => BY_TYPE.get(type)?.fields ?? [];
+
+// The authored shape (author.js's normalized node tree): every control carries
+// `type`, and `when`/`whenFalse` are real fields there (phase 6 landed them for
+// this shape only — the legacy lists above stay frozen so a legacy `when` still
+// warns). Per-type extras beyond AUTHOR_COMMON; select/radio/readout join
+// AUTHOR_EXTRAS in Tasks 7 and 8.
+const AUTHOR_COMMON = ["key", "type", "label", "description", "hidden", "when", "whenFalse"];
+const AUTHOR_EXTRAS = {
+  slider: ["unit", "min", "max", "step", "scale", "ticks", "snap", "recommended"],
+  number: ["unit", "min", "max", "step", "scale", "ticks", "snap", "recommended"],
+  text: [],
+  textarea: [],
+  checkbox: ["on"],
+};
+const AUTHOR_FIELDS = new Map(Object.entries(AUTHOR_EXTRAS).map(
+  ([type, extra]) => [type, [...AUTHOR_COMMON, ...extra]]));
+export const authorFieldsFor = (type) => AUTHOR_FIELDS.get(type) ?? [];
+
+// Container node types in the authored tree. Not widget types — no DOM factory
+// looks them up — so, like the legacy FEATURE_FIELDS/TOGGLE_FIELDS, they keep
+// explicit field lists here rather than living in WIDGET_SPECS.
+export const GROUP_FIELDS = ["type", "id", "title", "collapsed", "bare", "when", "whenFalse", "hidden", "controls"];
+// NB: no "description" — renderGroup has nowhere to hang an info glyph (the
+// toggle is itself a button). Sections keep descriptions (SECTION_FIELDS).
+export const PRESET_FIELDS = ["type", "id", "label", "presets", "when", "whenFalse", "hidden"];
