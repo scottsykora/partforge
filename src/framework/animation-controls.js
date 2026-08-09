@@ -93,9 +93,11 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   bar.append(animations.length > 1 ? pick : title);
   const infoSlot = el("span", "pf-anim-info");
   const playBtn = btn("pf-anim-play", "▶", "Play animation");
-  const prevBtn = btn("pf-anim-step-btn", "‹", "Previous step");
+  // pf-anim-step-btn carries the shared styling; the direction classes let the
+  // touch layout in app.css order the row as ‹ ▶ › without reordering the DOM.
+  const prevBtn = btn("pf-anim-step-btn pf-anim-prev", "‹", "Previous step");
   const stepLabel = el("span", "pf-anim-step", "");
-  const nextBtn = btn("pf-anim-step-btn", "›", "Next step");
+  const nextBtn = btn("pf-anim-step-btn pf-anim-next", "›", "Next step");
   const scrubWrap = el("span", "pf-anim-scrub-wrap");
   const scrub = document.createElement("input");
   scrub.type = "range";

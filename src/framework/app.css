@@ -257,6 +257,57 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
   .pf-anim-bar { min-height: 40px; }
 }
 
+/* ---- transport bar, touch layout ----------------------------------------
+   The rules above size the BAR; these size the things you press inside it. At
+   a 13px glyph in 2px/4px of padding, play and reset measure ~20x20 and the
+   step arrows ~12 wide, with 8px between neighbours — mouse targets. Measured
+   on a 390px stage: a tap 12px off the pause button's centre, ordinary finger
+   error, landed on the bar's background and did nothing; 20px further landed
+   on "previous step", which RESTARTS playback. The scrubber fared worse,
+   flex-shrinking to 3px wide.
+
+   So give every control the 44px minimum, and accept the rows that costs: at
+   44px per target they do not fit a 320-390px stage on one line.
+
+   Both query conditions matter. The width half is the framework's own narrow
+   layout (chrome.css's 720px breakpoint, measured on the STAGE — partforge in
+   an iframe sized to a phone-width card gets it too); the pointer half catches
+   a phone in landscape, wider than 720px and still all thumbs.
+
+   The bar stays a single flat flex line of eight children; `order` and a
+   couple of full-width items restack it into rows without touching the DOM, so
+   the wide-pointer layout above is the source order, untouched:
+
+       [ animation v ]  (i)           <- chooser
+       1/2 · Lower the lid            <- step readout (absent when not stepped)
+       ‹ ▶ ›  [====o=====]  ↺         <- transport, 44px each
+
+   The scrubber shares that last row while it can hold 120px and drops to a
+   full-width row of its own when it cannot — around a 360px stage on a stepped
+   animation. scripts/check-app.mjs's checkTransportTargets pins the result. */
+@media (max-width: 719px), (pointer: coarse) {
+  .pf-anim-bar {
+    flex-wrap: wrap; justify-content: center;
+    column-gap: 4px; row-gap: 2px; padding: 4px 8px;
+  }
+  .pf-anim-bar button {
+    min-width: 44px; min-height: 44px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .pf-anim-title, .pf-anim-pick { order: 1; min-width: 0; }
+  /* The picker is a target too, not a caption — it opens the animation list. */
+  .pf-anim-pick { max-width: 100%; min-height: 44px; padding: 3px 10px; }
+  .pf-anim-info { order: 2; }
+  /* A readout, not a target, so it takes a whole (short) line of its own
+     rather than squeezing the row that is all targets. `hidden` still wins. */
+  .pf-anim-step { order: 3; flex: 1 1 100%; min-width: 0; }
+  .pf-anim-prev { order: 4; }
+  .pf-anim-play { order: 5; }
+  .pf-anim-next { order: 6; }
+  .pf-anim-reset { order: 9; } /* after the scrubber, as on a wide pointer */
+  .pf-anim-scrub-wrap { order: 8; flex: 1 1 120px; min-width: 120px; width: auto; min-height: 44px; }
+}
+
 /* Legacy id-only markup only: classed markup's viewbar lives inside .pf-stage
    (bottom-right, see chrome.css's .pf-float-viewbar) so it never meets the
    top-left floating #panel card. Legacy markup still floats #viewbar top-right

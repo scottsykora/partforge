@@ -324,6 +324,75 @@ async function checkAnimBarLayout(widths) {
   }
 }
 
+// checkAnimBarLayout above sizes and places the BAR; this sizes the controls
+// inside it. They were authored at mouse scale — a 13px glyph in 2px/4px of
+// padding is ~20x20, the step arrows ~12 wide, 8px apart. Measured on a 390px
+// stage: a tap 12px off the pause button's centre, ordinary finger error, hit
+// the bar's background and did nothing; 20px further hit "previous step",
+// which RESTARTS playback. Hence a size floor, and a separation floor so the
+// enlarged targets cannot overlap into one another — a wrong action is worse
+// than a dead one.
+//
+// Only pages declaring animations grow a bar, so this is a no-op elsewhere.
+const TAP_TARGET_MIN = 44; // iOS HIG / Material minimum
+async function checkTransportTargets(width) {
+  await page.setViewportSize({ width, height: 720 });
+  await sleep(50);
+  const result = await page.evaluate(async (min) => {
+    const bar = document.querySelector(".pf-anim-bar");
+    if (!bar) return null; // no animations on this page
+    const problems = [];
+    // Measure under EVERY animation, not just the selected one: the step
+    // arrows are `hidden` unless the current animation is stepped, so a
+    // single-shot measurement never sees the most crowded row.
+    const pick = bar.querySelector(".pf-anim-pick");
+    const names = pick ? [...pick.options].map((o) => o.value) : [null];
+    for (const name of names) {
+      if (name != null) {
+        pick.value = name;
+        pick.dispatchEvent(new Event("change", { bubbles: true }));
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      measure(name);
+    }
+    return { problems };
+
+    function measure(name) {
+      const where = name ? `[${name}] ` : "";
+      const boxes = [];
+      for (const el of bar.querySelectorAll("button, .pf-anim-scrub-wrap, select")) {
+        if (el.hidden || el.offsetParent === null) continue;
+        const r = el.getBoundingClientRect();
+        boxes.push({ name: el.className || el.tagName, r });
+        // The scrubber is a track, not a target: it has to be TALL enough to
+        // grab and wide enough to aim along, so its width is checked apart.
+        const wide = el.classList.contains("pf-anim-scrub-wrap") ? 120 : min;
+        if (r.width + 0.5 < wide || r.height + 0.5 < min) {
+          problems.push(`${where}${el.className || el.tagName} is ${Math.round(r.width)}x${Math.round(r.height)}, below ${wide}x${min}`);
+        }
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) {
+          const a = boxes[i].r, b = boxes[j].r;
+          if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) {
+            problems.push(`${where}${boxes[i].name} overlaps ${boxes[j].name}`);
+          }
+        }
+      }
+      const stage = document.querySelector(".pf-stage")?.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      if (stage && (barRect.left < stage.left - 0.5 || barRect.right > stage.right + 0.5)) {
+        problems.push(`${where}the bar escapes the stage horizontally`);
+      }
+      if (stage && barRect.top < stage.top - 0.5) {
+        problems.push(`${where}the bar is taller than the stage`);
+      }
+    }
+  }, TAP_TARGET_MIN);
+  if (!result) return;
+  for (const problem of result.problems) errors.push(`transport ${width}px: ${problem}`);
+}
+
 // Reset through the rail's own API — a dblclick on the seam routes through
 // rail.js's commit(), which resets to the 288px default — so the DOM and
 // rail.js's in-memory `state` agree. The old approach (clear localStorage,
@@ -680,6 +749,8 @@ try {
     }
     await checkNarrowPaneTabs(400, 1024);
     await checkAnimBarLayout([1600, 1280, 1024]);
+    await checkTransportTargets(390); // a phone in portrait
+    await checkTransportTargets(320); // the narrowest phone still supported
     if (viewport) await page.setViewportSize(viewport);
   }
   await checkCaptureCurrent(); // before checkDebugOverlay — that one navigates away
