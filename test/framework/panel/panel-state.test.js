@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { buildTree } from "../../../src/framework/panel/model.js";
-import { computeState } from "../../../src/framework/panel/panel-state.js";
+import { computeState, AUTO_OPEN_MAX_SECTIONS } from "../../../src/framework/panel/panel-state.js";
 
 const group = (over = {}) => ({ kind: "group", children: [], ...over });
 const control = (key, over = {}) => ({ kind: "control", key, type: "slider", ...over });
@@ -106,4 +106,47 @@ test("a disabled group disables every control inside it, not just itself", () =>
   expect(st.get("g/0").disabled).toBe(true);       // control "a"
   expect(st.get("g/inner").disabled).toBe(true);   // inner group
   expect(st.get("g/inner/0").disabled).toBe(true); // control "b", two levels down
+});
+
+const sections = (n, over = {}) =>
+  buildTree(Array.from({ length: n }, (_, i) =>
+    group({ id: `s${i}`, collapsed: "auto", children: [control(`k${i}`)], ...over })));
+
+const openOf = (tree) => {
+  const st = computeState(tree, { params: {}, relevant: null });
+  return tree.map((s) => st.get(s.id).open);
+};
+
+test("the threshold is three sections", () => {
+  expect(AUTO_OPEN_MAX_SECTIONS).toBe(3);
+});
+
+test("a panel at or under the threshold opens every auto container", () => {
+  expect(openOf(sections(1))).toEqual([true]);
+  expect(openOf(sections(3))).toEqual([true, true, true]);
+});
+
+test("a panel over the threshold closes every auto container", () => {
+  expect(openOf(sections(4))).toEqual([false, false, false, false]);
+});
+
+test("an explicit `collapsed` always beats the heuristic, both ways", () => {
+  expect(openOf(sections(1, { collapsed: true }))).toEqual([false]);
+  expect(openOf(sections(5, { collapsed: false })).slice(0, 1)).toEqual([true]);
+});
+
+test("nested auto groups follow the same panel-wide decision", () => {
+  const tree = buildTree([group({ id: "s", collapsed: "auto", children: [
+    group({ id: "s/a", title: "Advanced", collapsed: "auto", children: [control("x")] }),
+  ] })]);
+  const st = computeState(tree, { params: {}, relevant: null });
+  expect(st.get("s").open).toBe(true);
+  expect(st.get("s/a").open).toBe(true);
+});
+
+test("a bare group is always open — it has no disclosure of its own", () => {
+  const tree = buildTree([group({ id: "s", children: [
+    group({ id: "s/b", bare: true, children: [control("x")] }),
+  ] })]);
+  expect(computeState(tree, { params: {}, relevant: null }).get("s/b").open).toBe(true);
 });

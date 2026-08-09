@@ -11,9 +11,26 @@
 // distinct (see the spec): `when` hides or disables, relevance only dims.
 import { evalWhen, controlNodes } from "./model.js";
 
+// A panel with a handful of sections should present itself fully, not make the
+// user click three times to see it. Beyond this many, collapsing wins: the rail
+// is a fixed-height column and an eight-section part scrolls forever.
+//
+// Counting SECTIONS rather than controls is deliberate — an author can predict
+// it at a glance, which matters because the rule shapes what their panel looks
+// like on first load.
+export const AUTO_OPEN_MAX_SECTIONS = 3;
+
+const resolveOpen = (node, autoOpen) => {
+  if (node.bare) return true;                    // no disclosure to open
+  if (node.collapsed === true) return false;
+  if (node.collapsed === false) return true;
+  return autoOpen;                               // "auto" or unset
+};
+
 export function computeState(tree, { params, relevant }) {
   const state = new Map();
   const showAll = !(relevant instanceof Set);
+  const autoOpen = tree.length <= AUTO_OPEN_MAX_SECTIONS;
 
   const walk = (nodes, parentVisible, isTop, parentDisabled) => {
     for (const node of nodes) {
@@ -33,11 +50,11 @@ export function computeState(tree, { params, relevant }) {
         // Only a TOP-LEVEL group gets `.section-hidden` (display:none). An inner
         // group merely dims, because collapsing an inner group out of the layout
         // on a relevance change makes the panel jump under the user's cursor.
-        state.set(node.id, { visible, disabled, dimmed, dimmedSection: dimmed && isTop });
+        state.set(node.id, { visible, disabled, dimmed, dimmedSection: dimmed && isTop, open: resolveOpen(node, autoOpen) });
         walk(node.children, visible, false, disabled);
       } else {
         state.set(node.id, {
-          visible, disabled, dimmedSection: false,
+          visible, disabled, dimmedSection: false, open: true,
           // Relevance is computed over parameter keys, so only a control can be
           // irrelevant. A preset node has no key; the legacy renderer never
           // dims the picker, and neither do we.
