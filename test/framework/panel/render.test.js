@@ -135,11 +135,13 @@ test("a condition-hidden control and section carry .hidden, and a disabled prese
       { key: "mode", type: "checkbox", label: "Mode" },
       { key: "od", type: "slider", label: "OD", min: 1, max: 10, step: 1, when: { mode: { gt: 0 } } },
       { type: "preset", presets: { P: { od: 5 } }, when: { mode: { gt: 0 } }, whenFalse: "disable" },
+      { key: "shape", type: "radio", label: "Shape", options: ["round", "square"],
+        when: { mode: { gt: 0 } }, whenFalse: "disable" },
     ] },
     { id: "b", title: "B", when: { mode: { gt: 0 } }, controls: [
       { key: "od2", type: "slider", min: 1, max: 10, step: 1 },
     ] },
-  ], { ...params, od2: 3 }, () => {});
+  ], { ...params, od2: 3, shape: "round" }, () => {});
   const odWrap = [...root.querySelectorAll(".slider")].find((w) => w.querySelector("label")?.textContent === "OD");
   expect(odWrap.classList.contains("hidden")).toBe(true);
   const sections = [...root.querySelectorAll(".section")];
@@ -147,9 +149,15 @@ test("a condition-hidden control and section carry .hidden, and a disabled prese
   const preset = root.querySelector("select.preset");
   expect(preset.classList.contains("disabled")).toBe(true);
   expect(preset.disabled).toBe(true);                       // the ATTRIBUTE, not just the class
+  // A radio's options are <button>s, not inputs — they need the attribute too,
+  // or the control only LOOKS disabled and stays keyboard-focusable.
+  const segButtons = [...root.querySelectorAll(".seg button")];
+  expect(segButtons.length).toBe(2);
+  expect(segButtons.every((b) => b.disabled)).toBe(true);
   const box = root.querySelector('input[type="checkbox"]');
   box.checked = true; box.dispatchEvent(new Event("change"));   // the file's established idiom
   expect(odWrap.classList.contains("hidden")).toBe(false);
   expect(preset.disabled).toBe(false);
+  expect(segButtons.some((b) => b.disabled)).toBe(false);
   panel.dispose();
 });

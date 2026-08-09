@@ -541,7 +541,7 @@ Every control accepts `key`, `type`, `label`, `description`, `hidden`, `when` an
 | `type` | Renders as | Extra fields |
 |---|---|---|
 | `"slider"` (default) | a range track plus an editable number box | `unit`, `min`, `max`, `step`, and the refinements below |
-| `"number"` | the number box alone — for precise or very wide ranges | `unit`, `min`, `max`, `step` |
+| `"number"` | the number box alone — for precise or very wide ranges | `unit`, `min`, `max`, `step`, `recommended` (see below) |
 | `"text"` | a single-line string field | — |
 | `"textarea"` | a multiline string field; line breaks are preserved | — |
 | `"checkbox"` | an on/off box: ticked writes `on`, cleared writes `0` | `on` (default `1`) |
@@ -673,8 +673,10 @@ defers to one rule:
 > section and fold on load. Beyond that, they all start closed.
 
 The rail is a fixed-height column, and a long part otherwise scrolls forever; three
-sections is a panel the user can take in at a glance. Sections are counted after
-`hidden` and empty ones are dropped, so the number you see is the number that counts.
+sections is a panel the user can take in at a glance. The count is over the sections
+in the built tree — `hidden: true` sections and sections left with nothing in them are
+gone before counting, but a section that a false `when` or relevance merely hides from
+view still counts, since it can come back without rebuilding the panel.
 Only the **first** render applies it — after that the user's own clicks own the folds,
 and a slider drag never snaps a section they opened back shut. A `bare: true` group
 has no disclosure at all and is never collapsed.
@@ -709,9 +711,16 @@ there. `duplicate-preset-name` catches it at lint time instead.
 
 Everything above is what a **new part should write**. The original array-based shapes
 predate the node model, still work exactly as they always did, and are not going
-away — most of the in-repo parts are deliberately left on them as live proof. They
-are sugar: `desugar()` normalizes them into the very same nodes, so conditions,
-collapsing and lint apply to them uniformly.
+away — most of the in-repo parts are deliberately left on them as live proof.
+`desugar()` normalizes them into the very same nodes, so the **runtime** is uniform:
+one renderer, one state pass, one set of lint walkers, whichever shape you wrote.
+
+The **authorable surface is not** uniform, and deliberately so — the legacy
+descriptors are frozen at the fields they always had. `when`, `whenFalse` and
+`collapsed`, and the `"checkbox"`, `"select"`, `"radio"` and `"readout"` types, exist
+in the `controls` shape **only**. Written on a legacy descriptor they are dropped and
+reported as `unknown-control-field`; a legacy section's `collapsed` is ignored
+silently. Reach for any of them and you are writing a `controls` section.
 
 | Legacy | Normalizes to |
 |---|---|
@@ -745,7 +754,8 @@ collapsing and lint apply to them uniformly.
 `"number"`, `"text"` or `"textarea"` — the newer `"checkbox"`, `"select"`, `"radio"`
 and `"readout"` types exist only in the `controls` shape. A `toggles` entry is
 `{ key, label, on?, hidden?, description? }`: checked writes `on` (default `1`),
-unchecked writes `0`. It is the right home for a bare boolean in this shape.
+unchecked writes `0`. It is the right home for a bare boolean in this shape —
+`src/parts/bracket.js`'s `clip` toggle is the in-repo example.
 
 **Feature-toggle section** — a checkbox that enables a feature *and* reveals its own
 sliders (`0` = off):
@@ -767,7 +777,8 @@ parameter takes when the box is ticked (a diameter, a count), and the panel read
 (`features-requires-on`). `sliders` is required too (`features-requires-sliders`) — it
 is what the checkbox reveals, and a feature with nothing to reveal belongs in
 `toggles` instead. A section carrying `features` renders *only* its features — its
-`presets`, `toggles` and `advanced` are ignored.
+`presets`, `toggles` and `advanced` are ignored. `src/parts/demo.js`'s `flange` is the
+in-repo example (`planter.js` has a second one).
 
 Three behaviours differ between the shapes, and they are frozen that way on purpose:
 
@@ -777,9 +788,9 @@ Three behaviours differ between the shapes, and they are frozen that way on purp
   exactly what `features` desugars to.
 - **Every** control in a `controls` section marks the section's picker Custom when
   edited. In the legacy shapes, feature sliders and toggles do not.
-- `collapsed` is honoured on `controls`-shape sections and on authored groups only. A
-  legacy-shaped section, and the "Advanced" fold it desugars to, are always `"auto"` —
-  they follow the three-section rule and nothing else.
+- Collapse state is not authorable here, per the surface note above: a legacy section
+  and the "Advanced" fold it desugars to are both always `"auto"`, so they follow the
+  three-section rule and nothing else.
 
 **A section is one shape or the other.** Mixing `controls` with `advanced`,
 `toggles`, `features` or `presets` is the error `mixed-section-shape` — the render

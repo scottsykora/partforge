@@ -39,8 +39,8 @@ export function makeNumeric(node, params, { onChange, info }) {
   wrap.append(row);
 
   // A log track maps thumb position 0..LOG_STEPS onto [min, max] geometrically —
-  // the value box stays linear and exact (see AUTHORING-PARTS.md's slider scale
-  // section). Only valid when min > 0; lint's log-scale-needs-positive-min
+  // the value box stays linear and exact (see AUTHORING-PARTS.md's "Slider
+  // refinements" section). Only valid when min > 0; lint's log-scale-needs-positive-min
   // catches an authored part that violates that before it ever reaches here.
   const LOG_STEPS = 1000;
   const log = node.scale === "log" && node.min > 0;

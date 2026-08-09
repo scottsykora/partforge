@@ -87,7 +87,11 @@ export function buildControls(root, parameters, params, onDirty) {
       // path (applyState runs on every slider drag and relevance update).
       if (!isGroup && lastDisabled.get(id) !== s.disabled) {
         if (node.matches?.("input, select, textarea")) node.disabled = s.disabled;
-        for (const input of node.querySelectorAll("input, select, textarea")) {
+        // `button` is in the list for the radio widget, whose options are
+        // <button>s: without it a disabled radio stayed keyboard-focusable and
+        // only LOOKED disabled. Group nodes skip this branch entirely, so the
+        // section and fold disclosure buttons are never touched.
+        for (const input of node.querySelectorAll("input, select, textarea, button")) {
           input.disabled = s.disabled;
         }
         lastDisabled.set(id, s.disabled);
