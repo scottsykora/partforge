@@ -129,6 +129,7 @@ export function buildControls(root, parameters, params, onDirty) {
     toggle.addEventListener("click", () => {
       const nowHidden = body.classList.toggle("hidden");
       toggle.textContent = nowHidden ? `${node.title} ▾` : `${node.title} ▴`;
+      toggle.setAttribute("aria-expanded", String(!nowHidden));
     });
     for (const child of node.children) renderNode(child, body, sectionCtx);
     wrap.append(toggle, body);

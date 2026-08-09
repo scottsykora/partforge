@@ -87,7 +87,7 @@ export function desugar(parameters) {
       }
       if (advChildren.length) {
         children.push({ kind: "group", title: "Advanced", collapsed: "auto",
-          legacyAdvanced: true, children: advChildren });
+          legacyAdvanced: true, children: advChildren }); // read by nothing yet; phase 4's migration tooling will key on it
       }
       return {
         kind: "group",

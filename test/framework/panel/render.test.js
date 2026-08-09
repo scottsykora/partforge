@@ -53,3 +53,18 @@ test("unticking writes 0 and hides the group; re-ticking restores `on`", () => {
   expect(params.flange_d).toBe(16);
   expect(root.querySelector('input[type="range"]').value).toBe("16");
 });
+
+test("the Advanced fold's toggle keeps aria-expanded in sync with clicks", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  buildControls(root, [{ id: "b", title: "Body",
+    advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] }], { od: 5 }, () => {});
+  const toggle = root.querySelector(".adv-toggle");
+  const body = root.querySelector(".adv");
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");   // 1 section → auto-open
+  toggle.click();
+  expect(body.classList.contains("hidden")).toBe(true);
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  toggle.click();
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+});

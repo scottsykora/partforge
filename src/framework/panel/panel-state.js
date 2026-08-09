@@ -50,6 +50,7 @@ export function computeState(tree, { params, relevant }) {
         // Only a TOP-LEVEL group gets `.section-hidden` (display:none). An inner
         // group merely dims, because collapsing an inner group out of the layout
         // on a relevance change makes the panel jump under the user's cursor.
+        // Groups: only dimmedSection is consumed by the renderer today; inner-group dimmed is informational (controls dim individually).
         state.set(node.id, { visible, disabled, dimmed, dimmedSection: dimmed && isTop, open: resolveOpen(node, autoOpen) });
         walk(node.children, visible, false, disabled);
       } else {
