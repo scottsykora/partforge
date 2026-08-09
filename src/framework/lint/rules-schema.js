@@ -5,7 +5,7 @@
 import { err, warn } from "./finding.js";
 import { suggest } from "../geometry/op-options.js";
 import { fieldsFor } from "../panel/widget-specs.js";
-import { visibleFeatures, sectionRenders } from "../panel/legacy.js";
+import { sectionRenders } from "../panel/legacy.js";
 
 // Legacy container descriptors aren't widget types, so they keep explicit lists.
 const FEATURE_FIELDS = ["key", "label", "on", "sliders", "hidden", "description"];

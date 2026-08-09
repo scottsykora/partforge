@@ -11,14 +11,19 @@
 const arr = (x) => (Array.isArray(x) ? x : []);
 
 // --- the legacy visibility predicates (unchanged behavior) ------------------
-export const visibleAdvanced = (sec) => (sec.advanced ?? []).filter((d) => !d.hidden);
-export const visibleFeatures = (sec) => (sec.features ?? []).filter((f) => !f.hidden);
-export const visibleToggles = (sec) => (sec.toggles ?? []).filter((t) => !t.hidden);
+// Guarded per-entry (`x && !x.hidden`) and per-section (`sec?.`) because a null
+// entry or a missing section is anticipated malformed input here: lint's
+// collectDescriptors walks the very same arrays with the same per-entry guard,
+// and it must be able to walk a broken part in order to report on it, rather
+// than have the walk itself throw.
+export const visibleAdvanced = (sec) => arr(sec?.advanced).filter((d) => d && !d.hidden);
+export const visibleFeatures = (sec) => arr(sec?.features).filter((f) => f && !f.hidden);
+export const visibleToggles = (sec) => arr(sec?.toggles).filter((t) => t && !t.hidden);
 
 export function sectionRenders(sec) {
-  if (sec.hidden) return false;
-  if (sec.features) return visibleFeatures(sec).length > 0;
-  const hasPresets = sec.presets && Object.keys(sec.presets).length > 0;
+  if (sec?.hidden) return false;
+  if (sec?.features) return visibleFeatures(sec).length > 0;
+  const hasPresets = sec?.presets && Object.keys(sec.presets).length > 0;
   return !!hasPresets || visibleAdvanced(sec).length > 0 || visibleToggles(sec).length > 0;
 }
 
@@ -62,7 +67,7 @@ function featureNodes(f) {
     bare: true,
     hidden: !!f.hidden,
     when: { [f.key]: { gt: 0 } },
-    children: arr(f.sliders).map((s) => toControl(s, false)),
+    children: arr(f.sliders).filter(Boolean).map((s) => toControl(s, false)),
   };
   return [box, group];
 }
@@ -77,7 +82,9 @@ export function desugar(parameters) {
     // Advanced group of feature nodes, matching that legacy routing exactly.
     if (sec?.features) {
       const advChildren = [];
-      for (const f of arr(sec.features)) advChildren.push(...featureNodes(f));
+      for (const f of arr(sec.features)) {
+        if (f) advChildren.push(...featureNodes(f));
+      }
       if (advChildren.length) {
         children.push({ kind: "group", title: "Advanced", collapsed: "auto",
           legacyAdvanced: true, children: advChildren });
@@ -104,13 +111,15 @@ export function desugar(parameters) {
     // Toggles sit directly in the section, before the Advanced fold, exactly as
     // controls.js:278-289 rendered them.
     for (const t of arr(sec?.toggles)) {
-      children.push(toCheckbox(t, { preserveOn: false, on: t.on ?? 1 }));
+      if (t) children.push(toCheckbox(t, { preserveOn: false, on: t.on ?? 1 }));
     }
 
     // Everything else lands inside an "Advanced" group. `collapsed: "auto"` is
     // what later hands these folds to the small-panel auto-open rule.
     const advChildren = [];
-    for (const d of arr(sec?.advanced)) advChildren.push(toControl(d, true));
+    for (const d of arr(sec?.advanced)) {
+      if (d) advChildren.push(toControl(d, true));
+    }
     if (advChildren.length) {
       children.push({ kind: "group", title: "Advanced", collapsed: "auto",
         legacyAdvanced: true, children: advChildren });

@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { desugar } from "../../../src/framework/panel/legacy.js";
+import { desugar, visibleAdvanced, visibleFeatures, visibleToggles, sectionRenders }
+  from "../../../src/framework/panel/legacy.js";
 
 test("a preset section becomes a group with a preset node and an Advanced group", () => {
   const tree = desugar([{
@@ -116,4 +117,45 @@ test("a features section ignores presets, toggles and advanced — legacy routin
   expect(sec.children).toHaveLength(1);
   expect(sec.children[0]).toMatchObject({ kind: "group", title: "Advanced" });
   expect(sec.children[0].children.map((c) => c.kind)).toEqual(["control", "group"]);
+});
+
+// Pinning: rules-schema.js's collectDescriptors walks these same arrays with a
+// per-entry null guard, so lint hands the four predicates and desugar() a part
+// that can contain null entries — a malformed-but-not-yet-flagged part. None of
+// the five may throw on that input; a throw aborts the whole rule and lint
+// reports a generic internal-rule-error instead of the specific finding.
+test("visibleAdvanced/visibleFeatures/visibleToggles skip null entries without throwing", () => {
+  const sec = { advanced: [null, { key: "a" }], features: [null, { key: "f" }], toggles: [null, { key: "t" }] };
+  expect(() => visibleAdvanced(sec)).not.toThrow();
+  expect(() => visibleFeatures(sec)).not.toThrow();
+  expect(() => visibleToggles(sec)).not.toThrow();
+  expect(visibleAdvanced(sec)).toEqual([{ key: "a" }]);
+  expect(visibleFeatures(sec)).toEqual([{ key: "f" }]);
+  expect(visibleToggles(sec)).toEqual([{ key: "t" }]);
+});
+
+test("sectionRenders does not throw on a section with null feature/advanced/toggle entries", () => {
+  expect(() => sectionRenders({ features: [null, { key: "f" }] })).not.toThrow();
+  expect(() => sectionRenders({ advanced: [null, { key: "a" }] })).not.toThrow();
+  expect(() => sectionRenders({ toggles: [null, { key: "t" }] })).not.toThrow();
+  expect(sectionRenders({ features: [null] })).toBe(false);
+  expect(sectionRenders({ features: [null, { key: "f" }] })).toBe(true);
+});
+
+test("desugar survives a null entry in features, advanced, or toggles", () => {
+  expect(() => desugar([{ id: "f", features: [null, { key: "k", on: 1, sliders: [null, { key: "s", min: 0, max: 1, step: 1 }] }] }]))
+    .not.toThrow();
+  expect(() => desugar([{ id: "a", advanced: [null, { key: "a", min: 0, max: 1, step: 1 }] }])).not.toThrow();
+  expect(() => desugar([{ id: "t", toggles: [null, { key: "t", label: "T" }] }])).not.toThrow();
+
+  const [fsec] = desugar([{ id: "f", features: [null, { key: "k", on: 1, sliders: [null, { key: "s", min: 0, max: 1, step: 1 }] }] }]);
+  const [box, group] = fsec.children[0].children;
+  expect(box).toMatchObject({ key: "k", type: "checkbox" });
+  expect(group.children).toEqual([expect.objectContaining({ key: "s" })]);
+
+  const [asec] = desugar([{ id: "a", advanced: [null, { key: "a", min: 0, max: 1, step: 1 }] }]);
+  expect(asec.children[0].children).toEqual([expect.objectContaining({ key: "a" })]);
+
+  const [tsec] = desugar([{ id: "t", toggles: [null, { key: "t", label: "T" }] }]);
+  expect(tsec.children).toEqual([expect.objectContaining({ key: "t" })]);
 });
