@@ -86,6 +86,7 @@ export function buildControls(root, parameters, params, onDirty) {
       // entirely when `disabled` hasn't changed also keeps this off the hot
       // path (applyState runs on every slider drag and relevance update).
       if (!isGroup && lastDisabled.get(id) !== s.disabled) {
+        if (node.matches?.("input, select, textarea")) node.disabled = s.disabled;
         for (const input of node.querySelectorAll("input, select, textarea")) {
           input.disabled = s.disabled;
         }

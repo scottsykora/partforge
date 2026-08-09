@@ -92,6 +92,10 @@ select.select-input {
 .feat input { cursor: pointer; accent-color: var(--pf-accent); }
 .feat-group { margin: 2px 0 8px; padding-left: 10px; border-left: 1px solid var(--pf-border); }
 .feat-group.hidden { display: none; }
+/* Condition-hidden nodes. Disclosure state uses `.hidden` on `.adv` /
+   `.sec-body` (rules above); everything else carrying `.hidden` inside the
+   panel is a `when` that evaluated false. */
+.section.hidden, .slider.hidden, .feat.hidden, select.preset.hidden { display: none; }
 .adv-toggle {
   margin-top: 8px; padding: 4px 0; width: 100%; border: 0; border-radius: 6px;
   background: transparent; color: var(--pf-muted); cursor: pointer;

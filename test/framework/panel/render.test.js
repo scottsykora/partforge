@@ -125,3 +125,31 @@ test("disclosure buttons carry aria-controls naming their body element", () => {
   expect(advBody.id).toBeTruthy();
   expect(advBtn.getAttribute("aria-controls")).toBe(advBody.id);
 });
+
+test("a condition-hidden control and section carry .hidden, and a disabled preset select gets the attribute", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { mode: 0, od: 5 };
+  const panel = buildControls(root, [
+    { id: "a", title: "A", controls: [
+      { key: "mode", type: "checkbox", label: "Mode" },
+      { key: "od", type: "slider", label: "OD", min: 1, max: 10, step: 1, when: { mode: { gt: 0 } } },
+      { type: "preset", presets: { P: { od: 5 } }, when: { mode: { gt: 0 } }, whenFalse: "disable" },
+    ] },
+    { id: "b", title: "B", when: { mode: { gt: 0 } }, controls: [
+      { key: "od2", type: "slider", min: 1, max: 10, step: 1 },
+    ] },
+  ], { ...params, od2: 3 }, () => {});
+  const odWrap = [...root.querySelectorAll(".slider")].find((w) => w.querySelector("label")?.textContent === "OD");
+  expect(odWrap.classList.contains("hidden")).toBe(true);
+  const sections = [...root.querySelectorAll(".section")];
+  expect(sections[1].classList.contains("hidden")).toBe(true);
+  const preset = root.querySelector("select.preset");
+  expect(preset.classList.contains("disabled")).toBe(true);
+  expect(preset.disabled).toBe(true);                       // the ATTRIBUTE, not just the class
+  const box = root.querySelector('input[type="checkbox"]');
+  box.checked = true; box.dispatchEvent(new Event("change"));   // the file's established idiom
+  expect(odWrap.classList.contains("hidden")).toBe(false);
+  expect(preset.disabled).toBe(false);
+  panel.dispose();
+});
