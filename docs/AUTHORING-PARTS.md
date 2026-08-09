@@ -453,6 +453,12 @@ even at animation rates (see `runtime.setParams`).
 
 ## Parameters: the control-panel schema
 
+`src/parts/planter.js`'s "Body" section is a live in-repo example of the full node
+shape — a preset, headline sliders, and a nested `"Wall"` group holding a
+`recommended` band and an `innerDia` readout. `src/parts/bracket.js`'s "Shape ops"
+section shows a `"radio"` control, and mixes it with two sections left on the legacy
+shape — proof the two coexist in one part.
+
 `parameters` is an **array of sections**. Each section is a node with a `controls`
 array, and **authored order is render order** — what you write top-to-bottom is what
 the user reads top-to-bottom:
@@ -755,7 +761,7 @@ silently. Reach for any of them and you are writing a `controls` section.
 and `"readout"` types exist only in the `controls` shape. A `toggles` entry is
 `{ key, label, on?, hidden?, description? }`: checked writes `on` (default `1`),
 unchecked writes `0`. It is the right home for a bare boolean in this shape —
-`src/parts/bracket.js`'s `clip` toggle is the in-repo example.
+`src/parts/hull-sweep.js`'s `wrap` toggle is the in-repo example.
 
 **Feature-toggle section** — a checkbox that enables a feature *and* reveals its own
 sliders (`0` = off):
