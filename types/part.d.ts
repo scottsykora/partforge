@@ -57,10 +57,25 @@ export interface PartMeta {
 /** Which input a control renders as. Omit for a slider + number box. */
 export type ControlKind = "slider" | "number" | "text" | "textarea";
 
+/** Every control type the panel can render. */
+export type ControlType = "slider" | "number" | "text" | "textarea" | "checkbox";
+
+/** A declarative visibility condition, evaluated against raw parameters. */
+export type WhenCondition =
+  | { allOf: WhenCondition[] }
+  | { anyOf: WhenCondition[] }
+  | { not: WhenCondition }
+  | Record<string, ParamValue | {
+      gt?: number; gte?: number; lt?: number; lte?: number;
+      ne?: ParamValue; in?: ParamValue[];
+    }>;
+
 /**
  * One parameter control. The recognised field list mirrors
  * `CONTROL_FIELDS` in src/framework/lint/rules-schema.js — anything else is
  * ignored by the panel and warned about by `partforge lint`.
+ *
+ * @deprecated Prefer a `controls` array of control nodes. Still fully supported.
  */
 export interface ControlDef {
   /** Must exist in `defaults`, or the control is silently dead. */
@@ -82,6 +97,8 @@ export interface ControlDef {
  * A feature: a checkbox that sets `key` to `on` (or `0`) and reveals its own
  * controls. `sliders` is REQUIRED — the panel reads `feat.sliders.filter(...)`
  * unguarded. A bare on/off control belongs in `toggles` instead.
+ *
+ * @deprecated Prefer a `controls` array of control nodes. Still fully supported.
  */
 export interface FeatureDef {
   key: string;
@@ -96,6 +113,8 @@ export interface FeatureDef {
 /**
  * A standalone on/off checkbox shown below the preset picker, outside the
  * Advanced fold. Checked writes `on` (default `1`); unchecked writes `0`.
+ *
+ * @deprecated Prefer a `controls` array of control nodes. Still fully supported.
  */
 export interface ToggleDef {
   key: string;
