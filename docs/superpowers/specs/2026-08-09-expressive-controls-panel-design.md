@@ -65,13 +65,27 @@ and `param-deps.js`. It is the only code in the project that understands the
 authored schema.
 
 ```js
-normalizePanel(parameters) -> PanelTree   // authored schema -> node tree
-evalWhen(condition, params) -> boolean    // one condition against raw params
-resolveOpenState(tree) -> tree            // stamps resolved `open` on containers
-controlNodes(tree) -> ControlNode[]       // flat walk, for lint and range checks
+desugar(parameters) -> CanonicalTree      // legacy shapes -> canonical, KEEPS hidden nodes
+buildTree(canonical) -> RenderTree        // drops hidden + empty groups, assigns ids
+evalWhen(condition, params) -> boolean     // one condition against raw params
+controlNodes(tree) -> ControlNode[]        // flat walk, for lint and range checks
 ```
 
-The tree has exactly two node kinds.
+**Desugaring and tree-building are separate steps, and must stay separate.** Lint
+needs the canonical tree with hidden nodes still in it — `lint-schema.test.js:153`
+("a hidden control still counts as exposing its key") fails otherwise, and
+`default-not-exposed` would start firing on every deliberate internal constant.
+The renderer needs them gone. Collapsing these into one `normalize` call, which
+an earlier draft of this spec did, silently breaks lint.
+
+### Node identity
+
+`buildTree` assigns every node a stable `id`: the authored `id` when there is
+one, otherwise a path derived from position (`body/advanced/2`). Ids are what the
+state pass (§7) keys its output on, and what the disclosure buttons use for
+`aria-controls`. They must be stable across a re-render of the same schema.
+
+The tree has exactly three node kinds.
 
 **Group** — a container.
 
@@ -92,12 +106,24 @@ The tree has exactly two node kinds.
   unit, min, max, step,   // numeric types
   options,                // select / radio
   on,                     // checkbox
-  derivedKey,             // readout
   scale, ticks, recommended,
   when, whenFalse }
 ```
 
-Top-level groups are the sections. Groups nest. Controls are always leaves.
+**Display** — a leaf bound to nothing. Currently just `readout`.
+
+```js
+{ kind: "display", type: "readout", label, unit, derivedKey, when, whenFalse }
+```
+
+A display node is a separate kind rather than a control because it differs on
+every axis that matters to the machinery: it has no `key`, never writes `params`,
+never appears in `syncValues`, never participates in relevance (which is computed
+over parameter keys), and can never be the target of a preset. Modelling it as a
+control would put a `key == null` branch in all five of those paths. Splitting the
+kind means each path simply filters to `kind === "control"` once.
+
+Top-level groups are the sections. Groups nest. Controls and displays are leaves.
 
 `presets` stays a group-level field rather than becoming a node, because
 `oracle/cases.js` reads `section.presets` directly to expand verify cases, and
@@ -139,7 +165,7 @@ Authored order is render order.
 
 ## 2. The old shapes become sugar
 
-`normalizePanel` desugars the legacy arrays. Nothing on disk changes; the nine
+`desugar` translates the legacy arrays. Nothing on disk changes; the nine
 in-repo parts and every downstream part keep working indefinitely.
 
 | Authored | Normalizes to |
@@ -178,7 +204,8 @@ Because legacy `advanced` desugars to `collapsed: "auto"`, existing parts pick
 this up for free: `demo.js` and `planter.js` (two sections each) open their
 Advanced folds on load, while a part with six sections stays tidy.
 
-`resolveOpenState` computes this and is unit-tested directly, with no DOM.
+The rule is evaluated inside `computeState` (§7) and is unit-tested directly,
+with no DOM.
 
 The section title becomes a disclosure button carrying `aria-expanded`. This is a
 visible change to how a panel presents on load, and it is intended.
@@ -215,6 +242,11 @@ when: { not: { style: "plain" } }
 
 Multiple keys in one object are ANDed.
 
+Operators live in a lookup table (`{ gt: (a, b) => a > b, … }`), not a `switch`.
+That table is the single source of truth: `evalWhen` dispatches through it, and
+`when-unknown-operator` builds its did-you-mean list from its keys, so adding an
+operator can never leave lint behind.
+
 `when` references **raw parameter keys only** — never derived values. That is
 what lets `rules-schema.js` check every referenced key against `defaults`
 statically, which no predicate function could support. Readouts get at derived
@@ -241,6 +273,14 @@ A control can be relevant but conditioned away, or vice versa. `mount.js:510`
 already re-runs relevance on every param change; conditions re-evaluate on the
 same tick.
 
+Two mechanisms that can both grey something out is a standing source of "why is
+this control like that?" confusion, for users and for whoever debugs it later.
+So they must never share a visual treatment: relevance-dimming keeps `.irrelevant`
+(opacity only, no interaction change), while `whenFalse: "disable"` renders as a
+genuinely disabled control — real `disabled` attributes, no hover response, and
+its own class. If the two ever converge visually, the panel becomes unreadable
+in exactly the situation where you most need to read it.
+
 ---
 
 ## 5. Widgets
@@ -252,7 +292,33 @@ Existing four keep working: `slider`, `number`, `text`, `textarea`.
 | `select` | Dropdown over `options`. Long form `[{ value, label, description? }]`, or the shorthand `["round", "faceted"]` where each string is both value and label. Values may be strings or numbers. |
 | `radio` | Same data as `select`, rendered as a segmented control. For 2–4 options where seeing all of them matters. |
 | `checkbox` | A bare on/off bound to `on` (default `1`) / `0`. The honest home for a boolean, and what `toggles` desugars to. |
-| `readout` | Read-only display of a `derive()` output named by `derivedKey`. Not bound to `defaults`; shows what the part computed. |
+| `readout` | Read-only display of a `derive()` output named by `derivedKey`. Not bound to `defaults`; shows what the part computed. A `display` node, not a control — see §1. |
+
+### The widget registry
+
+Every type — old and new — is declared once, as a pure spec:
+
+```js
+// panel/widget-specs.js — pure, DOM-free, dependency-free
+{ type: "slider",
+  kind: "control",
+  fields: ["key","label","unit","min","max","step","scale","ticks",
+           "recommended","description","when","whenFalse","hidden"],
+  validate(def, ctx) { … }   // returns findings, no DOM
+}
+```
+
+The DOM factory for each type lives beside it in `panel/widgets/<type>.js` and is
+imported only by the renderer.
+
+This is the piece that decides whether the schema stays maintainable. Right now
+`rules-schema.js:9-11` hardcodes three field allow-lists (`CONTROL_FIELDS`,
+`FEATURE_FIELDS`, `TOGGLE_FIELDS`) that have to be updated by hand whenever a
+field is added — and `unknown-control-field` silently warns on any legitimate
+field somebody forgot to add there. Deriving those lists from the registry
+removes the whole class of bug. Adding a widget becomes: one spec entry, one DOM
+factory, one type. Lint, the field allow-list, and the did-you-mean suggestions
+all follow automatically, and nothing else is edited.
 
 Three slider refinements:
 
@@ -268,13 +334,13 @@ Three slider refinements:
 
 ## 6. Lint
 
-`rules-schema.js` and `rules-animations.js` both switch to consuming
-`normalizePanel` / `controlNodes` instead of hand-walking. `panel/model.js` is
-dependency-free, so `test/lint-purity.test.js` keeps passing — its allowlist
-gains that one module.
+`rules-schema.js` and `rules-animations.js` both switch to consuming `desugar` /
+`controlNodes` instead of hand-walking. Both that module and `widget-specs.js`
+are dependency-free, so `test/lint-purity.test.js` keeps passing — its allowlist
+gains those two.
 
-Existing rules keep working against the normalized tree. `unknown-control-field`
-allow-lists extend to the new fields.
+Existing rules keep working against the canonical tree. `unknown-control-field`
+stops carrying hardcoded allow-lists and reads them off the widget registry.
 
 New rules:
 
@@ -298,23 +364,46 @@ The last two are the LLM-facing ones: they push toward a panel that is
 ## 7. Files
 
 ```
-src/framework/panel/model.js     pure: normalize, evalWhen, resolveOpenState, controlNodes
-src/framework/panel/widgets.js   one DOM factory per control type
-src/framework/panel/render.js    tree -> DOM; relevance, conditions, sync
-src/framework/panel/info.js      createInfoPopover, attachInfo (moved)
-src/framework/controls.js        public entry; re-exports the above
+src/framework/panel/model.js         pure: buildTree, evalWhen, controlNodes
+src/framework/panel/legacy.js        pure: desugar — the only code that knows the old shapes
+src/framework/panel/widget-specs.js  pure: the type registry (fields + validators)
+src/framework/panel/panel-state.js   pure: computeState(tree, {params, relevant}) -> Map
+src/framework/panel/widgets/*.js     one DOM factory per type
+src/framework/panel/render.js        thin binder: build DOM, apply state
+src/framework/panel/info.js          createInfoPopover, attachInfo (moved)
+src/framework/controls.js            public entry; re-exports the above
 ```
+
+Two things about this shape are deliberate.
+
+**`legacy.js` is quarantined.** All knowledge of `advanced` / `toggles` /
+`features` / `control:` lives in exactly one file with a known shelf life. When
+the old shapes are eventually dropped, that is one file deleted and one call site
+removed — not an archaeology dig through a model module that had grown half
+historical.
+
+**`panel-state.js` mirrors `rail-state.js`.** The repo already has this pattern
+and it works: `rail-state.js` is a pure drag/collapse state machine and `rail.js`
+is the thin thing that binds it to the DOM. The panel has four cross-cutting
+concerns that would otherwise tangle inside one render function — relevance
+dimming, conditions, open/closed state, and value sync. Instead, one pure
+function takes the tree plus the current params and relevant-key set and returns
+a `Map<nodeId, { visible, disabled, dimmed, open }>`; `render.js` does nothing
+but apply it.
+
+The payoff is that the interaction between conditions and relevance — the part
+most likely to produce a subtle bug, since they are two independent systems
+acting on the same nodes — becomes testable as a pure function, with no DOM and
+no `happy-dom` quirks in the way. It is also why `render.js` can stay small
+enough to hold in your head, which the current 364-line `controls.js` (doing
+schema interpretation, widget construction, DOM assembly, and popover management
+at once) is not.
 
 `controls.js` stays at its path and keeps exporting `buildControls`,
 `createInfoPopover`, `attachInfo`, `clampToRange`, `popoverTop`,
 `sectionRenders`, `visibleAdvanced`, `visibleFeatures`, and `visibleToggles`.
 The popover exports matter beyond the panel: `animation-controls.js:9` imports
 them for the transport bar's ⓘ.
-
-Splitting `controls.js` (364 lines, currently doing schema interpretation, widget
-construction, DOM assembly, and popover management at once) is what keeps each
-piece small enough to reason about — and it is what makes the schema layer
-testable without a DOM at all.
 
 ## 8. Runtime handle
 
@@ -372,9 +461,12 @@ shapes deliberately, as live proof that compatibility holds.
   byte-identical DOM — section titles gain a disclosure affordance — but the
   existing 27 tests in `test/framework/controls.test.js` should pass with at most
   mechanical changes.
-- **Model unit tests**, no DOM: normalization of each legacy shape, `evalWhen`
-  across every operator and combinator, `resolveOpenState` at the threshold
-  boundary.
+- **Model unit tests**, no DOM: `desugar` of each legacy shape, `evalWhen` across
+  every operator and combinator, `computeState` at the auto-open threshold
+  boundary and for every conditions × relevance combination.
+- **Registry coherence test**: every type in `widget-specs.js` has a DOM factory,
+  a type declaration, and appears in the authoring guide. This is what stops the
+  three from drifting the way the three schema walkers did.
 - **Widget tests** per new type: renders, binds, syncs, fires `onDirty`.
 - **Condition tests**: hide vs. disable, group subtrees, interaction with
   `.irrelevant`.
@@ -387,23 +479,46 @@ shapes deliberately, as live proof that compatibility holds.
 Each phase is a reviewable PR. Per `AGENTS.md`, the version bump rides on the
 branch.
 
-1. **Model + parity.** Extract `panel/`, render from the tree, desugar all legacy
-   shapes, collapsible sections, `collapsed: "auto"`. No new authored features.
-   Lint switches to the shared model. This is the risky phase; everything after
-   it is additive.
-2. **Widgets.** `select`, `radio`, `checkbox`, `readout`, and the three slider
-   refinements. Types and lint allow-lists.
-3. **Conditions.** `when` / `whenFalse`, `refresh`, the four condition lint rules.
-4. **Docs and parts.** Rewrite the authoring guide, add the structural lint
+1. **Pure refactor.** Extract `panel/`, add `legacy.js` + `model.js` +
+   `widget-specs.js` + `panel-state.js`, render from the tree. **Zero behavior
+   change** — all 27 tests in `test/framework/controls.test.js` pass completely
+   unmodified, and the DOM is byte-identical. Nothing new is authorable.
+2. **Lint onto the shared model.** `rules-schema.js` and `rules-animations.js`
+   switch to `desugar` / `controlNodes`; allow-lists derive from the registry.
+   `test/lint-schema.test.js` passes unmodified.
+3. **Collapsible sections.** Disclosure markup, `collapsed`, the auto-open rule.
+   The first phase with a visible change, and the only one that touches
+   `app.css`.
+4. **Widgets.** `select`, `radio`, `checkbox`, `readout`, and the three slider
+   refinements — each with its registry spec, lint validator, and type.
+5. **Conditions.** `when` / `whenFalse`, `refresh`, the four condition lint rules.
+6. **Docs and parts.** Rewrite the authoring guide, add the structural lint
    rules, enrich `bracket.js` and `planter.js`.
+
+Phases 1–3 replace what an earlier draft called a single "model + parity" phase.
+That phase bundled a module extraction, a desugaring layer, a rendering rewrite,
+a lint migration, and a visible UI change — while claiming a regression in it
+would be easy to bisect, which is plainly false. Split this way, each phase is
+independently revertible, and phases 1 and 2 are provable: if any existing test
+needed editing, something changed that shouldn't have.
+
+**No phase ships a schema capability without the lint rule that guards it.**
+Every field added here is a field an LLM can get wrong, so shipping phase 4 or 5
+with validators deferred to phase 6 would make authoring measurably worse in the
+interim. The validators travel with their widget specs, which is most of why the
+registry is shaped the way it is.
 
 ## 13. Risks
 
 - **Parity regressions in phase 1** are the main hazard — the desugar of
   `features` in particular has to reproduce the exact check/reveal behavior
   including the `syncs.forEach` on enable and the `params[key] = 0` on disable.
-  The golden tests are the mitigation, and phase 1 ships nothing else so a
-  regression is easy to bisect.
+  The mitigation is that phase 1 is a pure refactor with an unmodified test
+  suite: any test that needs editing is a regression by definition.
+- **Two systems acting on the same nodes.** Conditions and relevance are
+  independent by design, but that means every node has two reasons to be
+  unavailable. `computeState` returning both flags from one pure function is what
+  keeps that debuggable; if it ever grows a third mechanism, revisit.
 - **`section-too-many-controls` is a judgment call.** Twelve is a guess. It ships
   as a warning, and the threshold should be revisited after seeing real
   LLM-authored parts.
