@@ -271,7 +271,9 @@ async function checkRailLayout(width) {
 // engaged (all-roomy widths would make this check prove nothing).
 async function checkAnimBarLayout(widths) {
   if (!await page.locator(".pf-anim-bar").count()) return; // part declares no animations
-  await pauseTransportIfPlaying(); // step-label text changes width mid-playback
+  // Measure a still bar: a moving playhead keeps re-running the placement
+  // observer, so widths sampled mid-playback can straddle a reflow.
+  await pauseTransportIfPlaying();
   let sawSqueeze = false;
   for (const width of widths) {
     await page.setViewportSize({ width, height: 720 });

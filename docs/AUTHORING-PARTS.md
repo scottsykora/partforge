@@ -137,6 +137,13 @@ pagers between animations); hosts drive the same engine via
 `runtime.animation`; `partforge render` can render stills at any position. The
 reference part is `src/parts/hinged-box.js`.
 
+Step labels surface on the scrubber rather than in a readout: hovering or
+dragging along the timeline names the chapter under the pointer, and with the
+scrubber focused **PageUp / PageDown jump whole chapters** (PageUp forward,
+matching the key's native slider direction). Screen readers get the same
+information from the scrubber's `aria-valuetext`, which reads
+`"<step label> — <percent>"`.
+
 ```js
 animations: {
   open: {

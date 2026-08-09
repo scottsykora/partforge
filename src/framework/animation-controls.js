@@ -14,11 +14,14 @@ function el(tag, className, text) {
   if (text != null) node.textContent = text;
   return node;
 }
+function setBtnLabel(b, label) {
+  b.setAttribute("aria-label", label);
+  b.title = label;
+}
 function btn(className, text, label) {
   const b = el("button", className, text);
   b.type = "button";
-  b.setAttribute("aria-label", label);
-  b.title = label;
+  setBtnLabel(b, label);
   return b;
 }
 
@@ -128,51 +131,87 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   if (nextAnimBtn) bar.append(nextAnimBtn);
   container.append(bar);
 
-  // transient = a keyboard/scrub reveal with no pointerleave to end it — it
-  // fades on its own instead. A hover reveal stays until the pointer leaves.
+  // A reveal is either HOVER-owned or TRANSIENT. A hover reveal lives until the
+  // pointer leaves; a transient one (keyboard jump, scrub, touch) fades itself.
   //
-  // The pointer OWNS the bubble while it's inside the wrap: pointerleave is the
-  // only thing allowed to end a hover reveal. A drag fires pointermove then an
-  // `input` on every step, so the transient fade (armed by the `input` handler)
-  // is always the last timer set — without hoverInside a held-still thumb (or a
-  // click-seek followed by motionless hovering) would fade out from under a
-  // pointer that never left. So a transient reveal only arms its fade when the
-  // pointer isn't the one holding the bubble.
+  // `hoverInside` marks the pointer as the current owner, and while it is set a
+  // transient reveal deliberately arms no fade — a drag fires pointermove then
+  // an `input` on every step, so the transient timer would otherwise be the last
+  // one set and would blank the label under a finger that never left.
+  //
+  // Every path that hides the bubble clears the latch too, so it can never
+  // outlive the reveal it guards: an animation switch hides the bubble while the
+  // pointer sits still, and a gesture the browser steals for scrolling delivers
+  // pointercancel instead of pointerleave.
+  const BUBBLE_FADE_MS = 1000;
   let bubbleFadeTimer = 0;
   let hoverInside = false;
+  // The label's rendered width is re-measured only when the label itself
+  // changes: showChapterBubble runs on every pointermove, and offsetWidth
+  // forces a synchronous layout. Writing through textSetter keeps the text node
+  // stable per the WebKit rule above, rather than replacing it per move.
+  const setBubbleText = textSetter(chapterBubble);
+  let bubbleLabel = null;
+  let bubbleWidth = 0;
   function showChapterBubble(fraction, { transient = false } = {}) {
     if (current.steps.length <= 1) return;
     const f = Math.min(1, Math.max(0, fraction));
-    chapterBubble.textContent = current.steps[stepIndexAt(current, f)].label;
-    const wrapWidth = scrubWrap.clientWidth;
-    chapterBubble.style.left = `${clampBubbleX(f, wrapWidth, chapterBubble.offsetWidth)}px`;
+    const label = current.steps[stepIndexAt(current, f)].label;
+    if (label !== bubbleLabel) {
+      bubbleLabel = label;
+      setBubbleText(label);
+      bubbleWidth = chapterBubble.offsetWidth;
+    }
+    chapterBubble.style.left = `${clampBubbleX(f, scrubWrap.clientWidth, bubbleWidth)}px`;
     chapterBubble.classList.add("pf-show");
     clearTimeout(bubbleFadeTimer);
     bubbleFadeTimer = 0;
-    if (transient && !hoverInside) bubbleFadeTimer = setTimeout(hideChapterBubble, 1000);
+    if (transient && !hoverInside) bubbleFadeTimer = setTimeout(hideChapterBubble, BUBBLE_FADE_MS);
+  }
+  function fadeChapterBubble() {
+    if (!chapterBubble.classList.contains("pf-show")) return;
+    clearTimeout(bubbleFadeTimer);
+    bubbleFadeTimer = setTimeout(hideChapterBubble, BUBBLE_FADE_MS);
   }
   function hideChapterBubble() {
     clearTimeout(bubbleFadeTimer);
     bubbleFadeTimer = 0;
+    hoverInside = false;
     chapterBubble.classList.remove("pf-show");
   }
   const onWrapPointerMove = (e) => {
-    hoverInside = true;
+    if (current.steps.length <= 1) return; // no chapters: no bubble, and no layout read
     const rect = scrubWrap.getBoundingClientRect();
     if (!rect.width) return;
+    hoverInside = true;
     showChapterBubble((e.clientX - rect.left) / rect.width);
   };
-  const onWrapPointerLeave = () => {
+  // A touch pointer's leave arrives with the finger lift, so hiding outright
+  // would blank the label the tap just asked for — and touch has no hover to
+  // read it with afterwards. Let it fade like a keyboard reveal instead. A
+  // mouse leaving still hides at once: the pointer moving away IS the dismissal.
+  const onWrapPointerLeave = (e) => {
     hoverInside = false;
-    hideChapterBubble();
+    if (e?.pointerType === "touch") fadeChapterBubble();
+    else hideChapterBubble();
   };
   scrubWrap.addEventListener("pointermove", onWrapPointerMove);
   scrubWrap.addEventListener("pointerleave", onWrapPointerLeave);
+  scrubWrap.addEventListener("pointercancel", onWrapPointerLeave);
 
-  // Per-animation chrome: title, ⓘ description, scrubber ticks.
+  // Per-animation chrome: title, ⓘ description, pager labels, scrubber ticks.
   function syncStructure() {
     title.textContent = current.label;
     hideChapterBubble();
+    if (paged) {
+      // Name the destination. Activating a pager keeps focus on it and leaves
+      // its glyph unchanged, so without this a screen reader re-announces the
+      // same generic "Next animation" and never says what is now selected.
+      const i = animations.indexOf(current);
+      const at = (d) => animations[(i + d + animations.length) % animations.length].label;
+      setBtnLabel(prevAnimBtn, `Previous animation: ${at(-1)}`);
+      setBtnLabel(nextAnimBtn, `Next animation: ${at(1)}`);
+    }
     infoSlot.replaceChildren();
     attachInfo(infoSlot, current.description ?? "", info);
     const stepped = current.steps.length > 1;
@@ -192,12 +231,13 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   // 1. Text goes through textSetter (see above), so the button's text node is
   //    mutated and never replaced. This is the one that matters, because it
   //    holds even when the glyph legitimately changes under a held finger —
-  //    playback ending, or a step boundary crossing, mid-press.
+  //    playback ending mid-press.
   // 2. Each element has its own renderer that leaves early when its own value
-  //    is unchanged, so a playing transport does no DOM work per frame at all.
-  //    Per ELEMENT, not per write: driving several elements off one shared
-  //    state key means a step change also redraws the button, which was still
-  //    enough to lose the click before rule 1 was in place.
+  //    is unchanged, so a playing transport touches only what actually moved:
+  //    the scrubber's value, and aria-valuetext when it crosses a reporting
+  //    step. Per ELEMENT, not per write: driving several elements off one
+  //    shared state key means a step change also redraws the button, which was
+  //    still enough to lose the click before rule 1 was in place.
   //
   // Without rule 1 this cost the pause click outright: press, release, no click
   // event at all, and only ever while playing — the one moment the button is
@@ -216,13 +256,21 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     playBtn.title = label;
   }
 
-  // aria-valuetext runs on every frame like the scrubber value; an attribute
-  // write never eats clicks (see the WebKit note above), but skipping
-  // unchanged values keeps a playing transport from redundant DOM work.
+  // aria-valuetext is the accessible chapter channel — the bubble is aria-hidden,
+  // so this is the only place the chapter name reaches assistive tech. An
+  // attribute write never eats clicks (see the WebKit note above), but a screen
+  // reader announces every CHANGE, and during playback the position moves on its
+  // own: an exact percentage would chatter ~100 times a run with the scrubber
+  // focused. So while playing the percentage is reported in 10% steps. A
+  // user-driven seek reports the exact position, which is when precision is the
+  // feedback the user asked for.
   let shownValuetext = null;
-  function renderValuetext(t, stepIndex) {
-    const pct = `${Math.round(t * 100)}%`;
-    const text = current.steps.length > 1 ? `${current.steps[stepIndex].label} — ${pct}` : pct;
+  function renderValuetext(t, stepIndex, playing) {
+    const pct = Math.round(t * 100);
+    const shown = playing ? Math.round(pct / 10) * 10 : pct;
+    const text = current.steps.length > 1
+      ? `${current.steps[stepIndex].label} — ${shown}%`
+      : `${shown}%`;
     if (text === shownValuetext) return;
     shownValuetext = text;
     scrub.setAttribute("aria-valuetext", text);
@@ -230,13 +278,19 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
 
   function syncUi() {
     const { status, t, stepIndex } = playback.state();
+    const playing = status === "playing" || status === "intro";
     scrub.value = String(Math.round(t * 1000));
-    renderPlayButton(status === "playing" || status === "intro");
-    renderValuetext(t, stepIndex);
+    renderPlayButton(playing);
+    renderValuetext(t, stepIndex, playing);
   }
 
-  // selectAnimation swaps in a fresh playback whose state can coincide with the
-  // outgoing one; the chrome still has to re-render for the new animation.
+  // Belt-and-braces for the animation swap. Both caches above key on the exact
+  // value written to the DOM, so today a stale one can only ever agree with what
+  // is already on screen — this reset is currently redundant, and no test can
+  // pin it. It is kept because the cache it replaced (the old step readout) keyed
+  // on a step INDEX, which genuinely collided across animations at index 0: any
+  // future renderer keyed on a proxy rather than on its rendered value needs
+  // this hook to already exist.
   function invalidateUi() { shownActive = null; shownValuetext = null; }
 
   // --- driver -----------------------------------------------------------------
@@ -296,8 +350,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     playback = createPlayback(current);
     if (animations.length > 1) pick.value = name;
     syncStructure();
-    invalidateUi(); // a fresh playback starts idle at step 0 — the same key the
-                    // outgoing one may have been showing, but for another animation
+    invalidateUi();
     syncUi();
   }
 
@@ -331,6 +384,15 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   // removed step buttons. PageUp goes FORWARD, matching the key's native
   // slider direction (it increases the value). Single-step animations keep
   // the browser's native coarse seek instead.
+  //
+  // Targets are derived from the chapter the playhead is IN rather than by
+  // scanning stepStarts for the nearest boundary — same answers (verified
+  // equivalent across the whole 0..1 range), but it reads as the rule it
+  // implements and allocates nothing per keypress.
+  //
+  // The 1e-6 is an AT-THE-BOUNDARY tolerance, not a fudge: within it the
+  // playhead counts as sitting on the chapter's start, so PageDown steps to the
+  // chapter before instead of restarting the one you are already at the top of.
   const onScrubKeydown = (e) => {
     if (current.steps.length <= 1) return;
     if (e.key !== "PageUp" && e.key !== "PageDown") return;
@@ -338,9 +400,15 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     disarmAutoplay();
     const { t } = playback.state();
     const starts = current.stepStarts;
+    const i = stepIndexAt(current, t);
     const target = e.key === "PageUp"
-      ? (starts.find((s) => s > t + 1e-6) ?? 1)
-      : ([...starts].reverse().find((s) => s < t - 1e-6) ?? 0);
+      ? (starts[i + 1] ?? 1)
+      // Inside a chapter, back up to its own start (restart it); already at the
+      // start, step to the chapter before — the video-player convention.
+      : (t > starts[i] + 1e-6 ? starts[i] : (starts[i - 1] ?? 0));
+    // seek() abandons a pending cue but cannot touch the viewer's camera, so an
+    // in-flight tween would keep travelling to the position we just left.
+    viewer.cancelCameraTween();
     showChapterBubble(target, { transient: true });
     guarded(() => playback.seek(target));
   };
@@ -398,10 +466,15 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     bar.style.left = `${plan.left}px`;
     bar.style.transform = "none";
     // maxWidth is the last resort, only reached when even the margin can't
-    // hold the gap — and the bar's flex children have hard minimums (~320px)
-    // that don't shrink to fit a tighter cap. overflow:hidden only applies
-    // here, inline, because a static rule in app.css would also clip the ⓘ
-    // info popover in the (far more common) uncapped state.
+    // hold the gap — and the bar's flex children have hard minimums that don't
+    // shrink to fit a tighter cap. overflow:hidden is applied here, inline,
+    // rather than as a static rule so it is scoped to the capped state and the
+    // (far more common) uncapped bar never clips anything.
+    //
+    // It DOES clip the chapter bubble, which sits above the bar's content box:
+    // a capped bar shows no chapter label at all. (The ⓘ popover is immune
+    // either way — createInfoPopover appends it to document.body, so the bar's
+    // overflow can never reach it.)
     if (plan.maxWidth != null) {
       bar.style.maxWidth = `${plan.maxWidth}px`;
       bar.style.overflow = "hidden";
@@ -411,9 +484,9 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     if (typeof requestAnimationFrame !== "function") return applyPlacement();
     if (!placementRaf) placementRaf = requestAnimationFrame(applyPlacement);
   }
-  // Observing the bar itself catches content-driven width changes (animation
-  // switch changing the picker/title width); the viewbar, cutaway's actions;
-  // the stage, rail drags and window resizes.
+  // Observing the bar itself catches content-driven width changes — the ⓘ glyph
+  // appearing or disappearing when only some animations declare a description;
+  // the viewbar, cutaway's actions; the stage, rail drags and window resizes.
   const placementObserver = typeof ResizeObserver === "function"
     ? new ResizeObserver(schedulePlacement) : null;
   if (placementObserver) {
@@ -474,8 +547,8 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       if (placementRaf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placementRaf);
       scrubWrap.removeEventListener("pointermove", onWrapPointerMove);
       scrubWrap.removeEventListener("pointerleave", onWrapPointerLeave);
-      hoverInside = false;
-      hideChapterBubble();
+      scrubWrap.removeEventListener("pointercancel", onWrapPointerLeave);
+      hideChapterBubble(); // also clears hoverInside
       bar.remove();
     },
     __viewer: viewer, // test hook only

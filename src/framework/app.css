@@ -247,6 +247,10 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
   border-radius: var(--pf-radius-control); box-shadow: var(--pf-shadow-float);
   padding: 3px 8px; white-space: nowrap;
   pointer-events: none;
+  /* Out of flow, so nothing else constrains it: a long chapter label would
+     otherwise run past both ends of the scrubber and off a narrow stage.
+     Capped at the wrap's nominal width and ellipsised instead. */
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis;
   opacity: 0; transition: opacity .12s ease;
 }
 .pf-anim-chapter.pf-show { opacity: 1; }
