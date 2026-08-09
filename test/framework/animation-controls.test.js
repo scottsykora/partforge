@@ -4,7 +4,7 @@
 // cue → tween dispatch, intro gating, snapshot/reset, user-edit pause, and the
 // runtime surface.
 import { afterEach, expect, test, vi } from "vitest";
-import { attachAnimationControls, planAnimBarPlacement, clampBubbleX } from "../../src/framework/animation-controls.js";
+import { attachAnimationControls, planAnimBarPlacement, clampBubbleX, snapUpToScrubGrid } from "../../src/framework/animation-controls.js";
 
 function fakeViewer() {
   const frameCbs = new Set(); const orbitCbs = new Set();
@@ -101,6 +101,24 @@ test("stepped animation shows ticks but no step label or step buttons", () => {
   expect(container.querySelector(".pf-anim-step")).toBeNull();
   expect(container.querySelector(".pf-anim-step-btn")).toBeNull();
   expect(container.querySelectorAll(".pf-anim-tick")).toHaveLength(1); // one interior boundary
+});
+
+// The bar caps its own width and sets overflow:hidden when it runs out of room
+// (see the placement test below), so anything floating ABOVE it that lives
+// INSIDE it is clipped away — which is what happened to the bubble in exactly
+// the narrow layouts that need it. It belongs to the stage instead, like the
+// ⓘ popover belongs to document.body.
+test("the chapter bubble lives on the stage, outside the bar the cap clips", () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  const bar = container.querySelector(".pf-anim-bar");
+  const bubble = container.querySelector(".pf-anim-chapter");
+  expect(bubble).toBeTruthy();
+  expect(bar.contains(bubble)).toBe(false);
+  expect(bubble.parentElement).toBe(container);
+  // ...and it still leaves with the rest of the chrome, since the bar removing
+  // itself no longer takes the bubble with it.
+  ctl.detach();
+  expect(container.querySelector(".pf-anim-chapter")).toBeNull();
 });
 
 test("chapter bubble follows hover over the scrubber and names the chapter", () => {
@@ -575,6 +593,7 @@ test("placement wiring: clamps against the viewbar, clears when roomy, disconnec
     expect(bar.style.transform).toBe("none");
     expect(bar.style.maxWidth).toBe("");
     expect(bar.style.overflow).toBe("");
+    expect(bar.classList.contains("pf-squeezed")).toBe(false); // sliding is not squeezing
 
     // capped: even the 12px margin isn't enough (300−10−12 = 278 < barWidth
     // 400) → left pins to the margin and maxWidth caps the bar, clipping its
@@ -584,6 +603,9 @@ test("placement wiring: clamps against the viewbar, clears when roomy, disconnec
     expect(bar.style.left).toBe("12px");
     expect(bar.style.maxWidth).toBe("278px");
     expect(bar.style.overflow).toBe("hidden");
+    // ...and the bar sheds the pagers, so their width goes to the timeline
+    // rather than the timeline collapsing to keep them.
+    expect(bar.classList.contains("pf-squeezed")).toBe(true);
 
     // roomy again → overrides cleared, chrome.css back in charge
     viewbarLeft = 800;
@@ -591,6 +613,7 @@ test("placement wiring: clamps against the viewbar, clears when roomy, disconnec
     expect(bar.style.left).toBe("");
     expect(bar.style.transform).toBe("");
     expect(bar.style.overflow).toBe("");
+    expect(bar.classList.contains("pf-squeezed")).toBe(false);
 
     ctl.detach();
     expect(disconnected).toBe(true);
@@ -668,10 +691,10 @@ test("PageUp/PageDown jump chapter boundaries; no-ops for single-step", () => {
   expect(ctl.runtime.state().t).toBeCloseTo(0);
 });
 
-// PageDown's rule, pinned on three equal chapters: restart the chapter you are
-// inside, step back from the one you are at the top of. The 1e-6 is the
-// at-the-boundary tolerance that decides which of those you are in.
-test("PageDown restarts the current chapter, or steps back from its start", () => {
+// Three EQUAL chapters, so every boundary (1/3, 2/3) falls between two steps of
+// the scrubber's 1/1000 grid — the case that exposes a jump landing on a `t`
+// the scrubber cannot represent.
+function thirdsHarness() {
   const container = document.createElement("div");
   document.body.append(container);
   const thirds = { animations: { m: { label: "M", steps: [
@@ -684,28 +707,72 @@ test("PageDown restarts the current chapter, or steps back from its start", () =
   });
   handles.push(ctl);
   const scrub = container.querySelector(".pf-anim-scrub");
-  const pageDown = () => scrub.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true }));
+  const press = (key) => scrub.dispatchEvent(
+    new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  // The chapter the bar is REPORTING, which is the thing the user perceives.
+  const chapter = () => scrub.getAttribute("aria-valuetext").split(" — ")[0];
+  return { ctl, scrub, press, chapter };
+}
 
-  // Well inside chapter C: PageDown restarts C rather than leaving it.
-  ctl.runtime.seek(0.8);
-  pageDown();
-  expect(ctl.runtime.state().t).toBeCloseTo(2 / 3, 5);
-  // Now sitting on C's start: PageDown steps back to B.
-  pageDown();
-  expect(ctl.runtime.state().t).toBeCloseTo(1 / 3, 5);
-  // Within the tolerance above B's start still counts as being AT it.
-  ctl.runtime.seek(1 / 3 + 5e-7);
-  pageDown();
-  expect(ctl.runtime.state().t).toBeCloseTo(0, 5);
-  // Just outside it does not — that is inside B, so B restarts.
+// PageDown's rule: restart the chapter you are inside, step back from the one
+// you are at the top of. The 1e-6 is the at-the-boundary tolerance deciding
+// which of those you are in.
+test("PageDown restarts the current chapter, or steps back from its start", () => {
+  const { ctl, press, chapter } = thirdsHarness();
+
+  ctl.runtime.seek(0.8);                       // well inside C
+  press("PageDown");
+  expect(chapter()).toBe("C");                 // restarts C, does not leave it
+  press("PageDown");
+  expect(chapter()).toBe("B");                 // at C's start, so step back
+  // Anything the scrubber would round onto B's start counts as being AT it,
+  // not inside it — the tolerance is one step of the grid, not an epsilon.
   ctl.runtime.seek(1 / 3 + 1e-5);
-  pageDown();
-  expect(ctl.runtime.state().t).toBeCloseTo(1 / 3, 5);
-  // At the very start, PageDown has nowhere to go.
+  press("PageDown");
+  expect(chapter()).toBe("A");
+  ctl.runtime.seek(1 / 3 + 0.05);              // genuinely inside B
+  press("PageDown");
+  expect(chapter()).toBe("B");                 // so B restarts
   ctl.runtime.seek(0);
-  pageDown();
-  expect(ctl.runtime.state().t).toBeCloseTo(0, 5);
+  press("PageDown");
+  expect(ctl.runtime.state().t).toBe(0);       // nowhere left to go
+});
+
+// A jump used to land on the exact boundary (1/3), which syncUi rounds DOWN to
+// 333 — a value that reads back as the PREVIOUS chapter. The bar then reported
+// a chapter the playhead was not in, and any later arrow-key nudge re-derived
+// `t` from that rounded value and silently moved the user a chapter.
+test("a chapter jump lands where the scrubber can report it", () => {
+  const { ctl, scrub, press, chapter } = thirdsHarness();
+
+  press("PageUp");
+  expect(chapter()).toBe("B");
+  // The thumb's own value must agree with the playhead about the chapter...
+  const shown = Number(scrub.value) / 1000;
+  expect(shown).toBeGreaterThanOrEqual(1 / 3);
+  expect(shown).toBeLessThan(2 / 3);
+  // ...so a net-zero arrow round-trip reports the same chapter it started in.
+  const nudge = (d) => {
+    scrub.value = String(Number(scrub.value) + d);   // what the browser does
+    scrub.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  nudge(-1); nudge(+1);
+  expect(chapter()).toBe("B");
+
+  press("PageUp");                                    // B → C
+  expect(chapter()).toBe("C");
+  nudge(-1); nudge(+1);
+  expect(chapter()).toBe("C");
+});
+
+test("snapUpToScrubGrid keeps a target on its own side of a boundary", () => {
+  expect(snapUpToScrubGrid(1 / 3)).toBeCloseTo(0.334, 10);   // up, not down to .333
+  expect(snapUpToScrubGrid(2 / 3)).toBeCloseTo(0.667, 10);
+  expect(snapUpToScrubGrid(0.5)).toBe(0.5);                  // already on the grid
+  expect(snapUpToScrubGrid(0)).toBe(0);                      // and no -0
+  expect(Object.is(snapUpToScrubGrid(0), -0)).toBe(false);
+  expect(snapUpToScrubGrid(1)).toBe(1);                      // never past the end
+  expect(snapUpToScrubGrid(1.4)).toBe(1);
 });
 
 test("a chapter jump cancels an in-flight camera tween", () => {

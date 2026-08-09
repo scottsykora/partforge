@@ -39,6 +39,32 @@ export function planAnimBarPlacement({ stageWidth, barWidth, viewbarLeft }, { ga
   return barWidth > available ? { left, maxWidth: available } : { left };
 }
 
+// The scrubber's resolution: `t` is reported to the user as one of this many
+// steps, and read back the same way.
+export const SCRUB_STEPS = 1000;
+
+// Snap a seek target UP onto the scrubber's grid.
+//
+// syncUi rounds `t` onto that grid to position the thumb, but a chapter
+// boundary rarely lands on it: with three equal chapters, 1/3 rounds DOWN to
+// 0.333 — which is in the chapter BEFORE the one the playhead is really in. The
+// bar then reports a chapter it is not at, and the next arrow-key nudge reads
+// the rounded value back and "moves" the user a chapter without the position
+// changing. Rounding up keeps the grid value on the same side of the boundary
+// as `t`, so the playhead and what the scrubber shows always agree.
+//
+// A chapter shorter than one step can't be represented at all; nothing here can
+// fix that, and lint's minimum step duration keeps it out of reach.
+export function snapUpToScrubGrid(t) {
+  const stepped = Math.ceil(t * SCRUB_STEPS - 1e-9) / SCRUB_STEPS;
+  return Math.min(1, Math.max(0, stepped));
+}
+
+// "Close enough to a chapter's start to count as being ON it." One scrubber
+// step, for the same reason: finer than the grid is finer than anything the
+// user can see or land on.
+const AT_BOUNDARY = 1 / SCRUB_STEPS;
+
 // Center-x for the chapter bubble, in px within the scrub wrap: the bubble
 // tracks `fraction` along the timeline but never hangs past either end. A
 // wrap narrower than the bubble has no legal band — park it in the middle.
@@ -114,22 +140,30 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   const scrubWrap = el("span", "pf-anim-scrub-wrap");
   const scrub = document.createElement("input");
   scrub.type = "range";
-  scrub.min = "0"; scrub.max = "1000"; scrub.step = "1"; scrub.value = "0";
+  scrub.min = "0"; scrub.max = String(SCRUB_STEPS); scrub.step = "1"; scrub.value = "0";
   scrub.className = "pf-anim-scrub";
   scrub.setAttribute("aria-label", "Animation position");
   scrubWrap.append(scrub);
-  // Chapter bubble: floats above the scrubber naming the chapter under the
-  // pointer (hover) or playhead (scrub). Out-of-flow so it never changes the
-  // bar's size — the placement ResizeObserver must not see it. Non-interactive
-  // and aria-hidden: the accessible chapter channel is the scrubber's
-  // aria-valuetext, not this flag.
-  const chapterBubble = el("span", "pf-anim-chapter");
-  chapterBubble.setAttribute("aria-hidden", "true");
-  scrubWrap.append(chapterBubble);
   const resetBtn = btn("pf-anim-reset", "↺", "Reset animation");
   bar.append(infoSlot, playBtn, scrubWrap, resetBtn);
   if (nextAnimBtn) bar.append(nextAnimBtn);
   container.append(bar);
+  // Chapter bubble: floats above the scrubber naming the chapter under the
+  // pointer (hover) or playhead (scrub).
+  //
+  // It is a child of the STAGE, not of the bar, for the same reason the ⓘ
+  // popover is a child of document.body: when the bar runs out of room it caps
+  // its width and sets overflow:hidden (see applyPlacement), and anything
+  // inside it is clipped — the bubble sits above the bar's content box, so it
+  // was clipped away entirely in exactly the narrow layouts where a shrunken
+  // timeline needs its labels most. Living on the stage puts it out of that
+  // clip, and out of the placement ResizeObserver's subtree as well.
+  //
+  // Non-interactive and aria-hidden: the accessible chapter channel is the
+  // scrubber's aria-valuetext, not this flag.
+  const chapterBubble = el("span", "pf-anim-chapter");
+  chapterBubble.setAttribute("aria-hidden", "true");
+  container.append(chapterBubble);
 
   // A reveal is either HOVER-owned or TRANSIENT. A hover reveal lives until the
   // pointer leaves; a transient one (keyboard jump, scrub, touch) fades itself.
@@ -162,7 +196,13 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       setBubbleText(label);
       bubbleWidth = chapterBubble.offsetWidth;
     }
-    chapterBubble.style.left = `${clampBubbleX(f, scrubWrap.clientWidth, bubbleWidth)}px`;
+    // Stage-relative, because the bubble lives on the stage rather than in the
+    // wrap: track the point along the timeline, then lift clear of the bar.
+    const wrapRect = scrubWrap.getBoundingClientRect();
+    const stageRect = container.getBoundingClientRect();
+    chapterBubble.style.left =
+      `${wrapRect.left - stageRect.left + clampBubbleX(f, wrapRect.width, bubbleWidth)}px`;
+    chapterBubble.style.bottom = `${stageRect.bottom - wrapRect.top + 8}px`;
     chapterBubble.classList.add("pf-show");
     clearTimeout(bubbleFadeTimer);
     bubbleFadeTimer = 0;
@@ -279,7 +319,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   function syncUi() {
     const { status, t, stepIndex } = playback.state();
     const playing = status === "playing" || status === "intro";
-    scrub.value = String(Math.round(t * 1000));
+    scrub.value = String(Math.round(t * SCRUB_STEPS));
     renderPlayButton(playing);
     renderValuetext(t, stepIndex, playing);
   }
@@ -376,7 +416,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   };
   const onScrub = () => {
     disarmAutoplay();
-    const f = Number(scrub.value) / 1000;
+    const f = Number(scrub.value) / SCRUB_STEPS;
     showChapterBubble(f, { transient: true });
     guarded(() => playback.seek(f));
   };
@@ -390,9 +430,12 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   // equivalent across the whole 0..1 range), but it reads as the rule it
   // implements and allocates nothing per keypress.
   //
-  // The 1e-6 is an AT-THE-BOUNDARY tolerance, not a fudge: within it the
-  // playhead counts as sitting on the chapter's start, so PageDown steps to the
-  // chapter before instead of restarting the one you are already at the top of.
+  // AT_BOUNDARY decides "am I at this chapter's start or inside it", which is
+  // what makes PageDown step back rather than restart. It is one scrubber step
+  // because that is the finest position the user can see or reach: a tolerance
+  // finer than the grid would call a playhead that just landed on a boundary
+  // "inside" the chapter, and PageDown would restart it forever instead of
+  // walking back.
   const onScrubKeydown = (e) => {
     if (current.steps.length <= 1) return;
     if (e.key !== "PageUp" && e.key !== "PageDown") return;
@@ -401,11 +444,11 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     const { t } = playback.state();
     const starts = current.stepStarts;
     const i = stepIndexAt(current, t);
-    const target = e.key === "PageUp"
+    const target = snapUpToScrubGrid(e.key === "PageUp"
       ? (starts[i + 1] ?? 1)
       // Inside a chapter, back up to its own start (restart it); already at the
       // start, step to the chapter before — the video-player convention.
-      : (t > starts[i] + 1e-6 ? starts[i] : (starts[i - 1] ?? 0));
+      : (t > starts[i] + AT_BOUNDARY ? starts[i] : (starts[i - 1] ?? 0)));
     // seek() abandons a pending cue but cannot touch the viewer's camera, so an
     // in-flight tween would keep travelling to the position we just left.
     viewer.cancelCameraTween();
@@ -453,6 +496,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     bar.style.transform = "";
     bar.style.maxWidth = "";
     bar.style.overflow = "";
+    bar.classList.remove("pf-squeezed");
     const vb = viewbarEl?.getBoundingClientRect();
     const barRect = bar.getBoundingClientRect();
     if (!vb || barRect.top >= vb.bottom || barRect.bottom <= vb.top) return;
@@ -471,13 +515,17 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     // rather than as a static rule so it is scoped to the capped state and the
     // (far more common) uncapped bar never clips anything.
     //
-    // It DOES clip the chapter bubble, which sits above the bar's content box:
-    // a capped bar shows no chapter label at all. (The ⓘ popover is immune
-    // either way — createInfoPopover appends it to document.body, so the bar's
-    // overflow can never reach it.)
+    // Nothing that floats above the bar may live inside it, or this clips it:
+    // the ⓘ popover is on document.body and the chapter bubble is on the stage,
+    // both for that reason.
     if (plan.maxWidth != null) {
       bar.style.maxWidth = `${plan.maxWidth}px`;
       bar.style.overflow = "hidden";
+      // Under the cap the bar sheds the pagers (~40px with their gaps). They are
+      // pure convenience — the picker beside them reaches every animation — and
+      // spending that width on the timeline is what keeps the scrubber
+      // targetable instead of letting it collapse toward nothing.
+      bar.classList.add("pf-squeezed");
     }
   }
   function schedulePlacement() {
@@ -549,6 +597,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       scrubWrap.removeEventListener("pointerleave", onWrapPointerLeave);
       scrubWrap.removeEventListener("pointercancel", onWrapPointerLeave);
       hideChapterBubble(); // also clears hoverInside
+      chapterBubble.remove(); // a stage child, so the bar taking itself out misses it
       bar.remove();
     },
     __viewer: viewer, // test hook only

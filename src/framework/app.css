@@ -239,9 +239,18 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
 .pf-anim-pick {
   background: var(--pf-input-bg); border: 1px solid var(--pf-border);
   border-radius: var(--pf-radius-control); padding: 3px 6px;
+  /* The widest thing in the bar after the timeline, and the cheapest to give
+     up: a select's default `min-width: auto` floors it at its longest option,
+     so under pressure it would hold full width while the scrubber collapsed.
+     Let it yield first, and faster than everything else — but not to a bare
+     chevron: below this the control stops naming the animation it selects. */
+  min-width: 44px; flex-shrink: 4;
 }
+/* A child of the stage, not of the bar (the capped bar clips its contents, and
+   this sits above them) — animation-controls.js sets left/bottom per reveal,
+   stage-relative. z-index clears .pf-anim-bar's 15. */
 .pf-anim-chapter {
-  position: absolute; bottom: calc(100% + 8px); transform: translateX(-50%);
+  position: absolute; transform: translateX(-50%); z-index: 16;
   font-family: var(--pf-mono); font-size: 10px; color: var(--pf-text-2);
   background: var(--pf-surface); border: 1px solid var(--pf-border);
   border-radius: var(--pf-radius-control); box-shadow: var(--pf-shadow-float);
@@ -254,7 +263,16 @@ button.action:focus-visible, .adv-toggle:focus-visible, #viewbar button:focus-vi
   opacity: 0; transition: opacity .12s ease;
 }
 .pf-anim-chapter.pf-show { opacity: 1; }
-.pf-anim-scrub-wrap { position: relative; display: inline-flex; align-items: center; width: 220px; }
+/* 220px when there is room. The floor is what matters under pressure: a
+   timeline is a pointing target, and below ~96px it stops being one — the
+   chapter ticks collapse onto each other and a drag can't resolve a chapter.
+   Everything else in the bar yields before this does. */
+.pf-anim-scrub-wrap {
+  position: relative; display: inline-flex; align-items: center;
+  width: 220px; min-width: 80px;
+}
+/* Capped bar: the pagers go, and their width goes to the timeline. */
+.pf-anim-bar.pf-squeezed .pf-anim-page { display: none; }
 .pf-anim-scrub { width: 100%; accent-color: var(--pf-accent); }
 .pf-anim-tick {
   position: absolute; top: 50%; width: 2px; height: 8px; margin-top: -4px;
