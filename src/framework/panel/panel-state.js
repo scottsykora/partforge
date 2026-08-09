@@ -15,7 +15,7 @@ export function computeState(tree, { params, relevant }) {
   const state = new Map();
   const showAll = !(relevant instanceof Set);
 
-  const walk = (nodes, parentVisible) => {
+  const walk = (nodes, parentVisible, isTop) => {
     for (const node of nodes) {
       const passes = evalWhen(node.when, params);
       const hideOnFail = node.whenFalse !== "disable";
@@ -27,11 +27,14 @@ export function computeState(tree, { params, relevant }) {
         // .section-hidden behavior, generalized from sections to any group.
         const keys = controlNodes([node]).map((c) => c.key);
         const dimmed = !showAll && !keys.some((k) => relevant.has(k));
-        state.set(node.id, { visible, disabled, dimmed });
-        walk(node.children, visible);
+        // Only a TOP-LEVEL group gets `.section-hidden` (display:none). An inner
+        // group merely dims, because collapsing an inner group out of the layout
+        // on a relevance change makes the panel jump under the user's cursor.
+        state.set(node.id, { visible, disabled, dimmed, dimmedSection: dimmed && isTop });
+        walk(node.children, visible, false);
       } else {
         state.set(node.id, {
-          visible, disabled,
+          visible, disabled, dimmedSection: false,
           // Relevance is computed over parameter keys, so only a control can be
           // irrelevant. A preset node has no key; the legacy renderer never
           // dims the picker, and neither do we.
@@ -41,6 +44,6 @@ export function computeState(tree, { params, relevant }) {
     }
   };
 
-  walk(tree, true);
+  walk(tree, true, true);
   return state;
 }

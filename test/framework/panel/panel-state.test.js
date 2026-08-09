@@ -83,3 +83,9 @@ test("a preset node never dims — relevance only applies to controls", () => {
   expect(st.get("p/0").dimmed).toBe(false);   // the picker
   expect(st.get("p/1").dimmed).toBe(true);    // the control
 });
+
+test("only a TOP-LEVEL group reports dimmedSection — inner groups just dim", () => {
+  const st = computeState(tree(), { params: { gate: 1 }, relevant: new Set(["elsewhere"]) });
+  expect(st.get("s").dimmedSection).toBe(true);
+  expect(st.get("s/g").dimmedSection).toBe(false);
+});
