@@ -489,7 +489,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       onParamChange();
     });
     cleanup.defer(() => panel.dispose());
-    const updateRelevance = () => panel.applyRelevance(relevantParamKeys(part, view(), params));
+    const updateRelevance = () => {
+      // A throwing derive() must not break every slider drag — mount's pick
+      // flow already guards its own resolveDerived call the same way
+      // (mount.js ~:250). Readouts simply stay em-dashed.
+      let derived = {};
+      try { derived = resolveDerived(part, params); } catch { /* diagnosed by lint/build */ }
+      panel.refresh({ relevant: relevantParamKeys(part, view(), params), derived });
+    };
     updateRelevance(); // initial view
 
     // The ONLY caller of fastPath.repair(). It must never move into the regen /

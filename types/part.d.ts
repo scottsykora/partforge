@@ -70,8 +70,8 @@ export type WhenCondition =
       ne?: ParamValue; in?: ParamValue[];
     }>;
 
-/** One entry in a `controls` array: a control, a nested group, or a preset picker. */
-export type PanelEntry = PanelControlEntry | PanelGroupEntry | PanelPresetEntry;
+/** One entry in a `controls` array: a control, a nested group, a preset picker, or a readout. */
+export type PanelEntry = PanelControlEntry | PanelGroupEntry | PanelPresetEntry | PanelReadoutEntry;
 
 /** A control bound to one key in `defaults`. `type` defaults to `"slider"`. */
 export interface PanelControlEntry {
@@ -126,6 +126,21 @@ export interface PanelPresetEntry {
   hidden?: boolean;
   when?: WhenCondition;
   whenFalse?: "disable";
+}
+
+/** A read-only display of one `derive()` output. Not bound to `defaults`. */
+export interface PanelReadoutEntry {
+  type: "readout";
+  label?: string;
+  description?: string;
+  unit?: string;
+  derivedKey: string;
+  hidden?: boolean;
+  when?: WhenCondition;
+  whenFalse?: "disable";
+  key?: undefined;
+  controls?: undefined;
+  presets?: undefined;
 }
 
 /**

@@ -66,7 +66,12 @@ function authoredChildren(list) {
     else if (entry.type === "preset") {
       const node = authoredPreset(entry);
       if (node) out.push(node);
-    } else out.push(authoredControl(entry));
+    } else if (entry.type === "readout") out.push({
+      kind: "display", type: "readout", label: entry.label, description: entry.description,
+      unit: entry.unit, derivedKey: entry.derivedKey,
+      hidden: !!entry.hidden, when: entry.when, whenFalse: entry.whenFalse,
+    });
+    else out.push(authoredControl(entry));
   }
   return out;
 }
@@ -79,8 +84,5 @@ export function authoredSection(sec) {
     children: authoredChildren(sec?.controls),
   };
 }
-// NB until Task 8 lands: a `{ type: "readout" }` entry falls through
-// authoredChildren's else-branch to authoredControl, yielding a keyless control
-// node the renderer skips (no factory) — harmless in the intermediate commits.
 // Authored `id` is honored on containers only; a control entry's `id` is
 // dropped (positional ids serve) and lint warns on the unknown field.

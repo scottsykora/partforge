@@ -92,3 +92,13 @@ test("a legacy section is untouched by the new path", () => {
   const [sec] = desugar([{ id: "m", toggles: [{ key: "show", label: "S" }] }]);
   expect(sec.children.map((c) => c.kind)).toEqual(["control"]); // exactly as 0.47.0
 });
+
+test("a readout entry becomes a display node, not a control", () => {
+  const sec = authoredSection({ id: "s", controls: [
+    { type: "readout", label: "Inner ø", derivedKey: "innerDia", unit: "mm" },
+  ] });
+  expect(sec.children[0]).toMatchObject({
+    kind: "display", type: "readout", derivedKey: "innerDia", unit: "mm",
+  });
+  expect(sec.children[0].key).toBeUndefined();
+});

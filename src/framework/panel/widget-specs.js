@@ -36,6 +36,7 @@ export const WIDGET_SPECS = [
   { type: "checkbox", kind: "control", fields: LEGACY_TOGGLE },
   { type: "select", kind: "control", fields: [...AUTHOR_COMMON, "options"] },
   { type: "radio", kind: "control", fields: [...AUTHOR_COMMON, "options"] },
+  { type: "readout", kind: "display", fields: ["type", "label", "description", "unit", "derivedKey", "hidden", "when", "whenFalse"] },
 ];
 
 const BY_TYPE = new Map(WIDGET_SPECS.map((s) => [s.type, s]));
@@ -44,7 +45,7 @@ export const WIDGET_TYPES = WIDGET_SPECS.map((s) => s.type);
 export const specFor = (type) => BY_TYPE.get(type);
 export const fieldsFor = (type) => BY_TYPE.get(type)?.fields ?? [];
 
-// Per-type extras beyond AUTHOR_COMMON; readout joins AUTHOR_EXTRAS in Task 8.
+// Per-type extras beyond AUTHOR_COMMON.
 const AUTHOR_EXTRAS = {
   slider: ["unit", "min", "max", "step", "scale", "ticks", "snap", "recommended"],
   number: ["unit", "min", "max", "step", "scale", "ticks", "snap", "recommended"],
@@ -56,6 +57,10 @@ const AUTHOR_EXTRAS = {
 };
 const AUTHOR_FIELDS = new Map(Object.entries(AUTHOR_EXTRAS).map(
   ([type, extra]) => [type, [...AUTHOR_COMMON, ...extra]]));
+// readout is a display, not a control — it has no `key`, so it doesn't compose
+// with AUTHOR_COMMON like the control types above. Its author-facing fields
+// are exactly its WIDGET_SPECS fields.
+AUTHOR_FIELDS.set("readout", specFor("readout").fields);
 export const authorFieldsFor = (type) => AUTHOR_FIELDS.get(type) ?? [];
 
 // Container node types in the authored tree. Not widget types — no DOM factory

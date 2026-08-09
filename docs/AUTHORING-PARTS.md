@@ -1140,7 +1140,10 @@ previously didn't; that's the fix working as intended, not a regression.
 `duplicate-preset-name`, `duplicate-node-id`, `select-options-missing`,
 `select-default-not-in-options` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
-`default-not-exposed` (warnings).
+`default-not-exposed`, `readout-unknown-derived-key` (warnings). The last checks a
+`{ type: "readout" }` entry's `derivedKey` against the keys `derive()` actually
+produces (resolved once against `defaults`) — a readout naming a key no group
+returns shows an em-dash forever, so it warns rather than errors.
 
 **Kernel API**, found by executing `build()` against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,

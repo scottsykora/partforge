@@ -141,3 +141,13 @@ test("select with no options errors; default outside options errors", () => {
   expect(ids(r.errors)).not.toContain("select-options-missing");
   expect(ids(r.errors)).not.toContain("select-default-not-in-options");
 });
+
+test("a readout whose derivedKey no derive() group produces warns", () => {
+  const part = authoredPart();
+  part.derive = (p) => ({ innerDia: p.od - 2 * p.wall });
+  part.parameters[0].controls.push({ type: "readout", label: "X", derivedKey: "nope" });
+  const f = lintPart(part).warnings.find((f) => f.rule === "readout-unknown-derived-key");
+  expect(f).toBeTruthy();
+  part.parameters[0].controls.at(-1).derivedKey = "innerDia";
+  expect(ids(lintPart(part).warnings)).not.toContain("readout-unknown-derived-key");
+});

@@ -81,3 +81,36 @@ test("editing a select in a preset section drops the picker to Custom", () => {
   sel.value = "faceted"; sel.dispatchEvent(new Event("change"));
   expect(root.querySelector("select.preset").value).toBe("Custom");
 });
+
+test("a readout renders, fills from refresh({derived}), and never syncs params", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { od: 10 };
+  const panel = buildControls(root, [{ id: "s", controls: [
+    { key: "od", type: "slider", min: 1, max: 20, step: 1 },
+    { type: "readout", label: "Inner ø", derivedKey: "innerDia", unit: "mm" },
+  ] }], params, () => {});
+  const val = root.querySelector(".readout .val");
+  expect(val.textContent).toBe("—");                       // no derived yet
+  panel.refresh({ derived: { innerDia: 8.4 } });
+  expect(val.textContent).toContain("8.4");
+  panel.refresh({ derived: { innerDia: 9 } });
+  expect(val.textContent).toContain("9");
+  panel.dispose();
+});
+
+test("refresh({relevant}) still drives dimming — applyRelevance delegates", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const panel = buildControls(root, [{ id: "s", title: "S", controls: [
+    { key: "od", type: "slider", label: "OD", min: 1, max: 20, step: 1 },
+    { key: "h", type: "slider", label: "H", min: 1, max: 20, step: 1 },
+  ] }], { od: 5, h: 5 }, () => {});
+  panel.refresh({ relevant: new Set(["od"]) });
+  const wraps = [...root.querySelectorAll(".slider")];
+  expect(wraps[0].classList.contains("irrelevant")).toBe(false);
+  expect(wraps[1].classList.contains("irrelevant")).toBe(true);
+  panel.applyRelevance(new Set(["h"]));                    // old name still works
+  expect(wraps[1].classList.contains("irrelevant")).toBe(false);
+  panel.dispose();
+});

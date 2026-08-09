@@ -7,6 +7,7 @@ import { suggest } from "../geometry/op-options.js";
 import { fieldsFor, authorFieldsFor, GROUP_FIELDS, PRESET_FIELDS, normalizeOptions } from "../panel/widget-specs.js";
 import { sectionRenders, desugar } from "../panel/legacy.js";
 import { buildTree } from "../panel/model.js";
+import { resolveDerived } from "../derive.js";
 
 // Legacy container descriptors aren't widget types, so they keep explicit lists.
 const FEATURE_FIELDS = ["key", "label", "on", "sliders", "hidden", "description"];
@@ -354,6 +355,21 @@ export const SCHEMA_RULES = [
           `two panel nodes share the id "${id}"`,
           "Node ids must be unique across the whole panel — the renderer keys its element and state maps on them, and a collision silently cross-wires the two nodes. Rename one `id` (or drop it to use the positional default).",
           `parameters[${secs[0]}]`));
+    },
+  },
+  {
+    id: "readout-unknown-derived-key",
+    run: ({ part }) => {
+      let derivedKeys = null;
+      try { derivedKeys = new Set(Object.keys(resolveDerived(part, { ...part?.defaults }))); }
+      catch { return []; } // a throwing derive() is diagnosed elsewhere
+      return collectDescriptors(part)
+        .filter(({ d, container }) => !container && d.type === "readout")
+        .filter(({ d }) => typeof d.derivedKey !== "string" || !derivedKeys.has(d.derivedKey))
+        .map(({ d, path }) => warn("readout-unknown-derived-key",
+          `readout names derived key "${d.derivedKey}", which derive() does not produce`,
+          "A readout displays one output of `derive()`. Name a key a derive group returns, or add that key to `derive` — as it stands the readout shows an em-dash forever.",
+          `${path}.derivedKey`));
     },
   },
 ];

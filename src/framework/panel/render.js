@@ -5,6 +5,7 @@ import { desugar } from "./legacy.js";
 import { buildTree, controlNodes } from "./model.js";
 import { computeState } from "./panel-state.js";
 import { WIDGET_FACTORIES } from "./widgets/index.js";
+import { makeReadout } from "./widgets/readout.js";
 import { createInfoPopover, attachInfo } from "./info.js";
 
 function el(tag, className, text) {
@@ -28,6 +29,7 @@ export function buildControls(root, parameters, params, onDirty) {
   const tree = buildTree(desugar(parameters));
 
   const nodeEls = new Map();      // id -> the element whose visibility we toggle
+  const displayUpdates = new Map(); // id -> a display widget's update(derived)
   const groupIds = new Set();     // ids that are group/section wrappers, never controls
   const syncFns = [];             // { key, sync } for every widget
   const rawSyncs = new Map();     // sectionId -> [{ key, sync }] for preset application
@@ -174,6 +176,13 @@ export function buildControls(root, parameters, params, onDirty) {
   function renderNode(node, container, sectionCtx) {
     if (node.kind === "group") { renderGroup(node, container, sectionCtx); return; }
     if (node.kind === "preset") { renderPreset(node, container, sectionCtx); return; }
+    if (node.kind === "display") {
+      const widget = makeReadout(node, { info });
+      nodeEls.set(node.id, widget.el);
+      displayUpdates.set(node.id, widget.update);
+      container.append(widget.el);
+      return;
+    }
 
     const factory = WIDGET_FACTORIES[node.type];
     if (!factory) return; // unknown type: lint reports it; the panel skips it
@@ -246,8 +255,24 @@ export function buildControls(root, parameters, params, onDirty) {
 
   applyState();
 
+  // The single entry point for a param change: relevance dims/undims controls,
+  // derived pushes fresh values into every readout. Either argument may be
+  // omitted (mount.js's initial call, or a syncValues-only path) — only what's
+  // passed updates. `applyRelevance` is the old name, kept as a thin delegate
+  // so existing callers (and mount.test.js) don't have to change.
+  let lastDerived = null;
+  const refresh = ({ relevant: nextRelevant, derived } = {}) => {
+    if (nextRelevant !== undefined) relevant = nextRelevant;
+    if (derived !== undefined) {
+      lastDerived = derived;
+      for (const update of displayUpdates.values()) update(derived);
+    }
+    applyState();
+  };
+
   return {
-    applyRelevance: (next) => { relevant = next; applyState(); },
+    refresh,
+    applyRelevance: (next) => refresh({ relevant: next }),
     syncValues: (keys) => {
       const only = keys && new Set(keys);
       for (const { key, sync } of syncFns) if (!only || only.has(key)) sync();
