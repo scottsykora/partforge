@@ -365,7 +365,7 @@ async function checkAnimBarLayout(widths) {
 // overlap into one another — a wrong action is worse than a dead one.
 //
 // Only pages declaring animations grow a bar, so this is a no-op elsewhere.
-const TAP_TARGET_MIN = 44; // iOS HIG / Material minimum
+const TAP_TARGET_MIN = 44; // iOS HIG minimum (Material asks 48; 44 is the floor)
 async function checkTransportTargets(width) {
   await page.setViewportSize({ width, height: 720 });
   await sleep(50);
@@ -385,8 +385,32 @@ async function checkTransportTargets(width) {
         await new Promise((r) => requestAnimationFrame(r));
       }
       measure(name);
+      checkBubbleClearsBar(name);
     }
     return { problems };
+
+    // The chapter bubble floats ABOVE the bar while the user scrubs — and on a
+    // stepped animation that is the exact moment the whole transport matters.
+    // The bar wraps into rows at these widths, so "above the timeline" and
+    // "above the bar" stopped being the same place; assert the revealed bubble
+    // never covers the bar's controls.
+    function checkBubbleClearsBar(name) {
+      const where = name ? `[${name}] ` : "";
+      const wrap = bar.querySelector(".pf-anim-scrub-wrap");
+      const w = wrap.getBoundingClientRect();
+      wrap.dispatchEvent(new PointerEvent("pointermove", {
+        clientX: w.left + w.width / 2, bubbles: true,
+      }));
+      const bubble = document.querySelector(".pf-anim-chapter.pf-show");
+      if (bubble) {
+        const b = bubble.getBoundingClientRect();
+        const barRect = bar.getBoundingClientRect();
+        if (b.bottom > barRect.top + 0.5) {
+          problems.push(`${where}the chapter bubble overlaps the bar (bubble bottom ${Math.round(b.bottom)}, bar top ${Math.round(barRect.top)})`);
+        }
+      }
+      wrap.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+    }
 
     function measure(name) {
       const where = name ? `[${name}] ` : "";
