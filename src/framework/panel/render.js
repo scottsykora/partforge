@@ -87,11 +87,14 @@ export function buildControls(root, parameters, params, onDirty) {
       // path (applyState runs on every slider drag and relevance update).
       if (!isGroup && lastDisabled.get(id) !== s.disabled) {
         if (node.matches?.("input, select, textarea")) node.disabled = s.disabled;
-        // `button` is in the list for the radio widget, whose options are
+        // `.seg button` is in the list for the radio widget, whose options are
         // <button>s: without it a disabled radio stayed keyboard-focusable and
-        // only LOOKED disabled. Group nodes skip this branch entirely, so the
-        // section and fold disclosure buttons are never touched.
-        for (const input of node.querySelectorAll("input, select, textarea, button")) {
+        // only LOOKED disabled. Scoped to `.seg` rather than every button so a
+        // disabled control's ⓘ glyph stays reachable — the popover is where the
+        // author explains what has to be enabled first, which is exactly what
+        // the reader wants here. (Group nodes skip this branch entirely, so the
+        // section and fold disclosure buttons are never touched either way.)
+        for (const input of node.querySelectorAll("input, select, textarea, .seg button")) {
           input.disabled = s.disabled;
         }
         lastDisabled.set(id, s.disabled);

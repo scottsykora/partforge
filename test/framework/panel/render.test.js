@@ -136,7 +136,7 @@ test("a condition-hidden control and section carry .hidden, and a disabled prese
       { key: "od", type: "slider", label: "OD", min: 1, max: 10, step: 1, when: { mode: { gt: 0 } } },
       { type: "preset", presets: { P: { od: 5 } }, when: { mode: { gt: 0 } }, whenFalse: "disable" },
       { key: "shape", type: "radio", label: "Shape", options: ["round", "square"],
-        when: { mode: { gt: 0 } }, whenFalse: "disable" },
+        description: "Tick Mode first.", when: { mode: { gt: 0 } }, whenFalse: "disable" },
     ] },
     { id: "b", title: "B", when: { mode: { gt: 0 } }, controls: [
       { key: "od2", type: "slider", min: 1, max: 10, step: 1 },
@@ -154,6 +154,9 @@ test("a condition-hidden control and section carry .hidden, and a disabled prese
   const segButtons = [...root.querySelectorAll(".seg button")];
   expect(segButtons.length).toBe(2);
   expect(segButtons.every((b) => b.disabled)).toBe(true);
+  // ...but the ⓘ glyph on that same disabled control stays reachable — its
+  // popover is where the author says what has to be enabled first.
+  expect(root.querySelector(".seg").closest(".slider").querySelector("button.info").disabled).toBe(false);
   const box = root.querySelector('input[type="checkbox"]');
   box.checked = true; box.dispatchEvent(new Event("change"));   // the file's established idiom
   expect(odWrap.classList.contains("hidden")).toBe(false);
