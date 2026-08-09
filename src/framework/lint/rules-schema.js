@@ -372,4 +372,13 @@ export const SCHEMA_RULES = [
           `${path}.derivedKey`));
     },
   },
+  {
+    id: "log-scale-needs-positive-min",
+    run: ({ part }) => collectDescriptors(part)
+      .filter(({ d, container }) => !container && d.scale === "log" && !(typeof d.min === "number" && d.min > 0))
+      .map(({ d, path }) => err("log-scale-needs-positive-min",
+        `"${d.key}" uses scale:"log" with min ${d.min}`,
+        "A logarithmic track needs min > 0 — log(0) is -Infinity and the mapping breaks. Raise `min` (e.g. 0.1) or drop `scale`.",
+        `${path}.scale`)),
+  },
 ];

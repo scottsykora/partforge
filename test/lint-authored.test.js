@@ -151,3 +151,9 @@ test("a readout whose derivedKey no derive() group produces warns", () => {
   part.parameters[0].controls.at(-1).derivedKey = "innerDia";
   expect(ids(lintPart(part).warnings)).not.toContain("readout-unknown-derived-key");
 });
+
+test("scale:log with a non-positive min errors", () => {
+  const part = authoredPart();
+  part.parameters[0].controls.push({ key: "wall", type: "slider", min: 0, max: 4, step: 0.1, scale: "log" });
+  expect(ids(lintPart(part).errors)).toContain("log-scale-needs-positive-min");
+});

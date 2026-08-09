@@ -1138,12 +1138,15 @@ previously didn't; that's the fix working as intended, not a regression.
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,
 `control-key-not-in-defaults`, `preset-key-not-in-defaults`, `mixed-section-shape`,
 `duplicate-preset-name`, `duplicate-node-id`, `select-options-missing`,
-`select-default-not-in-options` (errors);
+`select-default-not-in-options`, `log-scale-needs-positive-min` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
 `default-not-exposed`, `readout-unknown-derived-key` (warnings). The last checks a
 `{ type: "readout" }` entry's `derivedKey` against the keys `derive()` actually
 produces (resolved once against `defaults`) — a readout naming a key no group
 returns shows an em-dash forever, so it warns rather than errors.
+`log-scale-needs-positive-min` fires when a slider/number sets `scale: "log"`
+without a positive `min` — `log(0)` is `-Infinity` and the thumb-to-value mapping
+breaks, so raise `min` above 0 or drop `scale`.
 
 **Kernel API**, found by executing `build()` against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,

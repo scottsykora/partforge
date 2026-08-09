@@ -114,3 +114,37 @@ test("refresh({relevant}) still drives dimming — applyRelevance delegates", ()
   expect(wraps[1].classList.contains("irrelevant")).toBe(false);
   panel.dispose();
 });
+
+test("a log slider maps its track logarithmically and round-trips through sync", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { r: 1 };
+  const panel = buildControls(root, [{ id: "s", controls: [
+    { key: "r", type: "slider", label: "R", min: 0.1, max: 100, step: 0.1, scale: "log" },
+  ] }], params, () => {});
+  const slider = root.querySelector('input[type="range"]');
+  expect(slider.min).toBe("0");
+  expect(slider.max).toBe("1000");
+  // position 500 is the geometric midpoint: sqrt(0.1 * 100) ≈ 3.1623.
+  // No step-rounding on the log path — the value is the exact mapping.
+  slider.value = "500"; slider.dispatchEvent(new Event("input"));
+  expect(params.r).toBeCloseTo(Math.sqrt(0.1 * 100), 6);
+  // syncing back after a programmatic change lands the thumb where the value is
+  params.r = 100; panel.syncValues(["r"]);
+  expect(slider.value).toBe("1000");
+  params.r = 0.1; panel.syncValues(["r"]);
+  expect(slider.value).toBe("0");
+  panel.dispose();
+});
+
+test("the value box on a log slider stays linear and clamps as usual", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { r: 1 };
+  buildControls(root, [{ id: "s", controls: [
+    { key: "r", type: "slider", min: 0.1, max: 100, step: 0.1, scale: "log" },
+  ] }], params, () => {});
+  const box = root.querySelector("input.num");
+  box.value = "250"; box.dispatchEvent(new Event("change"));
+  expect(params.r).toBe(100);   // clamped to max, linear semantics untouched
+});
