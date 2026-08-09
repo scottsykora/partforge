@@ -381,4 +381,34 @@ export const SCHEMA_RULES = [
         "A logarithmic track needs min > 0 — log(0) is -Infinity and the mapping breaks. Raise `min` (e.g. 0.1) or drop `scale`.",
         `${path}.scale`)),
   },
+  {
+    id: "slider-refinement-invalid",
+    run: ({ part }) => {
+      const out = [];
+      for (const { d, path, container } of collectDescriptors(part)) {
+        if (container) continue;
+        const numeric = typeof d.min === "number" && typeof d.max === "number";
+        if (Array.isArray(d.ticks) && numeric && d.ticks.some((t) => t < d.min || t > d.max)) {
+          out.push(warn("slider-refinement-invalid",
+            `"${d.key}" has ticks outside its ${d.min}..${d.max} range`,
+            "Every tick must sit inside [min, max] — an out-of-range tick renders nowhere and, with snap, drags the value out of range.",
+            `${path}.ticks`));
+        }
+        if (Array.isArray(d.recommended)
+            && (d.recommended.length !== 2 || !(d.recommended[0] < d.recommended[1]))) {
+          out.push(warn("slider-refinement-invalid",
+            `"${d.key}" has a malformed recommended band`,
+            "`recommended` is [lo, hi] with lo < hi — the tinted span of the track the DFM checks consider safe.",
+            `${path}.recommended`));
+        }
+        if (d.scale === "log" && (d.ticks || d.recommended)) {
+          out.push(warn("slider-refinement-invalid",
+            `"${d.key}" combines scale:"log" with ticks/recommended`,
+            "Ticks and the recommended band render on a linear track only; on a log slider they are ignored. Drop one or the other.",
+            `${path}.scale`));
+        }
+      }
+      return out;
+    },
+  },
 ];

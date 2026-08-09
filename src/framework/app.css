@@ -144,6 +144,24 @@ input[type="range"]:focus-visible { outline: none; }
 input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 5px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 
+/* recommended band: a tinted span of the track between --band-lo and --band-hi */
+.slider.has-band input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right,
+    var(--pf-border) var(--band-lo),
+    color-mix(in oklab, var(--pf-accent) 30%, var(--pf-border)) var(--band-lo),
+    color-mix(in oklab, var(--pf-accent) 30%, var(--pf-border)) var(--band-hi),
+    var(--pf-border) var(--band-hi));
+}
+.slider.has-band input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right,
+    var(--pf-border) var(--band-lo),
+    color-mix(in oklab, var(--pf-accent) 30%, var(--pf-border)) var(--band-lo),
+    color-mix(in oklab, var(--pf-accent) 30%, var(--pf-border)) var(--band-hi),
+    var(--pf-border) var(--band-hi));
+}
+/* value box outside the recommended band */
+.row .num.warn { border-color: var(--pf-err); color: var(--pf-err); }
+
 button.action {
   width: 100%; margin-top: 8px; padding: 9px; border: 0; border-radius: var(--pf-radius-control);
   background: var(--pf-accent); color: var(--pf-on-accent); font-weight: 500; cursor: pointer;

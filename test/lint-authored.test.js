@@ -157,3 +157,13 @@ test("scale:log with a non-positive min errors", () => {
   part.parameters[0].controls.push({ key: "wall", type: "slider", min: 0, max: 4, step: 0.1, scale: "log" });
   expect(ids(lintPart(part).errors)).toContain("log-scale-needs-positive-min");
 });
+
+test("out-of-range ticks and an inverted recommended band warn", () => {
+  const part = authoredPart();
+  part.parameters[0].controls.push(
+    { key: "wall", type: "slider", min: 0.8, max: 4, step: 0.1, ticks: [0.5, 2] },
+    { key: "od", type: "slider", min: 1, max: 10, step: 1, recommended: [9, 2] },
+  );
+  const found = ids(lintPart(part).warnings).filter((r) => r === "slider-refinement-invalid");
+  expect(found).toHaveLength(2);
+});

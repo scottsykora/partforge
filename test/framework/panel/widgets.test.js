@@ -148,3 +148,41 @@ test("the value box on a log slider stays linear and clamps as usual", () => {
   box.value = "250"; box.dispatchEvent(new Event("change"));
   expect(params.r).toBe(100);   // clamped to max, linear semantics untouched
 });
+
+test("ticks render a datalist; snap quantizes slider input to the nearest tick", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { n: 6 };
+  buildControls(root, [{ id: "s", controls: [
+    { key: "n", type: "slider", min: 0, max: 12, step: 1, ticks: [0, 6, 12], snap: true },
+  ] }], params, () => {});
+  const slider = root.querySelector('input[type="range"]');
+  const dl = root.querySelector("datalist");
+  expect(dl).toBeTruthy();
+  expect(slider.getAttribute("list")).toBe(dl.id);
+  expect([...dl.querySelectorAll("option")].map((o) => o.value)).toEqual(["0", "6", "12"]);
+  slider.value = "8"; slider.dispatchEvent(new Event("input"));
+  expect(params.n).toBe(6);        // snapped to the nearest tick
+  slider.value = "10"; slider.dispatchEvent(new Event("input"));
+  expect(params.n).toBe(12);
+});
+
+test("recommended draws a band and warns the value box outside it", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { wall: 1.6 };
+  const panel = buildControls(root, [{ id: "s", controls: [
+    { key: "wall", type: "slider", min: 0.8, max: 4, step: 0.1, recommended: [1.2, 4] },
+  ] }], params, () => {});
+  const wrap = root.querySelector(".slider");
+  const box = root.querySelector("input.num");
+  expect(wrap.classList.contains("has-band")).toBe(true);
+  expect(wrap.style.getPropertyValue("--band-lo")).toBe("12.5%");   // (1.2-0.8)/(4-0.8)
+  expect(wrap.style.getPropertyValue("--band-hi")).toBe("100%");
+  expect(box.classList.contains("warn")).toBe(false);
+  box.value = "0.9"; box.dispatchEvent(new Event("input"));
+  expect(box.classList.contains("warn")).toBe(true);
+  params.wall = 2; panel.syncValues(["wall"]);
+  expect(box.classList.contains("warn")).toBe(false);
+  panel.dispose();
+});

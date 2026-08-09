@@ -1140,13 +1140,20 @@ previously didn't; that's the fix working as intended, not a regression.
 `duplicate-preset-name`, `duplicate-node-id`, `select-options-missing`,
 `select-default-not-in-options`, `log-scale-needs-positive-min` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
-`default-not-exposed`, `readout-unknown-derived-key` (warnings). The last checks a
-`{ type: "readout" }` entry's `derivedKey` against the keys `derive()` actually
-produces (resolved once against `defaults`) — a readout naming a key no group
-returns shows an em-dash forever, so it warns rather than errors.
+`default-not-exposed`, `readout-unknown-derived-key`, `slider-refinement-invalid`
+(warnings). The `readout` one checks a `{ type: "readout" }` entry's `derivedKey`
+against the keys `derive()` actually produces (resolved once against `defaults`)
+— a readout naming a key no group returns shows an em-dash forever, so it warns
+rather than errors.
 `log-scale-needs-positive-min` fires when a slider/number sets `scale: "log"`
 without a positive `min` — `log(0)` is `-Infinity` and the thumb-to-value mapping
 breaks, so raise `min` above 0 or drop `scale`.
+`slider-refinement-invalid` covers a slider/number's optional `ticks` (native
+datalist marks; combine with `snap: true` to quantize slider drags to the
+nearest tick) and `recommended` (an `[lo, hi]` band tinted on the track, with
+the value box warning outside it): a tick outside `[min, max]`, a `recommended`
+that isn't exactly `[lo, hi]` with `lo < hi`, or either of them combined with
+`scale: "log"` (ticks and the band render on a linear track only) all warn.
 
 **Kernel API**, found by executing `build()` against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,
