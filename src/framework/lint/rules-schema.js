@@ -5,7 +5,8 @@
 import { err, warn } from "./finding.js";
 import { suggest } from "../geometry/op-options.js";
 import { fieldsFor, authorFieldsFor, GROUP_FIELDS, PRESET_FIELDS } from "../panel/widget-specs.js";
-import { sectionRenders } from "../panel/legacy.js";
+import { sectionRenders, desugar } from "../panel/legacy.js";
+import { buildTree } from "../panel/model.js";
 
 // Legacy container descriptors aren't widget types, so they keep explicit lists.
 const FEATURE_FIELDS = ["key", "label", "on", "sliders", "hidden", "description"];
@@ -257,6 +258,65 @@ export const SCHEMA_RULES = [
           `\`defaults.${key}\` is not referenced by any control`,
           `Either add a control for "${key}" or leave it as an intentional internal constant — a hidden control (\`hidden: true\`) counts as exposing it, and is the documented way to keep a build-only value out of the panel.`,
           `defaults.${key}`));
+    },
+  },
+  {
+    id: "mixed-section-shape",
+    run: ({ part }) => {
+      const out = [];
+      sections(part).forEach((sec, si) => {
+        if (!Array.isArray(sec?.controls)) return;
+        const legacy = ["advanced", "toggles", "features", "presets"].filter((k) => sec[k] != null);
+        if (legacy.length) {
+          out.push(err("mixed-section-shape",
+            `section "${sec.id ?? si}" mixes \`controls\` with legacy ${legacy.map((k) => `\`${k}\``).join(", ")}`,
+            "A section is either the new shape (everything in `controls`) or the legacy shape — mixing them would make the render order arbitrary. Move the legacy entries into `controls` (a toggle becomes a checkbox control, `advanced` becomes a nested group, `presets` becomes a `{ type: \"preset\" }` node), or drop `controls`.",
+            `parameters[${si}]`));
+        }
+      });
+      return out;
+    },
+  },
+  {
+    id: "duplicate-preset-name",
+    run: ({ part }) => {
+      const seen = new Map(); // name -> first path
+      const out = [];
+      for (const { name, path } of collectPresetBundles(part)) {
+        if (seen.has(name)) {
+          out.push(err("duplicate-preset-name",
+            `preset "${name}" is declared more than once (first at ${seen.get(name)})`,
+            "Preset names are global to the part: verify() expands one case per name and throws on a repeat, which is a worse place to find out. Rename one of them.",
+            path));
+        } else seen.set(name, path);
+      }
+      return out;
+    },
+  },
+  {
+    id: "duplicate-node-id",
+    run: ({ part }) => {
+      // Ids key the renderer's element/state/disclosure maps — a collision
+      // silently cross-wires two nodes (one picker syncing another section's
+      // widgets). Catch it statically: build the tree and look for repeats.
+      const seen = new Map(); // id -> [sectionIndex, ...]
+      const tree = buildTree(desugar(part?.parameters ?? []));
+      tree.forEach((section, si) => {
+        const walk = (nodes) => {
+          for (const n of nodes ?? []) {
+            if (!seen.has(n.id)) seen.set(n.id, []);
+            seen.get(n.id).push(si);
+            if (n.kind === "group") walk(n.children);
+          }
+        };
+        seen.set(section.id, [...(seen.get(section.id) ?? []), si]);
+        walk(section.children);
+      });
+      return [...seen].filter(([, secs]) => secs.length > 1).map(([id, secs]) =>
+        err("duplicate-node-id",
+          `two panel nodes share the id "${id}"`,
+          "Node ids must be unique across the whole panel — the renderer keys its element and state maps on them, and a collision silently cross-wires the two nodes. Rename one `id` (or drop it to use the positional default).",
+          `parameters[${secs[0]}]`));
     },
   },
 ];

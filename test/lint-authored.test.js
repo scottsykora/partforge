@@ -81,3 +81,39 @@ test("slider-range-excludes-default fires on authored controls too", () => {
   part.defaults.od = 99;
   expect(ids(lintPart(part).warnings)).toContain("slider-range-excludes-default");
 });
+
+test("mixing controls with any legacy array in one section is an error", () => {
+  for (const extra of [
+    { advanced: [{ key: "od", min: 1, max: 10, step: 1 }] },
+    { toggles: [{ key: "show" }] },
+    { features: [{ key: "show", on: 1, sliders: [] }] },
+    { presets: { P: {} } },
+  ]) {
+    const part = authoredPart();
+    Object.assign(part.parameters[0], extra);
+    const f = lintPart(part).errors.find((f) => f.rule === "mixed-section-shape");
+    expect(f, JSON.stringify(extra)).toBeTruthy();
+    expect(f.path).toBe("parameters[0]");
+  }
+});
+
+test("the same preset name twice in one part is an error, before verify would throw", () => {
+  const part = authoredPart();
+  part.parameters.push({ id: "more", controls: [
+    { type: "preset", presets: { A: { wall: 2 } } },   // "A" already exists in section 0
+  ] });
+  const f = lintPart(part).errors.find((f) => f.rule === "duplicate-preset-name");
+  expect(f).toBeTruthy();
+  expect(f.path).toBe('parameters[1].controls[0].presets');
+});
+
+test("two nodes resolving to the same id is an error", () => {
+  const part = authoredPart();
+  part.parameters[0].controls[3].id = "body";      // collides with the section id
+  const f = lintPart(part).errors.find((f) => f.rule === "duplicate-node-id");
+  expect(f).toBeTruthy();
+});
+
+test("a clean authored part still lints clean after the new rules", () => {
+  expect(lintPart(authoredPart()).errors).toEqual([]);
+});

@@ -1136,7 +1136,8 @@ previously didn't; that's the fix working as intended, not a regression.
 `default-view-ambiguous` (warnings).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,
-`control-key-not-in-defaults`, `preset-key-not-in-defaults` (errors);
+`control-key-not-in-defaults`, `preset-key-not-in-defaults`, `mixed-section-shape`,
+`duplicate-preset-name`, `duplicate-node-id` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
 `default-not-exposed` (warnings).
 
