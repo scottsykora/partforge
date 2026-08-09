@@ -28,3 +28,26 @@ test("throws on an unknown named case", () => {
 test("a part with no parameters yields just defaults", () => {
   expect(expandCases({ defaults: { a: 1 }, views: { v: {} }, parts: {} })).toEqual([{ name: "defaults", params: { a: 1 } }]);
 });
+
+test("expandCases sees presets declared as authored preset nodes", () => {
+  const part = {
+    defaults: { od: 5 },
+    parameters: [{ id: "b", controls: [
+      { type: "preset", presets: { Wide: { od: 9 } } },
+      { key: "od", min: 1, max: 10, step: 1 },
+    ] }],
+  };
+  const names = expandCases(part).map((c) => c.name);
+  expect(names).toEqual(["defaults", "Wide"]);
+});
+
+test("a preset name repeated across sections still throws", () => {
+  const part = {
+    defaults: { od: 5 },
+    parameters: [
+      { id: "a", presets: { Dup: { od: 2 } }, advanced: [{ key: "od", min: 1, max: 10, step: 1 }] },
+      { id: "b", controls: [{ type: "preset", presets: { Dup: { od: 3 } } }] },
+    ],
+  };
+  expect(() => expandCases(part)).toThrow(/duplicate preset name/);
+});

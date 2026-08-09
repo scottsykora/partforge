@@ -1,15 +1,26 @@
 // Enumerate the parameter configurations verify() checks: the default config plus
 // every declared preset (or an explicit part.verify.cases list).
 
+import { desugar } from "../panel/legacy.js";
+
+// Preset name -> overrides, discovered from the desugared node tree so both the
+// legacy `presets:` field and authored `{ type: "preset" }` nodes count. The
+// duplicate-name guard predates the duplicate-preset-name lint rule and stays:
+// verify must fail loudly even on an unlinted part.
 function presetMap(part) {
   const map = {};
-  for (const section of part.parameters ?? []) {
-    if (!section.presets) continue;
-    for (const [name, overrides] of Object.entries(section.presets)) {
-      if (name in map) throw new Error(`duplicate preset name across sections: "${name}"`);
-      map[name] = overrides;
+  const walk = (nodes) => {
+    for (const node of nodes ?? []) {
+      if (node.kind === "preset") {
+        for (const [name, overrides] of Object.entries(node.presets ?? {})) {
+          if (name in map) throw new Error(`duplicate preset name across sections: "${name}"`);
+          map[name] = overrides;
+        }
+      }
+      if (node.kind === "group") walk(node.children);
     }
-  }
+  };
+  walk(desugar(part.parameters ?? []));
   return map;
 }
 
