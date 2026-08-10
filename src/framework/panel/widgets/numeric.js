@@ -38,26 +38,82 @@ export function makeNumeric(node, params, { onChange, info }) {
   row.append(val);
   wrap.append(row);
 
+  // A log track maps thumb position 0..LOG_STEPS onto [min, max] geometrically —
+  // the value box stays linear and exact (see AUTHORING-PARTS.md's "Slider
+  // refinements" section). Only valid when min > 0; lint's log-scale-needs-positive-min
+  // catches an authored part that violates that before it ever reaches here.
+  const LOG_STEPS = 1000;
+  const log = node.scale === "log" && node.min > 0;
+  const toValue = (t) => Math.exp(Math.log(node.min) + (t / LOG_STEPS) * (Math.log(node.max) - Math.log(node.min)));
+  const toPos = (v) => Math.round(LOG_STEPS * (Math.log(v) - Math.log(node.min)) / (Math.log(node.max) - Math.log(node.min)));
+  // toPos(0) is -Infinity and a non-finite assignment to slider.value snaps the
+  // thumb to mid-track instead of an end — guard the live-typed, unclamped box
+  // value before it reaches the slider.
+  const toPosSafe = (v) => {
+    if (!(v > 0)) return 0;
+    const t = toPos(v);
+    return Math.max(0, Math.min(LOG_STEPS, Number.isFinite(t) ? t : 0));
+  };
+
   let slider = null;
   if (!numeric) {
     slider = document.createElement("input");
     slider.type = "range";
-    slider.min = node.min; slider.max = node.max; slider.step = node.step;
-    slider.value = params[node.key];
+    slider.min = log ? 0 : node.min; slider.max = log ? LOG_STEPS : node.max; slider.step = log ? 1 : node.step;
+    slider.value = log ? toPosSafe(params[node.key]) : params[node.key];
     slider.addEventListener("input", () => {
-      params[node.key] = +slider.value;
-      box.value = numStr(+slider.value);
+      const v = log ? toValue(+slider.value) : snapTo(+slider.value);
+      params[node.key] = v;
+      box.value = numStr(v);
+      paintWarn();
       onChange?.();
     });
     wrap.append(slider);
   }
+
+  // ticks: native datalist marks; snap quantizes input to the nearest tick.
+  // The datalist id derives from the node id (assigned by buildTree before
+  // factories run) — stable across re-renders, no randomness.
+  if (slider && !log && Array.isArray(node.ticks) && node.ticks.length) {
+    const dl = document.createElement("datalist");
+    dl.id = `pf-ticks-${node.id.replaceAll("/", "-")}`;
+    for (const t of node.ticks) {
+      const o = document.createElement("option");
+      o.value = String(t);
+      dl.append(o);
+    }
+    wrap.append(dl);
+    slider.setAttribute("list", dl.id);
+  }
+  const snapTo = (v) => {
+    if (!node.snap || !Array.isArray(node.ticks) || !node.ticks.length) return v;
+    return node.ticks.reduce((best, t) => Math.abs(t - v) < Math.abs(best - v) ? t : best);
+  };
+
+  // recommended: a tinted band of the track, and a warning on the value box
+  // when the current value sits outside it. Linear tracks only (like ticks).
+  const band = !log && Array.isArray(node.recommended) && node.recommended.length === 2
+    ? node.recommended : null;
+  if (band) {
+    wrap.classList.add("has-band");
+    const pct = (v) => {
+      const raw = Math.max(0, Math.min(100, ((v - node.min) / (node.max - node.min)) * 100));
+      return `${Math.round(raw * 1e4) / 1e4}%`; // trim float noise (e.g. 12.499999999999996)
+    };
+    wrap.style.setProperty("--band-lo", pct(band[0]));
+    wrap.style.setProperty("--band-hi", pct(band[1]));
+  }
+  const paintWarn = () => {
+    if (band) box.classList.toggle("warn", params[node.key] < band[0] || params[node.key] > band[1]);
+  };
 
   // live preview while typing (unclamped); clamp + reformat on commit
   box.addEventListener("input", () => {
     const v = parseFloat(box.value);
     if (!Number.isFinite(v)) return;
     params[node.key] = v;
-    if (slider) slider.value = v;
+    if (slider) slider.value = log ? toPosSafe(v) : v;
+    paintWarn();
     onChange?.();
   });
   box.addEventListener("change", () => {
@@ -65,13 +121,16 @@ export function makeNumeric(node, params, { onChange, info }) {
     if (v == null) { box.value = numStr(params[node.key]); return; } // revert invalid input
     params[node.key] = v;
     box.value = numStr(v);
-    if (slider) slider.value = v;
+    if (slider) slider.value = log ? toPosSafe(v) : v;
+    paintWarn();
     onChange?.();
   });
 
   const sync = () => {
     box.value = numStr(params[node.key]);
-    if (slider) slider.value = params[node.key];
+    if (slider) slider.value = log ? toPosSafe(params[node.key]) : params[node.key];
+    paintWarn();
   };
+  paintWarn();
   return { el: wrap, sync };
 }

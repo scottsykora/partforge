@@ -5,6 +5,7 @@ import { desugar } from "./legacy.js";
 import { buildTree, controlNodes } from "./model.js";
 import { computeState } from "./panel-state.js";
 import { WIDGET_FACTORIES } from "./widgets/index.js";
+import { makeReadout } from "./widgets/readout.js";
 import { createInfoPopover, attachInfo } from "./info.js";
 
 function el(tag, className, text) {
@@ -28,9 +29,10 @@ export function buildControls(root, parameters, params, onDirty) {
   const tree = buildTree(desugar(parameters));
 
   const nodeEls = new Map();      // id -> the element whose visibility we toggle
+  const displayUpdates = new Map(); // id -> a display widget's update(derived)
   const groupIds = new Set();     // ids that are group/section wrappers, never controls
   const syncFns = [];             // { key, sync } for every widget
-  const rawSyncs = new Map();     // sectionId -> { key -> raw sync } for preset application
+  const rawSyncs = new Map();     // sectionId -> [{ key, sync }] for preset application
   const widgetSyncs = new Map();  // id -> the RAW widget sync (no markCustom)
   const nodeById = new Map();     // id -> node, for the reveal re-sync
   const lastVisible = new Map();  // id -> previous `visible`, to detect a reveal
@@ -84,7 +86,15 @@ export function buildControls(root, parameters, params, onDirty) {
       // entirely when `disabled` hasn't changed also keeps this off the hot
       // path (applyState runs on every slider drag and relevance update).
       if (!isGroup && lastDisabled.get(id) !== s.disabled) {
-        for (const input of node.querySelectorAll("input, select, textarea")) {
+        if (node.matches?.("input, select, textarea")) node.disabled = s.disabled;
+        // `.seg button` is in the list for the radio widget, whose options are
+        // <button>s: without it a disabled radio stayed keyboard-focusable and
+        // only LOOKED disabled. Scoped to `.seg` rather than every button so a
+        // disabled control's ⓘ glyph stays reachable — the popover is where the
+        // author explains what has to be enabled first, which is exactly what
+        // the reader wants here. (Group nodes skip this branch entirely, so the
+        // section and fold disclosure buttons are never touched either way.)
+        for (const input of node.querySelectorAll("input, select, textarea, .seg button")) {
           input.disabled = s.disabled;
         }
         lastDisabled.set(id, s.disabled);
@@ -125,7 +135,9 @@ export function buildControls(root, parameters, params, onDirty) {
 
     const wrap = el("div", "adv-wrap");
     const body = el("div", "adv hidden");   // starts closed — legacy parity
+    body.id = `pf-fold-${node.id.replaceAll("/", "-")}`;
     const toggle = el("button", "adv-toggle", `${node.title} ▾`);
+    toggle.setAttribute("aria-controls", body.id);
     toggle.addEventListener("click", () => {
       const nowHidden = body.classList.toggle("hidden");
       toggle.textContent = nowHidden ? `${node.title} ▾` : `${node.title} ▴`;
@@ -142,6 +154,11 @@ export function buildControls(root, parameters, params, onDirty) {
   // section's controls through their RAW syncs — a preset application must not
   // mark itself Custom (controls.test.js:366).
   function renderPreset(node, container, sectionCtx) {
+    if (node.label) {
+      const row = el("div", "row");
+      row.append(el("label", "", node.label));
+      container.append(row);
+    }
     const names = Object.keys(node.presets);
     const select = document.createElement("select");
     select.className = "preset";
@@ -154,7 +171,7 @@ export function buildControls(root, parameters, params, onDirty) {
       const bundle = node.presets[select.value];
       if (!bundle) return; // "Custom"
       Object.assign(params, bundle);
-      for (const [key, sync] of rawSyncs.get(sectionCtx.id)) if (key in params) sync();
+      for (const { key, sync } of rawSyncs.get(sectionCtx.id)) if (key in params) sync();
       onEdit();
     });
     // The section's controls need a handle on the picker to drop it to Custom
@@ -167,6 +184,13 @@ export function buildControls(root, parameters, params, onDirty) {
   function renderNode(node, container, sectionCtx) {
     if (node.kind === "group") { renderGroup(node, container, sectionCtx); return; }
     if (node.kind === "preset") { renderPreset(node, container, sectionCtx); return; }
+    if (node.kind === "display") {
+      const widget = makeReadout(node, { info });
+      nodeEls.set(node.id, widget.el);
+      displayUpdates.set(node.id, widget.update);
+      container.append(widget.el);
+      return;
+    }
 
     const factory = WIDGET_FACTORIES[node.type];
     if (!factory) return; // unknown type: lint reports it; the panel skips it
@@ -190,7 +214,7 @@ export function buildControls(root, parameters, params, onDirty) {
     // syncValues() uses, and for a preset-section control it does drop the
     // picker to Custom (controls.test.js:350), because a programmatic edit
     // diverges from the preset exactly as a user edit does.
-    if (sectionCtx) rawSyncs.get(sectionCtx.id).set(node.key, widget.sync);
+    if (sectionCtx) rawSyncs.get(sectionCtx.id).push({ key: node.key, sync: widget.sync });
     syncFns.push({
       key: node.key,
       sync: () => { widget.sync(); markCustom(); },
@@ -218,6 +242,8 @@ export function buildControls(root, parameters, params, onDirty) {
     secEl.append(header);
 
     const body = el("div", "sec-body");
+    body.id = `pf-sec-${section.id.replaceAll("/", "-")}`;
+    title.setAttribute("aria-controls", body.id);
     secEl.append(body);
 
     title.addEventListener("click", () => {
@@ -229,7 +255,7 @@ export function buildControls(root, parameters, params, onDirty) {
     // `preset` is filled in when a preset node renders. Controls read it late, so
     // one appearing after them in the children array still works.
     const ctx = { id: section.id, preset: null };
-    rawSyncs.set(section.id, new Map());
+    rawSyncs.set(section.id, []);
 
     for (const child of section.children) renderNode(child, body, ctx);
     root.append(secEl);
@@ -237,8 +263,22 @@ export function buildControls(root, parameters, params, onDirty) {
 
   applyState();
 
+  // The single entry point for a param change: relevance dims/undims controls,
+  // derived pushes fresh values into every readout. Either argument may be
+  // omitted (mount.js's initial call, or a syncValues-only path) — only what's
+  // passed updates. `applyRelevance` is the old name, kept as a thin delegate
+  // so existing callers (and mount.test.js) don't have to change.
+  const refresh = ({ relevant: nextRelevant, derived } = {}) => {
+    if (nextRelevant !== undefined) relevant = nextRelevant;
+    if (derived !== undefined) {
+      for (const update of displayUpdates.values()) update(derived);
+    }
+    applyState();
+  };
+
   return {
-    applyRelevance: (next) => { relevant = next; applyState(); },
+    refresh,
+    applyRelevance: (next) => refresh({ relevant: next }),
     syncValues: (keys) => {
       const only = keys && new Set(keys);
       for (const { key, sync } of syncFns) if (!only || only.has(key)) sync();

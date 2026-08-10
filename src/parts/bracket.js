@@ -42,12 +42,12 @@ export default {
     {
       id: "shape",
       title: "Shape ops",
-      toggles: [
-        { key: "clip", label: "Clip arms to a disc (intersect)", on: 1,
+      controls: [
+        { key: "clip", type: "radio", label: "Arm tips",
+          options: [{ value: 0, label: "Square" }, { value: 1, label: "Clipped" }],
           description: "**Intersect** the cross with a circle so the four arm tips are rounded off to a common radius." },
-      ],
-      advanced: [
-        { key: "clearance", label: "Print-clearance offset", unit: "mm", min: 0, max: 1, step: 0.1,
+        { key: "clearance", type: "slider", label: "Print-clearance offset", unit: "mm",
+          min: 0, max: 1, step: 0.1,
           description: "**Offset** the whole outline outward (round corners) for a looser slip fit. 0 = none." },
       ],
     },

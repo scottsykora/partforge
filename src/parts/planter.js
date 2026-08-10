@@ -30,28 +30,33 @@ export default {
       id: "body",
       title: "Body",
       description:
-        "The faceted vessel. Pick a preset to start, or open **Advanced** for exact dimensions. " +
-        "**Facets** and **Twist** are pure styling; **Wall** is the one that decides whether it prints cleanly.",
-      presets: {
-        "Pen cup": { facets: 6, dia: 80, height: 100, taper: 1.0, twist: 0, drain: 0 },
-        Planter: { facets: 8, dia: 90, height: 80, taper: 0.9, twist: 0, drain: 8 },
-        Vase: { facets: 5, dia: 70, height: 150, taper: 1.12, twist: 40, drain: 0 },
-      },
-      advanced: [
-        { key: "facets", label: "Facets", min: 3, max: 12, step: 1,
+        "The faceted vessel. Pick a preset to start, or dial exact dimensions below — " +
+        "**Facets** and **Twist** are pure styling; open **Wall** for the one that decides whether it prints cleanly.",
+      controls: [
+        { type: "preset", presets: {
+          "Pen cup": { facets: 6, dia: 80, height: 100, taper: 1.0, twist: 0, drain: 0 },
+          Planter: { facets: 8, dia: 90, height: 80, taper: 0.9, twist: 0, drain: 8 },
+          Vase: { facets: 5, dia: 70, height: 150, taper: 1.12, twist: 40, drain: 0 },
+        } },
+        { key: "facets", type: "slider", label: "Facets", min: 3, max: 12, step: 1,
           description: "Number of flat sides around the body. Low counts read as crystalline; high counts approach a smooth cylinder." },
-        { key: "dia", label: "Diameter", unit: "mm", min: 30, max: 150, step: 1,
+        { key: "dia", type: "slider", label: "Diameter", unit: "mm", min: 30, max: 150, step: 1,
           description: "Across-corners diameter at the base. Size it to the plant, pens, or shelf it has to fit." },
-        { key: "height", label: "Height", unit: "mm", min: 20, max: 200, step: 1,
+        { key: "height", type: "slider", label: "Height", unit: "mm", min: 20, max: 200, step: 1,
           description: "Overall height along the axis." },
-        { key: "taper", label: "Top taper", min: 0.6, max: 1.4, step: 0.02,
+        { key: "taper", type: "slider", label: "Top taper", min: 0.6, max: 1.4, step: 0.02,
           description: "Rim size relative to the base: below 1 tapers inward (planter), 1 is straight (cup), above 1 flares out (vase)." },
-        { key: "wall", label: "Wall thickness", unit: "mm", min: 0.8, max: 4, step: 0.1,
-          description: "Side-wall thickness. The fdm-pla profile wants **≥ 1.2 mm** — go thinner and partforge flags a min-wall warning." },
-        { key: "twist", label: "Twist", unit: "°", min: 0, max: 180, step: 5,
+        { key: "twist", type: "slider", label: "Twist", unit: "°", min: 0, max: 180, step: 5,
           description: "Rotates the facets from base to rim for a spiral look. 0 keeps the facets vertical." },
-        { key: "floor", label: "Floor thickness", unit: "mm", min: 1, max: 6, step: 0.5, hidden: true,
-          description: "Internal: solid base thickness, fixed by the design. Hidden from the end user but still drives the geometry." },
+        { type: "group", title: "Wall", collapsed: "auto", controls: [
+          { key: "wall", type: "slider", label: "Wall thickness", unit: "mm", min: 0.8, max: 4, step: 0.1,
+            recommended: [1.2, 4],
+            description: "Side-wall thickness. The fdm-pla profile wants **≥ 1.2 mm** — go thinner and partforge flags a min-wall warning." },
+          { type: "readout", label: "Inner diameter", derivedKey: "innerDia", unit: "mm",
+            description: "Clear inside width at the base, after the walls." },
+          { key: "floor", type: "slider", label: "Floor thickness", unit: "mm", min: 1, max: 6, step: 0.5, hidden: true,
+            description: "Internal: solid base thickness, fixed by the design. Hidden from the end user but still drives the geometry." },
+        ] },
       ],
     },
     {
@@ -87,6 +92,7 @@ export default {
       // pick it so inner_radius(top) = outer_radius(top) − wall.
       innerTaper: 1 + (Rout * (p.taper - 1)) / Rin,
       drainR: (p.drain + 0.2) / 2, // nominal hole + 0.2 mm print clearance, as a radius
+      innerDia: 2 * Rin, // across-corners inner diameter at the base, after the wall inset
     };
   },
   parts: {

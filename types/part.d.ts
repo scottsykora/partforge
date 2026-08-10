@@ -58,7 +58,7 @@ export interface PartMeta {
 export type ControlKind = "slider" | "number" | "text" | "textarea";
 
 /** Every control type the panel can render. */
-export type ControlType = "slider" | "number" | "text" | "textarea" | "checkbox";
+export type ControlType = "slider" | "number" | "text" | "textarea" | "checkbox" | "select" | "radio";
 
 /** A declarative visibility condition, evaluated against raw parameters. */
 export type WhenCondition =
@@ -70,10 +70,84 @@ export type WhenCondition =
       ne?: ParamValue; in?: ParamValue[];
     }>;
 
+/** One entry in a `controls` array: a control, a nested group, a preset picker, or a readout. */
+export type PanelEntry = PanelControlEntry | PanelGroupEntry | PanelPresetEntry | PanelReadoutEntry;
+
+/** A control bound to one key in `defaults`. `type` defaults to `"slider"`. */
+export interface PanelControlEntry {
+  key: string;
+  type?: ControlType;
+  label?: string;
+  description?: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  /** checkbox: the value written when ticked (default 1). */
+  on?: number;
+  /** select / radio: the choices. Strings are both value and label. */
+  options?: Array<ParamValue | { value: ParamValue; label?: string; description?: string }>;
+  /** slider: logarithmic response. Requires min > 0. */
+  scale?: "log";
+  /** slider: marked values on the track; `snap: true` makes the thumb prefer them. */
+  ticks?: number[];
+  snap?: boolean;
+  /** slider: [lo, hi] band drawn on the track; outside it the value box takes a warning tint. */
+  recommended?: [number, number];
+  hidden?: boolean;
+  when?: WhenCondition;
+  whenFalse?: "disable";
+  /** These two discriminate against the container entries. */
+  controls?: undefined;
+  presets?: undefined;
+}
+
+/** A nested group. `collapsed` defaults to `"auto"` (the small-panel auto-open rule). */
+export interface PanelGroupEntry {
+  type: "group";
+  id?: string;
+  title?: string;
+  collapsed?: boolean | "auto";
+  /** No title, no disclosure — just an indented block. */
+  bare?: boolean;
+  controls: PanelEntry[];
+  hidden?: boolean;
+  when?: WhenCondition;
+  whenFalse?: "disable";
+}
+
+/** A preset picker, positionable anywhere among the controls. */
+export interface PanelPresetEntry {
+  type: "preset";
+  id?: string;
+  label?: string;
+  /** Preset name -> the param overrides it applies. */
+  presets: Record<string, Record<string, ParamValue>>;
+  hidden?: boolean;
+  when?: WhenCondition;
+  whenFalse?: "disable";
+}
+
+/** A read-only display of one `derive()` output. Not bound to `defaults`. */
+export interface PanelReadoutEntry {
+  type: "readout";
+  label?: string;
+  description?: string;
+  unit?: string;
+  derivedKey: string;
+  hidden?: boolean;
+  when?: WhenCondition;
+  whenFalse?: "disable";
+  key?: undefined;
+  controls?: undefined;
+  presets?: undefined;
+}
+
 /**
- * One parameter control. The recognised field list mirrors
- * `CONTROL_FIELDS` in src/framework/lint/rules-schema.js — anything else is
- * ignored by the panel and warned about by `partforge lint`.
+ * One parameter control in a legacy `advanced` / `sliders` array. The recognised
+ * field list is the registry's, `fieldsFor("slider")` in
+ * src/framework/panel/widget-specs.js — anything else is ignored by the panel and
+ * warned about by `partforge lint`.
  *
  * @deprecated Prefer a `controls` array of control nodes. Still fully supported.
  */
@@ -142,14 +216,31 @@ export interface PresetSection extends SectionBase {
   advanced?: ControlDef[];
   /** A section with `features` is a feature section; `advanced` is ignored there. */
   features?: undefined;
+  /** Discriminator: a PresetSection carries no `controls` array. */
+  controls?: undefined;
 }
 
 /** A feature-toggle section: each feature is a checkbox plus its own controls. */
 export interface FeatureSection extends SectionBase {
   features: FeatureDef[];
+  /** Discriminator: a FeatureSection carries no `controls` array. */
+  controls?: undefined;
 }
 
-export type ParameterSection = PresetSection | FeatureSection;
+/** The new section shape: everything in `controls`, in render order. */
+export interface NodeSection extends SectionBase {
+  controls: PanelEntry[];
+  collapsed?: boolean | "auto";
+  when?: WhenCondition;
+  whenFalse?: "disable";
+  /** Discriminators: a NodeSection carries none of the legacy arrays. */
+  features?: undefined;
+  advanced?: undefined;
+  toggles?: undefined;
+  presets?: undefined;
+}
+
+export type ParameterSection = PresetSection | FeatureSection | NodeSection;
 
 // --- fonts ------------------------------------------------------------------
 

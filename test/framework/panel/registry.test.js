@@ -2,12 +2,12 @@ import { expect, test } from "vitest";
 import { WIDGET_SPECS, WIDGET_TYPES, specFor, fieldsFor } from "../../../src/framework/panel/widget-specs.js";
 
 test("the registry covers exactly the types this phase supports", () => {
-  expect(WIDGET_TYPES.sort()).toEqual(["checkbox", "number", "slider", "text", "textarea"]);
+  expect(WIDGET_TYPES.sort()).toEqual(["checkbox", "number", "radio", "readout", "select", "slider", "text", "textarea"]);
 });
 
 test("every spec declares a kind and a non-empty field list", () => {
   for (const spec of WIDGET_SPECS) {
-    expect(spec.kind, `${spec.type}.kind`).toBe("control");
+    expect(["control", "display"], `${spec.type}.kind`).toContain(spec.kind);
     expect(spec.fields.length, `${spec.type}.fields`).toBeGreaterThan(0);
   }
 });
@@ -34,8 +34,9 @@ test("specFor returns undefined for an unknown type", () => {
 import { WIDGET_FACTORIES } from "../../../src/framework/panel/widgets/index.js";
 
 test("every registered type has a DOM factory, and every factory a spec", () => {
-  expect(Object.keys(WIDGET_FACTORIES).sort()).toEqual([...WIDGET_TYPES].sort());
-  for (const type of WIDGET_TYPES) {
+  const controlTypes = WIDGET_SPECS.filter((s) => s.kind === "control").map((s) => s.type);
+  expect(Object.keys(WIDGET_FACTORIES).sort()).toEqual([...controlTypes].sort());
+  for (const type of controlTypes) {
     expect(typeof WIDGET_FACTORIES[type], `${type} factory`).toBe("function");
   }
 });

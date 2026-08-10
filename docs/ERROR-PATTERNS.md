@@ -337,6 +337,30 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 - **Fix:** pass `shading: "faceted"` to `k.loft` (or drop the smooth-implying
   option) per [AUTHORING-PARTS.md](AUTHORING-PARTS.md) shading-intent note.
 
+## duplicate-preset-name-throws
+
+- **Symptom:** `duplicate preset name across sections:` thrown from verify/measure, naming the repeated preset (e.g. `duplicate preset name across sections: "Compact"`).
+- **Cause:** The same preset name is declared twice — once via the legacy `presets` field, once as a `{ type: "preset" }` node, or twice within either.
+- **Fix:** Rename one of them; `npx partforge lint` reports it statically as `duplicate-preset-name` before verify ever runs. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Rule catalog".
+
+## when-condition-never-true
+
+- **Symptom:** A control, group, preset, readout, or section with a `when` condition never appears, with no error anywhere.
+- **Cause:** The condition references a key `defaults` doesn't declare (reads `undefined`, which every comparison treats as false) or a typo'd operator (`evalWhen` treats an unrecognized operator as false too).
+- **Fix:** Run `npx partforge lint` — `when-key-not-in-defaults` or `when-unknown-operator` names the offending key or operator. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Rule catalog".
+
+## readout-shows-em-dash
+
+- **Symptom:** A `{ type: "readout" }` control renders "—" forever, no matter what the other controls are set to.
+- **Cause:** The readout's `derivedKey` names a key that no `derive()` group actually produces.
+- **Fix:** Name a key a `derive` group returns, or add that key to `derive`; `npx partforge lint` warns via `readout-unknown-derived-key`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Rule catalog".
+
+## select-default-unreachable
+
+- **Symptom:** The panel opens showing a `select`/`radio` value the control can never be set back to by interacting with it.
+- **Cause:** `defaults[key]` is not among the control's `options` values — often a value-type mismatch (`12` is not `"12"`).
+- **Fix:** Add the default to `options`, or change the default to one of the existing options; `npx partforge lint` errors via `select-default-not-in-options`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Rule catalog".
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.
