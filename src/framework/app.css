@@ -53,7 +53,10 @@ canvas { display: block; }
    sits at the rail's own padding, so each slider gains the ~22px the old box
    border + padding used to take from both sides. */
 .section {
-  padding: 11px var(--pf-rail-pad);
+  /* No vertical padding at the top: the header band (below) owns the space
+     around the title so a section's title sits at the same offset whether
+     the section is open or collapsed — toggling must not move it. */
+  padding: 0 var(--pf-rail-pad) 11px;
 }
 /* Divider BETWEEN visible sections. `~` walks all preceding siblings, and a
    relevance-hidden section (.section-hidden, display:none) fails the :not(),
@@ -74,7 +77,9 @@ canvas { display: block; }
 .sec-header {
   display: flex; align-items: center; gap: 6px;
   margin: 0 calc(-1 * var(--pf-rail-pad)) 6px;
-  padding: 4px var(--pf-rail-pad);
+  /* The same 13px band open or collapsed: the title never moves on toggle
+     and the hover target keeps one size. */
+  padding: 13px var(--pf-rail-pad);
   cursor: pointer;
 }
 .sec-header:hover { background: var(--pf-surface-2); }
@@ -90,21 +95,29 @@ canvas { display: block; }
    Glyph via ::before — the span must stay text-free (tests match .sec-title
    by exact textContent). Rotation keys off the collapsed class because the
    chevron sits beside, not inside, the aria-carrying button. */
+/* A real equilateral triangle (clip-path, not a font glyph): the box is
+   exactly the triangle's bounds, so rotating about the center is wobble-free
+   — a font's ▾ sits off-center in its em box and lurches when rotated.
+   Height = width × √3/2 keeps it equilateral. */
 .sec-header .chev, .adv-header .chev {
-  display: inline-block; font-size: 13px; line-height: 1; color: var(--pf-muted-2);
+  display: inline-block; width: 8px; height: 7px; color: var(--pf-muted-2);
   transition: transform 0.15s ease;
 }
-.sec-header .chev::before, .adv-header .chev::before { content: "▾"; }
-.section.collapsed .chev, .adv-wrap.collapsed > .adv-header .chev { transform: rotate(-90deg); }
-/* Collapsed section: the header grows into the whole band between the
-   section's top divider and its own bottom rule — text vertically centered,
-   hover and click cover the entire band. The -1px bottom margin overlaps
-   this rule with the next section's border-top so they read as one line. */
+.sec-header .chev::before, .adv-header .chev::before {
+  content: ""; display: block; width: 100%; height: 100%;
+  background: currentColor;
+  clip-path: polygon(50% 100%, 0 0, 100% 0);
+}
+.section.collapsed > .sec-header .chev, .adv-wrap.collapsed > .adv-header .chev { transform: rotate(-90deg); }
+/* Collapsed section: the header band sits flush between the section's top
+   divider and its own bottom rule — text vertically centered, hover and
+   click covering the entire band. The -1px bottom margin overlaps this rule
+   with the next section's border-top so they read as one line. */
 .section.collapsed {
-  padding-top: 0; padding-bottom: 0;
+  padding-bottom: 0;
   border-bottom: 1px solid var(--pf-border); margin-bottom: -1px;
 }
-.section.collapsed .sec-header { margin-bottom: 0; padding-top: 13px; padding-bottom: 13px; }
+.section.collapsed .sec-header { margin-bottom: 0; }
 .sec-body.hidden { display: none; }
 select.preset {
   width: 100%; background: var(--pf-input-bg); color: var(--pf-text-2);
@@ -132,23 +145,27 @@ select.select-input {
    moving it. */
 .adv-header {
   display: flex; align-items: center; gap: 6px;
-  margin: 8px -6px 0; padding: 4px 6px;
+  margin: 8px -6px 0; padding: 8px 6px;
+  /* Transparent borders reserve the collapsed rules' pixels so toggling
+     swaps only their color — the title never moves and the hover target
+     keeps one size, matching the section-header treatment. */
+  border-top: 1px solid transparent; border-bottom: 1px solid transparent;
   border-radius: 6px; cursor: pointer;
 }
 .adv-header:hover { background: var(--pf-surface-2); }
-.adv-header .chev { font-size: 11px; }
 .adv-toggle {
   flex: 1; margin: 0; padding: 0; border: 0;
   background: transparent; color: var(--pf-muted); cursor: pointer;
-  font-family: var(--pf-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; text-align: left;
+  font-family: var(--pf-mono); font-size: 12px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase; text-align: left;
 }
 .adv-header:hover .adv-toggle { color: var(--pf-muted-2); }
-/* Collapsed fold: rules above and below, text vertically centered between
-   them (the section-band treatment at fold scale). Square corners while the
-   rules show. */
+/* Collapsed fold: the reserved borders take color — rules above and below,
+   text vertically centered between them (the section-band treatment at fold
+   scale). Square corners while the rules show. */
 .adv-wrap.collapsed > .adv-header {
-  border-top: 1px solid var(--pf-border); border-bottom: 1px solid var(--pf-border);
-  border-radius: 0; padding-top: 8px; padding-bottom: 8px;
+  border-top-color: var(--pf-border); border-bottom-color: var(--pf-border);
+  border-radius: 0;
 }
 .adv.hidden { display: none; }
 .adv { margin-top: 4px; }
