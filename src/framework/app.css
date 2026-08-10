@@ -65,18 +65,40 @@ canvas { display: block; }
 .section:not(.section-hidden):not(.hidden) ~ .section:not(.section-hidden):not(.hidden) {
   border-top: 1px solid var(--pf-border);
 }
-.sec-header { display: flex; align-items: center; gap: 4px; }
-.sec-title {
-  flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  width: 100%; margin: 0 0 9px; padding: 0; border: 0; background: transparent; cursor: pointer;
-  text-align: left;
-  font-family: var(--pf-mono); font-size: 10px; font-weight: 600;
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--pf-muted-2);
+/* Section disclosure header: the whole row is the click target. Hover tint
+   and pill padding live on .sec-header; the negative horizontal margins
+   cancel the padding so the title keeps the rail's text alignment. */
+.sec-header {
+  display: flex; align-items: center; gap: 4px;
+  margin: 0 -6px 6px; padding: 4px 6px; border-radius: 6px;
 }
-.sec-title:hover { color: var(--pf-text-2); }
-.sec-title .chev { display: inline-block; transition: transform 0.15s ease; }
+.sec-header:hover { background: var(--pf-surface-2); }
+.sec-title {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  width: 100%; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer;
+  text-align: left;
+  font-family: var(--pf-mono); font-size: 12px; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--pf-text-2);
+}
+.sec-header:hover .sec-title { color: var(--pf-text); }
+/* Disclosure triangle: leads the title (the chev span is first in the
+   button) and is sized up from the label so the affordance reads at a
+   glance. Glyph via ::before — the span must stay text-free (tests match
+   .sec-title by exact textContent). */
+.sec-title .chev {
+  display: inline-block; font-size: 13px; line-height: 1; color: var(--pf-muted-2);
+  transition: transform 0.15s ease;
+}
 .sec-title .chev::before { content: "▾"; }
 .sec-title[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+/* Collapsed section: a rule under the header marks the closed band as
+   clickable. Drawn inside the header — not on .section — so it can never
+   double up with the inter-section border-top above. */
+.section.collapsed .sec-header {
+  margin-bottom: 0; padding-bottom: 9px;
+  border-bottom: 1px solid var(--pf-border);
+  border-radius: 6px 6px 0 0;
+}
 .sec-body.hidden { display: none; }
 select.preset {
   width: 100%; background: var(--pf-input-bg); color: var(--pf-text-2);
