@@ -188,6 +188,19 @@ test("a legacy `control: \"sldier\"` value is never validated, before or after t
   expect(ids(r.errors)).not.toContain("unknown-control-type");
 });
 
+test("a legacy control's `when` is a dropped unknown field, not a when-rule target", () => {
+  // `when` isn't in LEGACY_CONTROL, so controls.js drops it silently — flagging
+  // its *contents* (an unknown key, here) would wrongly imply that fixing the
+  // key alone would make the condition work.
+  const part = authoredPart();
+  part.parameters.push({ id: "legacy", advanced: [
+    { key: "od", label: "OD", min: 1, max: 10, step: 1, when: { badkey: 1 } }] });
+  const r = lintPart(part);
+  expect(ids(r.warnings)).toContain("unknown-control-field");
+  expect(ids(r.errors)).not.toContain("when-key-not-in-defaults");
+  expect(ids(r.errors)).not.toContain("when-unknown-operator");
+});
+
 test("a when condition naming a key not in defaults errors, on any node kind", () => {
   const part = authoredPart();
   part.parameters[0].controls[3].when = { nope: { gt: 0 } };            // group
