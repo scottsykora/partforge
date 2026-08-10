@@ -901,6 +901,23 @@ reader one.
 
 Finally, **every control gets a `description`** — see below.
 
+### Ordering and naming
+
+Authored order is render order, so spend it deliberately: put the control a user
+reaches for first at the **top** — usually the primary dimension the presets don't
+settle — and order the rest by how a user thinks about the part, not by the order
+the build consumes them. A user scans the rail top-to-bottom once; the control they
+need should sit where that scan expects it, with fine-tuning below it and
+housekeeping last.
+
+Labels are for reading, not for the build: a short noun phrase (**"Wall
+thickness"**, **"Bolt hole ø"**), with units in `unit:` rather than in the label
+text, and never a parameter key or build-internal jargon — `flange_d` is a key,
+"Flange diameter" is a label. Every label must make sense on its own with its
+neighbours folded away; if a label only reads correctly next to another control
+("Diameter" … "Diameter" in two groups), rename until each stands alone or regroup
+until they are one idea.
+
 ### A description for every control
 
 Give every section and control a `description`. Keep each one short and make it cover:
