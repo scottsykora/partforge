@@ -250,6 +250,26 @@
   .pf-anim-bar { bottom: 64px; }
 }
 
+/* Placement half of app.css's touch layout — same query, so the two must be
+   edited together. That layout stacks the bar into rows, and a shrink-to-fit
+   absolutely-positioned box sizes itself to its widest single item (195px,
+   measured at 390px) rather than to the room available, wrapping every row far
+   earlier than it needs to. State the width outright.
+
+   The lift off the viewbar comes along for a landscape phone, which is wider
+   than 719px and so misses the block above. It also keeps this clear of the
+   viewbar CLAMP in animation-controls.js: with the bands no longer
+   intersecting, applyPlacement() returns before touching left/transform, so
+   the stacked bar stays centred instead of being slid sideways by a rule that
+   was reasoning about a single-row bar.
+
+   The cap is for a tablet — a coarse pointer on a wide stage — where an
+   unbounded stacked bar would span 700px+ and strand the reset button across a
+   mostly empty row. A phone is narrower than the cap and still fills its width. */
+@media (max-width: 719px), (pointer: coarse) {
+  .pf-anim-bar { width: calc(100% - 24px); max-width: 520px; bottom: 64px; }
+}
+
 
 
 /* ---- reduced motion -----------------------------------------------------
