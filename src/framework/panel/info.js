@@ -20,6 +20,15 @@ export function popoverTop({ glyphTop, glyphBottom, popHeight, viewportHeight })
   return Math.max(8, glyphTop - 6 - popHeight);
 }
 
+// Popover left edge: aligned 8px left of the glyph when that fits, pulled
+// left so the popover's right edge keeps a 10px margin from the viewport
+// edge, and never past a 10px margin on the left (left margin wins when both
+// would be violated). Pure, for direct unit testing — happy-dom reports zero
+// layout metrics, same as popoverTop above.
+export function popoverLeft({ glyphLeft, popWidth, viewportWidth }) {
+  return Math.max(10, Math.min(glyphLeft - 8, viewportWidth - 10 - popWidth));
+}
+
 // One popover element per panel, shared by all its glyphs (only one open at a
 // time). Document-level dismiss listeners are registered per panel and removed
 // by panel.dispose().
@@ -51,7 +60,7 @@ export function createInfoPopover() {
       glyph.setAttribute("aria-expanded", "true");
       const r = glyph.getBoundingClientRect();
       pop.style.top = `${popoverTop({ glyphTop: r.top, glyphBottom: r.bottom, popHeight: pop.offsetHeight, viewportHeight: window.innerHeight })}px`;
-      pop.style.left = `${Math.max(8, r.left - 8)}px`;
+      pop.style.left = `${popoverLeft({ glyphLeft: r.left, popWidth: pop.offsetWidth, viewportWidth: window.innerWidth })}px`;
     },
     dispose() {
       document.removeEventListener("click", onDocClick);

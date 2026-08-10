@@ -23,7 +23,7 @@ function labeledRow(node, info) {
   return wrap;
 }
 
-export function makeSelect(node, params, { onChange, info }) {
+export function makeSelect(node, params, { onChange, onCommit, info }) {
   const wrap = labeledRow(node, info);
   const opts = normalizeOptions(node.options);
   const byString = new Map(opts.map((o) => [String(o.value), o.value]));
@@ -40,13 +40,14 @@ export function makeSelect(node, params, { onChange, info }) {
   select.addEventListener("change", () => {
     params[node.key] = byString.get(select.value);
     onChange?.();
+    onCommit?.();
   });
   wrap.append(select);
   const sync = () => { select.value = String(params[node.key]); };
   return { el: wrap, sync };
 }
 
-export function makeRadio(node, params, { onChange, info }) {
+export function makeRadio(node, params, { onChange, onCommit, info }) {
   const wrap = labeledRow(node, info);
   const opts = normalizeOptions(node.options);
   const seg = el("div", "seg");
@@ -58,6 +59,7 @@ export function makeRadio(node, params, { onChange, info }) {
       params[node.key] = o.value;
       paint();
       onChange?.();
+      onCommit?.();
     });
     seg.append(b);
     return { b, value: o.value };

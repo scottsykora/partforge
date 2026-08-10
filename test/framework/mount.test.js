@@ -1016,3 +1016,26 @@ test("makeHandle.animation defaults to null; a supplied runtime passes through",
   const withAnimation = makeHandle({ ...fixture, animation: fakeRuntime });
   expect(withAnimation.animation).toBe(fakeRuntime);
 });
+
+test("onParamsCommit fires on a finished panel edit with a snapshot, never from setParams", () => {
+  const { createWorker } = makeWorkers();
+  const els = makeElements();
+  const commits = [];
+  const runtime = mount(makePart(), { createWorker, elements: els,
+    onParamsCommit: (p) => commits.push(p) });
+
+  const slider = els.controls.querySelector('input[type="range"]');
+  slider.value = "6";
+  slider.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(commits).toEqual([]);                       // mid-drag
+  slider.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toHaveLength(1);
+  expect(commits[0].changed).toEqual(["h"]);
+  expect(commits[0].params).toMatchObject({ h: 6, tilt: 0 });
+
+  // the payload is a snapshot: a later edit must not mutate it
+  runtime.setParams({ h: 9 });
+  expect(commits[0].params.h).toBe(6);
+  expect(commits).toHaveLength(1);                   // setParams never commits
+  runtime.dispose();
+});

@@ -139,10 +139,16 @@ function createCleanupStack() {
 // onViewChange fires once synchronously during mount with the initial resolved
 // view (before ready), then again on every subsequent view change (user click
 // or a programmatic setView) — always the new view name.
+// onParamsCommit({ changed, params })   // the user FINISHED editing a panel control (slider
+//                                         // released, box committed, checkbox ticked, preset
+//                                         // applied): `changed` lists the keys written, `params`
+//                                         // is a snapshot copy. Never fired by setParams or
+//                                         // animation playback — hosts call setParams from their
+//                                         // own undo/reset, and firing here would loop.
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
-export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange,
+export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange, onParamsCommit,
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
@@ -487,7 +493,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     const panel = buildControls(els.controls, part.parameters, params, () => {
       animCtl?.notifyUserEdit();
       onParamChange();
-    });
+    }, onParamsCommit
+      ? (changed) => onParamsCommit({ changed, params: { ...params } })
+      : undefined);
     cleanup.defer(() => panel.dispose());
     const updateRelevance = () => {
       // A throwing derive() must not break every slider drag — mount's pick

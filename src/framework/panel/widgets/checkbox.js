@@ -14,7 +14,7 @@ function el(tag, className, text) {
   return node;
 }
 
-export function makeCheckbox(node, params, { onChange, info }) {
+export function makeCheckbox(node, params, { onChange, onCommit, info }) {
   const row = el("label", "feat");
   const box = document.createElement("input");
   box.type = "checkbox";
@@ -30,6 +30,7 @@ export function makeCheckbox(node, params, { onChange, info }) {
       params[node.key] = 0;
     }
     onChange?.();
+    onCommit?.();
   });
 
   const sync = () => { box.checked = params[node.key] > 0; };

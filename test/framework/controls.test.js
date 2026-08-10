@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { expect, test } from "vitest";
-import { clampToRange, popoverTop } from "../../src/framework/controls.js";
+import { clampToRange, popoverTop, popoverLeft } from "../../src/framework/controls.js";
 
 // The value-commit logic for the editable number boxes (DOM wiring is browser-only).
 test("clampToRange clamps a typed value into [min, max], allowing exact (non-step) values", () => {
@@ -22,6 +22,15 @@ test("popoverTop places below when it fits, flips above when clipped", () => {
   expect(popoverTop({ glyphTop: 700, glyphBottom: 720, popHeight: 200, viewportHeight: 800 })).toBe(494);
   // no room above either → clamps to the 8px margin
   expect(popoverTop({ glyphTop: 30, glyphBottom: 50, popHeight: 780, viewportHeight: 800 })).toBe(8);
+});
+
+test("popoverLeft aligns near the glyph, clamps to a 10px margin at both edges", () => {
+  // fits: aligned 8px left of the glyph
+  expect(popoverLeft({ glyphLeft: 100, popWidth: 200, viewportWidth: 800 })).toBe(92);
+  // glyph near the right edge: pulled left so the right edge sits 10px in
+  expect(popoverLeft({ glyphLeft: 700, popWidth: 200, viewportWidth: 800 })).toBe(590);
+  // popover wider than the viewport allows: the left margin wins
+  expect(popoverLeft({ glyphLeft: 5, popWidth: 900, viewportWidth: 800 })).toBe(10);
 });
 
 import { buildControls, visibleAdvanced, visibleFeatures, visibleToggles, sectionRenders } from "../../src/framework/controls.js";
@@ -208,6 +217,45 @@ const wrapByLabel = (root, t) =>
   [...root.querySelectorAll(".slider")].find((w) => w.querySelector("label")?.textContent === t);
 const sectionByTitle = (root, t) =>
   [...root.querySelectorAll(".section")].find((s) => s.querySelector(".sec-title")?.textContent === t);
+
+test("section header anatomy: title, then chevron on the right; .collapsed tracks the disclosure", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  // "Shut" uses the NEW authored shape (`controls:`) because legacy desugar
+  // hard-sets `collapsed: "auto"` on legacy-shaped sections (legacy.js:105) —
+  // only author.js honors an explicit `collapsed: true` (author.js:82).
+  buildControls(root, [
+    { id: "open", title: "Open", description: "About it",
+      advanced: [{ key: "a", label: "A", min: 0, max: 1, step: 1 }] },
+    { id: "shut", title: "Shut", collapsed: true,
+      controls: [{ type: "slider", key: "b", label: "B", min: 0, max: 1, step: 1 }] },
+  ], { a: 0, b: 0 }, () => {});
+
+  const openSec = sectionByTitle(root, "Open");
+  const shutSec = sectionByTitle(root, "Shut");
+  // Row order: title button, ⓘ (when described), chevron last on the right.
+  const header = openSec.querySelector(".sec-header");
+  expect(header.firstElementChild.className).toBe("sec-title");
+  expect(header.lastElementChild.className).toBe("chev");
+  expect(header.querySelector(".info").previousElementSibling.className).toBe("sec-title");
+  expect(header.querySelector(".chev").textContent).toBe(""); // glyph is CSS-only
+  expect(openSec.querySelector(".sec-title").textContent).toBe("Open"); // exact-match contract holds
+
+  // initial open state → class matches
+  expect(openSec.classList.contains("collapsed")).toBe(false);
+  expect(shutSec.classList.contains("collapsed")).toBe(true);
+
+  // the whole header row toggles: a title click bubbles, a header click works directly
+  shutSec.querySelector(".sec-title").click();
+  expect(shutSec.classList.contains("collapsed")).toBe(false);
+  expect(shutSec.querySelector(".sec-body").classList.contains("hidden")).toBe(false);
+  openSec.querySelector(".sec-header").click();
+  expect(openSec.classList.contains("collapsed")).toBe(true);
+  expect(openSec.querySelector(".sec-title").getAttribute("aria-expanded")).toBe("false");
+  // …but the ⓘ does not: it stops propagation so info never toggles the fold
+  openSec.querySelector(".info").click();
+  expect(openSec.classList.contains("collapsed")).toBe(true);
+});
 
 const twoSections = [
   { id: "body", title: "Body", advanced: [
@@ -450,7 +498,10 @@ test("the legacy Advanced fold opens with a small panel", () => {
   const root = document.createElement("div");
   buildControls(root, [presetSec()], { od: 5, secret: 0 }, () => {});
   expect(root.querySelector(".adv").classList.contains("hidden")).toBe(false);
-  expect(root.querySelector(".adv-toggle").textContent).toBe("Advanced ▴");
+  // The fold shares the section-header anatomy: the button carries only the
+  // title (chevron is a text-free sibling span), so textContent is exact.
+  expect(root.querySelector(".adv-toggle").textContent).toBe("Advanced");
+  expect(root.querySelector(".adv-header").lastElementChild.className).toBe("chev");
 });
 
 test("a section the user closed stays closed across applyState re-runs (the openApplied latch)", () => {
@@ -467,4 +518,85 @@ test("a section the user closed stays closed across applyState re-runs (the open
   panel.applyRelevance(new Set(["od"]));                  // also runs applyState
   expect(body.classList.contains("hidden")).toBe(true);
   panel.dispose();
+});
+
+test("onCommit fires on slider release (change), not during drag (input)", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const commits = [];
+  const params = { od: 5 };
+  buildControls(root, [{ id: "b", title: "Body",
+    advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] }],
+    params, () => {}, (keys) => commits.push(keys));
+  const slider = root.querySelector('input[type="range"]');
+  slider.value = "7";
+  slider.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(params.od).toBe(7);
+  expect(commits).toEqual([]);            // mid-drag: no commit
+  slider.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toEqual([["od"]]);      // release: one commit, the key
+});
+
+test("number box commits on change (blur/Enter), including after live typing", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const commits = [];
+  const params = { od: 5 };
+  buildControls(root, [{ id: "b", title: "Body",
+    advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] }],
+    params, () => {}, (keys) => commits.push(keys));
+  const box = root.querySelector('input[type="number"]');
+  box.value = "8";
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(commits).toEqual([]);            // live preview: no commit
+  box.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toEqual([["od"]]);
+  // an invalid entry reverts and must NOT commit
+  box.value = "abc";
+  box.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toEqual([["od"]]);
+});
+
+test("checkbox and preset commits: a preset carries every key it wrote", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const commits = [];
+  const params = { od: 5, h: 2, show: 0 };
+  buildControls(root, [
+    { id: "b", title: "Body", presets: { Tall: { od: 3, h: 9 } },
+      advanced: [
+        { key: "od", label: "OD", min: 1, max: 10, step: 1 },
+        { key: "h", label: "H", min: 1, max: 10, step: 1 },
+      ] },
+    { id: "m", title: "Motor", toggles: [{ key: "show", label: "Show", on: 1 }] },
+  ], params, () => {}, (keys) => commits.push(keys));
+
+  root.querySelector('input[type="checkbox"]')
+    .dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toEqual([["show"]]);
+
+  const preset = root.querySelector("select.preset");
+  preset.value = "Tall";
+  preset.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toEqual([["show"], ["od", "h"]]);
+  expect(params).toMatchObject({ od: 3, h: 9 });
+});
+
+test("syncValues never commits; a throwing commit handler never breaks the panel", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const commits = [];
+  const params = { od: 5 };
+  const panel = buildControls(root, [{ id: "b", title: "Body",
+    advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] }],
+    params, () => {}, (keys) => { commits.push(keys); throw new Error("host boom"); });
+  params.od = 9;
+  panel.syncValues(["od"]);               // programmatic: no commit
+  expect(commits).toEqual([]);
+  const slider = root.querySelector('input[type="range"]');
+  slider.value = "7";
+  slider.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(() => slider.dispatchEvent(new Event("change", { bubbles: true }))).not.toThrow();
+  expect(commits).toEqual([["od"]]);      // dispatched despite the throw
+  expect(params.od).toBe(7);              // the panel kept working
 });
