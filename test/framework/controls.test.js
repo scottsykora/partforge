@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { expect, test } from "vitest";
-import { clampToRange, popoverTop } from "../../src/framework/controls.js";
+import { clampToRange, popoverTop, popoverLeft } from "../../src/framework/controls.js";
 
 // The value-commit logic for the editable number boxes (DOM wiring is browser-only).
 test("clampToRange clamps a typed value into [min, max], allowing exact (non-step) values", () => {
@@ -22,6 +22,15 @@ test("popoverTop places below when it fits, flips above when clipped", () => {
   expect(popoverTop({ glyphTop: 700, glyphBottom: 720, popHeight: 200, viewportHeight: 800 })).toBe(494);
   // no room above either → clamps to the 8px margin
   expect(popoverTop({ glyphTop: 30, glyphBottom: 50, popHeight: 780, viewportHeight: 800 })).toBe(8);
+});
+
+test("popoverLeft aligns near the glyph, clamps to a 10px margin at both edges", () => {
+  // fits: aligned 8px left of the glyph
+  expect(popoverLeft({ glyphLeft: 100, popWidth: 200, viewportWidth: 800 })).toBe(92);
+  // glyph near the right edge: pulled left so the right edge sits 10px in
+  expect(popoverLeft({ glyphLeft: 700, popWidth: 200, viewportWidth: 800 })).toBe(590);
+  // popover wider than the viewport allows: the left margin wins
+  expect(popoverLeft({ glyphLeft: 5, popWidth: 900, viewportWidth: 800 })).toBe(10);
 });
 
 import { buildControls, visibleAdvanced, visibleFeatures, visibleToggles, sectionRenders } from "../../src/framework/controls.js";
