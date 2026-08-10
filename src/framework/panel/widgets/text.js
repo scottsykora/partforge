@@ -9,7 +9,7 @@ function el(tag, className, text) {
   return node;
 }
 
-export function makeText(node, params, { onChange, info }) {
+export function makeText(node, params, { onChange, onCommit, info }) {
   const multiline = node.type === "textarea";
   const wrap = el("div", "slider");
   const row = el("div", "row");
@@ -26,6 +26,7 @@ export function makeText(node, params, { onChange, info }) {
     params[node.key] = field.value;
     onChange?.();
   });
+  field.addEventListener("change", () => onCommit?.());
   wrap.append(field);
 
   const sync = () => { field.value = String(params[node.key] ?? ""); };

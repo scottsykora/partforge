@@ -19,7 +19,7 @@ function el(tag, className, text) {
   return node;
 }
 
-export function makeNumeric(node, params, { onChange, info }) {
+export function makeNumeric(node, params, { onChange, onCommit, info }) {
   const numeric = node.type === "number";
   const wrap = el("div", "slider");
   const row = el("div", "row");
@@ -68,6 +68,7 @@ export function makeNumeric(node, params, { onChange, info }) {
       paintWarn();
       onChange?.();
     });
+    slider.addEventListener("change", () => onCommit?.());
     wrap.append(slider);
   }
 
@@ -124,6 +125,7 @@ export function makeNumeric(node, params, { onChange, info }) {
     if (slider) slider.value = log ? toPosSafe(v) : v;
     paintWarn();
     onChange?.();
+    onCommit?.();
   });
 
   const sync = () => {

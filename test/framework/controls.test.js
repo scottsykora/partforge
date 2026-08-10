@@ -507,3 +507,84 @@ test("a section the user closed stays closed across applyState re-runs (the open
   expect(body.classList.contains("hidden")).toBe(true);
   panel.dispose();
 });
+
+test("onCommit fires on slider release (change), not during drag (input)", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const commits = [];
+  const params = { od: 5 };
+  buildControls(root, [{ id: "b", title: "Body",
+    advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] }],
+    params, () => {}, (keys) => commits.push(keys));
+  const slider = root.querySelector('input[type="range"]');
+  slider.value = "7";
+  slider.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(params.od).toBe(7);
+  expect(commits).toEqual([]);            // mid-drag: no commit
+  slider.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toEqual([["od"]]);      // release: one commit, the key
+});
+
+test("number box commits on change (blur/Enter), including after live typing", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const commits = [];
+  const params = { od: 5 };
+  buildControls(root, [{ id: "b", title: "Body",
+    advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] }],
+    params, () => {}, (keys) => commits.push(keys));
+  const box = root.querySelector('input[type="number"]');
+  box.value = "8";
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(commits).toEqual([]);            // live preview: no commit
+  box.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toEqual([["od"]]);
+  // an invalid entry reverts and must NOT commit
+  box.value = "abc";
+  box.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toEqual([["od"]]);
+});
+
+test("checkbox and preset commits: a preset carries every key it wrote", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const commits = [];
+  const params = { od: 5, h: 2, show: 0 };
+  buildControls(root, [
+    { id: "b", title: "Body", presets: { Tall: { od: 3, h: 9 } },
+      advanced: [
+        { key: "od", label: "OD", min: 1, max: 10, step: 1 },
+        { key: "h", label: "H", min: 1, max: 10, step: 1 },
+      ] },
+    { id: "m", title: "Motor", toggles: [{ key: "show", label: "Show", on: 1 }] },
+  ], params, () => {}, (keys) => commits.push(keys));
+
+  root.querySelector('input[type="checkbox"]')
+    .dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toEqual([["show"]]);
+
+  const preset = root.querySelector("select.preset");
+  preset.value = "Tall";
+  preset.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(commits).toEqual([["show"], ["od", "h"]]);
+  expect(params).toMatchObject({ od: 3, h: 9 });
+});
+
+test("syncValues never commits; a throwing commit handler never breaks the panel", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const commits = [];
+  const params = { od: 5 };
+  const panel = buildControls(root, [{ id: "b", title: "Body",
+    advanced: [{ key: "od", label: "OD", min: 1, max: 10, step: 1 }] }],
+    params, () => {}, (keys) => { commits.push(keys); throw new Error("host boom"); });
+  params.od = 9;
+  panel.syncValues(["od"]);               // programmatic: no commit
+  expect(commits).toEqual([]);
+  const slider = root.querySelector('input[type="range"]');
+  slider.value = "7";
+  slider.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(() => slider.dispatchEvent(new Event("change", { bubbles: true }))).not.toThrow();
+  expect(commits).toEqual([["od"]]);      // dispatched despite the throw
+  expect(params.od).toBe(7);              // the panel kept working
+});

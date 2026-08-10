@@ -24,7 +24,7 @@ function indexNodes(nodes, map) {
   }
 }
 
-export function buildControls(root, parameters, params, onDirty) {
+export function buildControls(root, parameters, params, onDirty, onCommit) {
   const info = createInfoPopover();
   const tree = buildTree(desugar(parameters));
 
@@ -115,6 +115,15 @@ export function buildControls(root, parameters, params, onDirty) {
 
   const onEdit = () => { applyState(); onDirty?.(); };
 
+  // A commit = the user FINISHED an interaction (slider released, box
+  // committed, checkbox ticked, preset applied). Distinct from onDirty, which
+  // fires on every input event mid-drag. Wrapped: a throwing host handler
+  // must never break the panel.
+  const commit = (keys) => {
+    if (!onCommit) return;
+    try { onCommit(keys); } catch { /* host's problem, not the panel's */ }
+  };
+
   // --- build ---------------------------------------------------------------
   //
   // TWO DIFFERENT THINGS USE `.hidden`, and conflating them is a real bug:
@@ -176,6 +185,7 @@ export function buildControls(root, parameters, params, onDirty) {
       Object.assign(params, bundle);
       for (const { key, sync } of rawSyncs.get(sectionCtx.id)) if (key in params) sync();
       onEdit();
+      commit(Object.keys(bundle));
     });
     // The section's controls need a handle on the picker to drop it to Custom
     // when one of them is edited. First picker in the section wins.
@@ -206,6 +216,7 @@ export function buildControls(root, parameters, params, onDirty) {
     };
     const widget = factory(node, params, {
       onChange: () => { markCustom(); onEdit(); },
+      onCommit: () => commit([node.key]),
       info,
     });
     nodeEls.set(node.id, widget.el);
