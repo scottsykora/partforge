@@ -168,6 +168,26 @@ test("out-of-range ticks and an inverted recommended band warn", () => {
   expect(found).toHaveLength(2);
 });
 
+test("a typo'd authored control type is one unknown-control-type error, with a did-you-mean, and no unknown-control-field cascade for its standard fields", () => {
+  const part = authoredPart();
+  part.parameters[0].controls.push({ key: "show", type: "sldier", label: "Show" });
+  const r = lintPart(part);
+  const typeErrs = r.errors.filter((f) => f.rule === "unknown-control-type");
+  expect(typeErrs).toHaveLength(1);
+  expect(typeErrs[0].message).toContain('"sldier"');
+  expect(typeErrs[0].hint).toMatch(/slider/);
+  expect(typeErrs[0].path).toBe("parameters[0].controls[4].type");
+  expect(ids(r.warnings)).not.toContain("unknown-control-field");
+});
+
+test("a legacy `control: \"sldier\"` value is never validated, before or after the fix", () => {
+  const part = authoredPart();
+  part.parameters.push({ id: "legacy", advanced: [
+    { key: "od", label: "OD", control: "sldier", min: 1, max: 10, step: 1 }] });
+  const r = lintPart(part);
+  expect(ids(r.errors)).not.toContain("unknown-control-type");
+});
+
 test("a when condition naming a key not in defaults errors, on any node kind", () => {
   const part = authoredPart();
   part.parameters[0].controls[3].when = { nope: { gt: 0 } };            // group

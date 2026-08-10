@@ -268,11 +268,9 @@ export function buildControls(root, parameters, params, onDirty) {
   // omitted (mount.js's initial call, or a syncValues-only path) — only what's
   // passed updates. `applyRelevance` is the old name, kept as a thin delegate
   // so existing callers (and mount.test.js) don't have to change.
-  let lastDerived = null;
   const refresh = ({ relevant: nextRelevant, derived } = {}) => {
     if (nextRelevant !== undefined) relevant = nextRelevant;
     if (derived !== undefined) {
-      lastDerived = derived;
       for (const update of displayUpdates.values()) update(derived);
     }
     applyState();

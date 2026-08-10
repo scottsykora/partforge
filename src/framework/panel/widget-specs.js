@@ -61,7 +61,13 @@ const AUTHOR_FIELDS = new Map(Object.entries(AUTHOR_EXTRAS).map(
 // with AUTHOR_COMMON like the control types above. Its author-facing fields
 // are exactly its WIDGET_SPECS fields.
 AUTHOR_FIELDS.set("readout", specFor("readout").fields);
-export const authorFieldsFor = (type) => AUTHOR_FIELDS.get(type) ?? [];
+// An unrecognised type (a typo like "sldier") falls back to AUTHOR_COMMON
+// rather than []: with [], every field on the descriptor — including "key"
+// and "label" — reads as unrecognised, so a single typo cascades into a wall
+// of unknown-control-field warnings with nothing pointing at the real cause.
+// lint's unknown-control-type rule (rules-schema.js) is what actually names
+// the typo; this fallback just keeps the field-level noise from drowning it.
+export const authorFieldsFor = (type) => AUTHOR_FIELDS.get(type) ?? AUTHOR_COMMON;
 
 // Container node types in the authored tree. Not widget types — no DOM factory
 // looks them up — so, like the legacy FEATURE_FIELDS/TOGGLE_FIELDS, they keep

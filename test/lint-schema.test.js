@@ -185,6 +185,18 @@ test("a feature's own-key slider with a non-sentinel out-of-range default still 
   expect(find(r, "slider-range-excludes-default").path).toBe("parameters[0].features[0].sliders[0]");
 });
 
+test("a legacy control's `when` is a dropped unknown field, not a when-rule target", () => {
+  // `when` isn't in LEGACY_CONTROL, so controls.js drops it silently — flagging
+  // its *contents* (an unknown key, here) would wrongly imply that fixing the
+  // key alone would make the condition work.
+  const part = goodPart();
+  part.parameters[0].advanced[0].when = { badkey: 1 };
+  const r = lintPart(part);
+  expect(ids(r.warnings)).toContain("unknown-control-field");
+  expect(ids(r.errors)).not.toContain("when-key-not-in-defaults");
+  expect(ids(r.errors)).not.toContain("when-unknown-operator");
+});
+
 test("an explicit empty defaults still gets its control keys checked", () => {
   // missing-defaults (shape rule) only fires when `defaults` isn't a plain object;
   // an explicit `defaults: {}` passes that check but must not silently exempt

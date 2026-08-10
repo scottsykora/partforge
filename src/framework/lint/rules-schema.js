@@ -4,7 +4,7 @@
 // resolve against `defaults`, which produce a control that silently does nothing.
 import { err, warn } from "./finding.js";
 import { suggest } from "../geometry/op-options.js";
-import { fieldsFor, authorFieldsFor, GROUP_FIELDS, PRESET_FIELDS, SECTION_FIELDS, normalizeOptions } from "../panel/widget-specs.js";
+import { fieldsFor, authorFieldsFor, WIDGET_TYPES, GROUP_FIELDS, PRESET_FIELDS, SECTION_FIELDS, normalizeOptions } from "../panel/widget-specs.js";
 import { sectionRenders, desugar } from "../panel/legacy.js";
 import { buildTree, WHEN_OPS } from "../panel/model.js";
 import { resolveDerived } from "../derive.js";
@@ -34,20 +34,24 @@ function collectDescriptors(part) {
         if (!entry) return;
         const path = `${base}[${i}]`;
         if (entry.type === "group") {
-          out.push({ d: entry, path, fields: GROUP_FIELDS, container: true });
+          out.push({ d: entry, path, fields: GROUP_FIELDS, container: true, authored: true });
           walkAuthored(entry.controls, `${path}.controls`);
         } else if (entry.type === "preset") {
-          out.push({ d: entry, path, fields: PRESET_FIELDS, container: true });
+          out.push({ d: entry, path, fields: PRESET_FIELDS, container: true, authored: true });
         } else {
-          out.push({ d: entry, path, fields: authorFieldsFor(entry.type ?? "slider") });
+          // A typo'd type (e.g. "grup") fails both branches above and lands
+          // here — authorFieldsFor falls back to AUTHOR_COMMON, and
+          // unknown-control-type (below) is what actually diagnoses it.
+          out.push({ d: entry, path, fields: authorFieldsFor(entry.type ?? "slider"), authored: true });
         }
       });
     }
     if (Array.isArray(sec?.controls)) {
       // The section itself is a descriptor too, but only worth collecting when
-      // it carries a `when` — unknown-control-field already validates section
-      // shape elsewhere, and pushing every section unconditionally would double
-      // up on that. `when`-only rules just need it present when relevant.
+      // it carries a `when` — a section becomes a descriptor at all only in
+      // that case (a deliberate scope choice), and pushing every section
+      // unconditionally would produce findings with nothing to say. `when`-only
+      // rules just need it present when relevant.
       if (sec?.when !== undefined) out.push({ d: sec, path: `parameters[${si}]`, fields: SECTION_FIELDS, container: true });
       walkAuthored(sec.controls, `parameters[${si}].controls`);
       return;
@@ -252,6 +256,18 @@ export const SCHEMA_RULES = [
     },
   },
   {
+    id: "unknown-control-type",
+    run: ({ part }) => collectDescriptors(part)
+      .filter(({ container, authored, d }) => authored && !container && typeof d.type === "string" && !WIDGET_TYPES.includes(d.type))
+      .map(({ d, path }) => {
+        const hint = suggest(d.type, WIDGET_TYPES);
+        return err("unknown-control-type",
+          `unrecognised control type "${d.type}"`,
+          `${hint ? `Did you mean "${hint}"? ` : ""}Recognised types: ${WIDGET_TYPES.join(", ")}.`,
+          `${path}.type`);
+      }),
+  },
+  {
     id: "duplicate-control-key",
     run: ({ part }) => {
       const seen = new Map();
@@ -446,8 +462,13 @@ export const SCHEMA_RULES = [
       if (!isPlainObject(part?.defaults)) return [];
       const known = defaultKeys(part);
       const out = [];
-      for (const { d, path } of collectDescriptors(part)) {
+      for (const { d, path, fields } of collectDescriptors(part)) {
         if (!d.when) continue;
+        // A legacy descriptor's `when` isn't a real field (fields wouldn't
+        // list it) — controls.js silently drops it as an unknown key
+        // (unknown-control-field already says so), so validating its
+        // *contents* would imply fixing the key alone makes it work.
+        if (!fields.includes("when")) continue;
         walkWhen(d.when, (key) => {
           if (!known.has(key)) {
             const hint = suggest(key, [...known]);
@@ -466,8 +487,11 @@ export const SCHEMA_RULES = [
     run: ({ part }) => {
       const ops = Object.keys(WHEN_OPS);
       const out = [];
-      for (const { d, path } of collectDescriptors(part)) {
+      for (const { d, path, fields } of collectDescriptors(part)) {
         if (!d.when) continue;
+        // Same reasoning as when-key-not-in-defaults: a legacy `when` is a
+        // dropped unknown field, not a condition to validate.
+        if (!fields.includes("when")) continue;
         walkWhen(d.when, () => {}, (op) => {
           if (!ops.includes(op)) {
             const hint = suggest(op, ops);
@@ -524,7 +548,7 @@ export const SCHEMA_RULES = [
         if (n > SECTION_CONTROL_BUDGET) {
           out.push(warn("section-too-many-controls",
             `section "${sec.id ?? si}" shows ${n} controls`,
-            `More than ${SECTION_CONTROL_BUDGET} visible controls in one section reads as a wall. Group related controls (\`{ type: "group", collapsed: "auto" }\`), split the section, or hide internals (\`hidden: true\`).`,
+            `More than ${SECTION_CONTROL_BUDGET} visible controls in one section reads as a wall. Split the section, or hide internals (\`hidden: true\`) — grouping organizes but does not reduce the count.`,
             `parameters[${si}]`));
         }
       });

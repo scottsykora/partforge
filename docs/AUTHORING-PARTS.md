@@ -868,7 +868,8 @@ Tier the controls so the default view is uncluttered:
 Keep a section to **12 visible controls or fewer** — past that `section-too-many-controls`
 warns, because more than a dozen in one column reads as a wall rather than a set of
 choices. If a section is over budget, the fix is almost always that two ideas are
-sharing it: split the section, or fold one idea into a group.
+sharing it: split the section, or hide internals (`hidden: true`) — grouping
+organizes but does not reduce the count.
 
 Aim for a panel whose first screen is a handful of controls, and whose full design is
 one click away in a fold.
@@ -1424,7 +1425,7 @@ previously didn't; that's the fix working as intended, not a regression.
 `control-key-not-in-defaults`, `preset-key-not-in-defaults`, `mixed-section-shape`,
 `duplicate-preset-name`, `duplicate-node-id`, `select-options-missing`,
 `select-default-not-in-options`, `log-scale-needs-positive-min`,
-`when-key-not-in-defaults`, `when-unknown-operator` (errors);
+`when-key-not-in-defaults`, `when-unknown-operator`, `unknown-control-type` (errors);
 `slider-range-excludes-default`, `unknown-control-field`, `duplicate-control-key`,
 `default-not-exposed`, `readout-unknown-derived-key`, `slider-refinement-invalid`,
 `group-depth`, `section-too-many-controls` (warnings).
@@ -1463,6 +1464,17 @@ each comparison operator (`{ gt: 0 }`, `{ in: [...] }`, …) must be one
 condition is always false and the node never shows — which is why both are
 errors rather than warnings.
 
+`unknown-control-type` fires when an authored control's `type` (e.g. a typo
+like `"sldier"`) isn't one of the recognised widget types — the renderer skips
+a node with an unrecognised type entirely, so the control silently vanishes
+from the panel with no other sign anything is wrong. An unrecognised type's
+field list falls back to the common set (`key`, `type`, `label`, `description`,
+`hidden`, `when`, `whenFalse`) rather than an empty one, so this error carries
+the diagnosis instead of every field on the control — even ordinary ones like
+`label` — separately warning as `unknown-control-field`. This only applies to
+the authored `controls` shape — a legacy descriptor's `control:` value was
+never validated and still isn't.
+
 `readout-unknown-derived-key` checks a `{ type: "readout" }` entry's `derivedKey`
 against the keys `derive()` actually produces (resolved once against `defaults`)
 — a readout naming a key no group returns shows an em-dash forever, so it warns
@@ -1480,8 +1492,10 @@ controls into the parent.
 `section-too-many-controls` warns when a section (authored or legacy, desugared
 to a common format) shows more than 12 visible controls — the budget is
 deliberately conservative, revisable against real LLM-authored parts. More than a
-dozen in one section reads as a wall; group related controls, split into multiple
-sections, or hide internals (`hidden: true`).
+dozen in one section reads as a wall; split into multiple sections, or hide
+internals (`hidden: true`). Grouping controls organizes them but does not
+reduce the count — the check recurses into groups — so a group alone doesn't
+bring a section back under budget.
 
 **Kernel API**, found by executing `build()` against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,

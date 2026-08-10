@@ -62,7 +62,7 @@ export function makeNumeric(node, params, { onChange, info }) {
     slider.min = log ? 0 : node.min; slider.max = log ? LOG_STEPS : node.max; slider.step = log ? 1 : node.step;
     slider.value = log ? toPos(params[node.key]) : params[node.key];
     slider.addEventListener("input", () => {
-      const v = snapTo(log ? toValue(+slider.value) : +slider.value);
+      const v = log ? toValue(+slider.value) : snapTo(+slider.value);
       params[node.key] = v;
       box.value = numStr(v);
       paintWarn();
