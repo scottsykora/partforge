@@ -218,6 +218,36 @@ const wrapByLabel = (root, t) =>
 const sectionByTitle = (root, t) =>
   [...root.querySelectorAll(".section")].find((s) => s.querySelector(".sec-title")?.textContent === t);
 
+test("section header: chevron precedes the title; .collapsed tracks the disclosure", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  // "Shut" uses the NEW authored shape (`controls:`) because legacy desugar
+  // hard-sets `collapsed: "auto"` on legacy-shaped sections (legacy.js:105) —
+  // only author.js honors an explicit `collapsed: true` (author.js:82).
+  buildControls(root, [
+    { id: "open", title: "Open", advanced: [{ key: "a", label: "A", min: 0, max: 1, step: 1 }] },
+    { id: "shut", title: "Shut", collapsed: true,
+      controls: [{ type: "slider", key: "b", label: "B", min: 0, max: 1, step: 1 }] },
+  ], { a: 0, b: 0 }, () => {});
+
+  const openSec = sectionByTitle(root, "Open");
+  const shutSec = sectionByTitle(root, "Shut");
+  const title = openSec.querySelector(".sec-title");
+  expect(title.firstElementChild.className).toBe("chev"); // chevron leads
+  expect(title.textContent).toBe("Open");                 // …and carries no text
+
+  // initial open state → class matches
+  expect(openSec.classList.contains("collapsed")).toBe(false);
+  expect(shutSec.classList.contains("collapsed")).toBe(true);
+
+  // clicking toggles both the body and the class
+  shutSec.querySelector(".sec-title").click();
+  expect(shutSec.classList.contains("collapsed")).toBe(false);
+  expect(shutSec.querySelector(".sec-body").classList.contains("hidden")).toBe(false);
+  openSec.querySelector(".sec-title").click();
+  expect(openSec.classList.contains("collapsed")).toBe(true);
+});
+
 const twoSections = [
   { id: "body", title: "Body", advanced: [
     { key: "od", label: "OD", min: 1, max: 10, step: 1 },

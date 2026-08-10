@@ -39,8 +39,10 @@ export function buildControls(root, parameters, params, onDirty) {
   const lastDisabled = new Map(); // id -> previous `disabled`, to skip a no-op input pass
   // Containers that own a disclosure: sections, and titled inner groups (the
   // legacy "Advanced" fold). `label` is set only for the inner groups, whose
-  // button text carries the ▾/▴ instead of a chevron span.
-  const disclosures = new Map(); // id -> { body, button, label }
+  // button text carries the ▾/▴ instead of a chevron span. `el` is set only
+  // for sections: the section element mirrors the disclosure with a
+  // `.collapsed` class so CSS can draw the closed-band affordance.
+  const disclosures = new Map(); // id -> { body, button, label, el }
   indexNodes(tree, nodeById);
   let relevant = null;
 
@@ -62,6 +64,7 @@ export function buildControls(root, parameters, params, onDirty) {
       const open = state.get(id)?.open ?? true;
       d.body.classList.toggle("hidden", !open);
       d.button.setAttribute("aria-expanded", String(open));
+      if (d.el) d.el.classList.toggle("collapsed", !open);
       if (d.label) d.button.textContent = open ? `${d.label} ▴` : `${d.label} ▾`;
     }
   };
@@ -146,7 +149,7 @@ export function buildControls(root, parameters, params, onDirty) {
     for (const child of node.children) renderNode(child, body, sectionCtx);
     wrap.append(toggle, body);
     nodeEls.set(node.id, wrap);             // conditions act on the wrapper
-    disclosures.set(node.id, { body, button: toggle, label: node.title });
+    disclosures.set(node.id, { body, button: toggle, label: node.title, el: null });
     container.append(wrap);
   }
 
@@ -233,7 +236,7 @@ export function buildControls(root, parameters, params, onDirty) {
     // because sectionByTitle-style lookups match `.sec-title` by exact
     // textContent === title (controls.test.js:210), and a text chevron here
     // would break that match.
-    title.append(el("span", "sec-name", section.title ?? ""), el("span", "chev"));
+    title.append(el("span", "chev"), el("span", "sec-name", section.title ?? ""));
     header.append(title);
     // The ⓘ is a SIBLING of the button, never a child: attachInfo appends a
     // <button>, and a button nested in a button is invalid HTML that never
@@ -249,8 +252,9 @@ export function buildControls(root, parameters, params, onDirty) {
     title.addEventListener("click", () => {
       const nowHidden = body.classList.toggle("hidden");
       title.setAttribute("aria-expanded", String(!nowHidden));
+      secEl.classList.toggle("collapsed", nowHidden);
     });
-    disclosures.set(section.id, { body, button: title, label: null });
+    disclosures.set(section.id, { body, button: title, label: null, el: secEl });
 
     // `preset` is filled in when a preset node renders. Controls read it late, so
     // one appearing after them in the children array still works.
