@@ -218,33 +218,42 @@ const wrapByLabel = (root, t) =>
 const sectionByTitle = (root, t) =>
   [...root.querySelectorAll(".section")].find((s) => s.querySelector(".sec-title")?.textContent === t);
 
-test("section header: chevron precedes the title; .collapsed tracks the disclosure", () => {
+test("section header anatomy: title, then chevron on the right; .collapsed tracks the disclosure", () => {
   document.body.innerHTML = '<div id="root"></div>';
   const root = document.getElementById("root");
   // "Shut" uses the NEW authored shape (`controls:`) because legacy desugar
   // hard-sets `collapsed: "auto"` on legacy-shaped sections (legacy.js:105) —
   // only author.js honors an explicit `collapsed: true` (author.js:82).
   buildControls(root, [
-    { id: "open", title: "Open", advanced: [{ key: "a", label: "A", min: 0, max: 1, step: 1 }] },
+    { id: "open", title: "Open", description: "About it",
+      advanced: [{ key: "a", label: "A", min: 0, max: 1, step: 1 }] },
     { id: "shut", title: "Shut", collapsed: true,
       controls: [{ type: "slider", key: "b", label: "B", min: 0, max: 1, step: 1 }] },
   ], { a: 0, b: 0 }, () => {});
 
   const openSec = sectionByTitle(root, "Open");
   const shutSec = sectionByTitle(root, "Shut");
-  const title = openSec.querySelector(".sec-title");
-  expect(title.firstElementChild.className).toBe("chev"); // chevron leads
-  expect(title.textContent).toBe("Open");                 // …and carries no text
+  // Row order: title button, ⓘ (when described), chevron last on the right.
+  const header = openSec.querySelector(".sec-header");
+  expect(header.firstElementChild.className).toBe("sec-title");
+  expect(header.lastElementChild.className).toBe("chev");
+  expect(header.querySelector(".info").previousElementSibling.className).toBe("sec-title");
+  expect(header.querySelector(".chev").textContent).toBe(""); // glyph is CSS-only
+  expect(openSec.querySelector(".sec-title").textContent).toBe("Open"); // exact-match contract holds
 
   // initial open state → class matches
   expect(openSec.classList.contains("collapsed")).toBe(false);
   expect(shutSec.classList.contains("collapsed")).toBe(true);
 
-  // clicking toggles both the body and the class
+  // the whole header row toggles: a title click bubbles, a header click works directly
   shutSec.querySelector(".sec-title").click();
   expect(shutSec.classList.contains("collapsed")).toBe(false);
   expect(shutSec.querySelector(".sec-body").classList.contains("hidden")).toBe(false);
-  openSec.querySelector(".sec-title").click();
+  openSec.querySelector(".sec-header").click();
+  expect(openSec.classList.contains("collapsed")).toBe(true);
+  expect(openSec.querySelector(".sec-title").getAttribute("aria-expanded")).toBe("false");
+  // …but the ⓘ does not: it stops propagation so info never toggles the fold
+  openSec.querySelector(".info").click();
   expect(openSec.classList.contains("collapsed")).toBe(true);
 });
 
@@ -489,7 +498,10 @@ test("the legacy Advanced fold opens with a small panel", () => {
   const root = document.createElement("div");
   buildControls(root, [presetSec()], { od: 5, secret: 0 }, () => {});
   expect(root.querySelector(".adv").classList.contains("hidden")).toBe(false);
-  expect(root.querySelector(".adv-toggle").textContent).toBe("Advanced ▴");
+  // The fold shares the section-header anatomy: the button carries only the
+  // title (chevron is a text-free sibling span), so textContent is exact.
+  expect(root.querySelector(".adv-toggle").textContent).toBe("Advanced");
+  expect(root.querySelector(".adv-header").lastElementChild.className).toBe("chev");
 });
 
 test("a section the user closed stays closed across applyState re-runs (the openApplied latch)", () => {

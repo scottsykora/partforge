@@ -65,40 +65,46 @@ canvas { display: block; }
 .section:not(.section-hidden):not(.hidden) ~ .section:not(.section-hidden):not(.hidden) {
   border-top: 1px solid var(--pf-border);
 }
-/* Section disclosure header: the whole row is the click target. Hover tint
-   and pill padding live on .sec-header; the negative horizontal margins
-   cancel the padding so the title keeps the rail's text alignment. */
+/* Section disclosure header: the whole row is the click target (render.js
+   puts the toggle listener on the header; the title button's click bubbles
+   to it and the ⓘ stops propagation). Full-bleed: negative margins cancel
+   the rail padding so the hover band and the collapsed rules run edge to
+   edge while the text keeps the rail's alignment. Row order: title (flex:1),
+   ⓘ, chevron on the far right. */
 .sec-header {
-  display: flex; align-items: center; gap: 4px;
-  margin: 0 -6px 6px; padding: 4px 6px; border-radius: 6px;
+  display: flex; align-items: center; gap: 6px;
+  margin: 0 calc(-1 * var(--pf-rail-pad)) 6px;
+  padding: 4px var(--pf-rail-pad);
+  cursor: pointer;
 }
 .sec-header:hover { background: var(--pf-surface-2); }
 .sec-title {
-  flex: 1; display: flex; align-items: center; gap: 8px;
-  width: 100%; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer;
+  flex: 1; display: flex; align-items: center;
+  margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer;
   text-align: left;
   font-family: var(--pf-mono); font-size: 12px; font-weight: 600;
   letter-spacing: 0.12em; text-transform: uppercase; color: var(--pf-text-2);
 }
 .sec-header:hover .sec-title { color: var(--pf-text); }
-/* Disclosure triangle: leads the title (the chev span is first in the
-   button) and is sized up from the label so the affordance reads at a
-   glance. Glyph via ::before — the span must stay text-free (tests match
-   .sec-title by exact textContent). */
-.sec-title .chev {
+/* Disclosure triangle: closes the header row on the right, after the ⓘ.
+   Glyph via ::before — the span must stay text-free (tests match .sec-title
+   by exact textContent). Rotation keys off the collapsed class because the
+   chevron sits beside, not inside, the aria-carrying button. */
+.sec-header .chev, .adv-header .chev {
   display: inline-block; font-size: 13px; line-height: 1; color: var(--pf-muted-2);
   transition: transform 0.15s ease;
 }
-.sec-title .chev::before { content: "▾"; }
-.sec-title[aria-expanded="false"] .chev { transform: rotate(-90deg); }
-/* Collapsed section: a rule under the header marks the closed band as
-   clickable. Drawn inside the header — not on .section — so it can never
-   double up with the inter-section border-top above. */
-.section.collapsed .sec-header {
-  margin-bottom: 0; padding-bottom: 9px;
-  border-bottom: 1px solid var(--pf-border);
-  border-radius: 6px 6px 0 0;
+.sec-header .chev::before, .adv-header .chev::before { content: "▾"; }
+.section.collapsed .chev, .adv-wrap.collapsed > .adv-header .chev { transform: rotate(-90deg); }
+/* Collapsed section: the header grows into the whole band between the
+   section's top divider and its own bottom rule — text vertically centered,
+   hover and click cover the entire band. The -1px bottom margin overlaps
+   this rule with the next section's border-top so they read as one line. */
+.section.collapsed {
+  padding-top: 0; padding-bottom: 0;
+  border-bottom: 1px solid var(--pf-border); margin-bottom: -1px;
 }
+.section.collapsed .sec-header { margin-bottom: 0; padding-top: 13px; padding-bottom: 13px; }
 .sec-body.hidden { display: none; }
 select.preset {
   width: 100%; background: var(--pf-input-bg); color: var(--pf-text-2);
@@ -119,12 +125,31 @@ select.select-input {
    `.sec-body` (rules above); everything else carrying `.hidden` inside the
    panel is a `when` that evaluated false. */
 .section.hidden, .slider.hidden, .feat.hidden, select.preset.hidden { display: none; }
+/* Inner fold header: same row anatomy as .sec-header (title left, chevron
+   right, whole row clickable) at the subordinate scale. Spans the fold's own
+   width — not full-bleed — so it never crosses a feat-group's left border;
+   small negative margins let the hover band breathe past the text without
+   moving it. */
+.adv-header {
+  display: flex; align-items: center; gap: 6px;
+  margin: 8px -6px 0; padding: 4px 6px;
+  border-radius: 6px; cursor: pointer;
+}
+.adv-header:hover { background: var(--pf-surface-2); }
+.adv-header .chev { font-size: 11px; }
 .adv-toggle {
-  margin-top: 8px; padding: 4px 0; width: 100%; border: 0; border-radius: 6px;
+  flex: 1; margin: 0; padding: 0; border: 0;
   background: transparent; color: var(--pf-muted); cursor: pointer;
   font-family: var(--pf-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; text-align: left;
 }
-.adv-toggle:hover { color: var(--pf-muted-2); }
+.adv-header:hover .adv-toggle { color: var(--pf-muted-2); }
+/* Collapsed fold: rules above and below, text vertically centered between
+   them (the section-band treatment at fold scale). Square corners while the
+   rules show. */
+.adv-wrap.collapsed > .adv-header {
+  border-top: 1px solid var(--pf-border); border-bottom: 1px solid var(--pf-border);
+  border-radius: 0; padding-top: 8px; padding-bottom: 8px;
+}
 .adv.hidden { display: none; }
 .adv { margin-top: 4px; }
 

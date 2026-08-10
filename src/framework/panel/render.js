@@ -38,11 +38,11 @@ export function buildControls(root, parameters, params, onDirty, onCommit) {
   const lastVisible = new Map();  // id -> previous `visible`, to detect a reveal
   const lastDisabled = new Map(); // id -> previous `disabled`, to skip a no-op input pass
   // Containers that own a disclosure: sections, and titled inner groups (the
-  // legacy "Advanced" fold). `label` is set only for the inner groups, whose
-  // button text carries the ▾/▴ instead of a chevron span. `el` is set only
-  // for sections: the section element mirrors the disclosure with a
-  // `.collapsed` class so CSS can draw the closed-band affordance.
-  const disclosures = new Map(); // id -> { body, button, label, el }
+  // legacy "Advanced" fold). Both share the same anatomy — a header row with
+  // the aria-carrying button and a text-free chevron span — so `el` (the
+  // section element / the fold wrapper) mirrors the disclosure with a
+  // `.collapsed` class and CSS draws the closed-band affordance off that.
+  const disclosures = new Map(); // id -> { body, button, el }
   indexNodes(tree, nodeById);
   let relevant = null;
 
@@ -64,8 +64,7 @@ export function buildControls(root, parameters, params, onDirty, onCommit) {
       const open = state.get(id)?.open ?? true;
       d.body.classList.toggle("hidden", !open);
       d.button.setAttribute("aria-expanded", String(open));
-      if (d.el) d.el.classList.toggle("collapsed", !open);
-      if (d.label) d.button.textContent = open ? `${d.label} ▴` : `${d.label} ▾`;
+      d.el.classList.toggle("collapsed", !open);
     }
   };
 
@@ -148,17 +147,24 @@ export function buildControls(root, parameters, params, onDirty, onCommit) {
     const wrap = el("div", "adv-wrap");
     const body = el("div", "adv hidden");   // starts closed — legacy parity
     body.id = `pf-fold-${node.id.replaceAll("/", "-")}`;
-    const toggle = el("button", "adv-toggle", `${node.title} ▾`);
+    // Same row anatomy as a section header — title button (text-free of any
+    // arrow, same exact-textContent reasoning), chevron span on the right,
+    // whole row clickable — at the fold's subordinate scale.
+    const foldHeader = el("div", "adv-header");
+    const toggle = el("button", "adv-toggle");
+    toggle.type = "button";
+    toggle.append(el("span", "adv-name", node.title));
     toggle.setAttribute("aria-controls", body.id);
-    toggle.addEventListener("click", () => {
+    foldHeader.append(toggle, el("span", "chev"));
+    foldHeader.addEventListener("click", () => {
       const nowHidden = body.classList.toggle("hidden");
-      toggle.textContent = nowHidden ? `${node.title} ▾` : `${node.title} ▴`;
       toggle.setAttribute("aria-expanded", String(!nowHidden));
+      wrap.classList.toggle("collapsed", nowHidden);
     });
     for (const child of node.children) renderNode(child, body, sectionCtx);
-    wrap.append(toggle, body);
+    wrap.append(foldHeader, body);
     nodeEls.set(node.id, wrap);             // conditions act on the wrapper
-    disclosures.set(node.id, { body, button: toggle, label: node.title, el: null });
+    disclosures.set(node.id, { body, button: toggle, el: wrap });
     container.append(wrap);
   }
 
@@ -247,12 +253,14 @@ export function buildControls(root, parameters, params, onDirty, onCommit) {
     // because sectionByTitle-style lookups match `.sec-title` by exact
     // textContent === title (controls.test.js:210), and a text chevron here
     // would break that match.
-    title.append(el("span", "chev"), el("span", "sec-name", section.title ?? ""));
+    title.append(el("span", "sec-name", section.title ?? ""));
     header.append(title);
+    // Row order: title (flex:1), then ⓘ, then the chevron on the far right.
     // The ⓘ is a SIBLING of the button, never a child: attachInfo appends a
     // <button>, and a button nested in a button is invalid HTML that never
     // receives clicks.
     attachInfo(header, section.description, info);
+    header.append(el("span", "chev"));
     secEl.append(header);
 
     const body = el("div", "sec-body");
@@ -260,12 +268,15 @@ export function buildControls(root, parameters, params, onDirty, onCommit) {
     title.setAttribute("aria-controls", body.id);
     secEl.append(body);
 
-    title.addEventListener("click", () => {
+    // The whole header row toggles: the title button's own click bubbles up
+    // here, the chevron and the empty row space hit it directly, and the ⓘ
+    // stops propagation in attachInfo. aria state stays on the title button.
+    header.addEventListener("click", () => {
       const nowHidden = body.classList.toggle("hidden");
       title.setAttribute("aria-expanded", String(!nowHidden));
       secEl.classList.toggle("collapsed", nowHidden);
     });
-    disclosures.set(section.id, { body, button: title, label: null, el: secEl });
+    disclosures.set(section.id, { body, button: title, el: secEl });
 
     // `preset` is filled in when a preset node renders. Controls read it late, so
     // one appearing after them in the children array still works.
