@@ -79,6 +79,74 @@
 .pf-rail-head, .pf-rail-foot { flex: none; }
 .pf-rail-head { padding: 12px var(--pf-rail-pad); border-bottom: 1px solid var(--pf-border); }
 .pf-rail-foot { padding: 12px var(--pf-rail-pad); border-top: 1px solid var(--pf-border); }
+
+/* Foot ACTIONS, the counterpart to app.css's `#viewbar button`: any button a
+   host puts in the foot inherits the shared chrome, so a host-drawn control
+   sits beside a built-in one without restating the metrics — or, more to the
+   point, without re-deriving the states. Both hosts had independently written
+   the same padding/radius/mono stack, and only one of them had remembered to
+   exclude :disabled from :hover, so a dead button still lit up under the
+   pointer in the other. That bug is unreachable from here.
+
+   Buttons only; the ROW is the host's. A foot can hold a bare row
+   (partforge-cloud) or a labelled group (the demo pages' .dl/.dl-head), and a
+   container rule here would have to pick one. This mirrors the viewbar only
+   as far as the analogy holds: there, the pill itself is a single known
+   element partforge can own outright.
+
+   Base is the quiet outline treatment, because that is the safe thing to
+   inherit by accident; the loud one is opt-in via .pf-primary. Equal
+   specificity to app.css's `.dl-row button`, which is imported after this
+   file and therefore still wins — the legacy download row renders exactly as
+   before, and can drop .dl-row whenever it likes. */
+.pf-rail-foot button {
+  flex: 1;
+  padding: 8px 0;
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-control);
+  background: transparent;
+  color: var(--pf-text-2);
+  font-family: var(--pf-mono);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.pf-rail-foot button:hover:not(:disabled) {
+  border-color: var(--pf-accent);
+  color: var(--pf-text-strong);
+}
+.pf-rail-foot button:disabled { opacity: .45; cursor: default; }
+
+/* The foot's main call to action — accent-filled, so it reads as the primary
+   thing to do with a finished part. */
+.pf-rail-foot button.pf-primary {
+  border-color: var(--pf-accent);
+  background: var(--pf-accent);
+  color: var(--pf-on-accent);
+}
+.pf-rail-foot button.pf-primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--pf-accent) 88%, #000);
+  border-color: color-mix(in oklab, var(--pf-accent) 88%, #000);
+}
+
+/* A square icon-only action sitting beside the primary one. Sized to match
+   the viewbar's icon buttons, and flex-none so the primary action keeps the
+   remaining width rather than the two splitting it evenly. */
+.pf-rail-foot button.pf-icon {
+  flex: 0 0 auto;
+  width: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--pf-muted);
+}
+.pf-rail-foot button.pf-icon:hover:not(:disabled) {
+  background: var(--pf-surface-2);
+  border-color: var(--pf-border);
+  color: var(--pf-text-2);
+}
+
 .pf-rail-body {
   flex: 1;
   min-height: 0;

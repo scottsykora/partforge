@@ -218,6 +218,43 @@ test("mount creates one tooltip presenter and shares it with every viewer consum
   runtime.dispose();
 });
 
+test("runtime.attachTooltips joins a host button to the shared tooltip and detaches on dispose", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  const tooltip = fakeTooltips[0];
+
+  const button = document.createElement("button");
+  button.title = "Send feedback";
+  document.body.append(button);
+  const binding = runtime.attachTooltips([{ element: button }]);
+
+  // The title is absorbed while attached (it would double up as a native
+  // tooltip beside the shared one) and stands in as the shown label.
+  expect(button.hasAttribute("title")).toBe(false);
+  button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  expect(tooltip.showAnchor).toHaveBeenCalledWith({ title: "Send feedback" }, button);
+  button.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+
+  // A disabled button never presents; sync() after re-enabling is enough.
+  button.disabled = true;
+  tooltip.showAnchor.mockClear();
+  button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  expect(tooltip.showAnchor).not.toHaveBeenCalled();
+  button.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+  button.disabled = false;
+  binding.sync();
+  button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  expect(tooltip.showAnchor).toHaveBeenCalledWith({ title: "Send feedback" }, button);
+
+  runtime.dispose(); // detaches the binding: title restored, listeners gone
+  expect(button.title).toBe("Send feedback");
+  tooltip.showAnchor.mockClear();
+  button.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  expect(tooltip.showAnchor).not.toHaveBeenCalled();
+  expect(() => binding.detach()).not.toThrow(); // idempotent after dispose()
+});
+
 test("mount detaches tooltip consumers before disposing the shared presenter once", () => {
   const order = [];
   const cutaway = { reset: vi.fn(), detach: vi.fn(() => order.push("cutaway")) };
@@ -875,6 +912,10 @@ test("makeHandle always exposes a callable setHostPane", () => {
   expect(typeof handle.getView).toBe("function");
   expect(typeof handle.setView).toBe("function");
   expect(typeof handle.captureView).toBe("function"); // added in Task 4
+  // attachTooltips defaults to a no-op that still hands back a full binding,
+  // so a host can hold and call the result without feature-detecting.
+  const binding = handle.attachTooltips([{ element: document.createElement("button") }]);
+  expect(() => { binding.sync(); binding.hide(); binding.detach(); }).not.toThrow();
 });
 
 // --- animation playback: best-effort geometry ------------------------------

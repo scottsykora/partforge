@@ -5,7 +5,7 @@ import { attachViewerControls } from "./viewer-controls.js";
 import { attachCutawayControls } from "./cutaway-controls.js";
 import { attachRail } from "./rail.js";
 import { attachMobileTabs } from "./mobile-tabs.js";
-import { createTooltipPresenter } from "./tooltip.js";
+import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
 import { loadCamera } from "./view-state.js";
 import { buildControls } from "./controls.js";
 import { relevantParamKeys } from "./param-deps.js";
@@ -29,7 +29,11 @@ import { resolveDefaultView } from "./default-view.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView }) {
+// The default no-op tooltip binding, so a host can hold on to whatever
+// attachTooltips returned without caring whether this mount resolved one.
+const NOOP_TOOLTIP_BINDING = { sync: () => {}, hide: () => {}, detach: () => {} };
+
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -60,6 +64,12 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // (partforge-cloud does, at the window level). Defaulted to a no-op so the
     // handle's shape never depends on whether this mount resolved a rail.
     setHostPane: setHostPane ?? (() => {}),
+    // Join host-owned chrome buttons to this mount's shared hover tooltip, so
+    // a host's own viewbar/rail-foot buttons match the built-in ones. Entries
+    // are [{ element, getLabel? }] (label falls back to the button's
+    // title/aria-label); returns { sync, hide, detach }. Same no-op default
+    // stance as setHostPane above.
+    attachTooltips: attachTooltips ?? (() => NOOP_TOOLTIP_BINDING),
   };
 }
 
@@ -116,6 +126,15 @@ function createCleanupStack() {
 //   runtime.setHostPane("rail");  // narrow layout only: show just the controls
 //                                 // rail ('stage' | 'rail'), suppressing the
 //                                 // built-in tab bar. null hands selection back.
+//   runtime.attachTooltips([{ element: myButton }]);  // host chrome buttons join the
+//                                 // mount's shared hover tooltip (the viewbar one).
+//                                 // Label = the button's title (or aria-label), or a
+//                                 // per-entry getLabel(); the title attribute is
+//                                 // absorbed while attached so it can't double up as a
+//                                 // native tooltip, and restored on detach. Returns
+//                                 // { sync, hide, detach } — call sync() after you
+//                                 // toggle a button's disabled state. Detached
+//                                 // automatically on dispose().
 //   runtime.setActive(false);     // park the viewer: stop the render loop and release
 //                                 // both large GPU allocations (the drawing buffer and
 //                                 // the cached capture target). For a host that hides the
@@ -203,7 +222,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     cleanup.defer(() => cutawayChrome.detach());
     // Resizable/collapsible controls rail. No-ops when the host lays out the
     // framework itself (no #panel / no elements.rail).
-    const railChrome = attachRail({ rail: els.rail, toggle: els.chrome.railToggle, shell: els.shell });
+    const railChrome = attachRail({ rail: els.rail, toggle: els.chrome.railToggle, shell: els.shell, tooltip });
     cleanup.defer(() => railChrome.detach());
     // Narrow-layout pane tabs. Below RAIL_NARROW_BREAKPOINT the rail cannot sit
     // beside the viewer, so exactly one pane shows and this bar picks it. Same
@@ -639,8 +658,19 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       }
     };
 
+    // Host chrome buttons joining the mount's shared tooltip (the one the
+    // viewbar and cutaway buttons already use). Bindings are detached by
+    // dispose() via the cleanup stack; a host detaching earlier is fine —
+    // attachButtonTooltips.detach is idempotent.
+    const attachHostTooltips = (entries) => {
+      const binding = attachButtonTooltips(tooltip, entries);
+      cleanup.defer(() => binding.detach());
+      return binding;
+    };
+
     return makeHandle({
       ready, dispose, viewer, setParams,
+      attachTooltips: attachHostTooltips,
       setHostPane: paneTabs.setHostPane,
       getView: view,                         // () => tabsCtl.current()
       setView: (name) => tabsCtl.select(name),
