@@ -358,5 +358,13 @@ export function renderViews(
     size?: [number, number];
     edges?: boolean;
     params?: ResolvedParams;
+    /** Frame suffix in the written filename (`<part>-<view>-<angle>-<tag>.png`). */
+    tag?: string;
+    /**
+     * Per-sub-part opacity, keyed by sub-part name (an animation `evaluate()`
+     * result). `0` omits the sub-part entirely; `0 < v < 1` fades it toward the
+     * background. Absent keys render solid.
+     */
+    opacity?: Record<string, number>;
   },
 ): Promise<string[]>;

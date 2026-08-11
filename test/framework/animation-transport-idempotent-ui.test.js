@@ -26,22 +26,26 @@ const PART = {
   parameters: [{ id: "b", title: "B", advanced: [{ key: "lift", label: "Lift", min: 0, max: 40, step: 1 }] }],
   defaults: { lift: 0 },
   parts: { p: { label: "P", views: ["v"], build: () => null } },
-  views: { v: { label: "V" } },
-  animations: {
-    a: { label: "A", duration: 4, loop: true, easing: "linear", tracks: TRACKS },
-    b: {
-      label: "B",
-      steps: [
-        { label: "up", duration: 1, tracks: { lift: [[0, 0], [1, 40]] } },
-        { label: "down", duration: 1, tracks: { lift: [[0, 40], [1, 0]] } },
-      ],
-    },
-    c: {
-      label: "C",
-      steps: [
-        { label: "raise", duration: 1, tracks: { lift: [[0, 0], [1, 20]] } },
-        { label: "lower", duration: 1, tracks: { lift: [[0, 20], [1, 0]] } },
-      ],
+  views: {
+    v: {
+      label: "V",
+      animations: {
+        a: { label: "A", duration: 4, loop: true, easing: "linear", tracks: TRACKS },
+        b: {
+          label: "B",
+          steps: [
+            { label: "up", duration: 1, tracks: { lift: [[0, 0], [1, 40]] } },
+            { label: "down", duration: 1, tracks: { lift: [[0, 40], [1, 0]] } },
+          ],
+        },
+        c: {
+          label: "C",
+          steps: [
+            { label: "raise", duration: 1, tracks: { lift: [[0, 0], [1, 20]] } },
+            { label: "lower", duration: 1, tracks: { lift: [[0, 20], [1, 0]] } },
+          ],
+        },
+      },
     },
   },
 };
@@ -61,6 +65,7 @@ function harness(part = PART) {
     container,
     applyValues: (values) => Object.assign(params, values),
     getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
+    getView: () => "v",
   });
   return { ctl, container, tick: (dt) => frame?.(dt), params };
 }
