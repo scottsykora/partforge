@@ -51,12 +51,13 @@ export function normalizeAnimation(name, spec) {
         duration: s.duration,
         easing: s.easing ?? spec.easing ?? DEFAULT_EASING,
         tracks: s.tracks ?? {},
+        opacity: s.opacity ?? {},
         camera: s.camera ?? null,
       }))
     : [{
         label: null, duration: spec.duration,
         easing: spec.easing ?? DEFAULT_EASING,
-        tracks: spec.tracks ?? {}, camera: null,
+        tracks: spec.tracks ?? {}, opacity: spec.opacity ?? {}, camera: null,
       }];
   const totalDuration = steps.reduce((sum, s) => sum + s.duration, 0) || 1;
   let acc = 0;
@@ -65,8 +66,13 @@ export function normalizeAnimation(name, spec) {
   if (typeof spec.camera === "string") cues = [{ t: 0, view: spec.camera }];
   else if (Array.isArray(spec.camera)) cues = spec.camera.map(([t, view]) => ({ t, view }));
   else cues = steps.flatMap((s, i) => (s.camera ? [{ t: stepStarts[i], view: s.camera }] : []));
-  const trackedKeys = [...new Set(steps.flatMap((s) =>
-    Object.entries(s.tracks).filter(([, kf]) => usableKeyframes(kf)).map(([key]) => key)))];
+  // Keys with at least one usable keyframe list in any step, for one field
+  // ("tracks" or "opacity"). Shares usableKeyframes with segmentsFor — the
+  // single rule both must agree on (see the comment on usableKeyframes).
+  const keysOf = (field) => [...new Set(steps.flatMap((s) =>
+    Object.entries(s[field]).filter(([, kf]) => usableKeyframes(kf)).map(([key]) => key)))];
+  const trackedKeys = keysOf("tracks");
+  const opacityKeys = keysOf("opacity");
   return {
     name, label: spec.label ?? name, description: spec.description ?? null,
     // Fail CLOSED on both flags: only a literal `true` turns them on. Coercing
@@ -76,12 +82,32 @@ export function normalizeAnimation(name, spec) {
     // having been linted. An invalid flag therefore does the quiet thing here and
     // is reported there.
     loop: spec.loop === true, autoplay: spec.autoplay === true,
-    steps, stepStarts, totalDuration, cues, trackedKeys,
+    steps, stepStarts, totalDuration, cues, trackedKeys, opacityKeys,
   };
 }
 
-export function normalizeAnimations(part) {
-  return Object.entries(part?.animations ?? {}).map(([name, spec]) => normalizeAnimation(name, spec));
+// Per-view normalized animations (spec 2026-08-10-per-view-animations):
+// Map(viewName -> NormalizedAnimation[]), one entry per declared view, [] for
+// views without animations. Malformed entries are SKIPPED, not thrown — the
+// runtime must degrade to "that animation doesn't exist" while lint reports
+// the specifics. A legacy top-level `animations` key is deliberately ignored
+// (clean break; lint's animation-not-in-view names the fix).
+export function viewAnimations(part) {
+  const out = new Map();
+  const views = part?.views;
+  if (views === null || typeof views !== "object" || Array.isArray(views)) return out;
+  for (const [viewName, view] of Object.entries(views)) {
+    const block = view?.animations;
+    const entries = block !== null && typeof block === "object" && !Array.isArray(block)
+      ? Object.entries(block)
+      : [];
+    const anims = [];
+    for (const [name, spec] of entries) {
+      try { anims.push(normalizeAnimation(name, spec)); } catch { /* lint reports */ }
+    }
+    out.set(viewName, anims);
+  }
+  return out;
 }
 
 // Step containing t. Boundaries belong to the LATER step, and t clamps to [0,1].
@@ -100,11 +126,12 @@ export function cueAt(anim, t) {
   return g;
 }
 
-// The timeline segments (global [start,end] spans) in which `key` is tracked.
-function segmentsFor(anim, key) {
+// The timeline segments (global [start,end] spans) in which `key` is tracked,
+// for one keyframe field ("tracks" for params, "opacity" for sub-part fades).
+function segmentsFor(anim, key, field = "tracks") {
   const out = [];
   anim.steps.forEach((step, i) => {
-    const kf = step.tracks[key];
+    const kf = step[field][key];
     if (!usableKeyframes(kf)) return;
     const start = anim.stepStarts[i];
     const end = i + 1 < anim.steps.length ? anim.stepStarts[i + 1] : 1;
@@ -126,11 +153,11 @@ function interpKeyframes(kf, u) {
   return kf[kf.length - 1][1];
 }
 
-function evaluateTrack(anim, key, t) {
-  const segs = segmentsFor(anim, key);
-  // trackedKeys and segmentsFor share usableKeyframes, so a tracked key always
-  // has a segment. Guard anyway: this runs inside the render loop, where a throw
-  // costs the whole viewer, not just the frame.
+function evaluateTrack(anim, key, t, field = "tracks") {
+  const segs = segmentsFor(anim, key, field);
+  // trackedKeys/opacityKeys and segmentsFor share usableKeyframes, so a tracked
+  // key always has a segment. Guard anyway: this runs inside the render loop,
+  // where a throw costs the whole viewer, not just the frame.
   if (!segs.length) return undefined;
   let prev = null;
   for (const seg of segs) {
@@ -142,8 +169,8 @@ function evaluateTrack(anim, key, t) {
     }
     prev = seg;
   }
-  // Outside every segment: hold the nearest boundary value, so a param tracked
-  // only in step 2 doesn't jump while step 1 plays.
+  // Outside every segment: hold the nearest boundary value, so a param (or an
+  // opacity) tracked only in step 2 doesn't jump while step 1 plays.
   return prev ? prev.keyframes[prev.keyframes.length - 1][1] : segs[0].keyframes[0][1];
 }
 
@@ -152,8 +179,10 @@ function evaluateTrack(anim, key, t) {
 export function evaluate(anim, t) {
   const tc = clampT(t);
   const values = {};
-  for (const key of anim.trackedKeys) values[key] = evaluateTrack(anim, key, tc);
-  return { stepIndex: stepIndexAt(anim, tc), values };
+  for (const key of anim.trackedKeys) values[key] = evaluateTrack(anim, key, tc, "tracks");
+  const opacity = {};
+  for (const key of anim.opacityKeys) opacity[key] = evaluateTrack(anim, key, tc, "opacity");
+  return { stepIndex: stepIndexAt(anim, tc), values, opacity };
 }
 
 // --- playback state machine --------------------------------------------------

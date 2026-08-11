@@ -443,6 +443,46 @@ const neitherForm: AnimationSpec = { duration: 1 };
 // @ts-expect-error — not one of the seven canonical angles
 const badCue: AnimationSpec = { duration: 1, camera: "north-east-ish", tracks: { a: [[0, 0], [1, 1]] } };
 
+// Opacity tracks ride alongside `tracks`, and an opacity-only animation is a
+// legal single-phase form — a pure fade. The stepped form carries neither at the
+// top level; its steps do.
+const opacityStep: AnimationStep = { label: "Fade", duration: 1, opacity: { lid: [[0, 1], [1, 0]] } };
+const opacityOnly: AnimationSpec = { duration: 1, opacity: { lid: [[0, 1], [1, 0]] } };
+const tracksAndOpacity: AnimationSpec = {
+  duration: 1, tracks: { lidAngle: [[0, 0], [1, 110]] }, opacity: { lid: [[0, 1], [1, 0]] },
+};
+const steppedOpacity: AnimationSpec = {
+  steps: [{ duration: 1, opacity: { lid: [[0, 1], [1, 0]] } }],
+};
+const steppedTopLevelOpacity: AnimationSpec = {
+  steps: [{ duration: 1, tracks: { a: [[0, 0], [1, 1]] } }],
+  // @ts-expect-error — the stepped form has no top-level `opacity`; its steps carry it
+  opacity: { lid: [[0, 1], [1, 0]] },
+};
+
+export { opacityStep, opacityOnly, tracksAndOpacity, steppedOpacity, steppedTopLevelOpacity };
+
+// Animations are VIEW-owned: they hang off a `ViewDefinition`, and a top-level
+// `part.animations` no longer exists — the clean break lint reports as an error.
+const animatedPart = {
+  meta: { title: "Animated" },
+  parameters: [],
+  defaults: { lidAngle: 0 },
+  parts: { lid: { views: ["main"], build: (k) => k.cylinder({ r: 1, h: 1 }) } },
+  views: { main: { label: "Main", animations: { open: tracksAndOpacity } } },
+} satisfies PartDefinition;
+const topLevelAnimations = {
+  meta: { title: "Legacy" },
+  parameters: [],
+  defaults: { lidAngle: 0 },
+  parts: { lid: { views: ["main"], build: (k) => k.cylinder({ r: 1, h: 1 }) } },
+  views: { main: { label: "Main" } },
+  // @ts-expect-error — animations moved onto the view they belong to
+  animations: { open: tracksAndOpacity },
+} satisfies PartDefinition;
+
+export { animatedPart, topLevelAnimations };
+
 // The authored controls shape typechecks.
 const nodeSection: ParameterSection = {
   id: "body", title: "Body",

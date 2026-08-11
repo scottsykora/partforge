@@ -36,8 +36,10 @@ const NOOP_TOOLTIP_BINDING = { sync: () => {}, hide: () => {}, detach: () => {} 
 export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips }) {
   return {
     ready, dispose, setParams,
-    // Part-declared animation playback (spec 2026-08-02): null when the part
-    // declares no animations. { play(name?), pause(), seek(t), stop(), state() }.
+    // Part-declared animation playback (spec 2026-08-02): animations are
+    // VIEW-owned, so this is null only when NO view declares any.
+    // { play(name?), pause(), seek(t), stop(), state() } — play(name) resolves
+    // within the ACTIVE view's set, and state() reports that view.
     animation: animation ?? null,
     // Active view name (never null once mounted). See onViewChange for the push side.
     getView,
@@ -141,13 +143,20 @@ function createCleanupStack() {
 //                                 // loop would otherwise render a hidden pane forever.
 //                                 // Captures still work while parked (they re-allocate).
 //                                 // setActive(true) restores it. Safe after dispose().
-//   runtime.animation?.play("open");  // part-declared animation playback: null when the
-//                                 // part declares no animations, else
+//   runtime.animation?.play("open");  // part-declared animation playback: animations are
+//                                 // VIEW-owned, so this is null only when NO view
+//                                 // declares any, else
 //                                 // { play(name?), pause(), seek(t), stop(), state() }.
-//                                 // play() with an unknown name warns and does nothing;
-//                                 // any user/host param edit pauses playback. A part's
-//                                 // `autoplay: true` animation self-starts on first show
-//                                 // and each view switch until the user touches the
+//                                 // play(name) resolves within the ACTIVE view's set —
+//                                 // an unknown name (including one declared by a
+//                                 // different view) warns and does nothing; state()
+//                                 // reports the view it applies to. Switching views
+//                                 // restores the outgoing animation's params, then
+//                                 // presents the incoming view's own set (empty in a
+//                                 // view that declares none). Any user/host param edit
+//                                 // pauses playback. A view's `autoplay: true` animation
+//                                 // self-starts when that view is first shown and on
+//                                 // each switch to it, until the user touches the
 //                                 // transport — no runtime call needed for that part.
 //   const off = runtime.onContextLost(() => …);  // WebGL context loss, i.e. the GPU or the
 //                                 // OS gave up — surface it rather than showing a dead
@@ -258,6 +267,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // cached assembly instantly if it's current, else auto-builds what's missing.
     const tabsCtl = createViewTabs(els.tabs, part, {
       onChange: (name) => {
+        // FIRST: the outgoing animation restores its param snapshot, so the
+        // incoming view composes its assembly from un-animated params. Anything
+        // that reads params (refreshView / updateRelevance / the loop kick) must
+        // run after it. autoplayKick stays LAST — it starts the new view's own.
+        animCtl?.viewChanged();
         pendingPosed.clear(); cutawayChrome.reset(); refreshView(); updateRelevance(); loop.kick(); animCtl?.autoplayKick();
         onViewChange?.(name);
       },
@@ -567,11 +581,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       loop.kick();
     }
 
-    // Animation transport + driver (no-op null when the part declares none).
+    // Animation transport + driver (null when NO view declares animations).
+    // Animations are view-owned: `getView` is how the driver knows which view's
+    // set is live, both at attach and after every `viewChanged()`.
     animCtl = attachAnimationControls(viewer, part, {
       container: els.viewer,
       applyValues: applyAnimationValues,
       getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
+      getView: view,
     });
     if (animCtl) cleanup.defer(() => animCtl.detach());
 

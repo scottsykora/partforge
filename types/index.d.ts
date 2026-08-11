@@ -146,8 +146,13 @@ export interface CaptureViewOptions {
 export type AnimationStatus = "idle" | "intro" | "playing" | "paused";
 
 export interface AnimationState {
-  /** The selected animation's key. */
-  animation: string;
+  /** The active view (tab) name — animations belong to a view. */
+  view: string;
+  /**
+   * The selected animation's key, or `null` while the active view declares no
+   * animations. Switching views re-selects that view's first animation.
+   */
+  animation: string | null;
   status: AnimationStatus;
   /** Position on the timeline, 0..1 over the animation's total duration. */
   t: number;
@@ -158,12 +163,16 @@ export interface AnimationState {
 /**
  * Part-declared animation playback — the same engine the viewer's transport bar
  * drives. Playback writes real params, so exporting while paused exports the
- * posed state, and any user or host param edit pauses it.
+ * posed state, and any user or host param edit pauses it. An animation's
+ * `opacity` tracks are the exception: display-only, never written to params and
+ * never visible to export.
  */
 export interface AnimationRuntime {
   /**
-   * Play, optionally switching to a named animation first. An unknown name
-   * warns and does nothing rather than playing whatever is selected.
+   * Play, optionally switching to a named animation first. The name resolves
+   * within the ACTIVE view — an animation declared by another view is not
+   * playable from here. An unknown name warns and does nothing rather than
+   * playing whatever is selected.
    */
   play(name?: string): void;
   pause(): void;
@@ -239,8 +248,9 @@ export interface PartRuntime {
    */
   setHostPane(pane: HostPane): void;
   /**
-   * Part-declared animation playback, or `null` when the part declares no
-   * `animations` block.
+   * Part-declared animation playback, or `null` when NO view declares an
+   * `animations` block. Non-null while any view does — including while the
+   * active view has none, where `state().animation` reads `null`.
    */
   animation: AnimationRuntime | null;
 }

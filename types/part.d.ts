@@ -308,6 +308,14 @@ export interface SubPartDefinition<P = ResolvedParams, D = Derived> {
 
 export interface ViewDefinition {
   label: string;
+  /**
+   * Named animations belonging to this view — keyframe data driving this view's
+   * params and sub-part opacity over time. See `AnimationSpec` below; the
+   * transport bar shows one view's animations at a time, and `play(name)`
+   * resolves within the active view. Animations live ONLY here: a top-level
+   * `part.animations` is a lint error and is ignored at runtime.
+   */
+  animations?: Record<string, AnimationSpec>;
 }
 
 // --- the verify block -------------------------------------------------------
@@ -430,12 +438,20 @@ export interface AnimationStep {
   /**
    * Param key -> keyframes. A param tracked nowhere keeps its current value.
    *
-   * Optional so a step can move only the camera — an establishing shot that
-   * holds the pose while the view swings round. `partforge lint` still requires
-   * that at least one step in the animation carries tracks, which is a
-   * whole-animation rule the type system can't express per step.
+   * Optional so a step can carry only `opacity`, or move only the camera — an
+   * establishing shot that holds the pose while the view swings round.
+   * `partforge lint` still requires that at least one step in the animation
+   * carries `tracks` or `opacity`, which is a whole-animation rule the type
+   * system can't express per step.
    */
   tracks?: Record<string, Keyframes>;
+  /**
+   * Sub-part name → opacity keyframes (values 0–1; 0 = fully hidden, mesh and
+   * edge lines both; multiplies any static `display.opacity`). Same keyframe
+   * rules as `tracks`; the same hold rule applies across steps. Display-only:
+   * never affects params, export, measure, or verify.
+   */
+  opacity?: Record<string, Keyframes>;
   /** Swing the camera to this angle when the step begins. */
   camera?: CameraCue;
 }
@@ -460,7 +476,7 @@ export interface AnimationSpecCommon {
   /**
    * Start this animation automatically on first show and again on each view
    * switch, until the user touches the transport. At most one animation per
-   * part may set this; `partforge lint` enforces it
+   * VIEW may set this; `partforge lint` enforces it
    * (`animation-autoplay-invalid`). Not armed when the browser reports
    * `prefers-reduced-motion: reduce`.
    */
@@ -468,10 +484,12 @@ export interface AnimationSpecCommon {
 }
 
 /**
- * An animation is EITHER single-phase (`tracks` + `duration`) OR stepped
- * (`steps`) — never both, never neither. `partforge lint` enforces that
- * (`animation-tracks-or-steps`), and the union says the same thing, so a block
- * carrying both is rejected before it ever reaches lint.
+ * An animation is EITHER single-phase (`tracks` and/or `opacity`, plus a
+ * `duration`) OR stepped (`steps`) — never both, never neither. `partforge
+ * lint` enforces that (`animation-tracks-or-steps`), and the union says the
+ * same thing, so a block carrying both is rejected before it ever reaches lint.
+ * The first two arms are the two ways to satisfy "at least one of
+ * `tracks`/`opacity`".
  */
 export type AnimationSpec =
   | (AnimationSpecCommon & {
@@ -479,12 +497,22 @@ export type AnimationSpec =
       duration: number;
       /** Param key -> keyframes. */
       tracks: Record<string, Keyframes>;
+      /** Sub-part name -> opacity keyframes (see AnimationStep.opacity). */
+      opacity?: Record<string, Keyframes>;
+      steps?: never;
+    })
+  | (AnimationSpecCommon & {
+      duration: number;
+      tracks?: Record<string, Keyframes>;
+      /** An opacity-only animation is legal — a pure fade. */
+      opacity: Record<string, Keyframes>;
       steps?: never;
     })
   | (AnimationSpecCommon & {
       /** The multi-step form; each step carries its own relative `duration`. */
       steps: AnimationStep[];
       tracks?: never;
+      opacity?: never;
       duration?: never;
     });
 
@@ -510,10 +538,8 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
   derive?: DeriveSpec<P, D>;
   /** Named sub-parts; each builds exactly one solid. */
   parts: Record<string, SubPartDefinition<P, D>>;
-  /** The view tabs. A view is a set of sub-parts. */
+  /** The view tabs. A view is a set of sub-parts, and owns its own `animations`. */
   views: Record<string, ViewDefinition>;
   /** Self-verification, co-located with the schema. */
   verify?: VerifyBlock<P, D>;
-  /** Named animations: keyframe data driving existing params over time. */
-  animations?: Record<string, AnimationSpec>;
 }

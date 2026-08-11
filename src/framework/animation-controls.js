@@ -3,9 +3,14 @@
 // the debug overlay); the driver ticks the pure playback state machine
 // (animation.js) from the viewer's frame loop and routes every param write
 // through the mount-supplied applyValues hook — the same path as a slider
-// edit, minus the regen debounce. Returns null when the part declares no
-// (valid) animations, so mount can wire it unconditionally.
-import { normalizeAnimations, createPlayback, stepIndexAt } from "./animation.js";
+// edit, minus the regen debounce. Returns null when NO view declares a
+// (valid) animation, so mount can wire it unconditionally.
+//
+// Animations belong to a VIEW: the bar shows the active view's set and hides
+// itself in a view that declares none, and every view switch resets the
+// outgoing animation first (see viewChanged). The host owns which view is
+// active — getView() is the driver's only window onto it.
+import { viewAnimations, createPlayback, stepIndexAt } from "./animation.js";
 import { createInfoPopover, attachInfo } from "./controls.js";
 
 function el(tag, className, text) {
@@ -92,49 +97,51 @@ function textSetter(element) {
   return (value) => { if (node.data !== value) node.data = value; };
 }
 
-export function attachAnimationControls(viewer, part, { container, applyValues, getParamValues }) {
+export function attachAnimationControls(viewer, part, { container, applyValues, getParamValues, getView }) {
   // A malformed animations block must degrade to "no transport bar", never a
   // crashed mount — lint reports the specifics; the viewer just goes without.
-  let animations;
-  try { animations = normalizeAnimations(part); } catch { animations = []; }
-  if (!animations.length) return null;
+  let byView;
+  try { byView = viewAnimations(part); } catch { byView = new Map(); }
+  if (![...byView.values()].some((a) => a.length)) return null;
 
   const reducedMotion = typeof matchMedia === "function"
     && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const tweenDuration = reducedMotion ? 0 : 0.6; // reduced motion: jump cut, no sweep
 
-  let current = animations[0];
-  let playback = createPlayback(current);
+  // `animations` is the ACTIVE view's set; it is re-pointed by viewChanged, and
+  // is empty (with a null current/playback) in a view that declares none.
+  const animsFor = (view) => byView.get(view) ?? [];
+  let animations = animsFor(getView());
+  let current = animations[0] ?? null;
+  let playback = current ? createPlayback(current) : null;
   let snapshot = null; // tracked-param values before this animation first drove them
 
-  // Autoplay: at most one animation declares it (lint-enforced). Armed until
-  // the user manually touches the transport — and never armed at all under
+  // Autoplay: at most one animation PER VIEW declares it (lint-enforced), and
+  // each view's own gets its kick when that view becomes active. Armed until
+  // the user manually touches the transport — one touch disarms it for the
+  // whole session, every view included — and never armed at all under
   // prefers-reduced-motion: self-starting motion is exactly what that setting
   // opts out of. The transport still plays everything on request.
-  const autoplayAnim = animations.find((a) => a.autoplay) ?? null;
-  let autoplayArmed = !!autoplayAnim && !reducedMotion;
+  const autoplayFor = (view) => animsFor(view).find((a) => a.autoplay) ?? null;
+  let autoplayArmed = [...byView.values()].some((set) => set.some((a) => a.autoplay)) && !reducedMotion;
   const disarmAutoplay = () => { autoplayArmed = false; };
 
   // --- DOM --------------------------------------------------------------------
   const bar = el("div", "pf-anim-bar");
   const info = createInfoPopover();
 
+  // The bar's DOM is built ONCE and re-dressed per view: which of the picker,
+  // the title and the pagers actually shows is syncStructure's call, because a
+  // view switch can move between a one-animation set and a many-animation one.
   const pick = document.createElement("select");
   pick.className = "pf-anim-pick";
   pick.setAttribute("aria-label", "Choose animation");
-  for (const a of animations) {
-    const o = document.createElement("option");
-    o.value = a.name; o.textContent = a.label;
-    pick.append(o);
-  }
   const title = el("span", "pf-anim-title", "");
-  // Multi-animation parts page with ‹ › at the card's outer edges — whole
+  // Multi-animation views page with ‹ › at the card's outer edges — whole
   // animations only, never chapters (chapters are the bubble + PageUp/Down).
-  const paged = animations.length > 1;
-  const prevAnimBtn = paged ? btn("pf-anim-page", "‹", "Previous animation") : null;
-  const nextAnimBtn = paged ? btn("pf-anim-page", "›", "Next animation") : null;
-  if (prevAnimBtn) bar.append(prevAnimBtn);
-  bar.append(paged ? pick : title);
+  const prevAnimBtn = btn("pf-anim-page", "‹", "Previous animation");
+  const nextAnimBtn = btn("pf-anim-page", "›", "Next animation");
+  bar.append(prevAnimBtn, pick, title);
   const infoSlot = el("span", "pf-anim-info");
   const playBtn = btn("pf-anim-play", "▶", "Play animation");
   const scrubWrap = el("span", "pf-anim-scrub-wrap");
@@ -145,8 +152,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   scrub.setAttribute("aria-label", "Animation position");
   scrubWrap.append(scrub);
   const resetBtn = btn("pf-anim-reset", "↺", "Reset animation");
-  bar.append(infoSlot, playBtn, scrubWrap, resetBtn);
-  if (nextAnimBtn) bar.append(nextAnimBtn);
+  bar.append(infoSlot, playBtn, scrubWrap, resetBtn, nextAnimBtn);
   container.append(bar);
   // Chapter bubble: floats above the scrubber naming the chapter under the
   // pointer (hover) or playhead (scrub).
@@ -188,7 +194,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   let bubbleLabel = null;
   let bubbleWidth = 0;
   function showChapterBubble(fraction, { transient = false } = {}) {
-    if (current.steps.length <= 1) return;
+    if (!current || current.steps.length <= 1) return;
     const f = Math.min(1, Math.max(0, fraction));
     const label = current.steps[stepIndexAt(current, f)].label;
     if (label !== bubbleLabel) {
@@ -224,7 +230,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     chapterBubble.classList.remove("pf-show");
   }
   const onWrapPointerMove = (e) => {
-    if (current.steps.length <= 1) return; // no chapters: no bubble, and no layout read
+    if (!current || current.steps.length <= 1) return; // no chapters: no bubble, and no layout read
     const rect = scrubWrap.getBoundingClientRect();
     if (!rect.width) return;
     hoverInside = true;
@@ -243,10 +249,25 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   scrubWrap.addEventListener("pointerleave", onWrapPointerLeave);
   scrubWrap.addEventListener("pointercancel", onWrapPointerLeave);
 
-  // Per-animation chrome: title, ⓘ description, pager labels, scrubber ticks.
+  // Per-view + per-animation chrome: which chooser shows, the picker's options,
+  // title, ⓘ description, pager labels, scrubber ticks. A view with no
+  // animations hides the whole bar rather than showing an empty transport.
   function syncStructure() {
-    title.textContent = current.label;
+    bar.style.display = current ? "" : "none";
     hideChapterBubble();
+    if (!current) return;
+    const paged = animations.length > 1;
+    pick.style.display = paged ? "" : "none";
+    title.style.display = paged ? "none" : "";
+    prevAnimBtn.style.display = paged ? "" : "none";
+    nextAnimBtn.style.display = paged ? "" : "none";
+    pick.replaceChildren(...animations.map((a) => {
+      const o = document.createElement("option");
+      o.value = a.name; o.textContent = a.label;
+      return o;
+    }));
+    pick.value = current.name;
+    title.textContent = current.label;
     if (paged) {
       // Name the destination. Activating a pager keeps focus on it and leaves
       // its glyph unchanged, so without this a screen reader re-announces the
@@ -321,6 +342,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   }
 
   function syncUi() {
+    if (!current) return; // a view with no animations has nothing to draw
     const { status, t, stepIndex } = playback.state();
     const playing = status === "playing" || status === "intro";
     scrub.value = String(Math.round(t * SCRUB_STEPS));
@@ -350,12 +372,20 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     console.warn("partforge: animation frame failed", err);
   }
   function apply(r) {
-    if (!r) return;
+    if (!r || !current) return;
     try {
-      // First write for this run: remember what the user's params were, so Reset
-      // can put them back.
-      if (snapshot == null && Object.keys(r.values).length) snapshot = getParamValues(current.trackedKeys);
-      applyValues(r.values);
+      // Params go through applyValues (the slider path) only when the animation
+      // actually drives some: an opacity-only frame must neither snapshot nor
+      // write params, or it would dirty the regen loop for a display-only fade.
+      // First write for this run also remembers what the user's params were, so
+      // Reset can put them back.
+      if (Object.keys(r.values).length) {
+        if (snapshot == null) snapshot = getParamValues(current.trackedKeys);
+        applyValues(r.values);
+      }
+      // Opacity is display-only and lives entirely in the viewer — no param, no
+      // rebuild, nothing to snapshot; doReset drops the overrides wholesale.
+      for (const [n, v] of Object.entries(r.opacity ?? {})) viewer.setSubPartOpacity?.(n, v);
       if (r.cue) {
         viewer.tweenCameraTo(r.cue.view, {
           duration: tweenDuration,
@@ -376,12 +406,14 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   // callback returns — a throw escaping from there stops the rAF chain and
   // freezes the viewer permanently instead of costing one frame.
   function guarded(produce) {
+    if (!playback) return; // active view has no animations: nothing to drive
     try { apply(produce()); } catch (err) { warnFrameFailure(err); }
   }
 
   function doReset() {
-    playback.reset();
+    playback?.reset();
     viewer.cancelCameraTween();
+    viewer.clearSubPartOpacities?.();
     if (snapshot) { applyValues(snapshot); snapshot = null; }
     syncUi();
   }
@@ -392,7 +424,6 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     doReset();
     current = next;
     playback = createPlayback(current);
-    if (animations.length > 1) pick.value = name;
     syncStructure();
     invalidateUi();
     syncUi();
@@ -404,11 +435,13 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   // gating playback, settle the gate — cancel() never fires onComplete, so
   // without this the machine would sit in "intro" forever.
   const offOrbit = viewer.onCameraStart(() => {
+    if (!playback) return;
     playback.disarmCues();
     if (playback.state().status === "intro") guarded(() => playback.introDone());
   });
 
   const onPlayClick = () => {
+    if (!current) return;
     disarmAutoplay();
     const active = playback.state().status;
     if (active === "playing" || active === "intro") {
@@ -419,6 +452,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     }
   };
   const onScrub = () => {
+    if (!current) return;
     disarmAutoplay();
     const f = Number(scrub.value) / SCRUB_STEPS;
     showChapterBubble(f, { transient: true });
@@ -441,7 +475,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   // "inside" the chapter, and PageDown would restart it forever instead of
   // walking back.
   const onScrubKeydown = (e) => {
-    if (current.steps.length <= 1) return;
+    if (!current || current.steps.length <= 1) return;
     if (e.key !== "PageUp" && e.key !== "PageDown") return;
     e.preventDefault();
     disarmAutoplay();
@@ -460,6 +494,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     guarded(() => playback.seek(target));
   };
   const cycleAnimation = (dir) => {
+    if (!current) return;
     disarmAutoplay();
     const i = animations.indexOf(current);
     selectAnimation(animations[(i + dir + animations.length) % animations.length].name);
@@ -468,8 +503,8 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   const onNextAnim = () => cycleAnimation(1);
   const onPick = () => { disarmAutoplay(); selectAnimation(pick.value); };
   const onResetClick = () => { disarmAutoplay(); doReset(); };
-  prevAnimBtn?.addEventListener("click", onPrevAnim);
-  nextAnimBtn?.addEventListener("click", onNextAnim);
+  prevAnimBtn.addEventListener("click", onPrevAnim);
+  nextAnimBtn.addEventListener("click", onNextAnim);
   playBtn.addEventListener("click", onPlayClick);
   scrub.addEventListener("input", onScrub);
   scrub.addEventListener("keydown", onScrubKeydown);
@@ -551,7 +586,8 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   const runtime = {
     // An unknown name is a host bug, not a request to play whatever happens to
     // be selected — say so and do nothing rather than silently animating
-    // something else.
+    // something else. "Unknown" is judged against the ACTIVE view's set: an
+    // animation that exists in another view is not playable from here.
     play(name) {
       disarmAutoplay();
       if (name != null && !animations.some((a) => a.name === name)) {
@@ -564,7 +600,11 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     pause() { disarmAutoplay(); viewer.cancelCameraTween(); guarded(() => playback.pause()); },
     seek(t) { disarmAutoplay(); guarded(() => playback.seek(t)); },
     stop() { disarmAutoplay(); doReset(); },
-    state: () => ({ animation: current.name, ...playback.state() }),
+    state: () => ({
+      view: getView(),
+      animation: current?.name ?? null,
+      ...(playback ? playback.state() : { status: "idle", t: 0, stepIndex: 0 }),
+    }),
   };
 
   const handle = {
@@ -574,21 +614,41 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     notifyUserEdit() {
       disarmAutoplay();
       viewer.cancelCameraTween();
-      playback.userEdited();
+      playback?.userEdited();
       syncUi();
     },
-    // Mount calls this on first ready and on every view/tab switch.
+    // Mount calls this from the view-tab onChange, BEFORE it refreshes the
+    // view: the outgoing animation's params and opacity overrides must be
+    // restored before the incoming view composes its assembly.
+    viewChanged() {
+      doReset();
+      animations = animsFor(getView());
+      current = animations[0] ?? null;
+      playback = current ? createPlayback(current) : null;
+      syncStructure();
+      invalidateUi();
+      if (current) syncUi();
+    },
+    // Mount calls this on first ready and on every view/tab switch — it plays
+    // the ACTIVE view's autoplay animation, if that view declares one.
     autoplayKick() {
-      if (!autoplayArmed || !autoplayAnim) return;
-      if (current !== autoplayAnim) selectAnimation(autoplayAnim.name);
+      if (!autoplayArmed) return;
+      const target = autoplayFor(getView());
+      if (!target) return;
+      // selectAnimation resolves within the ACTIVE view's set, so a kick that
+      // arrives before viewChanged has re-pointed it finds nothing to select —
+      // degrade to a no-op rather than driving the outgoing view's playback.
+      if (current !== target) selectAnimation(target.name);
+      if (current !== target || !playback) return;
       const { status } = playback.state();
       if (status !== "playing" && status !== "intro") guarded(() => playback.play());
     },
     detach() {
       offFrame();
       offOrbit();
-      prevAnimBtn?.removeEventListener("click", onPrevAnim);
-      nextAnimBtn?.removeEventListener("click", onNextAnim);
+      viewer.clearSubPartOpacities?.();
+      prevAnimBtn.removeEventListener("click", onPrevAnim);
+      nextAnimBtn.removeEventListener("click", onNextAnim);
       playBtn.removeEventListener("click", onPlayClick);
       scrub.removeEventListener("input", onScrub);
       scrub.removeEventListener("keydown", onScrubKeydown);
