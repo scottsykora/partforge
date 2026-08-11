@@ -13,19 +13,33 @@ function fakeViewer() {
     onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
     tweenCameraTo: vi.fn((view, { onComplete } = {}) => onComplete?.()), // completes instantly
     cancelCameraTween: vi.fn(),
+    setSubPartOpacity: vi.fn(),
+    clearSubPartOpacities: vi.fn(),
     frame: (dt) => { for (const cb of [...frameCbs]) cb(dt); },
     orbit: () => { for (const cb of [...orbitCbs]) cb(); },
   };
 }
 
+// Animations are declared PER VIEW: "box" carries both, "solo" carries none —
+// which is what exercises the hide/show and reset paths of a view switch.
 const part = {
-  animations: {
-    open: { label: "Open lid", camera: "front", duration: 2, easing: "linear",
-      description: "Opens the **lid**.", tracks: { lidAngle: [[0, 0], [1, 110]] } },
-    assemble: { label: "Assemble", steps: [
-      { label: "Lower", duration: 1, easing: "linear", tracks: { lidLift: [[0, 40], [1, 0]] } },
-      { label: "Open", duration: 1, easing: "linear", tracks: { lidAngle: [[0, 0], [1, 110]] } },
-    ] },
+  parts: {
+    base: { views: ["box", "solo"], build: () => {} },
+    lid: { views: ["box"], build: () => {} },
+  },
+  views: {
+    box: {
+      label: "Box",
+      animations: {
+        open: { label: "Open lid", camera: "front", duration: 2, easing: "linear",
+          description: "Opens the **lid**.", tracks: { lidAngle: [[0, 0], [1, 110]] } },
+        assemble: { label: "Assemble", steps: [
+          { label: "Appear", duration: 1, easing: "linear", opacity: { lid: [[0, 0], [1, 1]] } },
+          { label: "Lower", duration: 1, easing: "linear", tracks: { lidLift: [[0, 40], [1, 0]] } },
+        ] },
+      },
+    },
+    solo: { label: "Solo" },
   },
 };
 
@@ -34,12 +48,15 @@ function setup(defn = part) {
   document.body.append(container);
   const params = { lidAngle: 5, lidLift: 0 };
   const applied = [];
+  let activeView = "box";
   const ctl = attachAnimationControls(fakeViewer(), defn, {
     container,
     applyValues: (v) => { applied.push({ ...v }); Object.assign(params, v); },
     getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
+    getView: () => activeView,
   });
-  return { container, params, applied, ctl, viewer: ctl.__viewer };
+  const switchView = (name) => { activeView = name; ctl.viewChanged(); };
+  return { container, params, applied, ctl, switchView, viewer: ctl.__viewer };
 }
 
 let handles = [];
@@ -49,6 +66,81 @@ test("no animations → null, no DOM", () => {
   const container = document.createElement("div");
   expect(attachAnimationControls(fakeViewer(), {}, { container, applyValues: () => {}, getParamValues: () => ({}) })).toBeNull();
   expect(container.children).toHaveLength(0);
+});
+
+test("returns null only when NO view declares animations", () => {
+  const container = document.createElement("div");
+  const none = { views: { v: { label: "V" } }, parts: {} };
+  expect(attachAnimationControls(fakeViewer(), none, {
+    container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "v",
+  })).toBeNull();
+  expect(container.children).toHaveLength(0);
+});
+
+test("top-level animations are ignored — clean break", () => {
+  const container = document.createElement("div");
+  const legacy = { views: { v: { label: "V" } }, parts: {},
+    animations: { open: { duration: 1, tracks: { x: [[0, 0], [1, 1]] } } } };
+  expect(attachAnimationControls(fakeViewer(), legacy, {
+    container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "v",
+  })).toBeNull();
+});
+
+test("switching to a view without animations hides the bar; back shows it", () => {
+  const { container, ctl, switchView } = setup(); handles.push(ctl);
+  const bar = container.querySelector(".pf-anim-bar");
+  expect(bar.style.display).not.toBe("none");
+  switchView("solo");
+  expect(bar.style.display).toBe("none");
+  expect(ctl.runtime.state()).toMatchObject({ view: "solo", animation: null });
+  switchView("box");
+  expect(bar.style.display).not.toBe("none");
+  expect(ctl.runtime.state()).toMatchObject({ view: "box", animation: "open" });
+});
+
+test("a view switch resets: snapshot restored, opacities cleared, position zeroed", () => {
+  const { applied, ctl, switchView } = setup(); handles.push(ctl);
+  const viewer = ctl.__viewer;
+  ctl.runtime.play();          // takes snapshot { lidAngle: 5 }
+  viewer.frame(1);             // t=0.5, lidAngle 55
+  switchView("solo");
+  expect(applied.at(-1)).toEqual({ lidAngle: 5 });            // snapshot restored
+  expect(viewer.clearSubPartOpacities).toHaveBeenCalled();
+  switchView("box");
+  expect(ctl.runtime.state().t).toBe(0);
+});
+
+test("opacity tracks drive viewer.setSubPartOpacity each frame", () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  const viewer = ctl.__viewer;
+  container.querySelector(".pf-anim-pick").value = "assemble";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  ctl.runtime.play();
+  viewer.frame(0.5); // mid step 1: lid at 0.5
+  const calls = viewer.setSubPartOpacity.mock.calls;
+  expect(calls.at(-1)[0]).toBe("lid");
+  expect(calls.at(-1)[1]).toBeCloseTo(0.5);
+});
+
+test("reset clears opacity overrides", () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  const viewer = ctl.__viewer;
+  container.querySelector(".pf-anim-pick").value = "assemble";
+  container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  ctl.runtime.play();
+  viewer.frame(0.5);
+  ctl.runtime.stop();
+  expect(viewer.clearSubPartOpacities).toHaveBeenCalled();
+});
+
+test("runtime.play resolves names in the ACTIVE view only", () => {
+  const { ctl, switchView } = setup(); handles.push(ctl);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  switchView("solo");
+  ctl.runtime.play("open"); // exists in "box", not here
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining("unknown animation"));
+  expect(ctl.runtime.state().status).toBe("idle");
+  warn.mockRestore();
 });
 
 test("renders the bar with a picker (two animations) and an info glyph", () => {
@@ -129,13 +221,13 @@ test("chapter bubble follows hover over the scrubber and names the chapter", () 
   wrap.getBoundingClientRect = () => ({ left: 0, right: 220, top: 0, bottom: 14, width: 220, height: 14 });
   const bubble = container.querySelector(".pf-anim-chapter");
   expect(bubble.classList.contains("pf-show")).toBe(false);
-  // assemble: steps Lower (0..0.5) and Open (0.5..1). Hover at 25% → Lower.
+  // assemble: steps Appear (0..0.5) and Lower (0.5..1). Hover at 25% → Appear.
   wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 55, bubbles: true }));
   expect(bubble.classList.contains("pf-show")).toBe(true);
-  expect(bubble.textContent).toBe("Lower");
-  // Hover at 75% → Open.
+  expect(bubble.textContent).toBe("Appear");
+  // Hover at 75% → Lower.
   wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 165, bubbles: true }));
-  expect(bubble.textContent).toBe("Open");
+  expect(bubble.textContent).toBe("Lower");
   wrap.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
   expect(bubble.classList.contains("pf-show")).toBe(false);
 });
@@ -182,7 +274,7 @@ test("scrub input reveals the bubble at the playhead and it fades after the hold
     scrub.value = "750";
     scrub.dispatchEvent(new Event("input", { bubbles: true }));
     expect(bubble.classList.contains("pf-show")).toBe(true);
-    expect(bubble.textContent).toBe("Open");
+    expect(bubble.textContent).toBe("Lower");
     vi.advanceTimersByTime(1100);
     expect(bubble.classList.contains("pf-show")).toBe(false);
   } finally {
@@ -203,7 +295,7 @@ test("a touch pointer leaving fades the bubble instead of blanking it", () => {
     const bubble = container.querySelector(".pf-anim-chapter");
 
     wrap.dispatchEvent(new PointerEvent("pointermove", { clientX: 165, pointerType: "touch", bubbles: true }));
-    expect(bubble.textContent).toBe("Open");
+    expect(bubble.textContent).toBe("Lower");
     wrap.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "touch", bubbles: true }));
     expect(bubble.classList.contains("pf-show")).toBe(true);   // still readable
     vi.advanceTimersByTime(1100);
@@ -324,6 +416,7 @@ test("orbit during a gated intro settles the gate instead of stranding playback"
     container,
     applyValues: (v) => applied.push({ ...v }),
     getParamValues: () => ({ lidAngle: 5 }),
+    getView: () => "box",
   });
   handles.push(ctl);
   ctl.runtime.play(); // "open" has a t=0 cue → status "intro", params hold
@@ -363,6 +456,7 @@ test("a throwing applyValues degrades the frame instead of killing the loop", ()
     container,
     applyValues: () => { throw new Error("bad track"); },
     getParamValues: () => ({ lidAngle: 5 }),
+    getView: () => "box",
   });
   handles.push(ctl);
 
@@ -386,6 +480,7 @@ test("orbit while idle changes nothing", () => {
       container,
       applyValues: (val) => { applied.push({ ...val }); Object.assign(params, val); },
       getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
+      getView: () => "box",
     });
     return { applied, ctl, viewer: v };
   })();
@@ -397,10 +492,16 @@ test("orbit while idle changes nothing", () => {
 });
 
 const autoPart = {
-  animations: {
-    open: part.animations.open,
-    cycle: { label: "Cycle", duration: 2, loop: true, easing: "linear", autoplay: true,
-      tracks: { lidAngle: [[0, 0], [0.5, 110], [1, 0]] } },
+  views: {
+    box: {
+      label: "Box",
+      animations: {
+        open: part.views.box.animations.open,
+        cycle: { label: "Cycle", duration: 2, loop: true, easing: "linear", autoplay: true,
+          tracks: { lidAngle: [[0, 0], [0.5, 110], [1, 0]] } },
+      },
+    },
+    solo: { label: "Solo" },
   },
 };
 
@@ -481,6 +582,7 @@ test("pausing mid-intro and resuming re-issues the camera cue", () => {
     container,
     applyValues: (val) => Object.assign(params, val),
     getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
+    getView: () => "box",
   });
   handles.push(ctl);
 
@@ -572,7 +674,7 @@ test("placement wiring: clamps against the viewbar, clears when roomy, disconnec
     viewbar.getBoundingClientRect = () =>
       ({ left: viewbarLeft, right: viewbarLeft + 190, top: 650, bottom: 694, width: 190, height: 44 });
     const ctl = attachAnimationControls(fakeViewer(), part, {
-      container, applyValues: () => {}, getParamValues: () => ({}),
+      container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "box",
     });
     handles.push(ctl);
     const bar = container.querySelector(".pf-anim-bar");
@@ -642,7 +744,7 @@ test("placement wiring: no-op when the bars' vertical bands do not intersect", a
     viewbar.getBoundingClientRect = () =>
       ({ left: 100, right: 490, top: 650, bottom: 694, width: 390, height: 44 });
     const ctl = attachAnimationControls(fakeViewer(), part, {
-      container, applyValues: () => {}, getParamValues: () => ({}),
+      container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "box",
     });
     handles.push(ctl);
     const bar = container.querySelector(".pf-anim-bar");
@@ -661,10 +763,10 @@ test("aria-valuetext announces chapter and percent", () => {
   expect(scrub.getAttribute("aria-valuetext")).toBe("0%"); // single-step: percent only
   container.querySelector(".pf-anim-pick").value = "assemble";
   container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
-  expect(scrub.getAttribute("aria-valuetext")).toBe("Lower — 0%");
+  expect(scrub.getAttribute("aria-valuetext")).toBe("Appear — 0%");
   scrub.value = "750";
   scrub.dispatchEvent(new Event("input", { bubbles: true }));
-  expect(scrub.getAttribute("aria-valuetext")).toBe("Open — 75%");
+  expect(scrub.getAttribute("aria-valuetext")).toBe("Lower — 75%");
 });
 
 test("PageUp/PageDown jump chapter boundaries; no-ops for single-step", () => {
@@ -697,13 +799,13 @@ test("PageUp/PageDown jump chapter boundaries; no-ops for single-step", () => {
 function thirdsHarness() {
   const container = document.createElement("div");
   document.body.append(container);
-  const thirds = { animations: { m: { label: "M", steps: [
+  const thirds = { views: { v: { label: "V", animations: { m: { label: "M", steps: [
     { label: "A", duration: 1, easing: "linear", tracks: { lidAngle: [[0, 0], [1, 1]] } },
     { label: "B", duration: 1, easing: "linear", tracks: { lidAngle: [[0, 1], [1, 2]] } },
     { label: "C", duration: 1, easing: "linear", tracks: { lidAngle: [[0, 2], [1, 3]] } },
-  ] } } };
+  ] } } } } };
   const ctl = attachAnimationControls(fakeViewer(), thirds, {
-    container, applyValues: () => {}, getParamValues: () => ({ lidAngle: 0 }),
+    container, applyValues: () => {}, getParamValues: () => ({ lidAngle: 0 }), getView: () => "v",
   });
   handles.push(ctl);
   const scrub = container.querySelector(".pf-anim-scrub");
@@ -829,14 +931,23 @@ test("animation pager bookends the card and cycles with wrap", () => {
   expect(ctl.runtime.state().animation).toBe("assemble");
 });
 
-test("single-animation part gets no pager", () => {
+// The bar's DOM is built once and re-dressed per view, so the pagers and the
+// picker always exist — a single-animation view HIDES them rather than never
+// having built them, and shows the plain title instead.
+test("single-animation view hides the pager and the picker", () => {
   const container = document.createElement("div");
   document.body.append(container);
-  const solo = { animations: { open: { label: "Open lid", duration: 1, easing: "linear",
-    tracks: { lidAngle: [[0, 0], [1, 110]] } } } };
+  const solo = { views: { v: { label: "V", animations: { open: { label: "Open lid",
+    duration: 1, easing: "linear", tracks: { lidAngle: [[0, 0], [1, 110]] } } } } } };
   const ctl = attachAnimationControls(fakeViewer(), solo, {
-    container, applyValues: () => {}, getParamValues: () => ({}),
+    container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "v",
   });
   handles.push(ctl);
-  expect(container.querySelectorAll(".pf-anim-page")).toHaveLength(0);
+  const pagers = container.querySelectorAll(".pf-anim-page");
+  expect(pagers).toHaveLength(2);
+  expect([...pagers].every((p) => p.style.display === "none")).toBe(true);
+  expect(container.querySelector(".pf-anim-pick").style.display).toBe("none");
+  const title = container.querySelector(".pf-anim-title");
+  expect(title.style.display).not.toBe("none");
+  expect(title.textContent).toBe("Open lid");
 });
