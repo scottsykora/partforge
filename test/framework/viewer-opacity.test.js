@@ -47,7 +47,11 @@ function createFakeCutaway() {
     setTheme: vi.fn(),
     setViewportSize: vi.fn(),
     isPointVisible: vi.fn(() => true),
-    registerClippableMaterial: vi.fn(),
+    // Each registration hands back its own unregister spy, so a dispose test can
+    // assert every clone was released. The real cutaway always has these two
+    // methods; production code calls them unguarded so a drifting API fails loudly.
+    registerClippableMaterial: vi.fn(() => vi.fn()),
+    resyncSubpart: vi.fn(),
     onHandleHoverChange: vi.fn(),
     updateForCamera: vi.fn(),
     renderOverlay: vi.fn(() => false),
@@ -216,6 +220,83 @@ test("setTheme recolours the fade line-material clones", () => {
 
   expect(shared.color.getHex()).not.toBe(darkHex); // the theme really moved
   expect(faded.color.getHex()).toBe(shared.color.getHex());
+});
+
+// --- fade + cutaway material ownership --------------------------------------
+// The cutaway owns mesh.material while it is enabled; a live fade takes the mesh
+// away from it. These pin the three seam calls that keep the two composing: the
+// clone registers for clipping, the restore hands ownership back, and the
+// enable/disable toggle re-asserts whatever fade is live.
+
+test("a fade clone registers itself as a clippable auxiliary material", () => {
+  const viewer = setup();
+  const mesh = viewer.__subMesh("lid"), lines = viewer.__subLines("lid");
+  viewer.setSubPartOpacity("lid", 0.4);
+
+  expect(state.cutaway.registerClippableMaterial).toHaveBeenCalledWith(mesh.material);
+  expect(state.cutaway.registerClippableMaterial).toHaveBeenCalledWith(lines.material);
+  expect(state.cutaway.registerClippableMaterial).toHaveBeenCalledTimes(2);
+
+  viewer.setSubPartOpacity("lid", null);
+  viewer.setSubPartOpacity("lid", 0.7); // the clones are cached — no second registration
+  expect(state.cutaway.registerClippableMaterial).toHaveBeenCalledTimes(2);
+});
+
+test("clearing a fade hands the mesh back to the cutaway", () => {
+  const viewer = setup();
+  const mesh = viewer.__subMesh("lid");
+  const baseMat = mesh.material;
+  viewer.setSubPartOpacity("lid", 0.4);
+
+  viewer.setSubPartOpacity("lid", null);
+
+  expect(mesh.material).toBe(baseMat);
+  expect(state.cutaway.resyncSubpart).toHaveBeenCalledWith("lid");
+});
+
+test("a never-faded part's restore does NOT resync the cutaway", () => {
+  // Companion to the sentinel-material test above: the every-regen showAssembly
+  // path must stay byte-identical for un-faded sub-parts, and a resync would
+  // re-run setEnabled on every sub-part of every part on every param edit.
+  const viewer = setup();
+  viewer.showAssembly(["base", "lid", "ghost"]);
+  expect(state.cutaway.resyncSubpart).not.toHaveBeenCalled();
+});
+
+test("the cutaway toggle re-asserts a live fade", () => {
+  const viewer = setup();
+  const mesh = viewer.__subMesh("lid"), lines = viewer.__subLines("lid");
+  viewer.setSubPartOpacity("lid", 0.4);
+  const fadeMat = mesh.material, fadeLineMat = lines.material;
+  // Stand in for createSectionRenderSet.setEnabled, which rewrites mesh.material
+  // on both edges of the toggle and would strand a PAUSED mid-fade part at full
+  // opacity.
+  const stomped = fadeMat.clone();
+  state.cutaway.setEnabled.mockImplementation(() => {
+    mesh.material = stomped;
+    lines.material = stomped;
+    return true;
+  });
+
+  viewer.setCutawayEnabled(true);
+
+  expect(mesh.material).toBe(fadeMat);
+  expect(mesh.material.opacity).toBeCloseTo(0.4);
+  expect(lines.material).toBe(fadeLineMat);
+
+  viewer.setCutawayEnabled(false); // and the same on the way back out
+  expect(mesh.material).toBe(fadeMat);
+});
+
+test("dispose unregisters the fade clones from the cutaway", () => {
+  const viewer = setup();
+  viewer.setSubPartOpacity("lid", 0.4);
+  const unregisters = state.cutaway.registerClippableMaterial.mock.results.map((r) => r.value);
+  expect(unregisters).toHaveLength(2);
+
+  viewer.dispose();
+
+  for (const off of unregisters) expect(off).toHaveBeenCalled();
 });
 
 test("dispose frees the cloned fade materials", () => {

@@ -227,6 +227,9 @@ Rules (all lint-enforced):
   exports the posed state (below): a pose is real param state, a fade is not.
   Because it bypasses the param pipeline, a fade runs at frame rate even when
   param tracks force worker-cadence rebuilds.
+- Fades compose with the cutaway: a half-faded surface is still sectioned by the
+  cut plane, though its hatch cap keeps full-strength ink for the moment the part
+  is mid-fade.
 - A step may declare a `camera` and **no** `tracks`/`opacity` — an establishing
   shot that swings the view while the model holds still. At least one step still
   has to carry `tracks` or `opacity`, or the animation animates nothing; a
