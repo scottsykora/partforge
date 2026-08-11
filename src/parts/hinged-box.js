@@ -1,7 +1,10 @@
 // Animation reference part — a box with a hinged lid. Worked example for
-// docs/AUTHORING-PARTS.md "Animations": pose-only animated params (lidAngle,
-// lidLift) driven through place(), an intro camera + markdown description on
-// `open`, a looping `cycle`, and a stepped `assemble` with per-step cameras.
+// docs/AUTHORING-PARTS.md "Animations": animations are VIEW-OWNED (declared
+// under `views.box.animations`, so the transport bar belongs to that view),
+// they drive pose-only params (lidAngle, lidLift) through place(), and
+// `assemble` opens with an OPACITY fade that brings the lid in from nothing
+// before any motion. Also shown: an intro camera + markdown description on
+// `open`, a looping autoplay `cycle`, and per-step cameras on `assemble`.
 export default {
   meta: { title: "Hinged Box", units: "mm" },
   parameters: [
@@ -58,30 +61,43 @@ export default {
           : s.rotate(-p.lidAngle, [0, p.depth, p.height], [1, 0, 0]).translate([0, 0, p.lidLift]),
     },
   },
-  views: { box: { label: "Box" } },
-  animations: {
-    open: {
-      label: "Open lid",
-      description: "Swings the lid to **110°** about the rear hinge line.\n\nPose-only: playback runs at frame rate with no geometry rebuild.",
-      camera: "front",
-      duration: 1.2,
-      tracks: { lidAngle: [[0, 0], [1, 110]] },
-    },
-    cycle: {
-      label: "Open / close",
-      duration: 2.4,
-      loop: true,
-      easing: "linear",
-      autoplay: true,
-      tracks: { lidAngle: [[0, 0], [0.5, 110], [1, 0]] },
-    },
-    assemble: {
-      label: "Assemble",
-      description: "How the parts come together: the lid drops onto the base, then swings open to check hinge clearance.",
-      steps: [
-        { label: "Lower the lid", camera: "left", duration: 1.0, tracks: { lidLift: [[0, 40], [1, 0]] } },
-        { label: "Open to check clearance", camera: "iso", duration: 1.0, tracks: { lidAngle: [[0, 0], [1, 110]] } },
-      ],
+  views: {
+    box: {
+      label: "Box",
+      animations: {
+        open: {
+          label: "Open lid",
+          description: "Swings the lid to **110°** about the rear hinge line.\n\nPose-only: playback runs at frame rate with no geometry rebuild.",
+          camera: "front",
+          duration: 1.2,
+          tracks: { lidAngle: [[0, 0], [1, 110]] },
+        },
+        cycle: {
+          label: "Open / close",
+          duration: 2.4,
+          loop: true,
+          easing: "linear",
+          autoplay: true,
+          tracks: { lidAngle: [[0, 0], [0.5, 110], [1, 0]] },
+        },
+        assemble: {
+          label: "Assemble",
+          description: "How the parts come together: the lid fades in above the base, drops on, then swings open to check hinge clearance.",
+          steps: [
+            // The lidLift hold-track pins the lift at 40 while the lid fades in,
+            // so step 2's drop starts from where the fade showed it. Without it
+            // the lift would hold step 2's FIRST keyframe — also 40 — but
+            // stating it makes the pose explicit and survives a retune of step 2.
+            { label: "Lid appears", camera: "iso", duration: 0.8,
+              opacity: { lid: [[0, 0], [1, 1]] },
+              tracks: { lidLift: [[0, 40], [1, 40]] } },
+            { label: "Lower the lid", camera: "left", duration: 1.0,
+              tracks: { lidLift: [[0, 40], [1, 0]] } },
+            { label: "Open to check clearance", camera: "iso", duration: 1.0,
+              tracks: { lidAngle: [[0, 0], [1, 110]] } },
+          ],
+        },
+      },
     },
   },
   verify: {

@@ -85,7 +85,7 @@ export default {
       export?: { name },                   // filename/object name on export; defaults to the key
     },
   },
-  views: { <name>: { label, default? } },  // the view tabs (a view = a set of sub-parts)
+  views: { <name>: { label, default?, animations? } },  // view tabs; a view may own animations (below)
 };
 ```
 
@@ -131,11 +131,23 @@ export default {
 
 ## Animations
 
-A part may declare named animations — pure keyframe data that drives **existing
-params** over time. The viewer shows a transport bar (play/scrub, with ‹ ›
-pagers between animations); hosts drive the same engine via
-`runtime.animation`; `partforge render` can render stills at any position. The
-reference part is `src/parts/hinged-box.js`.
+A **view** may declare named animations — pure keyframe data that drives
+**existing params** over time and fades the view's own sub-parts in and out.
+Animations belong to the view that declares them: they live under
+`views.<name>.animations`, never at the top level of the part (a top-level
+`animations` key is a lint error — `animation-not-in-view` — and is ignored at
+runtime: no bar, no crash).
+
+The viewer shows a transport bar (play/scrub, with ‹ › pagers between
+animations) **only while the active view declares animations**, listing exactly
+that view's set; views without animations render no bar at all. Switching views
+resets playback: the running animation stops, its param snapshot is restored,
+all opacity overrides are cleared, and the incoming view's transport starts
+fresh at its first animation, position 0 — no animation state survives a view
+switch. Hosts drive the same engine via `runtime.animation`, scoped to the
+active view (call `setView` first to reach another view's animations);
+`partforge render` can render stills at any position. The reference part is
+`src/parts/hinged-box.js`.
 
 Step labels surface on the scrubber rather than in a readout: hovering or
 dragging along the timeline names the chapter under the pointer, and with the
@@ -144,42 +156,84 @@ matching the key's native slider direction). Screen readers get the same
 information from the scrubber's `aria-valuetext`, which reads
 `"<step label> — <percent>"`.
 
+This is the shipped reference part's own block — `views.box` owns all three
+animations, and `assemble` opens with a fade rather than a motion:
+
 ```js
-animations: {
-  open: {
-    label: "Open lid",
-    description: "Optional **CommonMark**, shown behind the ⓘ glyph.",
-    camera: "front",          // optional: intro angle, cue list, or per-step (below)
-    duration: 1.2,            // seconds
-    loop: false,              // true = wraps continuously (single-step only)
-    easing: "ease-in-out",    // linear | ease-in | ease-out | ease-in-out
-    tracks: { lidAngle: [[0, 0], [1, 110]] },   // param -> [t, value] keyframes
+views: {
+  box: {
+    label: "Box",
+    animations: {
+      open: {
+        label: "Open lid",
+        description: "Swings the lid to **110°** about the rear hinge line.\n\nPose-only: playback runs at frame rate with no geometry rebuild.",
+        camera: "front",        // optional: intro angle, cue list, or per-step (below)
+        duration: 1.2,          // seconds
+        tracks: { lidAngle: [[0, 0], [1, 110]] },   // param -> [t, value] keyframes
+      },
+      cycle: {
+        label: "Open / close",
+        duration: 2.4,
+        loop: true,             // wraps continuously (single-step only)
+        easing: "linear",       // linear | ease-in | ease-out | ease-in-out
+        autoplay: true,         // at most one per view
+        tracks: { lidAngle: [[0, 0], [0.5, 110], [1, 0]] },
+      },
+      assemble: {
+        label: "Assemble",
+        description: "How the parts come together: the lid fades in above the base, drops on, then swings open to check hinge clearance.",
+        steps: [                // steps play in order; named on the scrubber as you hover/drag
+          { label: "Lid appears", camera: "iso", duration: 0.8,
+            opacity: { lid: [[0, 0], [1, 1]] },        // sub-part -> [t, 0..1] keyframes
+            tracks: { lidLift: [[0, 40], [1, 40]] } }, // hold the lift while it fades in
+          { label: "Lower the lid", camera: "left", duration: 1.0,
+            tracks: { lidLift: [[0, 40], [1, 0]] } },
+          { label: "Open to check clearance", camera: "iso", duration: 1.0,
+            tracks: { lidAngle: [[0, 0], [1, 110]] } },
+        ],
+      },
+    },
   },
-  assemble: {
-    label: "Assemble",
-    steps: [                  // steps play in order; named on the scrubber as you hover/drag
-      { label: "Lower the lid", camera: "left", duration: 1.0,
-        tracks: { lidLift: [[0, 40], [1, 0]] } },
-      { label: "Open", camera: "iso", duration: 1.0,
-        tracks: { lidAngle: [[0, 0], [1, 110]] } },
-    ],
-  },
-}
+},
 ```
 
 Rules (all lint-enforced):
 
-- An animation has **either** `tracks` (a single anonymous step) **or** `steps`.
+- Animations are declared under `views.<name>.animations` — one map per view,
+  each name unique within its view. Two views may reuse a name; each owns its
+  own animation.
+- An animation has **either** `tracks`/`opacity` (a single anonymous step)
+  **or** `steps`. Never both forms, never neither.
 - Tracks reference numeric params from `defaults`. Keyframe `t` is normalized
   per step, strictly ascending from exactly 0 to exactly 1; values must sit
   inside the owning control's min/max (the engine applies them unclamped).
 - Params not tracked anywhere keep their current values; a param tracked in
   one step holds its nearest keyframe value while other steps play.
-- A step may declare a `camera` and **no** `tracks` — an establishing shot that
-  swings the view while the model holds still. At least one step still has to
-  carry tracks, or the animation animates nothing. Note the holding value is the
-  nearest keyframe, not whatever the user last set: a leading camera-only step
-  shows the animation's opening pose, the same one `t = 0` would show.
+- `opacity` sits beside `tracks` and fades sub-parts instead of moving them.
+  It is keyed by **sub-part name**, and the sub-part must belong to the owning
+  view (`animation-opacity-unknown-part` otherwise); values run 0 (hidden) to 1
+  (normal) and are lint-checked against that range
+  (`animation-opacity-range`). Keyframes follow exactly the same rules as param
+  tracks — per-step normalized `t`, strictly ascending from 0 to 1 — including
+  the hold rule: a sub-part faded in step 3 holds its step-3 opening value
+  (0, hidden) through steps 1–2, so "absent until its moment" needs no extra
+  declaration. Sub-parts never mentioned render normally.
+- Opacity 0 hides the mesh **and its edge lines** entirely — it is absence, not
+  a ghost. Values in between multiply any static `display.opacity`: a ghost
+  part at `display.opacity: 0.5` faded to 1 shows at 0.5.
+- **Opacity is display-only, always** — it never touches params, export,
+  `measure`, or `verify`, and Reset restores normal visibility. This is a
+  deliberate asymmetry with param `tracks`, where exporting while paused
+  exports the posed state (below): a pose is real param state, a fade is not.
+  Because it bypasses the param pipeline, a fade runs at frame rate even when
+  param tracks force worker-cadence rebuilds.
+- A step may declare a `camera` and **no** `tracks`/`opacity` — an establishing
+  shot that swings the view while the model holds still. At least one step still
+  has to carry `tracks` or `opacity`, or the animation animates nothing; a
+  **pure-fade** animation, carrying only `opacity`, is perfectly legal. Note the
+  holding value is the nearest keyframe, not whatever the user last set: a
+  leading camera-only step shows the animation's opening pose, the same one
+  `t = 0` would show.
 - `loop` and `autoplay` must be literal booleans. Anything else is reported by
   lint and treated as `false` at runtime, so `loop: "false"` never means "loop".
 - Couple motions through `derive` (animate one master param; derive the rest),
@@ -196,8 +250,8 @@ Rules (all lint-enforced):
 - Playback pauses when the user edits any control; Reset restores the values
   the animation found. Because animated values are real params, exporting
   while paused exports the posed state — by design.
-- `autoplay: true` (optional, one animation at most) starts that animation on
-  first show and again on each view switch, until the user touches the
+- `autoplay: true` (optional, at most one animation **per view**) starts that
+  animation on first show and again on each view switch, until the user touches the
   transport — or anything writes params (`runtime.setParams` included) or
   calls a `runtime.animation` method; any of those disarms auto-start for the
   session. Lint: `animation-autoplay-invalid`. It is not armed when the
@@ -210,7 +264,13 @@ Rules (all lint-enforced):
 Headless: `partforge render <part> --animation open --at 0,0.5,1` renders
 tagged stills (`--at` is normalized over the animation's total duration, like
 the scrubber); `--step <index|label>` renders a step's end state; stills
-default to the governing camera cue's angle.
+default to the governing camera cue's angle, and apply opacity at the rendered
+`t`, so a faded frame renders faded. `--animation` searches every view: a name
+unique across the part implies its owning view and renders there, overriding
+the usual first-view default. If two views declare the same name the CLI stops
+and asks for the existing positional view argument
+(`partforge render <part> <view> --animation shared`) — there is no compound
+"view/name" syntax, and `--views` already means camera angles.
 
 ---
 
