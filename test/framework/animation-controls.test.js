@@ -537,7 +537,20 @@ const autoPart = {
           tracks: { lidAngle: [[0, 0], [0.5, 110], [1, 0]] } },
       },
     },
-    solo: { label: "Solo" },
+    // A SECOND view with an autoplay animation of its own: autoplayFor() has to
+    // resolve against the ACTIVE view, not against whichever view happened to be
+    // first. Hardcoding it to the first view left the whole suite green.
+    // `drift` is declared FIRST and does NOT autoplay, so viewChanged's default
+    // selection lands on it — reaching `spin` can only be autoplayFor's doing.
+    solo: {
+      label: "Solo",
+      animations: {
+        drift: { label: "Drift", duration: 2, easing: "linear",
+          tracks: { lidAngle: [[0, 0], [1, 20]] } },
+        spin: { label: "Spin", duration: 2, easing: "linear", autoplay: true,
+          tracks: { lidAngle: [[0, 0], [1, 90]] } },
+      },
+    },
   },
 };
 
@@ -571,6 +584,20 @@ test("a param edit that pauses playback also disarms autoplay", () => {
   ctl.notifyUserEdit();
   ctl.autoplayKick();
   expect(ctl.runtime.state().status).toBe("paused");
+});
+
+test("autoplayKick after a view switch plays THAT view's autoplay animation", () => {
+  const { ctl, switchView } = setup(autoPart); handles.push(ctl);
+  ctl.autoplayKick();
+  expect(ctl.runtime.state()).toMatchObject({ view: "box", animation: "cycle" });
+
+  switchView("solo"); // mount does viewChanged() first, then autoplayKick()
+  expect(ctl.runtime.state().animation).toBe("drift"); // default selection, no autoplay
+  ctl.autoplayKick();
+
+  const state = ctl.runtime.state();
+  expect(state).toMatchObject({ view: "solo", animation: "spin" }); // not "cycle", not "drift"
+  expect(["playing", "intro"]).toContain(state.status);
 });
 
 test("no autoplay animation → autoplayKick is a harmless no-op", () => {
