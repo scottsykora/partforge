@@ -63,3 +63,37 @@ test("chrome.css is exported and stays id-free so any host can reuse the layout"
   const css = read("chrome.css").replace(/\/\*[\s\S]*?\*\//g, "");
   expect(css).not.toMatch(/#[a-zA-Z]/);
 });
+
+// The rail foot's shared button chrome, so a host that drops a button in the
+// foot gets the same treatment a built-in one has — the counterpart to
+// app.css's `#viewbar button`. Every rule below was duplicated in at least two
+// hosts before it moved here.
+test("chrome.css gives rail-foot buttons shared chrome, with primary and icon variants", () => {
+  const css = read("chrome.css");
+  expect(css).toMatch(/\.pf-rail-foot button\s*\{/);
+  expect(css).toMatch(/\.pf-rail-foot button\.pf-primary\s*\{/);
+  expect(css).toMatch(/\.pf-rail-foot button\.pf-icon\s*\{/);
+});
+
+// The bug this whole rule set exists to make unreachable: a disabled button
+// that still lights up under the pointer. The two bars reach that guarantee by
+// different routes, and both are legitimate — the foot writes
+// `:hover:not(:disabled)` on every rule, while the viewbar lets a plain
+// `button:hover` stand and neutralizes it with a higher-specificity
+// `button:disabled:hover` reset. What must never happen is a bar with hover
+// rules and NEITHER protection, which is exactly the state partforge-cloud's
+// hand-rolled copy of the foot was in.
+test("no hover state in the rail foot or viewbar can fire on a disabled button", () => {
+  const css = ["chrome.css", "app.css"]
+    .map((f) => read(f).replace(/\/\*[\s\S]*?\*\//g, "")).join("\n");
+  for (const bar of ["pf-rail-foot", "viewbar"]) {
+    const hovers = [...css.matchAll(new RegExp(`^\\s*([^{}]*${bar}[^{}]*:hover[^{}]*)\\{`, "gm"))]
+      .map(([, selector]) => selector.trim());
+    expect(hovers.length, `${bar} should have hover rules to check`).toBeGreaterThan(0);
+    const neutralized = hovers.some((s) => /:disabled:hover/.test(s));
+    const guarded = hovers.every((s) => /:hover:not\(:disabled\)|:disabled:hover/.test(s));
+    expect(neutralized || guarded,
+      `${bar}: hover rules must either all exclude :disabled or be neutralized by a `
+      + `:disabled:hover reset. Found:\n  ${hovers.join("\n  ")}`).toBe(true);
+  }
+});
