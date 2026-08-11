@@ -218,8 +218,13 @@ export function createViewer(container, part) {
     const shown = lastShown.includes(name);
     const v = animOpacity.get(name);
     if (v === undefined) {
-      mesh.material = baseMats[name];
-      lines.material = lineMaterial;
+      // Restore ONLY from our own fade clone. showAssembly runs on every regen
+      // (mount.js's refreshView) without disabling the cutaway, and an enabled
+      // cutaway has swapped these onto its clipped clones
+      // (createSectionRenderSet.setEnabled) — an unconditional write here would
+      // silently drop clipping on every sub-part on the next param edit.
+      if (mesh.material === fadeMats.get(name)) mesh.material = baseMats[name];
+      if (lines.material === fadeLineMats.get(name)) lines.material = lineMaterial;
       mesh.visible = shown;
       lines.visible = shown;
       return;

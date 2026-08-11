@@ -98,6 +98,22 @@ function setup() {
   return viewer;
 }
 
+// Same, but with a container whose reported size can change mid-test. The viewer
+// only re-reads it in resize(), which setActive(false)/setActive(true) drives.
+function setupResizable(size) {
+  state.cutaway = createFakeCutaway();
+  const container = document.createElement("div");
+  Object.defineProperties(container, {
+    clientWidth: { get: () => size.w },
+    clientHeight: { get: () => size.h },
+  });
+  document.body.append(container);
+  const viewer = createViewer(container, part);
+  for (const n of ["base", "lid", "ghost"]) viewer.setSubGeometry(n, payload());
+  viewer.showAssembly(["base", "lid", "ghost"]);
+  return viewer;
+}
+
 test("fade clones the material; clear restores the shared one", () => {
   const viewer = setup();
   const mesh = viewer.__subMesh("lid"), lines = viewer.__subLines("lid");
@@ -151,4 +167,67 @@ test("a part outside the shown set stays hidden regardless of override", () => {
 test("unknown names are a no-op", () => {
   const viewer = setup();
   expect(() => viewer.setSubPartOpacity("nope", 0.5)).not.toThrow();
+});
+
+test("showAssembly leaves a non-overridden part's materials untouched", () => {
+  // The cutaway OWNS mesh.material while it is enabled: createSectionRenderSet
+  // swaps in clipped clones on setEnabled(true), and mount.js's refreshView calls
+  // showAssembly on every regen WITHOUT disabling it. An unconditional restore in
+  // applySubOpacity would silently drop clipping on every sub-part, with the
+  // stencil caps still drawing. Stand in for those clones with sentinels.
+  const viewer = setup();
+  const mesh = viewer.__subMesh("lid"), lines = viewer.__subLines("lid");
+  const clippedMesh = mesh.material.clone(), clippedLines = lines.material.clone();
+  mesh.material = clippedMesh;
+  lines.material = clippedLines;
+
+  viewer.showAssembly(["base", "lid", "ghost"]); // regen re-show, no overrides anywhere
+
+  expect(mesh.material).toBe(clippedMesh);
+  expect(lines.material).toBe(clippedLines);
+  expect(mesh.visible).toBe(true);
+});
+
+test("resize fans the viewport size out to the fade line-material clones", () => {
+  const size = { w: 400, h: 300 };
+  const viewer = setupResizable(size);
+  viewer.setSubPartOpacity("lid", 0.4);
+  const faded = viewer.__subLines("lid").material;
+  const shared = viewer.__subLines("base").material; // no override -> the singleton
+  expect(faded).not.toBe(shared);
+
+  size.w = 800; size.h = 600;
+  viewer.setActive(false);
+  viewer.setActive(true); // the one resize() path reachable from the handle
+
+  expect(shared.resolution.x).toBeCloseTo(800); // the resize really happened
+  expect(faded.resolution.x).toBeCloseTo(shared.resolution.x);
+  expect(faded.resolution.y).toBeCloseTo(shared.resolution.y);
+});
+
+test("setTheme recolours the fade line-material clones", () => {
+  const viewer = setup();
+  viewer.setSubPartOpacity("lid", 0.4);
+  const faded = viewer.__subLines("lid").material;
+  const shared = viewer.__subLines("base").material;
+  const darkHex = shared.color.getHex();
+
+  viewer.setTheme("light");
+
+  expect(shared.color.getHex()).not.toBe(darkHex); // the theme really moved
+  expect(faded.color.getHex()).toBe(shared.color.getHex());
+});
+
+test("dispose frees the cloned fade materials", () => {
+  const viewer = setup();
+  viewer.setSubPartOpacity("lid", 0.4);
+  const meshMat = viewer.__subMesh("lid").material;
+  const lineMat = viewer.__subLines("lid").material;
+  const meshDispose = vi.spyOn(meshMat, "dispose");
+  const lineDispose = vi.spyOn(lineMat, "dispose");
+
+  viewer.dispose();
+
+  expect(meshDispose).toHaveBeenCalled();
+  expect(lineDispose).toHaveBeenCalled();
 });
