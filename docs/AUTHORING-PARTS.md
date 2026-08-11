@@ -1525,10 +1525,13 @@ bring a section back under budget.
 `contacts` / `clearance` keys, which are not scalar view metrics; they are
 validated by `verify-bad-pair-check`, matching `verify.js`'s own handling.
 
-**Animations block** — static validation of `animations`, without executing
-`build`: `animations-not-object`, `animation-tracks-or-steps`,
+**Animations block** — static validation of each view's `animations` block,
+without executing `build`: `animation-not-in-view` (a top-level `animations`
+key, which the runtime ignores), `animations-not-object`,
+`animation-tracks-or-steps`,
 `animation-unknown-param`, `animation-param-not-numeric`,
 `animation-keyframes-invalid`, `animation-value-out-of-range`,
+`animation-opacity-unknown-part`, `animation-opacity-range`,
 `animation-duration-invalid`, `animation-loop-invalid`,
 `animation-step-label-duplicate`, `animation-easing-unknown`,
 `animation-camera-invalid`, `animation-description-invalid`,
