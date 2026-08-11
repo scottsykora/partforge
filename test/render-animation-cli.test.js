@@ -207,11 +207,8 @@ test("the CLI hands the animation's opacity to the renderer", async () => {
   // pose — once with the lid hidden, once with it drawn. Drop `opacity` from
   // the CLI call and the frame becomes the "drawn" one, flipping both asserts.
   //
-  // Deliberately NOT a "the CLI frame is dimmer" assertion: hiding the lid also
-  // removes it from the SCENE BOUNDS, so the still reframes tighter and the
-  // base covers more pixels. Measured, the lid-hidden frame is the brighter of
-  // the two (74.1M vs 70.0M total luminance) — a dimmer-than test would fail
-  // for a reason that has nothing to do with the seam.
+  // A byte comparison rather than a luminance one because it pins the seam
+  // exactly: the CLI frame must BE the hidden render, not merely resemble it.
   const dir = out();
   // assemble's step 1 at t=0: lidLift 40, and its opacity track puts the lid at 0.
   cli(["render", PART, "--animation", "assemble", "--at", "0", "--views", "front", "--out", dir]);
@@ -245,4 +242,42 @@ test("a still mid-fade renders the faded part dimmer; at opacity 0 it is absent"
   const [full] = await renderViews(kernel, animatedPart, "assembly", { ...opts, tag: "o1", opacity: {} });
   expect(luminance(hidden)).toBeLessThan(luminance(faded));
   expect(luminance(faded)).toBeLessThan(luminance(full));
+});
+
+test("a sub-part fading through 0 does not reframe the still", async () => {
+  // Scene bounds used to be computed AFTER the opacity>0 filter, so the frame a
+  // fading part vanished on was framed from the survivors alone and drew them
+  // ~10% larger than the neighbouring frames — `--at 0,0.5,1` over a fade read
+  // as a zoom. Bounds now cover every built sub-part, visible or not.
+  //
+  // The fixture at lidLift 40 puts the lid (model z 64..66) well clear of the
+  // base (z 0..24), and the `front` camera maps model +Z to screen up — so the
+  // base owns the bottom half of the frame in both renders and the lid owns
+  // none of it. Identical framing therefore means identical base pixels there;
+  // a rescaled base moves its ink box by tens of pixels.
+  const kernel = await bootManifoldKernel();
+  const dir = out();
+  const opts = { views: ["front"], out: dir, size: [200, 150], params: { lidLift: 40 } };
+  const [hidden] = await renderViews(kernel, animatedPart, "assembly", { ...opts, tag: "frame-hidden", opacity: { lid: 0 } });
+  const [drawn] = await renderViews(kernel, animatedPart, "assembly", { ...opts, tag: "frame-drawn", opacity: {} });
+
+  // Bounding box of non-background pixels in the bottom half of the image.
+  const bg = [0x15, 0x18, 0x1d];
+  const lowerInkBox = (file) => {
+    const png = PNG.sync.read(readFileSync(file));
+    const box = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+    for (let y = png.height >> 1; y < png.height; y++) {
+      for (let x = 0; x < png.width; x++) {
+        const i = (y * png.width + x) * 4;
+        if (png.data[i] === bg[0] && png.data[i + 1] === bg[1] && png.data[i + 2] === bg[2]) continue;
+        box.minX = Math.min(box.minX, x); box.maxX = Math.max(box.maxX, x);
+        box.minY = Math.min(box.minY, y); box.maxY = Math.max(box.maxY, y);
+      }
+    }
+    return box;
+  };
+
+  const hiddenBox = lowerInkBox(hidden);
+  expect(Number.isFinite(hiddenBox.minX)).toBe(true); // the base really is down there
+  expect(hiddenBox).toEqual(lowerInkBox(drawn));
 });

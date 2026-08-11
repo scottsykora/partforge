@@ -34,9 +34,12 @@ const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] 
 // pngjs is lazy-imported so importing the testing barrel for measure never loads it.
 //
 // `opacity` is a Record<subPartName, number> (an animation's evaluate() output,
-// typically): a sub-part at 0 is skipped entirely — faces AND edges, and it is
-// out of the scene bounds too, so a hidden part cannot silently reframe the
-// still. Values in (0,1) fade by PRE-BLENDING that part's shaded base and edge
+// typically): a sub-part at 0 is skipped entirely — faces AND edges — but it
+// still counts toward the SCENE BOUNDS, so a part crossing 0 cannot silently
+// reframe the still. Framing is a property of the pose, not of what happens to
+// be visible: without that, `--at 0,0.5,1` over a fade drew the same base at
+// three different scales and the sequence read as a zoom.
+// Values in (0,1) fade by PRE-BLENDING that part's shaded base and edge
 // colours toward the background. That is a z-buffered approximation: a faded
 // part still fully occludes whatever is behind it, because real transparency
 // needs back-to-front sorting this rasterizer does not do. Stills only need to
@@ -55,17 +58,23 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
     const v = Number(opacity[name]);
     return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1; // a junk value renders solid
   };
-  const meshes = buildView(kernel, part, view, params) // copied out
-    .filter((b) => opacityOf(b.name) > 0)              // fully hidden: absent from the still
+  const built = buildView(kernel, part, view, params) // copied out
     .map((b) => ({ name: b.name, mesh: b.mesh }));
 
-  // scene bounds over all visible sub-parts (positions are JS-owned; safe after cleanup)
+  // Scene bounds over EVERY built sub-part, visible or not (positions are
+  // JS-owned; safe after cleanup). Opacity is deliberately NOT consulted here —
+  // see the note above on why a fade must not move the camera.
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (const { mesh: m } of meshes) {
+  for (const { mesh: m } of built) {
     const b = bounds(m.positions);
     for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], b.min[i]); hi[i] = Math.max(hi[i], b.max[i]); }
   }
+  // kernel.cleanup() walks the backend's own tracked list, not this array, so
+  // dropping the hidden sub-parts afterwards frees nothing and skips nothing.
   kernel.cleanup?.();
+
+  // …and only the visible ones are rasterized: faces AND edges below iterate this.
+  const meshes = built.filter(({ name }) => opacityOf(name) > 0);
 
   const center = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
   const radius = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 || 5;
