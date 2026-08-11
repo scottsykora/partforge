@@ -127,10 +127,46 @@ test("reset clears opacity overrides", () => {
   const viewer = ctl.__viewer;
   container.querySelector(".pf-anim-pick").value = "assemble";
   container.querySelector(".pf-anim-pick").dispatchEvent(new Event("change", { bubbles: true }));
+  // Selecting an animation resets too, so clear first — otherwise this asserts
+  // the SWITCH cleared the overrides and would pass with stop() deleted.
+  viewer.clearSubPartOpacities.mockClear();
   ctl.runtime.play();
   viewer.frame(0.5);
   ctl.runtime.stop();
   expect(viewer.clearSubPartOpacities).toHaveBeenCalled();
+});
+
+// The `Object.keys(r.values).length` guard in apply() exists for exactly this
+// animation: a fade drives the display and nothing else, so it must neither
+// take a param snapshot nor call applyValues — either would push a rebuild
+// through the regen loop once per frame for a change no rebuild can see.
+// (The shared fixture's "assemble" cannot pin this: its second step declares a
+// `lidLift` track, and evaluateTrack holds that track's boundary value at every
+// t, so even its opacity-only step reports a non-empty `values`.)
+const fadePart = {
+  parts: { lid: { views: ["box"], build: () => {} } },
+  views: {
+    box: {
+      label: "Box",
+      animations: {
+        fade: { label: "Fade in", duration: 2, easing: "linear", opacity: { lid: [[0, 0], [1, 1]] } },
+      },
+    },
+  },
+};
+
+test("an opacity-only animation drives the viewer without touching params", () => {
+  const { applied, ctl } = setup(fadePart); handles.push(ctl);
+  const viewer = ctl.__viewer;
+  ctl.runtime.play();
+  viewer.frame(0.5); // t = 0.25
+  viewer.frame(0.5); // t = 0.5
+  expect(applied).toHaveLength(0); // applyValues never called: nothing to regen
+  const calls = viewer.setSubPartOpacity.mock.calls.filter((c) => c[0] === "lid");
+  expect(calls.at(-1)[1]).toBeCloseTo(0.5); // ...but the fade itself is driven
+  // And no snapshot was taken, so Reset has no params to write back either.
+  ctl.runtime.stop();
+  expect(applied).toHaveLength(0);
 });
 
 test("runtime.play resolves names in the ACTIVE view only", () => {
