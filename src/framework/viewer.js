@@ -198,7 +198,7 @@ export function createViewer(container, part) {
   // cutaway is already on picks up the current state.
   //
   // Known cosmetic remainder, accepted: the hatch cap keeps its full-strength
-  // ink while the surface above it fades, because the cap material derives its
+  // opacity while the surface above it fades, because the cap derives its
   // colour/opacity from the base material at refreshSourceMaterial time. A part
   // at opacity 0 drops out of the cutaway's visible set entirely, so the cap
   // only over-reads during the transient middle of a fade; re-deriving cap
@@ -476,13 +476,21 @@ export function createViewer(container, part) {
     frameTo(names.filter((n) => subMesh[n].visible && subCache[n]));
   }
 
+  // Call after anything that rewrites sub-part materials out from under us.
+  // The cutaway assigns mesh.material itself — the clipped clone on enable, the
+  // captured original on disable, and a freshly re-cloned pair on every
+  // refreshSourceMaterial (which setTheme drives) — so a live fade has to be
+  // re-asserted on top or a PAUSED mid-fade part sticks at full opacity. A
+  // playing animation would self-heal on its next frame; a paused one has no
+  // next frame. Only the calls that reassign materials need this: flip and
+  // reset move the plane and nothing else.
+  function reassertLiveFades() {
+    for (const n of animOpacity.keys()) applySubOpacity(n);
+  }
+
   function setCutawayEnabled(on) {
     const result = cutaway.setEnabled(on);
-    // The toggle rewrites every sub-part's material (clipped clone on enable,
-    // captured original on disable) — re-assert any live fade on top, else a
-    // PAUSED mid-fade part sticks at full opacity. A playing animation would
-    // self-heal on its next frame; a paused one has no next frame.
-    for (const n of animOpacity.keys()) applySubOpacity(n);
+    reassertLiveFades();
     return result;
   }
 
@@ -497,6 +505,7 @@ export function createViewer(container, part) {
     lineMaterial.color.set(t.line);
     for (const m of fadeLineMats.values()) m.color.set(t.line); // clones follow the theme
     cutaway.setTheme(mode, t.line);
+    reassertLiveFades(); // setTheme re-clones every section's materials and reassigns them
   }
 
   function hideAssembly() {
@@ -848,8 +857,8 @@ export function createViewer(container, part) {
     // Hand the fade clones back before freeing them. cutaway.dispose() above has
     // already restored their original clippingPlanes and emptied its registry,
     // so these unregister closures find no entry and return without touching a
-    // disposed cutaway — but they still matter for a viewer whose cutaway was
-    // replaced, and they release the registry's references either way.
+    // disposed cutaway. They still earn their place: they release this map's
+    // hold on the registry's unregister closures rather than leaving it to GC.
     for (const off of fadeUnregisters.values()) off();
     fadeUnregisters.clear();
     for (const m of fadeMats.values()) m.dispose();

@@ -288,6 +288,30 @@ test("the cutaway toggle re-asserts a live fade", () => {
   expect(mesh.material).toBe(fadeMat);
 });
 
+test("setTheme re-asserts a live fade", () => {
+  // The theme swap is the same stomp as the toggle, one layer down:
+  // cutaway.setTheme re-clones every section's source materials
+  // (createSectionRenderSet.refreshSourceMaterial) and reassigns mesh.material
+  // unconditionally. Without the re-assert a paused mid-fade part snaps to full
+  // opacity the moment the user hits the theme button, and stays there.
+  const viewer = setup();
+  const mesh = viewer.__subMesh("lid"), lines = viewer.__subLines("lid");
+  viewer.setSubPartOpacity("lid", 0.4);
+  const fadeMat = mesh.material, fadeLineMat = lines.material;
+  const stomped = fadeMat.clone();
+  state.cutaway.setTheme.mockImplementation(() => {
+    mesh.material = stomped;
+    lines.material = stomped;
+    return true;
+  });
+
+  viewer.setTheme("light");
+
+  expect(mesh.material).toBe(fadeMat);
+  expect(mesh.material.opacity).toBeCloseTo(0.4);
+  expect(lines.material).toBe(fadeLineMat);
+});
+
 test("dispose unregisters the fade clones from the cutaway", () => {
   const viewer = setup();
   viewer.setSubPartOpacity("lid", 0.4);

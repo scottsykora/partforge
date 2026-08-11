@@ -76,7 +76,8 @@ function createFakeCutaway() {
     setTheme: vi.fn(),
     setViewportSize: vi.fn(),
     isPointVisible: vi.fn(() => true),
-    registerClippableMaterial: vi.fn(),
+    registerClippableMaterial: vi.fn(() => () => {}),
+    resyncSubpart: vi.fn(),
     onHandleHoverChange: vi.fn(),
     updateForCamera: vi.fn(),
     renderOverlay: vi.fn((renderer, camera) => {
