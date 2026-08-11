@@ -2,6 +2,7 @@ import {
   RAIL_DEFAULT_WIDTH, RAIL_MIN_WIDTH, RAIL_NARROW_BREAKPOINT,
   clampRailWidth, railMaxWidth, readRailPref, resolveRailDrag, writeRailPref,
 } from "./rail-state.js";
+import { attachButtonTooltips } from "./tooltip.js";
 
 const KEY_STEP = 16;
 const KEY_STEP_SHIFT = 64;
@@ -75,7 +76,11 @@ function safeStorage() {
 //
 // Everything is optional. With no rail this returns a no-op, so hosts that lay
 // the framework out themselves (see embed-test.html) are unaffected.
-export function attachRail({ rail, toggle, shell = rail?.parentElement, storage = safeStorage() } = {}) {
+//
+// `tooltip` is the mount's shared presenter (tooltip.js). With it, the toggle's
+// Hide/Show-controls label renders as the same anchored pf-hover-tip the
+// viewbar buttons use; without it, the label falls back to a native title.
+export function attachRail({ rail, toggle, shell = rail?.parentElement, storage = safeStorage(), tooltip } = {}) {
   if (!rail || !shell) {
     // No rail to resolve in this document: --pf-rail-w still defaults to 288px
     // from tokens.css, but nothing is reserving that space, so anything that
@@ -107,6 +112,12 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     toggle.replaceChildren(svg);
     toggleChevron = chevron;
   }
+  // Attached BEFORE the first apply() below writes an aria-label, so the
+  // binding's original-attribute capture (what its detach() restores) sees the
+  // host's own markup, not our first label.
+  const tooltipBinding = toggle && tooltip
+    ? attachButtonTooltips(tooltip, [{ element: toggle }])
+    : null;
 
   const seam = document.createElement("div");
   seam.className = "pf-rail-seam";
@@ -157,8 +168,11 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
       const label = collapsed ? "Show controls" : "Hide controls";
       toggle.setAttribute("aria-expanded", String(!collapsed));
       toggle.setAttribute("aria-label", label);
-      toggle.title = label;
+      // The shared tooltip reads the aria-label at show time, so a native
+      // title would double up as a second, competing tooltip.
+      if (!tooltipBinding) toggle.title = label;
       toggle.classList.toggle("on", collapsed);
+      tooltipBinding?.sync();
     }
     if (persist) writeRailPref(state, storage);
   }
@@ -324,6 +338,9 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
       shell.removeAttribute("data-pf-dragging");
       rail.removeAttribute("inert");
       root.style.removeProperty("--pf-rail-w");
+      // Before the attribute restore below: the binding's own detach rewrites
+      // title/aria-label from its capture, and ours must win.
+      tooltipBinding?.detach();
       if (toggle) {
         toggle.innerHTML = toggleOriginal.html;
         toggle.title = toggleOriginal.title;

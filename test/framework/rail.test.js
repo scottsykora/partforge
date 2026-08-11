@@ -304,6 +304,68 @@ test("detach restores a toggle to its pre-attach label instead of leaving it wir
   expect(toggle.classList.contains("on")).toBe(false);
 });
 
+// --- shared tooltip ----------------------------------------------------
+// With mount's tooltip presenter passed in, the toggle's label renders as the
+// shared anchored pf-hover-tip (like the viewbar buttons) instead of a native
+// title tooltip — and tracks the collapse state across hovers.
+
+function fakeTooltip() {
+  const shown = [];
+  return {
+    shown,
+    showAnchor: (content, anchor) => { shown.push({ content, anchor }); return Symbol("t"); },
+    showPointer: () => Symbol("t"),
+    hide: () => {},
+  };
+}
+
+test("with a shared tooltip the toggle never gets a native title and shows the presenter's tip", () => {
+  document.body.innerHTML = `
+    <div class="pf-shell">
+      <div class="pf-stage"></div>
+      <div class="pf-rail"></div>
+    </div>`;
+  const shell = document.querySelector(".pf-shell");
+  shell.getBoundingClientRect = () => ({ left: 0, right: 1600, width: 1600, top: 0, bottom: 720, height: 720 });
+  const toggle = document.createElement("button");
+  document.body.append(toggle);
+  const tooltip = fakeTooltip();
+  track(attachRail({ rail: document.querySelector(".pf-rail"), shell, toggle, storage: fakeStorage(), tooltip }));
+
+  // The label lives in aria-label only; a title would double up as a second,
+  // native tooltip alongside the shared one.
+  expect(toggle.hasAttribute("title")).toBe(false);
+  expect(toggle.getAttribute("aria-label")).toBe("Hide controls");
+
+  toggle.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  expect(tooltip.shown.at(-1)).toEqual({ content: { title: "Hide controls" }, anchor: toggle });
+  toggle.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+
+  toggle.click(); // collapse — the next hover must read the NEW label
+  expect(toggle.hasAttribute("title")).toBe(false);
+  toggle.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+  expect(tooltip.shown.at(-1)).toEqual({ content: { title: "Show controls" }, anchor: toggle });
+});
+
+test("detach with a shared tooltip still restores the pre-attach title", () => {
+  document.body.innerHTML = `
+    <div class="pf-shell">
+      <div class="pf-stage"></div>
+      <div class="pf-rail"></div>
+    </div>`;
+  const shell = document.querySelector(".pf-shell");
+  shell.getBoundingClientRect = () => ({ left: 0, right: 1600, width: 1600, top: 0, bottom: 720, height: 720 });
+  const toggle = document.createElement("button");
+  toggle.title = "Toggle the controls panel";
+  document.body.append(toggle);
+  const handle = track(attachRail({ rail: document.querySelector(".pf-rail"), shell, toggle, storage: fakeStorage(), tooltip: fakeTooltip() }));
+  expect(toggle.hasAttribute("title")).toBe(false); // absorbed while attached
+
+  handle.detach();
+  expect(toggle.title).toBe("Toggle the controls panel");
+  expect(toggle.getAttribute("aria-label")).toBeNull();
+});
+
 // --- narrow layout -----------------------------------------------------
 // Below RAIL_NARROW_BREAKPOINT the shell shows exactly one pane and the tab
 // bar (mobile-tabs.js) picks it, so collapse is suspended: an inert rail

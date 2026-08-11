@@ -114,6 +114,10 @@ runtime.setHostPane("rail");  // narrow layout only: show just the controls
                                // built-in tab bar. null hands selection back.
 runtime.setActive(false);      // park the viewer: stop the render loop, release the
                                // drawing buffer. setActive(true) restores both.
+runtime.attachTooltips([{ element: myButton }]);  // host chrome buttons join the mount's
+                               // shared hover tooltip (label = the button's title or
+                               // aria-label, or a per-entry getLabel()); returns
+                               // { sync, hide, detach }, auto-detached on dispose()
 const off = runtime.onContextLost(() => {});  // WebGL context loss; returns an unsubscribe
 runtime.dispose();     // stops loops, workers, observers, listeners; frees GPU resources
 ```
