@@ -200,6 +200,33 @@ test("an unknown animation is reported with the declared names", () => {
 
 // --- opacity in the headless rasterizer --------------------------------------
 
+test("the CLI hands the animation's opacity to the renderer", async () => {
+  // The integration seam this task adds: bin/cli.js must pass evaluate()'s
+  // `opacity` into renderViews. Nothing else about the frame changes, so the
+  // CLI's PNG is compared byte-for-byte against direct renders of the same
+  // pose — once with the lid hidden, once with it drawn. Drop `opacity` from
+  // the CLI call and the frame becomes the "drawn" one, flipping both asserts.
+  //
+  // Deliberately NOT a "the CLI frame is dimmer" assertion: hiding the lid also
+  // removes it from the SCENE BOUNDS, so the still reframes tighter and the
+  // base covers more pixels. Measured, the lid-hidden frame is the brighter of
+  // the two (74.1M vs 70.0M total luminance) — a dimmer-than test would fail
+  // for a reason that has nothing to do with the seam.
+  const dir = out();
+  // assemble's step 1 at t=0: lidLift 40, and its opacity track puts the lid at 0.
+  cli(["render", PART, "--animation", "assemble", "--at", "0", "--views", "front", "--out", dir]);
+  const cliFile = join(dir, "anim-box-assembly-front-assemble-t000.png");
+
+  const kernel = await bootManifoldKernel();
+  const opts = { views: ["front"], out: dir, params: { lidLift: 40 } };
+  const [hidden] = await renderViews(kernel, animatedPart, "assembly", { ...opts, tag: "seam-hidden", opacity: { lid: 0 } });
+  const [drawn] = await renderViews(kernel, animatedPart, "assembly", { ...opts, tag: "seam-drawn", opacity: {} });
+
+  const pixels = (f) => PNG.sync.read(readFileSync(f)).data;
+  expect(Buffer.compare(pixels(cliFile), pixels(hidden))).toBe(0);
+  expect(Buffer.compare(pixels(cliFile), pixels(drawn))).not.toBe(0);
+});
+
 test("a still mid-fade renders the faded part dimmer; at opacity 0 it is absent", async () => {
   // Bypasses the CLI: calls renderViews directly with an opacity map and
   // compares total non-background luminance — absent < faded < full. This pins

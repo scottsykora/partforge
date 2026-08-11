@@ -185,40 +185,46 @@ const commands = {
       if (view !== undefined && !Object.hasOwn(part.views ?? {}, view)) {
         die(`unknown view "${view}" (have: ${Object.keys(part.views ?? {}).join(", ") || "none"})\n${usage}`);
       }
+      // Resolve --animation across views, still BEFORE the kernel boots (the
+      // header's rule: a flag typo shouldn't pay a WASM boot, and this depends
+      // only on `part`). A unique name implies its owning view, overriding the
+      // default-view rule; an ambiguous one needs the positional view argument.
+      // NOT a --view flag: --views already means camera angles.
+      let anim = null, animView;
+      if (flags.animation !== undefined) {
+        const byView = viewAnimations(part);
+        // Deduped: two views declaring the same name would otherwise report
+        // "(declared: shared, shared)".
+        const declared = () =>
+          [...new Set([...byView.values()].flat().map((x) => x.name))].join(", ") || "none";
+        const owners = [...byView.entries()]
+          .filter(([, anims]) => anims.some((x) => x.name === flags.animation))
+          .map(([v]) => v);
+        if (view !== undefined) {
+          if (!owners.includes(view)) {
+            throw new Error(owners.length
+              ? `animation "${flags.animation}" is not in view "${view}" — it lives in view ${owners.map((v) => `"${v}"`).join(", ")}`
+              : `unknown animation "${flags.animation}" (declared: ${declared()})`);
+          }
+          animView = view;
+        } else if (owners.length === 1) {
+          animView = owners[0];
+        } else if (owners.length > 1) {
+          die(`--animation "${flags.animation}" is ambiguous (views ${owners.map((v) => `"${v}"`).join(", ")}) — pass the positional view argument\n${usage}`);
+        } else {
+          throw new Error(`unknown animation "${flags.animation}" (declared: ${declared()})`);
+        }
+        // Already normalized by viewAnimations — no normalizeAnimation call here.
+        anim = byView.get(animView).find((x) => x.name === flags.animation);
+      }
+
       const kernel = await bootKernel(part);
 
-      if (flags.animation === undefined) {
+      if (anim === null) {
         const files = await renderViews(kernel, part, view, { views, out: outDir, params: baseParams });
         for (const f of files) console.log(`wrote ${f}`);
         process.exit(0);
       }
-
-      // Resolve --animation across views: a unique name implies its owning
-      // view (overriding the default-view rule); an ambiguous one needs the
-      // positional view argument. NOT a --view flag: --views already means
-      // camera angles.
-      const byView = viewAnimations(part);
-      const declared = () => [...byView.values()].flat().map((x) => x.name).join(", ") || "none";
-      const owners = [...byView.entries()]
-        .filter(([, anims]) => anims.some((x) => x.name === flags.animation))
-        .map(([v]) => v);
-      let animView;
-      if (view !== undefined) {
-        if (!owners.includes(view)) {
-          throw new Error(owners.length
-            ? `animation "${flags.animation}" is not in view "${view}" — it lives in view ${owners.map((v) => `"${v}"`).join(", ")}`
-            : `unknown animation "${flags.animation}" (declared: ${declared()})`);
-        }
-        animView = view;
-      } else if (owners.length === 1) {
-        animView = owners[0];
-      } else if (owners.length > 1) {
-        die(`--animation "${flags.animation}" is ambiguous (views ${owners.map((v) => `"${v}"`).join(", ")}) — pass the positional view argument\n${usage}`);
-      } else {
-        throw new Error(`unknown animation "${flags.animation}" (declared: ${declared()})`);
-      }
-      // Already normalized by viewAnimations — no normalizeAnimation call here.
-      const anim = byView.get(animView).find((x) => x.name === flags.animation);
       // Frames: --step renders one still at the END of that step (its fully
       // applied state); --at takes positions normalized over the animation's
       // TOTAL duration (same t as the viewer scrubber / runtime seek).
