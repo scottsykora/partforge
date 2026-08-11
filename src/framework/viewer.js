@@ -177,6 +177,87 @@ export function createViewer(container, part) {
     partsGroup.add(l);
   }
 
+  // --- animated per-sub-part opacity (display-only) ---------------------------
+  // Overrides from the animation driver (spec 2026-08-10-per-view-animations):
+  // absent = normal, 0 = fully hidden (mesh AND lines), 0<v<1 = faded on cloned
+  // materials. Never touches geometry, params, or exports — this is the display
+  // half of "fade a part in, then animate it into place".
+  const animOpacity = new Map();     // name -> value in [0, 1)
+  const baseMats = Object.fromEntries(names.map((n) => [n, subMesh[n].material]));
+  const fadeMats = new Map();        // name -> lazily cloned MeshStandardMaterial
+  const fadeLineMats = new Map();    // name -> lazily cloned LineMaterial
+  let lastShown = [];                // names last passed to showAssembly
+
+  const effectiveVisible = () => lastShown.filter((n) => (animOpacity.get(n) ?? 1) > 0);
+
+  function fadeMatFor(name) {
+    let m = fadeMats.get(name);
+    if (!m) {
+      m = baseMats[name].clone();
+      m.transparent = true;
+      m.depthWrite = false;
+      fadeMats.set(name, m);
+    }
+    return m;
+  }
+  function fadeLineMatFor(name) {
+    let m = fadeLineMats.get(name);
+    if (!m) {
+      m = lineMaterial.clone();
+      m.transparent = true;
+      m.resolution.copy(lineMaterial.resolution);
+      fadeLineMats.set(name, m);
+    }
+    return m;
+  }
+
+  // Re-derive one sub-part's material + visibility from (shown, override).
+  function applySubOpacity(name) {
+    const mesh = subMesh[name], lines = subLines[name];
+    if (!mesh) return;
+    const shown = lastShown.includes(name);
+    const v = animOpacity.get(name);
+    if (v === undefined) {
+      mesh.material = baseMats[name];
+      lines.material = lineMaterial;
+      mesh.visible = shown;
+      lines.visible = shown;
+      return;
+    }
+    if (v <= 0) {
+      mesh.visible = false;
+      lines.visible = false;
+      return;
+    }
+    const staticOpacity = part.parts[name].display?.opacity ?? 1;
+    const fm = fadeMatFor(name);
+    fm.opacity = staticOpacity * v;
+    mesh.material = fm;
+    const flm = fadeLineMatFor(name);
+    flm.opacity = v;
+    lines.material = flm;
+    mesh.visible = shown;
+    lines.visible = shown;
+  }
+
+  function setSubPartOpacity(name, value) {
+    if (!subMesh[name]) return;
+    const wasZero = (animOpacity.get(name) ?? 1) <= 0;
+    if (value == null || !(value < 1)) animOpacity.delete(name); // null/undefined/NaN/>=1 clear
+    else animOpacity.set(name, Math.max(0, value));
+    applySubOpacity(name);
+    const isZero = (animOpacity.get(name) ?? 1) <= 0;
+    if (wasZero !== isZero) cutaway.setVisible(effectiveVisible());
+  }
+
+  function clearSubPartOpacities() {
+    if (!animOpacity.size) return;
+    const touched = [...animOpacity.keys()];
+    animOpacity.clear();
+    for (const n of touched) applySubOpacity(n);
+    cutaway.setVisible(effectiveVisible());
+  }
+
   // The cutaway plane lives in world space, so its initial/reset bounds must
   // include the pivot rotation and the per-view recentering transform —
   // mesh.matrixWorld carries both. Union each visible mesh's own
@@ -347,17 +428,19 @@ export function createViewer(container, part) {
   // frame the camera to them — done only on the initial show and on view (tab)
   // changes, NOT on regeneration, so a user's zoom/orbit survives editing params.
   function showAssembly(visibleNames, { frame = false } = {}) {
-    for (const [name, mesh] of Object.entries(subMesh)) {
-      const on = visibleNames.includes(name);
-      if (on) {
-        mesh.geometry = subCache[name]; // cached geometries reused, not disposed
+    lastShown = [...visibleNames];
+    for (const name of names) {
+      if (visibleNames.includes(name)) {
+        subMesh[name].geometry = subCache[name]; // cached geometries reused, not disposed
         subLines[name].geometry = subCache[name].userData.edges;
+        applySubOpacity(name); // shown, but an active 0-override keeps it hidden
+      } else {
+        subMesh[name].visible = false;
+        subLines[name].visible = false;
       }
-      mesh.visible = on;
-      subLines[name].visible = on;
     }
     if (frame) frameTo(visibleNames);
-    cutaway.setVisible(visibleNames);
+    cutaway.setVisible(effectiveVisible());
   }
 
   // Re-frame whatever is currently visible (the reframe button).
@@ -378,10 +461,12 @@ export function createViewer(container, part) {
     grid.position.y = floorY; // keep the floor at the bbox bottom across theme swaps
     scene.add(grid);
     lineMaterial.color.set(t.line);
+    for (const m of fadeLineMats.values()) m.color.set(t.line); // clones follow the theme
     cutaway.setTheme(mode, t.line);
   }
 
   function hideAssembly() {
+    lastShown = [];
     for (const m of Object.values(subMesh)) m.visible = false;
     for (const l of Object.values(subLines)) l.visible = false;
     cutaway.setVisible([]);
@@ -399,6 +484,7 @@ export function createViewer(container, part) {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     lineMaterial.resolution.set(w, h); // fat lines need the viewport size for px width
+    for (const m of fadeLineMats.values()) m.resolution.set(w, h); // clones need it too
     cutaway.setViewportSize(w, h, renderer.getPixelRatio());
   }
   const ro = new ResizeObserver(resize);
@@ -720,9 +806,15 @@ export function createViewer(container, part) {
     for (const n of names) {
       const g = subCache[n];
       if (g) { g.userData.edges?.dispose(); g.dispose(); subCache[n] = null; }
-      subMesh[n].material?.dispose();
+      // baseMats[n], not subMesh[n].material: an active fade override has swapped
+      // the mesh onto a clone, and the base material would otherwise leak.
+      baseMats[n]?.dispose();
       subMesh[n].geometry?.dispose(); // the initial empty BufferGeometry, if never replaced
     }
+    for (const m of fadeMats.values()) m.dispose();
+    for (const m of fadeLineMats.values()) m.dispose();
+    fadeMats.clear();
+    fadeLineMats.clear();
     material.dispose();
     lineMaterial.dispose();
     grid.geometry.dispose();
@@ -737,6 +829,8 @@ export function createViewer(container, part) {
     hideAssembly,
     setSubGeometry,
     setSubPose,
+    setSubPartOpacity,
+    clearSubPartOpacities,
     hasSubMesh,
     subTriangles,
     frame,
@@ -756,6 +850,8 @@ export function createViewer(container, part) {
     camera,
     domElement: renderer.domElement,
     _subMeshes: subMesh,
+    __subMesh: (n) => subMesh[n],   // test hooks (cf. attachAnimationControls' __viewer)
+    __subLines: (n) => subLines[n],
     flashPoint,
     cutawaySupported: () => cutaway.isSupported,
     cutawayEnabled: () => cutaway.isEnabled,
