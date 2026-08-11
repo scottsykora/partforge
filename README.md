@@ -174,7 +174,7 @@ playback engine (`null` otherwise). Animations are **view-owned**
 runtime.animation.play("open");   // switch + play, within the ACTIVE view (camera cue and all)
 runtime.animation.seek(0.5);      // scrub, normalized 0..1 (pauses)
 runtime.animation.pause();
-runtime.animation.stop();         // reset + restore pre-animation params
+runtime.animation.stop();         // reset + restore pre-animation params and clear opacity overrides
 runtime.animation.state();        // { view, animation, status, t, stepIndex }
 ```
 
