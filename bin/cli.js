@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import { resolve, dirname } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { detectBackend } from "../src/framework/backend-select.js";
-import { normalizeAnimation, evaluate, cueAt } from "../src/framework/animation.js";
+import { viewAnimations, evaluate, cueAt } from "../src/framework/animation.js";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { measure } from "../src/framework/oracle/measure.js";
@@ -193,11 +193,32 @@ const commands = {
         process.exit(0);
       }
 
-      const spec = part.animations?.[flags.animation];
-      if (!spec) {
-        throw new Error(`unknown animation "${flags.animation}" (have: ${Object.keys(part.animations ?? {}).join(", ") || "none"})`);
+      // Resolve --animation across views: a unique name implies its owning
+      // view (overriding the default-view rule); an ambiguous one needs the
+      // positional view argument. NOT a --view flag: --views already means
+      // camera angles.
+      const byView = viewAnimations(part);
+      const declared = () => [...byView.values()].flat().map((x) => x.name).join(", ") || "none";
+      const owners = [...byView.entries()]
+        .filter(([, anims]) => anims.some((x) => x.name === flags.animation))
+        .map(([v]) => v);
+      let animView;
+      if (view !== undefined) {
+        if (!owners.includes(view)) {
+          throw new Error(owners.length
+            ? `animation "${flags.animation}" is not in view "${view}" — it lives in view ${owners.map((v) => `"${v}"`).join(", ")}`
+            : `unknown animation "${flags.animation}" (declared: ${declared()})`);
+        }
+        animView = view;
+      } else if (owners.length === 1) {
+        animView = owners[0];
+      } else if (owners.length > 1) {
+        die(`--animation "${flags.animation}" is ambiguous (views ${owners.map((v) => `"${v}"`).join(", ")}) — pass the positional view argument\n${usage}`);
+      } else {
+        throw new Error(`unknown animation "${flags.animation}" (declared: ${declared()})`);
       }
-      const anim = normalizeAnimation(flags.animation, spec);
+      // Already normalized by viewAnimations — no normalizeAnimation call here.
+      const anim = byView.get(animView).find((x) => x.name === flags.animation);
       // Frames: --step renders one still at the END of that step (its fully
       // applied state); --at takes positions normalized over the animation's
       // TOTAL duration (same t as the viewer scrubber / runtime seek).
@@ -241,11 +262,11 @@ const commands = {
         frames = ts.map((t, i) => ({ t, tag: `${flags.animation}-t${tags[i]}` }));
       }
       for (const frame of frames) {
-        const { values } = evaluate(anim, frame.t);
+        const { values, opacity } = evaluate(anim, frame.t);
         const cue = cueAt(anim, frame.cueT ?? frame.t);
         const frameViews = views ?? (cue ? [cue.view] : undefined);
-        const files = await renderViews(kernel, part, view, {
-          views: frameViews, out: outDir, params: { ...baseParams, ...values }, tag: frame.tag,
+        const files = await renderViews(kernel, part, animView, {
+          views: frameViews, out: outDir, params: { ...baseParams, ...values }, tag: frame.tag, opacity,
         });
         for (const f of files) console.log(`wrote ${f}`);
       }

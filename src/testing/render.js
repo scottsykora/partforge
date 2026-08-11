@@ -32,16 +32,36 @@ const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] 
 // rasterizer (orthographic, z-buffered, Lambert-shaded, with depth-tested edge
 // overlays). No native module, no browser. Returns the written file paths.
 // pngjs is lazy-imported so importing the testing barrel for measure never loads it.
+//
+// `opacity` is a Record<subPartName, number> (an animation's evaluate() output,
+// typically): a sub-part at 0 is skipped entirely — faces AND edges, and it is
+// out of the scene bounds too, so a hidden part cannot silently reframe the
+// still. Values in (0,1) fade by PRE-BLENDING that part's shaded base and edge
+// colours toward the background. That is a z-buffered approximation: a faded
+// part still fully occludes whatever is behind it, because real transparency
+// needs back-to-front sorting this rasterizer does not do. Stills only need to
+// read as faded, so the approximation is the contract, not a stopgap.
 export async function renderViews(kernel, part, view = Object.keys(part.views)[0], {
   views = ["iso", "front", "top"], out = "render", size = [800, 600], edges = true, params = {}, tag = "",
+  opacity = {},
 } = {}) {
   const { PNG } = await import("pngjs");
   const [W, H] = size;
-  const meshes = buildView(kernel, part, view, params).map((b) => b.mesh); // copied out
+  // Sub-part names are kept alongside the meshes: opacity is keyed by name.
+  // Own-key lookups only — a part named "constructor" must not inherit a value
+  // off Object.prototype and vanish from the render.
+  const opacityOf = (name) => {
+    if (!Object.hasOwn(opacity ?? {}, name)) return 1;
+    const v = Number(opacity[name]);
+    return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1; // a junk value renders solid
+  };
+  const meshes = buildView(kernel, part, view, params) // copied out
+    .filter((b) => opacityOf(b.name) > 0)              // fully hidden: absent from the still
+    .map((b) => ({ name: b.name, mesh: b.mesh }));
 
-  // scene bounds over all sub-parts (positions are JS-owned; safe after cleanup)
+  // scene bounds over all visible sub-parts (positions are JS-owned; safe after cleanup)
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (const m of meshes) {
+  for (const { mesh: m } of meshes) {
     const b = bounds(m.positions);
     for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], b.min[i]); hi[i] = Math.max(hi[i], b.max[i]); }
   }
@@ -84,7 +104,12 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
     for (let i = 0; i < W * H; i++) { color[i * 3] = bg[0]; color[i * 3 + 1] = bg[1]; color[i * 3 + 2] = bg[2]; }
     const zbuf = new Float32Array(W * H).fill(-Infinity); // larger depth = nearer camera
 
-    for (const m of meshes) {
+    for (const { name, mesh: m } of meshes) {
+      // Pre-blend toward the background: the fade is baked into the material
+      // colour before shading, so no per-pixel compositing (and no depth sort)
+      // is needed. See the note on renderViews for why that is enough here.
+      const v = opacityOf(name);
+      const faded = v < 1 ? base.map((c, i) => Math.round(c * v + bg[i] * (1 - v))) : base;
       const P = m.positions, N = m.normals, ind = m.indices;
       // Manifold meshes are a non-indexed soup (3 consecutive verts/triangle);
       // OCCT meshes are indexed. Both carry per-vertex normals.
@@ -109,16 +134,18 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
           const I0 = Math.min(1, ambient + diffuse * Math.abs((nx * light[0] + ny * light[1] + nz * light[2]) / L));
           inten = [I0, I0, I0];
         }
-        rasterTri(sp, inten, base, color, zbuf, W, H);
+        rasterTri(sp, inten, faded, color, zbuf, W, H);
       }
     }
 
     if (edges) {
-      for (const m of meshes) {
+      for (const { name, mesh: m } of meshes) {
         const E = m.edges;
         if (!E?.length) continue;
+        const v = opacityOf(name);
+        const fadedEdge = v < 1 ? edgeColor.map((c, i) => Math.round(c * v + bg[i] * (1 - v))) : edgeColor;
         for (let i = 0; i < E.length; i += 6)
-          drawLine(project([E[i], E[i + 1], E[i + 2]]), project([E[i + 3], E[i + 4], E[i + 5]]), edgeColor, color, zbuf, W, H, bias);
+          drawLine(project([E[i], E[i + 1], E[i + 2]]), project([E[i + 3], E[i + 4], E[i + 5]]), fadedEdge, color, zbuf, W, H, bias);
       }
     }
 
