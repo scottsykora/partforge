@@ -169,18 +169,20 @@ viewer re-poses the meshes it already has — instantly, with no worker rebuild;
 `onBuild` does not fire for those pose-only edits. Anything that changes the
 geometry itself rebuilds as usual.
 
-For parts that declare `animations`, `runtime.animation` exposes the viewer's
-playback engine (`null` otherwise):
+When any view declares `animations`, `runtime.animation` exposes the viewer's
+playback engine (`null` otherwise). Animations are **view-owned**
+(`views.<name>.animations`), so the engine is scoped to the active view — call
+`setView` first to reach another view's set:
 
 ```js
-runtime.animation.play("open");   // switch + play (camera cue and all)
+runtime.animation.play("open");   // switch + play, within the ACTIVE view (camera cue and all)
 runtime.animation.seek(0.5);      // scrub, normalized 0..1 (pauses)
 runtime.animation.pause();
-runtime.animation.stop();         // reset + restore pre-animation params
-runtime.animation.state();        // { animation, status, t, stepIndex }
+runtime.animation.stop();         // reset + restore pre-animation params and clear opacity overrides
+runtime.animation.state();        // { view, animation, status, t, stepIndex }
 ```
 
-A part can mark at most one animation `autoplay: true` to start it
+A view can mark at most one of its animations `autoplay: true` to start it
 automatically on first show and again on every view switch — until the user
 touches the transport — or anything writes params (`runtime.setParams`
 included) or calls a `runtime.animation` method; any of those disarms

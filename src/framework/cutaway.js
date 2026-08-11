@@ -412,6 +412,19 @@ export function createCutaway({
     };
   }
 
+  // Re-assert this sub-part's enabled-state material assignment. The viewer
+  // calls it after taking a sub-part OFF a fade clone: while the cutaway is
+  // enabled the mesh belongs on clippedMeshMaterial, and only the render set
+  // knows that material. setEnabled is idempotent, so this is a cheap
+  // re-assert, not a rebuild.
+  function resyncSubpart(name) {
+    if (disposed) return false;
+    const entry = renderSets.get(name);
+    if (!entry) return false;
+    entry.renderSet.setEnabled(enabled);
+    return true;
+  }
+
   // Per-frame maintenance while the cutaway is on: the gizmo rescales for the
   // camera, and every visible section re-slices its outline if anything it
   // depends on moved. Both are cheap no-ops when nothing changed.
@@ -499,6 +512,7 @@ export function createCutaway({
     updateGeometry,
     setVisible,
     setEnabled,
+    resyncSubpart,
     reset,
     flip,
     setTheme,

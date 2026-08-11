@@ -46,6 +46,10 @@ vi.mock("../../src/framework/viewer.js", () => ({
       resetCutaway: vi.fn(),
       isWorldPointVisible: vi.fn(() => true),
       registerCutawayMaterial: vi.fn(() => vi.fn()),
+      // Opacity overrides: an animation's fade writes them, and handing a view
+      // back must clear them (see the view-switch test at the end of the file).
+      setSubPartOpacity: vi.fn(),
+      clearSubPartOpacities: vi.fn(),
       dispose: vi.fn(),
     };
     fakeViewers.push(v);
@@ -923,8 +927,9 @@ test("makeHandle always exposes a callable setHostPane", () => {
 const makeAnimatedPart = () => {
   const part = makePart();
   // `h` is the GEOMETRY param (the box is built from it), so every animation
-  // frame genuinely needs a worker build — the case the fix is about.
-  part.animations = {
+  // frame genuinely needs a worker build — the case the fix is about. Animations
+  // are view-owned, so it hangs off the view these tests run in ("main").
+  part.views.main.animations = {
     grow: { label: "Grow", duration: 2, easing: "linear", tracks: { h: [[0, 4], [1, 10]] } },
   };
   return part;
@@ -983,7 +988,7 @@ test("autoplay still fires on first show when the first build errored", () => {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();
   const part = makeAnimatedPart();
-  part.animations.grow.autoplay = true;
+  part.views.main.animations.grow.autoplay = true;
   const handle = mount(part, { createWorker, elements: els });
 
   workers.manifold.onmessage({ data: { type: "ready" } });
@@ -991,6 +996,32 @@ test("autoplay still fires on first show when the first build errored", () => {
   workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } }); // retry succeeds
 
   expect(handle.animation.state().status).toBe("playing"); // autoplay still kicked
+  handle.dispose();
+});
+
+// Animations are view-owned, so mount's tab onChange has to hand the outgoing
+// view's animation back — animCtl.viewChanged() — BEFORE anything reads params
+// again. Deleting that one call left the whole suite green: the driver kept
+// driving the departed view's animation, its param snapshot was never restored,
+// and its opacity overrides stayed on the meshes of a view that never asked for
+// a fade. This is the mount-level pin on that wiring.
+test("switching views hands the outgoing view's animation back", () => {
+  const part = makeAnimatedPart();
+  part.views.other = { label: "Other" }; // declares no animations of its own
+  part.parts.body.views = ["main", "other"];
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: els });
+  finishFirstBuild(workers);
+  expect(handle.animation.state()).toMatchObject({ view: "main", animation: "grow" });
+  fakeViewers[0].clearSubPartOpacities.mockClear(); // attach resets once; ignore that
+
+  [...els.tabs.querySelectorAll("button")]
+    .find((button) => button.textContent === "Other")
+    .click();
+
+  expect(fakeViewers[0].clearSubPartOpacities).toHaveBeenCalled();
+  expect(handle.animation.state()).toMatchObject({ view: "other", animation: null });
   handle.dispose();
 });
 

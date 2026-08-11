@@ -32,20 +32,49 @@ const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] 
 // rasterizer (orthographic, z-buffered, Lambert-shaded, with depth-tested edge
 // overlays). No native module, no browser. Returns the written file paths.
 // pngjs is lazy-imported so importing the testing barrel for measure never loads it.
+//
+// `opacity` is a Record<subPartName, number> (an animation's evaluate() output,
+// typically): a sub-part at 0 is skipped entirely — faces AND edges — but it
+// still counts toward the SCENE BOUNDS, so a part crossing 0 cannot silently
+// reframe the still. Framing is a property of the pose, not of what happens to
+// be visible: without that, `--at 0,0.5,1` over a fade drew the same base at
+// three different scales and the sequence read as a zoom.
+// Values in (0,1) fade by PRE-BLENDING that part's shaded base and edge
+// colours toward the background. That is a z-buffered approximation: a faded
+// part still fully occludes whatever is behind it, because real transparency
+// needs back-to-front sorting this rasterizer does not do. Stills only need to
+// read as faded, so the approximation is the contract, not a stopgap.
 export async function renderViews(kernel, part, view = Object.keys(part.views)[0], {
   views = ["iso", "front", "top"], out = "render", size = [800, 600], edges = true, params = {}, tag = "",
+  opacity = {},
 } = {}) {
   const { PNG } = await import("pngjs");
   const [W, H] = size;
-  const meshes = buildView(kernel, part, view, params).map((b) => b.mesh); // copied out
+  // Sub-part names are kept alongside the meshes: opacity is keyed by name.
+  // Own-key lookups only — a part named "constructor" must not inherit a value
+  // off Object.prototype and vanish from the render.
+  const opacityOf = (name) => {
+    if (!Object.hasOwn(opacity ?? {}, name)) return 1;
+    const v = Number(opacity[name]);
+    return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1; // a junk value renders solid
+  };
+  const built = buildView(kernel, part, view, params) // copied out
+    .map((b) => ({ name: b.name, mesh: b.mesh }));
 
-  // scene bounds over all sub-parts (positions are JS-owned; safe after cleanup)
+  // Scene bounds over EVERY built sub-part, visible or not (positions are
+  // JS-owned; safe after cleanup). Opacity is deliberately NOT consulted here —
+  // see the note above on why a fade must not move the camera.
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (const m of meshes) {
+  for (const { mesh: m } of built) {
     const b = bounds(m.positions);
     for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], b.min[i]); hi[i] = Math.max(hi[i], b.max[i]); }
   }
+  // kernel.cleanup() walks the backend's own tracked list, not this array, so
+  // dropping the hidden sub-parts afterwards frees nothing and skips nothing.
   kernel.cleanup?.();
+
+  // …and only the visible ones are rasterized: faces AND edges below iterate this.
+  const meshes = built.filter(({ name }) => opacityOf(name) > 0);
 
   const center = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
   const radius = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 || 5;
@@ -84,7 +113,12 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
     for (let i = 0; i < W * H; i++) { color[i * 3] = bg[0]; color[i * 3 + 1] = bg[1]; color[i * 3 + 2] = bg[2]; }
     const zbuf = new Float32Array(W * H).fill(-Infinity); // larger depth = nearer camera
 
-    for (const m of meshes) {
+    for (const { name, mesh: m } of meshes) {
+      // Pre-blend toward the background: the fade is baked into the material
+      // colour before shading, so no per-pixel compositing (and no depth sort)
+      // is needed. See the note on renderViews for why that is enough here.
+      const v = opacityOf(name);
+      const faded = v < 1 ? base.map((c, i) => Math.round(c * v + bg[i] * (1 - v))) : base;
       const P = m.positions, N = m.normals, ind = m.indices;
       // Manifold meshes are a non-indexed soup (3 consecutive verts/triangle);
       // OCCT meshes are indexed. Both carry per-vertex normals.
@@ -109,16 +143,18 @@ export async function renderViews(kernel, part, view = Object.keys(part.views)[0
           const I0 = Math.min(1, ambient + diffuse * Math.abs((nx * light[0] + ny * light[1] + nz * light[2]) / L));
           inten = [I0, I0, I0];
         }
-        rasterTri(sp, inten, base, color, zbuf, W, H);
+        rasterTri(sp, inten, faded, color, zbuf, W, H);
       }
     }
 
     if (edges) {
-      for (const m of meshes) {
+      for (const { name, mesh: m } of meshes) {
         const E = m.edges;
         if (!E?.length) continue;
+        const v = opacityOf(name);
+        const fadedEdge = v < 1 ? edgeColor.map((c, i) => Math.round(c * v + bg[i] * (1 - v))) : edgeColor;
         for (let i = 0; i < E.length; i += 6)
-          drawLine(project([E[i], E[i + 1], E[i + 2]]), project([E[i + 3], E[i + 4], E[i + 5]]), edgeColor, color, zbuf, W, H, bias);
+          drawLine(project([E[i], E[i + 1], E[i + 2]]), project([E[i + 3], E[i + 4], E[i + 5]]), fadedEdge, color, zbuf, W, H, bias);
       }
     }
 

@@ -300,7 +300,10 @@ async function settleAnimBar() {
 // roomy — and, at least once across the widths, that the clamp actually
 // engaged (all-roomy widths would make this check prove nothing).
 async function checkAnimBarLayout(widths) {
-  if (!await page.locator(".pf-anim-bar").count()) return; // part declares no animations
+  // VISIBILITY, not existence: the bar is always in the DOM now and is hidden
+  // (display:none) on a view with no animations, so a count() gate would size a
+  // 0x0 element and report bogus "0px tall" errors on such a view.
+  if (!await page.locator(".pf-anim-bar").isVisible()) return;
   // Measure a still bar: a moving playhead keeps re-running the placement
   // observer, so widths sampled mid-playback can straddle a reflow.
   await pauseTransportIfPlaying();
@@ -371,7 +374,9 @@ async function checkTransportTargets(width) {
   await sleep(50);
   const result = await page.evaluate(async (min) => {
     const bar = document.querySelector(".pf-anim-bar");
-    if (!bar) return null; // no animations on this page
+    // Same visibility-not-existence rule as checkAnimBarLayout: a display:none
+    // bar has no client rects, and measuring its 0x0 targets proves nothing.
+    if (!bar || !bar.getClientRects().length) return null; // no animations on this view
     const problems = [];
     // Measure under EVERY animation, not just the selected one: the ⓘ info
     // button only renders for animations with a description, so a single-shot
