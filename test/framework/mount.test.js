@@ -882,8 +882,9 @@ test("makeHandle always exposes a callable setHostPane", () => {
 const makeAnimatedPart = () => {
   const part = makePart();
   // `h` is the GEOMETRY param (the box is built from it), so every animation
-  // frame genuinely needs a worker build — the case the fix is about.
-  part.animations = {
+  // frame genuinely needs a worker build — the case the fix is about. Animations
+  // are view-owned, so it hangs off the view these tests run in ("main").
+  part.views.main.animations = {
     grow: { label: "Grow", duration: 2, easing: "linear", tracks: { h: [[0, 4], [1, 10]] } },
   };
   return part;
@@ -942,7 +943,7 @@ test("autoplay still fires on first show when the first build errored", () => {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();
   const part = makeAnimatedPart();
-  part.animations.grow.autoplay = true;
+  part.views.main.animations.grow.autoplay = true;
   const handle = mount(part, { createWorker, elements: els });
 
   workers.manifold.onmessage({ data: { type: "ready" } });
