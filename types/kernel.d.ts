@@ -304,6 +304,7 @@ export interface ScrewSweepOptions {
   profile: number[][];
   /** Axial rise per turn, mm. */
   pitch: number;
+  /** Number of turns swept; total height is `pitch * turns`. Cost scales with it. */
   turns: number;
   lefthand?: boolean;
 }
