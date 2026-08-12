@@ -644,7 +644,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // renders it in a throwaway scene via viewer.renderMeshPayloads. Never
     // touches the active tab, getView(), or the live scene — best-effort: any
     // failure, including a resolved-null from a worker build failure (4A
-    // settles rather than throwing), returns null.
+    // settles rather than throwing), returns null. `opts` is spread last, so
+    // renderMeshPayloads' own options (including `background`) pass straight
+    // through from the caller.
     const captureView = async (viewName, opts = {}) => {
       try {
         const target = (viewName && part.views?.[viewName]) ? viewName : resolveDefaultView(part);
