@@ -9,7 +9,8 @@
 // the true surface needs spiral arcs. Undensified, an ISO tooth loses ~42% of its
 // volume. So every segment is subdivided to a fixed 5° polar step — fixed, not a
 // per-call tolerance, so both backends see the identical polygon and the solid
-// cache keys stay stable.
+// cache keys stay stable. "Every segment" includes the contour's implicit closing
+// edge, except in the periodic case where that edge is a single polar point.
 
 // Degrees of polar sweep per emitted point. Matches Manifold's twist division
 // resolution (nDiv = ceil(|twist|/5) in manifold-backend.js), so the angular and
@@ -35,33 +36,49 @@ export function screwCrossSection(profile, pitch, { lefthand = false } = {}) {
       `screwSweep: profile axial extent ${extent} exceeds pitch ${pitch} — consecutive ` +
       "turns would interpenetrate; reduce the profile height or increase pitch");
 
+  const n = profile.length;
+  const first = profile[0], last = profile[n - 1];
+  const periodic = extent > pitch - EPS;
+
   // Subdivide by POLAR span, not by length: a segment with no z change sweeps no
   // angle and needs no extra points.
   const dense = [];
-  for (let i = 0; i < profile.length - 1; i++) {
-    const [r0, z0] = profile[i], [r1, z1] = profile[i + 1];
+  const densify = ([r0, z0], [r1, z1], { includeStart }) => {
     const span = Math.abs((360 * (z1 - z0)) / pitch);
-    const n = Math.max(1, Math.ceil(span / SCREW_STEP_DEG));
-    for (let j = 0; j < n; j++)
-      dense.push([r0 + ((r1 - r0) * j) / n, z0 + ((z1 - z0) * j) / n]);
-  }
-  dense.push(profile[profile.length - 1]);
+    const steps = Math.max(1, Math.ceil(span / SCREW_STEP_DEG));
+    for (let j = includeStart ? 0 : 1; j < steps; j++)
+      dense.push([r0 + ((r1 - r0) * j) / steps, z0 + ((z1 - z0) * j) / steps]);
+  };
+  for (let i = 0; i < n - 1; i++) densify(profile[i], profile[i + 1], { includeStart: true });
+  dense.push(last);
 
   // A profile spanning exactly one pitch closes on itself by periodicity: its last
   // point maps to the same polar angle as its first, so it must agree in radius and
   // the duplicate is dropped (a zero-length edge would otherwise reach the backend).
-  let pts = dense;
-  if (extent > pitch - EPS) {
-    const r0 = profile[0][0], rN = profile[profile.length - 1][0];
-    if (Math.abs(r0 - rN) > 1e-6)
+  // Nothing is densified between them — they ARE the same polar point, and a
+  // densified edge would trace a spurious full circle back around the axis.
+  if (periodic) {
+    if (Math.abs(last[1] - first[1]) < pitch - EPS)
       throw new Error(
-        `screwSweep: a full-pitch profile must be periodic — first radius ${r0} ` +
-        `must equal last radius ${rN}`);
-    pts = dense.slice(0, -1);
+        `screwSweep: a full-pitch profile must start and end at its extreme z values — ` +
+        `the first and last points span ${Math.abs(last[1] - first[1])}, not the full ` +
+        `pitch ${pitch}; reorder the profile so it opens and closes on the wrap`);
+    if (Math.abs(first[0] - last[0]) > 1e-6)
+      throw new Error(
+        `screwSweep: a full-pitch profile must be periodic — first radius ${first[0]} ` +
+        `must equal last radius ${last[0]}`);
+    dense.pop();
+  } else {
+    // Sub-pitch: the contour's implicit closing edge (last → first) is a real edge
+    // spanning real polar angle, so it needs the same treatment as every other one.
+    // Undensified it is a straight chord across the unused part of the pitch, which
+    // turns a slim ridge into a twisted half-disc. `first` already opens the
+    // contour, so only the intermediate points are appended.
+    densify(last, first, { includeStart: false });
   }
 
   const sign = lefthand ? 1 : -1;
-  return pts.map(([r, z]) => {
+  return dense.map(([r, z]) => {
     const psi = (sign * 2 * Math.PI * z) / pitch;
     const x = r * Math.cos(psi);
     let y = r * Math.sin(psi);
