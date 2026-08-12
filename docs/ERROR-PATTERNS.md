@@ -384,6 +384,29 @@ inside the geometrically expected range, not the bare-rod or empty-solid
 signature above. It's the thin near-self-touching sliver that OCCT's boolean
 mishandles, not screw geometry as such.
 
+## occt-bbox-too-large-on-twist
+
+- **Symptom:** `solid.boundingBox()` inside a `build()` reports a solid far larger
+  than it is — on a twisted solid (`extrude`/`prism` with `twist`, or
+  `k.screwSweep`) whose true max radius is 5, OCCT reports **7.209** where
+  Manifold reports **5.000** — so anything placed off that query lands ~44% too
+  far out in the STEP export while the preview looks right. The axial extent is
+  exact; it is the twisted directions that inflate.
+- **Cause:** OCCT derives the bounding box of a twisted B-spline surface from its
+  **control hull**, not from the surface. The control points of a twisted section
+  bow outward, so the box is a valid outer bound but a loose one. Volume and the
+  meshed surface are exact; only the bbox query is loose.
+- **Fix:** don't place geometry off `solid.boundingBox()` on a twisted solid —
+  compute the extent from the parameters that built it (they are right there in
+  `p`/`d`), or bound the twisted part with an untwisted proxy solid.
+
+**The `measure` / `verify` gate is not affected**: `src/framework/oracle/measure.js`
+takes its bbox from `bounds(mesh.positions)` — the meshed surface — never from
+`solid.boundingBox()`, so `bbox` assertions read 5.000 on both backends. The
+exposure is a `build()` that queries a twisted solid's box itself, which is the
+normal idiom for placing something relative to a solid and now silently disagrees
+between the Manifold preview and the OCCT STEP export.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

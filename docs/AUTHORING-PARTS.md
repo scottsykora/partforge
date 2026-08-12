@@ -1068,7 +1068,15 @@ const rod = k.screwSweep({
 ```
 
 The ends are flat z-planes, which is what a threaded rod wants; intersect a cone
-for a lead-in chamfer. For a bolt, build the head as its own solid.
+for a lead-in chamfer. For a bolt, build the head as its own solid — that is what
+**`src/parts/screw.js`** does, the worked example for this recipe: an ISO-style
+metric bolt, periodic thread plus a hex head, presets and all.
+
+Cost scales with `turns` (= `length / pitch`), and steeply: the section is
+resampled every 5° of the twist, so an M10×1.5 shank costs ~10.5k triangles per
+turn. A 30 mm shank is 20 turns and about half a second on Manifold; hundreds of
+turns is millions of triangles and minutes behind the STEP button. Bound the
+`length` and `pitch` your schema exposes accordingly.
 
 The hand-rolled equivalent, for the record: `screwSweep` is
 `k.extrude({ profile, h, twist })` with the axial profile remapped to polar

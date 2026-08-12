@@ -131,9 +131,9 @@ for free.
 | `loft` | `{rings, ruled?, closed?}` | `(rings, {ruled?,closed?})` |
 | `sweep` | `{profile, path, closed?, cornerRadius?, ruled?, smooth?}` | `(profile2D, path3D, opts?)` |
 
-`boredCylinder` and `helixSweptTube` were always options-only (no positional
-legacy form exists); they get the same unknown-key / required-key validation as
-the ops above.
+`boredCylinder`, `helixSweptTube` and `screwSweep` were always options-only (no
+positional legacy form exists); they get the same unknown-key / required-key
+validation as the ops above.
 `union(solids[])` and `toSTEP(named[])` take a single array — unchanged.
 
 ### Solid ops
@@ -187,7 +187,7 @@ above. All ops return a `Solid`.
 | `loft({rings, ruled?, closed?})` | Stack polygon cross-sections (per-ring `z`/`rotate`/`scale`, equal vertex counts) with ruled walls and capped ends. Must self-correct a fully inverted result (CW rings / descending z) to an outward solid. |
 | `sweep({profile, path, closed?, cornerRadius?, ruled?, smooth?})` | Sweep a fixed CCW profile along a polyline with a rotation-minimizing frame; sharp mitered corners, or `cornerRadius` fillets; capped ends. |
 | `helixSweptTube({pathR, profileR, pitch, turns, z0, lefthand})` | Circle of radius `profileR` swept along a helix (e.g. a rope groove). Circular profile on a frenet frame that rolls with the helix — **not for threads**; use `screwSweep`. |
-| `screwSweep({profile, pitch, turns, lefthand})` | Screw-motion sweep of an axial lathe profile `[[r, z], …]` (r ≥ 0) — threads. The profile travels to `(r·cosθ, r·sinθ, z + pitch·θ/2π)`; `h = pitch · turns`. Axial extent must not exceed `pitch` or consecutive turns interpenetrate (throws). A profile spanning exactly `pitch` is **periodic**: first and last radius must agree, and it yields a complete threaded body needing no boolean. Options-only. Parity: **within tolerance, not by construction** — both backends receive the identical densified polygon, but the mesh backend facets the twist at its own resolution while the B-rep backend builds an exact spline (`hull`'s parity class). |
+| `screwSweep({profile, pitch, turns, lefthand})` | Screw-motion sweep of an axial lathe profile `[[r, z], …]` (r ≥ 0) — threads. The profile travels to `(r·cosθ, r·sinθ, z + pitch·θ/2π)`; `h = pitch · turns`. Axial extent must not exceed `pitch` or consecutive turns interpenetrate (throws). A profile spanning exactly `pitch` is **periodic**: first and last radius must agree, and it yields a complete threaded body needing no boolean. Compound: the polar-remapped, densified section extruded with `twist = 360 · turns`, exactly as composed in `kernel-front.js`; a backend may override only for caching, never for different geometry. Options-only. Parity: **within tolerance, not by construction** — both backends receive the identical densified polygon, but the mesh backend facets the twist at its own resolution while the B-rep backend builds an exact spline (`hull`'s parity class). |
 | `union(solids[])` | Boolean union of one or more solids. |
 | `text2d(string, {size, font?, align?, valign?, lineHeight?, tracking?, kerning?})` | Outline-font text → `Shape2D`. `size` = cap height (mm). `font` = declared name / inline bytes / default. Build-time; curve-exact on OCCT, faceted on Manifold. |
 | `hull(inputs[])` | Convex hull of all inputs (each a `Shape2D`, a curve contour, or an `[[x,y],…]` point list) → a convex `Shape2D`. Backend-agnostic: a pure-JS monotone-chain hull over the inputs' sampled points (curved inputs tessellated at a fixed LOD), lifted via `shape2d` (see the parity note below). Throws on an empty input array or a degenerate (collinear/point-count < 3) hull. |
