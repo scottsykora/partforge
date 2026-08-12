@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import * as THREE from "three";
-import { captureViewsFromScene, captureCurrentFromScene, srgbEncodeInPlace } from "../src/framework/viewer.js";
+import {
+  captureViewsFromScene, captureCurrentFromScene, srgbEncodeInPlace,
+  thumbnailBackground, THUMBNAIL_BG,
+} from "../src/framework/viewer.js";
 import { CANONICAL_VIEWS } from "../src/framework/view-angles.js";
 
 // captureViewsFromScene is the pure-ish core extracted so it can run without a
@@ -179,5 +182,48 @@ describe("srgbEncodeInPlace", () => {
     for (let i = 0; i < 256; i++) data[i * 4] = i;
     srgbEncodeInPlace(data);
     for (let i = 1; i < 256; i++) expect(data[i * 4]).toBeGreaterThanOrEqual(data[(i - 1) * 4]);
+  });
+});
+
+// renderMeshPayloads — the off-loop thumbnail render behind runtime.captureView —
+// builds a THROWAWAY scene, so unlike the two captures above it inherits no
+// background from the live scene's theme. It used to set none at all, and every
+// thumbnail came back on the renderer's default opaque black. This is the whole
+// of that decision, split out because renderMeshPayloads itself needs a GL context.
+describe("thumbnailBackground", () => {
+  it("defaults to the neutral thumbnail grey", () => {
+    expect(thumbnailBackground()).toEqual(new THREE.Color(THUMBNAIL_BG));
+  });
+
+  it("is theme-independent: neither viewer background", () => {
+    // A thumbnail is baked at capture time and shown later under host chrome
+    // partforge cannot see, so following either theme would be wrong half the time.
+    expect(THUMBNAIL_BG).not.toBe(0x15181d); // THEME.dark.bg
+    expect(THUMBNAIL_BG).not.toBe(0xe9edf2); // THEME.light.bg
+  });
+
+  it("honours an explicit colour", () => {
+    expect(thumbnailBackground(0x112233)).toEqual(new THREE.Color(0x112233));
+  });
+
+  it("passes null through as no background, rather than taking the default", () => {
+    // The escape hatch back to the pre-0.52 behaviour. Only an ABSENT option
+    // (undefined) means "unset" — Scene.background wants a literal null here.
+    expect(thumbnailBackground(null)).toBe(null);
+  });
+
+  it("survives the render's colour-management round trip", () => {
+    // THREE.Color converts an sRGB hex into the LINEAR working space; the render
+    // target reads back linear 8-bit; srgbEncodeInPlace converts back. A missing
+    // encode step would land this near 38, not 107 — the muddy-capture bug that
+    // SRGB8 exists to fix. ±2 is the 8-bit LUT's own rounding.
+    const c = new THREE.Color(THUMBNAIL_BG);
+    const bytes = new Uint8ClampedArray([
+      Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255), 255,
+    ]);
+    srgbEncodeInPlace(bytes);
+    for (const [i, expected] of [(THUMBNAIL_BG >> 16) & 0xff, (THUMBNAIL_BG >> 8) & 0xff, THUMBNAIL_BG & 0xff].entries()) {
+      expect(Math.abs(bytes[i] - expected)).toBeLessThanOrEqual(2);
+    }
   });
 });

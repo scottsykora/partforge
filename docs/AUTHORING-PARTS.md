@@ -1250,9 +1250,14 @@ instead of (or in addition to) the built-in `#part` bar:
   `viewName` rendered offscreen (falling back to the resolved default view — see
   `resolveDefaultView` / `default-view.js` — when `viewName` is omitted or names a view the
   part doesn't declare). Never disturbs the active tab, the live camera, or the on-screen
-  scene; `opts` forwards to the underlying render (size, quality, angle). Resolves `null` on
-  failure rather than throwing (a build error, a part with no sub-parts in that view, a
-  disposed runtime).
+  scene; `opts` forwards to the underlying render (size, quality, angle, background).
+  Resolves `null` on failure rather than throwing (a build error, a part with no sub-parts
+  in that view, a disposed runtime). The render happens in a throwaway scene, so it takes
+  no colour from the viewer's light/dark theme: it gets a fixed neutral grey, on the
+  reasoning that a thumbnail is captured once and then displayed under host chrome
+  partforge cannot see. Pass `background` (any `THREE.Color`-compatible value) to choose
+  your own, or `background: null` for no background at all — which clears to opaque black
+  unless the embedder has set a clear colour.
 
 Pass `onViewChange(name)` to `mount()` to be told the active view: it fires once
 synchronously during mount with the initial resolved view (before `runtime.ready` settles),

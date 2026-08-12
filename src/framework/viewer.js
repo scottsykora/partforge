@@ -57,6 +57,36 @@ export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, b
   }
 }
 
+// The off-loop thumbnail capture (renderMeshPayloads, behind the handle's
+// captureView) renders a THROWAWAY scene, so it gets no background from the
+// live scene's theme — and before this constant existed it set none at all,
+// which meant every thumbnail came back on the renderer's default opaque
+// black, in light mode as much as dark. One deliberately theme-INDEPENDENT
+// colour is the right answer rather than either THEME entry below: a thumbnail
+// is baked at capture time and displayed later under host chrome this renderer
+// cannot know (partforge-cloud's card grid draws them on both). Near the
+// perceptual midpoint of THEME.light.bg / THEME.dark.bg, so it commits to
+// neither, and clear of both the part material (0x9fb4cc, lighter) and the
+// feature-edge lines (0x1c232d, much darker).
+//
+// The near-ZERO chroma is the part that looks arbitrary and isn't: the default
+// part material is blue-grey, so a blue-grey background of the same value
+// (0x6b7280 was the first try) competes with it and the shaded side of a part
+// half-disappears into the plate. A neutral grey separates by hue as well as
+// value. Judged on real captures of demo.js and hinged-box.js — if this is
+// ever retuned, retune it the same way and not by eye on the hex.
+export const THUMBNAIL_BG = 0x6e6e73;
+
+// Resolve renderMeshPayloads' `background` option to what Scene.background
+// wants. Exported for its own sake: renderMeshPayloads needs a GL context and
+// so is untestable directly, and this is the whole of the decision. `null` is
+// a real escape hatch — the pre-existing no-background behaviour, clearing to
+// the renderer's clear colour — so it is passed through rather than treated as
+// "unset"; only `undefined` (an absent option) takes the default.
+export function thumbnailBackground(background = THUMBNAIL_BG) {
+  return background === null ? null : new THREE.Color(background);
+}
+
 // Render the LIVE camera's current framing offscreen, once, at a caller-chosen
 // resolution — the showcase capture behind the runtime handle's captureCurrent.
 // Same injected-renderer split as captureViewsFromScene so it runs without a GL
@@ -646,12 +676,18 @@ export function createViewer(container, part) {
   // Offscreen render of an arbitrary mesh set (a non-active view), for thumbnails.
   // Assembles a THROWAWAY scene mirroring the live pivot convention, frames it from a
   // canonical angle, renders through the parameterized renderOffscreen, and disposes
-  // everything. Never touches the live scene, camera, subMesh, or subCache. `payloads`
-  // is the worker's [{name, positions, normals, indices, …}] array — placement is
-  // already baked into shared-frame coords, so meshes are NOT recentred.
-  function renderMeshPayloads(payloads, { angle = "iso", size = 640, quality = 0.8 } = {}) {
+  // everything. Never touches the live scene, camera, subMesh, or subCache. The scene
+  // gets THUMBNAIL_BG unless `background` says otherwise (`null` = no background, the
+  // renderer's clear colour). `payloads` is the worker's [{name, positions, normals,
+  // indices, …}] array — placement is already baked into shared-frame coords, so
+  // meshes are NOT recentred.
+  function renderMeshPayloads(payloads, { angle = "iso", size = 640, quality = 0.8, background } = {}) {
     if (disposed) return null; // same guard as captureCurrent/captureCanonicalViews — never touch a torn-down renderer
     const tmpScene = new THREE.Scene();
+    // Deliberately the throwaway scene's own background, never the live one's:
+    // this must not follow the viewer theme (see THUMBNAIL_BG) and must not
+    // reach the live-scene captures, which correctly do follow it.
+    tmpScene.background = thumbnailBackground(background);
     const tmpPivot = new THREE.Group();
     tmpPivot.rotation.x = -Math.PI / 2; // model Z (CAD up) -> vertical, same as live pivot
     tmpScene.add(tmpPivot);
