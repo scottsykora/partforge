@@ -26,6 +26,7 @@ export default defineConfig(({ command }) => ({
         bracket: "bracket.html",
         hullSweep: "hull-sweep.html",
         hingedBox: "hinged-box.html",
+        screw: "screw.html",
       },
     },
   },
