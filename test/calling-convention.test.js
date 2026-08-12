@@ -95,3 +95,8 @@ test("probe routes an options-form fillet build to occt", () => {
   const part = { defaults: {}, parts: { p: { build: (kk) => kk.box({ size: [1, 1, 1] }).fillet({ r: 0.1 }) } } };
   expect(detectBackend(part)).toBe("occt");
 });
+
+test("screwSweep is options-only and validates required keys", () => {
+  expect(() => k.screwSweep({ profile: [[4, 0], [5, 1]], pitch: 2 }))
+    .toThrow("screwSweep: turns is required");
+});

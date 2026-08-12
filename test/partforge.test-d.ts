@@ -298,6 +298,7 @@ k.loft({ rings: [{ sides: 6, radius: 30, z: 0 }, { sides: 6, radius: 22, z: 120 
 expectType<Solid>(k.sweep({ profile: circleProfile(3), path: [[0, 0, 0], [0, 0, 20], [15, 0, 20]], cornerRadius: 5 }));
 expectType<Solid>(k.revolve({ profile: [[0, 0], [10, 0], [10, 20]], degrees: 180 }));
 expectType<Solid>(k.helixSweptTube({ pathR: 20, profileR: 2, pitch: 6, turns: 4, z0: 0, lefthand: false }));
+expectType<Solid>(k.screwSweep({ profile: [[4, 0], [5, 0.5], [4, 1]], pitch: 2, turns: 3 }));
 expectType<Solid>(k.union([k.sphere({ r: 1 }), k.sphere({ r: 2 })]));
 expectType<Promise<ArrayBuffer>>(k.toSTEP([{ name: "body", solid: k.sphere({ r: 1 }) }]));
 

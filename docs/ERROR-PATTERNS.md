@@ -361,6 +361,52 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 - **Cause:** `defaults[key]` is not among the control's `options` values — often a value-type mismatch (`12` is not `"12"`).
 - **Fix:** Add the default to `options`, or change the default to one of the existing options; `npx partforge lint` errors via `select-default-not-in-options`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Rule catalog".
 
+## screw-thread-vanishes-on-occt
+
+- **Symptom:** a threaded part previews correctly but its STEP export is a plain
+  cylinder, or a valid-looking but implausibly small STEP file (~2 KB, a few
+  dozen entities, where a real thread is megabytes) that opens with no solid
+  geometry; on the OCCT backend the union of a thread with a core returns
+  exactly the core's volume, or `0`, with no error thrown.
+- **Cause:** the thread was built as a thin sub-pitch helical sliver and unioned
+  onto a core. OCCT's boolean fails on a near-self-touching swept operand and
+  silently returns the other operand — or nothing — rather than throwing.
+- **Fix:** build the thread in the **periodic** form instead — a profile spanning
+  exactly one `pitch` with equal first and last radius encloses the axis, so
+  `k.screwSweep` yields the whole threaded body with no boolean at all. See
+  [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Helical & threaded features".
+
+The hazard is specific to that sliver-riding-a-core shape, not to unions
+involving screw geometry in general: a filled periodic `screwSweep` rod
+unioned with an unrelated solid — a bolt head, say — booleans correctly. A
+measured rod (585.545) unioned with a head (804.248) returned 1324.732 —
+inside the geometrically expected range, not the bare-rod or empty-solid
+signature above. It's the thin near-self-touching sliver that OCCT's boolean
+mishandles, not screw geometry as such.
+
+## occt-bbox-too-large-on-twist
+
+- **Symptom:** `solid.boundingBox()` inside a `build()` reports a solid far larger
+  than it is — on a twisted solid (`extrude`/`prism` with `twist`, or
+  `k.screwSweep`) whose true max radius is 5, OCCT reports **7.209** where
+  Manifold reports **5.000** — so anything placed off that query lands ~44% too
+  far out in the STEP export while the preview looks right. The axial extent is
+  exact; it is the twisted directions that inflate.
+- **Cause:** OCCT derives the bounding box of a twisted B-spline surface from its
+  **control hull**, not from the surface. The control points of a twisted section
+  bow outward, so the box is a valid outer bound but a loose one. Volume and the
+  meshed surface are exact; only the bbox query is loose.
+- **Fix:** don't place geometry off `solid.boundingBox()` on a twisted solid —
+  compute the extent from the parameters that built it (they are right there in
+  `p`/`d`), or bound the twisted part with an untwisted proxy solid.
+
+**The `measure` / `verify` gate is not affected**: `src/framework/oracle/measure.js`
+takes its bbox from `bounds(mesh.positions)` — the meshed surface — never from
+`solid.boundingBox()`, so `bbox` assertions read 5.000 on both backends. The
+exposure is a `build()` that queries a twisted solid's box itself, which is the
+normal idiom for placing something relative to a solid and now silently disagrees
+between the Manifold preview and the OCCT STEP export.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

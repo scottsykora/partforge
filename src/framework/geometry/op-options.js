@@ -253,6 +253,13 @@ export const KERNEL_OP_SPECS = {
   boredCylinder:  { toArgs: passThrough("boredCylinder", ["od", "h", "bore"], ["od", "h", "bore"]) },
   helixSweptTube: { toArgs: passThrough("helixSweptTube",
     ["pathR", "profileR", "pitch", "turns", "z0", "lefthand"], ["pathR", "profileR", "pitch", "turns"]) },
+  screwSweep: {
+    toArgs: passThrough("screwSweep", ["profile", "pitch", "turns", "lefthand"], ["profile", "pitch", "turns"]),
+    check: (o) => {
+      if (!(o.pitch > 0)) throw new Error("screwSweep: pitch must be > 0");
+      if (!(o.turns > 0)) throw new Error("screwSweep: turns must be > 0");
+    },
+  },
   roundedBox:      { toArgs: roundedBoxArgs },
   roundedCylinder: { toArgs: roundedCylinderArgs },
   torus:           { toArgs: torusArgs },

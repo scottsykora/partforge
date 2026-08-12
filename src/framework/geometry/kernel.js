@@ -19,7 +19,7 @@ export const CONTRACT_VERSION = 1;
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
-  "loft", "sweep", "helixSweptTube", "union", "shape2d", "text2d", "hull", "hullChain", "toSTEP",
+  "loft", "sweep", "helixSweptTube", "screwSweep", "union", "shape2d", "text2d", "hull", "hullChain", "toSTEP",
   "roundedCylinder", "torus", "roundedBox",
 ];
 
@@ -110,6 +110,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(o:{profile:number[][],path:number[][],closed?:boolean,cornerRadius?:number,ruled?:boolean,smooth?:boolean}) => Solid} sweep   sweep a 2-D profile along a 3-D polyline; legacy (profile,path,opts) accepted until v2
  * @property {(o:{profile:number[][],degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z; legacy (points,opts) accepted until v2
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
+ * @property {(o:{profile:number[][],pitch:number,turns:number,lefthand?:boolean}) => Solid} screwSweep   screw-motion sweep of an axial [[r,z]] profile — threads; options-only
  * @property {(solids:Solid[]) => Solid} union
  * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|Shape2D) => Shape2D} shape2d   2-D boolean value (both backends: Manifold wraps a CrossSection, OCCT a replicad Drawing)
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hull   convex hull of all inputs → a convex Shape2D (faceted; pure-JS monotone chain)
