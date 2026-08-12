@@ -63,5 +63,9 @@ test("a head landing FLUSH on the shank top unions exactly, coincident face and 
     [headR * Math.cos((Math.PI / 3) * i), headR * Math.sin((Math.PI / 3) * i)]);
   const head = k.prism({ points: hexPoints, h: 6.4 }).at([0, 0, PITCH * TURNS]);
   const rodVol = rod.volume(), headVol = head.volume();
-  expect(k.union([rod, head]).volume()).toBeCloseTo(rodVol + headVol, 6);
+  // Precision 4 (1e-4 mm³ on ~2187 mm³), not 6: OCCT integrates volume over re-split
+  // B-spline faces and does not guarantee 1e-10 relative agreement across builds or
+  // platforms. This still fails decisively on what the test is for — a dropped
+  // operand or a swallowed coincident face move the total by hundreds of mm³.
+  expect(k.union([rod, head]).volume()).toBeCloseTo(rodVol + headVol, 4);
 }, 60000);
