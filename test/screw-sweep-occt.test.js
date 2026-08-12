@@ -51,3 +51,17 @@ test("a rod unioned with a head keeps both volumes", () => {
   expect(bolt.volume()).toBeGreaterThan(rodVol + headVol * 0.8);
   expect(bolt.volume()).toBeLessThanOrEqual(rodVol + headVol);
 }, 60000);
+
+test("a head landing FLUSH on the shank top unions exactly, coincident face and all", () => {
+  // What the reference part actually does — .at([0, 0, length]) puts the head's
+  // base exactly on the rod's top plane. A coincident face is its own OCCT
+  // boolean hazard, and STEP export is the only thing that routes a part here,
+  // so nothing else would catch it. Disjoint solids: volumes must simply add.
+  const rod = k.screwSweep({ profile: ISO, pitch: PITCH, turns: TURNS });
+  const headR = 17 / Math.sqrt(3);   // hex across flats 17 → circumradius
+  const hexPoints = Array.from({ length: 6 }, (_, i) =>
+    [headR * Math.cos((Math.PI / 3) * i), headR * Math.sin((Math.PI / 3) * i)]);
+  const head = k.prism({ points: hexPoints, h: 6.4 }).at([0, 0, PITCH * TURNS]);
+  const rodVol = rod.volume(), headVol = head.volume();
+  expect(k.union([rod, head]).volume()).toBeCloseTo(rodVol + headVol, 6);
+}, 60000);
