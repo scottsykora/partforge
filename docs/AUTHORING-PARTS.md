@@ -312,7 +312,8 @@ future contract v2 — but are not shown here; see `docs/KERNEL-CONTRACT.md`
 | `k.roundedCylinder({ r\|d, h, center?, round })` | cylinder with rounded rims — `round` = number (both) or `{ top?, bottom? }`; `round: r` with `top+bottom = h` gives a sphere (capsule when `h > 2r`); one lathe revolve, curve-exact in STEP |
 | `k.torus({ rMajor, rMinor })` | torus centered at the origin (tube centerline in z=0); `0 < rMinor < rMajor` |
 | `k.revolve({ profile, degrees? })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
-| `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove) |
+| `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove). **Not for threads** — the profile is always circular and rides a frenet frame that rolls with the helix, tilting a tooth off-axis. For threads use `k.screwSweep` |
+| `k.screwSweep({ profile, pitch, turns, lefthand? })` | screw-motion sweep of an **axial** lathe profile `[[r, z], …]` (same convention as `k.revolve`) — threads, worms, helical ridges. `h = pitch · turns`. The profile's axial extent must not exceed `pitch`; a profile spanning exactly `pitch` must be **periodic** (first radius == last radius) and yields a complete threaded body with no boolean. Both backends |
 | `k.union(solids[])` | boolean union |
 
 **`loft` rings** — each ring is `{ polygon:[[x,y],…] | sides+radius, z, rotate?, scale? }`
@@ -1035,6 +1036,47 @@ real TORUS faces in STEP).
 const hole = k.cylinder({ r: 2, h: 20 }).translate([20, 0, 0]);
 body = body.cutAll(circularPattern(hole, 8, { axis: "Z" }));   // 8 bolt holes on a 40mm circle
 ```
+
+**Helical & threaded features** (screws, threads, bolts, worms, helical ridges):
+
+Use `k.screwSweep({ profile, pitch, turns })`. The profile is an **axial**
+`[[r, z]]` contour — the shape you would see slicing the thread down its axis —
+exactly `k.revolve`'s convention, with an axial rise added.
+
+The strongly preferred form is **periodic**: span exactly one `pitch`, start and
+end at the same radius. That makes the cross-section enclose the axis, so one op
+gives you the whole threaded body — no union with a core cylinder, which is both
+faster and avoids a boolean the B-rep backend handles badly
+([screw-thread-vanishes-on-occt](ERROR-PATTERNS.md#screw-thread-vanishes-on-occt)).
+
+```js
+// an ISO-ish M10x1.5 external thread: 60° flanks, crest flat P/8, root flat P/4
+const pitch = 1.5, majorR = 5;
+const rootR = majorR - (5 / 8) * (Math.sqrt(3) / 2) * pitch;
+const crest = pitch / 8, root = pitch / 4;
+const rise = (pitch - crest - root) / 2;
+const rod = k.screwSweep({
+  profile: [
+    [rootR,  0],
+    [rootR,  root],                    // root flat
+    [majorR, root + rise],             // up the flank
+    [majorR, root + rise + crest],     // crest flat
+    [rootR,  pitch],                   // down the flank, back to the start radius
+  ],
+  pitch, turns: 6,
+});
+```
+
+The ends are flat z-planes, which is what a threaded rod wants; intersect a cone
+for a lead-in chamfer. For a bolt, build the head as its own solid.
+
+The hand-rolled equivalent, for the record: `screwSweep` is
+`k.extrude({ profile, h, twist })` with the axial profile remapped to polar
+(`ψ = −360·z/pitch`) and `twist = 360 · turns` — one full turn of twist per pitch
+of height *is* screw motion. The op exists because that identity is easy to
+want and hard to find, and because the remap must be densified (see
+`geometry/screw-profile.js`) or the chords between profile points cut deep into
+the tooth.
 
 ## 2-D booleans
 
