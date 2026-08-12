@@ -364,15 +364,17 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 ## screw-thread-vanishes-on-occt
 
 - **Symptom:** a threaded part previews correctly but its STEP export is a plain
-  cylinder or an empty file; on the OCCT backend the union of a thread with a core
-  returns exactly the core's volume, or `0`, with no error thrown.
+  cylinder, or a valid-looking but implausibly small STEP file (~2 KB, a few
+  dozen entities, where a real thread is megabytes) that opens with no solid
+  geometry; on the OCCT backend the union of a thread with a core returns
+  exactly the core's volume, or `0`, with no error thrown.
 - **Cause:** the thread was built as a thin sub-pitch helical sliver and unioned
   onto a core. OCCT's boolean fails on a near-self-touching swept operand and
   silently returns the other operand — or nothing — rather than throwing.
 - **Fix:** build the thread in the **periodic** form instead — a profile spanning
   exactly one `pitch` with equal first and last radius encloses the axis, so
   `k.screwSweep` yields the whole threaded body with no boolean at all. See
-  [AUTHORING-PARTS.md](AUTHORING-PARTS.md) "Helical & threaded features".
+  [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Helical & threaded features".
 
 The hazard is specific to that sliver-riding-a-core shape, not to unions
 involving screw geometry in general: a filled periodic `screwSweep` rod
