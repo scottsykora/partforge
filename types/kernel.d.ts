@@ -298,6 +298,16 @@ export interface HelixSweptTubeOptions {
   lefthand: boolean;
 }
 
+/** `k.screwSweep` — an axial lathe profile `[[r, z], …]` swept by screw motion. */
+export interface ScrewSweepOptions {
+  /** Closed axial contour; axial extent must not exceed `pitch`. */
+  profile: number[][];
+  /** Axial rise per turn, mm. */
+  pitch: number;
+  turns: number;
+  lefthand?: boolean;
+}
+
 export interface RoundedCylinderOptions {
   r?: number;
   d?: number;
@@ -376,6 +386,8 @@ export interface GeometryKernel {
   /** Sweep a 2-D profile along a 3-D polyline. */
   sweep(o: SweepOptions): Solid;
   helixSweptTube(o: HelixSweptTubeOptions): Solid;
+  /** Sweep an axial lathe profile by screw motion — threads. */
+  screwSweep(o: ScrewSweepOptions): Solid;
   /** Rim round-overs via one lathe revolve; curve-exact in STEP. */
   roundedCylinder(o: RoundedCylinderOptions): Solid;
   torus(o: TorusOptions): Solid;

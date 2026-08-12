@@ -89,7 +89,7 @@ test("revolve/loft/sweep normalize", () => {
 
 test("KERNEL_OP_SPECS carries the semantic checks (both calling forms)", () => {
   expect(Object.keys(KERNEL_OP_SPECS).sort()).toEqual(
-    ["boredCylinder", "box", "cylinder", "extrude", "helixSweptTube", "loft", "prism", "revolve", "roundedBox", "roundedCylinder", "sphere", "sweep", "torus"]);
+    ["boredCylinder", "box", "cylinder", "extrude", "helixSweptTube", "loft", "prism", "revolve", "roundedBox", "roundedCylinder", "screwSweep", "sphere", "sweep", "torus"]);
   expect(() => KERNEL_OP_SPECS.prism.check(TRI, 5, { scaleTop: -1 })).toThrow("prism: scaleTop must be ≥ 0");
   expect(() => KERNEL_OP_SPECS.extrude.check(TRI, 5, { scaleTop: -1 })).toThrow("extrude: scaleTop must be ≥ 0");
   expect(() => KERNEL_OP_SPECS.revolve.check([[-1, 0]])).toThrow("revolve: profile radius must be ≥ 0");
@@ -108,6 +108,16 @@ test("options-only compound ops validate keys and pass the object through", () =
     .toThrow("helixSweptTube: turns is required");
   expect(() => KERNEL_OP_SPECS.helixSweptTube.toArgs({ ...helix, radius: 2 }))
     .toThrow('helixSweptTube: unknown option "radius"');
+  const screw = { profile: [[4, 0], [5, 0.5], [4, 1]], pitch: 2, turns: 3, lefthand: true };
+  expect(KERNEL_OP_SPECS.screwSweep.toArgs(screw)).toEqual([screw]);
+  expect(() => KERNEL_OP_SPECS.screwSweep.toArgs({ profile: [[4, 0]], pitch: 2 }))
+    .toThrow("screwSweep: turns is required");
+  expect(() => KERNEL_OP_SPECS.screwSweep.toArgs({ ...screw, chordTolerance: 0.02 }))
+    .toThrow('screwSweep: unknown option "chordTolerance"');
+  expect(() => KERNEL_OP_SPECS.screwSweep.check({ ...screw, pitch: 0 }))
+    .toThrow("screwSweep: pitch must be > 0");
+  expect(() => KERNEL_OP_SPECS.screwSweep.check({ ...screw, turns: 0 }))
+    .toThrow("screwSweep: turns must be > 0");
 });
 
 test("box: center mixed with min/max gets its own message", () => {

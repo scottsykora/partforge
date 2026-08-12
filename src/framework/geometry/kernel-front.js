@@ -29,6 +29,7 @@ import { beveledExtrude } from "./rim-bevel.js";
 import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
 import { convexHull, hullPoints } from "./hull.js";
 import { latheRoundedRect, torusContour } from "./rounded-solids.js";
+import { screwCrossSection } from "./screw-profile.js";
 
 export function finishKernel(k) {
   // Compound default: bored-through cylinder (tool overshoots 2 mm each end for
@@ -46,6 +47,18 @@ export function finishKernel(k) {
   };
   k.torus ??= ({ rMajor, rMinor }) =>
     k.revolve({ profile: k.shape2d(torusContour(rMajor, rMinor)) });
+
+  // Compound default: a screw-motion sweep of an axial [[r, z]] profile. Exactly
+  // k.extrude with a polar-remapped section and one full turn of twist per pitch
+  // (see screw-profile.js for why that identity holds, and why the profile must be
+  // densified first). No backend override: both backends twist natively, so this
+  // is one implementation and STEP gets a real twisted B-rep rather than a loft.
+  k.screwSweep ??= ({ profile, pitch, turns, lefthand = false }) =>
+    k.extrude({
+      profile: screwCrossSection(profile, pitch, { lefthand }),
+      h: pitch * turns,
+      twist: (lefthand ? -360 : 360) * turns,
+    });
 
   for (const [op, { toArgs, check }] of Object.entries(KERNEL_OP_SPECS)) {
     const raw = k[op];
