@@ -263,3 +263,15 @@ hover pass is seeded with the base pass's lane occupancy (`laneCounts`) so a
 hovered dim takes the same lane it will keep once pinned — clicking never
 moves it. The
 v1-style per-label collision solver stays explicitly out of scope.
+
+**2026-08-13 — label interaction polish.** Live use showed the param-pill
+labels were effectively unclickable: labels float off the geometry, so the
+pointer travelling from a feature to its label cleared the hover — the label
+vanished under the approaching cursor. Three changes: (1) hover PARKS while
+the pointer is over any dim label (the move handler checks `pickLabel` before
+re-raycasting), so labels survive their own approach; (2) the canvas shows a
+pointer cursor over labels — the click affordance; (3) clicking a pinned
+LINKED label now reveals/flashes its rail control and keeps the pin (it is a
+button to the control it names), superseding §Interaction deltas' unpin-on-
+label-click for linked labels only; unlinked pinned labels keep the toggle,
+and unpinning a linked dim stays on re-clicking its geometry or Clear.

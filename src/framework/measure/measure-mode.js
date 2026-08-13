@@ -394,6 +394,16 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
       const p = pendingMove;
       pendingMove = null;
       if (!enabled || detached || !p || suppressed) return;
+      // A pointer over any dim label parks the hover state: labels usually
+      // float OFF the geometry, so re-raycasting here would clear the hover
+      // (and its label) out from under a cursor travelling toward it — the
+      // label must survive its own approach to be clickable. The pointer
+      // cursor is the click affordance a canvas can give.
+      if (scene?.pickLabel(p.x, p.y)) {
+        dom.style.cursor = "pointer";
+        return;
+      }
+      dom.style.cursor = "";
       const hit = raycastViewer(viewer, p.x, p.y);
       if (hit) {
         hover = hitToHover(hit);
@@ -405,7 +415,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
       rebuild();
     });
   }
-  const onLeave = () => { hover = null; highlight?.clear(); rebuild(); };
+  const onLeave = () => { hover = null; highlight?.clear(); dom.style.cursor = ""; rebuild(); };
 
   function togglePin(key, paramName) {
     const { view } = getContext();
@@ -428,6 +438,16 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
         return;
       }
       const item = lastItems.find((i) => i.id === labelId);
+      // A pinned LINKED label is a button to its rail control — clicking it
+      // reveals/flashes the control and keeps the pin (the pill advertises
+      // "this value is `height`"; unpinning on that click read as breakage).
+      // Unpinning stays on re-clicking the geometry, or Clear. Unlinked
+      // pinned labels keep the v1 toggle so single pins remain removable
+      // from the drawing itself.
+      if (item?.paramName) {
+        revealParam?.(item.paramName);
+        return;
+      }
       if (item?._key) togglePin(item._key, null); // toggling off: no reveal
       return;
     }
@@ -469,6 +489,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
       lastBounds = null;
       baseCache.key = null;
       baseCache.drawings = [];
+      dom.style.cursor = "";
     }
     notifyMode();
   }

@@ -267,34 +267,83 @@ test("drag does not pin", () => {
   mode.detach();
 });
 
-// Regression (carried over from the chip-click case): a pinned dimension is
-// un-pinned by clicking its LABEL, resolved by the structured item id carried
-// on the label mesh — never by parsing the rendered dim text, which can itself
-// contain colons when a Solid.label() does.
-test("clicking a pinned dim's label resolves it by item id and unpins", () => {
-  // Half-labeled plate: the pinned feature covers only one triangle, so one of
-  // its dim labels lands over UNLABELED geometry. A click there that fell
-  // through to the raycast would pin the sub-part bbox (pinCount 2) instead of
-  // un-pinning — which is what makes this test see the label-pick path.
-  const { viewer, mode, dimGroup } = setup({ mesh: plateMesh({ halfLabeled: true }) });
-  mode.setEnabled(true);
-  clickAt(viewer.domElement, 64.1, 55.6); // inside the labeled triangle
-  expect(mode.pinCount()).toBe(1);
-
+// Screen coordinates of a pinned/hover label that floats over geometry with no
+// feature (or none at all) — the spot where only the label-pick path can
+// resolve the click; a raycast fallthrough would pin the sub-part bbox.
+function offFeatureLabelTarget(viewer, dimGroup, prefix) {
   viewer.frame(); // labels are positioned by scene.tick(), not at build time
   viewer.__parts.updateMatrixWorld(true);
   const screenOf = (o) => {
     const p = o.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
     return { x: ((p.x + 1) / 2) * 100, y: ((1 - p.y) / 2) * 100 };
   };
-  const target = dimGroup().children
-    .filter((c) => c.userData.pfDimItemId?.startsWith("pin:"))
+  return dimGroup().children
+    .filter((c) => c.userData.pfDimItemId?.startsWith(prefix))
     .map(screenOf)
     .find(({ x, y }) => raycastViewer(viewer, x, y)?.feature == null);
+}
+
+// Regression (carried over from the chip-click case): a pinned dimension's
+// label resolves by the structured item id carried on the label mesh — never
+// by parsing the rendered dim text (which can itself contain colons when a
+// Solid.label() does) and never by falling through to the geometry raycast.
+// A LINKED pinned label acts as a button to its rail control: reveal, keep
+// the pin.
+test("clicking a pinned linked label reveals its param and keeps the pin", () => {
+  // Half-labeled plate: the pinned feature covers only one triangle, so one of
+  // its dim labels lands over UNLABELED geometry. A click there that fell
+  // through to the raycast would pin the sub-part bbox (pinCount 2) — which is
+  // what makes this test see the label-pick path.
+  const { viewer, mode, dimGroup, revealParam } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+  mode.setEnabled(true);
+  clickAt(viewer.domElement, 64.1, 55.6); // inside the labeled triangle
+  expect(mode.pinCount()).toBe(1);
+  revealParam.mockClear(); // pinning revealed once; the label click must again
+
+  const target = offFeatureLabelTarget(viewer, dimGroup, "pin:");
+  expect(target).toBeDefined();
+  clickAt(viewer.domElement, target.x, target.y);
+
+  expect(revealParam).toHaveBeenCalledWith("plate_w");
+  expect(mode.pinCount()).toBe(1); // still pinned — no toggle, no bbox fallthrough
+  mode.detach();
+});
+
+test("clicking an UNLINKED pinned label unpins it", () => {
+  const { viewer, mode, dimGroup, ctx } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+  ctx.params.plate_w = 999; // nothing matches any measured value → no link
+  mode.setEnabled(true);
+  clickAt(viewer.domElement, 64.1, 55.6);
+  expect(mode.pinCount()).toBe(1);
+
+  const target = offFeatureLabelTarget(viewer, dimGroup, "pin:");
   expect(target).toBeDefined();
   clickAt(viewer.domElement, target.x, target.y);
 
   expect(mode.pinCount()).toBe(0);
+  mode.detach();
+});
+
+// The label must survive its own approach: labels usually float OFF the
+// geometry, so the pointer travelling from the feature to its label leaves
+// the mesh — without parking, the hover (and the label under the cursor)
+// would clear before it could ever be clicked.
+test("hover parks while the pointer is over a dim label (and shows a pointer cursor)", () => {
+  const { viewer, mode, dimGroup, hasHover } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+  mode.setEnabled(true);
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 64.1, clientY: 55.6 }));
+  expect(hasHover()).toBe(true);
+
+  const target = offFeatureLabelTarget(viewer, dimGroup, "hover");
+  expect(target).toBeDefined();
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: target.x, clientY: target.y }));
+  expect(hasHover()).toBe(true); // parked, not cleared
+  expect(viewer.domElement.style.cursor).toBe("pointer");
+
+  // moving to empty space (no label, no geometry) clears hover and cursor
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 2, clientY: 2 }));
+  expect(hasHover()).toBe(false);
+  expect(viewer.domElement.style.cursor).toBe("");
   mode.detach();
 });
 
