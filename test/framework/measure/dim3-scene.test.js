@@ -3,7 +3,8 @@ import { describe, it, expect, vi } from "vitest";
 import * as THREE from "three";
 import {
   createDimScene, DIM_THEME, RENDER_ORDER_DIMS, RENDER_ORDER_LABELS,
-  labelWorldHeight, LABEL_SCREEN_PX, ARROW_SCREEN_PX, OVERSHOOT_SCREEN_PX,
+  worldPerPx, labelWorldHeight, LABEL_SCREEN_PX, ARROW_SCREEN_PX,
+  OVERSHOOT_SCREEN_PX, GAP_SCREEN_PX, STANDOFF_SCREEN_PX, STAGGER_SCREEN_PX,
 } from "../../../src/framework/measure/dim3-scene.js";
 
 function fakeViewer() {
@@ -37,13 +38,20 @@ const fakePaint = ({ text }) => {
   return c;
 };
 
+// One parametric linear dim: measures X (0..10) on a part edge at y = 2,
+// extending -Y to its dim line.
 const DRAWING = {
   itemId: "overall", tier: "static", pinned: false,
-  segments: [0, 0, 0, 10, 0, 0],
-  arrows: [{ tip: [0, 0, 0], inward: [1, 0, 0], perp: [0, 1, 0] }],
-  tails: [{ origin: [10, 0, 0], dir: [1, 0, 0] }],
-  labels: [{ text: "10.00 mm", param: null, center: [5, -2, 0], x: [1, 0, 0], y: [0, 1, 0], h: 4 }],
+  dims: [{
+    pA: [0, 2, 0], pB: [10, 2, 0],
+    baseA: [0, 0, 0], baseB: [10, 0, 0],
+    ext: [0, -1, 0], dir: [1, 0, 0], lane: 0, standoffScale: 1,
+    label: { text: "10.00 mm", param: null, x: [1, 0, 0], y: [0, 1, 0] },
+  }],
+  diams: [], leaders: [],
 };
+
+const wppOf = (viewer) => worldPerPx(viewer.camera.position.length(), viewer.camera.fov, 600);
 
 describe("createDimScene", () => {
   it("parents a group under the parts group and registers capture hiding", () => {
@@ -54,12 +62,12 @@ describe("createDimScene", () => {
     expect(viewer.registerCanonicalCaptureHidden).toHaveBeenCalledWith(scene.group);
   });
 
-  it("builds lines, arrow fills and a label with the right render flags", () => {
+  it("builds line, arrows and label with the right render flags", () => {
     const viewer = fakeViewer();
     const scene = createDimScene(viewer, { paintLabel: fakePaint });
     scene.update([DRAWING]);
     const kids = scene.group.children;
-    expect(kids.length).toBe(4); // lines + 1 arrow + 1 tail + 1 label
+    expect(kids.length).toBe(4); // 1 line (ext+dim+tails) + 2 arrows + 1 label
     for (const k of kids) {
       expect(k.material.depthTest).toBe(false);
       expect(k.renderOrder === RENDER_ORDER_DIMS || k.renderOrder === RENDER_ORDER_LABELS).toBe(true);
@@ -78,67 +86,81 @@ describe("createDimScene", () => {
     expect(scene.group.children.length).toBe(0);
   });
 
-  it("tick sizes arrowheads and overshoot tails screen-constant", () => {
+  it("tick assembles the dim from screen-constant distances", () => {
     const viewer = fakeViewer();
     const scene = createDimScene(viewer, { paintLabel: fakePaint });
     scene.update([DRAWING]);
     viewer.__parts.updateMatrixWorld(true);
     scene.tick();
-    const dist = viewer.camera.position.length();
-    const worldPerPx = labelWorldHeight(dist, viewer.camera.fov, 600) / LABEL_SCREEN_PX;
-    const arrow = scene.group.children.find((k) => k.isMesh && !k.userData.pfDimItemId && k.geometry.type === "BufferGeometry");
-    // both the segments run and the tail are LineSegments2 — the tail is the
-    // one positioned at its dim-line end, the segments run stays at the origin
-    const tail = scene.group.children.find((k) => k.isLineSegments2 && k.position.x === 10);
-    expect(arrow.scale.x).toBeCloseTo(ARROW_SCREEN_PX * worldPerPx, 6);
-    expect(tail.scale.x).toBeCloseTo(OVERSHOOT_SCREEN_PX * worldPerPx, 6);
-    // the arrow's origin stays glued to its tip; scaling grows it away from it
-    expect(arrow.position.toArray()).toEqual([0, 0, 0]);
-    expect(tail.position.toArray()).toEqual([10, 0, 0]);
-    // zoom in: decorations shrink in world units in lockstep
-    viewer.camera.position.set(0, 0, dist / 2);
+    const wpp = wppOf(viewer);
+    const off = STANDOFF_SCREEN_PX * wpp;
+    const gap = GAP_SCREEN_PX * wpp;
+    const tail = OVERSHOOT_SCREEN_PX * wpp;
+    const hStar = LABEL_SCREEN_PX * wpp;
+
+    const line = scene.group.children.find((k) => k.isLineSegments2);
+    const arr = line.geometry.attributes.instanceStart.data.array;
+    // extension A runs from pA + û·gap to dA = baseA + ext·off (û = -Y here)
+    expect(arr[0]).toBeCloseTo(0, 6);
+    expect(arr[1]).toBeCloseTo(2 - gap, 6);
+    expect(arr[4]).toBeCloseTo(-off, 6);
+    // dim line spans dA..dB at the standoff
+    expect(arr[13]).toBeCloseTo(-off, 6);
+    expect(arr[16]).toBeCloseTo(-off, 6);
+    // tail A overshoots past the dim line along û (segment 3: floats 18-23)
+    expect(arr[22]).toBeCloseTo(-off - tail, 6);
+
+    const arrows = scene.group.children.filter((k) => !k.isLineSegments2 && !k.userData.pfDimItemId);
+    expect(arrows.length).toBe(2);
+    for (const a of arrows) expect(a.scale.x).toBeCloseTo(ARROW_SCREEN_PX * wpp, 6);
+    expect(arrows[0].position.y).toBeCloseTo(-off, 6); // riding the dim line
+
+    const label = scene.group.children.find((k) => k.userData.pfDimItemId);
+    expect(label.scale.x).toBeCloseTo(hStar, 6); // unit-height plane → scale IS the height
+    expect(label.position.x).toBeCloseTo(5, 6);
+    expect(label.position.y).toBeCloseTo(-off - 0.85 * hStar, 6);
+
+    // zoom to half the distance: every display size halves in world units
+    viewer.camera.position.set(0, 0, viewer.camera.position.length() / 2);
     viewer.camera.updateMatrixWorld();
     scene.tick();
-    expect(arrow.scale.x).toBeCloseTo((ARROW_SCREEN_PX * worldPerPx) / 2, 6);
+    expect(line.geometry.attributes.instanceStart.data.array[4]).toBeCloseTo(-off / 2, 6);
+    expect(label.scale.x).toBeCloseTo(hStar / 2, 6);
   });
 
-  it("tick sizes labels screen-constant: one shared world height, tracking zoom", () => {
+  it("staggers lanes by STAGGER_SCREEN_PX and scales feature standoff", () => {
+    const viewer = fakeViewer();
+    const scene = createDimScene(viewer, { paintLabel: fakePaint });
+    const lane1 = {
+      ...DRAWING, itemId: "pin:x", tier: "pinned",
+      dims: [{ ...DRAWING.dims[0], lane: 1, standoffScale: 0.55,
+        label: { text: "5.00 mm", param: null, x: [1, 0, 0], y: [0, 1, 0] } }],
+    };
+    scene.update([DRAWING, lane1]);
+    viewer.__parts.updateMatrixWorld(true);
+    scene.tick();
+    const wpp = wppOf(viewer);
+    const lines = scene.group.children.filter((k) => k.isLineSegments2);
+    const y0 = lines[0].geometry.attributes.instanceStart.data.array[4];
+    const y1 = lines[1].geometry.attributes.instanceStart.data.array[4];
+    expect(y0).toBeCloseTo(-STANDOFF_SCREEN_PX * wpp, 6);
+    expect(y1).toBeCloseTo(-(STANDOFF_SCREEN_PX * 0.55 + STAGGER_SCREEN_PX) * wpp, 6);
+  });
+
+  it("sizes every label to one shared screen-constant height", () => {
     const viewer = fakeViewer();
     const scene = createDimScene(viewer, { paintLabel: fakePaint });
     const second = {
       ...DRAWING, itemId: "pin:x", tier: "pinned",
-      labels: [{ text: "5.00 mm", param: null, center: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], h: 8 }],
+      dims: [{ ...DRAWING.dims[0], label: { text: "5.00 mm", param: null, x: [1, 0, 0], y: [0, 1, 0] } }],
     };
     scene.update([DRAWING, second]);
     viewer.__parts.updateMatrixWorld(true);
     scene.tick();
     const [a, b] = scene.group.children.filter((k) => k.userData.pfDimItemId);
-    const dist = viewer.camera.position.length(); // dim group sits at the world origin
-    const hStar = labelWorldHeight(dist, viewer.camera.fov, 600);
-    expect(hStar).toBeCloseTo((LABEL_SCREEN_PX * 2 * dist * Math.tan((viewer.camera.fov * Math.PI) / 360)) / 600, 9);
-    // both labels display at the SAME world height despite different base h
-    expect(a.scale.x * 4).toBeCloseTo(hStar, 6);
-    expect(b.scale.x * 8).toBeCloseTo(hStar, 6);
-    // zoom to half the distance: world height halves, so screen size holds
-    viewer.camera.position.set(0, 0, dist / 2);
-    viewer.camera.updateMatrixWorld();
-    scene.tick();
-    expect(a.scale.x * 4).toBeCloseTo(hStar / 2, 6);
-  });
-
-  it("tick keeps a resized label 0.85·displayHeight outside its dim line", () => {
-    const viewer = fakeViewer();
-    const scene = createDimScene(viewer, { paintLabel: fakePaint });
-    scene.update([DRAWING]);
-    viewer.__parts.updateMatrixWorld(true);
-    scene.tick();
-    const label = scene.group.children.find((k) => k.userData.pfDimItemId);
     const hStar = labelWorldHeight(viewer.camera.position.length(), viewer.camera.fov, 600);
-    // placement: center [5,-2,0], y [0,1,0], h 4 → on-line anchor [5, 1.4, 0];
-    // display position slides along -y by 0.85·hStar from that anchor
-    expect(label.position.x).toBeCloseTo(5, 6);
-    expect(label.position.z).toBeCloseTo(0, 6);
-    expect(label.position.y).toBeCloseTo(1.4 - 0.85 * hStar, 6);
+    expect(a.scale.x).toBeCloseTo(hStar, 6);
+    expect(b.scale.x).toBeCloseTo(hStar, 6);
   });
 
   it("tick mirrors a label viewed from behind (and holds within the deadband)", () => {
@@ -160,7 +182,9 @@ describe("createDimScene", () => {
     const scene = createDimScene(viewer, { paintLabel: fakePaint });
     scene.update([DRAWING]);
     viewer.__parts.updateMatrixWorld(true);
-    viewer.camera.lookAt(5, -2, 0);
+    scene.tick(); // positions the label
+    const label = scene.group.children.find((k) => k.userData.pfDimItemId);
+    viewer.camera.lookAt(label.position);
     viewer.camera.updateMatrixWorld();
     // center of the viewport now aims at the label center
     expect(scene.pickLabel(400, 300)).toBe("overall");
@@ -175,8 +199,8 @@ describe("createDimScene", () => {
     const before = paint.mock.calls.length;
     scene.setTheme("light");
     expect(paint.mock.calls.length).toBeGreaterThan(before);
-    const lines = scene.group.children.find((k) => k.isLineSegments2 || k.type === "LineSegments2" || k.material.isLineMaterial);
-    expect(lines.material.color.getHex()).toBe(DIM_THEME.light.static);
+    const line = scene.group.children.find((k) => k.isLineSegments2);
+    expect(line.material.color.getHex()).toBe(DIM_THEME.light.static);
   });
 
   it("dispose detaches, unregisters and disposes", () => {
@@ -197,11 +221,13 @@ describe("createDimScene", () => {
 
     const mkDrawing = (itemId, texts) => ({
       itemId, tier: "static", pinned: false,
-      segments: [0, 0, 0, 10, 0, 0],
-      triangles: [],
-      labels: texts.map((text, i) => ({
-        text, param: null, center: [i, 0, 0], x: [1, 0, 0], y: [0, 1, 0], h: 4,
+      dims: texts.map((text, i) => ({
+        pA: [i, 2, 0], pB: [i + 1, 2, 0],
+        baseA: [i, 0, 0], baseB: [i + 1, 0, 0],
+        ext: [0, -1, 0], dir: [1, 0, 0], lane: 0, standoffScale: 1,
+        label: { text, param: null, x: [1, 0, 0], y: [0, 1, 0] },
       })),
+      diams: [], leaders: [],
     });
 
     // Update 1: "A" and "C" (twice). A repeated text within one update should

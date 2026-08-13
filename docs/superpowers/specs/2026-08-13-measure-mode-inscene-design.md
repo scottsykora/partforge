@@ -241,3 +241,22 @@ dimension line now runs tip to tip — the solid arrowheads draw over it, so no
 inset needs recomputing when arrows resize. This supersedes the locked
 `arrowLen`/`ARROW_HALF_W`/`OVERSHOOT` mm constants in §Visual language
 (`GAP` stays mm-based: it relates to the model surface, not the screen).
+
+**2026-08-13 — parametric assembly: every display distance screen-constant;
+duplicate suppression; stagger lanes.** Extended to the remaining distances —
+standoff (`STANDOFF_SCREEN_PX` 40, × 0.55 for feature dims that hug their
+feature), the surface gap (`GAP_SCREEN_PX` 4, superseding the mm `GAP` after
+it proved ~38 px on an 8 mm part), and the R-leader (`LEADER_SCREEN_PX` 36).
+Architecture shift: `dim3-place` now emits PARAMETRIC records (surface
+anchors, zero-standoff dim-line base points, directions) and does discovery
+only; `dim3-scene` assembles the final geometry every frame from the
+screen-derived offsets (writing line positions in place — zoom remains fully
+rebuild-free, and per-frame cost stays trivial at these object counts). Two
+overlap fixes ride the same change: (1) duplicate-measurement suppression —
+equal-extent axes within a bbox item draw once, and items measuring the same
+thing (a hovered sub-part over the overall bounds, a hover over its own pin)
+draw once, later item winning since it carries the param pill; the
+orchestrator's hover pass passes the cached base items' `specSig`s as a
+suppression set; (2) stagger lanes — dims extending the same outward
+direction stack at `STAGGER_SCREEN_PX` (26) increments, drafting-style. The
+v1-style per-label collision solver stays explicitly out of scope.

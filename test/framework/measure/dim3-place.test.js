@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import * as THREE from "three";
 import {
-  evaluateChoices, choicesEqual, placeDims, extremeVertex,
-  GAP, HYSTERESIS, FLIP_DEADBAND_DEG, standoff, textHeight,
+  evaluateChoices, choicesEqual, placeDims, extremeVertex, specSig,
+  HYSTERESIS, FLIP_DEADBAND_DEG, standoffNominal,
 } from "../../../src/framework/measure/dim3-place.js";
 import { bboxSpec } from "../../../src/framework/measure/feature-dims.js";
 
@@ -117,91 +117,79 @@ describe("placeDims — bbox", () => {
     }, choices)[0];
   }
 
-  it("emits three linear dims with drafting anatomy", () => {
+  it("emits three parametric linear dims", () => {
     const d = place();
-    // 3 axes × 3 segments (2 extension + 1 dim line), 6 xyz numbers each
-    expect(d.segments.length).toBe(3 * 3 * 6);
-    // 3 axes × 2 screen-constant arrow decorations / overshoot tails
-    expect(d.arrows.length).toBe(3 * 2);
-    expect(d.tails.length).toBe(3 * 2);
-    expect(d.labels.map((l) => l.text).sort()).toEqual(["10.00 mm", "20.00 mm", "30.00 mm"]);
+    expect(d.dims.length).toBe(3);
+    expect(d.dims.map((x) => x.label.text).sort()).toEqual(["10.00 mm", "20.00 mm", "30.00 mm"]);
+    for (const dim of d.dims) {
+      expect(dim.pA.length).toBe(3);
+      expect(dim.baseA.length).toBe(3);
+      expect(Math.hypot(...dim.ext)).toBeCloseTo(1, 6);
+      expect(Math.hypot(...dim.dir)).toBeCloseTo(1, 6);
+    }
   });
 
-  it("is coplanar per dim and the label sits outside the dim line", () => {
+  it("staggers dims sharing an outward direction into lanes", () => {
     const d = place();
-    const label = d.labels.find((l) => l.text === "10.00 mm"); // X extent
-    // X dim, camera at -Y → ext = -Y: label center y must be OUTSIDE (below) min.y - standoff
-    const off = standoff(30);
-    expect(label.center[1]).toBeLessThan(0 - off);
-    // y direction points back toward the line (+Y)
-    expect(label.y[1]).toBeCloseTo(1, 5);
+    // camera at -Y: the X dim (first) and H dim (third) both extend -Y —
+    // the later one stacks into the next lane; the D dim has its own direction
+    expect(d.dims[0].ext[1]).toBe(-1);
+    expect(d.dims[2].ext[1]).toBe(-1);
+    expect(d.dims[0].lane).toBe(0);
+    expect(d.dims[2].lane).toBe(1);
+    expect(d.dims[1].lane).toBe(0);
   });
 
-  it("starts extension lines at the surfaceHit point when provided", () => {
-    const items = [overallItem()];
-    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
-    const hitPoint = new THREE.Vector3(2, 0, 0);
+  it("suppresses duplicate values within an item (round/square parts)", () => {
+    const items = [{ id: "overall", tier: "static", spec: bboxSpec([0, 0, 0], [8, 8, 10]), meshes: [0] }];
+    const choices = evaluateChoices(items, { camPos: [4, -100, 5], center: [4, 4, 5], prev: {} });
     const d = placeDims(items, {
-      meshData: boxMeshData(),
-      surfaceHit: () => hitPoint,
-      bounds: { min: [0, 0, 0], max: [10, 20, 30] },
+      meshData: boxMeshData([0, 0, 0], [8, 8, 10]), surfaceHit: null,
+      bounds: { min: [0, 0, 0], max: [8, 8, 10] },
     }, choices)[0];
-    // every extension start is GAP away from a snapped copy of hitPoint —
-    // just assert none starts at the raw bbox corner ± GAP along ext:
-    // the first segment's start must derive from (2, …) not (0, …)
-    const firstStartX = d.segments[0];
-    expect(Math.abs(firstStartX - 2)).toBeLessThanOrEqual(GAP + 1e-6);
+    expect(d.dims.map((x) => x.label.text).sort()).toEqual(["10.00 mm", "8.00 mm"]);
   });
 
-  it("respects locked constants", () => {
-    expect(standoff(100)).toBe(10);
-    expect(standoff(10)).toBe(6);
-    expect(textHeight(100)).toBe(5);
-    expect(textHeight(10)).toBe(3.2);
-    expect(GAP).toBe(1.0);
-    expect(HYSTERESIS).toBe(1.15);
-    expect(FLIP_DEADBAND_DEG).toBe(25);
-    // arrow length/ratio and the overshoot moved to dim3-scene as
-    // screen-constant px sizes (spec amendment 2026-08-13)
-  });
-
-  it("keeps every point of the X dim on a single plane (coplanarity)", () => {
-    // camPos [5,-100,15] picks e1s-1 for axis0 (see "extends bbox dims toward
-    // the camera" above), i.e. extAxis=1, nAxis=2 — the dim plane is a fixed z.
-    // The X dim is the first of the 3 axis dims placeBox emits (axis loop
-    // order 0,1,2), so it occupies the first 3 segments (18 numbers), first 2
-    // arrows/tails, and first label.
-    const items = [overallItem()];
+  it("later item wins when two items measure the same thing", () => {
+    const spec = bboxSpec([0, 0, 0], [10, 20, 30]);
+    const items = [
+      { id: "overall", tier: "static", spec, meshes: [0] },
+      { id: "pin:body:bbox:0", tier: "pinned", pinned: true, spec, meshes: [0], paramName: "height" },
+    ];
     const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
-    expect(choices["overall|ax0"].key).toBe("e1s-1");
-    const d = placeDims(items, {
+    const drawings = placeDims(items, {
       meshData: boxMeshData(), surfaceHit: null,
       bounds: { min: [0, 0, 0], max: [10, 20, 30] },
-    }, choices)[0];
-
-    const xSegments = d.segments.slice(0, 18);
-    const xLabel = d.labels[0];
-    expect(xLabel.text).toBe("10.00 mm"); // sanity: this really is the X dim
-
-    const zValues = [];
-    for (let i = 2; i < xSegments.length; i += 3) zValues.push(xSegments[i]);
-    // arrow tips + tail origins sit in the plane, and their basis vectors lie
-    // flat in it (zero out-of-plane component) so the scaled decorations can
-    // never leave it
-    for (const a of d.arrows.slice(0, 2)) {
-      zValues.push(a.tip[2]);
-      expect(a.inward[2]).toBeCloseTo(0, 6);
-      expect(a.perp[2]).toBeCloseTo(0, 6);
-    }
-    for (const t of d.tails.slice(0, 2)) {
-      zValues.push(t.origin[2]);
-      expect(t.dir[2]).toBeCloseTo(0, 6);
-    }
-    zValues.push(xLabel.center[2]);
-    for (const z of zValues) expect(z).toBeCloseTo(zValues[0], 6);
+    }, choices);
+    expect(drawings.length).toBe(1);
+    expect(drawings[0].itemId).toBe("pin:body:bbox:0");
   });
 
-  it("snaps a surfaceHit point back onto the dim plane (planeAxis/planeC)", () => {
+  it("suppresses items whose sig was already drawn by another pass", () => {
+    const items = [overallItem()];
+    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    const drawings = placeDims(items, {
+      meshData: boxMeshData(), surfaceHit: null,
+      bounds: { min: [0, 0, 0], max: [10, 20, 30] },
+      suppress: new Set([specSig(items[0].spec)]),
+    }, choices);
+    expect(drawings).toEqual([]);
+  });
+
+  it("keeps every discovered point of the X dim on a single plane (coplanarity)", () => {
+    // camPos [5,-100,15] picks e1s-1 for axis0, i.e. extAxis=1, nAxis=2 — the
+    // dim plane is a fixed z. With ext and dir flat in the plane, the scene's
+    // per-frame assembly can never leave it.
+    const d = place();
+    const dim = d.dims[0];
+    expect(dim.label.text).toBe("10.00 mm"); // sanity: this really is the X dim
+    const zs = [dim.pA[2], dim.pB[2], dim.baseA[2], dim.baseB[2]];
+    for (const z of zs) expect(z).toBeCloseTo(zs[0], 6);
+    expect(dim.ext[2]).toBeCloseTo(0, 6);
+    expect(dim.dir[2]).toBeCloseTo(0, 6);
+  });
+
+  it("anchors extension lines at the surfaceHit point, snapped onto the dim plane", () => {
     const items = [overallItem()];
     const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
     // deliberately off the X dim's plane (z=99, nowhere near the box)
@@ -211,20 +199,23 @@ describe("placeDims — bbox", () => {
       surfaceHit: () => offPlaneHit,
       bounds: { min: [0, 0, 0], max: [10, 20, 30] },
     }, choices)[0];
+    const dim = d.dims[0];
+    expect(dim.pA[0]).toBeCloseTo(2, 6); // the hit, not the bbox corner
+    expect(dim.pA[2]).toBeCloseTo(dim.baseA[2], 6); // snapped back onto the plane
+  });
 
-    const xSegments = d.segments.slice(0, 18);
-    // first extension line: segments[0..5] = [start.xyz, end.xyz]; start.z is
-    // segments[2]. If the snap didn't run this would be ~99.
-    const startZ = xSegments[2];
-    expect(startZ).not.toBeCloseTo(99, 3);
-    // it lands back on the same plane as the rest of the dim (dim-line end z)
-    const dimLineEndZ = xSegments[17];
-    expect(startZ).toBeCloseTo(dimLineEndZ, 6);
+  it("respects locked constants", () => {
+    expect(standoffNominal(100)).toBe(10);
+    expect(standoffNominal(10)).toBe(6);
+    expect(HYSTERESIS).toBe(1.15);
+    expect(FLIP_DEADBAND_DEG).toBe(25);
+    // display distances (standoff, gap, arrows, overshoot, stagger, leader,
+    // text) are screen-constant px in dim3-scene (spec amendments 2026-08-13)
   });
 });
 
 describe("placeDims — plane and cylinder", () => {
-  it("plane emits width+height dims in the face plane", () => {
+  it("plane emits width+height dims lying in the face plane", () => {
     const spec = {
       kind: "plane",
       values: { width: 10, height: 5 },
@@ -237,14 +228,17 @@ describe("placeDims — plane and cylinder", () => {
     const item = { id: "h", tier: "hover", spec };
     const choices = evaluateChoices([item], { camPos: [5, -50, 2], center: [5, 0, 2], prev: {} });
     const d = placeDims([item], { bounds: { min: [0, 0, 0], max: [10, 0, 5] } }, choices)[0];
-    expect(d.labels.map((l) => l.text).sort()).toEqual(["10.00 mm", "5.00 mm"]);
-    // all points share y=0 plane-family? width dim's ext lies IN the face plane
-    // (normal -Y): no segment point may leave y = 0 by more than standoff — the
-    // real assertion: every y coordinate is 0 (the face plane), since ext ⊥ normal
-    for (let i = 1; i < d.segments.length; i += 3) expect(d.segments[i]).toBeCloseTo(0, 6);
+    expect(d.dims.map((x) => x.label.text).sort()).toEqual(["10.00 mm", "5.00 mm"]);
+    for (const dim of d.dims) {
+      // anchors on the face, ext in the face plane (normal -Y → all y = 0),
+      // and feature dims hug their feature (reduced standoff)
+      for (const p of [dim.pA, dim.pB, dim.baseA, dim.baseB]) expect(p[1]).toBeCloseTo(0, 6);
+      expect(dim.ext[1]).toBeCloseTo(0, 6);
+      expect(dim.standoffScale).toBeCloseTo(0.55, 6);
+    }
   });
 
-  it("full cylinder emits ⌀ across the circle + a depth dim; partial emits R leader", () => {
+  it("full cylinder emits a ⌀ record + a depth dim; partial emits an R leader", () => {
     const full = {
       kind: "cylinder",
       values: { diameter: 8, depth: 10, partial: false },
@@ -253,11 +247,18 @@ describe("placeDims — plane and cylinder", () => {
     const item = { id: "h", tier: "hover", spec: full };
     const choices = evaluateChoices([item], { camPos: [100, 0, 5], center: [0, 0, 5], prev: {} });
     const d = placeDims([item], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
-    expect(d.labels.some((l) => l.text === "⌀8.00")).toBe(true);
-    expect(d.labels.some((l) => l.text === "10.00 mm")).toBe(true);
+    expect(d.diams.length).toBe(1);
+    expect(d.diams[0].label.text).toBe("⌀8.00");
+    // rims straddle the fitted centre along du at radius 4
+    expect(d.diams[0].rimA[0]).toBeCloseTo(4, 5);
+    expect(d.diams[0].rimB[0]).toBeCloseTo(-4, 5);
+    expect(d.dims.length).toBe(1);
+    expect(d.dims[0].label.text).toBe("10.00 mm");
 
     const part = { ...full, values: { ...full.values, partial: true } };
     const d2 = placeDims([{ id: "h", tier: "hover", spec: part }], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
-    expect(d2.labels.some((l) => l.text === "R4.00")).toBe(true);
+    expect(d2.leaders.length).toBe(1);
+    expect(d2.leaders[0].label.text).toBe("R4.00");
+    expect(d2.leaders[0].rim[0]).toBeCloseTo(4, 5); // on the arc, along rimDir
   });
 });

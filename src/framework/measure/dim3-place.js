@@ -1,27 +1,46 @@
-// Pure in-scene dimension placement (spec v2 §Placement). Everything works in
-// the PARTS frame — the meshes' shared parent group (delivered geometry
-// composed with pose matrices) — so the resulting drawing rides the pivot
-// rotation and per-view recentring untouched. No DOM, no GL, no rendering
-// objects: three's math classes only, so this runs under plain vitest.
+// Pure in-scene dimension placement (spec v2 §Placement + amendments).
+// Everything works in the PARTS frame — the meshes' shared parent group
+// (delivered geometry composed with pose matrices) — so the resulting drawing
+// rides the pivot rotation and per-view recentring untouched. No DOM, no GL,
+// no rendering objects: three's math classes only, so this runs under plain
+// vitest.
+//
+// Placement does the expensive DISCOVERY only: anchor points (extreme-vertex
+// scans, surface raycasts, plane snapping), side selection, dedupe and stagger
+// lanes. Every display distance — standoff, surface gap, arrowheads, the
+// overshoot past the dim line, leader length, text size — is screen-constant,
+// so the final geometry depends on zoom and is assembled per frame by
+// dim3-scene from the parametric records emitted here. That keeps zoom fully
+// rebuild-free.
 //
 // Split in two so the orchestrator can score cheaply every frame and rebuild
 // rarely: evaluateChoices() is dot-products + hysteresis over the previous
-// choices; placeDims() does the real work (vertex scans, raycasts, geometry)
-// only when a choice flipped or the scene changed.
+// choices; placeDims() does the discovery only when a choice flipped or the
+// scene changed.
+//
+// Drawing contract (consumed by dim3-scene):
+//   { itemId, tier, pinned,
+//     dims:    [{ pA, pB, baseA, baseB, ext, dir, lane, standoffScale,
+//                 label: { text, param, x, y } }],
+//     diams:   [{ rimA, rimB, du, dv, label }],
+//     leaders: [{ rim, dir, perp, label }] }
+// All vectors are number[3] in the parts frame. A linear dim's line endpoints
+// at display time are base± + ext·offset (offset chosen on-screen); pA/pB are
+// the discovered surface-contact anchors its extension lines run from. A diam
+// is the fixed line across a circle (rim to rim); a leader points at `rim`
+// along `dir`.
 import * as THREE from "three";
 import { fmtMm } from "./feature-dims.js";
 
-// --- locked visual constants (spec v2 §Visual language + amendments) ----------
-// Arrowheads and the extension-line overshoot are SCREEN-constant (like label
-// text): placement emits them as unit decorations — an arrow is a tip +
-// in-plane basis, an overshoot tail is an origin + direction — and dim3-scene
-// scales them to their on-screen size each frame. Placement therefore carries
-// no arrow/overshoot lengths at all.
-export const GAP = 1.0;          // mm, surface-contact point -> extension line
+// --- discovery constants ------------------------------------------------------
+// standoffNominal: the mm offset ASSUMED while discovering surface contacts
+// (raycast origins) and extreme-vertex tie-break targets. Display standoff is
+// screen-constant and lives in dim3-scene; discovery only needs a plausible
+// out-of-the-part reference, and the contact points it finds barely depend on
+// it.
+export const standoffNominal = (modelSize) => Math.max(6, modelSize * 0.10);
 export const HYSTERESIS = 1.15;  // challenger must beat the holder by 15%
 export const FLIP_DEADBAND_DEG = 25; // cylinder ⌀ direction re-aim threshold
-export const standoff = (modelSize) => Math.max(6, modelSize * 0.10);
-export const textHeight = (modelSize) => Math.max(3.2, modelSize * 0.05);
 
 const AXES = [
   new THREE.Vector3(1, 0, 0),
@@ -29,6 +48,30 @@ const AXES = [
   new THREE.Vector3(0, 0, 1),
 ];
 const v3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
+
+// --- duplicate-dimension suppression ------------------------------------------
+// Two items measuring the same thing draw identical dims on top of each other:
+// a hovered sub-part over the overall bounds (single-part apps), a hover over
+// its own pin. The signature identifies "the same measurement" independent of
+// item id/tier. Within one placeDims call the LATER item wins (pins carry the
+// param pill the overall lacks); across the orchestrator's base/hover split,
+// the hover pass hands the base items' sigs in as `suppress`.
+export function specSig(spec) {
+  return JSON.stringify({ kind: spec.kind, values: spec.values, anchors: spec.anchors });
+}
+
+// --- stagger lanes ------------------------------------------------------------
+// Dims extending the same outward direction stack at increasing standoff
+// (drafting-style stacked dimension lines), so co-located labels stagger
+// instead of overlapping. Lanes are per-placeDims-call and deterministic in
+// item order (overall, pins, hover). The lane's on-screen spacing lives in
+// dim3-scene.
+function laneFor(lanes, ext) {
+  const key = `${ext.x.toFixed(2)},${ext.y.toFixed(2)},${ext.z.toFixed(2)}`;
+  const lane = lanes.get(key) ?? 0;
+  lanes.set(key, lane + 1);
+  return lane;
+}
 
 // --- candidate sides for a box-extent dim ------------------------------------
 // Measuring along `axis`, the dim can extend outward along ± each of the other
@@ -152,103 +195,94 @@ export function extremeVertex(meshData, axis, sign, near) {
   return best;
 }
 
-// --- one flat linear dimension ------------------------------------------------
-// pA/pB: surface anchor points. da/db: dim-line endpoints. ext: unit in-plane
-// outward direction. All coplanar by the time this runs. When `surfaceHit` is
-// given, each extension line starts at the first in-plane surface hit walking
-// from the dim-line endpoint back toward the part (ray nudged `nudge` inside
-// the extreme plane so a grazing ray on the extreme face still registers);
+// --- one parametric linear dimension -----------------------------------------
+// pA/pB: surface anchor points. nomA/nomB: NOMINAL dim-line endpoints used for
+// discovery only. baseA/baseB: dim-line endpoints at ZERO standoff — the scene
+// slides them out along `ext` by the screen-derived offset. When `surfaceHit`
+// is given, each extension line starts at the first in-plane surface hit
+// walking from the nominal endpoint back toward the part (ray nudged 0.05 mm
+// inside the extreme plane so a grazing ray on the extreme face registers);
 // otherwise (feature dims — anchors already ON the surface) it starts at the
 // anchor.
-function linearDim(out, { pA, pB, da, db, ext, text, param, modelSize, surfaceHit, planeAxis, planeC }) {
-  const dir = db.clone().sub(da).normalize();
-
-  for (const [p, d, inwardSign] of [[pA, da, 1], [pB, db, -1]]) {
-    let start = p;
-    if (surfaceHit) {
-      const nudged = d.clone().addScaledVector(dir, 0.05 * inwardSign);
-      const toward = p.clone().sub(d).normalize();
-      const hit = surfaceHit(nudged, toward);
-      if (hit) {
-        start = hit.clone();
-        if (planeAxis != null) start.setComponent(planeAxis, planeC); // stay exactly coplanar
-      }
+function linearDim(out, {
+  pA, pB, baseA, baseB, nomA, nomB, ext, lane, standoffScale = 1,
+  text, param, surfaceHit, planeAxis, planeC,
+}) {
+  const dir = baseB.clone().sub(baseA).normalize();
+  const anchors = [pA, pB];
+  [[pA, nomA, 1], [pB, nomB, -1]].forEach(([p, nom, inwardSign], i) => {
+    if (!surfaceHit) return;
+    const nudged = nom.clone().addScaledVector(dir, 0.05 * inwardSign);
+    const toward = p.clone().sub(nom).normalize();
+    const hit = surfaceHit(nudged, toward);
+    if (hit) {
+      const start = hit.clone();
+      if (planeAxis != null) start.setComponent(planeAxis, planeC); // stay exactly coplanar
+      anchors[i] = start;
     }
-    const u = d.clone().sub(start);
-    const un = u.lengthSq() > 1e-12 ? u.normalize() : ext.clone();
-    const s = start.clone().addScaledVector(un, GAP);
-    // the main run ends AT the dim line; the screen-constant overshoot past it
-    // is a unit tail the scene scales per frame
-    out.segments.push(s.x, s.y, s.z, d.x, d.y, d.z);
-    out.tails.push({ origin: d.toArray(), dir: un.toArray() });
-  }
-
-  // dim line runs tip to tip; the solid screen-constant arrowheads draw over it
-  out.segments.push(da.x, da.y, da.z, db.x, db.y, db.z);
-  arrow(out, da, dir, ext);
-  arrow(out, db, dir.clone().negate(), ext);
-
-  const h = textHeight(modelSize);
-  const mid = da.clone().add(db).multiplyScalar(0.5);
-  const center = mid.clone().addScaledVector(ext, h * 0.85); // OUTSIDE the line
-  out.labels.push({
-    text, param: param ?? null,
-    center: center.toArray(), x: dir.toArray(), y: ext.clone().negate().toArray(), h,
+  });
+  out.dims.push({
+    pA: anchors[0].toArray(), pB: anchors[1].toArray(),
+    baseA: baseA.toArray(), baseB: baseB.toArray(),
+    ext: ext.toArray(), dir: dir.toArray(),
+    lane, standoffScale,
+    label: { text, param: param ?? null, x: dir.toArray(), y: ext.clone().negate().toArray() },
   });
 }
 
-// Screen-constant flat arrowhead lying in the dim plane: tip on the endpoint,
-// body toward the line's centre (`inward`), spread along the in-plane
-// perpendicular. Emitted as a unit decoration; dim3-scene owns the on-screen
-// length and the width ratio.
-function arrow(out, tip, inward, perp) {
-  out.arrows.push({ tip: tip.toArray(), inward: inward.toArray(), perp: perp.toArray() });
-}
-
 // --- per-kind placement -------------------------------------------------------
-function placeBox(out, item, spec, choices, { meshData, surfaceHit, modelSize }, camAidedRefSide) {
+function placeBox(out, item, spec, choices, { meshData, surfaceHit, modelSize, lanes }, refSide) {
   const min = spec.anchors.min, max = spec.anchors.max;
-  const off = standoff(modelSize);
+  const nomOff = standoffNominal(modelSize);
   const scan = meshData; // caller pre-filtered by item.meshes
   const valueByAxis = [spec.values.w, spec.values.d, spec.values.h];
+  const seenValues = new Set();
   for (const axis of [0, 1, 2]) {
     const span = max[axis] - min[axis];
     if (span < 1e-6) continue;
+    // duplicate-value suppression within the item: a round or square part has
+    // equal extents — one dim carries the shared value
+    const text = `${fmtMm(valueByAxis[axis])} mm`;
+    if (seenValues.has(text)) continue;
+    seenValues.add(text);
     const cand = boxCandidates(axis).find((c) => c.key === choices[`${item.id}|ax${axis}`]?.key)
       ?? boxCandidates(axis)[0];
     const { extAxis, sign, nAxis } = cand;
     const ext = AXES[extAxis].clone().multiplyScalar(sign);
-    // dim-line endpoints: measured coordinate at min/max, ext coordinate at the
-    // near face + standoff; the plane coordinate (nAxis) is snapped below.
+    // dim-line base points: measured coordinate at min/max, ext coordinate on
+    // the near face (zero standoff); the plane coordinate (nAxis) is snapped
+    // below. Nominal points add the discovery standoff for raycast origins and
+    // tie-break targets.
     const extBase = sign > 0 ? max[extAxis] : min[extAxis];
-    const mk = (m) => {
+    const mk = (m, off) => {
       const p = new THREE.Vector3();
       p.setComponent(axis, m);
       p.setComponent(extAxis, extBase + sign * off);
-      p.setComponent(nAxis, camAidedRefSide(nAxis, min, max));
+      p.setComponent(nAxis, refSide(nAxis, min, max));
       return p;
     };
-    const da = mk(min[axis]), db = mk(max[axis]);
-    // true extreme anchors (tie-break toward the dim line), then plane snap:
-    // slide the plane along nAxis to whichever anchor sits nearer the
+    const nomA = mk(min[axis], nomOff), nomB = mk(max[axis], nomOff);
+    // true extreme anchors (tie-break toward the nominal dim line), then plane
+    // snap: slide the plane along nAxis to whichever anchor sits nearer the
     // mid-plane reference; the other anchor projects into the plane.
-    const ref = camAidedRefSide(nAxis, min, max);
-    let pA = extremeVertex(scan, axis, -1, da) ?? new THREE.Vector3().setComponent(axis, min[axis]);
-    let pB = extremeVertex(scan, axis, +1, db) ?? new THREE.Vector3().setComponent(axis, max[axis]);
+    const ref = refSide(nAxis, min, max);
+    let pA = extremeVertex(scan, axis, -1, nomA) ?? new THREE.Vector3().setComponent(axis, min[axis]);
+    let pB = extremeVertex(scan, axis, +1, nomB) ?? new THREE.Vector3().setComponent(axis, max[axis]);
     const cA = pA.getComponent(nAxis), cB = pB.getComponent(nAxis);
     const c = Math.abs(cA - ref) <= Math.abs(cB - ref) ? cA : cB;
-    for (const p of [pA, pB, da, db]) p.setComponent(nAxis, c);
+    const baseA = mk(min[axis], 0), baseB = mk(max[axis], 0);
+    for (const p of [pA, pB, nomA, nomB, baseA, baseB]) p.setComponent(nAxis, c);
     linearDim(out, {
-      pA, pB, da, db, ext,
-      text: `${fmtMm(valueByAxis[axis])} mm`, param: item.paramName,
-      modelSize, surfaceHit, planeAxis: nAxis, planeC: c,
+      pA, pB, baseA, baseB, nomA, nomB, ext,
+      lane: laneFor(lanes, ext),
+      text, param: item.paramName,
+      surfaceHit, planeAxis: nAxis, planeC: c,
     });
   }
 }
 
-function placePlane(out, item, spec, choices, { modelSize }) {
+function placePlane(out, item, spec, choices, { lanes }) {
   const n = v3(spec.anchors.normal).normalize();
-  const off = standoff(modelSize) * 0.5; // feature dims hug their feature
   const dims = [
     ["width", spec.values.width],
     ["height", spec.values.height],
@@ -260,51 +294,46 @@ function placePlane(out, item, spec, choices, { modelSize }) {
     const perp = new THREE.Vector3().crossVectors(n, dir).normalize();
     const sign = choices[`${item.id}|${dimKey}`]?.key === "p-" ? -1 : 1;
     const ext = perp.multiplyScalar(sign);
-    const da = a.clone().addScaledVector(ext, off);
-    const db = b.clone().addScaledVector(ext, off);
     linearDim(out, {
-      pA: a, pB: b, da, db, ext,
-      text: `${fmtMm(value)} mm`, param: item.paramName, modelSize, surfaceHit: null,
+      pA: a, pB: b, baseA: a.clone(), baseB: b.clone(), nomA: a, nomB: b, ext,
+      lane: laneFor(lanes, ext), standoffScale: 0.55, // feature dims hug their feature
+      text: `${fmtMm(value)} mm`, param: item.paramName, surfaceHit: null,
     });
   }
 }
 
-function placeCylinder(out, item, spec, choices, { modelSize }) {
+function placeCylinder(out, item, spec, choices, { lanes }) {
   const axis = v3(spec.anchors.axis).normalize();
   const top = v3(spec.anchors.top);
   const bottom = v3(spec.anchors.bottom);
   const r = spec.values.diameter / 2;
   const du = v3(choices[`${item.id}|du`]?.du ?? spec.anchors.rimDir ?? [1, 0, 0]).normalize();
   const dv = new THREE.Vector3().crossVectors(axis, du).normalize();
-  const h = textHeight(modelSize);
 
   if (spec.values.partial) {
     // R leader from the covered-arc midpoint, radial, in the top plane
     const rd = v3(spec.anchors.rimDir ?? du.toArray()).normalize();
     const rim = top.clone().addScaledVector(rd, r);
-    const leaderLen = h * 2;
-    const s = rim.clone().addScaledVector(rd, GAP);
-    const e = rim.clone().addScaledVector(rd, GAP + leaderLen);
-    out.segments.push(s.x, s.y, s.z, e.x, e.y, e.z);
-    arrow(out, rim, rd, new THREE.Vector3().crossVectors(axis, rd).normalize());
-    out.labels.push({
-      text: `R${fmtMm(r)}`, param: item.paramName,
-      center: e.clone().addScaledVector(rd, h * 0.85).toArray(),
-      x: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
-      y: rd.clone().negate().toArray(), h,
+    out.leaders.push({
+      rim: rim.toArray(), dir: rd.toArray(),
+      perp: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
+      label: {
+        text: `R${fmtMm(r)}`, param: item.paramName ?? null,
+        x: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
+        y: rd.clone().negate().toArray(),
+      },
     });
   } else {
     // full circle: diameter line across the top circle, arrows outward at both
     // rim points, ⌀ text just outside the rim
     const rimA = top.clone().addScaledVector(du, r);
     const rimB = top.clone().addScaledVector(du, -r);
-    out.segments.push(rimA.x, rimA.y, rimA.z, rimB.x, rimB.y, rimB.z);
-    arrow(out, rimA, du.clone().negate(), dv);
-    arrow(out, rimB, du, dv);
-    out.labels.push({
-      text: `⌀${fmtMm(spec.values.diameter)}`, param: item.paramName,
-      center: rimA.clone().addScaledVector(du, h * 0.85).toArray(),
-      x: dv.toArray(), y: du.clone().negate().toArray(), h,
+    out.diams.push({
+      rimA: rimA.toArray(), rimB: rimB.toArray(), du: du.toArray(), dv: dv.toArray(),
+      label: {
+        text: `⌀${fmtMm(spec.values.diameter)}`, param: item.paramName ?? null,
+        x: dv.toArray(), y: du.clone().negate().toArray(),
+      },
     });
   }
 
@@ -312,33 +341,42 @@ function placeCylinder(out, item, spec, choices, { modelSize }) {
   if (spec.values.depth > 1e-6) {
     const sgn = choices[`${item.id}|depth`]?.key === "d-" ? -1 : 1;
     const ext = du.clone().multiplyScalar(sgn);
-    const off = standoff(modelSize) * 0.5;
     const pA = bottom.clone().addScaledVector(ext, r);
     const pB = top.clone().addScaledVector(ext, r);
-    const da = pA.clone().addScaledVector(ext, off);
-    const db = pB.clone().addScaledVector(ext, off);
     linearDim(out, {
-      pA, pB, da, db, ext,
-      text: `${fmtMm(spec.values.depth)} mm`, param: item.paramName,
-      modelSize, surfaceHit: null,
+      pA, pB, baseA: pA.clone(), baseB: pB.clone(), nomA: pA, nomB: pB, ext,
+      lane: laneFor(lanes, ext), standoffScale: 0.55,
+      text: `${fmtMm(spec.values.depth)} mm`, param: item.paramName, surfaceHit: null,
     });
   }
 }
 
 // --- entry point --------------------------------------------------------------
-export function placeDims(items, { meshData = [], surfaceHit = null, bounds }, choices) {
+export function placeDims(items, { meshData = [], surfaceHit = null, bounds, suppress = null }, choices) {
   const size = bounds
     ? Math.max(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2])
     : 10;
+  // duplicate-measurement suppression: see specSig. Later item wins in-call;
+  // `suppress` carries sigs already drawn by another call (the base pass).
+  const sigs = items.map((i) => (i.spec ? specSig(i.spec) : null));
+  const skip = new Set();
+  for (let i = 0; i < items.length; i++) {
+    if (!sigs[i]) { skip.add(i); continue; }
+    if (suppress?.has(sigs[i])) { skip.add(i); continue; }
+    for (let j = i + 1; j < items.length; j++) {
+      if (sigs[i] === sigs[j]) { skip.add(i); break; }
+    }
+  }
   // plane-snap reference: for bbox dims the plane snaps to whichever true
   // extreme anchor sits nearer the model's mid-plane along nAxis (see refSide
   // below) rather than to a camera side — deterministic and adequate: the
   // spec only requires "the side of the model the dim is drawn toward".
+  const lanes = new Map();
   const drawings = [];
-  for (const item of items) {
+  items.forEach((item, idx) => {
     const spec = item.spec;
-    if (!spec) continue;
-    const out = { itemId: item.id, tier: item.tier, pinned: !!item.pinned, segments: [], arrows: [], tails: [], labels: [] };
+    if (!spec || skip.has(idx)) return;
+    const out = { itemId: item.id, tier: item.tier, pinned: !!item.pinned, dims: [], diams: [], leaders: [] };
     const scan = item.meshes ? item.meshes.map((i) => meshData[i]).filter(Boolean) : meshData;
     if (spec.kind === "bbox") {
       const refSide = (nAxis, min, max) => {
@@ -347,13 +385,13 @@ export function placeDims(items, { meshData = [], surfaceHit = null, bounds }, c
         // the drawing close to where the extent actually occurs.
         return (min[nAxis] + max[nAxis]) / 2;
       };
-      placeBox(out, item, spec, choices, { meshData: scan, surfaceHit, modelSize: size }, refSide);
+      placeBox(out, item, spec, choices, { meshData: scan, surfaceHit, modelSize: size, lanes }, refSide);
     } else if (spec.kind === "plane") {
-      placePlane(out, item, spec, choices, { modelSize: size });
+      placePlane(out, item, spec, choices, { lanes });
     } else if (spec.kind === "cylinder") {
-      placeCylinder(out, item, spec, choices, { modelSize: size });
+      placeCylinder(out, item, spec, choices, { lanes });
     }
-    if (out.segments.length || out.labels.length) drawings.push(out);
-  }
+    if (out.dims.length || out.diams.length || out.leaders.length) drawings.push(out);
+  });
   return drawings;
 }

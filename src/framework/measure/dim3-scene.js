@@ -1,10 +1,15 @@
-// In-scene dimension renderer (spec v2). Renders dim3-place drawings as
-// three.js objects parented under the meshes' shared group, so the pivot
-// rotation, per-view recentring and pose fast path apply for free. Text is
-// painted onto canvas textures by an injectable painter (tests inject a fake;
-// happy-dom has no real 2d context). Dims draw over the model
-// (depthTest:false), are never cutaway-clipped (materials deliberately NOT
-// registered with the cutaway), and are hidden from canonical captures.
+// In-scene dimension renderer (spec v2 + amendments). Renders dim3-place's
+// parametric drawings as three.js objects parented under the meshes' shared
+// group, so the pivot rotation, per-view recentring and pose fast path apply
+// for free. Placement discovers WHERE a dimension is anchored; this module
+// assembles its final geometry every frame, because every display distance is
+// SCREEN-constant — sized off one shared reference distance (camera to the
+// model centre) so the whole drawing reads the same at any zoom, on any part
+// size, uniformly across a view. Text is painted onto canvas textures by an
+// injectable painter (tests inject a fake; happy-dom has no real 2d context).
+// Dims draw over the model (depthTest:false), are never cutaway-clipped
+// (materials deliberately NOT registered with the cutaway), and are hidden
+// from canonical captures.
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -30,29 +35,28 @@ export const DIM_THEME = {
 export const RENDER_ORDER_DIMS = 998;
 export const RENDER_ORDER_LABELS = 999;
 
-// Target on-screen label height, CSS px. Labels display screen-constant: one
-// world height per view, derived from the camera's distance to the model
-// centre, so text reads the same size at any zoom (and stays proportionate on
-// very small parts, where the placement engine's mm-based minimum would
-// dominate the model). Uniform per view by design — every label shares the one
-// reference distance, so a nearer label is NOT normalized to match a farther
-// one; it just reads slightly larger under perspective like the rest of the
-// scene.
-export const LABEL_SCREEN_PX = 18;
+// Screen-constant sizes, CSS px, all sized off the same per-view reference
+// distance. Uniform per view by design — a nearer dimension is NOT normalized
+// to match a farther one; it just reads slightly larger under perspective
+// like the rest of the scene.
+export const LABEL_SCREEN_PX = 18;     // label text height
+export const ARROW_SCREEN_PX = 10;     // arrowhead length
+export const ARROW_HALF_W = 0.25;      // × arrow length — the narrow drafting ratio
+export const OVERSHOOT_SCREEN_PX = 7;  // extension line past the dim line
+export const GAP_SCREEN_PX = 4;        // extension line stands off the surface
+export const STANDOFF_SCREEN_PX = 40;  // dim line stands off the part (× dim's standoffScale)
+export const STAGGER_SCREEN_PX = 26;   // extra standoff per stacked lane
+export const LEADER_SCREEN_PX = 36;    // R-leader length
 
-// Screen-constant decoration sizes, CSS px, sized off the same per-view
-// reference distance as labels. Arrowheads keep the narrow drafting ratio
-// (half-width = 0.25 × length); the tail is how far the extension line runs
-// past the dimension line.
-export const ARROW_SCREEN_PX = 10;
-export const ARROW_HALF_W = 0.25; // × arrow length
-export const OVERSHOOT_SCREEN_PX = 7;
+// World units per CSS pixel for a point at `dist` from the camera.
+export function worldPerPx(dist, fovDeg, viewportPx) {
+  return (2 * dist * Math.tan((fovDeg * Math.PI) / 360)) / viewportPx;
+}
 
-// World-space height that renders as `targetPx` on screen for a point at
-// `dist` from the camera: the visible world height at that distance is
-// 2·dist·tan(fov/2) spread over `viewportPx` pixels.
+// Kept for compatibility with earlier callers/tests: the world height that
+// renders as `targetPx` on screen.
 export function labelWorldHeight(dist, fovDeg, viewportPx, targetPx = LABEL_SCREEN_PX) {
-  return (targetPx * 2 * dist * Math.tan((fovDeg * Math.PI) / 360)) / viewportPx;
+  return targetPx * worldPerPx(dist, fovDeg, viewportPx);
 }
 
 // Default label painter: returns a canvas whose aspect the caller turns into
@@ -130,26 +134,55 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
 
   const matFor = (tier) => (tier === "static" ? "static" : "strong");
 
-  // Unit decoration geometries, shared by every arrow/tail instance and scaled
-  // per frame to their screen-constant world size (tick below). Both are
-  // modelled with their anchor at the origin pointing +X — the arrow's tip,
-  // the tail's dim-line end — so scaling about the mesh origin grows them away
-  // from the point they decorate.
+  // Shared unit arrowhead: tip at the origin pointing +X, the narrow drafting
+  // ratio baked in; instances are oriented at build time (their in-plane basis
+  // never changes) and positioned + scaled per frame.
   const unitArrowGeo = new THREE.BufferGeometry();
   unitArrowGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array([
     0, 0, 0, 1, ARROW_HALF_W, 0, 1, -ARROW_HALF_W, 0,
   ]), 3));
-  const unitTailGeo = new LineSegmentsGeometry();
-  unitTailGeo.setPositions([0, 0, 0, 1, 0, 0]);
-  const sharedGeos = [unitArrowGeo, unitTailGeo];
-  const _UX = new THREE.Vector3(1, 0, 0);
 
-  // decos: [{ obj, px }] — px is the object's target on-screen size
-  let decos = [];
+  const quatFromBasis = (x, y) => {
+    const z = new THREE.Vector3().crossVectors(x, y).normalize();
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  };
 
-  // ---- label bookkeeping ----------------------------------------------------
-  // labels: [{ mesh, baseQuat, mirrored, flipped, itemId, text, param }]
+  function makeArrow(key, x, y, position) {
+    const mesh = new THREE.Mesh(unitArrowGeo, fillMats[key]);
+    mesh.quaternion.copy(quatFromBasis(x, y));
+    if (position) mesh.position.copy(position);
+    mesh.renderOrder = RENDER_ORDER_DIMS;
+    mesh.frustumCulled = false; // scaled/moved per frame; stale bounds must not cull it
+    group.add(mesh);
+    arrows.push(mesh);
+    return mesh;
+  }
+
+  // A LineSegments2 whose positions this module rewrites in place each frame.
+  function makeLine(key, segmentCount) {
+    const geo = new LineSegmentsGeometry();
+    geo.setPositions(new Array(segmentCount * 6).fill(0));
+    const line = new LineSegments2(geo, lineMats[key]);
+    line.renderOrder = RENDER_ORDER_DIMS;
+    line.frustumCulled = false;
+    group.add(line);
+    return line;
+  }
+
+  function writeSegments(line, arr) {
+    const data = line.geometry.attributes.instanceStart.data;
+    data.array.set(arr);
+    data.needsUpdate = true;
+  }
+
+  // ---- record bookkeeping ---------------------------------------------------
+  // labels: [{ mesh, baseQuat, mirrored, flipped, itemId, text, param }] —
+  // positions/scale are written per frame by the owning record in tick().
   let labels = [];
+  let arrows = [];
+  let dimRecs = [];    // parametric linear dims
+  let diamRecs = [];   // ⌀ lines (static line, per-frame label anchor)
+  let leaderRecs = []; // R leaders
   const textureCache = new Map(); // `${theme}|${param ?? ""}|${text}` -> THREE.CanvasTexture
 
   function labelTexture(text, param) {
@@ -169,33 +202,30 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
     const tex = labelTexture(l.text, l.param);
     const img = tex.image;
     const aspect = img && img.height ? img.width / img.height : 4;
+    // unit-height plane; tick() scales it to the screen-constant display height
     const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(l.h * aspect, l.h),
+      new THREE.PlaneGeometry(aspect, 1),
       new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, side: THREE.DoubleSide }),
     );
     mesh.renderOrder = RENDER_ORDER_LABELS;
+    mesh.frustumCulled = false;
     const x = new THREE.Vector3(...l.x), y = new THREE.Vector3(...l.y);
-    const z = new THREE.Vector3().crossVectors(x, y).normalize();
-    const baseQuat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
-    mesh.quaternion.copy(baseQuat);
-    mesh.position.set(...l.center);
+    mesh.quaternion.copy(quatFromBasis(x, y));
     mesh.userData.pfDimItemId = itemId;
     group.add(mesh);
-    // The placement puts the label's centre 0.85·h OUTSIDE the dim line along
-    // ext (= -y). Recover the on-line anchor so tick() can re-offset by the
-    // zoom-derived display height without a placement rebuild.
-    const anchor = new THREE.Vector3(...l.center).addScaledVector(y, 0.85 * l.h);
-    labels.push({
-      mesh, baseQuat, mirrored: false, flipped: false, itemId, text: l.text, param: l.param,
-      baseH: l.h, anchor, offDir: y.clone(),
-    });
+    const rec = {
+      mesh, baseQuat: mesh.quaternion.clone(), mirrored: false, flipped: false,
+      itemId, text: l.text, param: l.param,
+    };
+    labels.push(rec);
+    return rec;
   }
 
   // ---- build / clear --------------------------------------------------------
   function disposeChildren() {
     for (const child of [...group.children]) {
       group.remove(child);
-      if (!sharedGeos.includes(child.geometry)) child.geometry?.dispose?.(); // unit geos are shared
+      if (child.geometry !== unitArrowGeo) child.geometry?.dispose?.(); // the unit arrow is shared
       // label materials are per-mesh clones; textures live in the cache
       if (child.material && !Object.values(lineMats).includes(child.material)
           && !Object.values(fillMats).includes(child.material)) {
@@ -203,7 +233,10 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
       }
     }
     labels = [];
-    decos = [];
+    arrows = [];
+    dimRecs = [];
+    diamRecs = [];
+    leaderRecs = [];
   }
 
   function update(drawings) {
@@ -211,33 +244,41 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
     disposeChildren();
     for (const d of drawings) {
       const key = matFor(d.tier);
-      if (d.segments.length) {
-        const g = new LineSegmentsGeometry();
-        g.setPositions(d.segments);
-        const lines = new LineSegments2(g, lineMats[key]);
-        lines.renderOrder = RENDER_ORDER_DIMS;
-        group.add(lines);
+      for (const dim of d.dims ?? []) {
+        const dir = new THREE.Vector3(...dim.dir);
+        const ext = new THREE.Vector3(...dim.ext);
+        dimRecs.push({
+          pA: new THREE.Vector3(...dim.pA), pB: new THREE.Vector3(...dim.pB),
+          baseA: new THREE.Vector3(...dim.baseA), baseB: new THREE.Vector3(...dim.baseB),
+          ext, dir, lane: dim.lane ?? 0, standoffScale: dim.standoffScale ?? 1,
+          line: makeLine(key, 5), // ext A, ext B, dim line, tail A, tail B
+          arrowA: makeArrow(key, dir, ext),
+          arrowB: makeArrow(key, dir.clone().negate(), ext),
+          labelRec: buildLabel(dim.label, d.itemId),
+        });
       }
-      for (const a of d.arrows ?? []) {
-        const x = new THREE.Vector3(...a.inward);
-        const y = new THREE.Vector3(...a.perp);
-        const z = new THREE.Vector3().crossVectors(x, y).normalize();
-        const mesh = new THREE.Mesh(unitArrowGeo, fillMats[key]);
-        mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
-        mesh.position.set(...a.tip);
-        mesh.renderOrder = RENDER_ORDER_DIMS;
-        group.add(mesh);
-        decos.push({ obj: mesh, px: ARROW_SCREEN_PX });
+      for (const diam of d.diams ?? []) {
+        const rimA = new THREE.Vector3(...diam.rimA);
+        const rimB = new THREE.Vector3(...diam.rimB);
+        const du = new THREE.Vector3(...diam.du);
+        const dv = new THREE.Vector3(...diam.dv);
+        const line = makeLine(key, 1);
+        writeSegments(line, [rimA.x, rimA.y, rimA.z, rimB.x, rimB.y, rimB.z]); // static
+        makeArrow(key, du.clone().negate(), dv, rimA);
+        makeArrow(key, du, dv, rimB);
+        diamRecs.push({ rimA, du, labelRec: buildLabel(diam.label, d.itemId) });
       }
-      for (const t of d.tails ?? []) {
-        const line = new LineSegments2(unitTailGeo, lineMats[key]);
-        line.quaternion.setFromUnitVectors(_UX, new THREE.Vector3(...t.dir).normalize());
-        line.position.set(...t.origin);
-        line.renderOrder = RENDER_ORDER_DIMS;
-        group.add(line);
-        decos.push({ obj: line, px: OVERSHOOT_SCREEN_PX });
+      for (const leader of d.leaders ?? []) {
+        const rim = new THREE.Vector3(...leader.rim);
+        const dir = new THREE.Vector3(...leader.dir);
+        const perp = new THREE.Vector3(...leader.perp);
+        leaderRecs.push({
+          rim, dir,
+          line: makeLine(key, 1),
+          arrow: makeArrow(key, dir, perp, rim),
+          labelRec: buildLabel(leader.label, d.itemId),
+        });
       }
-      for (const l of d.labels) buildLabel(l, d.itemId);
     }
     sweepTextureCache();
   }
@@ -259,7 +300,7 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
     }
   }
 
-  // ---- per-frame: resolution + readability flips ----------------------------
+  // ---- per-frame assembly + readability flips -------------------------------
   // Labels correct among four in-plane states so they never read mirrored or
   // upside down: Ry(π) fixes viewing the plane from behind, Rz(π) fixes the
   // reading direction. 0.08 deadband stops edge-on flicker.
@@ -273,27 +314,70 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
   const _wp = new THREE.Vector3();
   const _toCam = new THREE.Vector3();
   const _gp = new THREE.Vector3();
+  const _dA = new THREE.Vector3();
+  const _dB = new THREE.Vector3();
+  const _uA = new THREE.Vector3();
+  const _uB = new THREE.Vector3();
+  const _p = new THREE.Vector3();
+  const _seg = new Float32Array(30);
   function tick() {
     if (!attached || !group.children.length) return;
     const el = viewer.domElement;
     const w = el.clientWidth || 1, h = el.clientHeight || 1;
     lineMats.static.resolution.set(w, h);
     lineMats.strong.resolution.set(w, h);
-    // Screen-constant sizing (see LABEL_SCREEN_PX and friends): scale +
-    // reposition only — placement, and the rebuild-not-per-frame invariant,
-    // are untouched. The group origin is the recentred model centre, so every
-    // label, arrowhead and overshoot tail shares the one reference distance.
+    // One shared reference distance — camera to the dim group's origin (the
+    // recentred model centre) — sizes the whole drawing.
     group.getWorldPosition(_gp);
     const dist = viewer.camera.position.distanceTo(_gp);
-    const worldPerPx = (2 * dist * Math.tan(((viewer.camera.fov ?? 45) * Math.PI) / 360)) / h;
-    if (worldPerPx > 0) {
-      const hStar = LABEL_SCREEN_PX * worldPerPx;
-      for (const L of labels) {
-        if (!L.baseH) continue;
-        L.mesh.scale.setScalar(hStar / L.baseH);
-        L.mesh.position.copy(L.anchor).addScaledVector(L.offDir, -0.85 * hStar);
+    const wpp = worldPerPx(dist, viewer.camera.fov ?? 45, h);
+    if (wpp > 0) {
+      const hStar = LABEL_SCREEN_PX * wpp;
+      const aw = ARROW_SCREEN_PX * wpp;
+      const gap = GAP_SCREEN_PX * wpp;
+      const tail = OVERSHOOT_SCREEN_PX * wpp;
+      for (const R of dimRecs) {
+        const off = (STANDOFF_SCREEN_PX * R.standoffScale + R.lane * STAGGER_SCREEN_PX) * wpp;
+        _dA.copy(R.baseA).addScaledVector(R.ext, off);
+        _dB.copy(R.baseB).addScaledVector(R.ext, off);
+        _uA.copy(_dA).sub(R.pA);
+        if (_uA.lengthSq() > 1e-12) _uA.normalize(); else _uA.copy(R.ext);
+        _uB.copy(_dB).sub(R.pB);
+        if (_uB.lengthSq() > 1e-12) _uB.normalize(); else _uB.copy(R.ext);
+        let i = 0;
+        _p.copy(R.pA).addScaledVector(_uA, gap);
+        _seg[i++] = _p.x; _seg[i++] = _p.y; _seg[i++] = _p.z;
+        _seg[i++] = _dA.x; _seg[i++] = _dA.y; _seg[i++] = _dA.z;
+        _p.copy(R.pB).addScaledVector(_uB, gap);
+        _seg[i++] = _p.x; _seg[i++] = _p.y; _seg[i++] = _p.z;
+        _seg[i++] = _dB.x; _seg[i++] = _dB.y; _seg[i++] = _dB.z;
+        _seg[i++] = _dA.x; _seg[i++] = _dA.y; _seg[i++] = _dA.z;
+        _seg[i++] = _dB.x; _seg[i++] = _dB.y; _seg[i++] = _dB.z;
+        _p.copy(_dA).addScaledVector(_uA, tail);
+        _seg[i++] = _dA.x; _seg[i++] = _dA.y; _seg[i++] = _dA.z;
+        _seg[i++] = _p.x; _seg[i++] = _p.y; _seg[i++] = _p.z;
+        _p.copy(_dB).addScaledVector(_uB, tail);
+        _seg[i++] = _dB.x; _seg[i++] = _dB.y; _seg[i++] = _dB.z;
+        _seg[i++] = _p.x; _seg[i++] = _p.y; _seg[i++] = _p.z;
+        writeSegments(R.line, _seg);
+        R.arrowA.position.copy(_dA);
+        R.arrowB.position.copy(_dB);
+        R.labelRec.mesh.position
+          .copy(_dA).add(_dB).multiplyScalar(0.5)
+          .addScaledVector(R.ext, 0.85 * hStar);
       }
-      for (const D of decos) D.obj.scale.setScalar(D.px * worldPerPx);
+      for (const R of diamRecs) {
+        R.labelRec.mesh.position.copy(R.rimA).addScaledVector(R.du, 0.85 * hStar);
+      }
+      for (const R of leaderRecs) {
+        const len = LEADER_SCREEN_PX * wpp;
+        _p.copy(R.rim).addScaledVector(R.dir, gap);
+        _dA.copy(R.rim).addScaledVector(R.dir, gap + len);
+        writeSegments(R.line, [_p.x, _p.y, _p.z, _dA.x, _dA.y, _dA.z]);
+        R.labelRec.mesh.position.copy(_dA).addScaledVector(R.dir, 0.85 * hStar);
+      }
+      for (const a of arrows) a.scale.setScalar(aw);
+      for (const L of labels) L.mesh.scale.setScalar(hStar);
     }
     group.getWorldQuaternion(_gq);
     _iq.copy(viewer.camera.quaternion).invert();
@@ -352,7 +436,7 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
     if (attached) group.parent?.remove(group);
     attached = false;
     for (const m of [...Object.values(lineMats), ...Object.values(fillMats)]) m.dispose();
-    for (const g of sharedGeos) g.dispose();
+    unitArrowGeo.dispose();
     for (const t of textureCache.values()) t.dispose();
     textureCache.clear();
   }

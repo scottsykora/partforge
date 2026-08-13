@@ -16,7 +16,7 @@ import { subPartReadKeys, RELEVANT_ALL } from "../param-deps.js";
 import { classifyFeature, bboxSpec, unionBounds } from "./feature-dims.js";
 import { linkParam } from "./param-link.js";
 import { createPinStore, occurrenceOf } from "./pins.js";
-import { evaluateChoices, choicesEqual, placeDims } from "./dim3-place.js";
+import { evaluateChoices, choicesEqual, placeDims, specSig } from "./dim3-place.js";
 import { createDimScene } from "./dim3-scene.js";
 
 export function createMeasureMode(viewer, { part, getContext, revealParam, getParamsVersion, schedule = (cb) => requestAnimationFrame(cb) }) {
@@ -264,8 +264,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
     if (!items.length || !bounds) { scene.clear(); baseCache.key = null; return; }
     const env = buildEnv(meshes);
     choices = evaluateChoices(items, { camPos: env.camPos, center: centerOf(bounds), prev: choices });
-    const place = (list) =>
-      placeDims(list, { meshData: env.meshData, surfaceHit: env.surfaceHit, bounds }, choices);
+    const place = (list, suppress) =>
+      placeDims(list, { meshData: env.meshData, surfaceHit: env.surfaceHit, bounds, suppress }, choices);
     const hoverItem = items.find((i) => i.id === "hover");
     const baseItems = hoverItem ? items.filter((i) => i !== hoverItem) : items;
     const key = baseCacheKey(meshSig(), baseItems);
@@ -273,7 +273,13 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
       baseCache.key = key;
       baseCache.drawings = place(baseItems);
     }
-    scene.update(hoverItem ? baseCache.drawings.concat(place([hoverItem])) : baseCache.drawings);
+    // The hover pass can't see the base pass's items (they're cached), so it
+    // hands their sigs in as `suppress` — a hover duplicating an already-drawn
+    // measurement (the sub-part bounds over the overall, a hovered pin) draws
+    // nothing instead of doubling it.
+    scene.update(hoverItem
+      ? baseCache.drawings.concat(place([hoverItem], new Set(baseItems.map((i) => specSig(i.spec)))))
+      : baseCache.drawings);
   }
 
   // ---- frame dirty check ---------------------------------------------------

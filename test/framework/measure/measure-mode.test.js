@@ -255,6 +255,7 @@ test("clicking a pinned dim's label resolves it by item id and unpins", () => {
   clickAt(viewer.domElement, 64.1, 55.6); // inside the labeled triangle
   expect(mode.pinCount()).toBe(1);
 
+  viewer.frame(); // labels are positioned by scene.tick(), not at build time
   viewer.__parts.updateMatrixWorld(true);
   const screenOf = (o) => {
     const p = o.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
