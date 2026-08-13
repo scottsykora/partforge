@@ -10,13 +10,14 @@ export function linkParam(keys, params, values) {
   const measured = Object.entries(values)
     .filter(([k, v]) => typeof v === "number" && k !== "partial")
     .map(([, v]) => v);
+  const hasDiameter = "diameter" in values;
   const matches = new Set();
   for (const key of keys) {
     const pv = params[key];
     if (typeof pv !== "number") continue;
     for (const mv of measured) {
       if (Math.abs(pv - mv) < QUANTUM) { matches.add(key); break; }
-      if ("diameter" in values && Math.abs(pv * 2 - values.diameter) < QUANTUM * 2) { matches.add(key); break; }
+      if (hasDiameter && Math.abs(pv * 2 - values.diameter) < QUANTUM) { matches.add(key); break; }
     }
   }
   return matches.size === 1 ? [...matches][0] : null;

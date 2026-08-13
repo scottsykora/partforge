@@ -29,3 +29,13 @@ test("matches within the 0.01 quantum only", () => {
 test("non-numeric params and the partial flag are ignored", () => {
   expect(linkParam(["style"], { style: "hex" }, { diameter: 8, partial: false })).toBeNull();
 });
+
+test("radius match uses the same half-quantum tolerance as direct match", () => {
+  expect(linkParam(["wall"], { wall: 4 }, { diameter: 8.004 })).toBe("wall");
+  expect(linkParam(["wall"], { wall: 4 }, { diameter: 8.009 })).toBeNull();
+});
+
+test("direct and radius matches compete for uniqueness", () => {
+  // height matches diameter directly; wall matches at value*2 — ambiguous, so null
+  expect(linkParam(["height", "wall"], { height: 8, wall: 4 }, { diameter: 8 })).toBeNull();
+});
