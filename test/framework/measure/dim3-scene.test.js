@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
 import * as THREE from "three";
-import { createDimScene, DIM_THEME, RENDER_ORDER_DIMS, RENDER_ORDER_LABELS }
+import { createDimScene, DIM_THEME, RENDER_ORDER_DIMS, RENDER_ORDER_LABELS, labelWorldHeight, LABEL_SCREEN_PX }
   from "../../../src/framework/measure/dim3-scene.js";
 
 function fakeViewer() {
@@ -73,6 +73,45 @@ describe("createDimScene", () => {
     expect(scene.group.children.length).toBe(3);
     scene.clear();
     expect(scene.group.children.length).toBe(0);
+  });
+
+  it("tick sizes labels screen-constant: one shared world height, tracking zoom", () => {
+    const viewer = fakeViewer();
+    const scene = createDimScene(viewer, { paintLabel: fakePaint });
+    const second = {
+      ...DRAWING, itemId: "pin:x", tier: "pinned",
+      labels: [{ text: "5.00 mm", param: null, center: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], h: 8 }],
+    };
+    scene.update([DRAWING, second]);
+    viewer.__parts.updateMatrixWorld(true);
+    scene.tick();
+    const [a, b] = scene.group.children.filter((k) => k.userData.pfDimItemId);
+    const dist = viewer.camera.position.length(); // dim group sits at the world origin
+    const hStar = labelWorldHeight(dist, viewer.camera.fov, 600);
+    expect(hStar).toBeCloseTo((LABEL_SCREEN_PX * 2 * dist * Math.tan((viewer.camera.fov * Math.PI) / 360)) / 600, 9);
+    // both labels display at the SAME world height despite different base h
+    expect(a.scale.x * 4).toBeCloseTo(hStar, 6);
+    expect(b.scale.x * 8).toBeCloseTo(hStar, 6);
+    // zoom to half the distance: world height halves, so screen size holds
+    viewer.camera.position.set(0, 0, dist / 2);
+    viewer.camera.updateMatrixWorld();
+    scene.tick();
+    expect(a.scale.x * 4).toBeCloseTo(hStar / 2, 6);
+  });
+
+  it("tick keeps a resized label 0.85·displayHeight outside its dim line", () => {
+    const viewer = fakeViewer();
+    const scene = createDimScene(viewer, { paintLabel: fakePaint });
+    scene.update([DRAWING]);
+    viewer.__parts.updateMatrixWorld(true);
+    scene.tick();
+    const label = scene.group.children.find((k) => k.userData.pfDimItemId);
+    const hStar = labelWorldHeight(viewer.camera.position.length(), viewer.camera.fov, 600);
+    // placement: center [5,-2,0], y [0,1,0], h 4 → on-line anchor [5, 1.4, 0];
+    // display position slides along -y by 0.85·hStar from that anchor
+    expect(label.position.x).toBeCloseTo(5, 6);
+    expect(label.position.z).toBeCloseTo(0, 6);
+    expect(label.position.y).toBeCloseTo(1.4 - 0.85 * hStar, 6);
   });
 
   it("tick mirrors a label viewed from behind (and holds within the deadband)", () => {

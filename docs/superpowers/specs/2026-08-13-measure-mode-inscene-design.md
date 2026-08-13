@@ -214,3 +214,18 @@ no compositing step:
    AGENTS.md architecture line updated.
 
 Version stays 0.54.0 — nothing of v1's overlay was ever published.
+
+## Amendments
+
+**2026-08-13 — screen-constant label sizing.** Review on very small parts (the
+8 mm demo spacer) showed the mm-based text floor dominating the model when
+zoomed in. Labels now DISPLAY at a screen-constant height: one world height
+per view, derived from the camera's distance to the model centre so text
+renders ≈18 px (`LABEL_SCREEN_PX` in dim3-scene) at any zoom. Uniform per view
+by construction — a single reference distance sizes every label, so nearer
+labels are not individually normalized; they read slightly larger under
+perspective like the rest of the scene. Applied per frame in `dim3-scene`'s
+tick as a scale + reposition (the label stays `0.85 × displayHeight` outside
+its dim line); placement's `textHeight` constant remains the nominal for
+leader lengths and initial quad geometry, and the rebuild-not-per-frame
+invariant is untouched.

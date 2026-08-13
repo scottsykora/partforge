@@ -30,6 +30,23 @@ export const DIM_THEME = {
 export const RENDER_ORDER_DIMS = 998;
 export const RENDER_ORDER_LABELS = 999;
 
+// Target on-screen label height, CSS px. Labels display screen-constant: one
+// world height per view, derived from the camera's distance to the model
+// centre, so text reads the same size at any zoom (and stays proportionate on
+// very small parts, where the placement engine's mm-based minimum would
+// dominate the model). Uniform per view by design — every label shares the one
+// reference distance, so a nearer label is NOT normalized to match a farther
+// one; it just reads slightly larger under perspective like the rest of the
+// scene.
+export const LABEL_SCREEN_PX = 18;
+
+// World-space height that renders as `targetPx` on screen for a point at
+// `dist` from the camera: the visible world height at that distance is
+// 2·dist·tan(fov/2) spread over `viewportPx` pixels.
+export function labelWorldHeight(dist, fovDeg, viewportPx, targetPx = LABEL_SCREEN_PX) {
+  return (targetPx * 2 * dist * Math.tan((fovDeg * Math.PI) / 360)) / viewportPx;
+}
+
 // Default label painter: returns a canvas whose aspect the caller turns into
 // a plane. Pure DOM-canvas; swapped out in tests.
 export function defaultPaintLabel({ text, param, palette }) {
@@ -139,7 +156,14 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
     mesh.position.set(...l.center);
     mesh.userData.pfDimItemId = itemId;
     group.add(mesh);
-    labels.push({ mesh, baseQuat, mirrored: false, flipped: false, itemId, text: l.text, param: l.param });
+    // The placement puts the label's centre 0.85·h OUTSIDE the dim line along
+    // ext (= -y). Recover the on-line anchor so tick() can re-offset by the
+    // zoom-derived display height without a placement rebuild.
+    const anchor = new THREE.Vector3(...l.center).addScaledVector(y, 0.85 * l.h);
+    labels.push({
+      mesh, baseQuat, mirrored: false, flipped: false, itemId, text: l.text, param: l.param,
+      baseH: l.h, anchor, offDir: y.clone(),
+    });
   }
 
   // ---- build / clear --------------------------------------------------------
@@ -210,12 +234,27 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
   const _x = new THREE.Vector3();
   const _wp = new THREE.Vector3();
   const _toCam = new THREE.Vector3();
+  const _gp = new THREE.Vector3();
   function tick() {
     if (!attached || !group.children.length) return;
     const el = viewer.domElement;
     const w = el.clientWidth || 1, h = el.clientHeight || 1;
     lineMats.static.resolution.set(w, h);
     lineMats.strong.resolution.set(w, h);
+    // Screen-constant label sizing (see LABEL_SCREEN_PX): scale + reposition
+    // only — placement, and the rebuild-not-per-frame invariant, are
+    // untouched. The group origin is the recentred model centre, so every
+    // label shares the one reference distance.
+    group.getWorldPosition(_gp);
+    const dist = viewer.camera.position.distanceTo(_gp);
+    const hStar = labelWorldHeight(dist, viewer.camera.fov ?? 45, h);
+    if (hStar > 0) {
+      for (const L of labels) {
+        if (!L.baseH) continue;
+        L.mesh.scale.setScalar(hStar / L.baseH);
+        L.mesh.position.copy(L.anchor).addScaledVector(L.offDir, -0.85 * hStar);
+      }
+    }
     group.getWorldQuaternion(_gq);
     _iq.copy(viewer.camera.quaternion).invert();
     for (const L of labels) {

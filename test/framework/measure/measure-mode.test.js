@@ -305,6 +305,7 @@ test("a posed mesh moves its pinned PLANE dim by the pose", () => {
   mode.setEnabled(true);
   clickAt(viewer.domElement); // pin the "top face" feature -> plane spec
   expect(mode.pinCount()).toBe(1);
+  viewer.frame(); // settle scene.tick()'s screen-constant label sizing before capturing
   const before = labelPositions("pin:");
   expect(before.length).toBeGreaterThan(0);
 
@@ -329,6 +330,7 @@ test("a posed mesh moves its pinned BBOX dim by the pose", () => {
   mode.setEnabled(true);
   clickAt(viewer.domElement, 50, 48); // over the UNLABELED triangle
   expect(itemIds()).toContain("pin:plate:bbox:0");
+  viewer.frame(); // settle scene.tick()'s screen-constant label sizing before capturing
   const before = labelPositions("pin:");
   expect(before.length).toBeGreaterThan(0);
 
@@ -392,6 +394,7 @@ test("a posed mesh rotates its pinned CYLINDER dim's ⌀ label through transform
   clickAt(viewer.domElement); // pin the "boss" wall feature -> cylinder spec
   expect(mode.pinCount()).toBe(1);
   expect(itemIds()).toContain("pin:plate:boss:0");
+  viewer.frame(); // settle scene.tick()'s screen-constant label sizing before capturing
   const before = labelPositions("pin:"); // [⌀ label, depth label]
   expect(before.length).toBeGreaterThan(0);
 
