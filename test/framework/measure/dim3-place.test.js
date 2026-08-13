@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import * as THREE from "three";
 import {
   evaluateChoices, choicesEqual, placeDims, extremeVertex,
-  GAP, OVERSHOOT, HYSTERESIS, standoff, arrowLen, ARROW_HALF_W, textHeight,
+  GAP, OVERSHOOT, HYSTERESIS, FLIP_DEADBAND_DEG, standoff, arrowLen, ARROW_HALF_W, textHeight,
 } from "../../../src/framework/measure/dim3-place.js";
 import { bboxSpec } from "../../../src/framework/measure/feature-dims.js";
 
@@ -59,6 +59,33 @@ describe("evaluateChoices", () => {
     // 90° away: re-aimed
     const c = evaluateChoices([item], { camPos: [0, 100, 5], center: [0, 0, 5], prev: a });
     expect(c["h|du"].du[1]).toBeCloseTo(1, 5);
+  });
+
+  it("cylinder du boundary: holds just under FLIP_DEADBAND_DEG, re-aims just past it", () => {
+    const spec = {
+      kind: "cylinder",
+      values: { diameter: 8, depth: 10, partial: false },
+      anchors: { center: [0, 0, 5], axis: [0, 0, 1], top: [0, 0, 10], bottom: [0, 0, 0], rimDir: [1, 0, 0] },
+    };
+    const item = { id: "h", tier: "hover", spec };
+    const a = evaluateChoices([item], { camPos: [100, 0, 5], center: [0, 0, 5], prev: {} });
+    expect(a["h|du"].du[0]).toBeCloseTo(1, 5);
+
+    // Camera positions derived from tan(angle): with the camera's radial X held
+    // at 100 and Y = 100·tan(angle), the resulting du sits exactly `angle` off
+    // the previous du = (1,0,0) (the Z offset cancels out of the radial
+    // projection). Stay 1° clear of the exact 25° boundary either way so
+    // floating-point noise can't flip the outcome.
+    const R = 100;
+    const angleTo = (deg) => R * Math.tan((deg * Math.PI) / 180);
+
+    const under = evaluateChoices([item], { camPos: [R, angleTo(24), 5], center: [0, 0, 5], prev: a });
+    expect(under["h|du"].du[0]).toBeCloseTo(1, 5); // held at the previous du
+    expect(under["h|du"].du[1]).toBeCloseTo(0, 5);
+
+    const over = evaluateChoices([item], { camPos: [R, angleTo(26), 5], center: [0, 0, 5], prev: a });
+    expect(over["h|du"].du[0]).toBeCloseTo(Math.cos((26 * Math.PI) / 180), 5); // re-aimed
+    expect(over["h|du"].du[1]).toBeCloseTo(Math.sin((26 * Math.PI) / 180), 5);
   });
 });
 
@@ -136,6 +163,54 @@ describe("placeDims — bbox", () => {
     expect(GAP).toBe(1.0);
     expect(OVERSHOOT).toBe(1.5);
     expect(HYSTERESIS).toBe(1.15);
+    expect(FLIP_DEADBAND_DEG).toBe(25);
+  });
+
+  it("keeps every point of the X dim on a single plane (coplanarity)", () => {
+    // camPos [5,-100,15] picks e1s-1 for axis0 (see "extends bbox dims toward
+    // the camera" above), i.e. extAxis=1, nAxis=2 — the dim plane is a fixed z.
+    // The X dim is the first of the 3 axis dims placeBox emits (axis loop
+    // order 0,1,2), so it occupies the first 3 segments (18 numbers), first 2
+    // triangles (18 numbers), and first label.
+    const items = [overallItem()];
+    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    expect(choices["overall|ax0"].key).toBe("e1s-1");
+    const d = placeDims(items, {
+      meshData: boxMeshData(), surfaceHit: null,
+      bounds: { min: [0, 0, 0], max: [10, 20, 30] },
+    }, choices)[0];
+
+    const xSegments = d.segments.slice(0, 18);
+    const xTriangles = d.triangles.slice(0, 18);
+    const xLabel = d.labels[0];
+    expect(xLabel.text).toBe("10.00 mm"); // sanity: this really is the X dim
+
+    const zValues = [];
+    for (let i = 2; i < xSegments.length; i += 3) zValues.push(xSegments[i]);
+    for (let i = 2; i < xTriangles.length; i += 3) zValues.push(xTriangles[i]);
+    zValues.push(xLabel.center[2]);
+    for (const z of zValues) expect(z).toBeCloseTo(zValues[0], 6);
+  });
+
+  it("snaps a surfaceHit point back onto the dim plane (planeAxis/planeC)", () => {
+    const items = [overallItem()];
+    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    // deliberately off the X dim's plane (z=99, nowhere near the box)
+    const offPlaneHit = new THREE.Vector3(2, 0, 99);
+    const d = placeDims(items, {
+      meshData: boxMeshData(),
+      surfaceHit: () => offPlaneHit,
+      bounds: { min: [0, 0, 0], max: [10, 20, 30] },
+    }, choices)[0];
+
+    const xSegments = d.segments.slice(0, 18);
+    // first extension line: segments[0..5] = [start.xyz, end.xyz]; start.z is
+    // segments[2]. If the snap didn't run this would be ~99.
+    const startZ = xSegments[2];
+    expect(startZ).not.toBeCloseTo(99, 3);
+    // it lands back on the same plane as the rest of the dim (dim-line end z)
+    const dimLineEndZ = xSegments[17];
+    expect(startZ).toBeCloseTo(dimLineEndZ, 6);
   });
 });
 
