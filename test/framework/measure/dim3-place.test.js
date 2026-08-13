@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import * as THREE from "three";
 import {
-  evaluateChoices, choicesEqual, placeDims, extremeVertex, specSig,
+  evaluateChoices, choicesEqual, placeDims, extremeVertex, specSig, laneCounts,
   HYSTERESIS, FLIP_DEADBAND_DEG, standoffNominal,
 } from "../../../src/framework/measure/dim3-place.js";
 import { bboxSpec } from "../../../src/framework/measure/feature-dims.js";
@@ -163,6 +163,22 @@ describe("placeDims — bbox", () => {
     }, choices);
     expect(drawings.length).toBe(1);
     expect(drawings[0].itemId).toBe("pin:body:bbox:0");
+  });
+
+  it("continues stagger lanes from seeded lane counts (laneCounts round trip)", () => {
+    const items = [overallItem()];
+    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    const env = { meshData: boxMeshData(), surfaceHit: null, bounds: { min: [0, 0, 0], max: [10, 20, 30] } };
+    const base = placeDims(items, env, choices);
+    // base: the X and H dims both extend -Y (lanes 0 and 1)
+    const seed = laneCounts(base);
+    const hoverItem = { id: "hover", tier: "hover", spec: bboxSpec([1, 1, 1], [9, 19, 29]), meshes: [0] };
+    const hoverChoices = evaluateChoices([hoverItem], { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    const hover = placeDims([hoverItem], { ...env, lanes: seed }, hoverChoices)[0];
+    // its X dim extends -Y too and must continue at lane 2, not restart at 0
+    const xDim = hover.dims.find((d) => d.label.text === "8.00 mm");
+    expect(xDim.ext[1]).toBe(-1);
+    expect(xDim.lane).toBe(2);
   });
 
   it("suppresses items whose sig was already drawn by another pass", () => {

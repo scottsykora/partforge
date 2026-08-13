@@ -180,6 +180,32 @@ test("hover shows the feature's dims with a param link", () => {
   mode.detach();
 });
 
+// Regression: stagger lanes are assigned per placeDims call, and hover is
+// placed in a separate call from the cached base — without seeding the hover
+// pass with the base pass's lane counts, a hovered dim started at lane 0 and
+// JUMPED outward on click when its pin joined the base pass. A hovered dim
+// must land exactly where its pin will.
+test("a hovered dim takes the lane it will keep when pinned (no jump on click)", () => {
+  const { viewer, mode, labelPositions } = setup();
+  mode.setEnabled(true);
+  viewer.frame(); // settle screen-constant sizing
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
+  viewer.frame(); // position the hover labels
+  const hover = labelPositions("hover");
+  expect(hover.length).toBeGreaterThan(0);
+
+  clickAt(viewer.domElement); // pin the same feature (hover then dedupes away)
+  viewer.frame();
+  const pinned = labelPositions("pin:");
+  expect(pinned.length).toBe(hover.length);
+  pinned.forEach((p, i) => {
+    expect(p[0]).toBeCloseTo(hover[i][0], 5);
+    expect(p[1]).toBeCloseTo(hover[i][1], 5);
+    expect(p[2]).toBeCloseTo(hover[i][2], 5);
+  });
+  mode.detach();
+});
+
 test("click pins; pin survives a geometry swap; clearPins notifies", () => {
   const { viewer, mode, itemIds } = setup();
   const onPins = vi.fn();

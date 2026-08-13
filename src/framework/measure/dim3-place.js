@@ -73,6 +73,22 @@ function laneFor(lanes, ext) {
   return lane;
 }
 
+// Lane occupancy of already-placed drawings, in laneFor's key space — the
+// orchestrator seeds the hover pass with the cached base pass's counts so a
+// hovered dim takes the SAME lane it will occupy once pinned (pins append
+// after the base items in the same order), instead of starting at lane 0 and
+// jumping on click.
+export function laneCounts(drawings) {
+  const lanes = new Map();
+  for (const d of drawings) {
+    for (const dim of d.dims ?? []) {
+      const key = `${dim.ext[0].toFixed(2)},${dim.ext[1].toFixed(2)},${dim.ext[2].toFixed(2)}`;
+      lanes.set(key, Math.max(lanes.get(key) ?? 0, (dim.lane ?? 0) + 1));
+    }
+  }
+  return lanes;
+}
+
 // --- candidate sides for a box-extent dim ------------------------------------
 // Measuring along `axis`, the dim can extend outward along ± each of the other
 // two axes; the plane normal is the remaining axis. Keys are stable across
@@ -352,7 +368,7 @@ function placeCylinder(out, item, spec, choices, { lanes }) {
 }
 
 // --- entry point --------------------------------------------------------------
-export function placeDims(items, { meshData = [], surfaceHit = null, bounds, suppress = null }, choices) {
+export function placeDims(items, { meshData = [], surfaceHit = null, bounds, suppress = null, lanes: laneSeed = null }, choices) {
   const size = bounds
     ? Math.max(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2])
     : 10;
@@ -371,7 +387,7 @@ export function placeDims(items, { meshData = [], surfaceHit = null, bounds, sup
   // extreme anchor sits nearer the model's mid-plane along nAxis (see refSide
   // below) rather than to a camera side — deterministic and adequate: the
   // spec only requires "the side of the model the dim is drawn toward".
-  const lanes = new Map();
+  const lanes = new Map(laneSeed ?? undefined);
   const drawings = [];
   items.forEach((item, idx) => {
     const spec = item.spec;

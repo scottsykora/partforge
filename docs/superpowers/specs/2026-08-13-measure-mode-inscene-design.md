@@ -258,5 +258,8 @@ thing (a hovered sub-part over the overall bounds, a hover over its own pin)
 draw once, later item winning since it carries the param pill; the
 orchestrator's hover pass passes the cached base items' `specSig`s as a
 suppression set; (2) stagger lanes — dims extending the same outward
-direction stack at `STAGGER_SCREEN_PX` (26) increments, drafting-style. The
+direction stack at `STAGGER_SCREEN_PX` (26) increments, drafting-style; the
+hover pass is seeded with the base pass's lane occupancy (`laneCounts`) so a
+hovered dim takes the same lane it will keep once pinned — clicking never
+moves it. The
 v1-style per-label collision solver stays explicitly out of scope.
