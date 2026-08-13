@@ -14,7 +14,7 @@ import { createFeatureHighlight } from "../selection/feature-highlight.js";
 import { createDragTracker } from "../selection/drag-tracker.js";
 import { subPartReadKeys, RELEVANT_ALL } from "../param-deps.js";
 import { classifyFeature, bboxSpec, unionBounds } from "./feature-dims.js";
-import { linkParam } from "./param-link.js";
+import { paramMatches } from "./param-link.js";
 import { createPinStore, occurrenceOf } from "./pins.js";
 import { evaluateChoices, choicesEqual, placeDims, specSig, laneCounts } from "./dim3-place.js";
 import { createDimScene } from "./dim3-scene.js";
@@ -121,17 +121,23 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
       ? Object.keys(params)
       : [...(reads.get(subPart) ?? Object.keys(params))];
   }
-  // A measurement is a FUNCTION of several params, so clicking one flashes
-  // every control that can drive it: the union of the read keys of the
-  // sub-parts it spans. The clicked label's exact value picks the control to
-  // FOCUS (linkParam's unique-match rule); no match, no focus steal.
+  // Clicking a measurement flashes the controls whose value ACTUALLY matches
+  // it (within the display quantum; radius-style params match a diameter at
+  // value*2), scoped to the spanned sub-parts' read keys so an unrelated
+  // part's coincidental value can't light up. One match also takes keyboard
+  // focus; several flash without a focus steal; none flashes nothing — a
+  // sub-part's whole read set proved far too coarse (a single build function
+  // reads every param, so even the drainage toggle lit up for a width click).
+  // Truthful derived-value attribution (which params MOVE this value) would
+  // need a per-param sensitivity probe in the worker — deliberately not done.
   function revealRelevant(subParts, value) {
+    if (value == null) return;
     const keySet = new Set();
     for (const sp of subParts ?? []) for (const k of readKeysFor(sp)) keySet.add(k);
     if (!keySet.size) return;
-    const keys = [...keySet];
-    const focus = value != null ? linkParam(keys, getContext().params, { value }) : null;
-    revealParams?.(keys, focus);
+    const matches = paramMatches([...keySet], getContext().params, { value });
+    if (!matches.length) return;
+    revealParams?.(matches, matches.length === 1 ? matches[0] : null);
   }
 
   // ---- pin resolution: stable key -> a live spec + its mesh ----------------

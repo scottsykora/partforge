@@ -280,10 +280,14 @@ and unpinning a linked dim stays on re-clicking its geometry or Clear.
 param pill was misleading: the link was computed per measurement SET, so the
 one matched param (e.g. `height`) stamped every label in the set — the width
 label read "height". Dropped the pill entirely; labels are plain values.
-The dimension->control affordance is now the click: clicking ANY label (or
-pinning via geometry) flashes EVERY control that can drive the measurement —
-the union of the spanned sub-parts' read keys (`panel.revealParams`) — with
-keyboard focus given only to a control whose value uniquely matches the
-clicked dimension (param-link's rule, now applied per label value carried on
-the label mesh). Labels never unpin (geometry re-click / Clear do); the
-flash ring uses an outline with 5 px offset so it sits clear of the control.
+The dimension->control affordance is now the click: clicking ANY label
+flashes the controls whose value ACTUALLY matches the clicked dimension
+(param-link's quantum rule, incl. the value*2 radius match), scoped to the
+spanned sub-parts' read keys via `panel.revealParams`. One match also takes
+keyboard focus; several flash without focus; none flashes nothing. (A first
+cut flashed the sub-part's whole read set — far too coarse: a single build
+function reads every param, so even the drainage toggle lit up for a width
+click. Truthful derived-value attribution would need a per-param sensitivity
+probe in the worker; deliberately deferred.) Geometry clicks pin/unpin
+quietly; labels never unpin; the flash ring uses an outline with 5 px offset
+so it sits clear of the control.

@@ -248,15 +248,13 @@ test("a pin whose feature label disappears goes dormant without being dropped", 
   mode.detach();
 });
 
-test("clicking a hovered dim flashes every relevant control", () => {
+test("a geometry click pins quietly (no value, no flash)", () => {
   const { viewer, mode, revealParams } = setup();
   mode.setEnabled(true);
   viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  clickAt(viewer.domElement); // geometry click: pin + flash the read set (no value -> no focus)
-  expect(revealParams).toHaveBeenCalled();
-  const [keys, focus] = revealParams.mock.calls.at(-1);
-  expect(keys).toEqual(expect.arrayContaining(["plate_w", "wall"]));
-  expect(focus).toBe(null);
+  clickAt(viewer.domElement);
+  expect(mode.pinCount()).toBe(1);
+  expect(revealParams).not.toHaveBeenCalled();
   mode.detach();
 });
 
@@ -293,7 +291,7 @@ function offFeatureLabelTarget(viewer, dimGroup, prefix) {
 // Solid.label() does) and never by falling through to the geometry raycast.
 // Every label is a button to the controls driving its measurement: reveal,
 // keep the pin. Unpinning stays on geometry re-click / Clear.
-test("clicking a pinned dim's label flashes its controls and keeps the pin", () => {
+test("clicking a pinned dim's label keeps the pin; only value matches flash", () => {
   // Half-labeled plate: the pinned feature covers only one triangle, so one of
   // its dim labels lands over UNLABELED geometry. A click there that fell
   // through to the raycast would pin the sub-part bbox (pinCount 2) — which is
@@ -302,15 +300,17 @@ test("clicking a pinned dim's label flashes its controls and keeps the pin", () 
   mode.setEnabled(true);
   clickAt(viewer.domElement, 64.1, 55.6); // inside the labeled triangle
   expect(mode.pinCount()).toBe(1);
-  revealParams.mockClear(); // pinning flashed once; the label click must again
+  revealParams.mockClear();
 
   const target = offFeatureLabelTarget(viewer, dimGroup, "pin:");
   expect(target).toBeDefined();
   clickAt(viewer.domElement, target.x, target.y);
 
-  expect(revealParams).toHaveBeenCalled();
-  const [keys] = revealParams.mock.calls.at(-1);
-  expect(keys).toEqual(expect.arrayContaining(["plate_w", "wall"]));
+  // whichever label was clicked, the pin holds and any flash is value-matched:
+  // no control ever lights up for a value it doesn't hold
+  for (const [keys] of revealParams.mock.calls) {
+    for (const k of keys) expect(["plate_w"]).toContain(k); // wall=3 matches nothing here
+  }
   expect(mode.pinCount()).toBe(1); // still pinned — no toggle, no bbox fallthrough
   mode.detach();
 });
@@ -331,9 +331,49 @@ test("a label click whose value matches a param focuses that control", () => {
   const proj = wLabel.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
   clickAt(viewer.domElement, ((proj.x + 1) / 2) * 100, ((1 - proj.y) / 2) * 100);
 
-  const [, focus] = revealParams.mock.calls.at(-1);
+  const [keys, focus] = revealParams.mock.calls.at(-1);
+  expect(keys).toEqual(["plate_w"]); // ONLY the matching control — nothing else flashes
   expect(focus).toBe("plate_w");
   expect(mode.pinCount()).toBe(1);
+  mode.detach();
+});
+
+test("a label click with no matching value flashes nothing", () => {
+  const { viewer, mode, dimGroup, revealParams } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+  mode.setEnabled(true);
+  clickAt(viewer.domElement, 64.1, 55.6);
+  revealParams.mockClear();
+
+  viewer.frame();
+  viewer.__parts.updateMatrixWorld(true);
+  // the D label (10.00): params are plate_w=20 / wall=3 — no match
+  const dLabel = dimGroup().children.find((c) => c.userData.pfDimValue === 10);
+  expect(dLabel).toBeDefined();
+  const proj = dLabel.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
+  clickAt(viewer.domElement, ((proj.x + 1) / 2) * 100, ((1 - proj.y) / 2) * 100);
+
+  expect(revealParams).not.toHaveBeenCalled();
+  mode.detach();
+});
+
+test("several matching params all flash, none takes focus", () => {
+  const { viewer, mode, dimGroup, ctx, revealParams } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+  ctx.params.wall = 20; // now BOTH plate_w and wall hold the clicked value
+  mode.setEnabled(true);
+  clickAt(viewer.domElement, 64.1, 55.6);
+  revealParams.mockClear();
+
+  viewer.frame();
+  viewer.__parts.updateMatrixWorld(true);
+  const wLabel = dimGroup().children
+    .filter((c) => c.userData.pfDimItemId?.startsWith("pin:"))
+    .find((c) => c.userData.pfDimValue === 20);
+  const proj = wLabel.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
+  clickAt(viewer.domElement, ((proj.x + 1) / 2) * 100, ((1 - proj.y) / 2) * 100);
+
+  const [keys, focus] = revealParams.mock.calls.at(-1);
+  expect(keys.sort()).toEqual(["plate_w", "wall"]);
+  expect(focus).toBe(null);
   mode.detach();
 });
 

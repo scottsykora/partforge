@@ -6,7 +6,10 @@
 // never guess between two.
 const QUANTUM = 0.005; // half the 0.01 display quantum: |a-b| < 0.005 rounds equal
 
-export function linkParam(keys, params, values) {
+// Every candidate whose current value matches a measured value (or matches
+// diameter at value*2, the radius-style rule) — the set a measurement click
+// flashes. linkParam keeps the stricter unique-or-nothing rule for focus.
+export function paramMatches(keys, params, values) {
   const measured = Object.entries(values)
     .filter(([k, v]) => typeof v === "number" && k !== "partial")
     .map(([, v]) => v);
@@ -20,5 +23,10 @@ export function linkParam(keys, params, values) {
       if (hasDiameter && Math.abs(pv * 2 - values.diameter) < QUANTUM) { matches.add(key); break; }
     }
   }
-  return matches.size === 1 ? [...matches][0] : null;
+  return [...matches];
+}
+
+export function linkParam(keys, params, values) {
+  const matches = paramMatches(keys, params, values);
+  return matches.length === 1 ? matches[0] : null;
 }
