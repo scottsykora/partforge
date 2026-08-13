@@ -23,3 +23,8 @@ export { renderViews, RENDER_VIEWS } from "./testing/render.js";
 export { verify } from "./framework/oracle/verify.js";
 export { buildBVH } from "./framework/oracle/bvh.js";
 export { minWall } from "./framework/oracle/min-wall.js";
+// Silhouette match scoring — also worker-reachable (the `inspect` job scores
+// `matchTargets` with exactly these), re-exported so a downstream harness can build
+// the same masks and reproduce a score outside the job loop.
+export { MATCH_VIEWS, rasterizeMeshMask, rasterizeRingsMask } from "./framework/oracle/silhouette.js";
+export { matchMasks, matchViews } from "./framework/oracle/match.js";
