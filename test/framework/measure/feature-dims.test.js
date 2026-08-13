@@ -11,8 +11,8 @@ function square({ w = 1, h = 1, z = 0 } = {}) {
   return { positions, featureIds: new Uint16Array([1, 1]) };
 }
 
-// Open tube (no caps): radius r, height along +Z, `seg` segments over `arc` radians.
-function tube({ r = 4, height = 10, seg = 24, arc = Math.PI * 2, id = 1 } = {}) {
+// Open tube (optional cap): radius r, height along +Z, `seg` segments over `arc` radians.
+function tube({ r = 4, height = 10, seg = 24, arc = Math.PI * 2, id = 1, cap = false } = {}) {
   const pos = [];
   for (let i = 0; i < seg; i++) {
     const a0 = (arc * i) / seg, a1 = (arc * (i + 1)) / seg;
@@ -20,8 +20,17 @@ function tube({ r = 4, height = 10, seg = 24, arc = Math.PI * 2, id = 1 } = {}) 
     pos.push(p0[0], p0[1], 0, p1[0], p1[1], 0, p1[0], p1[1], height);
     pos.push(p0[0], p0[1], 0, p1[0], p1[1], height, p0[0], p0[1], height);
   }
+  // Optional top cap: triangle fan centered at [0, 0, height]
+  if (cap) {
+    pos.push(0, 0, height); // fan center (index 0 of cap)
+    for (let i = 0; i <= seg; i++) {
+      const a = (arc * i) / seg;
+      pos.push(r * Math.cos(a), r * Math.sin(a), height);
+    }
+  }
   const positions = new Float32Array(pos);
-  return { positions, featureIds: new Uint16Array(positions.length / 9).fill(id) };
+  const triangles = (positions.length / 9);
+  return { positions, featureIds: new Uint16Array(triangles).fill(id) };
 }
 
 test("planar axis-snapped face -> plane spec with global-axis extents", () => {
@@ -55,7 +64,16 @@ test("full tube -> cylinder spec with diameter and depth", () => {
 test("120° arc -> partial cylinder (R notation)", () => {
   const spec = classifyFeature(tube({ arc: (2 * Math.PI) / 3 }), 1);
   expect(spec.kind).toBe("cylinder");
+  expect(spec.values.diameter).toBeCloseTo(8, 1);
+  expect(spec.values.depth).toBeCloseTo(10, 5);
   expect(spec.values.partial).toBe(true);
+});
+
+test("capped tube (wall + cap in one feature) still classifies as cylinder", () => {
+  const spec = classifyFeature(tube({ r: 4, height: 10, cap: true }), 1);
+  expect(spec.kind).toBe("cylinder");
+  expect(spec.values.diameter).toBeCloseTo(8, 1);
+  expect(spec.values.depth).toBeCloseTo(10, 5);
 });
 
 test("irregular soup falls back to bbox", () => {

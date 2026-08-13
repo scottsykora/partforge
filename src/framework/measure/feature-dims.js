@@ -130,17 +130,27 @@ function planeSpec(tris, normals) {
 }
 
 function cylinderSpec(tris, normals) {
-  // Axis estimate: side-wall normals of a cylinder lie in the plane ⊥ axis,
-  // so any two well-separated wall normals cross to ±axis. Pick the pair with
-  // the smallest |dot|; refine nothing — validation below does the accepting.
-  let n0 = normals[0].n, nk = null, bestAbs = Infinity;
-  for (const { n } of normals) {
-    const d = Math.abs(dot(n0, n));
-    if (d < bestAbs) { bestAbs = d; nk = n; }
+  // Candidate axes from cross products of well-separated normal pairs, scored
+  // by how much triangle area agrees the candidate is ⊥ to it. A single seeded
+  // pair is not robust: when a feature carries wall AND cap triangles, a
+  // wall×cap pair yields a tangent to the cylinder, not its axis.
+  const stride = Math.max(1, Math.floor(normals.length / 16));
+  const sample = [];
+  for (let i = 0; i < normals.length; i += stride) sample.push(normals[i].n);
+  let axis = null, bestScore = 0;
+  for (let i = 0; i < sample.length; i++) {
+    for (let j = i + 1; j < sample.length; j++) {
+      if (Math.abs(dot(sample[i], sample[j])) > 0.95) continue;
+      const cand = norm(cross(sample[i], sample[j]));
+      if (cand[0] === 0 && cand[1] === 0 && cand[2] === 0) continue;
+      let score = 0;
+      for (const { n: tn, area } of normals) {
+        if (Math.abs(dot(tn, cand)) <= AXIS_DOT_MAX) score += area;
+      }
+      if (score > bestScore) { bestScore = score; axis = cand; }
+    }
   }
-  if (!nk) return null;
-  const axis = norm(cross(n0, nk));
-  if (axis[0] === 0 && axis[1] === 0 && axis[2] === 0) return null;
+  if (!axis) return null;
 
   // Wall triangles only (a labeled boss's end caps attribute to the same
   // feature — their normals are along the axis; exclude them from the fit).
