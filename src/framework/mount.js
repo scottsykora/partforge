@@ -34,8 +34,11 @@ import { attachMeasureControls } from "./measure/measure-controls.js";
 // The default no-op tooltip binding, so a host can hold on to whatever
 // attachTooltips returned without caring whether this mount resolved one.
 const NOOP_TOOLTIP_BINDING = { sync: () => {}, hide: () => {}, detach: () => {} };
+// Same no-op-default stance as attachTooltips/setHostPane below, for a
+// makeHandle caller (or a direct test) that doesn't wire measure mode.
+const NOOP_MEASURE = { isEnabled: () => false, setEnabled: () => {}, getOverlaySvg: () => null };
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -72,6 +75,12 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // title/aria-label); returns { sync, hide, detach }. Same no-op default
     // stance as setHostPane above.
     attachTooltips: attachTooltips ?? (() => NOOP_TOOLTIP_BINDING),
+    // Measurement-mode capture API (spec Goal 3): { isEnabled, setEnabled,
+    // getOverlaySvg } — an embedder pairs getOverlaySvg() with
+    // compositeOverlay()/overlaySvgString() (exported from the main entry) to
+    // build a dimensioned capture, or drives the mode without the built-in
+    // ruler button entirely.
+    measure: measure ?? NOOP_MEASURE,
   };
 }
 
@@ -710,6 +719,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
       exportParts: (opts) => exportCtl.exportParts(opts),
       animation: animCtl?.runtime ?? null,
+      measure: {
+        isEnabled: measureMode.isEnabled,
+        setEnabled: measureMode.setEnabled,
+        getOverlaySvg: measureMode.getOverlaySvg,
+      },
     });
   } catch (error) {
     try {

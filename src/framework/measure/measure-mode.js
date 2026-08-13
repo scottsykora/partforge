@@ -33,7 +33,10 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
   let detached = false;
 
   // ---- spec cache: (geometry instance, featureId) -> core spec -------------
-  const specCache = new Map(); // geometry -> Map(featureId -> spec|null)
+  // WeakMap: identity lookup only, and old geometries (with their typed
+  // arrays) drop out on their own once no mesh references them anymore —
+  // nothing here needs to clear it on detach.
+  const specCache = new WeakMap(); // geometry -> Map(featureId -> spec|null)
   function featureSpec(mesh, featureId) {
     let byId = specCache.get(mesh.geometry);
     if (!byId) { byId = new Map(); specCache.set(mesh.geometry, byId); }
@@ -71,10 +74,25 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
     .filter(([, m]) => m.visible && m.geometry.getAttribute("position")?.count);
 
   // ---- param linking (scoped like selection/resolve.js scopeParams) --------
+  // Memoize the per-sub-part read-key map: subPartReadKeys runs probe builds
+  // (see mesh-cache.js's readsFor), so it must run once per (view, params)
+  // change, not once per pinned item per frame. mount's getContext() returns
+  // the SAME live params object every call (mutated in place on every edit),
+  // so identity is stable across edits and can't key the memo the way
+  // mesh-cache.js's paramsVersion getter does — key on a content hash instead.
+  let readsKey = null, readsMap = null;
+  function readsFor(view, params) {
+    const key = `${view}|${JSON.stringify(params)}`;
+    if (readsKey !== key) {
+      readsKey = key;
+      try { readsMap = subPartReadKeys(part, view, params); } catch { readsMap = null; }
+    }
+    return readsMap;
+  }
   function readKeysFor(subPart) {
     const { view, params } = getContext();
-    let reads;
-    try { reads = subPartReadKeys(part, view, params); } catch { return Object.keys(getContext().params); }
+    const reads = readsFor(view, params);
+    if (!reads) return Object.keys(params);
     return reads === RELEVANT_ALL
       ? Object.keys(params)
       : [...(reads.get(subPart) ?? Object.keys(params))];
@@ -146,6 +164,10 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
 
   // ---- frame dirty check ---------------------------------------------------
   let lastSig = "";
+  // The parent (partsGroup) transform is deliberately NOT hashed here: every
+  // frameTo call site also changes the camera or a mesh's visibility/geometry
+  // (both already hashed below), so a parent-only transform change can't
+  // currently happen unobserved. A future decoupling of those must add it.
   function frameSig() {
     const e = viewer.camera.matrixWorld.elements;
     let sig = `${e[0]},${e[5]},${e[10]},${e[12]},${e[13]},${e[14]},${viewer.camera.projectionMatrix.elements[0]}`;
@@ -170,6 +192,18 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
   let dragged = false;
   let pendingMove = null;
   let moveScheduled = false;
+  let suppressed = false; // cutaway gizmo drag in progress
+
+  // Mirrors hover.js's own subscription: a cutaway handle drag takes over the
+  // pointer, so drop any pending hover and stop reacting to moves until it lets go.
+  const unsubscribeHandleHover = viewer.onCutawayHandleHover?.((handle) => {
+    suppressed = handle != null;
+    if (!suppressed) return;
+    pendingMove = null;
+    hover = null;
+    highlight?.clear();
+    renderNow();
+  }) ?? (() => {});
 
   function hitToHover(hit) {
     let spec, key;
@@ -197,7 +231,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
   }
 
   function onMove(ev) {
-    if (!enabled || ev.pointerType === "touch") return;
+    if (!enabled || ev.pointerType === "touch" || suppressed) return;
     const start = pointerStarts.get(ev.pointerId);
     if (start && !dragged) {
       const dx = ev.clientX - start.x, dy = ev.clientY - start.y;
@@ -210,7 +244,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
       moveScheduled = false;
       const p = pendingMove;
       pendingMove = null;
-      if (!enabled || detached || !p) return;
+      if (!enabled || detached || !p || suppressed) return;
       const hit = raycastViewer(viewer, p.x, p.y);
       if (hit) {
         hover = hitToHover(hit);
@@ -228,7 +262,10 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
   };
   const onUp = (ev) => pointerStarts.delete(ev.pointerId);
   const onCancel = (ev) => { pointerStarts.delete(ev.pointerId); if (pointerStarts.size === 0) dragged = false; };
-  const onLeave = () => { hover = null; highlight?.clear(); renderNow(); };
+  const onLeave = (ev) => {
+    if (overlay?.element.contains(ev.relatedTarget)) return; // into the overlay ≠ leaving
+    hover = null; highlight?.clear(); renderNow();
+  };
 
   function togglePin(key, paramName) {
     const { view } = getContext();
@@ -304,6 +341,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
       detached = true;
       enabled = false;
       offFrame();
+      unsubscribeHandleHover();
       dom.removeEventListener("pointermove", onMove);
       dom.removeEventListener("pointerdown", onDown);
       dom.removeEventListener("pointerup", onUp);
@@ -312,7 +350,6 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
       dom.removeEventListener("click", onClick);
       highlight?.dispose();
       overlay?.dispose();
-      specCache.clear();
       pinListeners.clear();
       modeListeners.clear();
     },

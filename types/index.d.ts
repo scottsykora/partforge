@@ -87,6 +87,7 @@ export interface MountElements {
     reframe?: HTMLElement | null;
     theme?: HTMLElement | null;
     cutaway?: HTMLElement | null;
+    measure?: HTMLElement | null;
     railToggle?: HTMLElement | null;
   };
 }
@@ -140,6 +141,19 @@ export interface CaptureViewOptions {
   quality?: number;
   /** Canonical angle to render from. Default `"iso"`. */
   angle?: CanonicalView | string;
+}
+
+/**
+ * Measurement mode's capture API (spec Goal 3, "Communication"): pair
+ * `getOverlaySvg()` with `overlaySvgString()`/`compositeOverlay()` (exported
+ * from the main entry) to build a dimensioned capture, or drive the mode
+ * without the built-in ruler button entirely.
+ */
+export interface MeasureRuntime {
+  isEnabled(): boolean;
+  setEnabled(on: boolean): void;
+  /** The overlay's live `<svg>` element, or `null` while the mode is off. */
+  getOverlaySvg(): SVGSVGElement | null;
 }
 
 /** Where playback is: idle, swinging the camera to an intro cue, playing, or paused. */
@@ -253,10 +267,33 @@ export interface PartRuntime {
    * active view has none, where `state().animation` reads `null`.
    */
   animation: AnimationRuntime | null;
+  /** Measurement mode's capture API. Always present (a no-op stand-in outside `makeHandle` tests). */
+  measure: MeasureRuntime;
 }
 
 /** Mount a full parametric-part app from a `PartDefinition`. */
 export function mount(part: PartDefinition, options: MountOptions): PartRuntime;
+
+/**
+ * Composite the measurement overlay onto a captured frame — `frameDataUrl` is
+ * `runtime.captureCurrent()`'s (or `captureView()`'s) output, `svgString` is
+ * `overlaySvgString()`'s. Async because the SVG must decode as an image.
+ */
+export function compositeOverlay(
+  frameDataUrl: string,
+  svgString: string,
+  viewport: { width: number; height: number },
+): Promise<string>;
+
+/**
+ * Serialize a measurement overlay `<svg>` (from `runtime.measure.getOverlaySvg()`)
+ * with computed styles inlined as presentation attributes, sized to `viewport`
+ * — the input `compositeOverlay` expects.
+ */
+export function overlaySvgString(
+  svg: SVGSVGElement,
+  viewport: { width: number; height: number },
+): string;
 
 /**
  * The sub-parts a view shows: declared in the view and `enabled` for these

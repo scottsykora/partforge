@@ -33,6 +33,7 @@ function fakeViewer(mesh) {
   mesh.name = "plate";
   mesh.updateMatrixWorld(true);
   const frameCbs = new Set();
+  const handleHoverCbs = new Set();
   return {
     domElement: dom,
     stageElement: stage,
@@ -41,6 +42,8 @@ function fakeViewer(mesh) {
     onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
     registerCutawayMaterial: () => () => {},
     frame: () => { for (const cb of [...frameCbs]) cb(16); },
+    onCutawayHandleHover: (cb) => { handleHoverCbs.add(cb); return () => handleHoverCbs.delete(cb); },
+    fireHandleHover: (handle) => { for (const cb of [...handleHoverCbs]) cb(handle); },
   };
 }
 
@@ -176,5 +179,50 @@ test("onModeChange fires on enable and disable", () => {
   mode.setEnabled(true);
   mode.setEnabled(false);
   expect(cb).toHaveBeenCalledTimes(2);
+  mode.detach();
+});
+
+// Regression: chips live INSIDE the overlay, which sits over the canvas —
+// moving onto a chip must not read as "left the canvas" (that flickered the
+// always-on dim band and self-destructed the hover chip on approach).
+test("pointerleave into the overlay keeps hover; leaving elsewhere clears it", () => {
+  const { viewer, mode } = setup();
+  mode.setEnabled(true);
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
+  const hasHover = () =>
+    [...mode.getOverlaySvg().querySelectorAll("text")].map((t) => t.textContent).includes("plate_w");
+  expect(hasHover()).toBe(true);
+
+  // MouseEvent, not PointerEvent: happy-dom's PointerEvent doesn't reliably carry
+  // relatedTarget through its constructor, but the "pointerleave" listener doesn't
+  // distinguish event classes — only ev.type and ev.relatedTarget matter.
+  const chip = mode.getOverlaySvg().querySelector("text");
+  viewer.domElement.dispatchEvent(new MouseEvent("pointerleave", { relatedTarget: chip }));
+  expect(hasHover()).toBe(true); // into the overlay ≠ leaving
+
+  viewer.domElement.dispatchEvent(new MouseEvent("pointerleave", { relatedTarget: null }));
+  expect(hasHover()).toBe(false); // genuinely left: hover cleared
+  mode.detach();
+});
+
+// Regression: the cutaway gizmo and measure mode share the pointer over the
+// same canvas; a handle drag must steal it the same way hover.js already does.
+test("cutaway handle hover suppresses measure hover; releases resume it", () => {
+  const { viewer, mode } = setup();
+  mode.setEnabled(true);
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
+  const hasHover = () =>
+    [...mode.getOverlaySvg().querySelectorAll("text")].map((t) => t.textContent).includes("plate_w");
+  expect(hasHover()).toBe(true);
+
+  viewer.fireHandleHover("radius"); // gizmo drag starts
+  expect(hasHover()).toBe(false); // suppressed: hover dim + highlight dropped
+
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 51 }));
+  expect(hasHover()).toBe(false); // moves ignored while suppressed
+
+  viewer.fireHandleHover(null); // gizmo released
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
+  expect(hasHover()).toBe(true); // hovering works again
   mode.detach();
 });

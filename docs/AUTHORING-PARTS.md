@@ -1236,7 +1236,7 @@ stylesheet). `mount` looks up these element IDs:
 | `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
-| `#viewbar` with `#reframe` / `#cutaway` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#viewbar` with `#reframe` / `#cutaway` / `#measure` / `#theme` | optional viewer controls (omit any you don't want) |
 | `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
 | `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme` |
 
@@ -1376,6 +1376,7 @@ mount(part, {
     chrome: {
       reframe,
       cutaway,
+      measure,
       theme,
       railToggle,
     },

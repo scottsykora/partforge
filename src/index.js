@@ -4,3 +4,6 @@
 // Part build functions import geometry helpers from "partforge/geometry" instead.
 export { mount } from "./framework/index.js";
 export { viewSubParts } from "./framework/part-model.js";
+// Dimensioned captures (measure mode, spec Goal 3): pair with
+// runtime.measure.getOverlaySvg() to composite the overlay onto a captured frame.
+export { compositeOverlay, overlaySvgString } from "./framework/measure/capture-overlay.js";
