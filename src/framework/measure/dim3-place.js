@@ -232,8 +232,8 @@ function placeBox(out, item, spec, choices, { meshData, surfaceHit, modelSize },
     };
     const da = mk(min[axis]), db = mk(max[axis]);
     // true extreme anchors (tie-break toward the dim line), then plane snap:
-    // slide the plane along nAxis to whichever anchor sits nearer the camera
-    // side; the other anchor projects into the plane.
+    // slide the plane along nAxis to whichever anchor sits nearer the
+    // mid-plane reference; the other anchor projects into the plane.
     const ref = camAidedRefSide(nAxis, min, max);
     let pA = extremeVertex(scan, axis, -1, da) ?? new THREE.Vector3().setComponent(axis, min[axis]);
     let pB = extremeVertex(scan, axis, +1, db) ?? new THREE.Vector3().setComponent(axis, max[axis]);
@@ -282,8 +282,8 @@ function placeCylinder(out, item, spec, choices, { modelSize }) {
 
   if (spec.values.partial) {
     // R leader from the covered-arc midpoint, radial, in the top plane
-    const rim = top.clone().addScaledVector(v3(spec.anchors.rimDir ?? du.toArray()), r);
     const rd = v3(spec.anchors.rimDir ?? du.toArray()).normalize();
+    const rim = top.clone().addScaledVector(rd, r);
     const leaderLen = h * 2;
     const s = rim.clone().addScaledVector(rd, GAP);
     const e = rim.clone().addScaledVector(rd, GAP + leaderLen);
@@ -335,9 +335,9 @@ export function placeDims(items, { meshData = [], surfaceHit = null, bounds }, c
   const size = bounds
     ? Math.max(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2])
     : 10;
-  // plane-snap reference: the nAxis face nearer the camera is unknowable here
-  // (no camera) — the caller folded it into choices via ext side selection, so
-  // use the face on the chosen ext side's half. Deterministic and adequate:
+  // plane-snap reference: for bbox dims the plane snaps to whichever true
+  // extreme anchor sits nearer the model's mid-plane along nAxis (see refSide
+  // below) rather than to a camera side — deterministic and adequate: the
   // spec only requires "the side of the model the dim is drawn toward".
   const drawings = [];
   for (const item of items) {

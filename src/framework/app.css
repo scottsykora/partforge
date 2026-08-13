@@ -335,11 +335,9 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 }
 
 /* ---- measurement mode -----------------------------------------------------
-   The dimension overlay is an SVG layer above the canvas, below the floating
-   chrome (viewbar z:15). A drawing, not a HUD: hairlines, drafting arrowheads,
-   mono numerals. Tiers: static (always-on bbox) is muted; hover/pinned are
-   full-strength; param-linked chips are the one loud thing — a mini control
-   pill that visually IS the slider it summons. */
+   Dimensions render in-scene — three.js objects placed alongside the part in
+   the viewer, not a DOM/SVG overlay. This CSS block only styles the viewbar
+   chrome: the unit tag shown next to the measure controls. */
 .pf-measure-unit {
   font-family: var(--pf-mono); font-size: 10px; color: var(--pf-muted);
   align-self: center; padding: 0 4px; user-select: none;

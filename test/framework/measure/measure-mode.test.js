@@ -9,6 +9,7 @@ import * as THREE from "three";
 import { createMeasureMode } from "../../../src/framework/measure/measure-mode.js";
 import { raycastViewer } from "../../../src/framework/selection/raycast.js";
 import { placeDims } from "../../../src/framework/measure/dim3-place.js";
+import { classifyFeature } from "../../../src/framework/measure/feature-dims.js";
 
 // Pass-through spy on the placement entry point: behaviour is untouched, but
 // "which items were re-placed, and when" becomes observable — the base/hover
@@ -344,6 +345,80 @@ test("a posed mesh moves its pinned BBOX dim by the pose", () => {
   // a pure translation must not change the measured extents
   expect(paintLog.filter((t) => t === "20.00 mm").length).toBeGreaterThan(0);
   expect(paintLog).not.toContain("25.00 mm");
+  mode.detach();
+});
+
+// Open tube (wall triangles only, one labeled feature), axis along Y — not Z
+// like feature-dims.test.js's tube() — so it sits crosswise to this file's
+// fixed camera ray (straight down -Z through x=10, y=5) and gets hit by a
+// click at the default (50, 50). Centered on (cx, length/2, cz) so classifyFeature's
+// fitted center lands there too.
+function cylinderMesh({ r = 3, length = 10, seg = 24, cx = 10, cz = 2, id = 1, label = "boss" } = {}) {
+  const pos = [];
+  for (let i = 0; i < seg; i++) {
+    const a0 = (2 * Math.PI * i) / seg, a1 = (2 * Math.PI * (i + 1)) / seg;
+    const p0 = [r * Math.cos(a0), r * Math.sin(a0)], p1 = [r * Math.cos(a1), r * Math.sin(a1)];
+    pos.push(cx + p0[0], 0, cz + p0[1], cx + p1[0], 0, cz + p1[1], cx + p1[0], length, cz + p1[1]);
+    pos.push(cx + p0[0], 0, cz + p0[1], cx + p1[0], length, cz + p1[1], cx + p0[0], length, cz + p0[1]);
+  }
+  const positions = new Float32Array(pos);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  geo.computeBoundingBox();
+  geo.userData.featureIds = new Uint16Array(positions.length / 9).fill(id);
+  geo.userData.features = [label];
+  return new THREE.Mesh(geo);
+}
+
+// transformSpec's cylinder branch (measure-mode.js's `dir()`/`pt()` mapping of
+// center/axis/top/bottom/rimDir) is otherwise uncovered: the two pose tests
+// above pin the plane and bbox branches, the only other users of the pinned-
+// item path, against a real (translated) pose, and this closes the parked gap
+// for the third kind under a real ROTATION.
+//
+// The pose rotates 90° about Z, pivoted on the feature's own classified
+// center (T·R·T⁻¹) rather than the parts origin. That keeps the pose a real
+// rotation (so transformSpec's `dir()` path — not just `pt()`'s translation
+// case — actually runs) while leaving the camera-relative-to-center geometry
+// that drives dim3-place's ⌀-direction (`du`) choice untouched by the pose:
+// with the center fixed, the expected rotated label position follows directly
+// from the pose matrix, rather than needing to re-derive evaluateChoices'
+// hysteresis/direction heuristics inside the test.
+test("a posed mesh rotates its pinned CYLINDER dim's ⌀ label through transformSpec", () => {
+  const mesh = cylinderMesh();
+  const { viewer, mode, itemIds, labelPositions } = setup({ mesh });
+  mode.setEnabled(true);
+  clickAt(viewer.domElement); // pin the "boss" wall feature -> cylinder spec
+  expect(mode.pinCount()).toBe(1);
+  expect(itemIds()).toContain("pin:plate:boss:0");
+  const before = labelPositions("pin:"); // [⌀ label, depth label]
+  expect(before.length).toBeGreaterThan(0);
+
+  const rawSpec = classifyFeature(
+    { positions: mesh.geometry.getAttribute("position").array, featureIds: mesh.geometry.userData.featureIds },
+    1,
+  );
+  expect(rawSpec.kind).toBe("cylinder");
+  const [cx, cy, cz] = rawSpec.anchors.center;
+
+  const pose = new THREE.Matrix4()
+    .makeTranslation(cx, cy, cz)
+    .multiply(new THREE.Matrix4().makeRotationZ(Math.PI / 2))
+    .multiply(new THREE.Matrix4().makeTranslation(-cx, -cy, -cz));
+  poseSubMesh(mesh, pose);
+  viewer.frame(); // pose is hashed, so this rebuilds
+  const after = labelPositions("pin:");
+
+  expect(after.length).toBe(before.length);
+  // The ⌀ label is always index 0 (placeCylinder pushes it before the depth
+  // dim's label). A 90° Z-rotation about (cx, cy, cz) maps a point offset
+  // (dx, dy, dz) from that center to (-dy, dx, dz).
+  const [bx, by, bz] = before[0];
+  const [ax, ay, az] = after[0];
+  expect(ax - cx).toBeCloseTo(-(by - cy), 3);
+  expect(ay - cy).toBeCloseTo(bx - cx, 3);
+  expect(az - cz).toBeCloseTo(bz - cz, 3);
   mode.detach();
 });
 

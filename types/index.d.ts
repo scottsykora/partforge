@@ -267,7 +267,7 @@ export interface PartRuntime {
    * active view has none, where `state().animation` reads `null`.
    */
   animation: AnimationRuntime | null;
-  /** Measurement mode's capture API. Always present (a no-op stand-in outside `makeHandle` tests). */
+  /** Measurement mode's runtime-controls API — mode on/off, unit, and pin state; dimensioned captures come from `captureCurrent()` while enabled. Always present (a no-op stand-in outside `makeHandle` tests). */
   measure: MeasureRuntime;
 }
 
