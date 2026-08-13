@@ -340,8 +340,10 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    chrome: the unit tag shown next to the measure controls. */
 .pf-measure-unit {
   font-family: var(--pf-mono); font-size: 10px; color: var(--pf-muted);
-  align-self: center; padding: 0 4px; user-select: none;
+  align-self: center; user-select: none; cursor: pointer;
 }
+#viewbar .pf-measure-actions button.pf-measure-unit { min-width: auto; padding: 0 6px; }
+.pf-measure-unit:hover { color: var(--pf-text-2); }
 
 /* animation transport bar (placement: chrome.css's .pf-anim-bar). APPEARANCE
    is ungated for the same reason as #viewbar above. */

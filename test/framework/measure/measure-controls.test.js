@@ -35,6 +35,28 @@ function fixture() {
   return { canvas, button, viewer: { domElement: canvas } };
 }
 
+test("the unit tag toggles the dimension display units", () => {
+  const { viewer, button } = fixture();
+  let units = "mm";
+  const mode = fakeMode({
+    getUnits: () => units,
+    setUnits: vi.fn((u) => { units = u; }),
+  });
+  attachMeasureControls(viewer, mode, { measure: button });
+  const unitButton = document.querySelector("button.pf-measure-unit");
+  expect(unitButton.textContent).toBe("mm");
+  expect(unitButton.getAttribute("aria-label")).toBe("Show measurements in inches");
+
+  unitButton.click();
+  expect(mode.setUnits).toHaveBeenCalledWith("in");
+  expect(unitButton.textContent).toBe("in");
+  expect(unitButton.getAttribute("aria-label")).toBe("Show measurements in millimetres");
+
+  unitButton.click();
+  expect(mode.setUnits).toHaveBeenCalledWith("mm");
+  expect(unitButton.textContent).toBe("mm");
+});
+
 test("no button -> inert no-op", () => {
   const { viewer } = fixture();
   const chrome = attachMeasureControls(viewer, fakeMode(), {});

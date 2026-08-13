@@ -1,5 +1,6 @@
 // Viewbar chrome for measurement mode: the ruler toggle + contextual actions
-// ("Clear" when pins exist, a static "mm" unit tag). A direct sibling of
+// ("Clear" when pins exist, a unit toggle cycling the dimension display
+// between millimetres and inches — display only; the rail stays mm). A direct sibling of
 // cutaway-controls.js — same no-op-without-button contract, same attribute
 // restore discipline on detach. The mode object (measure-mode.js) owns all
 // behavior; this file only puts it on screen.
@@ -36,14 +37,14 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
   clearButton.textContent = "Clear";
   clearButton.title = "Remove all pinned measurements";
   clearButton.setAttribute("aria-label", "Remove all pinned measurements");
-  const unitTag = document.createElement("span");
-  unitTag.className = "pf-measure-unit";
-  unitTag.textContent = "mm";
-  actions.append(clearButton, unitTag);
+  const unitButton = document.createElement("button");
+  unitButton.type = "button";
+  unitButton.className = "pf-measure-unit";
+  actions.append(clearButton, unitButton);
   button.after(actions);
 
   const tooltipBinding = tooltip
-    ? attachButtonTooltips(tooltip, [button, clearButton].map((element) => ({ element })))
+    ? attachButtonTooltips(tooltip, [button, clearButton, unitButton].map((element) => ({ element })))
     : null;
 
   function sync() {
@@ -53,11 +54,17 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
     button.classList.toggle("on", on);
     actions.hidden = !on;
     clearButton.hidden = mode.pinCount() === 0;
+    const u = mode.getUnits?.() ?? "mm";
+    unitButton.textContent = u;
+    const unitLabel = u === "mm" ? "Show measurements in inches" : "Show measurements in millimetres";
+    unitButton.setAttribute("aria-label", unitLabel);
+    if (!tooltip) unitButton.title = unitLabel;
     tooltipBinding?.sync();
   }
 
   const onToggle = () => { mode.setEnabled(!mode.isEnabled()); sync(); };
   const onClear = () => { mode.clearPins(); sync(); };
+  const onUnit = () => { mode.setUnits?.(mode.getUnits?.() === "mm" ? "in" : "mm"); sync(); };
   const onEscape = (event) => {
     if (event.key !== "Escape" || !mode.isEnabled()) return;
     event.preventDefault();
@@ -75,7 +82,8 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
 
   button.addEventListener("click", onToggle);
   clearButton.addEventListener("click", onClear);
-  const escapeTargets = [escapeScope ?? viewer.domElement, button, clearButton];
+  unitButton.addEventListener("click", onUnit);
+  const escapeTargets = [escapeScope ?? viewer.domElement, button, clearButton, unitButton];
   for (const element of escapeTargets) element.addEventListener("keydown", onEscape);
   sync();
 
@@ -89,6 +97,7 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
         offMode,
         () => button.removeEventListener("click", onToggle),
         () => clearButton.removeEventListener("click", onClear),
+        () => unitButton.removeEventListener("click", onUnit),
         ...escapeTargets.map((element) => () => element.removeEventListener("keydown", onEscape)),
         () => tooltipBinding?.detach(),
         () => actions.remove(),

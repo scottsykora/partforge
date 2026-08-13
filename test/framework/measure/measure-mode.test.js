@@ -157,6 +157,26 @@ test("enable renders always-on overall dims; disable clears but keeps state", ()
   mode.detach();
 });
 
+test("setUnits re-renders labels in inches; values stay mm", () => {
+  const { mode, dimGroup } = setup();
+  mode.setEnabled(true);
+  expect(mode.getUnits()).toBe("mm");
+  expect(paintLog).toContain("20.00 mm");
+
+  paintLog.length = 0;
+  mode.setUnits("in");
+  expect(mode.getUnits()).toBe("in");
+  expect(paintLog).toContain("0.787 in"); // 20 mm
+  expect(paintLog).not.toContain("20.00 mm");
+  // the label still carries its mm value for control matching
+  const w = dimGroup().children.find((c) => c.userData.pfDimValue === 20);
+  expect(w).toBeDefined();
+
+  mode.setUnits("furlongs"); // unknown unit: ignored
+  expect(mode.getUnits()).toBe("in");
+  mode.detach();
+});
+
 test("the dim group is parented under the meshes' shared group", () => {
   // v2's answer to "dims follow the pivot rotation / per-view recentring":
   // they are children of the same node the meshes hang off, so the parent

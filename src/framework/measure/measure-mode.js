@@ -27,6 +27,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
   const notifyMode = () => { for (const cb of [...modeListeners]) cb(); };
 
   let enabled = false;
+  let units = "mm";            // display only; values stay mm internally
   let scene = null;            // created on first enable, kept across toggles
   let highlight = null;
   let hover = null;            // { item, key } for the currently hovered spec
@@ -282,10 +283,10 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
     const env = buildEnv(meshes);
     choices = evaluateChoices(items, { camPos: env.camPos, center: centerOf(bounds), prev: choices });
     const place = (list, suppress, lanes) =>
-      placeDims(list, { meshData: env.meshData, surfaceHit: env.surfaceHit, bounds, suppress, lanes }, choices);
+      placeDims(list, { meshData: env.meshData, surfaceHit: env.surfaceHit, bounds, suppress, lanes, units }, choices);
     const hoverItem = items.find((i) => i.id === "hover");
     const baseItems = hoverItem ? items.filter((i) => i !== hoverItem) : items;
-    const key = baseCacheKey(meshSig(), baseItems);
+    const key = baseCacheKey(`${units}|${meshSig()}`, baseItems);
     if (baseCache.key !== key) {
       baseCache.key = key;
       baseCache.drawings = place(baseItems);
@@ -515,6 +516,12 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
       rebuild();
     },
     pinCount: () => pins.count(getContext().view),
+    getUnits: () => units,
+    setUnits(next) {
+      if (next === units || !(next in { mm: 1, in: 1 })) return;
+      units = next;
+      rebuild(); // labels re-render in the new unit; cache key carries it
+    },
     onPinsChange: (cb) => { pinListeners.add(cb); return () => pinListeners.delete(cb); },
     onModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
     detach() {

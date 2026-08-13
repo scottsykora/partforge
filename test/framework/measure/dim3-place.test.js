@@ -225,6 +225,17 @@ describe("placeDims — bbox", () => {
     expect(dim.pA[1]).not.toBeCloseTo(99, 3);
   });
 
+  it("formats labels in inches on request; values stay mm for matching", () => {
+    const items = [overallItem()];
+    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    const d = placeDims(items, {
+      meshData: boxMeshData(), surfaceHit: null,
+      bounds: { min: [0, 0, 0], max: [10, 20, 30] }, units: "in",
+    }, choices)[0];
+    expect(d.dims.map((x) => x.label.text).sort()).toEqual(["0.394 in", "0.787 in", "1.181 in"]);
+    expect(d.dims.map((x) => x.label.value).sort((a, b) => a - b)).toEqual([10, 20, 30]);
+  });
+
   it("respects locked constants", () => {
     expect(standoffNominal(100)).toBe(10);
     expect(standoffNominal(10)).toBe(6);

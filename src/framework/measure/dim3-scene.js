@@ -22,11 +22,13 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 export const DIM_THEME = {
   dark: {
     static: 0x7d93b8, strong: 0xa8c2ff,
-    text: "#c9d9ff", halo: "rgba(10, 14, 20, 0.9)",
+    text: "#d6e2ff", halo: "rgba(8, 11, 16, 0.95)",
   },
   light: {
+    // darker ink + a solid near-white halo: the first light palette washed
+    // out against the pale background and the part's light-blue surfaces
     static: 0x5a6c8a, strong: 0x2c4a86,
-    text: "#2c4a86", halo: "rgba(244, 247, 251, 0.9)",
+    text: "#182a4e", halo: "rgba(255, 255, 255, 0.96)",
   },
 };
 
@@ -37,7 +39,7 @@ export const RENDER_ORDER_LABELS = 999;
 // distance. Uniform per view by design — a nearer dimension is NOT normalized
 // to match a farther one; it just reads slightly larger under perspective
 // like the rest of the scene.
-export const LABEL_SCREEN_PX = 18;     // label text height
+export const LABEL_SCREEN_PX = 21;     // label text height
 export const ARROW_SCREEN_PX = 10;     // arrowhead length
 export const ARROW_HALF_W = 0.25;      // × arrow length — the narrow drafting ratio
 export const OVERSHOOT_SCREEN_PX = 7;  // extension line past the dim line
@@ -77,7 +79,7 @@ export function defaultPaintLabel({ text, palette }) {
   ctx.lineJoin = "round";
   ctx.font = font;
   ctx.strokeStyle = palette.halo; // halo so bare text reads on the part body
-  ctx.lineWidth = 10;
+  ctx.lineWidth = 12;
   ctx.strokeText(text, PAD, c.height / 2);
   ctx.fillStyle = palette.text;
   ctx.fillText(text, PAD, c.height / 2);

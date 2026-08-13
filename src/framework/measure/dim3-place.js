@@ -30,7 +30,7 @@
 // is the fixed line across a circle (rim to rim); a leader points at `rim`
 // along `dir`.
 import * as THREE from "three";
-import { fmtMm } from "./feature-dims.js";
+
 
 // --- discovery constants ------------------------------------------------------
 // standoffNominal: the mm offset ASSUMED while discovering surface contacts
@@ -39,6 +39,15 @@ import { fmtMm } from "./feature-dims.js";
 // out-of-the-part reference, and the contact points it finds barely depend on
 // it.
 export const standoffNominal = (modelSize) => Math.max(6, modelSize * 0.10);
+
+// Display units. Values are ALWAYS mm internally (kernel units; label.value
+// stays mm so control matching keeps working) — only the rendered text
+// converts. Inches show 3 decimals: 0.001 in ≈ 0.0254 mm, in the same
+// precision neighbourhood as the 0.01 mm display quantum.
+export const UNITS = {
+  mm: { format: (v) => v.toFixed(2), suffix: " mm" },
+  in: { format: (v) => (v / 25.4).toFixed(3), suffix: " in" },
+};
 export const HYSTERESIS = 1.15;  // challenger must beat the holder by 15%
 export const FLIP_DEADBAND_DEG = 25; // cylinder ⌀ direction re-aim threshold
 
@@ -271,7 +280,7 @@ function linearDim(out, {
 }
 
 // --- per-kind placement -------------------------------------------------------
-function placeBox(out, item, spec, choices, { meshData, surfaceHit, modelSize, lanes }, refSide) {
+function placeBox(out, item, spec, choices, { meshData, surfaceHit, modelSize, lanes, unit }, refSide) {
   const min = spec.anchors.min, max = spec.anchors.max;
   const nomOff = standoffNominal(modelSize);
   const scan = meshData; // caller pre-filtered by item.meshes
@@ -282,7 +291,7 @@ function placeBox(out, item, spec, choices, { meshData, surfaceHit, modelSize, l
     if (span < 1e-6) continue;
     // duplicate-value suppression within the item: a round or square part has
     // equal extents — one dim carries the shared value
-    const text = `${fmtMm(valueByAxis[axis])} mm`;
+    const text = `${unit.format(valueByAxis[axis])}${unit.suffix}`;
     if (seenValues.has(text)) continue;
     seenValues.add(text);
     const cand = boxCandidates(axis).find((c) => c.key === choices[`${item.id}|ax${axis}`]?.key)
@@ -321,7 +330,7 @@ function placeBox(out, item, spec, choices, { meshData, surfaceHit, modelSize, l
   }
 }
 
-function placePlane(out, item, spec, choices, { lanes }) {
+function placePlane(out, item, spec, choices, { lanes, unit }) {
   const n = v3(spec.anchors.normal).normalize();
   const dims = [
     ["width", spec.values.width],
@@ -337,12 +346,12 @@ function placePlane(out, item, spec, choices, { lanes }) {
     linearDim(out, {
       pA: a, pB: b, baseA: a.clone(), baseB: b.clone(), nomA: a, nomB: b, ext,
       lane: laneFor(lanes, ext), standoffScale: 0.55, // feature dims hug their feature
-      text: `${fmtMm(value)} mm`, value, surfaceHit: null,
+      text: `${unit.format(value)}${unit.suffix}`, value, surfaceHit: null,
     });
   }
 }
 
-function placeCylinder(out, item, spec, choices, { lanes }) {
+function placeCylinder(out, item, spec, choices, { lanes, unit }) {
   const axis = v3(spec.anchors.axis).normalize();
   const top = v3(spec.anchors.top);
   const bottom = v3(spec.anchors.bottom);
@@ -358,7 +367,7 @@ function placeCylinder(out, item, spec, choices, { lanes }) {
       rim: rim.toArray(), dir: rd.toArray(),
       perp: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
       label: {
-        text: `R${fmtMm(r)}`, value: r,
+        text: `R${unit.format(r)}`, value: r,
         x: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
         y: rd.clone().negate().toArray(),
       },
@@ -376,7 +385,7 @@ function placeCylinder(out, item, spec, choices, { lanes }) {
       // `dv` is the arrows' in-plane spread direction
       rimA: rimA.toArray(), rimB: rimB.toArray(), du: dv.toArray(), dv: du.toArray(),
       label: {
-        text: `⌀${fmtMm(spec.values.diameter)}`, value: spec.values.diameter,
+        text: `⌀${unit.format(spec.values.diameter)}`, value: spec.values.diameter,
         x: dv.toArray(), y: du.clone().negate().toArray(),
       },
     });
@@ -394,13 +403,13 @@ function placeCylinder(out, item, spec, choices, { lanes }) {
     linearDim(out, {
       pA, pB, baseA: pA.clone(), baseB: pB.clone(), nomA: pA, nomB: pB, ext,
       lane: laneFor(lanes, ext), standoffScale: 0.55,
-      text: `${fmtMm(spec.values.depth)} mm`, value: spec.values.depth, surfaceHit: null,
+      text: `${unit.format(spec.values.depth)}${unit.suffix}`, value: spec.values.depth, surfaceHit: null,
     });
   }
 }
 
 // --- entry point --------------------------------------------------------------
-export function placeDims(items, { meshData = [], surfaceHit = null, bounds, suppress = null, lanes: laneSeed = null }, choices) {
+export function placeDims(items, { meshData = [], surfaceHit = null, bounds, suppress = null, lanes: laneSeed = null, units = "mm" }, choices) {
   const size = bounds
     ? Math.max(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2])
     : 10;
@@ -420,6 +429,7 @@ export function placeDims(items, { meshData = [], surfaceHit = null, bounds, sup
   // below) rather than to a camera side — deterministic and adequate: the
   // spec only requires "the side of the model the dim is drawn toward".
   const lanes = new Map(laneSeed ?? undefined);
+  const unit = UNITS[units] ?? UNITS.mm;
   const drawings = [];
   items.forEach((item, idx) => {
     const spec = item.spec;
@@ -433,11 +443,11 @@ export function placeDims(items, { meshData = [], surfaceHit = null, bounds, sup
         // the drawing close to where the extent actually occurs.
         return (min[nAxis] + max[nAxis]) / 2;
       };
-      placeBox(out, item, spec, choices, { meshData: scan, surfaceHit, modelSize: size, lanes }, refSide);
+      placeBox(out, item, spec, choices, { meshData: scan, surfaceHit, modelSize: size, lanes, unit }, refSide);
     } else if (spec.kind === "plane") {
-      placePlane(out, item, spec, choices, { lanes });
+      placePlane(out, item, spec, choices, { lanes, unit });
     } else if (spec.kind === "cylinder") {
-      placeCylinder(out, item, spec, choices, { lanes });
+      placeCylinder(out, item, spec, choices, { lanes, unit });
     }
     if (out.dims.length || out.diams.length || out.leaders.length) drawings.push(out);
   });

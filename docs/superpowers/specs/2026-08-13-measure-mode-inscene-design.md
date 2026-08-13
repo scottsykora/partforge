@@ -315,3 +315,14 @@ the cylinder's visible silhouette; the same face-on scoring picks it except
 in degenerate down-the-axis views. The ⌀ line likewise moves from du (the
 projected ellipse's foreshortened axis) to dv (its wide axis), with the text
 continuing off the end of the line.
+
+**2026-08-13 — unit toggle + label legibility.** The viewbar's unit tag is
+now a button cycling the dimension DISPLAY between millimetres and inches
+(`UNITS` in dim3-place: mm at 2 decimals, inches at 3 — 0.001 in sits in the
+same precision neighbourhood as the 0.01 mm quantum). Display only: values
+stay mm internally (label.value, control matching, the rail — a rail unit
+switch is future work), and the choice is session-local mode state
+(`mode.getUnits/setUnits`; the base-drawing cache keys on it). Labels also
+grew from 18 to 21 px, the halo stroke thickened, and the light palette
+gained darker ink (#182a4e) on a solid near-white halo — the first light
+palette washed out against the pale background.
