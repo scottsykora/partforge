@@ -21,7 +21,7 @@
 // Drawing contract (consumed by dim3-scene):
 //   { itemId, tier, pinned,
 //     dims:    [{ pA, pB, baseA, baseB, ext, dir, lane, standoffScale,
-//                 label: { text, param, x, y } }],
+//                 label: { text, value, x, y } }],
 //     diams:   [{ rimA, rimB, du, dv, label }],
 //     leaders: [{ rim, dir, perp, label }] }
 // All vectors are number[3] in the parts frame. A linear dim's line endpoints
@@ -222,7 +222,7 @@ export function extremeVertex(meshData, axis, sign, near) {
 // anchor.
 function linearDim(out, {
   pA, pB, baseA, baseB, nomA, nomB, ext, lane, standoffScale = 1,
-  text, param, surfaceHit, planeAxis, planeC,
+  text, value, surfaceHit, planeAxis, planeC,
 }) {
   const dir = baseB.clone().sub(baseA).normalize();
   const anchors = [pA, pB];
@@ -242,7 +242,7 @@ function linearDim(out, {
     baseA: baseA.toArray(), baseB: baseB.toArray(),
     ext: ext.toArray(), dir: dir.toArray(),
     lane, standoffScale,
-    label: { text, param: param ?? null, x: dir.toArray(), y: ext.clone().negate().toArray() },
+    label: { text, value: value ?? null, x: dir.toArray(), y: ext.clone().negate().toArray() },
   });
 }
 
@@ -291,7 +291,7 @@ function placeBox(out, item, spec, choices, { meshData, surfaceHit, modelSize, l
     linearDim(out, {
       pA, pB, baseA, baseB, nomA, nomB, ext,
       lane: laneFor(lanes, ext),
-      text, param: item.paramName,
+      text, value: valueByAxis[axis],
       surfaceHit, planeAxis: nAxis, planeC: c,
     });
   }
@@ -313,7 +313,7 @@ function placePlane(out, item, spec, choices, { lanes }) {
     linearDim(out, {
       pA: a, pB: b, baseA: a.clone(), baseB: b.clone(), nomA: a, nomB: b, ext,
       lane: laneFor(lanes, ext), standoffScale: 0.55, // feature dims hug their feature
-      text: `${fmtMm(value)} mm`, param: item.paramName, surfaceHit: null,
+      text: `${fmtMm(value)} mm`, value, surfaceHit: null,
     });
   }
 }
@@ -334,7 +334,7 @@ function placeCylinder(out, item, spec, choices, { lanes }) {
       rim: rim.toArray(), dir: rd.toArray(),
       perp: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
       label: {
-        text: `R${fmtMm(r)}`, param: item.paramName ?? null,
+        text: `R${fmtMm(r)}`, value: r,
         x: new THREE.Vector3().crossVectors(axis, rd).normalize().toArray(),
         y: rd.clone().negate().toArray(),
       },
@@ -347,7 +347,7 @@ function placeCylinder(out, item, spec, choices, { lanes }) {
     out.diams.push({
       rimA: rimA.toArray(), rimB: rimB.toArray(), du: du.toArray(), dv: dv.toArray(),
       label: {
-        text: `⌀${fmtMm(spec.values.diameter)}`, param: item.paramName ?? null,
+        text: `⌀${fmtMm(spec.values.diameter)}`, value: spec.values.diameter,
         x: dv.toArray(), y: du.clone().negate().toArray(),
       },
     });
@@ -362,7 +362,7 @@ function placeCylinder(out, item, spec, choices, { lanes }) {
     linearDim(out, {
       pA, pB, baseA: pA.clone(), baseB: pB.clone(), nomA: pA, nomB: pB, ext,
       lane: laneFor(lanes, ext), standoffScale: 0.55,
-      text: `${fmtMm(spec.values.depth)} mm`, param: item.paramName, surfaceHit: null,
+      text: `${fmtMm(spec.values.depth)} mm`, value: spec.values.depth, surfaceHit: null,
     });
   }
 }

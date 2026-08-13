@@ -597,9 +597,11 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 
 /* dimension->control reveal: a decaying accent pulse that hands off to the
    focused control's own focus ring */
-.pf-param-flash { animation: pf-param-flash 900ms ease-out; }
+/* outline (not box-shadow) so outline-offset can space the ring away from
+   the control without touching layout */
+.pf-param-flash { animation: pf-param-flash 900ms ease-out; outline-offset: 5px; border-radius: 6px; }
 @keyframes pf-param-flash {
-  0% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 70%, transparent); }
-  100% { box-shadow: 0 0 0 3px transparent; }
+  0% { outline: 3px solid color-mix(in oklab, var(--pf-accent) 70%, transparent); }
+  100% { outline: 3px solid transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .pf-param-flash { animation: none; } }

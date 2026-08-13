@@ -19,7 +19,7 @@ import { createPinStore, occurrenceOf } from "./pins.js";
 import { evaluateChoices, choicesEqual, placeDims, specSig, laneCounts } from "./dim3-place.js";
 import { createDimScene } from "./dim3-scene.js";
 
-export function createMeasureMode(viewer, { part, getContext, revealParam, getParamsVersion, schedule = (cb) => requestAnimationFrame(cb) }) {
+export function createMeasureMode(viewer, { part, getContext, revealParams, getParamsVersion, schedule = (cb) => requestAnimationFrame(cb) }) {
   const pins = createPinStore();
   const pinListeners = new Set();
   const notifyPins = () => { for (const cb of [...pinListeners]) cb(); };
@@ -121,8 +121,18 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
       ? Object.keys(params)
       : [...(reads.get(subPart) ?? Object.keys(params))];
   }
-  const linkFor = (subPart, spec) =>
-    spec ? linkParam(readKeysFor(subPart), getContext().params, spec.values) : null;
+  // A measurement is a FUNCTION of several params, so clicking one flashes
+  // every control that can drive it: the union of the read keys of the
+  // sub-parts it spans. The clicked label's exact value picks the control to
+  // FOCUS (linkParam's unique-match rule); no match, no focus steal.
+  function revealRelevant(subParts, value) {
+    const keySet = new Set();
+    for (const sp of subParts ?? []) for (const k of readKeysFor(sp)) keySet.add(k);
+    if (!keySet.size) return;
+    const keys = [...keySet];
+    const focus = value != null ? linkParam(keys, getContext().params, { value }) : null;
+    revealParams?.(keys, focus);
+  }
 
   // ---- pin resolution: stable key -> a live spec + its mesh ----------------
   function resolvePin(key) {
@@ -166,6 +176,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
     items.push({
       id: "overall", tier: "static", spec: bboxSpec(u.min, u.max),
       meshes: meshes.map((_, i) => i),
+      subParts: meshes.map(([n]) => n),
     });
     const { view } = getContext();
     pins.list(view).forEach((key) => {
@@ -177,7 +188,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
         tier: "pinned", pinned: true,
         spec: transformSpec(live.spec, live.mesh.matrix),
         meshes: meshIndex >= 0 ? [meshIndex] : [],
-        paramName: linkFor(key.subPart, live.spec), _key: key,
+        subParts: [key.subPart], _key: key,
       });
     });
     if (hover) {
@@ -247,7 +258,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
   // the pointer and must not evict the cache.
   function baseCacheKey(sig, baseItems) {
     let key = `${sig}|t${themeEpoch}`;
-    for (const item of baseItems) key += `|${item.id}~${item.paramName ?? ""}`;
+    for (const item of baseItems) key += `|${item.id}`;
     for (const ck of Object.keys(choices)) {
       if (ck.startsWith("hover|")) continue;
       const c = choices[ck];
@@ -379,7 +390,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
       subPart: hit.subPart,
       mesh: hit.mesh,
       // spec stays in the mesh's own frame here; buildItems poses it.
-      item: { id: "hover", tier: "hover", spec, paramName: linkFor(hit.subPart, spec) },
+      item: { id: "hover", tier: "hover", spec, subParts: [hit.subPart] },
     };
   }
 
@@ -417,10 +428,10 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
   }
   const onLeave = () => { hover = null; highlight?.clear(); dom.style.cursor = ""; rebuild(); };
 
-  function togglePin(key, paramName) {
+  function togglePin(key, subParts, value) {
     const { view } = getContext();
     const added = pins.toggle(view, key);
-    if (added && paramName) revealParam?.(paramName);
+    if (added) revealRelevant(subParts, value);
     notifyPins();
     rebuild();
   }
@@ -431,30 +442,25 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
   function onClick(ev) {
     const wasDragged = drag.consumeClick();
     if (!enabled || wasDragged) return;
-    const labelId = scene?.pickLabel(ev.clientX, ev.clientY);
-    if (labelId) {
-      if (labelId === "hover") {
-        if (hover) togglePin(hover.key, hover.item.paramName);
+    const picked = scene?.pickLabel(ev.clientX, ev.clientY);
+    if (picked) {
+      // Every label is a button to the controls that drive its measurement:
+      // clicking flashes them (focusing an exact value match). A hover label
+      // also pins. Labels never unpin — that stays on re-clicking the
+      // geometry, or Clear — so the one visible affordance always means the
+      // same thing.
+      if (picked.itemId === "hover") {
+        if (hover) togglePin(hover.key, hover.item.subParts, picked.value);
         return;
       }
-      const item = lastItems.find((i) => i.id === labelId);
-      // A pinned LINKED label is a button to its rail control — clicking it
-      // reveals/flashes the control and keeps the pin (the pill advertises
-      // "this value is `height`"; unpinning on that click read as breakage).
-      // Unpinning stays on re-clicking the geometry, or Clear. Unlinked
-      // pinned labels keep the v1 toggle so single pins remain removable
-      // from the drawing itself.
-      if (item?.paramName) {
-        revealParam?.(item.paramName);
-        return;
-      }
-      if (item?._key) togglePin(item._key, null); // toggling off: no reveal
+      const item = lastItems.find((i) => i.id === picked.itemId);
+      if (item) revealRelevant(item.subParts, picked.value);
       return;
     }
     const hit = raycastViewer(viewer, ev.clientX, ev.clientY);
     if (!hit) return;
     const h = hitToHover(hit);
-    togglePin(h.key, h.item.paramName);
+    togglePin(h.key, h.item.subParts, null);
   }
 
   const dom = viewer.domElement;

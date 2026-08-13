@@ -46,7 +46,7 @@ const DRAWING = {
     pA: [0, 2, 0], pB: [10, 2, 0],
     baseA: [0, 0, 0], baseB: [10, 0, 0],
     ext: [0, -1, 0], dir: [1, 0, 0], lane: 0, standoffScale: 1,
-    label: { text: "10.00 mm", param: null, x: [1, 0, 0], y: [0, 1, 0] },
+    label: { text: "10.00 mm", value: 10, x: [1, 0, 0], y: [0, 1, 0] },
   }],
   diams: [], leaders: [],
 };
@@ -134,7 +134,7 @@ describe("createDimScene", () => {
     const lane1 = {
       ...DRAWING, itemId: "pin:x", tier: "pinned",
       dims: [{ ...DRAWING.dims[0], lane: 1, standoffScale: 0.55,
-        label: { text: "5.00 mm", param: null, x: [1, 0, 0], y: [0, 1, 0] } }],
+        label: { text: "5.00 mm", value: 5, x: [1, 0, 0], y: [0, 1, 0] } }],
     };
     scene.update([DRAWING, lane1]);
     viewer.__parts.updateMatrixWorld(true);
@@ -152,7 +152,7 @@ describe("createDimScene", () => {
     const scene = createDimScene(viewer, { paintLabel: fakePaint });
     const second = {
       ...DRAWING, itemId: "pin:x", tier: "pinned",
-      dims: [{ ...DRAWING.dims[0], label: { text: "5.00 mm", param: null, x: [1, 0, 0], y: [0, 1, 0] } }],
+      dims: [{ ...DRAWING.dims[0], label: { text: "5.00 mm", value: 5, x: [1, 0, 0], y: [0, 1, 0] } }],
     };
     scene.update([DRAWING, second]);
     viewer.__parts.updateMatrixWorld(true);
@@ -186,8 +186,9 @@ describe("createDimScene", () => {
     const label = scene.group.children.find((k) => k.userData.pfDimItemId);
     viewer.camera.lookAt(label.position);
     viewer.camera.updateMatrixWorld();
-    // center of the viewport now aims at the label center
-    expect(scene.pickLabel(400, 300)).toBe("overall");
+    // center of the viewport now aims at the label center; the pick carries
+    // the measured value for exact-match control focusing
+    expect(scene.pickLabel(400, 300)).toEqual({ itemId: "overall", value: 10 });
     expect(scene.pickLabel(5, 5)).toBe(null);
   });
 
@@ -225,7 +226,7 @@ describe("createDimScene", () => {
         pA: [i, 2, 0], pB: [i + 1, 2, 0],
         baseA: [i, 0, 0], baseB: [i + 1, 0, 0],
         ext: [0, -1, 0], dir: [1, 0, 0], lane: 0, standoffScale: 1,
-        label: { text, param: null, x: [1, 0, 0], y: [0, 1, 0] },
+        label: { text, value: 1, x: [1, 0, 0], y: [0, 1, 0] },
       })),
       diams: [], leaders: [],
     });

@@ -99,12 +99,12 @@ const pointerOpts = { bubbles: true, clientX: 50, clientY: 50, pointerId: 1 };
 
 function setup({ parts, mesh = plateMesh() } = {}) {
   const viewer = fakeViewer(mesh, parts);
-  const revealParam = vi.fn();
+  const revealParams = vi.fn();
   const ctx = { view: "main", params: { plate_w: 20, wall: 3 } };
   const mode = createMeasureMode(viewer, {
     part,
     getContext: () => ctx,
-    revealParam,
+    revealParams,
     schedule: (cb) => cb(), // synchronous for tests
   });
   // the dim group under the meshes' shared parent
@@ -121,7 +121,7 @@ function setup({ parts, mesh = plateMesh() } = {}) {
       .filter((c) => c.userData.pfDimItemId?.startsWith(prefix))
       .map((c) => c.getWorldPosition(new THREE.Vector3()).toArray());
   };
-  return { mesh, viewer, mode, ctx, revealParam, dimGroup, itemIds, hasHover, labelPositions };
+  return { mesh, viewer, mode, ctx, revealParams, dimGroup, itemIds, hasHover, labelPositions };
 }
 
 // Mirror viewer.setSubPose: a rigid pose written straight onto mesh.matrix.
@@ -171,12 +171,13 @@ test("the dim group is parented under the meshes' shared group", () => {
   mode.detach();
 });
 
-test("hover shows the feature's dims with a param link", () => {
+test("hover shows the feature's dims as plain value labels", () => {
   const { viewer, mode, hasHover } = setup();
   mode.setEnabled(true);
   viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
   expect(hasHover()).toBe(true);
-  expect(paintLog).toContain("plate_w"); // linked: unique read-key value match
+  expect(paintLog).toContain("20.00 mm"); // the plane feature's width
+  expect(paintLog).not.toContain("plate_w"); // no param pill on labels anymore
   mode.detach();
 });
 
@@ -247,12 +248,15 @@ test("a pin whose feature label disappears goes dormant without being dropped", 
   mode.detach();
 });
 
-test("clicking a linked hovered dim reveals the param", () => {
-  const { viewer, mode, revealParam } = setup();
+test("clicking a hovered dim flashes every relevant control", () => {
+  const { viewer, mode, revealParams } = setup();
   mode.setEnabled(true);
   viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
-  clickAt(viewer.domElement);
-  expect(revealParam).toHaveBeenCalledWith("plate_w");
+  clickAt(viewer.domElement); // geometry click: pin + flash the read set (no value -> no focus)
+  expect(revealParams).toHaveBeenCalled();
+  const [keys, focus] = revealParams.mock.calls.at(-1);
+  expect(keys).toEqual(expect.arrayContaining(["plate_w", "wall"]));
+  expect(focus).toBe(null);
   mode.detach();
 });
 
@@ -287,39 +291,58 @@ function offFeatureLabelTarget(viewer, dimGroup, prefix) {
 // label resolves by the structured item id carried on the label mesh — never
 // by parsing the rendered dim text (which can itself contain colons when a
 // Solid.label() does) and never by falling through to the geometry raycast.
-// A LINKED pinned label acts as a button to its rail control: reveal, keep
-// the pin.
-test("clicking a pinned linked label reveals its param and keeps the pin", () => {
+// Every label is a button to the controls driving its measurement: reveal,
+// keep the pin. Unpinning stays on geometry re-click / Clear.
+test("clicking a pinned dim's label flashes its controls and keeps the pin", () => {
   // Half-labeled plate: the pinned feature covers only one triangle, so one of
   // its dim labels lands over UNLABELED geometry. A click there that fell
   // through to the raycast would pin the sub-part bbox (pinCount 2) — which is
   // what makes this test see the label-pick path.
-  const { viewer, mode, dimGroup, revealParam } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+  const { viewer, mode, dimGroup, revealParams } = setup({ mesh: plateMesh({ halfLabeled: true }) });
   mode.setEnabled(true);
   clickAt(viewer.domElement, 64.1, 55.6); // inside the labeled triangle
   expect(mode.pinCount()).toBe(1);
-  revealParam.mockClear(); // pinning revealed once; the label click must again
+  revealParams.mockClear(); // pinning flashed once; the label click must again
 
   const target = offFeatureLabelTarget(viewer, dimGroup, "pin:");
   expect(target).toBeDefined();
   clickAt(viewer.domElement, target.x, target.y);
 
-  expect(revealParam).toHaveBeenCalledWith("plate_w");
+  expect(revealParams).toHaveBeenCalled();
+  const [keys] = revealParams.mock.calls.at(-1);
+  expect(keys).toEqual(expect.arrayContaining(["plate_w", "wall"]));
   expect(mode.pinCount()).toBe(1); // still pinned — no toggle, no bbox fallthrough
   mode.detach();
 });
 
-test("clicking an UNLINKED pinned label unpins it", () => {
-  const { viewer, mode, dimGroup, ctx } = setup({ mesh: plateMesh({ halfLabeled: true }) });
-  ctx.params.plate_w = 999; // nothing matches any measured value → no link
+test("a label click whose value matches a param focuses that control", () => {
+  const { viewer, mode, dimGroup, revealParams } = setup({ mesh: plateMesh({ halfLabeled: true }) });
   mode.setEnabled(true);
   clickAt(viewer.domElement, 64.1, 55.6);
   expect(mode.pinCount()).toBe(1);
+  revealParams.mockClear();
 
-  const target = offFeatureLabelTarget(viewer, dimGroup, "pin:");
-  expect(target).toBeDefined();
-  clickAt(viewer.domElement, target.x, target.y);
+  // click the pinned label whose value is 20.00 — plate_w is 20, unique match
+  viewer.frame();
+  viewer.__parts.updateMatrixWorld(true);
+  const labels = dimGroup().children.filter((c) => c.userData.pfDimItemId?.startsWith("pin:"));
+  const wLabel = labels.find((c) => c.userData.pfDimValue === 20);
+  expect(wLabel).toBeDefined();
+  const proj = wLabel.getWorldPosition(new THREE.Vector3()).project(viewer.camera);
+  clickAt(viewer.domElement, ((proj.x + 1) / 2) * 100, ((1 - proj.y) / 2) * 100);
 
+  const [, focus] = revealParams.mock.calls.at(-1);
+  expect(focus).toBe("plate_w");
+  expect(mode.pinCount()).toBe(1);
+  mode.detach();
+});
+
+test("re-clicking pinned geometry unpins it (labels never unpin)", () => {
+  const { viewer, mode } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  expect(mode.pinCount()).toBe(1);
+  clickAt(viewer.domElement); // same feature again -> toggle off
   expect(mode.pinCount()).toBe(0);
   mode.detach();
 });

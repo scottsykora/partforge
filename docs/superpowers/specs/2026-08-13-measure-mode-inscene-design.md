@@ -275,3 +275,15 @@ LINKED label now reveals/flashes its rail control and keeps the pin (it is a
 button to the control it names), superseding §Interaction deltas' unpin-on-
 label-click for linked labels only; unlinked pinned labels keep the toggle,
 and unpinning a linked dim stays on re-clicking its geometry or Clear.
+
+**2026-08-13 — labels are plain; clicks reveal the full control set.** The
+param pill was misleading: the link was computed per measurement SET, so the
+one matched param (e.g. `height`) stamped every label in the set — the width
+label read "height". Dropped the pill entirely; labels are plain values.
+The dimension->control affordance is now the click: clicking ANY label (or
+pinning via geometry) flashes EVERY control that can drive the measurement —
+the union of the spanned sub-parts' read keys (`panel.revealParams`) — with
+keyboard focus given only to a control whose value uniquely matches the
+clicked dimension (param-link's rule, now applied per label value carried on
+the label mesh). Labels never unpin (geometry re-click / Clear do); the
+flash ring uses an outline with 5 px offset so it sits clear of the control.

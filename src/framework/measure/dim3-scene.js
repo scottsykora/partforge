@@ -18,17 +18,15 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 // Theme palettes for dimension ink. Deliberately hardcoded (not CSS vars):
 // the scene renders to WebGL where var() can't reach, and these pair with the
 // viewer THEME backgrounds. static = always-on overall dims; strong = hover +
-// pinned; accent = param-linked label pill (mirrors --pf-accent).
+// pinned.
 export const DIM_THEME = {
   dark: {
     static: 0x7d93b8, strong: 0xa8c2ff,
     text: "#c9d9ff", halo: "rgba(10, 14, 20, 0.9)",
-    accent: "#4da3ff", pillBg: "rgba(26, 30, 36, 0.88)",
   },
   light: {
     static: 0x5a6c8a, strong: 0x2c4a86,
     text: "#2c4a86", halo: "rgba(244, 247, 251, 0.9)",
-    accent: "#1f6fd6", pillBg: "rgba(255, 255, 255, 0.88)",
   },
 };
 
@@ -60,46 +58,29 @@ export function labelWorldHeight(dist, fovDeg, viewportPx, targetPx = LABEL_SCRE
 }
 
 // Default label painter: returns a canvas whose aspect the caller turns into
-// a plane. Pure DOM-canvas; swapped out in tests.
-export function defaultPaintLabel({ text, param, palette }) {
+// a plane. Pure DOM-canvas; swapped out in tests. Plain value text only —
+// the old param pill misattributed a set-level link to every label in the
+// set, so the dimension->control affordance is now the click itself (every
+// label click flashes the controls that drive the measurement).
+export function defaultPaintLabel({ text, palette }) {
   const font = "700 96px ui-monospace, Menlo, monospace";
-  const paramFont = "600 60px ui-monospace, Menlo, monospace";
   const c = document.createElement("canvas");
   let ctx = c.getContext("2d");
   ctx.font = font;
   const wText = Math.ceil(ctx.measureText(text).width);
-  ctx.font = paramFont;
-  const wParam = param ? Math.ceil(ctx.measureText(param).width) + 24 : 0;
   const PAD = 20;
-  c.width = wText + wParam + PAD * 2;
+  c.width = wText + PAD * 2;
   c.height = 128;
   ctx = c.getContext("2d");
-  if (param) {
-    // param-linked pill: rounded accent-bordered background (v1's one loud element)
-    ctx.fillStyle = palette.pillBg;
-    ctx.strokeStyle = palette.accent;
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.roundRect(4, 8, c.width - 8, c.height - 16, 24);
-    ctx.fill();
-    ctx.stroke();
-  }
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   ctx.lineJoin = "round";
   ctx.font = font;
-  if (!param) {
-    ctx.strokeStyle = palette.halo; // halo so bare text reads on the part body
-    ctx.lineWidth = 10;
-    ctx.strokeText(text, PAD, c.height / 2);
-  }
+  ctx.strokeStyle = palette.halo; // halo so bare text reads on the part body
+  ctx.lineWidth = 10;
+  ctx.strokeText(text, PAD, c.height / 2);
   ctx.fillStyle = palette.text;
   ctx.fillText(text, PAD, c.height / 2);
-  if (param) {
-    ctx.font = paramFont;
-    ctx.fillStyle = palette.accent;
-    ctx.fillText(param, PAD + wText + 24, c.height / 2);
-  }
   return c;
 }
 
@@ -183,13 +164,13 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
   let dimRecs = [];    // parametric linear dims
   let diamRecs = [];   // ⌀ lines (static line, per-frame label anchor)
   let leaderRecs = []; // R leaders
-  const textureCache = new Map(); // `${theme}|${param ?? ""}|${text}` -> THREE.CanvasTexture
+  const textureCache = new Map(); // `${theme}|${text}` -> THREE.CanvasTexture
 
-  function labelTexture(text, param) {
-    const key = `${theme}|${param ?? ""}|${text}`;
+  function labelTexture(text) {
+    const key = `${theme}|${text}`;
     let tex = textureCache.get(key);
     if (!tex) {
-      const canvas = paintLabel({ text, param, palette: DIM_THEME[theme] });
+      const canvas = paintLabel({ text, palette: DIM_THEME[theme] });
       tex = new THREE.CanvasTexture(canvas);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = 8; // keep glancing-angle text legible
@@ -199,7 +180,7 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
   }
 
   function buildLabel(l, itemId) {
-    const tex = labelTexture(l.text, l.param);
+    const tex = labelTexture(l.text);
     const img = tex.image;
     const aspect = img && img.height ? img.width / img.height : 4;
     // unit-height plane; tick() scales it to the screen-constant display height
@@ -212,10 +193,11 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
     const x = new THREE.Vector3(...l.x), y = new THREE.Vector3(...l.y);
     mesh.quaternion.copy(quatFromBasis(x, y));
     mesh.userData.pfDimItemId = itemId;
+    mesh.userData.pfDimValue = l.value ?? null;
     group.add(mesh);
     const rec = {
       mesh, baseQuat: mesh.quaternion.clone(), mirrored: false, flipped: false,
-      itemId, text: l.text, param: l.param,
+      itemId, text: l.text,
     };
     labels.push(rec);
     return rec;
@@ -292,7 +274,7 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
   // still live if setTheme fires again before the next update) and are swept
   // here on the next update(), never while still assigned to a live label.
   function sweepTextureCache() {
-    const live = new Set(labels.map((L) => `${theme}|${L.param ?? ""}|${L.text}`));
+    const live = new Set(labels.map((L) => `${theme}|${L.text}`));
     for (const [key, tex] of textureCache) {
       if (live.has(key)) continue;
       tex.dispose();
@@ -404,13 +386,16 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
   // ---- label picking --------------------------------------------------------
   const raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
+  // Returns { itemId, value } for the label under the pointer (value = the
+  // measured number the label shows, for exact-match control focusing), or
+  // null when no label is hit.
   function pickLabel(clientX, clientY) {
     if (!attached || !labels.length) return null;
     const r = viewer.domElement.getBoundingClientRect();
     _ndc.set(((clientX - r.left) / r.width) * 2 - 1, -(((clientY - r.top) / r.height) * 2 - 1));
     raycaster.setFromCamera(_ndc, viewer.camera);
-    const hits = raycaster.intersectObjects(labels.map((L) => L.mesh), false);
-    return hits[0]?.object.userData.pfDimItemId ?? null;
+    const hit = raycaster.intersectObjects(labels.map((L) => L.mesh), false)[0];
+    return hit ? { itemId: hit.object.userData.pfDimItemId, value: hit.object.userData.pfDimValue ?? null } : null;
   }
 
   // ---- theme ----------------------------------------------------------------
@@ -423,7 +408,7 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
     fillMats.strong.color.set(DIM_THEME[theme].strong);
     // repaint labels: new-theme textures come from the cache or a fresh paint
     for (const L of labels) {
-      L.mesh.material.map = labelTexture(L.text, L.param);
+      L.mesh.material.map = labelTexture(L.text);
       L.mesh.material.needsUpdate = true;
     }
   }

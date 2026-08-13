@@ -317,21 +317,38 @@ export function buildControls(root, parameters, params, onDirty, onCommit) {
     // so the eye lands on it. DOM-containment (not tree walking) finds the
     // enclosing disclosures, so section vs fold nesting needs no special case.
     revealParam(key) {
-      const id = keyToId.get(key);
-      const target = id && nodeEls.get(id);
-      if (!target) return false;
-      for (const [, d] of disclosures) {
-        if (!d.body.contains(target) || !d.body.classList.contains("hidden")) continue;
-        d.body.classList.remove("hidden");
-        d.button.setAttribute("aria-expanded", "true");
-        d.el.classList.remove("collapsed");
+      return this.revealParams([key], key);
+    },
+    // Multi-control reveal: a measurement is usually a FUNCTION of several
+    // params, so clicking one flashes every control that can drive it.
+    // `focusKey` (when given and present) is the one whose value exactly
+    // matches the clicked dimension — it gets keyboard focus; otherwise the
+    // first flashed control is only scrolled to, no focus steal.
+    revealParams(keys, focusKey = null) {
+      const targets = [];
+      for (const key of keys) {
+        const id = keyToId.get(key);
+        const el = id && nodeEls.get(id);
+        if (el) targets.push([key, el]);
       }
-      target.scrollIntoView?.({ block: "center" });
-      target.querySelector("input, select, textarea, .seg button")?.focus({ preventScroll: true });
-      target.classList.remove("pf-param-flash");
-      void target.offsetWidth; // restart the animation on repeat reveals
-      target.classList.add("pf-param-flash");
-      target.addEventListener("animationend", () => target.classList.remove("pf-param-flash"), { once: true });
+      if (!targets.length) return false;
+      for (const [, target] of targets) {
+        for (const [, d] of disclosures) {
+          if (!d.body.contains(target) || !d.body.classList.contains("hidden")) continue;
+          d.body.classList.remove("hidden");
+          d.button.setAttribute("aria-expanded", "true");
+          d.el.classList.remove("collapsed");
+        }
+        target.classList.remove("pf-param-flash");
+        void target.offsetWidth; // restart the animation on repeat reveals
+        target.classList.add("pf-param-flash");
+        target.addEventListener("animationend", () => target.classList.remove("pf-param-flash"), { once: true });
+      }
+      const [primaryKey, primary] = targets.find(([k]) => k === focusKey) ?? targets[0];
+      primary.scrollIntoView?.({ block: "center" });
+      if (primaryKey === focusKey) {
+        primary.querySelector("input, select, textarea, .seg button")?.focus({ preventScroll: true });
+      }
       return true;
     },
     dispose: () => { info.dispose(); root.replaceChildren(); },
