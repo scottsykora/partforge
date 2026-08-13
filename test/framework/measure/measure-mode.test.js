@@ -8,6 +8,15 @@ import { expect, test, vi, beforeEach } from "vitest";
 import * as THREE from "three";
 import { createMeasureMode } from "../../../src/framework/measure/measure-mode.js";
 import { raycastViewer } from "../../../src/framework/selection/raycast.js";
+import { placeDims } from "../../../src/framework/measure/dim3-place.js";
+
+// Pass-through spy on the placement entry point: behaviour is untouched, but
+// "which items were re-placed, and when" becomes observable — the base/hover
+// split is otherwise invisible from the scene (identical drawings either way).
+vi.mock("../../../src/framework/measure/dim3-place.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, placeDims: vi.fn(actual.placeDims) };
+});
 
 // dim3-scene's default label painter needs a real 2d context; happy-dom has
 // none. Stub the minimum it touches and record every painted string, which is
@@ -79,18 +88,21 @@ function fakeViewer(mesh, parts = new THREE.Group()) {
   };
 }
 
+// Two views over the SAME sub-part: switching between them changes nothing
+// about the meshes, only which pins apply.
 const part = {
   parts: { plate: { label: "Plate", build: () => {} } },
-  views: { main: { parts: ["plate"] } },
+  views: { main: { parts: ["plate"] }, alt: { parts: ["plate"] } },
 };
 const pointerOpts = { bubbles: true, clientX: 50, clientY: 50, pointerId: 1 };
 
 function setup({ parts, mesh = plateMesh() } = {}) {
   const viewer = fakeViewer(mesh, parts);
   const revealParam = vi.fn();
+  const ctx = { view: "main", params: { plate_w: 20, wall: 3 } };
   const mode = createMeasureMode(viewer, {
     part,
-    getContext: () => ({ view: "main", params: { plate_w: 20, wall: 3 } }),
+    getContext: () => ctx,
     revealParam,
     schedule: (cb) => cb(), // synchronous for tests
   });
@@ -101,8 +113,22 @@ function setup({ parts, mesh = plateMesh() } = {}) {
     .filter((c) => c.userData.pfDimItemId)
     .map((c) => c.userData.pfDimItemId);
   const hasHover = () => itemIds().includes("hover");
-  return { mesh, viewer, mode, revealParam, dimGroup, itemIds, hasHover };
+  // world positions of one item's dim labels, for "did the placement move?"
+  const labelPositions = (prefix) => {
+    viewer.__parts.updateMatrixWorld(true);
+    return (dimGroup()?.children ?? [])
+      .filter((c) => c.userData.pfDimItemId?.startsWith(prefix))
+      .map((c) => c.getWorldPosition(new THREE.Vector3()).toArray());
+  };
+  return { mesh, viewer, mode, ctx, revealParam, dimGroup, itemIds, hasHover, labelPositions };
 }
+
+// Mirror viewer.setSubPose: a rigid pose written straight onto mesh.matrix.
+const poseSubMesh = (mesh, matrix) => {
+  mesh.matrixAutoUpdate = false;
+  mesh.matrix.copy(matrix);
+  mesh.matrixWorldNeedsUpdate = true;
+};
 
 const clickAt = (dom, x = 50, y = 50) => {
   const opts = { ...pointerOpts, clientX: x, clientY: y };
@@ -241,6 +267,166 @@ test("clicking a pinned dim's label resolves it by item id and unpins", () => {
   clickAt(viewer.domElement, target.x, target.y);
 
   expect(mode.pinCount()).toBe(0);
+  mode.detach();
+});
+
+// Regression: pins are per view, but the frame dirty check only watches the
+// meshes — and two views can share an identical mesh set, so switching between
+// them changes nothing it hashes. v1 caught this incidentally through its
+// camera hash (a view switch reframes); v2 has no camera hash, so the active
+// view is seeded into the signature explicitly. Without that, view A's pinned
+// dims keep drawing over view B.
+test("switching views drops the other view's pinned dims", () => {
+  const { viewer, mode, ctx, itemIds } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement); // pin in view "main"
+  expect(mode.pinCount()).toBe(1);
+  expect(itemIds().some((id) => id.startsWith("pin:"))).toBe(true);
+
+  ctx.view = "alt"; // same meshes, same poses, same geometry — only the view moved
+  viewer.frame();
+  expect(mode.pinCount()).toBe(0); // "alt" has no pins of its own
+  expect(itemIds().some((id) => id.startsWith("pin:"))).toBe(false);
+
+  ctx.view = "main";
+  viewer.frame();
+  expect(mode.pinCount()).toBe(1);
+  expect(itemIds().some((id) => id.startsWith("pin:"))).toBe(true);
+});
+
+// transformSpec's job: carry a spec out of the mesh's own geometry frame into
+// the parts frame dim3-place works in. The overall dim gets there by a
+// different route (its bounds are composed with mesh.matrix directly), so
+// these two pin the pinned-item path — the only user of the plane and bbox
+// branches — against a real (translated) pose.
+test("a posed mesh moves its pinned PLANE dim by the pose", () => {
+  const { mesh, viewer, mode, labelPositions } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement); // pin the "top face" feature -> plane spec
+  expect(mode.pinCount()).toBe(1);
+  const before = labelPositions("pin:");
+  expect(before.length).toBeGreaterThan(0);
+
+  poseSubMesh(mesh, new THREE.Matrix4().makeTranslation(5, 0, 0));
+  viewer.frame(); // the pose is hashed, so this rebuilds
+  const after = labelPositions("pin:");
+
+  expect(after.length).toBe(before.length);
+  after.forEach((p, i) => {
+    expect(p[0]).toBeCloseTo(before[i][0] + 5, 5); // translated along X
+    expect(p[1]).toBeCloseTo(before[i][1], 5);
+    expect(p[2]).toBeCloseTo(before[i][2], 5);
+  });
+  mode.detach();
+});
+
+test("a posed mesh moves its pinned BBOX dim by the pose", () => {
+  // half-labeled plate: clicking the unlabeled triangle pins the sub-part
+  // bounding box, which is the spec kind that goes through transformSpec's
+  // Box3 branch.
+  const { mesh, viewer, mode, itemIds, labelPositions } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+  mode.setEnabled(true);
+  clickAt(viewer.domElement, 50, 48); // over the UNLABELED triangle
+  expect(itemIds()).toContain("pin:plate:bbox:0");
+  const before = labelPositions("pin:");
+  expect(before.length).toBeGreaterThan(0);
+
+  poseSubMesh(mesh, new THREE.Matrix4().makeTranslation(5, 0, 0));
+  viewer.frame();
+  const after = labelPositions("pin:");
+
+  expect(after.length).toBe(before.length);
+  after.forEach((p, i) => {
+    expect(p[0]).toBeCloseTo(before[i][0] + 5, 5);
+    expect(p[1]).toBeCloseTo(before[i][1], 5);
+    expect(p[2]).toBeCloseTo(before[i][2], 5);
+  });
+  // a pure translation must not change the measured extents
+  expect(paintLog.filter((t) => t === "20.00 mm").length).toBeGreaterThan(0);
+  expect(paintLog).not.toContain("25.00 mm");
+  mode.detach();
+});
+
+// Regression: the pose hash used to carry only the matrix diagonal, so a
+// rotation and its mirror image (θ and −θ about X share cos θ on the diagonal)
+// with the same translation read as identical — and v2 has no camera hash left
+// to notice. The full rotation basis is hashed instead.
+test("an opposite-sign pose rotation is not mistaken for the same pose", () => {
+  const { mesh, viewer, mode, labelPositions } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement);
+  expect(mode.pinCount()).toBe(1);
+
+  const posed = (t) => new THREE.Matrix4().makeRotationX(t).setPosition(1, 2, 3);
+  poseSubMesh(mesh, posed(Math.PI / 6));
+  viewer.frame();
+  const plus = labelPositions("pin:");
+  expect(plus.length).toBeGreaterThan(0);
+
+  poseSubMesh(mesh, posed(-Math.PI / 6)); // same diagonal, same translation
+  viewer.frame();
+  const minus = labelPositions("pin:");
+
+  expect(minus.length).toBe(plus.length);
+  expect(minus).not.toEqual(plus);
+  mode.detach();
+});
+
+// The placement pipeline (vertex scans, raycasts) must run on CHANGE, not per
+// frame. scene.update() replaces every child object, so child identity across
+// frames is a direct read on "did we re-place?".
+test("a steady frame does not re-place; only a side-choice flip does", () => {
+  const { viewer, mode, dimGroup } = setup();
+  mode.setEnabled(true);
+  const kids = () => [...dimGroup().children];
+  // identity, not deep equality: scene.update() builds brand-new child objects,
+  // so "same objects" means update() was never called.
+  const same = (a, b) => a.length === b.length && a.every((o, i) => o === b[i]);
+  const first = kids();
+  expect(first.length).toBeGreaterThan(0);
+
+  for (let i = 0; i < 5; i++) viewer.frame(); // nothing changed at all
+  expect(same(kids(), first)).toBe(true);
+
+  // a nudge too small to flip which side any dim hangs off
+  viewer.camera.position.set(10.5, 5.2, 40);
+  viewer.frame();
+  expect(same(kids(), first)).toBe(true);
+
+  // straight through to the other side: every extension direction flips
+  viewer.camera.position.set(10, 5, -40);
+  viewer.frame();
+  expect(same(kids(), first)).toBe(false);
+  expect(kids().length).toBe(first.length);
+  mode.detach();
+});
+
+// Hover changes on every rAF while the pointer moves, and placeBox scans every
+// vertex of the meshes it covers — so a hover move must re-place the hover item
+// ALONE, reusing the cached always-on/pinned drawings. Read straight off
+// placeDims: which items each call was asked to place.
+test("hovering re-places only the hover dim, reusing the cached base drawings", () => {
+  const { viewer, mode, hasHover } = setup();
+  mode.setEnabled(true);
+  // enable places the base set once
+  expect(placeDims.mock.calls.at(-1)[0].map((i) => i.id)).toEqual(["overall"]);
+
+  placeDims.mockClear();
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
+  expect(hasHover()).toBe(true);
+  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["hover"]]);
+
+  // and again on the next move: still just the hover item
+  placeDims.mockClear();
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 52 }));
+  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["hover"]]);
+
+  // pinning changes the base set, so that one does re-place both
+  placeDims.mockClear();
+  clickAt(viewer.domElement);
+  expect(mode.pinCount()).toBe(1);
+  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id)))
+    .toEqual([["overall", "pin:plate:top face:0"], ["hover"]]);
   mode.detach();
 });
 

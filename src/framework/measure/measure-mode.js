@@ -64,6 +64,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
         && matrix.elements[14] === 0 && matrix.elements[0] === 1 && matrix.elements[5] === 1
         && matrix.elements[10] === 1) return spec;
     const pt = (p) => _tv.set(p[0], p[1], p[2]).applyMatrix4(matrix).toArray();
+    // directions take the matrix's linear part only — exact here because
+    // setSubPose poses are rigid (rotation + translation, no shear or scale).
     const dir = (d) => _tv.set(d[0], d[1], d[2]).applyMatrix3(_m3.setFromMatrix4(matrix)).normalize().toArray();
     if (spec.kind === "plane") {
       return { ...spec, anchors: {
@@ -193,6 +195,12 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
   let choices = {};
   let lastItems = [];          // for label-pick resolution + cheap re-scoring
   let lastBounds = null;
+  let themeEpoch = 0;
+  // The always-on + pinned dims, which change rarely, cached apart from the
+  // hover dim, which changes on every pointer move. placeBox scans every
+  // vertex of the meshes it covers (tens of ms on a big part), so re-placing
+  // the whole set per hover frame is the one path that must not exist.
+  const baseCache = { key: null, drawings: [] };
   const _rc = new THREE.Raycaster();
   const _origin = new THREE.Vector3();
   const _dir = new THREE.Vector3();
@@ -232,15 +240,40 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
     (bounds.min[2] + bounds.max[2]) / 2,
   ];
 
+  // Everything the base drawings depend on, in one string: the mesh signature
+  // (geometry, poses, visibility, active view), the theme, which items are in
+  // the base set and what they link to, and the side choices scored for them.
+  // The hover item's own choice entries are skipped — they come and go with
+  // the pointer and must not evict the cache.
+  function baseCacheKey(sig, baseItems) {
+    let key = `${sig}|t${themeEpoch}`;
+    for (const item of baseItems) key += `|${item.id}~${item.paramName ?? ""}`;
+    for (const ck of Object.keys(choices)) {
+      if (ck.startsWith("hover|")) continue;
+      const c = choices[ck];
+      key += `|${ck}=${c.key ?? ""}${c.du ? `,${c.du.map((n) => n.toFixed(4))}` : ""}`;
+    }
+    return key;
+  }
+
   function rebuild() {
     if (!enabled || !scene) return;
     const { items, meshes, bounds } = buildItems();
     lastItems = items;
     lastBounds = bounds ?? null;
-    if (!items.length || !bounds) { scene.clear(); return; }
+    if (!items.length || !bounds) { scene.clear(); baseCache.key = null; return; }
     const env = buildEnv(meshes);
     choices = evaluateChoices(items, { camPos: env.camPos, center: centerOf(bounds), prev: choices });
-    scene.update(placeDims(items, { meshData: env.meshData, surfaceHit: env.surfaceHit, bounds }, choices));
+    const place = (list) =>
+      placeDims(list, { meshData: env.meshData, surfaceHit: env.surfaceHit, bounds }, choices);
+    const hoverItem = items.find((i) => i.id === "hover");
+    const baseItems = hoverItem ? items.filter((i) => i !== hoverItem) : items;
+    const key = baseCacheKey(meshSig(), baseItems);
+    if (baseCache.key !== key) {
+      baseCache.key = key;
+      baseCache.drawings = place(baseItems);
+    }
+    scene.update(hoverItem ? baseCache.drawings.concat(place([hoverItem])) : baseCache.drawings);
   }
 
   // ---- frame dirty check ---------------------------------------------------
@@ -249,10 +282,18 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
   // is WHICH side each dim is drawn on — cheap to re-score every frame
   // (dot products + hysteresis), and only a genuine flip costs a rebuild.
   let lastSig = "";
+  // Seeded with the ACTIVE VIEW: pins are per view, so switching views changes
+  // what must be drawn even when the visible mesh set is byte-identical (two
+  // views over the same sub-parts). v1 caught that incidentally through its
+  // camera hash; without the camera here it has to be explicit.
+  // The pose is hashed as its full rotation basis + translation, not just the
+  // two diagonal terms — θ and −θ about X share cos θ on the diagonal, and
+  // there is no camera hash left to notice the difference.
   function meshSig() {
-    let sig = "";
+    let sig = getContext().view;
     for (const [name, m] of Object.entries(viewer._subMeshes)) {
-      sig += `|${name}:${m.visible ? 1 : 0}:${m.geometry.id}:${m.matrix.elements[12]},${m.matrix.elements[13]},${m.matrix.elements[14]},${m.matrix.elements[0]},${m.matrix.elements[5]}`;
+      const e = m.matrix.elements;
+      sig += `|${name}:${m.visible ? 1 : 0}:${m.geometry.id}:${e[0]},${e[1]},${e[2]},${e[4]},${e[5]},${e[6]},${e[12]},${e[13]},${e[14]}`;
     }
     return sig;
   }
@@ -391,7 +432,11 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
   dom.addEventListener("pointerleave", onLeave);
   dom.addEventListener("click", onClick);
 
-  const offTheme = viewer.onThemeChange?.((mode) => { scene?.setTheme(mode); rebuild(); }) ?? (() => {});
+  const offTheme = viewer.onThemeChange?.((mode) => {
+    themeEpoch++; // drop the cached base drawings so the repaint is unconditional
+    scene?.setTheme(mode);
+    rebuild();
+  }) ?? (() => {});
 
   function setEnabled(on) {
     if (detached || on === enabled) return;
@@ -399,14 +444,18 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
     if (enabled) {
       scene ??= createDimScene(viewer);
       highlight ??= createFeatureHighlight(viewer);
-      lastSig = "";
       rebuild();
+      // Adopt the signature this placement was built from, so the very next
+      // frame doesn't read as "changed" and redo the whole vertex scan.
+      lastSig = meshSig();
     } else {
       hover = null;
       highlight?.clear();
       scene?.clear();
       lastItems = [];
       lastBounds = null;
+      baseCache.key = null;
+      baseCache.drawings = [];
     }
     notifyMode();
   }
