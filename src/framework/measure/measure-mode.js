@@ -49,10 +49,14 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
   }
 
   // ---- projection: geometry-frame point -> CSS px in the canvas ------------
-  function projectorFor(mesh) {
+  // `node` may be a sub-part mesh (for per-feature/pin specs, in the mesh's
+  // own local frame) or the meshes' shared parent group (for the overall
+  // spec, already composed with each mesh's local `.matrix`); either way we
+  // apply its matrixWorld before projecting.
+  function projectorFor(node) {
     return (p) => {
       _v.set(p[0], p[1], p[2]);
-      if (mesh) _v.applyMatrix4(mesh.matrixWorld);
+      if (node) _v.applyMatrix4(node.matrixWorld);
       _v.project(viewer.camera);
       const rect = viewer.domElement.getBoundingClientRect();
       return {
@@ -113,9 +117,11 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
       return { min: [b.min.x, b.min.y, b.min.z], max: [b.max.x, b.max.y, b.max.z] };
     });
     const u = unionBounds(boundsList);
-    // overall anchors are in the shared (posed-mesh-local == parent) frame;
-    // project through the first mesh's PARENT transform via a null-mesh projector
-    items.push({ id: "overall", tier: "static", spec: bboxSpec(u.min, u.max), project: projectorFor(null) });
+    // Overall anchors are in the meshes' PARENT frame (bounds composed with
+    // mesh.matrix above), so project through the parent's world transform —
+    // in the live viewer that carries the pivot rotation + recentring.
+    const parent = meshes[0][1].parent ?? null;
+    items.push({ id: "overall", tier: "static", spec: bboxSpec(u.min, u.max), project: projectorFor(parent) });
     const { view } = getContext();
     pins.list(view).forEach((key, i) => {
       const live = resolvePin(key, i);
@@ -249,7 +255,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, sched
       if (hover) togglePin(hover.key, hover.item.paramName);
       return;
     }
-    const pinItem = prevLayout && buildItems().find((i) => labelId.startsWith(i.id));
+    const pinItem = prevLayout && buildItems().find((i) => labelId === i.id || labelId.startsWith(`${i.id}:`));
     if (pinItem?._key) togglePin(pinItem._key, null); // toggling off: no reveal
   }
 

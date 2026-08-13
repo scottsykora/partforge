@@ -130,6 +130,45 @@ test("drag does not pin", () => {
   mode.detach();
 });
 
+test("overall dims project through the meshes' parent transform", () => {
+  const mesh = plateMesh();
+  const group = new THREE.Group();
+  group.position.set(5, 0, 0);
+  group.add(mesh);
+  group.updateMatrixWorld(true);
+  const viewer = fakeViewer(mesh);
+  const mode = createMeasureMode(viewer, {
+    part,
+    getContext: () => ({ view: "main", params: {} }),
+    revealParam: () => {},
+    schedule: (cb) => cb(),
+  });
+  mode.setEnabled(true);
+  const withParent = [...mode.getOverlaySvg().querySelectorAll("text")].map((t) => Number(t.getAttribute("x")));
+  mode.detach();
+
+  const mesh2 = plateMesh();
+  const viewer2 = fakeViewer(mesh2);
+  const mode2 = createMeasureMode(viewer2, {
+    part,
+    getContext: () => ({ view: "main", params: {} }),
+    revealParam: () => {},
+    schedule: (cb) => cb(),
+  });
+  mode2.setEnabled(true);
+  const withoutParent = [...mode2.getOverlaySvg().querySelectorAll("text")].map((t) => Number(t.getAttribute("x")));
+  mode2.detach();
+  expect(withParent).not.toEqual(withoutParent); // parent translation must move the dims
+});
+
+test("chip ids resolve on boundaries, not prefixes", () => {
+  // pure resolution-logic guard at the string level: the fixed matcher
+  const items = [{ id: "pin:leg:hole:1" }, { id: "pin:leg:hole:10" }];
+  const resolve = (labelId) => items.find((i) => labelId === i.id || labelId.startsWith(`${i.id}:`));
+  expect(resolve("pin:leg:hole:10:depth").id).toBe("pin:leg:hole:10");
+  expect(resolve("pin:leg:hole:1:depth").id).toBe("pin:leg:hole:1");
+});
+
 test("onModeChange fires on enable and disable", () => {
   const { mode } = setup();
   const cb = vi.fn();
