@@ -326,3 +326,11 @@ switch is future work), and the choice is session-local mode state
 grew from 18 to 21 px, the halo stroke thickened, and the light palette
 gained darker ink (#182a4e) on a solid near-white halo — the first light
 palette washed out against the pale background.
+
+**2026-08-13 — dims render above the hover highlight.** The hover/feature
+highlight draws at the cutaway-overlay tier (renderOrder 3,000,000), far
+above the dims' original 998/999 — its 35%-opacity tint blended over every
+dim pixel it covered. Dims now render at overlay-tier +2/+3 (the cutaway
+gizmo moves to +10 so the actively-dragged control still outranks ink), and
+all dim materials set depthWrite:false so overlay ink never pollutes the
+depth buffer.

@@ -14,6 +14,7 @@ import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../cutaway-render.js";
 
 // Theme palettes for dimension ink. Deliberately hardcoded (not CSS vars):
 // the scene renders to WebGL where var() can't reach, and these pair with the
@@ -32,8 +33,12 @@ export const DIM_THEME = {
   },
 };
 
-export const RENDER_ORDER_DIMS = 998;
-export const RENDER_ORDER_LABELS = 999;
+// Above the cutaway-overlay tier (section caps, and the hover highlight,
+// which renders at CUTAWAY_OVERLAY_RENDER_ORDER): a later-drawn transparent
+// highlight would otherwise tint every dim pixel it covers. The cutaway
+// GIZMO deliberately stays above the dims — it is an active drag control.
+export const RENDER_ORDER_DIMS = CUTAWAY_OVERLAY_RENDER_ORDER + 2;
+export const RENDER_ORDER_LABELS = CUTAWAY_OVERLAY_RENDER_ORDER + 3;
 
 // Screen-constant sizes, CSS px, all sized off the same per-view reference
 // distance. Uniform per view by design — a nearer dimension is NOT normalized
@@ -112,6 +117,7 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
   };
   for (const m of [...Object.values(lineMats), ...Object.values(fillMats)]) {
     m.depthTest = false;
+    m.depthWrite = false; // overlay ink must not pollute the depth buffer
     m.transparent = true; // draw in the late pass so depthTest:false lands on top
   }
 
@@ -188,7 +194,7 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
     // unit-height plane; tick() scales it to the screen-constant display height
     const mesh = new THREE.Mesh(
       new THREE.PlaneGeometry(aspect, 1),
-      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide }),
     );
     mesh.renderOrder = RENDER_ORDER_LABELS;
     mesh.frustumCulled = false;
