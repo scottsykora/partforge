@@ -151,16 +151,42 @@ function cylinderSpec(tris, normals) {
   }
   if (wallVerts.length < 9) return null; // fewer than 3 wall triangles: not a cylinder
 
-  // Axis point: centroid of wall vertices. Radius: mean distance to axis line.
-  let c = [0, 0, 0];
-  for (const p of wallVerts) c = add(c, p);
-  c = scale(c, 1 / wallVerts.length);
+  // Circle fit (Kåsa least-squares) in the plane ⊥ axis: for a partial arc
+  // the vertex centroid is NOT on the axis, so a centroid-based radius check
+  // wrongly rejects arcs. Solve x²+y² = Ax + By + C over the projected wall
+  // vertices; center (A/2, B/2), r = sqrt(C + |center|²).
+  const e = Math.abs(axis[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  const uBasis = norm(cross(axis, e));
+  const vBasis = cross(axis, uBasis);
+  const p0 = wallVerts[0];
+  const pts = wallVerts.map((p) => {
+    const d = sub(p, p0);
+    return [dot(d, uBasis), dot(d, vBasis)];
+  });
+  let sxx = 0, sxy = 0, syy = 0, sx = 0, sy = 0, sxz = 0, syz = 0, sz = 0;
+  for (const [x, y] of pts) {
+    const z = x * x + y * y;
+    sxx += x * x; sxy += x * y; syy += y * y; sx += x; sy += y;
+    sxz += x * z; syz += y * z; sz += z;
+  }
+  const n = pts.length;
+  // Cramer's rule on the 3x3 normal equations [[sxx,sxy,sx],[sxy,syy,sy],[sx,sy,n]] · [A,B,C]ᵀ = [sxz,syz,sz]ᵀ
+  const det = sxx * (syy * n - sy * sy) - sxy * (sxy * n - sy * sx) + sx * (sxy * sy - syy * sx);
+  if (Math.abs(det) < 1e-12) return null;
+  const A = (sxz * (syy * n - sy * sy) - sxy * (syz * n - sy * sz) + sx * (syz * sy - syy * sz)) / det;
+  const B = (sxx * (syz * n - sy * sz) - sxz * (sxy * n - sy * sx) + sx * (sxy * sz - syz * sx)) / det;
+  const Cc = (sxx * (syy * sz - syz * sy) - sxy * (sxy * sz - syz * sx) + sxz * (sxy * sy - syy * sx)) / det;
+  const cx = A / 2, cy = B / 2;
+  const rSquared = Cc + cx * cx + cy * cy;
+  if (rSquared <= 0) return null;
+  const r = Math.sqrt(rSquared);
+  // Axis point in 3D: the fitted center lifted back out of the projection plane.
+  const c = add(p0, add(scale(uBasis, cx), scale(vBasis, cy)));
   const radial = (p) => { const d = sub(p, c); return sub(d, scale(axis, dot(d, axis))); };
-  let rSum = 0;
-  const rs = wallVerts.map((p) => { const r = Math.hypot(...radial(p)); rSum += r; return r; });
-  const r = rSum / rs.length;
-  if (r <= 0) return null;
-  for (const ri of rs) if (Math.abs(ri - r) > Math.max(RADIUS_TOL * r, 1e-6)) return null;
+  for (const p of wallVerts) {
+    const ri = Math.hypot(...radial(p));
+    if (Math.abs(ri - r) > Math.max(RADIUS_TOL * r, 1e-6)) return null;
+  }
 
   // Depth from ALL feature vertices (caps included) along the axis.
   let tMin = Infinity, tMax = -Infinity;
