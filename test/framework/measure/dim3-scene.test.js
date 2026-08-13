@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
 import * as THREE from "three";
-import { createDimScene, DIM_THEME, RENDER_ORDER_DIMS, RENDER_ORDER_LABELS, labelWorldHeight, LABEL_SCREEN_PX }
-  from "../../../src/framework/measure/dim3-scene.js";
+import {
+  createDimScene, DIM_THEME, RENDER_ORDER_DIMS, RENDER_ORDER_LABELS,
+  labelWorldHeight, LABEL_SCREEN_PX, ARROW_SCREEN_PX, OVERSHOOT_SCREEN_PX,
+} from "../../../src/framework/measure/dim3-scene.js";
 
 function fakeViewer() {
   const parts = new THREE.Group();
@@ -38,7 +40,8 @@ const fakePaint = ({ text }) => {
 const DRAWING = {
   itemId: "overall", tier: "static", pinned: false,
   segments: [0, 0, 0, 10, 0, 0],
-  triangles: [0, 0, 0, 1, 0.5, 0, 1, -0.5, 0],
+  arrows: [{ tip: [0, 0, 0], inward: [1, 0, 0], perp: [0, 1, 0] }],
+  tails: [{ origin: [10, 0, 0], dir: [1, 0, 0] }],
   labels: [{ text: "10.00 mm", param: null, center: [5, -2, 0], x: [1, 0, 0], y: [0, 1, 0], h: 4 }],
 };
 
@@ -56,7 +59,7 @@ describe("createDimScene", () => {
     const scene = createDimScene(viewer, { paintLabel: fakePaint });
     scene.update([DRAWING]);
     const kids = scene.group.children;
-    expect(kids.length).toBe(3); // lines + triangles + 1 label
+    expect(kids.length).toBe(4); // lines + 1 arrow + 1 tail + 1 label
     for (const k of kids) {
       expect(k.material.depthTest).toBe(false);
       expect(k.renderOrder === RENDER_ORDER_DIMS || k.renderOrder === RENDER_ORDER_LABELS).toBe(true);
@@ -70,9 +73,33 @@ describe("createDimScene", () => {
     const scene = createDimScene(viewer, { paintLabel: fakePaint });
     scene.update([DRAWING]);
     scene.update([DRAWING]);
-    expect(scene.group.children.length).toBe(3);
+    expect(scene.group.children.length).toBe(4);
     scene.clear();
     expect(scene.group.children.length).toBe(0);
+  });
+
+  it("tick sizes arrowheads and overshoot tails screen-constant", () => {
+    const viewer = fakeViewer();
+    const scene = createDimScene(viewer, { paintLabel: fakePaint });
+    scene.update([DRAWING]);
+    viewer.__parts.updateMatrixWorld(true);
+    scene.tick();
+    const dist = viewer.camera.position.length();
+    const worldPerPx = labelWorldHeight(dist, viewer.camera.fov, 600) / LABEL_SCREEN_PX;
+    const arrow = scene.group.children.find((k) => k.isMesh && !k.userData.pfDimItemId && k.geometry.type === "BufferGeometry");
+    // both the segments run and the tail are LineSegments2 — the tail is the
+    // one positioned at its dim-line end, the segments run stays at the origin
+    const tail = scene.group.children.find((k) => k.isLineSegments2 && k.position.x === 10);
+    expect(arrow.scale.x).toBeCloseTo(ARROW_SCREEN_PX * worldPerPx, 6);
+    expect(tail.scale.x).toBeCloseTo(OVERSHOOT_SCREEN_PX * worldPerPx, 6);
+    // the arrow's origin stays glued to its tip; scaling grows it away from it
+    expect(arrow.position.toArray()).toEqual([0, 0, 0]);
+    expect(tail.position.toArray()).toEqual([10, 0, 0]);
+    // zoom in: decorations shrink in world units in lockstep
+    viewer.camera.position.set(0, 0, dist / 2);
+    viewer.camera.updateMatrixWorld();
+    scene.tick();
+    expect(arrow.scale.x).toBeCloseTo((ARROW_SCREEN_PX * worldPerPx) / 2, 6);
   });
 
   it("tick sizes labels screen-constant: one shared world height, tracking zoom", () => {

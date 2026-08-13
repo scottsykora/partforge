@@ -229,3 +229,15 @@ tick as a scale + reposition (the label stays `0.85 × displayHeight` outside
 its dim line); placement's `textHeight` constant remains the nominal for
 leader lengths and initial quad geometry, and the rebuild-not-per-frame
 invariant is untouched.
+
+**2026-08-13 — screen-constant arrowheads and overshoot.** Arrowheads
+(`ARROW_SCREEN_PX` = 10, half-width still 0.25 × length) and the
+extension-line overshoot past the dim line (`OVERSHOOT_SCREEN_PX` = 7) follow
+the same rule, sized off the same per-view reference distance. Placement no
+longer carries arrow or overshoot lengths: it emits them as unit decorations
+(an arrow is a tip + in-plane basis, a tail an origin + direction) that
+`dim3-scene` instances from shared unit geometries and scales each frame. The
+dimension line now runs tip to tip — the solid arrowheads draw over it, so no
+inset needs recomputing when arrows resize. This supersedes the locked
+`arrowLen`/`ARROW_HALF_W`/`OVERSHOOT` mm constants in §Visual language
+(`GAP` stays mm-based: it relates to the model surface, not the screen).

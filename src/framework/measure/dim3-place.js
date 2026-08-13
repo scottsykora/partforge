@@ -11,14 +11,16 @@
 import * as THREE from "three";
 import { fmtMm } from "./feature-dims.js";
 
-// --- locked visual constants (spec v2 §Visual language) ----------------------
+// --- locked visual constants (spec v2 §Visual language + amendments) ----------
+// Arrowheads and the extension-line overshoot are SCREEN-constant (like label
+// text): placement emits them as unit decorations — an arrow is a tip +
+// in-plane basis, an overshoot tail is an origin + direction — and dim3-scene
+// scales them to their on-screen size each frame. Placement therefore carries
+// no arrow/overshoot lengths at all.
 export const GAP = 1.0;          // mm, surface-contact point -> extension line
-export const OVERSHOOT = 1.5;    // mm, extension line past the dim line
 export const HYSTERESIS = 1.15;  // challenger must beat the holder by 15%
 export const FLIP_DEADBAND_DEG = 25; // cylinder ⌀ direction re-aim threshold
 export const standoff = (modelSize) => Math.max(6, modelSize * 0.10);
-export const arrowLen = (span) => 0.7 * Math.min(3, Math.max(1.2, span * 0.04));
-export const ARROW_HALF_W = 0.25; // × arrow length
 export const textHeight = (modelSize) => Math.max(3.2, modelSize * 0.05);
 
 const AXES = [
@@ -160,8 +162,6 @@ export function extremeVertex(meshData, axis, sign, near) {
 // anchor.
 function linearDim(out, { pA, pB, da, db, ext, text, param, modelSize, surfaceHit, planeAxis, planeC }) {
   const dir = db.clone().sub(da).normalize();
-  const span = db.distanceTo(da);
-  const aLen = arrowLen(span);
 
   for (const [p, d, inwardSign] of [[pA, da, 1], [pB, db, -1]]) {
     let start = p;
@@ -177,16 +177,16 @@ function linearDim(out, { pA, pB, da, db, ext, text, param, modelSize, surfaceHi
     const u = d.clone().sub(start);
     const un = u.lengthSq() > 1e-12 ? u.normalize() : ext.clone();
     const s = start.clone().addScaledVector(un, GAP);
-    const e = d.clone().addScaledVector(un, OVERSHOOT);
-    out.segments.push(s.x, s.y, s.z, e.x, e.y, e.z);
+    // the main run ends AT the dim line; the screen-constant overshoot past it
+    // is a unit tail the scene scales per frame
+    out.segments.push(s.x, s.y, s.z, d.x, d.y, d.z);
+    out.tails.push({ origin: d.toArray(), dir: un.toArray() });
   }
 
-  // dim line, inset so it never pokes through the arrowheads
-  const dA = da.clone().addScaledVector(dir, aLen);
-  const dB = db.clone().addScaledVector(dir, -aLen);
-  out.segments.push(dA.x, dA.y, dA.z, dB.x, dB.y, dB.z);
-  arrow(out, da, dir, ext, aLen);
-  arrow(out, db, dir.clone().negate(), ext, aLen);
+  // dim line runs tip to tip; the solid screen-constant arrowheads draw over it
+  out.segments.push(da.x, da.y, da.z, db.x, db.y, db.z);
+  arrow(out, da, dir, ext);
+  arrow(out, db, dir.clone().negate(), ext);
 
   const h = textHeight(modelSize);
   const mid = da.clone().add(db).multiplyScalar(0.5);
@@ -197,14 +197,12 @@ function linearDim(out, { pA, pB, da, db, ext, text, param, modelSize, surfaceHi
   });
 }
 
-// Filled flat triangle lying in the dim plane: tip on the endpoint, base
-// toward the line's centre, spread along the in-plane perpendicular.
-function arrow(out, tip, inward, perp, len) {
-  const base = tip.clone().addScaledVector(inward, len);
-  const halfW = len * ARROW_HALF_W;
-  const p1 = base.clone().addScaledVector(perp, halfW);
-  const p2 = base.clone().addScaledVector(perp, -halfW);
-  out.triangles.push(tip.x, tip.y, tip.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+// Screen-constant flat arrowhead lying in the dim plane: tip on the endpoint,
+// body toward the line's centre (`inward`), spread along the in-plane
+// perpendicular. Emitted as a unit decoration; dim3-scene owns the on-screen
+// length and the width ratio.
+function arrow(out, tip, inward, perp) {
+  out.arrows.push({ tip: tip.toArray(), inward: inward.toArray(), perp: perp.toArray() });
 }
 
 // --- per-kind placement -------------------------------------------------------
@@ -288,7 +286,7 @@ function placeCylinder(out, item, spec, choices, { modelSize }) {
     const s = rim.clone().addScaledVector(rd, GAP);
     const e = rim.clone().addScaledVector(rd, GAP + leaderLen);
     out.segments.push(s.x, s.y, s.z, e.x, e.y, e.z);
-    arrow(out, rim, rd, new THREE.Vector3().crossVectors(axis, rd).normalize(), arrowLen(r * 2));
+    arrow(out, rim, rd, new THREE.Vector3().crossVectors(axis, rd).normalize());
     out.labels.push({
       text: `R${fmtMm(r)}`, param: item.paramName,
       center: e.clone().addScaledVector(rd, h * 0.85).toArray(),
@@ -300,12 +298,9 @@ function placeCylinder(out, item, spec, choices, { modelSize }) {
     // rim points, ⌀ text just outside the rim
     const rimA = top.clone().addScaledVector(du, r);
     const rimB = top.clone().addScaledVector(du, -r);
-    const aLen = arrowLen(2 * r);
-    const iA = rimA.clone().addScaledVector(du, -aLen);
-    const iB = rimB.clone().addScaledVector(du, aLen);
-    out.segments.push(iA.x, iA.y, iA.z, iB.x, iB.y, iB.z);
-    arrow(out, rimA, du.clone().negate(), dv, aLen);
-    arrow(out, rimB, du, dv, aLen);
+    out.segments.push(rimA.x, rimA.y, rimA.z, rimB.x, rimB.y, rimB.z);
+    arrow(out, rimA, du.clone().negate(), dv);
+    arrow(out, rimB, du, dv);
     out.labels.push({
       text: `⌀${fmtMm(spec.values.diameter)}`, param: item.paramName,
       center: rimA.clone().addScaledVector(du, h * 0.85).toArray(),
@@ -343,7 +338,7 @@ export function placeDims(items, { meshData = [], surfaceHit = null, bounds }, c
   for (const item of items) {
     const spec = item.spec;
     if (!spec) continue;
-    const out = { itemId: item.id, tier: item.tier, pinned: !!item.pinned, segments: [], triangles: [], labels: [] };
+    const out = { itemId: item.id, tier: item.tier, pinned: !!item.pinned, segments: [], arrows: [], tails: [], labels: [] };
     const scan = item.meshes ? item.meshes.map((i) => meshData[i]).filter(Boolean) : meshData;
     if (spec.kind === "bbox") {
       const refSide = (nAxis, min, max) => {

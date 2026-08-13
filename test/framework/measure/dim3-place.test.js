@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import * as THREE from "three";
 import {
   evaluateChoices, choicesEqual, placeDims, extremeVertex,
-  GAP, OVERSHOOT, HYSTERESIS, FLIP_DEADBAND_DEG, standoff, arrowLen, ARROW_HALF_W, textHeight,
+  GAP, HYSTERESIS, FLIP_DEADBAND_DEG, standoff, textHeight,
 } from "../../../src/framework/measure/dim3-place.js";
 import { bboxSpec } from "../../../src/framework/measure/feature-dims.js";
 
@@ -121,8 +121,9 @@ describe("placeDims — bbox", () => {
     const d = place();
     // 3 axes × 3 segments (2 extension + 1 dim line), 6 xyz numbers each
     expect(d.segments.length).toBe(3 * 3 * 6);
-    // 3 axes × 2 arrows × 9 numbers
-    expect(d.triangles.length).toBe(3 * 2 * 9);
+    // 3 axes × 2 screen-constant arrow decorations / overshoot tails
+    expect(d.arrows.length).toBe(3 * 2);
+    expect(d.tails.length).toBe(3 * 2);
     expect(d.labels.map((l) => l.text).sort()).toEqual(["10.00 mm", "20.00 mm", "30.00 mm"]);
   });
 
@@ -155,15 +156,13 @@ describe("placeDims — bbox", () => {
   it("respects locked constants", () => {
     expect(standoff(100)).toBe(10);
     expect(standoff(10)).toBe(6);
-    expect(arrowLen(100)).toBeCloseTo(2.1, 6); // 0.7 × 3 (clamped)
-    expect(arrowLen(10)).toBeCloseTo(0.7 * 1.2, 6);
-    expect(ARROW_HALF_W).toBe(0.25);
     expect(textHeight(100)).toBe(5);
     expect(textHeight(10)).toBe(3.2);
     expect(GAP).toBe(1.0);
-    expect(OVERSHOOT).toBe(1.5);
     expect(HYSTERESIS).toBe(1.15);
     expect(FLIP_DEADBAND_DEG).toBe(25);
+    // arrow length/ratio and the overshoot moved to dim3-scene as
+    // screen-constant px sizes (spec amendment 2026-08-13)
   });
 
   it("keeps every point of the X dim on a single plane (coplanarity)", () => {
@@ -171,7 +170,7 @@ describe("placeDims — bbox", () => {
     // the camera" above), i.e. extAxis=1, nAxis=2 — the dim plane is a fixed z.
     // The X dim is the first of the 3 axis dims placeBox emits (axis loop
     // order 0,1,2), so it occupies the first 3 segments (18 numbers), first 2
-    // triangles (18 numbers), and first label.
+    // arrows/tails, and first label.
     const items = [overallItem()];
     const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
     expect(choices["overall|ax0"].key).toBe("e1s-1");
@@ -181,13 +180,23 @@ describe("placeDims — bbox", () => {
     }, choices)[0];
 
     const xSegments = d.segments.slice(0, 18);
-    const xTriangles = d.triangles.slice(0, 18);
     const xLabel = d.labels[0];
     expect(xLabel.text).toBe("10.00 mm"); // sanity: this really is the X dim
 
     const zValues = [];
     for (let i = 2; i < xSegments.length; i += 3) zValues.push(xSegments[i]);
-    for (let i = 2; i < xTriangles.length; i += 3) zValues.push(xTriangles[i]);
+    // arrow tips + tail origins sit in the plane, and their basis vectors lie
+    // flat in it (zero out-of-plane component) so the scaled decorations can
+    // never leave it
+    for (const a of d.arrows.slice(0, 2)) {
+      zValues.push(a.tip[2]);
+      expect(a.inward[2]).toBeCloseTo(0, 6);
+      expect(a.perp[2]).toBeCloseTo(0, 6);
+    }
+    for (const t of d.tails.slice(0, 2)) {
+      zValues.push(t.origin[2]);
+      expect(t.dir[2]).toBeCloseTo(0, 6);
+    }
     zValues.push(xLabel.center[2]);
     for (const z of zValues) expect(z).toBeCloseTo(zValues[0], 6);
   });
