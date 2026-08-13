@@ -330,8 +330,8 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 @media (max-width: 360px) {
   #viewbar { gap: 3px; }
   #viewbar button { width: 30px; height: 30px; font-size: 13px; }
-  #viewbar .pf-cutaway-actions { gap: 3px; }
-  #viewbar .pf-cutaway-actions button { min-width: 44px; padding: 0 6px; }
+  #viewbar .pf-cutaway-actions, #viewbar .pf-measure-actions { gap: 3px; }
+  #viewbar .pf-cutaway-actions button, #viewbar .pf-measure-actions button { min-width: 44px; padding: 0 6px; }
 }
 
 /* ---- measurement mode -----------------------------------------------------

@@ -89,6 +89,29 @@ test("Escape exits the mode; cutaway skips Escape while measure is active", () =
   expect(cutViewer.setCutawayEnabled).toHaveBeenCalledWith(false); // second Escape reaches cutaway
 });
 
+test("Escape ordering holds when measure attaches before cutaway", () => {
+  const { viewer, button } = fixture();
+  const cutButton = document.createElement("button");
+  document.body.appendChild(cutButton);
+  const mode = fakeMode();
+  attachMeasureControls(viewer, mode, { measure: button });
+  const cutViewer = {
+    domElement: viewer.domElement,
+    cutawaySupported: () => true,
+    cutawayEnabled: vi.fn(() => true),
+    setCutawayEnabled: vi.fn(),
+    flipCutaway: vi.fn(),
+    resetCutaway: vi.fn(),
+  };
+  attachCutawayControls(cutViewer, { cutaway: cutButton }, { escapeGuard: () => mode.isEnabled() });
+  button.click(); // measure on
+  viewer.domElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  expect(mode.setEnabled).toHaveBeenLastCalledWith(false);
+  expect(cutViewer.setCutawayEnabled).not.toHaveBeenCalled(); // consumed by measure
+  viewer.domElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  expect(cutViewer.setCutawayEnabled).toHaveBeenCalledWith(false);
+});
+
 test("detach restores the host button and removes the actions row", () => {
   const { viewer, button } = fixture();
   button.setAttribute("title", "host title");

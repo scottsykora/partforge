@@ -77,6 +77,11 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
   const onEscape = (event) => {
     if (event.key !== "Escape" || !mode.isEnabled()) return;
     event.preventDefault();
+    // Consume the keystroke: with measure attached first, cutaway's listener
+    // on the same element would otherwise read the guard AFTER we've disabled
+    // and close too. Order-independent together with cutaway's escapeGuard
+    // (which covers the cutaway-attached-first order).
+    event.stopImmediatePropagation();
     mode.setEnabled(false);
     sync();
     tooltipBinding?.hide();
