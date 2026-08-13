@@ -162,7 +162,11 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
         paramName: linkFor(key.subPart, live.spec), _key: key,
       });
     });
-    if (hover) items.push(hover.item);
+    // Rebind against THIS pass's rect: hover.item's own projector was created
+    // at hover time (in hitToHover), independent of any buildItems call, so
+    // without this it would re-measure getBoundingClientRect per anchor on
+    // every render while hovering — the hottest path in the mode.
+    if (hover) items.push({ ...hover.item, project: projectorFor(hover.mesh, rect) });
     return items;
   }
 
@@ -242,7 +246,12 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
       key,
       geometry: hit.mesh.geometry,
       subPart: hit.subPart,
+      mesh: hit.mesh,
       item: {
+        // Fallback projector (no shared rect) for a caller that reads
+        // hover.item directly, outside a buildItems(rect) pass; buildItems
+        // itself rebinds against the shared rect below so the hottest path
+        // (continuous hover) doesn't call getBoundingClientRect per anchor.
         id: "hover", tier: "hover", spec, project: projectorFor(hit.mesh),
         paramName: linkFor(hit.subPart, spec),
       },

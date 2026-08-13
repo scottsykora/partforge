@@ -286,3 +286,55 @@ Modified:
 - `test/framework/measure/measure-mode.test.js`
 
 No refactoring beyond what the 10 findings required; no scope creep.
+
+## Follow-up: finding 7 residual (hover projector still measuring rect per anchor)
+
+Re-review flagged that finding 7 was only partially addressed: `hitToHover()`
+created the hover item with `project: projectorFor(hit.mesh)` — no rect — and
+that item was built outside `buildItems`, at hover time. Since the hover item
+is pushed into every `buildItems()` result while hovering (the hottest path —
+every render frame during continuous hover), its projector kept calling
+`viewer.domElement.getBoundingClientRect()` once per anchor per render,
+missing the "measure the rect once per pass" fix applied to the overall/pinned
+items.
+
+**Fix** — `src/framework/measure/measure-mode.js`:
+- `hitToHover()` (~line 227) now also stores `mesh: hit.mesh` on the returned
+  hover record. `hover.item.project` still falls back to
+  `projectorFor(hit.mesh)` (no rect) for a caller that reads `hover.item`
+  directly outside a `buildItems(rect)` pass.
+- `buildItems(rect)` (~line 165) now rebinds the hover item's projector
+  against the shared rect when pushing it:
+  ```js
+  if (hover) items.push({ ...hover.item, project: projectorFor(hover.mesh, rect) });
+  ```
+  So on the render path, the hover item's anchors are projected against the
+  SAME rect measured once for the whole pass, same as the overall/pinned
+  items — no more per-anchor `getBoundingClientRect()` calls while hovering.
+
+**Tests:** no new test added (the existing `dim-layout.test.js`/
+`measure-mode.test.js` suites don't assert `getBoundingClientRect` call
+counts — see the original report's note on this); the pre-existing hover
+tests in `measure-mode.test.js` (hover rendering, click-to-pin from hover,
+regen re-anchor, cutaway-handle suppression) all still exercise the hover
+item end to end and stay green, confirming the rebind doesn't change
+hover behavior.
+
+**Command:** `npx vitest run test/framework/measure/measure-mode.test.js test/framework/measure/dim-layout.test.js`
+**Output:**
+```
+ Test Files  2 passed (2)
+      Tests  21 passed (21)
+```
+
+Also reran the broader gate for safety:
+```
+$ npx vitest run test/framework/measure/ test/selection-pick.test.js \
+    test/selection-hover.test.js test/framework/cutaway-controls.test.js \
+    test/framework/mount.test.js test/worker-layering.test.js
+ Test Files  14 passed (14)
+      Tests  165 passed (165)
+```
+
+Committed separately as `Thread the shared rect into the hover projector`
+(not pushed).
