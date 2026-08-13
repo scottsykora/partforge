@@ -487,6 +487,12 @@ if (p.drain > 0) s = s.cut(k.cylinder({ r: d.drainR, h: p.floor + 4 }).at([0, 0,
 - Names should describe intent ("Drainage hole", not "cylinder2"); make them
   unique per sub-part unless you specifically want the merge behavior.
 
+Labels do double duty in the viewer: the hover tooltip names the feature, and
+**measurement mode** (the ruler button in the viewbar) measures it — a labeled
+hole reads ⌀ + depth, a labeled face reads its extents, and a click pins that
+dimension so it tracks parameter changes live. Label the features a user would
+want to measure; unlabeled geometry still measures as its bounding box.
+
 ### Caching & determinism
 
 The preview kernel memoizes geometry by content hash, so editing a parameter only

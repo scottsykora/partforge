@@ -88,7 +88,10 @@ the installed package, so let the publish finish before bumping the dep there.
   `resolveParams` / `buildPosed`; a deliberate leaf so the job loop, the
   collision check and the oracle can share it without a cycle), `assembly.js`
   (collision checking), `oracle/` (see below), `geometry/` (the
-  kernel), and `app.css` / `chrome.css` (the shell/rail layout - `rail.js` binds
+  kernel), `measure/` (the ruler-button measurement mode: pure dimension engines +
+  SVG overlay; `feature-dims.js`/`dim-layout.js`/`pins.js`/`param-link.js`
+  are pure leaves, `measure-mode.js` orchestrates, `measure-controls.js` is
+  the viewbar chrome), and `app.css` / `chrome.css` (the shell/rail layout - `rail.js` binds
   it to the DOM, `rail-state.js` is its pure drag/collapse state machine).
   Below `RAIL_NARROW_BREAKPOINT` (720px) the rail cannot sit beside the viewer:
   the shell shows exactly ONE pane, keyed on `data-pf-pane`, and `mobile-tabs.js`
