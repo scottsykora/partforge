@@ -313,6 +313,9 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar .pf-cutaway-actions { display: flex; gap: 4px; }
 #viewbar .pf-cutaway-actions[hidden] { display: none; }
 #viewbar .pf-cutaway-actions button { width: auto; min-width: 56px; padding: 0 8px; }
+#viewbar .pf-measure-actions { display: flex; gap: 4px; }
+#viewbar .pf-measure-actions[hidden] { display: none; }
+#viewbar .pf-measure-actions button { width: auto; min-width: 56px; padding: 0 8px; }
 #viewbar button:disabled { opacity: .38; cursor: not-allowed; }
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
@@ -337,6 +340,10 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    mono numerals. Tiers: static (always-on bbox) is muted; hover/pinned are
    full-strength; param-linked chips are the one loud thing — a mini control
    pill that visually IS the slider it summons. */
+.pf-measure-unit {
+  font-family: var(--pf-mono); font-size: 10px; color: var(--pf-muted);
+  align-self: center; padding: 0 4px; user-select: none;
+}
 .pf-stage { --pf-dim-ink: var(--pf-muted-2); --pf-dim-ink-strong: var(--pf-text-2); }
 .pf-dim-overlay {
   position: absolute; inset: 0; z-index: 10;

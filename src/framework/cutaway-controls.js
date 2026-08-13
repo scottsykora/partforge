@@ -48,7 +48,7 @@ function restoreAttributes(element, attributes) {
 
 // Wire the optional cutaway button to the viewer and create its contextual
 // actions. Hosts that omit the primary button opt out of all DOM behavior.
-export function attachCutawayControls(viewer, { cutaway: button } = {}, { tooltip } = {}) {
+export function attachCutawayControls(viewer, { cutaway: button } = {}, { tooltip, escapeGuard } = {}) {
   if (!button) return { reset: noop, detach: noop };
 
   const canvas = viewer.domElement;
@@ -116,6 +116,7 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}, { toolti
   };
   const onEscape = (event) => {
     if (event.key !== "Escape" || !viewer.cutawayEnabled()) return;
+    if (escapeGuard?.()) return; // an inner lens (measure mode) claims this Escape
     event.preventDefault();
     disable();
   };
