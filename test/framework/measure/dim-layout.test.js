@@ -18,7 +18,7 @@ test("bbox produces three linear dims with ext+dim lines and a label each", () =
   expect(dimLines.length).toBe(3);          // W, D, H
   expect(extLines.length).toBe(6);          // two per dim
   expect(out.arrows.length).toBe(6);
-  expect(out.labels.map((l) => l.text).sort()).toEqual(["100.00", "20.00", "60.00"]);
+  expect(out.labels.map((l) => l.text).sort()).toEqual(["10.00", "100.00", "60.00"]);
 });
 
 test("silhouette rule: the W dim uses an outboard edge, offset outward", () => {

@@ -205,11 +205,19 @@ export function layout(items, viewport, prev) {
   for (const l of out.labels) {
     const slide = l._slide ?? { x: 0, y: 1 };
     let tries = 0;
-    const hits = () => placed.some((p) =>
-      l.x < p.x + p.w && p.x < l.x + l.w && l.y < p.y + p.h && p.y < l.y + l.h);
-    while (hits() && tries < MAX_NUDGE) {
-      l.x += slide.x * (LABEL_H + 2);
-      l.y += slide.y * (LABEL_H + 2);
+    while (tries < MAX_NUDGE) {
+      const p = placed.find((q) =>
+        l.x < q.x + q.w && q.x < l.x + l.w && l.y < q.y + q.h && q.y < l.y + l.h);
+      if (!p) break;
+      // Step far enough along the slide to clear THIS blocker, not a fixed
+      // increment — identical stacked chips would otherwise exhaust the nudge
+      // budget (a 38px-wide chip needs three 18px nudges per blocker).
+      const step = Math.max(
+        LABEL_H + 2,
+        Math.abs(slide.x) * (p.w + 2) + Math.abs(slide.y) * (p.h + 2),
+      );
+      l.x += slide.x * step;
+      l.y += slide.y * step;
       tries++;
     }
     placed.push(l);
