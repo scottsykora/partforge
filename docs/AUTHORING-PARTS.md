@@ -1302,7 +1302,10 @@ pane's pixel size:
   `null` when the runtime is disposed or nothing is built/visible yet — it never throws.
   `hideGrid: false` keeps the floor grid so the capture matches the on-screen look
   exactly. The live view is untouched: the camera never moves, and lights/grid/render
-  target are restored after the render.
+  target are restored after the render. Measurement-mode dimensions render directly
+  in the scene, so a dimensioned capture needs no special handling — enable measure
+  mode (`runtime.measure.setEnabled(true)`) and call `captureCurrent()`; the dims are
+  just part of the rendered frame.
 - `runtime.captureViews(viewNames) → [{ view, dataUrl }]` — the canonical-angle
   counterpart (fixed poses, framed to the visible assembly, 1024², grid hidden). Sized
   for feeding a vision model, not for display; use `captureCurrent` for showcase images.

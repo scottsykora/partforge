@@ -225,13 +225,6 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
   try {
     const viewer = createViewer(els.viewer, part);
     cleanup.defer(() => viewer.dispose());
-    // THROWAWAY SPIKE (in-scene 3D dimensions evaluation) — remove before merge.
-    if (new URLSearchParams(location.search).has("dim3spike")) {
-      import("./measure/dim3-spike.js").then(({ attachDim3Spike }) => {
-        const spike = attachDim3Spike(viewer, els.viewer);
-        cleanup.defer(() => spike.dispose());
-      });
-    }
     const tooltip = createTooltipPresenter({ id: null });
     cleanup.defer(() => tooltip.dispose());
     // cutawayChrome + measureMode/measureChrome are attached further down (just
