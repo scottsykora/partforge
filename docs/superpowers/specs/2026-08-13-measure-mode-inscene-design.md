@@ -304,3 +304,14 @@ no longer emit choices (their degenerate near-zero scores flip-flopped on
 tiny camera moves, forcing pointless rebuilds), and hysteresis gains an
 absolute floor (a challenger must also beat the holder by 0.02) so
 near-degenerate views can't churn either.
+
+**2026-08-13 — cylinder dims face the camera too.** The bore fix's cylinder
+counterpart: the depth dim hung off ±du (the camera-facing radial), putting
+its plane containing the axis near EDGE-ON — and since du re-aims toward the
+camera as you orbit, the dim actively chased unreadability (a pinned bore
+height could never be seen). The depth dim's candidates now include the
+tangential pair ±dv, whose plane faces the camera and whose anchor line is
+the cylinder's visible silhouette; the same face-on scoring picks it except
+in degenerate down-the-axis views. The ⌀ line likewise moves from du (the
+projected ellipse's foreshortened axis) to dv (its wide axis), with the text
+continuing off the end of the line.

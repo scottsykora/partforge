@@ -172,13 +172,23 @@ export function evaluateChoices(items, { camPos, center, prev = {} }) {
       const prevDu = prev[ck]?.du ? v3(prev[ck].du) : null;
       const hold = prevDu && du.angleTo(prevDu) < (FLIP_DEADBAND_DEG * Math.PI) / 180;
       choices[ck] = { du: (hold ? prevDu : du).toArray() };
-      // depth dim side: ± the chosen du (in the plane containing the axis)
+      // depth dim side: candidates around the axis — the tangential pair
+      // (±dv) puts the dim's plane FACE-ON to the camera, hanging off the
+      // cylinder's visible silhouette; the radial pair (±du) is near edge-on
+      // and only wins in degenerate down-the-axis views. Same readability
+      // rule as the box candidates.
       const dck = `${item.id}|depth`;
       const duHeld = hold ? prevDu : du;
+      const dv = new THREE.Vector3().crossVectors(axis, duHeld).normalize();
       const scored = [
-        { key: "d+", score: scoreCandidate(duHeld, axis, toCamHere) },
-        { key: "d-", score: scoreCandidate(duHeld.clone().negate(), axis, toCamHere) },
-      ];
+        { key: "t+", ext: dv },
+        { key: "t-", ext: dv.clone().negate() },
+        { key: "d+", ext: duHeld },
+        { key: "d-", ext: duHeld.clone().negate() },
+      ].map((c) => ({
+        key: c.key,
+        score: scoreCandidate(c.ext, new THREE.Vector3().crossVectors(axis, c.ext).normalize(), toCamHere),
+      }));
       choices[dck] = { key: chooseWithHysteresis(scored, prev[dck]?.key).key, du: duHeld.toArray() };
     }
   }
@@ -354,12 +364,17 @@ function placeCylinder(out, item, spec, choices, { lanes }) {
       },
     });
   } else {
-    // full circle: diameter line across the top circle, arrows outward at both
-    // rim points, ⌀ text just outside the rim
-    const rimA = top.clone().addScaledVector(du, r);
-    const rimB = top.clone().addScaledVector(du, -r);
+    // full circle: diameter line across the top circle along dv — the
+    // projected ellipse's WIDE axis (du, the camera radial, is its
+    // foreshortened one) — arrows outward at both rim points, ⌀ text
+    // continuing off the end of the line
+    const rimA = top.clone().addScaledVector(dv, r);
+    const rimB = top.clone().addScaledVector(dv, -r);
     out.diams.push({
-      rimA: rimA.toArray(), rimB: rimB.toArray(), du: du.toArray(), dv: dv.toArray(),
+      // scene contract: `du` is the label-offset direction off rimA (here the
+      // line's own direction, so the text runs off the end of the diameter);
+      // `dv` is the arrows' in-plane spread direction
+      rimA: rimA.toArray(), rimB: rimB.toArray(), du: dv.toArray(), dv: du.toArray(),
       label: {
         text: `⌀${fmtMm(spec.values.diameter)}`, value: spec.values.diameter,
         x: dv.toArray(), y: du.clone().negate().toArray(),
@@ -369,8 +384,11 @@ function placeCylinder(out, item, spec, choices, { lanes }) {
 
   // depth: linear dim along the axis, hung off the silhouette at the chosen side
   if (spec.values.depth > 1e-6) {
-    const sgn = choices[`${item.id}|depth`]?.key === "d-" ? -1 : 1;
-    const ext = du.clone().multiplyScalar(sgn);
+    const extKey = choices[`${item.id}|depth`]?.key ?? "t+";
+    const ext = ({
+      "t+": dv.clone(), "t-": dv.clone().negate(),
+      "d+": du.clone(), "d-": du.clone().negate(),
+    })[extKey] ?? dv.clone();
     const pA = bottom.clone().addScaledVector(ext, r);
     const pB = top.clone().addScaledVector(ext, r);
     linearDim(out, {

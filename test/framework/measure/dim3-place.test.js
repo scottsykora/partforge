@@ -270,11 +270,15 @@ describe("placeDims — plane and cylinder", () => {
     const d = placeDims([item], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
     expect(d.diams.length).toBe(1);
     expect(d.diams[0].label.text).toBe("⌀8.00");
-    // rims straddle the fitted centre along du at radius 4
-    expect(d.diams[0].rimA[0]).toBeCloseTo(4, 5);
-    expect(d.diams[0].rimB[0]).toBeCloseTo(-4, 5);
+    // camera at +X → du = +X (the projected ellipse's foreshortened axis);
+    // the diameter line runs along dv = +Y, the WIDE axis, at radius 4
+    expect(d.diams[0].rimA[1]).toBeCloseTo(4, 5);
+    expect(d.diams[0].rimB[1]).toBeCloseTo(-4, 5);
     expect(d.dims.length).toBe(1);
     expect(d.dims[0].label.text).toBe("10.00 mm");
+    // depth hangs off the tangential silhouette (±dv): its plane faces the
+    // camera instead of chasing edge-on alignment with it
+    expect(Math.abs(d.dims[0].ext[1])).toBeCloseTo(1, 5);
 
     const part = { ...full, values: { ...full.values, partial: true } };
     const d2 = placeDims([{ id: "h", tier: "hover", spec: part }], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
