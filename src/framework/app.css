@@ -331,6 +331,50 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   #viewbar .pf-cutaway-actions button { min-width: 44px; padding: 0 6px; }
 }
 
+/* ---- measurement mode -----------------------------------------------------
+   The dimension overlay is an SVG layer above the canvas, below the floating
+   chrome (viewbar z:15). A drawing, not a HUD: hairlines, drafting arrowheads,
+   mono numerals. Tiers: static (always-on bbox) is muted; hover/pinned are
+   full-strength; param-linked chips are the one loud thing — a mini control
+   pill that visually IS the slider it summons. */
+.pf-stage { --pf-dim-ink: var(--pf-muted-2); --pf-dim-ink-strong: var(--pf-text-2); }
+.pf-dim-overlay {
+  position: absolute; inset: 0; z-index: 10;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  font-family: var(--pf-mono); font-size: 11px; letter-spacing: 0.02em;
+  animation: pf-dim-in 140ms ease-out;
+}
+@keyframes pf-dim-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .pf-dim-overlay { animation: none; } }
+.pf-dim-ext, .pf-dim-line, .pf-dim-leader {
+  stroke: var(--pf-dim-ink); stroke-width: 1; fill: none;
+}
+.pf-dim-arrow { fill: var(--pf-dim-ink); }
+.tier-hover.pf-dim-ext, .tier-hover.pf-dim-line, .tier-hover.pf-dim-leader,
+.tier-pinned.pf-dim-ext, .tier-pinned.pf-dim-line, .tier-pinned.pf-dim-leader {
+  stroke: var(--pf-dim-ink-strong);
+}
+.tier-hover.pf-dim-arrow, .tier-pinned.pf-dim-arrow { fill: var(--pf-dim-ink-strong); }
+.pf-dim-chip { pointer-events: auto; cursor: pointer; }
+.pf-dim-chip-bg { fill: transparent; }
+.pf-dim-text {
+  fill: var(--pf-dim-ink); paint-order: stroke;
+  stroke: var(--pf-bg); stroke-width: 3; stroke-linejoin: round;
+}
+.tier-hover .pf-dim-text, .tier-pinned .pf-dim-text { fill: var(--pf-dim-ink-strong); }
+.pf-dim-param { fill: var(--pf-accent); font-size: 10px; }
+/* linked chips read as a mini control pill — the rail living in the drawing */
+.pf-dim-chip.linked .pf-dim-chip-bg {
+  fill: var(--pf-surface); stroke: var(--pf-accent); stroke-width: 1;
+}
+.pf-dim-chip.linked:hover .pf-dim-chip-bg { fill: var(--pf-accent-soft); }
+.pf-dim-chip.kind-offscreen .pf-dim-chip-bg {
+  fill: var(--pf-surface); stroke: var(--pf-border); stroke-width: 1;
+}
+.pf-dim-chip:focus-visible { outline: none; }
+.pf-dim-chip:focus-visible .pf-dim-chip-bg { stroke: var(--pf-accent); stroke-width: 2; }
+
 /* animation transport bar (placement: chrome.css's .pf-anim-bar). APPEARANCE
    is ungated for the same reason as #viewbar above. */
 .pf-anim-bar {
