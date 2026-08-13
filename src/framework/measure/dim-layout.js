@@ -22,7 +22,11 @@ const labelBox = (text, paramName) => {
 };
 
 // One linear dimension between projected points a and b, offset along unit o.
-function linearDim(out, { id, a, b, o, text, tier, paramName, pinned }) {
+// `itemId` is the owning item's stable id, carried on the label alongside the
+// primitive's own (possibly colon-bearing) `id` — chip resolution keys off
+// itemId, never off parsing `id` (Solid.label() text may itself contain
+// colons, so string-splitting `id` back into an item id collides).
+function linearDim(out, { id, itemId, a, b, o, text, tier, paramName, pinned }) {
   const off = (p, k) => ({ x: p.x + o.x * k, y: p.y + o.y * k });
   const dimA = off(a, DIM_OFFSET), dimB = off(b, DIM_OFFSET);
   for (const [p, dp] of [[a, dimA], [b, dimB]]) {
@@ -39,7 +43,7 @@ function linearDim(out, { id, a, b, o, text, tier, paramName, pinned }) {
   const box = labelBox(text, paramName);
   const mid = { x: (dimA.x + dimB.x) / 2, y: (dimA.y + dimB.y) / 2 };
   out.labels.push({
-    id, text, tier, kind: "chip", paramName: paramName ?? null, pinned: !!pinned,
+    id, itemId, text, tier, kind: "chip", paramName: paramName ?? null, pinned: !!pinned,
     x: mid.x - box.w / 2 + o.x * (box.h / 2 + 2),
     y: mid.y - box.h / 2 + o.y * (box.h / 2 + 2),
     ...box,
@@ -63,25 +67,32 @@ const AXIS_EDGES = [
   [[0, 4], [1, 5], [2, 6], [3, 7]], // Z
 ];
 
-function bboxItem(out, item, vp, prevChoice, choices) {
-  const { spec, project } = item;
-  const corners = boxCorners(spec.anchors.min, spec.anchors.max).map(project);
-  if (corners.some((c) => c.behind)) return;
-  const cx = corners.reduce((s, c) => s + c.x, 0) / 8;
-  const cy = corners.reduce((s, c) => s + c.y, 0) / 8;
+// `corners` are the 8 box corners, already projected exactly once by the
+// caller (layout()) — this never re-projects. A corner behind the camera
+// only drops the axes/edges that actually touch it, not the whole item: the
+// screen center is the mean of whichever corners ARE in front, and an axis
+// whose 4 candidate edges are all behind is the only thing skipped.
+function bboxItem(out, item, corners, vp, prevChoice, choices) {
+  const { spec } = item;
+  const visible = corners.filter((c) => !c.behind);
+  const cx = visible.reduce((s, c) => s + c.x, 0) / visible.length;
+  const cy = visible.reduce((s, c) => s + c.y, 0) / visible.length;
   const texts = [fmtMm(spec.values.w), fmtMm(spec.values.d), fmtMm(spec.values.h)];
   const chosen = [];
   for (let axis = 0; axis < 3; axis++) {
     if (spec.values[["w", "d", "h"][axis]] === 0) { chosen.push(-1); continue; }
     // Silhouette rule: the edge whose midpoint sits furthest from the projected
     // center never crosses the model. Hysteresis: keep the previous edge unless
-    // the best beats it by >15%.
-    let bestIdx = 0, bestScore = -1;
+    // the best beats it by >15%. An edge with either endpoint behind the camera
+    // is unusable (sentinel score -1); if all 4 are behind, skip this axis.
+    let bestIdx = -1, bestScore = -1;
     const scores = AXIS_EDGES[axis].map(([i, j]) => {
+      if (corners[i].behind || corners[j].behind) return -1;
       const mx = (corners[i].x + corners[j].x) / 2, my = (corners[i].y + corners[j].y) / 2;
       return Math.hypot(mx - cx, my - cy);
     });
     scores.forEach((s, i) => { if (s > bestScore) { bestScore = s; bestIdx = i; } });
+    if (bestIdx === -1) { chosen.push(-1); continue; }
     const prevIdx = prevChoice?.[axis];
     const idx = prevIdx != null && prevIdx >= 0 && scores[prevIdx] >= HYSTERESIS * bestScore
       ? prevIdx : bestIdx;
@@ -91,37 +102,46 @@ function bboxItem(out, item, vp, prevChoice, choices) {
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
     const oLen = Math.hypot(mx - cx, my - cy) || 1;
     const o = { x: (mx - cx) / oLen, y: (my - cy) / oLen };
-    linearDim(out, { id: `${item.id}:${axis}`, a, b, o, text: texts[axis],
+    linearDim(out, { id: `${item.id}:${axis}`, itemId: item.id, a, b, o, text: texts[axis],
       tier: item.tier, paramName: item.paramName, pinned: item.pinned });
   }
   choices[item.id] = chosen;
 }
 
-function planeItem(out, item) {
-  const { spec, project } = item;
+// `proj` is { widthA, widthB, heightA, heightB }, already projected exactly
+// once by the caller. Each of the two dims is emitted independently — a dim
+// is dropped only when its OWN pair has an endpoint behind the camera (the
+// two dims share a corner: width.b is height.a), not when any of the four
+// combined anchors is behind.
+function planeItem(out, item, proj) {
+  const { spec } = item;
   const dims = [
-    { key: "width", pair: spec.anchors.width },
-    { key: "height", pair: spec.anchors.height },
+    { key: "width", a: proj.widthA, b: proj.widthB },
+    { key: "height", a: proj.heightA, b: proj.heightB },
   ];
-  const pts = dims.flatMap((d) => [project(d.pair.a), project(d.pair.b)]);
-  if (pts.some((p) => p.behind)) return;
-  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-  for (const d of dims) {
-    const a = project(d.pair.a), b = project(d.pair.b);
+  const visible = [proj.widthA, proj.widthB, proj.heightA, proj.heightB].filter((p) => !p.behind);
+  if (visible.length === 0) return;
+  const cx = visible.reduce((s, p) => s + p.x, 0) / visible.length;
+  const cy = visible.reduce((s, p) => s + p.y, 0) / visible.length;
+  for (const { key, a, b } of dims) {
+    if (a.behind || b.behind) continue;
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
     // outward = perpendicular to the dim direction, pointing away from center
     const ang = Math.atan2(b.y - a.y, b.x - a.x);
     let o = { x: -Math.sin(ang), y: Math.cos(ang) };
     if (o.x * (mx - cx) + o.y * (my - cy) < 0) o = { x: -o.x, y: -o.y };
-    linearDim(out, { id: `${item.id}:${d.key}`, a, b, o, text: fmtMm(spec.values[d.key]),
+    linearDim(out, { id: `${item.id}:${key}`, itemId: item.id, a, b, o, text: fmtMm(spec.values[key]),
       tier: item.tier, paramName: item.paramName, pinned: item.pinned });
   }
 }
 
-function cylinderItem(out, item, vp, prevChoice, choices) {
-  const { spec, project } = item;
-  const center = project(spec.anchors.center);
+// `proj` is { center, bottom, top }, already projected exactly once by the
+// caller. The center.behind gate covers the leader + diameter label (there's
+// no meaningful leader anchor without it); the depth dim guards its own
+// bottom/top endpoints independently.
+function cylinderItem(out, item, proj, vp, prevChoice, choices) {
+  const { spec } = item;
+  const { center } = proj;
   if (center.behind) return;
   const text = spec.values.partial
     ? `R${fmtMm(spec.values.diameter / 2)}` : `⌀${fmtMm(spec.values.diameter)}`;
@@ -143,31 +163,52 @@ function cylinderItem(out, item, vp, prevChoice, choices) {
   out.lines.push({ x1: elbow.x, y1: elbow.y, x2: q.x > 0 ? labelX : labelX + box.w, y2: elbow.y, kind: "leader", tier: item.tier });
   out.arrows.push({ x: center.x, y: center.y, angle: Math.atan2(center.y - elbow.y, center.x - elbow.x), tier: item.tier });
   out.labels.push({
-    id: `${item.id}:dia`, text, tier: item.tier, kind: "chip",
+    id: `${item.id}:dia`, itemId: item.id, text, tier: item.tier, kind: "chip",
     paramName: item.paramName ?? null, pinned: !!item.pinned,
     x: labelX, y: elbow.y - box.h / 2, ...box,
     _slide: { x: 0, y: q.y },
   });
   // depth as a linear dim along the axis (skip degenerate depths)
   if (spec.values.depth > 0.01) {
-    const a = project(spec.anchors.bottom), b = project(spec.anchors.top);
+    const { bottom: a, top: b } = proj;
     if (!a.behind && !b.behind) {
       const ang = Math.atan2(b.y - a.y, b.x - a.x);
       let o = { x: -Math.sin(ang), y: Math.cos(ang) };
       if (o.x * q.x + o.y * q.y < 0) o = { x: -o.x, y: -o.y }; // same side as the leader
-      linearDim(out, { id: `${item.id}:depth`, a, b, o, text: fmtMm(spec.values.depth),
+      linearDim(out, { id: `${item.id}:depth`, itemId: item.id, a, b, o, text: fmtMm(spec.values.depth),
         tier: item.tier, pinned: item.pinned });
     }
   }
 }
 
-// Representative projected points of a spec, for the offscreen test.
-function specPoints(spec, project) {
-  if (spec.kind === "bbox") return boxCorners(spec.anchors.min, spec.anchors.max).map(project);
-  if (spec.kind === "plane") {
-    return [spec.anchors.width.a, spec.anchors.width.b, spec.anchors.height.b].map(project);
+// Every anchor of a spec, projected exactly once per layout() pass — shared
+// by the offscreen/onscreen test AND the per-kind builders above (no second
+// projection pass, no getBoundingClientRect-per-point re-derivation).
+function projectSpec(item) {
+  const { spec, project } = item;
+  if (spec.kind === "bbox") {
+    return { kind: "bbox", corners: boxCorners(spec.anchors.min, spec.anchors.max).map(project) };
   }
-  return [spec.anchors.center, spec.anchors.bottom, spec.anchors.top].map(project);
+  if (spec.kind === "plane") {
+    return {
+      kind: "plane",
+      widthA: project(spec.anchors.width.a), widthB: project(spec.anchors.width.b),
+      heightA: project(spec.anchors.height.a), heightB: project(spec.anchors.height.b),
+    };
+  }
+  return {
+    kind: "cylinder",
+    center: project(spec.anchors.center),
+    bottom: project(spec.anchors.bottom),
+    top: project(spec.anchors.top),
+  };
+}
+
+// Flat list of a projected spec's points, for the offscreen/onscreen test.
+function pointsOf(proj) {
+  if (proj.kind === "bbox") return proj.corners;
+  if (proj.kind === "plane") return [proj.widthA, proj.widthB, proj.heightA, proj.heightB];
+  return [proj.center, proj.bottom, proj.top];
 }
 
 export function layout(items, viewport, prev) {
@@ -176,18 +217,21 @@ export function layout(items, viewport, prev) {
   const order = { hover: 0, pinned: 1, static: 2 };
   const sorted = [...items].sort((a, b) => (order[a.tier] ?? 3) - (order[b.tier] ?? 3));
   for (const item of sorted) {
-    const pts = specPoints(item.spec, item.project);
+    const proj = projectSpec(item);
+    const pts = pointsOf(proj);
     if (pts.every((p) => !onScreen(p, viewport))) {
       if (!item.pinned) continue;
       // Pinned-but-offscreen: one edge chip pointing at the anchor, clamped in.
-      const p = pts[0];
-      if (p.behind) continue;
+      // Any anchor in front of the camera works as the chip's target point —
+      // pts[0] specifically may be behind even when a later anchor isn't.
+      const p = pts.find((pt) => !pt.behind);
+      if (!p) continue;
       const text = item.spec.kind === "cylinder"
         ? `⌀${fmtMm(item.spec.values.diameter)}`
         : fmtMm(Object.values(item.spec.values).find((v) => typeof v === "number") ?? 0);
       const box = labelBox(text, item.paramName);
       out.labels.push({
-        id: item.id, text, tier: item.tier, kind: "offscreen",
+        id: item.id, itemId: item.id, text, tier: item.tier, kind: "offscreen",
         paramName: item.paramName ?? null, pinned: true,
         x: Math.min(Math.max(p.x, EDGE_MARGIN), viewport.width - box.w - EDGE_MARGIN),
         y: Math.min(Math.max(p.y, EDGE_MARGIN), viewport.height - box.h - EDGE_MARGIN),
@@ -196,9 +240,9 @@ export function layout(items, viewport, prev) {
       continue;
     }
     const prevChoice = prev?.choices?.[item.id];
-    if (item.spec.kind === "bbox") bboxItem(out, item, viewport, prevChoice, out.choices);
-    else if (item.spec.kind === "plane") planeItem(out, item);
-    else if (item.spec.kind === "cylinder") cylinderItem(out, item, viewport, prevChoice, out.choices);
+    if (item.spec.kind === "bbox") bboxItem(out, item, proj.corners, viewport, prevChoice, out.choices);
+    else if (item.spec.kind === "plane") planeItem(out, item, proj);
+    else if (item.spec.kind === "cylinder") cylinderItem(out, item, proj, viewport, prevChoice, out.choices);
   }
   // Deterministic greedy collision pass: nudge along the label's slide dir.
   const placed = [];

@@ -98,3 +98,28 @@ test("behind-camera anchors drop their primitives cleanly", () => {
   expect(out.lines.length).toBe(0);
   expect(out.labels.length).toBe(0);
 });
+
+test("a corner behind the camera drops only the axes that depend on it", () => {
+  // Every corner on the min-X face goes behind the camera; the other two
+  // axes' edges each have a still-in-front pair (min-X only ever supplies
+  // ONE endpoint of a Y or Z edge, never both), so only the W dim (whose
+  // every candidate edge touches a min-X corner) should disappear.
+  const minX = -50;
+  const partial = (p) => ({ x: 200 + p[0], y: 200 - p[1], behind: p[0] === minX });
+  const out = layout([item({ project: partial })], vp, null);
+  const texts = out.labels.map((l) => l.text);
+  expect(texts).toContain("60.00"); // D axis: unaffected
+  expect(texts).toContain("10.00"); // H axis: unaffected
+  expect(texts).not.toContain("100.00"); // W axis: every edge has a behind endpoint
+});
+
+test("pinned offscreen item still produces a chip when its first anchor (only) is behind", () => {
+  // Regression: the old fallback read pts[0] unconditionally and dropped the
+  // whole chip when THAT ONE point happened to be behind, even though a
+  // later anchor was in front (just offscreen). box corner 0 is (min,min,min).
+  const corner0Behind = (p) => p[0] === -50 && p[1] === -30 && p[2] === 0;
+  const far = (p) => ({ x: p[0] + 5000, y: p[1] + 5000, behind: corner0Behind(p) });
+  const out = layout([item({ project: far, tier: "pinned", pinned: true })], vp, null);
+  expect(out.labels.length).toBe(1);
+  expect(out.labels[0].kind).toBe("offscreen");
+});

@@ -4,36 +4,20 @@
 // restore discipline on detach. The mode object (measure-mode.js) owns all
 // behavior; this file only puts it on screen.
 import { attachButtonTooltips } from "../tooltip.js";
+import { runCleanupSteps, captureAttributes, restoreAttributes } from "../teardown.js";
 
 const BUTTON_ATTRIBUTES = ["type", "aria-pressed", "aria-label", "title", "disabled"];
 const RULER_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.3 8.7 8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4Z"/><path d="m7.5 10.5 2 2"/><path d="m10.5 7.5 2 2"/><path d="m13.5 4.5 2 2"/><path d="m4.5 13.5 2 2"/></svg>`;
 
 const noop = () => {};
 
-function runCleanupSteps(steps) {
-  const errors = [];
-  for (const step of steps) {
-    try { step(); } catch (error) { errors.push(error); }
-  }
-  if (errors.length === 1) throw errors[0];
-  if (errors.length > 1) throw new AggregateError(errors, "measure control cleanup failed");
-}
-
-function captureAttributes(element, names) {
-  return new Map(names.map((name) => [name, {
-    present: element.hasAttribute(name),
-    value: element.getAttribute(name),
-  }]));
-}
-
-function restoreAttributes(element, attributes) {
-  for (const [name, { present, value }] of attributes) {
-    if (present) element.setAttribute(name, value);
-    else element.removeAttribute(name);
-  }
-}
-
-export function attachMeasureControls(viewer, mode, { measure: button } = {}, { tooltip } = {}) {
+// escapeScope: when a host places cutaway's Flip/Reset/etc. buttons as
+// canvas SIBLINGS in a shared #viewbar (not descendants of the canvas),
+// attaching Escape to viewer.domElement alone leaves those buttons dead —
+// nothing containing them ever sees the keydown. Attaching to a shared
+// ancestor instead (mount.js passes the whole viewer stage) lets it bubble
+// from canvas and viewbar buttons alike.
+export function attachMeasureControls(viewer, mode, { measure: button } = {}, { tooltip, escapeScope } = {}) {
   if (!button) return { detach: noop };
 
   const hostAttributes = captureAttributes(button, BUTTON_ATTRIBUTES);
@@ -87,10 +71,11 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
     tooltipBinding?.hide();
   };
   const offPins = mode.onPinsChange(sync);
+  const offMode = mode.onModeChange(sync);
 
   button.addEventListener("click", onToggle);
   clearButton.addEventListener("click", onClear);
-  const escapeTargets = [viewer.domElement, button, clearButton];
+  const escapeTargets = [escapeScope ?? viewer.domElement, button, clearButton];
   for (const element of escapeTargets) element.addEventListener("keydown", onEscape);
   sync();
 
@@ -101,6 +86,7 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
       detached = true;
       runCleanupSteps([
         offPins,
+        offMode,
         () => button.removeEventListener("click", onToggle),
         () => clearButton.removeEventListener("click", onClear),
         ...escapeTargets.map((element) => () => element.removeEventListener("keydown", onEscape)),
@@ -109,7 +95,7 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
         () => restoreAttributes(button, hostAttributes),
         () => { button.innerHTML = hostHtml; },
         () => button.classList.toggle("on", hostOn),
-      ]);
+      ], "measure control cleanup failed");
     },
   };
 }

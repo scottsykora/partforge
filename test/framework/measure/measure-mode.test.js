@@ -164,12 +164,28 @@ test("overall dims project through the meshes' parent transform", () => {
   expect(withParent).not.toEqual(withoutParent); // parent translation must move the dims
 });
 
-test("chip ids resolve on boundaries, not prefixes", () => {
-  // pure resolution-logic guard at the string level: the fixed matcher
-  const items = [{ id: "pin:leg:hole:1" }, { id: "pin:leg:hole:10" }];
-  const resolve = (labelId) => items.find((i) => labelId === i.id || labelId.startsWith(`${i.id}:`));
-  expect(resolve("pin:leg:hole:10:depth").id).toBe("pin:leg:hole:10");
-  expect(resolve("pin:leg:hole:1:depth").id).toBe("pin:leg:hole:1");
+// Regression: chip resolution used to parse the primitive's own (possibly
+// colon-bearing) dim id back into an item id via startsWith, which collides
+// whenever a Solid.label() itself contains a colon. Exercise the REAL path
+// end to end: pin a feature, click its rendered chip (identified by the
+// overlay's structured data-item-id, not by parsing dim text), confirm it
+// resolves and un-pins by exact equality.
+test("clicking a pinned chip resolves it by its structured item id and unpins", () => {
+  const { viewer, mode } = setup();
+  mode.setEnabled(true);
+  // pin the feature via hover + click (same as the "click pins" test)
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
+  viewer.domElement.dispatchEvent(new PointerEvent("pointerdown", pointerOpts));
+  viewer.domElement.dispatchEvent(new PointerEvent("pointerup", pointerOpts));
+  viewer.domElement.dispatchEvent(new MouseEvent("click", pointerOpts));
+  expect(mode.pinCount()).toBe(1);
+
+  const chip = mode.getOverlaySvg().querySelector('g[data-item-id^="pin:"]');
+  expect(chip).not.toBeNull();
+  chip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+  expect(mode.pinCount()).toBe(0);
+  mode.detach();
 });
 
 test("onModeChange fires on enable and disable", () => {
@@ -202,6 +218,26 @@ test("pointerleave into the overlay keeps hover; leaving elsewhere clears it", (
 
   viewer.domElement.dispatchEvent(new MouseEvent("pointerleave", { relatedTarget: null }));
   expect(hasHover()).toBe(false); // genuinely left: hover cleared
+  mode.detach();
+});
+
+// Regression: a visibility-only change (e.g. a cutaway/view toggle hiding the
+// hovered sub-part) is hashed into frameSig, so the dirty check trips, but
+// the mesh's geometry identity is untouched — the old check (geometry
+// identity only) missed this and left a stale hover dim/highlight pointing
+// at a now-invisible mesh.
+test("stale hover is dropped when its mesh goes invisible, even with the same geometry", () => {
+  const { mesh, viewer, mode } = setup();
+  mode.setEnabled(true);
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
+  const hasHover = () =>
+    [...mode.getOverlaySvg().querySelectorAll("text")].map((t) => t.textContent).includes("plate_w");
+  expect(hasHover()).toBe(true);
+
+  mesh.visible = false;
+  viewer.frame(); // dirty check picks up the visibility flip
+
+  expect(hasHover()).toBe(false);
   mode.detach();
 });
 

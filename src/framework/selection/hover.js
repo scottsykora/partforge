@@ -5,17 +5,7 @@
 import { createTooltipPresenter } from "../tooltip.js";
 import { raycastViewer } from "./raycast.js";
 import { createFeatureHighlight } from "./feature-highlight.js";
-
-function runCleanupSteps(steps) {
-  const errors = [];
-  for (const step of steps) {
-    try { step(); } catch (error) { errors.push(error); }
-  }
-  if (errors.length === 1) throw errors[0];
-  if (errors.length > 1) {
-    throw new AggregateError(errors, "feature hover cleanup failed");
-  }
-}
+import { runCleanupSteps } from "../teardown.js";
 
 export function attachHoverLabels(
   viewer,
@@ -125,7 +115,7 @@ export function attachHoverLabels(
         hide,
         () => highlight.dispose(),
         () => { if (ownsTooltip) tooltipPresenter.dispose(); },
-      ]);
+      ], "feature hover cleanup failed");
     },
   };
 }

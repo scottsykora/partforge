@@ -298,17 +298,26 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     const params = { ...part.defaults };
 
     // Measurement mode: overlay + pins + dimension->control reveal. The panel
-    // is built later in this function, so revealParam is a late-bound thunk.
+    // is built later in this function, so revealParam is a late-bound thunk —
+    // same idiom for getParamsVersion, which needs `loop` (created further
+    // below); readsFor's memo keys on it instead of hashing the whole params
+    // object per call, mirroring createMeshCache/createPoseFastPath.
     let panelRef = null;
     const measureMode = createMeasureMode(viewer, {
       part,
       getContext: () => ({ view: view(), params }),
       revealParam: (key) => panelRef?.revealParam(key),
+      getParamsVersion: () => loop.version(),
     });
     cleanup.defer(() => measureMode.detach());
+    // escapeScope: cutaway's Flip/Reset buttons are canvas SIBLINGS inside
+    // #viewbar, not descendants of the canvas — attaching Escape to
+    // viewer.domElement alone would leave a guarded Escape from those buttons
+    // dead. els.viewer (the stage) is a shared ancestor of both, so Escape
+    // bubbles up from either.
     const measureChrome = attachMeasureControls(viewer, measureMode, {
       measure: els.chrome.measure,
-    }, { tooltip });
+    }, { tooltip, escapeScope: els.viewer });
     cleanup.defer(() => measureChrome.detach());
     const cutawayChrome = attachCutawayControls(viewer, {
       cutaway: els.chrome.cutaway,

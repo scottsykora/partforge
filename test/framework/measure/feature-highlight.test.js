@@ -48,3 +48,34 @@ test("show without feature highlights the whole mesh geometry", () => {
   expect(mesh.children[0].geometry).toBe(mesh.geometry);
   hl.dispose();
 });
+
+// Regression: dispose() must isolate each cached subset's dispose() the way
+// hover.js's own cleanup list does (test/selection-hover.test.js's
+// aggregated-failure case) — a throw from one cached subset must not skip
+// material.dispose() or the cutaway unregister.
+test("dispose isolates a throwing cached subset from the rest of teardown", () => {
+  const mesh = meshWithFeatures();
+  const unregister = vi.fn();
+  const v = { registerCutawayMaterial: vi.fn(() => unregister) };
+  const hl = createFeatureHighlight(v);
+  // Populate the subset cache with two entries, then re-show each to grab
+  // the cached instances (the cache returns the same geometry object).
+  hl.show({ mesh, subPart: "body", feature: { id: 1, label: "top" } });
+  const cachedTop = mesh.children[0].geometry;
+  hl.show({ mesh, subPart: "body", feature: { id: 2, label: "side" } });
+  const cachedSide = mesh.children[0].geometry;
+  const subsetError = new Error("subset dispose failed");
+  const disposeTop = vi.spyOn(cachedTop, "dispose").mockImplementation(() => { throw subsetError; });
+  const disposeSide = vi.spyOn(cachedSide, "dispose");
+  const material = mesh.children[0].material;
+  const disposeMaterial = vi.spyOn(material, "dispose");
+
+  let thrown;
+  try { hl.dispose(); } catch (error) { thrown = error; }
+
+  expect(thrown).toBeTruthy();
+  expect(disposeTop).toHaveBeenCalledTimes(1);
+  expect(disposeSide).toHaveBeenCalledTimes(1); // not skipped by the earlier throw
+  expect(disposeMaterial).toHaveBeenCalledTimes(1); // not skipped either
+  expect(unregister).toHaveBeenCalledTimes(1); // cutaway unregister still ran
+});

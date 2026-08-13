@@ -19,18 +19,21 @@ export function createDimOverlay(container, { onChipClick } = {}) {
   container.appendChild(svg);
 
   // One delegated listener pair instead of per-chip listeners (chips are
-  // rebuilt every render).
+  // rebuilt every render). onChipClick gets the STRUCTURED item id first
+  // (data-item-id), then the primitive's own dim id (data-dim-id) — resolving
+  // a click by parsing data-dim-id back into an item id would collide when a
+  // Solid.label() string itself contains a colon.
   const chipOf = (ev) => ev.target.closest?.("g.pf-dim-chip");
   const onClick = (ev) => {
     const chip = chipOf(ev);
-    if (chip) onChipClick?.(chip.dataset.dimId);
+    if (chip) onChipClick?.(chip.dataset.itemId, chip.dataset.dimId);
   };
   const onKeydown = (ev) => {
     if (ev.key !== "Enter" && ev.key !== " ") return;
     const chip = chipOf(ev);
     if (!chip) return;
     ev.preventDefault();
-    onChipClick?.(chip.dataset.dimId);
+    onChipClick?.(chip.dataset.itemId, chip.dataset.dimId);
   };
   svg.addEventListener("click", onClick);
   svg.addEventListener("keydown", onKeydown);
@@ -59,6 +62,7 @@ export function createDimOverlay(container, { onChipClick } = {}) {
         class: `pf-dim-chip tier-${l.tier} kind-${l.kind}`
           + (linked ? " linked" : "") + (l.pinned ? " pinned" : ""),
         "data-dim-id": l.id,
+        "data-item-id": l.itemId,
         role: "button", tabindex: "0",
         "aria-label": linked ? `${l.text}, linked to ${l.paramName}` : l.text,
       });

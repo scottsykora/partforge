@@ -12,14 +12,16 @@ afterEach(() => { document.body.innerHTML = ""; });
 
 function fakeMode(over = {}) {
   const pinCbs = new Set();
+  const modeCbs = new Set();
   let enabled = false;
   let pins = 0;
   return {
-    setEnabled: vi.fn((on) => { enabled = on; }),
+    setEnabled: vi.fn((on) => { enabled = on; for (const cb of modeCbs) cb(); }),
     isEnabled: () => enabled,
     clearPins: vi.fn(() => { pins = 0; for (const cb of pinCbs) cb(); }),
     pinCount: () => pins,
     onPinsChange: (cb) => { pinCbs.add(cb); return () => pinCbs.delete(cb); },
+    onModeChange: (cb) => { modeCbs.add(cb); return () => modeCbs.delete(cb); },
     __setPins: (n) => { pins = n; for (const cb of pinCbs) cb(); },
     ...over,
   };
@@ -121,4 +123,51 @@ test("detach restores the host button and removes the actions row", () => {
   expect(button.getAttribute("title")).toBe("host title");
   expect(button.classList.contains("on")).toBe(false);
   expect(document.querySelector(".pf-measure-actions")).toBeNull();
+});
+
+// Regression: the chrome must stay in sync when the mode is driven externally
+// (runtime.measure.setEnabled) rather than through this button's own click —
+// e.g. an embedder's own UI, or another mount API caller.
+test("chrome syncs when the mode is enabled externally, not via the button", () => {
+  const { viewer, button } = fixture();
+  const mode = fakeMode();
+  attachMeasureControls(viewer, mode, { measure: button });
+  expect(button.getAttribute("aria-pressed")).toBe("false");
+  const actions = document.querySelector(".pf-measure-actions");
+  expect(actions.hidden).toBe(true);
+
+  mode.setEnabled(true); // NOT button.click()
+
+  expect(button.getAttribute("aria-pressed")).toBe("true");
+  expect(button.classList.contains("on")).toBe(true);
+  expect(actions.hidden).toBe(false);
+
+  mode.setEnabled(false);
+  expect(button.getAttribute("aria-pressed")).toBe("false");
+  expect(button.classList.contains("on")).toBe(false);
+  expect(actions.hidden).toBe(true);
+});
+
+// Regression: cutaway's own actions (Flip/Reset) live as canvas SIBLINGS in
+// a shared #viewbar, not descendants of the canvas — a guarded Escape
+// dispatched from one of them must still reach measure when the caller
+// (mount.js) attaches to a shared ancestor instead of the bare canvas.
+test("escapeScope: Escape from a canvas-sibling button still closes measure", () => {
+  const scope = document.createElement("div");
+  document.body.appendChild(scope);
+  const canvas = document.createElement("canvas");
+  const foreignButton = document.createElement("button"); // a cutaway-viewbar-like sibling
+  scope.append(canvas, foreignButton);
+  const button = document.createElement("button");
+  document.body.appendChild(button);
+  const viewer = { domElement: canvas };
+  const mode = fakeMode();
+  attachMeasureControls(viewer, mode, { measure: button }, { escapeScope: scope });
+  button.click(); // measure on
+  expect(mode.isEnabled()).toBe(true);
+
+  foreignButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+  expect(mode.setEnabled).toHaveBeenLastCalledWith(false);
+  expect(mode.isEnabled()).toBe(false);
 });

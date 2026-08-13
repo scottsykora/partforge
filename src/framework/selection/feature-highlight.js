@@ -3,6 +3,7 @@
 // tooltip and measurement mode share one implementation and one subset cache.
 import * as THREE from "three";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "../cutaway-render.js";
+import { runCleanupSteps } from "../teardown.js";
 
 const HIGHLIGHT = 0x4da3ff;
 
@@ -74,19 +75,25 @@ export function createFeatureHighlight(viewer) {
     },
     clear() { overlay.visible = false; },
     dispose() {
-      overlay.visible = false;
-      overlayParent?.remove(overlay);
-      for (const { byId } of subsets.values()) for (const g of byId.values()) g.dispose();
-      subsets.clear();
-      emptyOverlayGeometry?.dispose();
-      // unregisterCutaway and material.dispose were independent teardown
-      // steps in hover.js's own cleanup list; a throw from one must not skip
-      // the other (test/selection-hover.test.js's aggregated-failure case).
-      try {
-        unregisterCutaway();
-      } finally {
-        material.dispose();
+      // Every step isolated: a throw disposing one cached subset (or
+      // unregistering from cutaway) must not skip the rest — same discipline
+      // as hover.js's own cleanup list, which this dispose() call is itself
+      // one step of (test/selection-hover.test.js's aggregated-failure case
+      // exercises both layers together).
+      const steps = [
+        () => { overlay.visible = false; },
+        () => { overlayParent?.remove(overlay); },
+      ];
+      for (const { byId } of subsets.values()) {
+        for (const g of byId.values()) steps.push(() => g.dispose());
       }
+      steps.push(
+        () => subsets.clear(),
+        () => emptyOverlayGeometry?.dispose(),
+        unregisterCutaway,
+        () => material.dispose(),
+      );
+      runCleanupSteps(steps, "feature highlight cleanup failed");
     },
   };
 }
