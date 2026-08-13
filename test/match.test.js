@@ -127,6 +127,21 @@ test("distanceTransform reports Euclidean distance to the nearest foreground pix
   expect(dt[10 * w + 13]).toBeCloseTo(3, 6);
 });
 
+test("distanceTransform is correct on a non-square grid", () => {
+  // A square grid cannot tell the row pass from the column pass: swap the two lengths the
+  // envelope is run over and every square fixture still passes. This one is 40 wide by 16
+  // tall and probed off both diagonals, so a transposed pass reads past the end of one
+  // axis and comes back with the BIG seed instead of a distance.
+  const w = 40, h = 16;
+  const data = new Uint8Array(w * h);
+  data[3 * w + 30] = 255;
+  const dt = distanceTransform(data, w, h);
+  expect(dt[3 * w + 30]).toBeCloseTo(0, 6);
+  expect(dt[7 * w + 33]).toBeCloseTo(5, 6);              // (4 rows, 3 cols)
+  expect(dt[15 * w + 39]).toBeCloseTo(15, 6);            // far corner: (12, 9)
+  expect(dt[0]).toBeCloseTo(Math.hypot(3, 30), 4);       // the other far corner
+});
+
 test("contourDist is reported in mm when both masks carry a scale", () => {
   // Concentric squares, 100 px vs 80 px at 1 mm/px: every inner rim pixel sits 10 mm
   // from the outer rim, and the outer corners a little further.
@@ -143,8 +158,30 @@ test("contourDist is reported as a fraction of the reference bbox diagonal when 
   const plus = cross(blank(256, 256), 10, 10, 100, 34);
   const m = matchMasks(plus, sq);
   expect(m.contourUnit).toBe("%bbox-diag");
-  expect(m.contourDist).toBeGreaterThan(0);
-  expect(m.contourDist).toBeLessThan(100);
+  // Pinned, not bracketed: a plain (0, 100) range accepts any divisor at all, including
+  // the raw pixel distance with no conversion. 100 px square vs the cross inside it.
+  expect(m.contourDist).toBeCloseTo(7.74, 1);
+});
+
+test("the %bbox-diag divisor is the REFERENCE's bbox diagonal, not the candidate's", () => {
+  // The two shapes above share a bbox, so they cannot tell the two divisors apart. These
+  // differ in aspect ratio, so their normalized diagonals differ: the square normalizes to
+  // 235.52² (diag 333.07) and the 2:1 rectangle to 235.52 x 117.76 (diag 263.32).
+  const sq = rect(blank(256, 256), 10, 10, 100, 100);
+  const wide = rect(blank(256, 256), 10, 10, 100, 50);
+
+  // contourDistance is symmetric, so the SAME pixel distance is divided both times and the
+  // ratio is exactly the ratio of the two references' diagonals — analytic, no measurement.
+  const withWideRef = matchMasks(sq, wide).contourDist;
+  const withSquareRef = matchMasks(wide, sq).contourDist;
+  const diagSquare = Math.hypot(235.52, 235.52), diagWide = Math.hypot(235.52, 117.76);
+  expect(withWideRef / withSquareRef).toBeCloseTo(diagSquare / diagWide, 6); // sqrt(1.6)
+
+  // Dividing by the candidate's diagonal inverts that ratio, so state the direction too:
+  // the smaller reference diagonal must be the one that reports the larger percentage.
+  expect(withWideRef).toBeGreaterThan(withSquareRef);
+  expect(withWideRef).toBeCloseTo(12.61, 1);
+  expect(withSquareRef).toBeCloseTo(9.97, 1);
 });
 
 test("boundaryIoU penalizes a thin tab more than plain iou", () => {
@@ -162,6 +199,9 @@ test("boundaryIoU penalizes a rim-only difference the area score barely notices"
   expect(m.iou).toBeGreaterThan(0.98);   // 60 px out of 10 000 — the area score shrugs
   expect(m.boundaryIoU).toBeLessThan(0.95);
   expect(m.boundaryIoU).toBeLessThan(m.iou);
+  // Pinned so the band width itself is behavioral: BAND_PX = 2. A wider band dilutes the
+  // notch into more agreeing rim and this number climbs; a narrower one drops it.
+  expect(m.boundaryIoU).toBeCloseTo(0.681, 2);
 });
 
 test("delta names candidate-only pixels excess and reference-only pixels missing", () => {
