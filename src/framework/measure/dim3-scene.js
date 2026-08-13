@@ -177,6 +177,24 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
       }
       for (const l of d.labels) buildLabel(l, d.itemId);
     }
+    sweepTextureCache();
+  }
+
+  // Bound the texture cache to labels actually in use: continuous param
+  // dragging mints a fresh label text every frame, so without this the cache
+  // (one CanvasTexture each) would grow unboundedly across a session. Drop
+  // every entry not referenced by the labels just built; entries from a prior
+  // theme become unreferenced the moment setTheme() repaints (it fetches a
+  // new-theme texture on demand but doesn't dispose the old one, since it's
+  // still live if setTheme fires again before the next update) and are swept
+  // here on the next update(), never while still assigned to a live label.
+  function sweepTextureCache() {
+    const live = new Set(labels.map((L) => `${theme}|${L.param ?? ""}|${L.text}`));
+    for (const [key, tex] of textureCache) {
+      if (live.has(key)) continue;
+      tex.dispose();
+      textureCache.delete(key);
+    }
   }
 
   // ---- per-frame: resolution + readability flips ----------------------------

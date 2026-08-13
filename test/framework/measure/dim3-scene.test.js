@@ -123,4 +123,39 @@ describe("createDimScene", () => {
     expect(viewer.__parts.children).not.toContain(scene.group);
     expect(unregister).toHaveBeenCalled();
   });
+
+  it("bounds the label texture cache to live labels (mark-and-sweep on update)", () => {
+    const viewer = fakeViewer();
+    const paint = vi.fn(fakePaint);
+    const scene = createDimScene(viewer, { paintLabel: paint });
+
+    const mkDrawing = (itemId, texts) => ({
+      itemId, tier: "static", pinned: false,
+      segments: [0, 0, 0, 10, 0, 0],
+      triangles: [],
+      labels: texts.map((text, i) => ({
+        text, param: null, center: [i, 0, 0], x: [1, 0, 0], y: [0, 1, 0], h: 4,
+      })),
+    });
+
+    // Update 1: "A" and "C" (twice). A repeated text within one update should
+    // hit the cache after the first paint, not repaint.
+    scene.update([mkDrawing("item1", ["A", "C", "C"])]);
+    expect(paint.mock.calls.length).toBe(2); // one paint for "A", one for "C"
+
+    // Update 2: only "B" is live now. "A" and "C" are no longer referenced by
+    // any label, so the sweep at the end of update() should drop them.
+    scene.update([mkDrawing("item2", ["B"])]);
+    expect(paint.mock.calls.length).toBe(3); // +1 for "B"; no repaint of A/C
+
+    // Update 3: "A" again. Since it was swept out in update 2, this must be a
+    // fresh cache miss (a repaint), proving growth is bounded rather than the
+    // old "A" texture having lingered unbounded in the cache.
+    scene.update([mkDrawing("item3", ["A"])]);
+    expect(paint.mock.calls.length).toBe(4); // +1 for "A" repainted from scratch
+
+    // The label currently on screen still renders correctly post-sweep.
+    const label = scene.group.children.find((k) => k.userData.pfDimItemId === "item3");
+    expect(label.material.map).toBeTruthy();
+  });
 });
