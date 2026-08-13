@@ -7,7 +7,7 @@
 // the orchestrator projects them through mesh.matrixWorld, which is what makes
 // dims ride the pose fast path and animations):
 //   plane    { kind, values: {width, height},            anchors: {width:{a,b}, height:{a,b}, normal} }
-//   cylinder { kind, values: {diameter, depth, partial}, anchors: {center, axis, top, bottom} }
+//   cylinder { kind, values: {diameter, depth, partial}, anchors: {center, axis, top, bottom, rimDir} }
 //   bbox     { kind, values: {w, d, h},                  anchors: {min, max} }
 
 const COS_3DEG = 0.99863;      // same axis-snap threshold as selection/resolve.js
@@ -212,8 +212,19 @@ function cylinderSpec(tris, normals) {
     .map((p) => { const rd = radial(p); return Math.atan2(dot(rd, v), dot(rd, u)); })
     .sort((a, b) => a - b);
   let maxGap = 2 * Math.PI + angles[0] - angles[angles.length - 1];
-  for (let i = 1; i < angles.length; i++) maxGap = Math.max(maxGap, angles[i] - angles[i - 1]);
+  let gapEnd = angles[0]; // angle where the covered span begins (after the largest gap)
+  for (let i = 1; i < angles.length; i++) {
+    const g = angles[i] - angles[i - 1];
+    if (g > maxGap) { maxGap = g; gapEnd = angles[i]; }
+  }
   const coverageDeg = 360 - (maxGap * 180) / Math.PI;
+  // Radial direction at the angular midpoint of the covered span — where the
+  // wall actually is; the placer hangs R-leaders (and degenerate-view ⌀ dims)
+  // off it so they always spring from real surface. For a full circle
+  // (maxGap ~ the seam between last and first sample) this still yields a
+  // stable default direction.
+  const midAngle = gapEnd + (2 * Math.PI - maxGap) / 2;
+  const rimDir = norm(add(scale(u, Math.cos(midAngle)), scale(v, Math.sin(midAngle))));
 
   const snapped = snapAxis(axis);
   const ax = snapped ?? axis.map(q2);
@@ -225,6 +236,7 @@ function cylinderSpec(tris, normals) {
       axis: ax,
       bottom: add(c, scale(axis, tMin)).map(q2),
       top: add(c, scale(axis, tMax)).map(q2),
+      rimDir: rimDir.map(q2),
     },
   };
 }

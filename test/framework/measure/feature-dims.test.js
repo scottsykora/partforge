@@ -59,6 +59,12 @@ test("full tube -> cylinder spec with diameter and depth", () => {
   expect(spec.values.partial).toBe(false);
   // axis is ±Z
   expect(Math.abs(spec.anchors.axis[2])).toBeCloseTo(1, 5);
+  // rimDir is present (stable default direction) even for a full circle.
+  // Anchors are q2-rounded to 2 decimals like the other anchor fields, so
+  // unit length only holds to that precision, not float precision.
+  expect(Math.hypot(...spec.anchors.rimDir)).toBeCloseTo(1, 1);
+  const { rimDir, axis } = spec.anchors;
+  expect(Math.abs(rimDir[0] * axis[0] + rimDir[1] * axis[1] + rimDir[2] * axis[2])).toBeLessThan(1e-6);
 });
 
 test("120° arc -> partial cylinder (R notation)", () => {
@@ -67,6 +73,42 @@ test("120° arc -> partial cylinder (R notation)", () => {
   expect(spec.values.diameter).toBeCloseTo(8, 1);
   expect(spec.values.depth).toBeCloseTo(10, 5);
   expect(spec.values.partial).toBe(true);
+});
+
+test("partial arc carries a rimDir pointing into the covered angular range", () => {
+  // Quarter tube: wall vertices sample world angles [0, 90°] only (see tube()
+  // above), so the covered span's angular midpoint is 45° from either end.
+  const quarterArc = tube({ arc: Math.PI / 2 });
+  const spec = classifyFeature(quarterArc, 1);
+  expect(spec.kind).toBe("cylinder");
+  expect(spec.values.partial).toBe(true);
+  const { rimDir, axis, center } = spec.anchors;
+
+  // unit length (only to 2 decimals: anchors are q2-rounded)
+  expect(Math.hypot(...rimDir)).toBeCloseTo(1, 1);
+  // perpendicular to axis
+  expect(Math.abs(rimDir[0] * axis[0] + rimDir[1] * axis[1] + rimDir[2] * axis[2])).toBeLessThan(1e-6);
+
+  // Points into the covered wall, not the gap: reconstruct each raw vertex's
+  // radial direction (relative to the fitted center/axis) and confirm at
+  // least one covered vertex lies within half the arc's angular extent (45°)
+  // of rimDir. The extreme vertices (at the arc's own endpoints) sit exactly
+  // 45° from the midpoint, so a small slack absorbs circle-fit rounding.
+  const halfArcDeg = 45;
+  let minAngleDeg = Infinity;
+  const pos = quarterArc.positions;
+  for (let i = 0; i < pos.length; i += 3) {
+    const d = [pos[i] - center[0], pos[i + 1] - center[1], pos[i + 2] - center[2]];
+    const axial = d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2];
+    const radial = [d[0] - axial * axis[0], d[1] - axial * axis[1], d[2] - axial * axis[2]];
+    const len = Math.hypot(...radial);
+    if (len < 1e-6) continue; // vertex on the axis (none here, but guard anyway)
+    const rd = [radial[0] / len, radial[1] / len, radial[2] / len];
+    const cosAngle = Math.min(1, Math.max(-1, rd[0] * rimDir[0] + rd[1] * rimDir[1] + rd[2] * rimDir[2]));
+    const angleDeg = (Math.acos(cosAngle) * 180) / Math.PI;
+    if (angleDeg < minAngleDeg) minAngleDeg = angleDeg;
+  }
+  expect(minAngleDeg).toBeLessThanOrEqual(halfArcDeg + 1); // +1° slack for fit noise
 });
 
 test("capped tube (wall + cap in one feature) still classifies as cylinder", () => {
