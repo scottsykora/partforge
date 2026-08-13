@@ -144,16 +144,16 @@ export interface CaptureViewOptions {
 }
 
 /**
- * Measurement mode's capture API (spec Goal 3, "Communication"): pair
- * `getOverlaySvg()` with `overlaySvgString()`/`compositeOverlay()` (exported
- * from the main entry) to build a dimensioned capture, or drive the mode
- * without the built-in ruler button entirely.
+ * Measurement mode runtime controls. Dimensioned captures come straight from
+ * `captureCurrent()` while the mode is enabled — in-scene dims render into
+ * the frame natively (canonical-view captures and thumbnails never include
+ * them).
  */
 export interface MeasureRuntime {
   isEnabled(): boolean;
   setEnabled(on: boolean): void;
-  /** The overlay's live `<svg>` element, or `null` while the mode is off. */
-  getOverlaySvg(): SVGSVGElement | null;
+  clearPins(): void;
+  pinCount(): number;
 }
 
 /** Where playback is: idle, swinging the camera to an intro cue, playing, or paused. */
@@ -273,27 +273,6 @@ export interface PartRuntime {
 
 /** Mount a full parametric-part app from a `PartDefinition`. */
 export function mount(part: PartDefinition, options: MountOptions): PartRuntime;
-
-/**
- * Composite the measurement overlay onto a captured frame — `frameDataUrl` is
- * `runtime.captureCurrent()`'s (or `captureView()`'s) output, `svgString` is
- * `overlaySvgString()`'s. Async because the SVG must decode as an image.
- */
-export function compositeOverlay(
-  frameDataUrl: string,
-  svgString: string,
-  viewport: { width: number; height: number },
-): Promise<string>;
-
-/**
- * Serialize a measurement overlay `<svg>` (from `runtime.measure.getOverlaySvg()`)
- * with computed styles inlined as presentation attributes, sized to `viewport`
- * — the input `compositeOverlay` expects.
- */
-export function overlaySvgString(
-  svg: SVGSVGElement,
-  viewport: { width: number; height: number },
-): string;
 
 /**
  * The sub-parts a view shows: declared in the view and `enabled` for these

@@ -940,7 +940,6 @@ test("mount exposes the measure API on the handle", async () => {
   expect(typeof runtime.measure.pinCount).toBe("function");
   expect(runtime.measure.isEnabled()).toBe(false);
   expect(runtime.measure.pinCount()).toBe(0);
-  expect(runtime.measure.getOverlaySvg).toBeUndefined();
   runtime.dispose();
 });
 
