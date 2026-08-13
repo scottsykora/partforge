@@ -1,4 +1,5 @@
 import { attachButtonTooltips } from "./tooltip.js";
+import { runCleanupSteps, captureAttributes, restoreAttributes } from "./teardown.js";
 
 const UNSUPPORTED_TITLE = "Cutaway requires a stencil-capable WebGL context";
 const BUTTON_ATTRIBUTES = [
@@ -12,17 +13,6 @@ const BUTTON_ATTRIBUTES = [
 
 const noop = () => {};
 
-function runCleanupSteps(steps) {
-  const errors = [];
-  for (const step of steps) {
-    try { step(); } catch (error) { errors.push(error); }
-  }
-  if (errors.length === 1) throw errors[0];
-  if (errors.length > 1) {
-    throw new AggregateError(errors, "cutaway control cleanup failed");
-  }
-}
-
 function actionButton(label, title) {
   const button = document.createElement("button");
   button.type = "button";
@@ -32,23 +22,9 @@ function actionButton(label, title) {
   return button;
 }
 
-function captureAttributes(element, names) {
-  return new Map(names.map((name) => [name, {
-    present: element.hasAttribute(name),
-    value: element.getAttribute(name),
-  }]));
-}
-
-function restoreAttributes(element, attributes) {
-  for (const [name, { present, value }] of attributes) {
-    if (present) element.setAttribute(name, value);
-    else element.removeAttribute(name);
-  }
-}
-
 // Wire the optional cutaway button to the viewer and create its contextual
 // actions. Hosts that omit the primary button opt out of all DOM behavior.
-export function attachCutawayControls(viewer, { cutaway: button } = {}, { tooltip } = {}) {
+export function attachCutawayControls(viewer, { cutaway: button } = {}, { tooltip, escapeGuard } = {}) {
   if (!button) return { reset: noop, detach: noop };
 
   const canvas = viewer.domElement;
@@ -116,6 +92,7 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}, { toolti
   };
   const onEscape = (event) => {
     if (event.key !== "Escape" || !viewer.cutawayEnabled()) return;
+    if (escapeGuard?.()) return; // an inner lens (measure mode) claims this Escape
     event.preventDefault();
     disable();
   };
@@ -149,7 +126,7 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}, { toolti
         () => restoreAttributes(button, hostButtonAttributes),
         () => { button.disabled = hostButtonDisabled; },
         () => button.classList.toggle("on", hostButtonOn),
-      ]);
+      ], "cutaway control cleanup failed");
     },
   };
 }

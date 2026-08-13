@@ -26,14 +26,19 @@ import { createExportController, backendForFormat } from "./export-controller.js
 import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
 import { resolveDefaultView } from "./default-view.js";
+import { createMeasureMode } from "./measure/measure-mode.js";
+import { attachMeasureControls } from "./measure/measure-controls.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
 // The default no-op tooltip binding, so a host can hold on to whatever
 // attachTooltips returned without caring whether this mount resolved one.
 const NOOP_TOOLTIP_BINDING = { sync: () => {}, hide: () => {}, detach: () => {} };
+// Same no-op-default stance as attachTooltips/setHostPane below, for a
+// makeHandle caller (or a direct test) that doesn't wire measure mode.
+const NOOP_MEASURE = { isEnabled: () => false, setEnabled: () => {}, clearPins: () => {}, pinCount: () => 0 };
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -70,6 +75,11 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // title/aria-label); returns { sync, hide, detach }. Same no-op default
     // stance as setHostPane above.
     attachTooltips: attachTooltips ?? (() => NOOP_TOOLTIP_BINDING),
+    // Measurement-mode API (spec Goal 3): { isEnabled, setEnabled, clearPins,
+    // pinCount } — an embedder drives the mode without the built-in ruler
+    // button. Dimensions render in the scene, so a dimensioned capture is just
+    // captureCurrent() taken while the mode is on.
+    measure: measure ?? NOOP_MEASURE,
   };
 }
 
@@ -206,6 +216,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       reframe: elements.chrome?.reframe ?? byId("reframe"),
       theme: elements.chrome?.theme ?? byId("theme"),
       cutaway: elements.chrome?.cutaway ?? byId("cutaway"),
+      measure: elements.chrome?.measure ?? byId("measure"),
       railToggle: elements.chrome?.railToggle ?? byId("rail-toggle"),
     },
   };
@@ -216,10 +227,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     cleanup.defer(() => viewer.dispose());
     const tooltip = createTooltipPresenter({ id: null });
     cleanup.defer(() => tooltip.dispose());
-    const cutawayChrome = attachCutawayControls(viewer, {
-      cutaway: els.chrome.cutaway,
-    }, { tooltip });
-    cleanup.defer(() => cutawayChrome.detach());
+    // cutawayChrome + measureMode/measureChrome are attached further down (just
+    // after `params` exists — measure's getContext needs both `view()` and
+    // `params`, and cutaway needs measureMode for its escapeGuard). Nothing
+    // between here and there depends on cutawayChrome except the view-tabs
+    // onChange closure below, which only runs on a later user/programmatic tab
+    // change, never during this synchronous setup.
     // Resizable/collapsible controls rail. No-ops when the host lays out the
     // framework itself (no #panel / no elements.rail).
     const railChrome = attachRail({ rail: els.rail, toggle: els.chrome.railToggle, shell: els.shell, tooltip });
@@ -282,6 +295,39 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // (partforge-cloud) never has to poll getView() to learn where we opened.
     onViewChange?.(tabsCtl.current());
     const params = { ...part.defaults };
+
+    // Measurement mode: in-scene dims + pins + dimension->controls reveal
+    // (clicking a measurement flashes every control that can drive it). The
+    // panel is built later in this function, so revealParams is a late-bound
+    // thunk — same idiom for getParamsVersion, which needs `loop` (created
+    // further below); readsFor's memo keys on it instead of hashing the whole
+    // params object per call, mirroring createMeshCache/createPoseFastPath.
+    let panelRef = null;
+    const measureMode = createMeasureMode(viewer, {
+      part,
+      getContext: () => ({ view: view(), params }),
+      revealParams: (keys, focusKey) => panelRef?.revealParams(keys, focusKey),
+      getParamsVersion: () => loop.version(),
+    });
+    cleanup.defer(() => measureMode.detach());
+    // escapeScope: cutaway's Flip/Reset buttons are canvas SIBLINGS inside
+    // #viewbar, not descendants of the canvas — attaching Escape to
+    // viewer.domElement alone would leave a guarded Escape from those buttons
+    // dead. els.viewer (the stage) is a shared ancestor of both, so Escape
+    // bubbles up from either.
+    const measureChrome = attachMeasureControls(viewer, measureMode, {
+      measure: els.chrome.measure,
+    }, { tooltip, escapeScope: els.viewer });
+    cleanup.defer(() => measureChrome.detach());
+    const cutawayChrome = attachCutawayControls(viewer, {
+      cutaway: els.chrome.cutaway,
+    }, { tooltip, escapeGuard: () => measureMode.isEnabled() });
+    cleanup.defer(() => cutawayChrome.detach());
+    // Suppress the always-on hover tooltip while measure mode is active — its
+    // own feature highlight + dims take over the pointer.
+    const offMeasureHover = measureMode.onModeChange(() =>
+      hover.setSuppressed(measureMode.isEnabled()));
+    cleanup.defer(offMeasureHover);
 
     // Current selection context for the pickers: the active view + live params +
     // derived values. Shared by every pick mode below.
@@ -530,6 +576,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       ? (changed) => onParamsCommit({ changed, params: { ...params } })
       : undefined);
     cleanup.defer(() => panel.dispose());
+    panelRef = panel;
     const updateRelevance = () => {
       // A throwing derive() must not break every slider drag — mount's pick
       // flow already guards its own resolveDerived call the same way
@@ -681,6 +728,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
       exportParts: (opts) => exportCtl.exportParts(opts),
       animation: animCtl?.runtime ?? null,
+      measure: {
+        isEnabled: measureMode.isEnabled,
+        setEnabled: measureMode.setEnabled,
+        clearPins: measureMode.clearPins,
+        pinCount: measureMode.pinCount,
+      },
     });
   } catch (error) {
     try {

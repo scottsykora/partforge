@@ -227,3 +227,31 @@ describe("thumbnailBackground", () => {
     }
   });
 });
+
+describe("captureViewsFromScene hidden objects", () => {
+  it("hides extras for the pass and restores them", () => {
+    const calls = [];
+    const renderer = { renderOffscreen: () => { calls.push({ grid: grid.visible, dim: dim.visible }); return "data:,"; } };
+    const liveCamera = { position: new THREE.Vector3(1, 2, 3), aspect: 1 };
+    const grid = { visible: true };
+    const dim = { visible: true };
+    captureViewsFromScene(["iso"], {
+      renderer, liveCamera, grid, hidden: [dim],
+      bounds: { center: [0, 0, 0], radius: 10 },
+    });
+    expect(calls[0]).toEqual({ grid: false, dim: false });
+    expect(dim.visible).toBe(true);
+    expect(grid.visible).toBe(true);
+  });
+
+  it("restores an already-hidden extra to hidden", () => {
+    const renderer = { renderOffscreen: () => "data:," };
+    const liveCamera = { position: new THREE.Vector3(0, 0, 5), aspect: 1 };
+    const dim = { visible: false };
+    captureViewsFromScene(["iso"], {
+      renderer, liveCamera, grid: null, hidden: [dim],
+      bounds: { center: [0, 0, 0], radius: 10 },
+    });
+    expect(dim.visible).toBe(false);
+  });
+});

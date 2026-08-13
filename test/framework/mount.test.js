@@ -146,13 +146,14 @@ function makeElements() {
       reframe: mk("button"),
       theme: mk("button"),
       cutaway: mk("button"),
+      measure: mk("button"),
       railToggle: mk("button"),
     },
   };
   document.body.append(els.viewer, els.controls, els.rail, els.tabs,
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
-    els.chrome.reframe, els.chrome.theme, els.chrome.cutaway,
+    els.chrome.reframe, els.chrome.theme, els.chrome.cutaway, els.chrome.measure,
     els.chrome.railToggle);
   return els;
 }
@@ -211,7 +212,7 @@ test("mount creates one tooltip presenter and shares it with every viewer consum
   expect(attachCutawayControls).toHaveBeenCalledWith(
     viewer,
     { cutaway: els.chrome.cutaway },
-    { tooltip },
+    { tooltip, escapeGuard: expect.any(Function) },
   );
   expect(attachHoverLabels).toHaveBeenCalledWith(viewer, { part, tooltip });
   expect(attachViewerControls).toHaveBeenCalledWith(viewer, els.chrome, { tooltip });
@@ -916,6 +917,30 @@ test("makeHandle always exposes a callable setHostPane", () => {
   // so a host can hold and call the result without feature-detecting.
   const binding = handle.attachTooltips([{ element: document.createElement("button") }]);
   expect(() => { binding.sync(); binding.hide(); binding.detach(); }).not.toThrow();
+  // Same no-op-default stance for the measure API (spec Goal 3): a direct
+  // makeHandle caller with no measure mode wired still gets a safe surface.
+  expect(handle.measure.isEnabled()).toBe(false);
+  expect(() => handle.measure.setEnabled(true)).not.toThrow();
+  expect(() => handle.measure.clearPins()).not.toThrow();
+  expect(handle.measure.pinCount()).toBe(0);
+});
+
+// Spec Goal 3 ("Communication"): the measure API must actually be reachable
+// off the handle mount() returns, not just internal to measure-mode.js.
+// (setEnabled(true) itself isn't exercised here: the fake createViewer has no
+// real scene to build dimensions against — exposure of the real measureMode
+// methods is what this pins.)
+test("mount exposes the measure API on the handle", async () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  expect(typeof runtime.measure.isEnabled).toBe("function");
+  expect(typeof runtime.measure.setEnabled).toBe("function");
+  expect(typeof runtime.measure.clearPins).toBe("function");
+  expect(typeof runtime.measure.pinCount).toBe("function");
+  expect(runtime.measure.isEnabled()).toBe(false);
+  expect(runtime.measure.pinCount()).toBe(0);
+  runtime.dispose();
 });
 
 // --- animation playback: best-effort geometry ------------------------------

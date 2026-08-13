@@ -39,13 +39,15 @@ export function srgbEncodeInPlace(data) {
 // `renderer.renderOffscreen(pose)` does the GL work (temp camera → offscreen
 // target → readback → JPEG data URL); injected so this is unit-testable without
 // a GL context. The grid is hidden for the whole synchronous pass and restored.
-export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds }) {
+export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds, hidden = [] }) {
   const views = (viewNames?.length ? viewNames : ["iso", "front", "top"])
     .filter((v) => CANONICAL_VIEWS.includes(v))
     .slice(0, CANONICAL_VIEWS.length);
   const before = liveCamera.position.clone();
   const gridWasVisible = grid?.visible;
   if (grid) grid.visible = false;
+  const hiddenWas = hidden.map((o) => o.visible);
+  for (const o of hidden) o.visible = false;
   try {
     return views.map((view) => ({
       view,
@@ -53,6 +55,7 @@ export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, b
     }));
   } finally {
     if (grid) grid.visible = gridWasVisible;
+    hidden.forEach((o, i) => { o.visible = hiddenWas[i]; });
     liveCamera.position.copy(before); // belt-and-suspenders: never leak camera state
   }
 }
@@ -138,6 +141,10 @@ export function createViewer(container, part) {
     light: { bg: 0xe9edf2, grid: [0xc4ccd6, 0xd6dce4], line: 0x33414f },
   };
   scene.background = new THREE.Color(THEME.dark.bg);
+
+  let currentTheme = "dark";
+  const themeListeners = new Set();
+  function onThemeChange(cb) { themeListeners.add(cb); return () => themeListeners.delete(cb); }
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
   camera.position.set(18, 12, 18);
@@ -536,6 +543,8 @@ export function createViewer(container, part) {
     for (const m of fadeLineMats.values()) m.color.set(t.line); // clones follow the theme
     cutaway.setTheme(mode, t.line);
     reassertLiveFades(); // setTheme re-clones every section's materials and reassigns them
+    currentTheme = THEME[mode] ? mode : "dark";
+    for (const cb of [...themeListeners]) cb(currentTheme);
   }
 
   function hideAssembly() {
@@ -640,6 +649,15 @@ export function createViewer(container, part) {
     return canvas.toDataURL("image/jpeg", quality);
   }
 
+  // Objects excluded from CANONICAL captures only (agent renders must stay
+  // dimension-free); captureCurrent — the user-framed showcase capture —
+  // deliberately does NOT consult this set.
+  const canonicalCaptureHidden = new Set();
+  function registerCanonicalCaptureHidden(obj) {
+    canonicalCaptureHidden.add(obj);
+    return () => canonicalCaptureHidden.delete(obj);
+  }
+
   // Render the canonical camera angles offscreen, framed to whatever is visible,
   // without disturbing the user's live view. Returns [{ view, dataUrl }].
   function captureCanonicalViews(viewNames) {
@@ -653,6 +671,7 @@ export function createViewer(container, part) {
       renderer: { renderOffscreen },
       liveCamera: camera,
       grid,
+      hidden: [...canonicalCaptureHidden],
       bounds: { center, radius },
     });
   }
@@ -877,6 +896,8 @@ export function createViewer(container, part) {
     controls.removeEventListener("start", onControlsStart);
     cameraStartListeners.clear();
     frameListeners.clear();
+    themeListeners.clear();
+    canonicalCaptureHidden.clear();
     camTween.cancel();
     controls.dispose();
     for (const t of flashTimers) clearTimeout(t);
@@ -930,6 +951,8 @@ export function createViewer(container, part) {
     setActive,
     onContextLost,
     setTheme,
+    onThemeChange,
+    getTheme: () => currentTheme,
     getCameraState,
     setCameraState,
     onCameraEnd,
@@ -946,6 +969,7 @@ export function createViewer(container, part) {
     resetCutaway: cutaway.reset,
     isWorldPointVisible: cutaway.isPointVisible,
     registerCutawayMaterial: cutaway.registerClippableMaterial,
+    registerCanonicalCaptureHidden,
     onCutawayHandleHover: cutaway.onHandleHoverChange,
     dispose,
   };

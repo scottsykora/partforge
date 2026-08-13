@@ -37,6 +37,7 @@ export function buildControls(root, parameters, params, onDirty, onCommit) {
   const nodeById = new Map();     // id -> node, for the reveal re-sync
   const lastVisible = new Map();  // id -> previous `visible`, to detect a reveal
   const lastDisabled = new Map(); // id -> previous `disabled`, to skip a no-op input pass
+  const keyToId = new Map();      // param key -> node id, for revealParam
   // Containers that own a disclosure: sections, and titled inner groups (the
   // legacy "Advanced" fold). Both share the same anatomy — a header row with
   // the aria-carrying button and a text-free chevron span — so `el` (the
@@ -226,6 +227,7 @@ export function buildControls(root, parameters, params, onDirty, onCommit) {
       info,
     });
     nodeEls.set(node.id, widget.el);
+    if (node.key && !keyToId.has(node.key)) keyToId.set(node.key, node.id);
     widgetSyncs.set(node.id, widget.sync);
     container.append(widget.el);
 
@@ -309,6 +311,45 @@ export function buildControls(root, parameters, params, onDirty, onCommit) {
       const only = keys && new Set(keys);
       for (const { key, sync } of syncFns) if (!only || only.has(key)) sync();
       applyState();
+    },
+    // Measurement mode's dimension->control link: open whatever encloses the
+    // control, bring it on screen, hand it keyboard focus, and pulse the flash
+    // so the eye lands on it. DOM-containment (not tree walking) finds the
+    // enclosing disclosures, so section vs fold nesting needs no special case.
+    revealParam(key) {
+      return this.revealParams([key], key);
+    },
+    // Multi-control reveal: a measurement is usually a FUNCTION of several
+    // params, so clicking one flashes every control that can drive it.
+    // `focusKey` (when given and present) is the one whose value exactly
+    // matches the clicked dimension — it gets keyboard focus; otherwise the
+    // first flashed control is only scrolled to, no focus steal.
+    revealParams(keys, focusKey = null) {
+      const targets = [];
+      for (const key of keys) {
+        const id = keyToId.get(key);
+        const el = id && nodeEls.get(id);
+        if (el) targets.push([key, el]);
+      }
+      if (!targets.length) return false;
+      for (const [, target] of targets) {
+        for (const [, d] of disclosures) {
+          if (!d.body.contains(target) || !d.body.classList.contains("hidden")) continue;
+          d.body.classList.remove("hidden");
+          d.button.setAttribute("aria-expanded", "true");
+          d.el.classList.remove("collapsed");
+        }
+        target.classList.remove("pf-param-flash");
+        void target.offsetWidth; // restart the animation on repeat reveals
+        target.classList.add("pf-param-flash");
+        target.addEventListener("animationend", () => target.classList.remove("pf-param-flash"), { once: true });
+      }
+      const [primaryKey, primary] = targets.find(([k]) => k === focusKey) ?? targets[0];
+      primary.scrollIntoView?.({ block: "center" });
+      if (primaryKey === focusKey) {
+        primary.querySelector("input, select, textarea, .seg button")?.focus({ preventScroll: true });
+      }
+      return true;
     },
     dispose: () => { info.dispose(); root.replaceChildren(); },
   };

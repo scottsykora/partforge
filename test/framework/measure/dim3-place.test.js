@@ -1,0 +1,300 @@
+import { describe, it, expect } from "vitest";
+import * as THREE from "three";
+import {
+  evaluateChoices, choicesEqual, placeDims, extremeVertex, specSig, laneCounts,
+  HYSTERESIS, FLIP_DEADBAND_DEG, standoffNominal,
+} from "../../../src/framework/measure/dim3-place.js";
+import { bboxSpec } from "../../../src/framework/measure/feature-dims.js";
+
+// a 10×20×30 box as a soup of its 8 corners (enough for extreme scans)
+function boxMeshData(min = [0, 0, 0], max = [10, 20, 30]) {
+  const pts = [];
+  for (const x of [min[0], max[0]]) for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]])
+    pts.push(x, y, z);
+  return [{ positions: new Float32Array(pts), matrix: new THREE.Matrix4() }];
+}
+const CENTER = [5, 10, 15];
+
+function overallItem() {
+  return { id: "overall", tier: "static", spec: bboxSpec([0, 0, 0], [10, 20, 30]), meshes: [0] };
+}
+
+describe("evaluateChoices", () => {
+  it("puts a dim in the plane FACING the camera (readability over nearness)", () => {
+    // camera straight out along -Y: the X dim must lie in a plane whose
+    // normal is Y (seen face-on), NOT extend toward the camera in a plane
+    // seen edge-on — the original ext-dominant scoring got this backwards.
+    const c = evaluateChoices([overallItem()], { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    expect(c["overall|ax0"].key).toBe("e2s1"); // ext +Z, plane normal Y
+  });
+
+  it("holds the previous plane within hysteresis, flips when clearly beaten", () => {
+    const prev = evaluateChoices([overallItem()], { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    expect(prev["overall|ax0"].key).toBe("e2s1");
+    // swing past the front/top diagonal, but not by 15%: held
+    const near = evaluateChoices([overallItem()], { camPos: [5, -70, 110], center: CENTER, prev });
+    expect(near["overall|ax0"].key).toBe("e2s1");
+    // camera straight above: the Z-normal plane is now face-on — MUST flip
+    const far = evaluateChoices([overallItem()], { camPos: [5, 10, 150], center: CENTER, prev });
+    expect(far["overall|ax0"].key).toBe("e1s1");
+  });
+
+  it("choicesEqual detects change and sameness", () => {
+    const a = evaluateChoices([overallItem()], { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    const b = evaluateChoices([overallItem()], { camPos: [5, -100, 15], center: CENTER, prev: a });
+    expect(choicesEqual(a, b)).toBe(true);
+    const c = evaluateChoices([overallItem()], { camPos: [5, 10, 150], center: CENTER, prev: {} });
+    expect(choicesEqual(a, c)).toBe(false);
+  });
+
+  it("cylinder du holds within the deadband and re-aims past it", () => {
+    const spec = {
+      kind: "cylinder",
+      values: { diameter: 8, depth: 10, partial: false },
+      anchors: { center: [0, 0, 5], axis: [0, 0, 1], top: [0, 0, 10], bottom: [0, 0, 0], rimDir: [1, 0, 0] },
+    };
+    const item = { id: "h", tier: "hover", spec };
+    const a = evaluateChoices([item], { camPos: [100, 0, 5], center: [0, 0, 5], prev: {} });
+    expect(a["h|du"].du[0]).toBeCloseTo(1, 5);
+    // 10° away: held
+    const b = evaluateChoices([item], { camPos: [100, 18, 5], center: [0, 0, 5], prev: a });
+    expect(b["h|du"].du[0]).toBeCloseTo(1, 5);
+    // 90° away: re-aimed
+    const c = evaluateChoices([item], { camPos: [0, 100, 5], center: [0, 0, 5], prev: a });
+    expect(c["h|du"].du[1]).toBeCloseTo(1, 5);
+  });
+
+  it("cylinder du boundary: holds just under FLIP_DEADBAND_DEG, re-aims just past it", () => {
+    const spec = {
+      kind: "cylinder",
+      values: { diameter: 8, depth: 10, partial: false },
+      anchors: { center: [0, 0, 5], axis: [0, 0, 1], top: [0, 0, 10], bottom: [0, 0, 0], rimDir: [1, 0, 0] },
+    };
+    const item = { id: "h", tier: "hover", spec };
+    const a = evaluateChoices([item], { camPos: [100, 0, 5], center: [0, 0, 5], prev: {} });
+    expect(a["h|du"].du[0]).toBeCloseTo(1, 5);
+
+    // Camera positions derived from tan(angle): with the camera's radial X held
+    // at 100 and Y = 100·tan(angle), the resulting du sits exactly `angle` off
+    // the previous du = (1,0,0) (the Z offset cancels out of the radial
+    // projection). Stay 1° clear of the exact 25° boundary either way so
+    // floating-point noise can't flip the outcome.
+    const R = 100;
+    const angleTo = (deg) => R * Math.tan((deg * Math.PI) / 180);
+
+    const under = evaluateChoices([item], { camPos: [R, angleTo(24), 5], center: [0, 0, 5], prev: a });
+    expect(under["h|du"].du[0]).toBeCloseTo(1, 5); // held at the previous du
+    expect(under["h|du"].du[1]).toBeCloseTo(0, 5);
+
+    const over = evaluateChoices([item], { camPos: [R, angleTo(26), 5], center: [0, 0, 5], prev: a });
+    expect(over["h|du"].du[0]).toBeCloseTo(Math.cos((26 * Math.PI) / 180), 5); // re-aimed
+    expect(over["h|du"].du[1]).toBeCloseTo(Math.sin((26 * Math.PI) / 180), 5);
+  });
+});
+
+describe("extremeVertex", () => {
+  it("finds the posed extreme and tie-breaks toward `near`", () => {
+    const md = boxMeshData();
+    const nearFront = new THREE.Vector3(10, 0, 0);
+    const p = extremeVertex(md, 0, +1, nearFront); // max X, tied across 4 corners
+    expect(p.x).toBe(10);
+    expect(p.y).toBe(0); // tie broken toward y=0, z=0
+    expect(p.z).toBe(0);
+  });
+
+  it("applies the pose matrix", () => {
+    const md = boxMeshData();
+    md[0].matrix = new THREE.Matrix4().makeTranslation(100, 0, 0);
+    const p = extremeVertex(md, 0, +1, new THREE.Vector3(110, 0, 0));
+    expect(p.x).toBe(110);
+  });
+});
+
+describe("placeDims — bbox", () => {
+  function place(camPos = [5, -100, 15]) {
+    const items = [overallItem()];
+    const choices = evaluateChoices(items, { camPos, center: CENTER, prev: {} });
+    return placeDims(items, {
+      meshData: boxMeshData(), surfaceHit: null,
+      bounds: { min: [0, 0, 0], max: [10, 20, 30] },
+    }, choices)[0];
+  }
+
+  it("emits three parametric linear dims", () => {
+    const d = place();
+    expect(d.dims.length).toBe(3);
+    expect(d.dims.map((x) => x.label.text).sort()).toEqual(["10.00 mm", "20.00 mm", "30.00 mm"]);
+    for (const dim of d.dims) {
+      expect(dim.pA.length).toBe(3);
+      expect(dim.baseA.length).toBe(3);
+      expect(Math.hypot(...dim.ext)).toBeCloseTo(1, 6);
+      expect(Math.hypot(...dim.dir)).toBeCloseTo(1, 6);
+    }
+  });
+
+  it("staggers dims sharing an outward direction into lanes", () => {
+    const d = place();
+    // camera at -Y: the D dim (second) and H dim (third) both extend +X —
+    // the later one stacks into the next lane; the X dim has its own direction
+    expect(d.dims[0].ext[2]).toBe(1);
+    expect(d.dims[1].ext[0]).toBe(1);
+    expect(d.dims[2].ext[0]).toBe(1);
+    expect(d.dims[0].lane).toBe(0);
+    expect(d.dims[1].lane).toBe(0);
+    expect(d.dims[2].lane).toBe(1);
+  });
+
+  it("suppresses duplicate values within an item (round/square parts)", () => {
+    const items = [{ id: "overall", tier: "static", spec: bboxSpec([0, 0, 0], [8, 8, 10]), meshes: [0] }];
+    const choices = evaluateChoices(items, { camPos: [4, -100, 5], center: [4, 4, 5], prev: {} });
+    const d = placeDims(items, {
+      meshData: boxMeshData([0, 0, 0], [8, 8, 10]), surfaceHit: null,
+      bounds: { min: [0, 0, 0], max: [8, 8, 10] },
+    }, choices)[0];
+    expect(d.dims.map((x) => x.label.text).sort()).toEqual(["10.00 mm", "8.00 mm"]);
+  });
+
+  it("later item wins when two items measure the same thing", () => {
+    const spec = bboxSpec([0, 0, 0], [10, 20, 30]);
+    const items = [
+      { id: "overall", tier: "static", spec, meshes: [0] },
+      { id: "pin:body:bbox:0", tier: "pinned", pinned: true, spec, meshes: [0], paramName: "height" },
+    ];
+    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    const drawings = placeDims(items, {
+      meshData: boxMeshData(), surfaceHit: null,
+      bounds: { min: [0, 0, 0], max: [10, 20, 30] },
+    }, choices);
+    expect(drawings.length).toBe(1);
+    expect(drawings[0].itemId).toBe("pin:body:bbox:0");
+  });
+
+  it("continues stagger lanes from seeded lane counts (laneCounts round trip)", () => {
+    const items = [overallItem()];
+    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    const env = { meshData: boxMeshData(), surfaceHit: null, bounds: { min: [0, 0, 0], max: [10, 20, 30] } };
+    const base = placeDims(items, env, choices);
+    // base: the X dim extends +Z (lane 0); D and H both extend +X (lanes 0, 1)
+    const seed = laneCounts(base);
+    const hoverItem = { id: "hover", tier: "hover", spec: bboxSpec([1, 1, 1], [9, 19, 29]), meshes: [0] };
+    const hoverChoices = evaluateChoices([hoverItem], { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    const hover = placeDims([hoverItem], { ...env, lanes: seed }, hoverChoices)[0];
+    // its X dim extends +Z too and must continue at lane 1, not restart at 0
+    const xDim = hover.dims.find((d) => d.label.text === "8.00 mm");
+    expect(xDim.ext[2]).toBe(1);
+    expect(xDim.lane).toBe(1);
+  });
+
+  it("suppresses items whose sig was already drawn by another pass", () => {
+    const items = [overallItem()];
+    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    const drawings = placeDims(items, {
+      meshData: boxMeshData(), surfaceHit: null,
+      bounds: { min: [0, 0, 0], max: [10, 20, 30] },
+      suppress: new Set([specSig(items[0].spec)]),
+    }, choices);
+    expect(drawings).toEqual([]);
+  });
+
+  it("keeps every discovered point of the X dim on a single plane (coplanarity)", () => {
+    // camPos [5,-100,15] picks e2s1 for axis0, i.e. extAxis=2, nAxis=1 — the
+    // dim plane is a fixed y. With ext and dir flat in the plane, the scene's
+    // per-frame assembly can never leave it.
+    const d = place();
+    const dim = d.dims[0];
+    expect(dim.label.text).toBe("10.00 mm"); // sanity: this really is the X dim
+    const ys = [dim.pA[1], dim.pB[1], dim.baseA[1], dim.baseB[1]];
+    for (const y of ys) expect(y).toBeCloseTo(ys[0], 6);
+    expect(dim.ext[1]).toBeCloseTo(0, 6);
+    expect(dim.dir[1]).toBeCloseTo(0, 6);
+  });
+
+  it("anchors extension lines at the surfaceHit point, snapped onto the dim plane", () => {
+    const items = [overallItem()];
+    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    // deliberately off the X dim's plane (y=99, nowhere near the box)
+    const offPlaneHit = new THREE.Vector3(2, 99, 0);
+    const d = placeDims(items, {
+      meshData: boxMeshData(),
+      surfaceHit: () => offPlaneHit,
+      bounds: { min: [0, 0, 0], max: [10, 20, 30] },
+    }, choices)[0];
+    const dim = d.dims[0];
+    expect(dim.pA[0]).toBeCloseTo(2, 6); // the hit, not the bbox corner
+    expect(dim.pA[1]).toBeCloseTo(dim.baseA[1], 6); // snapped back onto the plane
+    expect(dim.pA[1]).not.toBeCloseTo(99, 3);
+  });
+
+  it("formats labels in inches on request; values stay mm for matching", () => {
+    const items = [overallItem()];
+    const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
+    const d = placeDims(items, {
+      meshData: boxMeshData(), surfaceHit: null,
+      bounds: { min: [0, 0, 0], max: [10, 20, 30] }, units: "in",
+    }, choices)[0];
+    expect(d.dims.map((x) => x.label.text).sort()).toEqual(["0.394 in", "0.787 in", "1.181 in"]);
+    expect(d.dims.map((x) => x.label.value).sort((a, b) => a - b)).toEqual([10, 20, 30]);
+  });
+
+  it("respects locked constants", () => {
+    expect(standoffNominal(100)).toBe(10);
+    expect(standoffNominal(10)).toBe(6);
+    expect(HYSTERESIS).toBe(1.15);
+    expect(FLIP_DEADBAND_DEG).toBe(25);
+    // display distances (standoff, gap, arrows, overshoot, stagger, leader,
+    // text) are screen-constant px in dim3-scene (spec amendments 2026-08-13)
+  });
+});
+
+describe("placeDims — plane and cylinder", () => {
+  it("plane emits width+height dims lying in the face plane", () => {
+    const spec = {
+      kind: "plane",
+      values: { width: 10, height: 5 },
+      anchors: {
+        width: { a: [0, 0, 0], b: [10, 0, 0] },
+        height: { a: [10, 0, 0], b: [10, 0, 5] },
+        normal: [0, -1, 0],
+      },
+    };
+    const item = { id: "h", tier: "hover", spec };
+    const choices = evaluateChoices([item], { camPos: [5, -50, 2], center: [5, 0, 2], prev: {} });
+    const d = placeDims([item], { bounds: { min: [0, 0, 0], max: [10, 0, 5] } }, choices)[0];
+    expect(d.dims.map((x) => x.label.text).sort()).toEqual(["10.00 mm", "5.00 mm"]);
+    for (const dim of d.dims) {
+      // anchors on the face, ext in the face plane (normal -Y → all y = 0),
+      // and feature dims hug their feature (reduced standoff)
+      for (const p of [dim.pA, dim.pB, dim.baseA, dim.baseB]) expect(p[1]).toBeCloseTo(0, 6);
+      expect(dim.ext[1]).toBeCloseTo(0, 6);
+      expect(dim.standoffScale).toBeCloseTo(0.55, 6);
+    }
+  });
+
+  it("full cylinder emits a ⌀ record + a depth dim; partial emits an R leader", () => {
+    const full = {
+      kind: "cylinder",
+      values: { diameter: 8, depth: 10, partial: false },
+      anchors: { center: [0, 0, 5], axis: [0, 0, 1], top: [0, 0, 10], bottom: [0, 0, 0], rimDir: [1, 0, 0] },
+    };
+    const item = { id: "h", tier: "hover", spec: full };
+    const choices = evaluateChoices([item], { camPos: [100, 0, 5], center: [0, 0, 5], prev: {} });
+    const d = placeDims([item], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
+    expect(d.diams.length).toBe(1);
+    expect(d.diams[0].label.text).toBe("⌀8.00");
+    // camera at +X → du = +X (the projected ellipse's foreshortened axis);
+    // the diameter line runs along dv = +Y, the WIDE axis, at radius 4
+    expect(d.diams[0].rimA[1]).toBeCloseTo(4, 5);
+    expect(d.diams[0].rimB[1]).toBeCloseTo(-4, 5);
+    expect(d.dims.length).toBe(1);
+    expect(d.dims[0].label.text).toBe("10.00 mm");
+    // depth hangs off the tangential silhouette (±dv): its plane faces the
+    // camera instead of chasing edge-on alignment with it
+    expect(Math.abs(d.dims[0].ext[1])).toBeCloseTo(1, 5);
+
+    const part = { ...full, values: { ...full.values, partial: true } };
+    const d2 = placeDims([{ id: "h", tier: "hover", spec: part }], { bounds: { min: [-4, -4, 0], max: [4, 4, 10] } }, choices)[0];
+    expect(d2.leaders.length).toBe(1);
+    expect(d2.leaders[0].label.text).toBe("R4.00");
+    expect(d2.leaders[0].rim[0]).toBeCloseTo(4, 5); // on the arc, along rimDir
+  });
+});

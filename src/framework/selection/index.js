@@ -6,3 +6,4 @@ export { attachPicker, worldToSubPartLocal } from "./pick.js";
 export { attachPickToggle } from "./pick-toggle.js";
 export { raycastViewer, featureAt } from "./raycast.js";
 export { attachHoverLabels } from "./hover.js";
+export { createFeatureHighlight } from "./feature-highlight.js";
