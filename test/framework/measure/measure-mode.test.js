@@ -610,8 +610,14 @@ test("a steady frame does not re-place; only a side-choice flip does", () => {
   viewer.frame();
   expect(same(kids(), first)).toBe(true);
 
-  // straight through to the other side: every extension direction flips
+  // an opposite camera along the SAME axis keeps the same face-on plane —
+  // that's the readability rule working, not a missed flip
   viewer.camera.position.set(10, 5, -40);
+  viewer.frame();
+  expect(same(kids(), first)).toBe(true);
+
+  // a SIDE camera makes a different plane face-on: now a choice flips
+  viewer.camera.position.set(150, 5, 2);
   viewer.frame();
   expect(same(kids(), first)).toBe(false);
   expect(kids().length).toBe(first.length);

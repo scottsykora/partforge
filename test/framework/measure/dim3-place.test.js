@@ -20,19 +20,22 @@ function overallItem() {
 }
 
 describe("evaluateChoices", () => {
-  it("extends bbox dims toward the camera", () => {
+  it("puts a dim in the plane FACING the camera (readability over nearness)", () => {
+    // camera straight out along -Y: the X dim must lie in a plane whose
+    // normal is Y (seen face-on), NOT extend toward the camera in a plane
+    // seen edge-on — the original ext-dominant scoring got this backwards.
     const c = evaluateChoices([overallItem()], { camPos: [5, -100, 15], center: CENTER, prev: {} });
-    // measuring X: camera at -Y → ext should be -Y (extAxis 1, sign -1)
-    expect(c["overall|ax0"].key).toBe("e1s-1");
+    expect(c["overall|ax0"].key).toBe("e2s1"); // ext +Z, plane normal Y
   });
 
-  it("holds the previous side within hysteresis", () => {
+  it("holds the previous plane within hysteresis, flips when clearly beaten", () => {
     const prev = evaluateChoices([overallItem()], { camPos: [5, -100, 15], center: CENTER, prev: {} });
-    // nudge the camera slightly past the diagonal — not enough to beat 15%
-    const near = evaluateChoices([overallItem()], { camPos: [5, -100, 30], center: CENTER, prev });
-    expect(near["overall|ax0"].key).toBe(prev["overall|ax0"].key);
-    // an opposite camera MUST flip
-    const far = evaluateChoices([overallItem()], { camPos: [5, 100, 15], center: CENTER, prev });
+    expect(prev["overall|ax0"].key).toBe("e2s1");
+    // swing past the front/top diagonal, but not by 15%: held
+    const near = evaluateChoices([overallItem()], { camPos: [5, -70, 110], center: CENTER, prev });
+    expect(near["overall|ax0"].key).toBe("e2s1");
+    // camera straight above: the Z-normal plane is now face-on — MUST flip
+    const far = evaluateChoices([overallItem()], { camPos: [5, 10, 150], center: CENTER, prev });
     expect(far["overall|ax0"].key).toBe("e1s1");
   });
 
@@ -40,7 +43,7 @@ describe("evaluateChoices", () => {
     const a = evaluateChoices([overallItem()], { camPos: [5, -100, 15], center: CENTER, prev: {} });
     const b = evaluateChoices([overallItem()], { camPos: [5, -100, 15], center: CENTER, prev: a });
     expect(choicesEqual(a, b)).toBe(true);
-    const c = evaluateChoices([overallItem()], { camPos: [5, 100, 15], center: CENTER, prev: {} });
+    const c = evaluateChoices([overallItem()], { camPos: [5, 10, 150], center: CENTER, prev: {} });
     expect(choicesEqual(a, c)).toBe(false);
   });
 
@@ -131,13 +134,14 @@ describe("placeDims — bbox", () => {
 
   it("staggers dims sharing an outward direction into lanes", () => {
     const d = place();
-    // camera at -Y: the X dim (first) and H dim (third) both extend -Y —
-    // the later one stacks into the next lane; the D dim has its own direction
-    expect(d.dims[0].ext[1]).toBe(-1);
-    expect(d.dims[2].ext[1]).toBe(-1);
+    // camera at -Y: the D dim (second) and H dim (third) both extend +X —
+    // the later one stacks into the next lane; the X dim has its own direction
+    expect(d.dims[0].ext[2]).toBe(1);
+    expect(d.dims[1].ext[0]).toBe(1);
+    expect(d.dims[2].ext[0]).toBe(1);
     expect(d.dims[0].lane).toBe(0);
-    expect(d.dims[2].lane).toBe(1);
     expect(d.dims[1].lane).toBe(0);
+    expect(d.dims[2].lane).toBe(1);
   });
 
   it("suppresses duplicate values within an item (round/square parts)", () => {
@@ -170,15 +174,15 @@ describe("placeDims — bbox", () => {
     const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
     const env = { meshData: boxMeshData(), surfaceHit: null, bounds: { min: [0, 0, 0], max: [10, 20, 30] } };
     const base = placeDims(items, env, choices);
-    // base: the X and H dims both extend -Y (lanes 0 and 1)
+    // base: the X dim extends +Z (lane 0); D and H both extend +X (lanes 0, 1)
     const seed = laneCounts(base);
     const hoverItem = { id: "hover", tier: "hover", spec: bboxSpec([1, 1, 1], [9, 19, 29]), meshes: [0] };
     const hoverChoices = evaluateChoices([hoverItem], { camPos: [5, -100, 15], center: CENTER, prev: {} });
     const hover = placeDims([hoverItem], { ...env, lanes: seed }, hoverChoices)[0];
-    // its X dim extends -Y too and must continue at lane 2, not restart at 0
+    // its X dim extends +Z too and must continue at lane 1, not restart at 0
     const xDim = hover.dims.find((d) => d.label.text === "8.00 mm");
-    expect(xDim.ext[1]).toBe(-1);
-    expect(xDim.lane).toBe(2);
+    expect(xDim.ext[2]).toBe(1);
+    expect(xDim.lane).toBe(1);
   });
 
   it("suppresses items whose sig was already drawn by another pass", () => {
@@ -193,23 +197,23 @@ describe("placeDims — bbox", () => {
   });
 
   it("keeps every discovered point of the X dim on a single plane (coplanarity)", () => {
-    // camPos [5,-100,15] picks e1s-1 for axis0, i.e. extAxis=1, nAxis=2 — the
-    // dim plane is a fixed z. With ext and dir flat in the plane, the scene's
+    // camPos [5,-100,15] picks e2s1 for axis0, i.e. extAxis=2, nAxis=1 — the
+    // dim plane is a fixed y. With ext and dir flat in the plane, the scene's
     // per-frame assembly can never leave it.
     const d = place();
     const dim = d.dims[0];
     expect(dim.label.text).toBe("10.00 mm"); // sanity: this really is the X dim
-    const zs = [dim.pA[2], dim.pB[2], dim.baseA[2], dim.baseB[2]];
-    for (const z of zs) expect(z).toBeCloseTo(zs[0], 6);
-    expect(dim.ext[2]).toBeCloseTo(0, 6);
-    expect(dim.dir[2]).toBeCloseTo(0, 6);
+    const ys = [dim.pA[1], dim.pB[1], dim.baseA[1], dim.baseB[1]];
+    for (const y of ys) expect(y).toBeCloseTo(ys[0], 6);
+    expect(dim.ext[1]).toBeCloseTo(0, 6);
+    expect(dim.dir[1]).toBeCloseTo(0, 6);
   });
 
   it("anchors extension lines at the surfaceHit point, snapped onto the dim plane", () => {
     const items = [overallItem()];
     const choices = evaluateChoices(items, { camPos: [5, -100, 15], center: CENTER, prev: {} });
-    // deliberately off the X dim's plane (z=99, nowhere near the box)
-    const offPlaneHit = new THREE.Vector3(2, 0, 99);
+    // deliberately off the X dim's plane (y=99, nowhere near the box)
+    const offPlaneHit = new THREE.Vector3(2, 99, 0);
     const d = placeDims(items, {
       meshData: boxMeshData(),
       surfaceHit: () => offPlaneHit,
@@ -217,7 +221,8 @@ describe("placeDims — bbox", () => {
     }, choices)[0];
     const dim = d.dims[0];
     expect(dim.pA[0]).toBeCloseTo(2, 6); // the hit, not the bbox corner
-    expect(dim.pA[2]).toBeCloseTo(dim.baseA[2], 6); // snapped back onto the plane
+    expect(dim.pA[1]).toBeCloseTo(dim.baseA[1], 6); // snapped back onto the plane
+    expect(dim.pA[1]).not.toBeCloseTo(99, 3);
   });
 
   it("respects locked constants", () => {

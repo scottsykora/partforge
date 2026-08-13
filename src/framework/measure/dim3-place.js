@@ -104,16 +104,26 @@ function boxCandidates(axis) {
 }
 
 function scoreCandidate(ext, n, toCam) {
-  // favour extending toward the viewer; favour a plane the viewer sees face-on
-  return 0.6 * Math.max(0, ext.dot(toCam)) + 0.4 * Math.abs(n.dot(toCam));
+  // Readability first: the dim's plane should FACE the camera — a face-on
+  // drawing is what a viewer can read. "Extend toward the viewer" only breaks
+  // ties between equally-oblique planes (and biases the near side there): the
+  // two terms are antagonistic — an ext pointing AT the camera means the
+  // plane containing it is near edge-on — so an ext-dominant weighting (the
+  // original 0.6/0.4) actively picked tilted, foreshortened planes that
+  // fought the viewer during orbit.
+  return Math.abs(n.dot(toCam)) + 0.15 * Math.max(0, ext.dot(toCam));
 }
 
-// Hold the previous choice unless a challenger beats it by HYSTERESIS.
+// Hold the previous choice unless a challenger beats it by HYSTERESIS — and
+// by an absolute margin too: near-degenerate views score every candidate close
+// to zero, where a multiplicative margin is meaningless and tiny camera moves
+// would flip-flop the choice (and force rebuilds) for no visible benefit.
 function chooseWithHysteresis(scored, prevKey) {
   scored.sort((a, b) => b.score - a.score);
   const best = scored[0];
   const prev = prevKey != null ? scored.find((s) => s.key === prevKey) : null;
-  if (prev && best.key !== prev.key && best.score < prev.score * HYSTERESIS) return prev;
+  if (prev && best.key !== prev.key
+      && (best.score < prev.score * HYSTERESIS || best.score - prev.score < 0.02)) return prev;
   return best;
 }
 
@@ -126,6 +136,10 @@ export function evaluateChoices(items, { camPos, center, prev = {} }) {
     const spec = item.spec;
     if (spec.kind === "bbox") {
       for (const axis of [0, 1, 2]) {
+        // zero-span axes place no dim (placeBox skips them) — emitting a
+        // choice anyway would let its degenerate near-zero scores flip on
+        // tiny camera moves and force pointless rebuilds
+        if (spec.anchors.max[axis] - spec.anchors.min[axis] < 1e-6) continue;
         const ck = `${item.id}|ax${axis}`;
         const scored = boxCandidates(axis).map((c) => ({
           ...c,

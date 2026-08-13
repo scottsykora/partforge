@@ -291,3 +291,16 @@ click. Truthful derived-value attribution would need a per-param sensitivity
 probe in the worker; deliberately deferred.) Geometry clicks pin/unpin
 quietly; labels never unpin; the flash ring uses an outline with 5 px offset
 so it sits clear of the control.
+
+**2026-08-13 — side-selection scoring corrected: face-on first.** The
+original candidate score weighted "extends toward the viewer" (0.6) over
+"plane faces the viewer" (0.4). Those terms are antagonistic — an outward
+direction pointing at the camera means the plane containing it is near
+edge-on — so orbiting parked dims in tilted, foreshortened planes that
+fought the viewer. Corrected to `|n·toCam| + 0.15·max(0, ext·toCam)`:
+readability (face-on) dominates; the near-side bias only breaks ties between
+equally-oblique planes. Two stability fixes ride along: zero-span bbox axes
+no longer emit choices (their degenerate near-zero scores flip-flopped on
+tiny camera moves, forcing pointless rebuilds), and hysteresis gains an
+absolute floor (a challenger must also beat the holder by 0.02) so
+near-degenerate views can't churn either.
