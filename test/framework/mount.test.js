@@ -146,13 +146,14 @@ function makeElements() {
       reframe: mk("button"),
       theme: mk("button"),
       cutaway: mk("button"),
+      measure: mk("button"),
       railToggle: mk("button"),
     },
   };
   document.body.append(els.viewer, els.controls, els.rail, els.tabs,
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
-    els.chrome.reframe, els.chrome.theme, els.chrome.cutaway,
+    els.chrome.reframe, els.chrome.theme, els.chrome.cutaway, els.chrome.measure,
     els.chrome.railToggle);
   return els;
 }
@@ -211,7 +212,7 @@ test("mount creates one tooltip presenter and shares it with every viewer consum
   expect(attachCutawayControls).toHaveBeenCalledWith(
     viewer,
     { cutaway: els.chrome.cutaway },
-    { tooltip },
+    { tooltip, escapeGuard: expect.any(Function) },
   );
   expect(attachHoverLabels).toHaveBeenCalledWith(viewer, { part, tooltip });
   expect(attachViewerControls).toHaveBeenCalledWith(viewer, els.chrome, { tooltip });

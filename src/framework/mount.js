@@ -26,6 +26,8 @@ import { createExportController, backendForFormat } from "./export-controller.js
 import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
 import { resolveDefaultView } from "./default-view.js";
+import { createMeasureMode } from "./measure/measure-mode.js";
+import { attachMeasureControls } from "./measure/measure-controls.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
@@ -206,6 +208,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       reframe: elements.chrome?.reframe ?? byId("reframe"),
       theme: elements.chrome?.theme ?? byId("theme"),
       cutaway: elements.chrome?.cutaway ?? byId("cutaway"),
+      measure: elements.chrome?.measure ?? byId("measure"),
       railToggle: elements.chrome?.railToggle ?? byId("rail-toggle"),
     },
   };
@@ -216,10 +219,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     cleanup.defer(() => viewer.dispose());
     const tooltip = createTooltipPresenter({ id: null });
     cleanup.defer(() => tooltip.dispose());
-    const cutawayChrome = attachCutawayControls(viewer, {
-      cutaway: els.chrome.cutaway,
-    }, { tooltip });
-    cleanup.defer(() => cutawayChrome.detach());
+    // cutawayChrome + measureMode/measureChrome are attached further down (just
+    // after `params` exists — measure's getContext needs both `view()` and
+    // `params`, and cutaway needs measureMode for its escapeGuard). Nothing
+    // between here and there depends on cutawayChrome except the view-tabs
+    // onChange closure below, which only runs on a later user/programmatic tab
+    // change, never during this synchronous setup.
     // Resizable/collapsible controls rail. No-ops when the host lays out the
     // framework itself (no #panel / no elements.rail).
     const railChrome = attachRail({ rail: els.rail, toggle: els.chrome.railToggle, shell: els.shell, tooltip });
@@ -282,6 +287,29 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // (partforge-cloud) never has to poll getView() to learn where we opened.
     onViewChange?.(tabsCtl.current());
     const params = { ...part.defaults };
+
+    // Measurement mode: overlay + pins + dimension->control reveal. The panel
+    // is built later in this function, so revealParam is a late-bound thunk.
+    let panelRef = null;
+    const measureMode = createMeasureMode(viewer, {
+      part,
+      getContext: () => ({ view: view(), params }),
+      revealParam: (key) => panelRef?.revealParam(key),
+    });
+    cleanup.defer(() => measureMode.detach());
+    const measureChrome = attachMeasureControls(viewer, measureMode, {
+      measure: els.chrome.measure,
+    }, { tooltip });
+    cleanup.defer(() => measureChrome.detach());
+    const cutawayChrome = attachCutawayControls(viewer, {
+      cutaway: els.chrome.cutaway,
+    }, { tooltip, escapeGuard: () => measureMode.isEnabled() });
+    cleanup.defer(() => cutawayChrome.detach());
+    // Suppress the always-on hover tooltip while measure mode is active — its
+    // own feature highlight + dims take over the pointer.
+    const offMeasureHover = measureMode.onModeChange(() =>
+      hover.setSuppressed(measureMode.isEnabled()));
+    cleanup.defer(offMeasureHover);
 
     // Current selection context for the pickers: the active view + live params +
     // derived values. Shared by every pick mode below.
@@ -530,6 +558,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       ? (changed) => onParamsCommit({ changed, params: { ...params } })
       : undefined);
     cleanup.defer(() => panel.dispose());
+    panelRef = panel;
     const updateRelevance = () => {
       // A throwing derive() must not break every slider drag — mount's pick
       // flow already guards its own resolveDerived call the same way
