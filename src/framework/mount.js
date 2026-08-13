@@ -36,7 +36,7 @@ import { attachMeasureControls } from "./measure/measure-controls.js";
 const NOOP_TOOLTIP_BINDING = { sync: () => {}, hide: () => {}, detach: () => {} };
 // Same no-op-default stance as attachTooltips/setHostPane below, for a
 // makeHandle caller (or a direct test) that doesn't wire measure mode.
-const NOOP_MEASURE = { isEnabled: () => false, setEnabled: () => {}, getOverlaySvg: () => null };
+const NOOP_MEASURE = { isEnabled: () => false, setEnabled: () => {}, clearPins: () => {}, pinCount: () => 0 };
 
 export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure }) {
   return {
@@ -75,11 +75,10 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // title/aria-label); returns { sync, hide, detach }. Same no-op default
     // stance as setHostPane above.
     attachTooltips: attachTooltips ?? (() => NOOP_TOOLTIP_BINDING),
-    // Measurement-mode capture API (spec Goal 3): { isEnabled, setEnabled,
-    // getOverlaySvg } — an embedder pairs getOverlaySvg() with
-    // compositeOverlay()/overlaySvgString() (exported from the main entry) to
-    // build a dimensioned capture, or drives the mode without the built-in
-    // ruler button entirely.
+    // Measurement-mode API (spec Goal 3): { isEnabled, setEnabled, clearPins,
+    // pinCount } — an embedder drives the mode without the built-in ruler
+    // button. Dimensions render in the scene, so a dimensioned capture is just
+    // captureCurrent() taken while the mode is on.
     measure: measure ?? NOOP_MEASURE,
   };
 }
@@ -738,7 +737,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       measure: {
         isEnabled: measureMode.isEnabled,
         setEnabled: measureMode.setEnabled,
-        getOverlaySvg: measureMode.getOverlaySvg,
+        clearPins: measureMode.clearPins,
+        pinCount: measureMode.pinCount,
       },
     });
   } catch (error) {

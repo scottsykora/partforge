@@ -1,10 +1,13 @@
 // Measurement-mode orchestrator: the one measure module that touches both
 // three.js and the DOM. Owns mode state and drives the pipeline
-//   raycast hit -> feature-dims spec -> param-link -> dim-layout -> dim-overlay
-// per frame with a dirty check (camera, mesh matrices, geometry identity), so
-// dims ride orbits, the pose fast path, and animations, and re-anchor across
-// regenerates. Pins live in the pure pin store, per view, and survive mode
-// toggles; `Clear` (chrome) is the only thing that empties them.
+//   raycast hit -> feature-dims spec -> param-link -> dim3-place -> dim3-scene
+// with a per-frame dirty check. Dimensions are real scene objects parented
+// under the meshes' shared group, so they ride the pivot rotation, the pose
+// fast path and animations for free; the frame loop only has to notice mesh
+// regenerates/visibility flips (rebuild) and camera moves that flip a side
+// choice (re-score, rebuild only if a choice actually changed). Pins live in
+// the pure pin store, per view, and survive mode toggles; `Clear` (chrome) is
+// the only thing that empties them.
 import * as THREE from "three";
 import { raycastViewer } from "../selection/raycast.js";
 import { createFeatureHighlight } from "../selection/feature-highlight.js";
@@ -13,10 +16,8 @@ import { subPartReadKeys, RELEVANT_ALL } from "../param-deps.js";
 import { classifyFeature, bboxSpec, unionBounds } from "./feature-dims.js";
 import { linkParam } from "./param-link.js";
 import { createPinStore, occurrenceOf } from "./pins.js";
-import { layout } from "./dim-layout.js";
-import { createDimOverlay } from "./dim-overlay.js";
-
-const _v = new THREE.Vector3();
+import { evaluateChoices, choicesEqual, placeDims } from "./dim3-place.js";
+import { createDimScene } from "./dim3-scene.js";
 
 export function createMeasureMode(viewer, { part, getContext, revealParam, getParamsVersion, schedule = (cb) => requestAnimationFrame(cb) }) {
   const pins = createPinStore();
@@ -26,10 +27,9 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
   const notifyMode = () => { for (const cb of [...modeListeners]) cb(); };
 
   let enabled = false;
-  let overlay = null;          // created on first enable, kept across toggles
+  let scene = null;            // created on first enable, kept across toggles
   let highlight = null;
   let hover = null;            // { item, key } for the currently hovered spec
-  let prevLayout = null;
   let detached = false;
 
   // ---- spec cache: (geometry instance, featureId) -> core spec -------------
@@ -51,27 +51,41 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
     return byId.get(featureId);
   }
 
-  // ---- projection: geometry-frame point -> CSS px in the canvas ------------
-  // `node` may be a sub-part mesh (for per-feature/pin specs, in the mesh's
-  // own local frame) or the meshes' shared parent group (for the overall
-  // spec, already composed with each mesh's local `.matrix`); either way we
-  // apply its matrixWorld before projecting. `rect` is the canvas's client
-  // rect for this pass: buildItems' callers measure it ONCE (not once per
-  // projected point across every item) and thread it through; the fallback
-  // keeps any stray caller (or a projector used outside a buildItems pass)
-  // working.
-  function projectorFor(node, rect) {
-    return (p) => {
-      _v.set(p[0], p[1], p[2]);
-      if (node) _v.applyMatrix4(node.matrixWorld);
-      _v.project(viewer.camera);
-      const r = rect ?? viewer.domElement.getBoundingClientRect();
-      return {
-        x: ((_v.x + 1) / 2) * r.width,
-        y: ((1 - _v.y) / 2) * r.height,
-        behind: _v.z > 1,
-      };
-    };
+  // ---- spec frames ---------------------------------------------------------
+  // Feature/bbox specs come out of classifyFeature in the MESH's own geometry
+  // frame; dim3-place works entirely in the PARTS frame (the meshes' shared
+  // parent), so compose the mesh's local matrix — which carries the viewer's
+  // fast-path pose — into every anchor before handing a spec over.
+  const _m3 = new THREE.Matrix3();
+  const _tv = new THREE.Vector3();
+  function transformSpec(spec, matrix) {
+    // identity fast path: poses are identity outside animations
+    if (matrix.determinant() === 1 && matrix.elements[12] === 0 && matrix.elements[13] === 0
+        && matrix.elements[14] === 0 && matrix.elements[0] === 1 && matrix.elements[5] === 1
+        && matrix.elements[10] === 1) return spec;
+    const pt = (p) => _tv.set(p[0], p[1], p[2]).applyMatrix4(matrix).toArray();
+    const dir = (d) => _tv.set(d[0], d[1], d[2]).applyMatrix3(_m3.setFromMatrix4(matrix)).normalize().toArray();
+    if (spec.kind === "plane") {
+      return { ...spec, anchors: {
+        width: { a: pt(spec.anchors.width.a), b: pt(spec.anchors.width.b) },
+        height: { a: pt(spec.anchors.height.a), b: pt(spec.anchors.height.b) },
+        normal: dir(spec.anchors.normal),
+      } };
+    }
+    if (spec.kind === "cylinder") {
+      return { ...spec, anchors: {
+        center: pt(spec.anchors.center), axis: dir(spec.anchors.axis),
+        top: pt(spec.anchors.top), bottom: pt(spec.anchors.bottom),
+        rimDir: spec.anchors.rimDir ? dir(spec.anchors.rimDir) : undefined,
+      } };
+    }
+    if (spec.kind === "bbox") {
+      const b = new THREE.Box3(
+        new THREE.Vector3(...spec.anchors.min), new THREE.Vector3(...spec.anchors.max),
+      ).applyMatrix4(matrix); // AABB of the posed box, same as viewer.frameTo
+      return bboxSpec(b.min.toArray(), b.max.toArray());
+    }
+    return spec;
   }
 
   const visibleMeshes = () => Object.entries(viewer._subMeshes)
@@ -108,8 +122,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
   const linkFor = (subPart, spec) =>
     spec ? linkParam(readKeysFor(subPart), getContext().params, spec.values) : null;
 
-  // ---- pin resolution: stable key -> a live layout item --------------------
-  function resolvePin(key, index) {
+  // ---- pin resolution: stable key -> a live spec + its mesh ----------------
+  function resolvePin(key) {
     const mesh = viewer._subMeshes[key.subPart];
     if (!mesh || !mesh.visible) return null;
     if (key.featureLabel == null) {
@@ -132,14 +146,14 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
     return null;
   }
 
-  // `rect` is the canvas's client rect for this pass, measured ONCE by the
-  // caller (renderNow / onChipClick) rather than once per projected point
-  // across every item — projectorFor falls back to measuring it itself when
-  // omitted, so a stray caller still works.
-  function buildItems(rect) {
+  // Items handed to dim3-place: every spec already in the parts frame, and
+  // `meshes` indexing into the meshData built alongside (so a feature dim
+  // scans only its own sub-part). `_key` rides along for un-pinning by label
+  // pick; dim3-place ignores unknown fields.
+  function buildItems() {
     const items = [];
     const meshes = visibleMeshes();
-    if (meshes.length === 0) return items;
+    if (meshes.length === 0) return { items, meshes };
     // always-on overall bounds (posed, like viewer.frameTo)
     const boundsList = meshes.map(([, m]) => {
       if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
@@ -147,68 +161,131 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
       return { min: [b.min.x, b.min.y, b.min.z], max: [b.max.x, b.max.y, b.max.z] };
     });
     const u = unionBounds(boundsList);
-    // Overall anchors are in the meshes' PARENT frame (bounds composed with
-    // mesh.matrix above), so project through the parent's world transform —
-    // in the live viewer that carries the pivot rotation + recentring.
-    const parent = meshes[0][1].parent ?? null;
-    items.push({ id: "overall", tier: "static", spec: bboxSpec(u.min, u.max), project: projectorFor(parent, rect) });
+    items.push({
+      id: "overall", tier: "static", spec: bboxSpec(u.min, u.max),
+      meshes: meshes.map((_, i) => i),
+    });
     const { view } = getContext();
-    pins.list(view).forEach((key, i) => {
-      const live = resolvePin(key, i);
+    pins.list(view).forEach((key) => {
+      const live = resolvePin(key);
       if (!live) return; // dormant
-      const id = `pin:${key.subPart}:${key.featureLabel ?? "bbox"}:${key.occurrence}`;
+      const meshIndex = meshes.findIndex(([n]) => n === key.subPart);
       items.push({
-        id, tier: "pinned", pinned: true, spec: live.spec, project: projectorFor(live.mesh, rect),
+        id: `pin:${key.subPart}:${key.featureLabel ?? "bbox"}:${key.occurrence}`,
+        tier: "pinned", pinned: true,
+        spec: transformSpec(live.spec, live.mesh.matrix),
+        meshes: meshIndex >= 0 ? [meshIndex] : [],
         paramName: linkFor(key.subPart, live.spec), _key: key,
       });
     });
-    // Rebind against THIS pass's rect: hover.item's own projector was created
-    // at hover time (in hitToHover), independent of any buildItems call, so
-    // without this it would re-measure getBoundingClientRect per anchor on
-    // every render while hovering — the hottest path in the mode.
-    if (hover) items.push({ ...hover.item, project: projectorFor(hover.mesh, rect) });
-    return items;
+    if (hover) {
+      const meshIndex = meshes.findIndex(([n]) => n === hover.subPart);
+      items.push({
+        ...hover.item,
+        spec: transformSpec(hover.item.spec, hover.mesh.matrix),
+        meshes: meshIndex >= 0 ? [meshIndex] : [],
+      });
+    }
+    return { items, meshes, bounds: u };
   }
 
-  function renderNow() {
-    if (!enabled || !overlay) return;
-    const rect = viewer.domElement.getBoundingClientRect();
-    const viewport = { width: rect.width, height: rect.height };
-    prevLayout = layout(buildItems(rect), viewport, prevLayout);
-    overlay.render(prevLayout, viewport);
+  // ---- placement environment + rebuild -------------------------------------
+  let choices = {};
+  let lastItems = [];          // for label-pick resolution + cheap re-scoring
+  let lastBounds = null;
+  const _rc = new THREE.Raycaster();
+  const _origin = new THREE.Vector3();
+  const _dir = new THREE.Vector3();
+  const _camLocal = new THREE.Vector3();
+
+  function partsParent(meshes) { return meshes[0]?.[1].parent ?? null; }
+
+  // Everything dim3-place needs from the live scene, expressed in the parts
+  // frame: raw vertex arrays + their pose matrices, a surface raycast (parts
+  // frame in, parts frame out) and the camera position.
+  function buildEnv(meshes) {
+    const parent = partsParent(meshes);
+    parent?.updateWorldMatrix(true, false);
+    const meshData = meshes.map(([, m]) => ({
+      positions: m.geometry.getAttribute("position").array,
+      matrix: m.matrix,
+    }));
+    const hittable = meshes.map(([, m]) => m);
+    for (const m of hittable) m.updateWorldMatrix(true, false);
+    const surfaceHit = (origin, dir) => {
+      if (!parent) return null;
+      _origin.copy(origin).applyMatrix4(parent.matrixWorld);
+      _dir.copy(dir).transformDirection(parent.matrixWorld);
+      _rc.set(_origin, _dir);
+      const hit = _rc.intersectObjects(hittable, false)[0];
+      return hit ? parent.worldToLocal(hit.point.clone()) : null;
+    };
+    const camPos = parent
+      ? _camLocal.copy(viewer.camera.position).applyMatrix4(parent.matrixWorld.clone().invert()).toArray()
+      : viewer.camera.position.toArray();
+    return { meshData, surfaceHit, camPos };
+  }
+
+  const centerOf = (bounds) => [
+    (bounds.min[0] + bounds.max[0]) / 2,
+    (bounds.min[1] + bounds.max[1]) / 2,
+    (bounds.min[2] + bounds.max[2]) / 2,
+  ];
+
+  function rebuild() {
+    if (!enabled || !scene) return;
+    const { items, meshes, bounds } = buildItems();
+    lastItems = items;
+    lastBounds = bounds ?? null;
+    if (!items.length || !bounds) { scene.clear(); return; }
+    const env = buildEnv(meshes);
+    choices = evaluateChoices(items, { camPos: env.camPos, center: centerOf(bounds), prev: choices });
+    scene.update(placeDims(items, { meshData: env.meshData, surfaceHit: env.surfaceHit, bounds }, choices));
   }
 
   // ---- frame dirty check ---------------------------------------------------
+  // The camera is deliberately NOT part of the signature: the dims live in the
+  // scene, so an orbit re-renders them for free. All a camera move can change
+  // is WHICH side each dim is drawn on — cheap to re-score every frame
+  // (dot products + hysteresis), and only a genuine flip costs a rebuild.
   let lastSig = "";
-  // The parent (partsGroup) transform is deliberately NOT hashed here: every
-  // frameTo call site also changes the camera or a mesh's visibility/geometry
-  // (both already hashed below), so a parent-only transform change can't
-  // currently happen unobserved. A future decoupling of those must add it.
-  function frameSig() {
-    const e = viewer.camera.matrixWorld.elements;
-    let sig = `${e[0]},${e[5]},${e[10]},${e[12]},${e[13]},${e[14]},${viewer.camera.projectionMatrix.elements[0]}`;
+  function meshSig() {
+    let sig = "";
     for (const [name, m] of Object.entries(viewer._subMeshes)) {
       sig += `|${name}:${m.visible ? 1 : 0}:${m.geometry.id}:${m.matrix.elements[12]},${m.matrix.elements[13]},${m.matrix.elements[14]},${m.matrix.elements[0]},${m.matrix.elements[5]}`;
     }
     return sig;
   }
   const offFrame = viewer.onFrame(() => {
-    if (!enabled) return;
-    const sig = frameSig();
-    if (sig === lastSig) return;
-    lastSig = sig;
-    // geometry identity is part of the signature, so a regenerate lands here;
-    // visibility (e.g. a cutaway/view toggle hiding the sub-part) is hashed
-    // too but changes NOTHING else about the mesh, so the frameSig alone
-    // can't tell "regenerated" from "still the same geometry, just hidden" —
-    // check both explicitly. Either way the hovered mesh is no longer a
-    // valid target: drop the stale hover (and its highlight) and re-render.
-    const m = viewer._subMeshes[hover?.subPart];
-    if (hover && (!m || !m.visible || hover.geometry !== m.geometry)) {
-      hover = null;
-      highlight.clear();
+    if (!enabled || !scene) return;
+    const sig = meshSig();
+    if (sig !== lastSig) {
+      lastSig = sig;
+      // geometry identity is part of the signature, so a regenerate lands here;
+      // visibility (e.g. a cutaway/view toggle hiding the sub-part) is hashed
+      // too but changes NOTHING else about the mesh, so the signature alone
+      // can't tell "regenerated" from "still the same geometry, just hidden" —
+      // check both explicitly. Either way the hovered mesh is no longer a
+      // valid target: drop the stale hover (and its highlight) and re-render.
+      const m = viewer._subMeshes[hover?.subPart];
+      if (hover && (!m || !m.visible || hover.geometry !== m.geometry)) {
+        hover = null;
+        highlight?.clear();
+      }
+      rebuild();
+    } else if (lastItems.length) {
+      // cheap per-frame: has a side choice flipped?
+      const meshes = visibleMeshes();
+      const parent = partsParent(meshes);
+      if (parent && lastBounds) {
+        parent.updateWorldMatrix(true, false);
+        const camPos = viewer.camera.position.clone()
+          .applyMatrix4(parent.matrixWorld.clone().invert()).toArray();
+        const next = evaluateChoices(lastItems, { camPos, center: centerOf(lastBounds), prev: choices });
+        if (!choicesEqual(next, choices)) { choices = next; rebuild(); }
+      }
     }
-    renderNow();
+    scene.tick();
   });
 
   // ---- pointer handling (drag threshold: the click-picker idiom) -----------
@@ -225,7 +302,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
     pendingMove = null;
     hover = null;
     highlight?.clear();
-    renderNow();
+    rebuild();
   }) ?? (() => {});
 
   function hitToHover(hit) {
@@ -247,14 +324,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
       geometry: hit.mesh.geometry,
       subPart: hit.subPart,
       mesh: hit.mesh,
-      item: {
-        // Fallback projector (no shared rect) for a caller that reads
-        // hover.item directly, outside a buildItems(rect) pass; buildItems
-        // itself rebinds against the shared rect below so the hottest path
-        // (continuous hover) doesn't call getBoundingClientRect per anchor.
-        id: "hover", tier: "hover", spec, project: projectorFor(hit.mesh),
-        paramName: linkFor(hit.subPart, spec),
-      },
+      // spec stays in the mesh's own frame here; buildItems poses it.
+      item: { id: "hover", tier: "hover", spec, paramName: linkFor(hit.subPart, spec) },
     };
   }
 
@@ -277,45 +348,39 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
         hover = null;
         highlight.clear();
       }
-      renderNow();
+      rebuild();
     });
   }
-  const onLeave = (ev) => {
-    if (overlay?.element.contains(ev.relatedTarget)) return; // into the overlay ≠ leaving
-    hover = null; highlight?.clear(); renderNow();
-  };
+  const onLeave = () => { hover = null; highlight?.clear(); rebuild(); };
 
   function togglePin(key, paramName) {
     const { view } = getContext();
     const added = pins.toggle(view, key);
     if (added && paramName) revealParam?.(paramName);
     notifyPins();
-    renderNow();
+    rebuild();
   }
 
+  // Label pick first, then geometry: a dimension's text plane is a real object
+  // in the scene, so clicking it must un-pin (or pin the hovered dim) rather
+  // than fall through to whatever surface sits behind it.
   function onClick(ev) {
     const wasDragged = drag.consumeClick();
     if (!enabled || wasDragged) return;
+    const labelId = scene?.pickLabel(ev.clientX, ev.clientY);
+    if (labelId) {
+      if (labelId === "hover") {
+        if (hover) togglePin(hover.key, hover.item.paramName);
+        return;
+      }
+      const item = lastItems.find((i) => i.id === labelId);
+      if (item?._key) togglePin(item._key, null); // toggling off: no reveal
+      return;
+    }
     const hit = raycastViewer(viewer, ev.clientX, ev.clientY);
     if (!hit) return;
     const h = hitToHover(hit);
     togglePin(h.key, h.item.paramName);
-  }
-
-  // Chip click: the overlay hands back the STRUCTURED item id (never the
-  // primitive's own dim id, which may itself contain colons if a
-  // Solid.label() does — parsing that back into an item id would collide).
-  // Pinned chips resolve by exact item-id equality; the hover chip pins
-  // itself. buildItems() here measures its own rect once (same contract as
-  // renderNow), independent of whatever pass last rendered.
-  function onChipClick(itemId) {
-    if (itemId === "hover") {
-      if (hover) togglePin(hover.key, hover.item.paramName);
-      return;
-    }
-    const rect = viewer.domElement.getBoundingClientRect();
-    const pinItem = prevLayout && buildItems(rect).find((i) => i.id === itemId);
-    if (pinItem?._key) togglePin(pinItem._key, null); // toggling off: no reveal
   }
 
   const dom = viewer.domElement;
@@ -326,22 +391,22 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
   dom.addEventListener("pointerleave", onLeave);
   dom.addEventListener("click", onClick);
 
+  const offTheme = viewer.onThemeChange?.((mode) => { scene?.setTheme(mode); rebuild(); }) ?? (() => {});
+
   function setEnabled(on) {
     if (detached || on === enabled) return;
     enabled = !!on;
     if (enabled) {
-      // overlay lives in the canvas's positioned ancestor (the stage)
-      overlay ??= createDimOverlay(viewer.stageElement ?? dom.parentElement, { onChipClick });
+      scene ??= createDimScene(viewer);
       highlight ??= createFeatureHighlight(viewer);
-      overlay.setVisible(true);
       lastSig = "";
-      renderNow();
+      rebuild();
     } else {
       hover = null;
       highlight?.clear();
-      overlay?.setVisible(false);
-      overlay?.clear();
-      prevLayout = null;
+      scene?.clear();
+      lastItems = [];
+      lastBounds = null;
     }
     notifyMode();
   }
@@ -352,18 +417,18 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
     clearPins() {
       pins.clear(getContext().view);
       notifyPins();
-      renderNow();
+      rebuild();
     },
     pinCount: () => pins.count(getContext().view),
     onPinsChange: (cb) => { pinListeners.add(cb); return () => pinListeners.delete(cb); },
     onModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
-    getOverlaySvg: () => (enabled && overlay ? overlay.element : null),
     detach() {
       if (detached) return;
       detached = true;
       enabled = false;
       offFrame();
       unsubscribeHandleHover();
+      offTheme();
       dom.removeEventListener("pointermove", onMove);
       dom.removeEventListener("pointerdown", drag.onDown);
       dom.removeEventListener("pointerup", drag.onUp);
@@ -371,7 +436,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParam, getPa
       dom.removeEventListener("pointerleave", onLeave);
       dom.removeEventListener("click", onClick);
       highlight?.dispose();
-      overlay?.dispose();
+      scene?.dispose();
       pinListeners.clear();
       modeListeners.clear();
     },
