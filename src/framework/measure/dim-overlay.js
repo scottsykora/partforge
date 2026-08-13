@@ -15,7 +15,7 @@ function svgEl(tag, attrs) {
 }
 
 export function createDimOverlay(container, { onChipClick } = {}) {
-  const svg = svgEl("svg", { class: "pf-dim-overlay", "aria-hidden": "false" });
+  const svg = svgEl("svg", { class: "pf-dim-overlay" });
   container.appendChild(svg);
 
   // One delegated listener pair instead of per-chip listeners (chips are

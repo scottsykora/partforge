@@ -372,6 +372,10 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-dim-chip.kind-offscreen .pf-dim-chip-bg {
   fill: var(--pf-surface); stroke: var(--pf-border); stroke-width: 1;
 }
+/* a linked chip stays the loud one even when it collapses to an edge chip */
+.pf-dim-chip.linked.kind-offscreen .pf-dim-chip-bg {
+  stroke: var(--pf-accent);
+}
 .pf-dim-chip:focus-visible { outline: none; }
 .pf-dim-chip:focus-visible .pf-dim-chip-bg { stroke: var(--pf-accent); stroke-width: 2; }
 

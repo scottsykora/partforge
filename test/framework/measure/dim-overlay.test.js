@@ -59,3 +59,15 @@ test("re-render replaces content; clear empties; setVisible toggles hidden", () 
   expect(overlay.element.hasAttribute("hidden")).toBe(true);
   overlay.dispose();
 });
+
+test("a linked offscreen chip carries both classes", () => {
+  const host = document.createElement("div");
+  const overlay = createDimOverlay(host);
+  overlay.render({ lines: [], arrows: [], labels: [
+    { id: "p:0", text: "⌀8.00", x: 2, y: 2, w: 60, h: 16, tier: "pinned", kind: "offscreen", paramName: "bore_d", pinned: true },
+  ] }, { width: 100, height: 50 });
+  const chip = overlay.element.querySelector("g.pf-dim-chip");
+  expect(chip.classList.contains("linked")).toBe(true);
+  expect(chip.classList.contains("kind-offscreen")).toBe(true);
+  overlay.dispose();
+});
