@@ -894,23 +894,33 @@ function segmentIntersect(p1, p2, p3, p4) {
 // the common case) dropped so the wraparound edge lands exactly on the real final segment
 // instead of a spurious zero-length "closing" edge — that phantom edge would otherwise
 // break index-adjacency between the first and last real edges (they'd no longer be ±1
-// apart). ownerFor(i) reports the ORIGINAL segmentIndex that produced edge i's target
-// vertex; an open contour's synthetic wraparound edge (start not reached by any real
-// segment) is tagged with the synthetic index contour.segments.length, matching
-// profileNearestPoint's convention for paper's own synthesized closing curve.
+// apart). `verts` (used for area/containment, where a repeated or missing point is
+// immaterial) keeps every sample; `edges` (used for self-intersection) additionally DROPS
+// any zero-length edge, wherever it falls — a duplicate consecutive point anywhere in the
+// contour (not just at the closing seam) would otherwise widen the index-gap between its
+// two genuinely-adjacent neighbors past the ±1 rule, so they'd be tested against each other
+// and "cross" at the shared vertex they both already touch. Each surviving edge keeps the
+// ORIGINAL segmentIndex that produced its target vertex; an open contour's synthetic
+// wraparound edge (start not reached by any real segment) is tagged with the synthetic
+// index contour.segments.length, matching profileNearestPoint's convention for paper's own
+// synthesized closing curve.
 function contourLoop(contour) {
   const samples = sampleForValidation(contour);
   const N = samples.length;
   const V = [[contour.start[0], contour.start[1]], ...samples.map((s) => s.p)];
   const closed = N > 0 && ptDist(V[N], V[0]) < DEGENERATE_EPS;
   const verts = closed ? V.slice(0, N) : V;
-  const n = verts.length;
-  const ownerFor = (localI) => {
-    const targetIdx = (localI + 1) % n;
-    if (targetIdx === 0) return closed ? samples[N - 1].segmentIndex : contour.segments.length;
-    return samples[targetIdx - 1].segmentIndex;
-  };
-  return { verts, n, ownerFor, samples };
+  const m = verts.length;
+  const rawEdges = [];
+  for (let i = 0; i < m; i++) {
+    const targetIdx = (i + 1) % m;
+    const segmentIndex = targetIdx === 0
+      ? (closed ? samples[N - 1].segmentIndex : contour.segments.length)
+      : samples[targetIdx - 1].segmentIndex;
+    rawEdges.push({ a: verts[i], b: verts[targetIdx], segmentIndex });
+  }
+  const edges = rawEdges.filter((e) => ptDist(e.a, e.b) >= DEGENERATE_EPS);
+  return { verts, samples, edges };
 }
 
 // Flattened outer-then-holes-per-region list, contourIndex running across ALL regions —
@@ -934,12 +944,10 @@ function flattenForValidation(regions) {
 function selfIntersectionInRegion(contours) {
   const edges = [];
   for (const c of contours) {
-    for (let i = 0; i < c.loop.n; i++) {
-      edges.push({
-        a: c.loop.verts[i], b: c.loop.verts[(i + 1) % c.loop.n],
-        contourIndex: c.contourIndex, localIndex: i, n: c.loop.n, segmentIndex: c.loop.ownerFor(i),
-      });
-    }
+    const n = c.loop.edges.length;
+    c.loop.edges.forEach((e, i) => {
+      edges.push({ a: e.a, b: e.b, contourIndex: c.contourIndex, localIndex: i, n, segmentIndex: e.segmentIndex });
+    });
   }
   const issues = [], flagged = new Set();
   if (edges.length < 2) return { issues, flagged };
@@ -980,9 +988,10 @@ function selfIntersectionInRegion(contours) {
         if (!pt) continue;
         const first = eI.contourIndex <= eJ.contourIndex ? eI : eJ;
         const other = first === eI ? eJ : eI;
+        const crossSuffix = other.contourIndex === first.contourIndex ? "" : ` (or crosses contour ${other.contourIndex})`;
         issues.push({
           type: "self-intersection", contourIndex: first.contourIndex, segmentIndex: first.segmentIndex, point: pt,
-          message: `contour ${first.contourIndex} self-intersects (or crosses contour ${other.contourIndex}) near (${pt[0].toFixed(4)}, ${pt[1].toFixed(4)})`,
+          message: `contour ${first.contourIndex} self-intersects${crossSuffix} near (${pt[0].toFixed(4)}, ${pt[1].toFixed(4)})`,
         });
         flagged.add(eI.contourIndex); flagged.add(eJ.contourIndex);
       }
