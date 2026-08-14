@@ -582,3 +582,135 @@ export function filletProfile(input, r, opts) {
 export function chamferProfile(input, dist, opts) {
   return applyCornerOp(input, dist, opts, "chamferProfile", false);
 }
+
+// ── Queries (Task 8) ─────────────────────────────────────────────────────────
+// Arc-length queries (length/pointAt/tangentAt) only make sense on a single open/closed
+// contour, not a multi-ring region — liftProfile's "points"/"contour" kinds are the two
+// bare-contour shapes; everything else (region/regions) is rejected with a pointer to the
+// per-ring accessors. All three route through paper.js for exact curve arc-length.
+function singleContour(input, fnName) {
+  const { kind, regions } = liftProfile(input);
+  if (kind !== "points" && kind !== "contour")
+    throw new Error(`${fnName}: pass a single contour (use region.outer / region.holes[i])`);
+  return regions[0].outer;
+}
+
+function lengthToParam(path, opts, fnName) {
+  if (opts && Number.isFinite(opts.t)) return opts.t * path.length;
+  if (opts && Number.isFinite(opts.length)) return Math.min(path.length, Math.max(0, opts.length));
+  throw new Error(`${fnName}: pass a finite {t} or {length}`);
+}
+
+export function profileLength(input) {
+  const contour = singleContour(input, "profileLength");
+  const scope = paperScope();
+  try {
+    return toPaperPath(scope, contour).length;
+  } finally {
+    scope.project.clear();
+  }
+}
+
+export function profilePointAt(input, opts) {
+  const contour = singleContour(input, "profilePointAt");
+  const scope = paperScope();
+  try {
+    const path = toPaperPath(scope, contour);
+    const len = lengthToParam(path, opts, "profilePointAt");
+    const pt = path.getPointAt(len);
+    return [pt.x, pt.y];
+  } finally {
+    scope.project.clear();
+  }
+}
+
+export function profileTangentAt(input, opts) {
+  const contour = singleContour(input, "profileTangentAt");
+  const scope = paperScope();
+  try {
+    const path = toPaperPath(scope, contour);
+    const len = lengthToParam(path, opts, "profileTangentAt");
+    const tan = path.getTangentAt(len);
+    return [tan.x, tan.y];
+  } finally {
+    scope.project.clear();
+  }
+}
+
+export function profileNearestPoint(input, [x, y]) {
+  const { regions } = liftProfile(input);
+  const scope = paperScope();
+  try {
+    let best = null;
+    let contourIndex = 0;
+    for (const rg of regions) {
+      for (const contour of [rg.outer, ...rg.holes]) {
+        const segMap = [];
+        const path = toPaperPath(scope, contour, segMap);
+        const loc = path.getNearestLocation(new scope.Point(x, y));
+        if (!best || loc.distance < best.distance) {
+          best = {
+            point: [loc.point.x, loc.point.y],
+            distance: loc.distance,
+            contourIndex,
+            segmentIndex: segMap[loc.index],
+            t: loc.time,
+          };
+        }
+        contourIndex++;
+      }
+    }
+    return best;
+  } finally {
+    scope.project.clear();
+  }
+}
+
+export function profileBounds(input) {
+  const { regions } = liftProfile(input);
+  const scope = paperScope();
+  try {
+    let min = null, max = null;
+    for (const rg of regions) {
+      for (const contour of [rg.outer, ...rg.holes]) {
+        const b = toPaperPath(scope, contour).bounds;
+        const lo = [b.left, b.top], hi = [b.right, b.bottom];
+        min = min ? [Math.min(min[0], lo[0]), Math.min(min[1], lo[1])] : lo;
+        max = max ? [Math.max(max[0], hi[0]), Math.max(max[1], hi[1])] : hi;
+      }
+    }
+    return { min, max };
+  } finally {
+    scope.project.clear();
+  }
+}
+
+export function profileArea(input) {
+  const { regions } = liftProfile(input);
+  const scope = paperScope();
+  try {
+    let area = 0;
+    for (const rg of regions) {
+      area += Math.abs(toPaperPath(scope, rg.outer).area);
+      for (const h of rg.holes) area -= Math.abs(toPaperPath(scope, h).area);
+    }
+    return area;
+  } finally {
+    scope.project.clear();
+  }
+}
+
+export function profileContains(input, [x, y]) {
+  const { regions } = liftProfile(input);
+  const scope = paperScope();
+  try {
+    const point = new scope.Point(x, y);
+    return regions.some((rg) => {
+      const children = [rg.outer, ...rg.holes].map((c) => toPaperPath(scope, c));
+      const compound = new scope.CompoundPath({ children, insert: false, fillRule: "evenodd" });
+      return compound.contains(point);
+    });
+  } finally {
+    scope.project.clear();
+  }
+}
