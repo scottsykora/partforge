@@ -120,6 +120,22 @@ function toContour(path) {
   return out;
 }
 
+// Open-path counterpart to toContour: every segment is a real curve of the path (no
+// wrap-around, no implicit-close skip) — for readback of paths built with {open: true}.
+function toOpenContour(path) {
+  const segs = path.segments;
+  const start = [segs[0].point.x, segs[0].point.y];
+  const out = { start, segments: [] };
+  for (let i = 0; i < segs.length - 1; i++) {
+    const a = segs[i], b = segs[i + 1];
+    const straight = a.handleOut.isZero() && b.handleIn.isZero();
+    const to = [b.point.x, b.point.y];
+    if (straight) out.segments.push({ to });
+    else out.segments.push({ to, c1: [a.point.x + a.handleOut.x, a.point.y + a.handleOut.y], c2: [b.point.x + b.handleIn.x, b.point.y + b.handleIn.y] });
+  }
+  return out;
+}
+
 // Group while paths are still Paper geometry. Path.area includes cubic handles and
 // interiorPoint is guaranteed to lie inside the curve; never reduce curves to endpoint rings.
 function groupPaperPaths(paths) {
@@ -139,4 +155,4 @@ function groupPaperPaths(paths) {
   }));
 }
 
-export { paperScope, toContour, groupPaperPaths };
+export { paperScope, toContour, toOpenContour, groupPaperPaths };

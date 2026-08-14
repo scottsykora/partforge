@@ -1,6 +1,6 @@
 import { isPathContour, tessellateContour } from "./profile.js";
 import { ringArea } from "./shape2d-regions.js";
-import { arcToCubicSegments, arcCenterAndSweep, paperScope, toPaperPath } from "./paper-bridge.js";
+import { arcToCubicSegments, arcCenterAndSweep, paperScope, toPaperPath, toContour, toOpenContour } from "./paper-bridge.js";
 
 const WINDING_SEGS = 64;   // tessellation LOD for orientation/containment sampling
 
@@ -581,6 +581,117 @@ export function filletProfile(input, r, opts) {
 
 export function chamferProfile(input, dist, opts) {
   return applyCornerOp(input, dist, opts, "chamferProfile", false);
+}
+
+// ── simplifyProfile (Task 9) ─────────────────────────────────────────────────
+// Corner-preserving decimation/refit: split each contour at its corners (contourCorners,
+// SMOOTH_JOINT_DEG), then reduce each run independently, and reassemble. Corner points are
+// always bit-exact preserved — a run's endpoints are the corners bounding it.
+//
+// A run is only cheaply "line-only" when EVERY point in it is exactly collinear with its
+// neighbors (the walk below drops every interior vertex) — that's the common polygon case
+// (extra waypoints along an otherwise-straight edge) and stays bit-exact, no paper involved.
+// A line-typed run that does NOT fully collapse (an over-segmented, smoothly-curving
+// polyline — every joint below SMOOTH_JOINT_DEG so none of it split off into its own
+// corner, but never exactly straight either) falls through to the same paper refit as a
+// run that already contains a real arc/cubic segment. Arcs come back as cubics after paper's
+// fit (paper has no arc primitive) — a "points"/"contour" input that gains cubics upgrades
+// to a contour on restore (restoreProfile's existing curves-introduced check, same mechanism
+// applyCornerOp relies on for corner ops).
+function mergeCollinearRun(points) {
+  const out = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const p0 = out[out.length - 1], p1 = points[i], p2 = points[i + 1];
+    const v1 = [p1[0] - p0[0], p1[1] - p0[1]], v2 = [p2[0] - p1[0], p2[1] - p1[1]];
+    const cross = v1[0] * v2[1] - v1[1] * v2[0];
+    const mag1 = Math.hypot(v1[0], v1[1]), mag2 = Math.hypot(v2[0], v2[1]);
+    if (Math.abs(cross) < 1e-9 * mag1 * mag2) continue;   // exactly collinear — drop p1
+    out.push(p1);
+  }
+  out.push(points[points.length - 1]);
+  return out;
+}
+
+// paper's Path#simplify() fits only through the path's EXISTING anchor points (paper's
+// PathFitter reads path._segments directly, never samples along existing curves) — handed a
+// sparse, already-curved path (e.g. one authored arc segment) it fits a curve through just
+// the two endpoints, which degenerates toward their straight chord. flatten() first samples
+// the true curve into a dense polyline so simplify() has real shape to fit against; its own
+// tolerance is a small fraction of the caller's so flattening error never dominates the fit.
+function flattenThenSimplify(path, tolerance) {
+  path.flatten(Math.max(tolerance / 20, 1e-6));
+  path.simplify(tolerance);
+}
+
+// Refit an open run (from `from` through `segs`, the run's OWN segments — real arcs/cubics
+// preserved, never flattened to their endpoints) via paper's simplify; pin the exact corner
+// coordinate back onto the last anchor (paper may nudge endpoints during the fit) and return
+// the run's replacement segments.
+function refitRunViaPaper(scope, from, segs, tolerance) {
+  const sub = { start: from, segments: segs };
+  const path = toPaperPath(scope, sub, null, { open: true });
+  flattenThenSimplify(path, tolerance);
+  const out = toOpenContour(path);
+  const lastTo = segs[segs.length - 1].to;
+  out.segments[out.segments.length - 1].to = [lastTo[0], lastTo[1]];
+  return out.segments;
+}
+
+// One corner-to-corner run: `from`/segs describe it (segs[i] runs pts[i]->pts[i+1], pts[0]
+// === from). Pure-line runs get an exact collinear-merge attempt first; only a run that
+// doesn't fully collapse to its two endpoints (i.e. it isn't really straight) falls through
+// to paper. A run with any real curve segment (arc/cubic) always goes straight to paper,
+// with its original curve data intact (never flattened to a chord first).
+function simplifyRun(scope, from, segs, tolerance) {
+  const allLines = segs.every((s) => !s.c1 && !s.via);
+  if (allLines) {
+    const pts = [from, ...segs.map((s) => s.to)];
+    const merged = mergeCollinearRun(pts);
+    if (merged.length === 2) return [{ to: [merged[1][0], merged[1][1]] }];   // exactly straight
+    return refitRunViaPaper(scope, from, merged.slice(1).map((p) => ({ to: p })), tolerance);
+  }
+  return refitRunViaPaper(scope, from, segs, tolerance);
+}
+
+function simplifyContour(scope, contour, tolerance) {
+  const corners = contourCorners(contour);
+  if (corners.length === 0) {
+    // Cornerless (smooth closed loop): simplify as ONE closed path — toPaperPath's default
+    // (open: false) already closes it (path.closed = true) so paper fits smoothly across
+    // the seam instead of treating the start point as a free open endpoint.
+    const path = toPaperPath(scope, contour);
+    flattenThenSimplify(path, tolerance);
+    return toContour(path);
+  }
+  const n = contour.segments.length;
+  const startIdx = corners[0].index;
+  const pts0 = [contour.start, ...contour.segments.map((s) => s.to)];   // length n+1, pts0[n] === contour.start
+  const segs = [...contour.segments.slice(startIdx), ...contour.segments.slice(0, startIdx)];
+  const pts = [];
+  for (let i = 0; i <= n; i++) pts.push(pts0[(startIdx + i) % n]);      // rotated to start at the first corner
+  const rotatedCornerIdx = corners.map((c) => (c.index - startIdx + n) % n);   // ascending, [0] === 0
+
+  const segments = [];
+  for (let j = 0; j < rotatedCornerIdx.length; j++) {
+    const r0 = rotatedCornerIdx[j];
+    const r1 = j + 1 < rotatedCornerIdx.length ? rotatedCornerIdx[j + 1] : n;
+    segments.push(...simplifyRun(scope, pts[r0], segs.slice(r0, r1), tolerance));
+  }
+  return { start: [pts[0][0], pts[0][1]], segments };
+}
+
+export function simplifyProfile(input, tolerance) {
+  const { kind, regions } = liftProfile(input);
+  const scope = paperScope();
+  try {
+    const out = regions.map((rg) => ({
+      outer: simplifyContour(scope, rg.outer, tolerance),
+      holes: rg.holes.map((h) => simplifyContour(scope, h, tolerance)),
+    }));
+    return restoreProfile(kind, out);
+  } finally {
+    scope.project.clear();
+  }
 }
 
 // ── Queries (Task 8) ─────────────────────────────────────────────────────────
