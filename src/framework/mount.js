@@ -346,6 +346,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     if (onPick) {
       picker = attachPicker(viewer, {
         part, getContext,
+        // Measure mode claims canvas clicks for pinning dimensions, so while it
+        // is on a click must not ALSO select-and-flash (hosts turn picks into
+        // chat chips — one click was doing both). Same idea as the hover
+        // suppression above, but pull-based: checked per click, nothing to
+        // resync on mode changes. The ?pick/?pickserver harnesses below are
+        // deliberately not guarded — one is armed by an explicit dev toggle,
+        // the other per agent request.
+        suppressed: () => measureMode.isEnabled(),
         onPick: (selection) => onPick({
           selection,
           label: selection.feature?.label ?? part.parts[selection.subPart]?.label ?? selection.subPart,

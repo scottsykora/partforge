@@ -6,13 +6,19 @@ import { createDragTracker } from "./drag-tracker.js";
 
 export { worldToSubPartLocal };
 
-export function attachPicker(viewer, { part, getContext, onPick }) {
+// `suppressed` is an optional pull-based guard checked per click, for a caller
+// whose suppression condition lives elsewhere (mount passes measure mode's
+// isEnabled): while it returns true a click neither raycasts, flashes, nor
+// picks — no resync bookkeeping the way an event-driven setActive would need.
+export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
   let active = false;
   const drag = createDragTracker();
 
   function onClick(ev) {
+    // consumeClick() first, unconditionally — the drag tracker is stateful and
+    // a suppressed click must still clear its just-dragged flag.
     const wasDragged = drag.consumeClick();
-    if (!active || wasDragged) return;
+    if (!active || wasDragged || suppressed?.()) return;
     const hit = raycastViewer(viewer, ev.clientX, ev.clientY);
     if (!hit) return;
     const selection = resolveSelection(part, getContext(), hit);
