@@ -10,6 +10,8 @@
 // adapted from paper.js Segments to the partforge contour IR.
 import { arcCenterAndSweep } from "./paper-bridge.js";
 import { cubicAt, splitCubic, jointTangents, SMOOTH_JOINT_DEG } from "./contour-ops.js";
+import { tessellateContour } from "./profile.js";
+import { ringArea, pointInRing } from "./shape2d-regions.js";
 
 export const OFFSET_TOL = 1e-3;   // mm — max deviation of a cubic offset approximation
 const MAX_DEPTH = 12;             // cubic subdivision recursion cap
@@ -149,4 +151,49 @@ export function _offsetContour(contour, delta, corners) {
   if (dist(last.to, start) <= JOIN_EPS) last.to = [start[0], start[1]];  // snap the closure exactly
   else out.push({ to: [start[0], start[1]] });
   return { contour: { start, segments: out }, dirty };
+}
+
+const VALIDATE_SEGS = 32;
+const AREA_EPS = 1e-9;
+
+function segsCross(a1, a2, b1, b2) {
+  const o = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
+  const o1 = o(a1, a2, b1), o2 = o(a1, a2, b2), o3 = o(b1, b2, a1), o4 = o(b1, b2, a2);
+  return o1 !== o2 && o3 !== o4 && o1 !== 0 && o2 !== 0 && o3 !== 0 && o4 !== 0; // strict crossings only
+}
+
+function ringSelfIntersects(ring) {
+  const m = ring.length;
+  for (let i = 0; i < m; i++) for (let j = i + 2; j < m; j++) {
+    if (i === 0 && j === m - 1) continue;                  // adjacent via wraparound
+    if (segsCross(ring[i], ring[(i + 1) % m], ring[j], ring[(j + 1) % m])) return true;
+  }
+  return false;
+}
+
+function ringsCross(a, b) {
+  for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++)
+    if (segsCross(a[i], a[(i + 1) % a.length], b[j], b[(j + 1) % b.length])) return true;
+  return false;
+}
+
+// True when a raw offset result is already valid (fast path). Sampled at VALIDATE_SEGS.
+export function validateRawOffset(regions) {
+  const sampled = regions.map((rg) => ({
+    outer: tessellateContour(rg.outer, VALIDATE_SEGS),
+    holes: rg.holes.map((h) => tessellateContour(h, VALIDATE_SEGS)),
+  }));
+  const allRings = [];
+  for (const rg of sampled) {
+    if (ringArea(rg.outer) <= AREA_EPS) return false;                  // flipped or collapsed outer
+    for (const h of rg.holes) {
+      if (ringArea(h) >= -AREA_EPS) return false;                      // flipped or collapsed hole
+      if (!pointInRing(h[0], rg.outer)) return false;                  // hole escaped its outer
+    }
+    allRings.push(rg.outer, ...rg.holes);
+  }
+  for (const r of allRings) if (ringSelfIntersects(r)) return false;
+  for (let i = 0; i < allRings.length; i++) for (let j = i + 1; j < allRings.length; j++)
+    if (ringsCross(allRings[i], allRings[j])) return false;
+  return true;
 }

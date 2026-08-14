@@ -55,9 +55,9 @@ describe("cubic offset", () => {
   });
 });
 
-import { _offsetContour } from "../src/framework/geometry/contour-offset.js";
+import { _offsetContour, validateRawOffset } from "../src/framework/geometry/contour-offset.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
-import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
+import { ringArea, pointInRing } from "../src/framework/geometry/shape2d-regions.js";
 
 const sq = (s) => ({ start: [0, 0], segments: [{ to: [s, 0] }, { to: [s, s] }, { to: [0, s] }, { to: [0, 0] }] });
 const area = (c) => ringArea(tessellateContour(c, 256));
@@ -99,5 +99,25 @@ describe("offsetContour", () => {
     const { contour } = _offsetContour(tri, 1, "chamfer");
     // every corner contributes exactly one extra line: 3 edges + 3 chamfer chords
     expect(contour.segments.filter((s) => !s.via && !s.c1).length).toBe(6);
+  });
+});
+
+describe("validateRawOffset", () => {
+  const ring = (pts) => ({ start: pts[0], segments: [...pts.slice(1), pts[0]].map((p) => ({ to: p })) });
+  test("accepts a clean square with a hole", () => {
+    expect(validateRawOffset([{ outer: ring([[0, 0], [10, 0], [10, 10], [0, 10]]),
+      holes: [ring([[4, 4], [4, 6], [6, 6], [6, 4]])] }])).toBe(true);
+  });
+  test("rejects a self-intersecting (butterfly) ring", () => {
+    expect(validateRawOffset([{ outer: ring([[0, 0], [10, 10], [10, 0], [0, 10]]), holes: [] }])).toBe(false);
+  });
+  test("rejects a flipped (CW) outer", () => {
+    expect(validateRawOffset([{ outer: ring([[0, 0], [0, 10], [10, 10], [10, 0]]), holes: [] }])).toBe(false);
+  });
+  test("rejects crossing rings", () => {
+    expect(validateRawOffset([
+      { outer: ring([[0, 0], [10, 0], [10, 10], [0, 10]]), holes: [] },
+      { outer: ring([[5, 5], [15, 5], [15, 15], [5, 15]]), holes: [] },
+    ])).toBe(false);
   });
 });
