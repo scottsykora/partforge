@@ -51,8 +51,10 @@ have gone unbuilt for three consecutive rebinds.
 
 `KernelCapabilityError` is a *routing signal*, not a failure: partforge's geometry-free
 probe (`probe.js`) runs `build` against a fake kernel, and any use of an `OCCT_ONLY_OPS`
-op routes the whole part to a B-rep-class kernel. A host with only a core kernel must
-surface the error ("this part needs a B-rep backend") rather than swallow it.
+op **on a Solid handle** routes the whole part to a B-rep-class kernel (the probe tracks
+handle kinds, so the same names on a `Shape2D` — shared pure JS, backend-identical — do
+not route). A host with only a core kernel must surface the error ("this part needs a
+B-rep backend") rather than swallow it.
 
 ## Global semantics
 

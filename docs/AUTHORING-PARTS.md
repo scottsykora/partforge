@@ -2034,8 +2034,11 @@ s = s.chamfer({ d: 1, edges: { inPlane: "XY", at: 0 } }); // bevel the base
 See `src/parts/filleted-box.js` for the worked example.
 
 **Automatic backend selection.** Before building, the framework runs a geometry-free *probe*
-of your `build` to see whether it uses a CAD-only op, and routes accordingly — Manifold for
-everything else (so sweep-heavy parts, e.g. helical grooves, stay fast). Force it with
+of your `build` to see whether it uses a CAD-only op **on a Solid**, and routes accordingly —
+Manifold for everything else (so sweep-heavy parts, e.g. helical grooves, stay fast). The
+probe tracks which handle kind each op ran on, so `Shape2D.fillet`/`.chamfer` (the shared,
+backend-identical 2-D implementations — see "Editing profiles") do *not* route a part to
+OCCT: rounding a profile before extruding keeps you on fast Manifold. Force the backend with
 `meta.backend: "occt" | "manifold"` if you ever need to. Because an OCCT part is built
 entirely on OCCT, its fillets are exact in the STEP **and** present in the printed STL.
 

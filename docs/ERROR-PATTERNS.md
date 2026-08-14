@@ -52,8 +52,8 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 ## probe-routed-to-occt
 
 - **Symptom:** A part builds far slower than expected (preview takes seconds instead of milliseconds), and the worker logs show it running on the `occt` worker.
-- **Cause:** The geometry-free probe runs `build` against a recording proxy (dummy query values), and a `fillet`/`chamfer`/`shell` call it reaches — including a branch the real build wouldn't take, since queries return dummies — routes the whole part to OCCT.
-- **Fix:** Remove the CAD-only call the probe reaches unnecessarily, or force the backend with `meta.backend: "manifold"` (or `"occt"`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Fillet & chamfer (automatic OCCT backend)".
+- **Cause:** The geometry-free probe runs `build` against a recording proxy (dummy query values), and a **Solid** `fillet`/`chamfer`/`shell` call it reaches — including a branch the real build wouldn't take, since queries return dummies — routes the whole part to OCCT. (`Shape2D.fillet`/`.chamfer` are the shared pure-JS implementation and do **not** route; the probe tracks which handle kind an op ran on.)
+- **Fix:** Remove the CAD-only call the probe reaches unnecessarily, or force the backend with `meta.backend: "manifold"` (or `"occt"`). If the rounding is on a 2-D profile, `Shape2D.fillet` before extruding keeps the part on Manifold. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Fillet & chamfer (automatic OCCT backend)".
 
 ## fillet-chamfer-many-edges-slow
 

@@ -16,10 +16,13 @@ export function detectBackend(part, params = {}) {
   // regen (after the busy spinner goes up). Probe with an empty `d`; the worker
   // build hits the same throw and posts a proper error for the UI.
   try { d = resolveDerived(part, p); } catch { /* fall through with d = {} */ }
-  const { kernel, used } = createProbeKernel();
+  const { kernel, solidUsed } = createProbeKernel();
   for (const name of Object.keys(part.parts)) {
     try { part.parts[name].build(kernel, p, d); } catch { /* probe miss → capability backstop covers it */ }
   }
-  for (const op of used) if (OCCT_ONLY.has(op)) return "occt";
+  // solidUsed, not used: `Shape2D.fillet`/`.chamfer` are the shared pure-JS
+  // implementation (backend-identical) and must not drag a part onto OCCT — only
+  // the same names called on a Solid are CAD-only.
+  for (const op of solidUsed) if (OCCT_ONLY.has(op)) return "occt";
   return "manifold";
 }

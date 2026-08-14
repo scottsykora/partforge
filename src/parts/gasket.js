@@ -6,17 +6,10 @@
 // rounded with `.fillet(…, { corners: "convex" })`, the bolt holes cut, an optional
 // print-clearance offset applied, and the whole profile extruded.
 //
-// No `meta.backend` override: the geometry-free probe records the *op name* "fillet"
-// regardless of whether it ran on a Solid or a Shape2D (see
-// ERROR-PATTERNS.md#probe-routed-to-occt), so this build auto-routes to OCCT even
-// though `Shape2D.fillet` is the same backend-identical implementation either way
-// (KERNEL-CONTRACT.md "One shared implementation"). Forcing `meta.backend: "manifold"`
-// would dodge that and preview faster, but the lint rule that catches an OCCT-only
-// *Solid* op under a forced Manifold backend (`manifold-backend-uses-occt-op`) has the
-// same op-name blind spot and would then misreport this part as broken — so this part
-// takes the OCCT route and stays lint-clean. test/gasket-part.test.js still builds it
-// directly against a Manifold kernel (bypassing detectBackend/lint entirely), since
-// the two backends produce the same profile.
+// No `meta.backend` override needed: the probe tracks which handle kind an op ran
+// on, so this build's `Shape2D.fillet` (backend-identical pure JS — KERNEL-CONTRACT.md
+// "One shared implementation") does not read as a CAD-only op, and the part
+// auto-routes to fast Manifold like any other non-B-rep part.
 import { pathProfile, circleProfile } from "partforge/geometry";
 
 // Pure dimension math shared with test/gasket-part.test.js, which re-derives the same
@@ -104,15 +97,14 @@ export default {
     },
   },
   views: { gasket: { label: "Gasket" } },
-  // `holes` is Manifold-only topology (ERROR-PATTERNS.md#occt-holes-watertight-na),
-  // and this part auto-routes to OCCT (no meta.backend override — see the module
-  // comment), so the gate stays on the two facts that hold on both backends;
-  // test/gasket-part.test.js's genus() === 2 check covers the hole count directly
-  // against a Manifold build instead.
+  // Now that Shape2D.fillet no longer routes the part to OCCT, this builds on
+  // Manifold and can gate `holes` directly (Manifold-only topology —
+  // ERROR-PATTERNS.md#occt-holes-watertight-na); test/gasket-part.test.js's
+  // genus() === 2 check pins the same fact against a directly-booted kernel.
   verify: {
     process: "fdm-pla",
     expect: {
-      gasket: { bbox: "<=[60,50,6]" },
+      gasket: { bbox: "<=[60,50,6]", holes: 2 },
       _view: { overlaps: 0 },
     },
   },
