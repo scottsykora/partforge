@@ -9,16 +9,71 @@ function paperScope() {
   return _scope;
 }
 
+// Circular arc through (p0, via, to) → cubic Bézier segments, ≤90° each, endpoints
+// exact. Same circumcircle + sweep-direction recovery as profile.js's sampleArc
+// (the sweep is the one passing through `via`); each piece uses the standard
+// k = (4/3)·tan(θ/4) control-point offset. Collinear triple → straight segment.
+export function arcToCubicSegments(p0, via, to) {
+  const [ax, ay] = p0, [bx, by] = via, [cx, cy] = to;
+  const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+  if (Math.abs(d) < 1e-12) return [{ to: [cx, cy] }];
+  const sa = ax*ax + ay*ay, sb = bx*bx + by*by, sc = cx*cx + cy*cy;
+  const ux = (sa * (by - cy) + sb * (cy - ay) + sc * (ay - by)) / d;
+  const uy = (sa * (cx - bx) + sb * (ax - cx) + sc * (bx - ax)) / d;
+  const r = Math.hypot(ax - ux, ay - uy);
+  const a0 = Math.atan2(ay - uy, ax - ux);
+  const av = Math.atan2(by - uy, bx - ux);
+  const a1 = Math.atan2(cy - uy, cx - ux);
+  const twoPi = 2 * Math.PI;
+  const ccw = (x) => { let v = x % twoPi; if (v < 0) v += twoPi; return v; };
+  const dCCW = ccw(a1 - a0), vCCW = ccw(av - a0);
+  const dA = vCCW <= dCCW ? dCCW : dCCW - twoPi;
+  // Handle floating-point precision: angles very close to π/2 boundaries
+  const pieces = Math.max(1, Math.ceil((Math.abs(dA) - 1e-9) / (Math.PI / 2)));
+  const out = [];
+  for (let i = 0; i < pieces; i++) {
+    const t0 = a0 + dA * (i / pieces), t1 = a0 + dA * ((i + 1) / pieces);
+    const dt = t1 - t0, k = (4 / 3) * Math.tan(dt / 4);
+    const P = (t) => [ux + r * Math.cos(t), uy + r * Math.sin(t)];
+    const s = P(t0), e = P(t1);
+    out.push({
+      to: e,
+      c1: [s[0] - k * r * Math.sin(t0), s[1] + k * r * Math.cos(t0)],
+      c2: [e[0] + k * r * Math.sin(t1), e[1] - k * r * Math.cos(t1)],
+    });
+  }
+  out[out.length - 1].to = [cx, cy];   // pin the exact endpoint
+  return out;
+}
+
 export function toPaperPath(scope, contour, segMap = null) {
   const path = new scope.Path({ insert: false });
   path.moveTo(new scope.Point(contour.start[0], contour.start[1]));
+  let prev = contour.start;
   contour.segments.forEach((s, i) => {
-    if (s.c1) path.cubicCurveTo(
-      new scope.Point(s.c1[0], s.c1[1]),
-      new scope.Point(s.c2[0], s.c2[1]),
-      new scope.Point(s.to[0], s.to[1]));
-    else path.lineTo(new scope.Point(s.to[0], s.to[1]));
-    if (segMap) segMap.push(i);
+    if (s.via) {
+      // Expand {to,via} arc into cubic segments, all sharing one segMap entry
+      const cubics = arcToCubicSegments(prev, s.via, s.to);
+      for (const cubic of cubics) {
+        path.cubicCurveTo(
+          new scope.Point(cubic.c1[0], cubic.c1[1]),
+          new scope.Point(cubic.c2[0], cubic.c2[1]),
+          new scope.Point(cubic.to[0], cubic.to[1]));
+        if (segMap) segMap.push(i);
+      }
+      prev = s.to;
+    } else if (s.c1) {
+      path.cubicCurveTo(
+        new scope.Point(s.c1[0], s.c1[1]),
+        new scope.Point(s.c2[0], s.c2[1]),
+        new scope.Point(s.to[0], s.to[1]));
+      if (segMap) segMap.push(i);
+      prev = s.to;
+    } else {
+      path.lineTo(new scope.Point(s.to[0], s.to[1]));
+      if (segMap) segMap.push(i);
+      prev = s.to;
+    }
   });
   path.closePath();
   return path;
