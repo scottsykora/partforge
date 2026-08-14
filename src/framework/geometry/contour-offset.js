@@ -150,6 +150,12 @@ export function _offsetContour(contour, delta, corners) {
   // that never reflected, and "fixing" those by un-trimming produces over-inclusive geometry
   // instead of the correct, already-exact Task 1-4 result. So: only act when ALL plain-line
   // pieces agree; when some but not all do, this is a normal partial trim — leave it alone.
+  // Critically, "the whole ring" means EVERY piece of the ring, not just its line pieces: a
+  // ring where lines are a minority (a mostly-arc disc with a small tab, say) can have every
+  // one of its few line pieces reverse while the ring as a whole is nowhere near collapsed —
+  // requiring lineReversals.length === n makes this a genuine whole-ring predicate again. An
+  // all-arc ring that truly collapses is still caught downstream: offsetArc already marks
+  // rNew<0 / fully-collapsed arcs dirty, routing to cleanup instead of a false fast-path pass.
   const lineReversals = [];
   for (let i = 0; i < n; i++) {
     const p = pieces[i];
@@ -158,7 +164,7 @@ export function _offsetContour(contour, delta, corners) {
     const newDir = sub(p.segments[0].to, p.start);
     lineReversals.push(dot(newDir, origDir) <= 0);
   }
-  if (lineReversals.length > 0 && lineReversals.every(Boolean)) return { contour: null, dirty: true };
+  if (lineReversals.length === n && n > 0 && lineReversals.every(Boolean)) return { contour: null, dirty: true };
 
   const out = [];
   for (let i = 0; i < n; i++) {

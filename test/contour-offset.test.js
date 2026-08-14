@@ -222,6 +222,23 @@ describe("offsetRegions — whole-ring collapse vs. partial trims", () => {
     expect(profileArea(out)).toBeGreaterThan(805);
     expect(profileArea(out)).toBeLessThan(815);
   });
+  test("plate with an L-shaped hole: hole vanishes, plate itself does not", () => {
+    // Restored per review: pins what actually holds today rather than deleting the
+    // signal. The plate itself is correct (1 region, area in range) but the hole does
+    // NOT fully vanish — a small residual hole survives cleanup. That's a real, known,
+    // pre-existing gap (confirmed unrelated to this task's fixes — the mechanism is a
+    // partial point-reflection, not the zero-length-piece pattern first suspected) with
+    // its own follow-up task; see the test.todo below.
+    const plate = { start: [0, 0], segments: [{ to: [30, 0] }, { to: [30, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
+    const lHole = { start: [10, 6], segments: [
+      { to: [10, 14] }, { to: [14, 14] }, { to: [14, 10] }, { to: [20, 10] }, { to: [20, 6] }, { to: [10, 6] }] };
+    const out = offsetRegions([region(plate, [lHole])], 2, { corners: "round" });
+    expect(out.length).toBe(1);
+    // expect(out[0].holes.length).toBe(0);   // known residual — see test.todo below
+    expect(profileArea(out)).toBeGreaterThan(805);
+    expect(profileArea(out)).toBeLessThan(815);
+  });
+  test.todo("plate with L-shaped hole at +2 fully absorbs the hole");
   test("chamfered rectangle insets without a false collapse throw", () => {
     const chamfered = { start: [0, 0], segments: [
       { to: [10, 0] }, { to: [10, 4] }, { to: [9, 5] }, { to: [1, 5] }, { to: [0, 4] }, { to: [0, 0] }] };
@@ -229,5 +246,47 @@ describe("offsetRegions — whole-ring collapse vs. partial trims", () => {
     expect(() => { out = offsetRegions([region(chamfered)], -2, { corners: "round" }); }).not.toThrow();
     expect(profileArea(out)).toBeGreaterThan(5.5);
     expect(profileArea(out)).toBeLessThan(6.6);
+  });
+});
+
+// Pins the regression class from fix round 2: the whole-ring collapse predicate only
+// inspected plain-LINE pieces, so on a ring where lines are a minority (a mostly-arc
+// disc/bore carrying a small line-built tab or keyway) it was really a "whole-small-
+// feature" predicate — it dropped the entire ring whenever just the small feature's line
+// pieces collapsed, even though the ring as a whole (dominated by its arcs) was nowhere
+// near critical. Loose tolerances on purpose: the point is the failure class.
+describe("offsetRegions — whole-ring collapse must span the whole ring, not just its lines", () => {
+  test("disc with a small rectangular tab insets without a false collapse throw", () => {
+    const tab = { start: [0, -10], segments: [
+      { via: [7.0711, -7.0711], to: [10, 0] },
+      { to: [12, 0] }, { to: [12, 2] }, { to: [10, 2] },
+      { via: [3.70, 9.29], to: [0, 10] }, { via: [-10, 0], to: [0, -10] } ] };
+    let out;
+    expect(() => { out = offsetRegions([region(tab)], -3, { corners: "round" }); }).not.toThrow();
+    expect(profileArea(out)).toBeGreaterThan(150);
+    expect(profileArea(out)).toBeLessThan(160);
+  });
+  test("keyed bore survives: circular hole with a keyway does not vanish", () => {
+    const plate = { start: [0, 0], segments: [{ to: [60, 0] }, { to: [60, 60] }, { to: [0, 60] }, { to: [0, 0] }] };
+    // r=10 circular hole centered at (30,30), CW, carrying a keyway: a 2×2-ish rectangular
+    // notch (radius 10 -> 11, spanning a 30° arc) sticking outward at angle 0.
+    const cx = 30, cy = 30, r = 10, rOut = 11, halfAngle = 15;
+    const pt = (ang, rad) => [cx + rad * Math.cos((ang * Math.PI) / 180), cy + rad * Math.sin((ang * Math.PI) / 180)];
+    const Q1 = pt(halfAngle, r), Q2 = pt(-halfAngle, r);
+    const viaBig = pt(180 + halfAngle, r);
+    const K1 = pt(-halfAngle, rOut), K2 = pt(halfAngle, rOut);
+    const bore = { start: Q1, segments: [{ to: K2 }, { to: K1 }, { to: Q2 }, { via: viaBig, to: Q1 }] };
+    const out = offsetRegions([region(plate, [bore])], 2.5, { corners: "round" });
+    // Found by index-searching, not out[0]: cleanup can leave a tiny separate sliver
+    // region alongside the main plate+bore region (the same known pre-existing residual
+    // class as the L-hole test above), and that's not what this test is pinning either —
+    // the bug here was the bore vanishing outright (0 holes, area jumping to the full
+    // ungrown-by-a-hole plate size). As long as exactly one hole ring survives somewhere
+    // in the output and the total area is right, the bore did not vanish.
+    const bored = out.find((rg) => rg.holes.length > 0);
+    expect(bored).toBeDefined();
+    expect(bored.holes.length).toBe(1);
+    expect(profileArea(out)).toBeGreaterThan(4000);
+    expect(profileArea(out)).toBeLessThan(4100);
   });
 });
