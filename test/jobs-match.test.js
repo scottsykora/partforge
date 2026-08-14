@@ -145,4 +145,19 @@ describe("inspect job match scoring", () => {
     });
     expect("match" in report).toBe(false);
   });
+
+  // The exact message partforge-cloud's requestReport has always sent: no `view` at
+  // all, meaning "the default". buildView has no view default (viewSubParts returns []
+  // for an unknown view without erroring), so before jobs.js defaulted the view
+  // itself, this message built an EMPTY view: measure reported zero subparts and a
+  // [0,0,0] bbox, match scored nothing, and verify still passed — every consumer
+  // degraded silently. Regression-pinned on the wire shape, not on internals.
+  test("an inspect with no view measures and scores the default view (the cloud's wire shape)", async () => {
+    const report = await inspect({ view: undefined, matchTargets: [{ kind: "profile", rings: spacerRings() }] });
+
+    expect(report.measure.subparts.length).toBeGreaterThan(0);
+    expect(report.measure.aggregate.volume).toBeGreaterThan(0);
+    expect(report.match).toHaveLength(1);
+    expect(report.match[0].best.iou).toBeGreaterThan(0.9);
+  });
 });
