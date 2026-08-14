@@ -192,7 +192,10 @@ export function profileTangentAt(contour: Contour, opts: { t: number } | { lengt
  * The closest point on `input` to `[x, y]` — the pick-resolution primitive.
  * Accepts regions (unlike the arc-length queries above); `contourIndex`/
  * `segmentIndex` follow the same flattened outer-then-holes-per-region order
- * `validateProfile` uses.
+ * `validateProfile` uses. `t` is normalized 0..1, but for a `{to, via}` arc
+ * segment (expanded internally into ≤90° cubic pieces that share one
+ * `segmentIndex`) it is local to whichever piece the nearest point landed
+ * on, not a position along the arc's full sweep.
  */
 export function profileNearestPoint(
   input: ProfileInput,

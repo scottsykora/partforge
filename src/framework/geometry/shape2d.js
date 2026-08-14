@@ -12,6 +12,7 @@ import { assembleRegions } from "./shape2d-regions.js";
 import { tessellateContour } from "./profile.js";
 import { booleanRegions } from "./paper-bridge.js";
 import { h } from "./solid-hash.js";
+import { closeContourGap } from "./profile.js";
 import {
   liftProfile, ensureRegionWinding, translateProfile, rotateProfile, scaleProfile,
   mirrorProfile, filletProfile, chamferProfile, simplifyProfile, profileCorners,
@@ -60,7 +61,13 @@ export function makeShape2dFactory({ segs, offsetRegions, extrude, revolve }) {
       cut:       (o) => make(booleanRegions(regions, liftRegions(o), "subtract")),
       cutAll:    (os) => make(os.reduce((acc, o) => booleanRegions(acc, liftRegions(o), "subtract"), regions)),
       intersect: (o) => make(booleanRegions(regions, liftRegions(o), "intersect")),
-      offset:    (delta, opts = {}) => make(offsetRegions(regions, delta, opts)),
+      // offsetRegions is the one backend hook feeding straight into make() — it doesn't route
+      // through liftRegions, so unlike every other op here nothing already guaranteed its
+      // rings are explicitly closed. Both backends' readbacks close explicitly today, so this
+      // is a no-op in practice; it's here so the storage invariant (every stored ring
+      // explicitly closed — see closeContourGap's own comment) holds unconditionally.
+      offset:    (delta, opts = {}) => make(offsetRegions(regions, delta, opts)
+        .map((rg) => ({ outer: closeContourGap(rg.outer), holes: rg.holes.map(closeContourGap) }))),
       area:      () => profileArea(regions),
       boundingBox: () => profileBounds(regions),
       toRegions: () => assembleRegions(regions.flatMap((rg) =>

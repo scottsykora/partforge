@@ -50,3 +50,18 @@ test("chamfer emits straight cuts and shrinks area by 4·d²/2", () => {
 test("empty selector match throws", () => {
   expect(() => filletProfile(sq, 1, { corners: "concave" })).toThrow(/no corner matched/);
 });
+
+test("a per-corner radius array without a {corners: {indices}} selector throws", () => {
+  expect(() => filletProfile(sq, [3, 1.5])).toThrow(
+    /filletProfile: a per-corner radius array requires a \{corners: \{indices\}\} selector/,
+  );
+  expect(() => chamferProfile(sq, [3, 1.5], { corners: "convex" })).toThrow(
+    /chamferProfile: a per-corner radius array requires a \{corners: \{indices\}\} selector/,
+  );
+});
+
+test("a per-corner radius array whose length mismatches {indices} throws", () => {
+  expect(() => filletProfile(sq, [1, 2, 3], { corners: { indices: [0, 1] } })).toThrow(
+    /filletProfile: per-corner radius array has 3 entries but \{indices\} has 2/,
+  );
+});

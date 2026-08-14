@@ -74,3 +74,13 @@ test("a clean arc-based contour validates ok", () => {
   const ct = { start: [0, 0], segments: [{ to: [10, 0], via: [5, 5] }, { to: [0, 0] }] };
   expect(validateProfile(ct)).toEqual({ ok: true, issues: [] });
 });
+
+test("an all-NaN contour reports ok:false instead of silently passing", () => {
+  const ct = { start: [NaN, NaN], segments: [
+    { to: [NaN, NaN] }, { to: [NaN, NaN] }, { to: [NaN, NaN] }, { to: [NaN, NaN] },
+  ] };
+  const r = validateProfile(ct);
+  expect(r.ok).toBe(false);
+  expect(r.issues.length).toBeGreaterThan(0);
+  expect(r.issues.every((i) => i.type === "degenerate" && /non-finite/.test(i.message))).toBe(true);
+});

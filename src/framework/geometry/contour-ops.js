@@ -201,12 +201,17 @@ export function profileCorners(input) {
 // broadcasts the scalar to every match. Throws when nothing matches.
 function resolveCornerSelector(corners, param, opts, label) {
   const sel = (opts && opts.corners) ?? "all";
+  const isArrayParam = Array.isArray(param);
+  if (isArrayParam && !(sel && Array.isArray(sel.indices)))
+    throw new Error(`${label}: a per-corner radius array requires a {corners: {indices}} selector`);
   let picked;
   if (sel === "all") picked = corners.map((corner) => ({ corner, param }));
   else if (sel === "convex") picked = corners.filter((c) => c.convex).map((corner) => ({ corner, param }));
   else if (sel === "concave") picked = corners.filter((c) => !c.convex).map((corner) => ({ corner, param }));
   else if (sel && Array.isArray(sel.indices)) {
-    const perCorner = Array.isArray(param) ? param : null;
+    const perCorner = isArrayParam ? param : null;
+    if (perCorner && perCorner.length !== sel.indices.length)
+      throw new Error(`${label}: per-corner radius array has ${perCorner.length} entries but {indices} has ${sel.indices.length}`);
     picked = sel.indices
       .map((idx, j) => ({ corner: corners[idx], param: perCorner ? perCorner[j] : param }))
       .filter((p) => p.corner);
@@ -1003,6 +1008,20 @@ export function validateProfile(input) {
     f.contour.segments.forEach((seg, si) => {
       if (segmentDegenerate(from, seg))
         issues.push({ type: "degenerate", contourIndex: f.contourIndex, segmentIndex: si, message: `contour ${f.contourIndex} segment ${si} is degenerate (near-zero length)` });
+      from = seg.to;
+    });
+  }
+
+  // 1a'. Non-finite coordinates (NaN/±Infinity) anywhere in a contour's start/segment
+  // points/controls. Every other check below is arithmetic comparisons against NaN, which
+  // are always false — so without this sweep a contour with e.g. a NaN corner radius baked
+  // into it would silently validate ok:true instead of surfacing the bad geometry.
+  for (const f of flat) {
+    let from = f.contour.start;
+    f.contour.segments.forEach((seg, si) => {
+      const pts = [from, seg.to, seg.via, seg.c1, seg.c2].filter(Boolean);
+      if (pts.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1])))
+        issues.push({ type: "degenerate", contourIndex: f.contourIndex, segmentIndex: si, message: `contour ${f.contourIndex} segment ${si} has non-finite coordinates` });
       from = seg.to;
     });
   }

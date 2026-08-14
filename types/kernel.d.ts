@@ -185,8 +185,8 @@ export interface Shape2D {
   translate(v: Point2): Shape2D;
   /** Rotate `deg` about `center` (default the origin). */
   rotate(deg: number, center?: Point2): Shape2D;
-  /** Uniform scale about `center` (default the origin). */
-  scale(factor: number, center?: Point2): Shape2D;
+  /** Scale about `center` (default the origin). A single `number` scales uniformly; `[sx, sy]` scales each axis independently. */
+  scale(factor: number | [number, number], center?: Point2): Shape2D;
   /** Reflect across an axis line. */
   mirror(axis: MirrorAxis2): Shape2D;
   /** Round selected corners with true arcs. `r` may be an array paired with `{ indices }`. */

@@ -4,7 +4,7 @@
 import paper from "paper/dist/paper-core.js";
 import { tessellateContour, reverseContour, closeContourGap } from "./profile.js";
 
-const WINDING_SEGS = 8;   // points/segment for the local orientation sampler below
+const ORIENT_SEGS = 8;   // points/segment for the local orientation sampler below
 
 let _scope = null;
 function paperScope() {
@@ -182,8 +182,8 @@ function shoelaceArea(ring) {
 function groupPaperPathsOriented(paths) {
   const regions = groupPaperPaths(paths);
   return regions.map(({ outer, holes }) => ({
-    outer: closeContourGap(shoelaceArea(tessellateContour(outer, WINDING_SEGS)) >= 0 ? outer : reverseContour(outer)),
-    holes: holes.map((h) => closeContourGap(shoelaceArea(tessellateContour(h, WINDING_SEGS)) < 0 ? h : reverseContour(h))),
+    outer: closeContourGap(shoelaceArea(tessellateContour(outer, ORIENT_SEGS)) >= 0 ? outer : reverseContour(outer)),
+    holes: holes.map((h) => closeContourGap(shoelaceArea(tessellateContour(h, ORIENT_SEGS)) < 0 ? h : reverseContour(h))),
   }));
 }
 

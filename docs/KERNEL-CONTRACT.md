@@ -379,7 +379,7 @@ cross-backend note below.
 | `toContours()` | The stored contour IR — `{outer, holes}[]` of `{start, segments}` contours, **curve-native and lossless** (no tessellation). Returns a deep copy, safe to mutate. |
 | `simple()` | `toRegions()` unwrapped — throws unless the result is exactly one region. |
 | `regions()` | Scission: each disjoint region as its own live `Shape2D[]` (each further boolean-able), vs `toRegions()` which returns raw `{outer, holes}` data. Goes through `toRegions()`, so the pieces are tessellated at the backend's LOD — curves do not survive scission. |
-| `translate([dx,dy])` / `rotate(deg, center?)` / `scale(f, center?)` / `mirror(axis)` | Rigid/similarity transforms on the contours (curve-preserving). `center` defaults to the origin; `axis` is `"x"`, `"y"`, or `{point, dir}`. |
+| `translate([dx,dy])` / `rotate(deg, center?)` / `scale(f\|[sx,sy], center?)` / `mirror(axis)` | Rigid/similarity transforms on the contours (curve-preserving). `center` defaults to the origin; `axis` is `"x"`, `"y"`, or `{point, dir}`. `scale`'s factor is uniform when a bare number, per-axis when `[sx,sy]`. |
 | `fillet(r, {corners?})` / `chamfer(d, {corners?})` | Round (true arcs) or bevel (straight chords) selected corners. `corners` = `"all"` (default) / `"convex"` / `"concave"` / `{indices}` / `{near, count?}`; `r`/`d` may be an array paired positionally with `{indices}`. Throws when no corner matches. |
 | `simplify(tolerance)` | Corner-preserving decimation/refit within `tolerance` mm — dense point rings become fewer segments (and refit arcs/cubics) without moving corners. |
 | `corners()` | The corner list — `{index, point, interiorAngleDeg, convex, segTypes}[]`. This positional order is what `fillet`/`chamfer`'s `{indices}` selects into. |
