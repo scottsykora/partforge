@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { paperScope, toPaperPath, toContour } from "../src/framework/geometry/paper-bridge.js";
+import { paperScope, toPaperPath, toContour, arcToCubicSegments } from "../src/framework/geometry/paper-bridge.js";
 
 test("contour → paper path → contour round-trips lines and cubics", () => {
   const scope = paperScope();
@@ -26,9 +26,7 @@ test("segMap is identity for line/cubic contours", () => {
   scope.project.clear();
 });
 
-import { arcToCubicSegments } from "../src/framework/geometry/paper-bridge.js";
-
-test("quarter-circle arc → single cubic within 1e-4 of the true circle", () => {
+test("quarter-circle arc → single cubic within precision 2", () => {
   const p0 = [10, 0], via = [Math.SQRT1_2 * 10, Math.SQRT1_2 * 10], to = [0, 10];
   const cubics = arcToCubicSegments(p0, via, to);
   expect(cubics.length).toBe(1);
@@ -74,5 +72,23 @@ test("segMap for contour with one 270° arc between two lines yields [0, 1, 1, 1
   const segMap = [];
   toPaperPath(scope, ct, segMap);
   expect(segMap).toEqual([0, 1, 1, 1, 2]);
+  scope.project.clear();
+});
+
+test("contour with collinear {to, via} segment round-trips without throwing", () => {
+  const scope = paperScope();
+  const ct = {
+    start: [0, 0],
+    segments: [
+      { to: [10, 0] },                           // line (index 0)
+      { to: [20, 0], via: [15, 0] },             // collinear arc (index 1) → straight
+      { to: [0, 0] }                             // line (index 2)
+    ]
+  };
+  const segMap = [];
+  // Should not throw when encountering collinear arc
+  const path = toPaperPath(scope, ct, segMap);
+  expect(path).toBeDefined();
+  expect(segMap).toContain(1);  // collinear arc's index must appear in segMap
   scope.project.clear();
 });

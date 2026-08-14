@@ -55,10 +55,15 @@ export function toPaperPath(scope, contour, segMap = null) {
       // Expand {to,via} arc into cubic segments, all sharing one segMap entry
       const cubics = arcToCubicSegments(prev, s.via, s.to);
       for (const cubic of cubics) {
-        path.cubicCurveTo(
-          new scope.Point(cubic.c1[0], cubic.c1[1]),
-          new scope.Point(cubic.c2[0], cubic.c2[1]),
-          new scope.Point(cubic.to[0], cubic.to[1]));
+        if (cubic.c1) {
+          path.cubicCurveTo(
+            new scope.Point(cubic.c1[0], cubic.c1[1]),
+            new scope.Point(cubic.c2[0], cubic.c2[1]),
+            new scope.Point(cubic.to[0], cubic.to[1]));
+        } else {
+          // Collinear triple: emit straight segment
+          path.lineTo(new scope.Point(cubic.to[0], cubic.to[1]));
+        }
         if (segMap) segMap.push(i);
       }
       prev = s.to;
