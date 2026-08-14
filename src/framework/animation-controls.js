@@ -249,11 +249,19 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   scrubWrap.addEventListener("pointerleave", onWrapPointerLeave);
   scrubWrap.addEventListener("pointercancel", onWrapPointerLeave);
 
+  // Late-bound hook into the placement section below (a plain call would hit
+  // the TDZ on its `let placementRaf` — setup invokes syncStructure before the
+  // placement block runs). Wired to schedulePlacement once that block exists,
+  // so a view switch that shows/hides the bar re-publishes --pf-anim-clear
+  // even where ResizeObserver is absent.
+  let onStructureChanged = null;
+
   // Per-view + per-animation chrome: which chooser shows, the picker's options,
   // title, ⓘ description, pager labels, scrubber ticks. A view with no
   // animations hides the whole bar rather than showing an empty transport.
   function syncStructure() {
     bar.style.display = current ? "" : "none";
+    onStructureChanged?.();
     hideChapterBubble();
     if (!current) return;
     const paged = animations.length > 1;
@@ -536,10 +544,20 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     bar.style.maxWidth = "";
     bar.style.overflow = "";
     bar.classList.remove("pf-squeezed");
-    const vb = viewbarEl?.getBoundingClientRect();
-    const barRect = bar.getBoundingClientRect();
-    if (!vb || barRect.top >= vb.bottom || barRect.bottom <= vb.top) return;
     const stageRect = container.getBoundingClientRect();
+    const barRect = bar.getBoundingClientRect();
+    // Publish the bar's vertical claim on the stage as --pf-anim-clear: the
+    // distance from the stage's bottom edge to the bar's top, 0px when the bar
+    // is hidden (a view with no animations). Hosts that float their own chrome
+    // at the stage's bottom-centre (partforge-cloud's status/forging stack)
+    // read it to sit above the bar instead of under it; with no bar mounted
+    // the property is never set and a var() fallback of 0px applies.
+    const clear = bar.style.display === "none"
+      ? 0
+      : Math.max(0, Math.round(stageRect.bottom - barRect.top));
+    container.style.setProperty("--pf-anim-clear", `${clear}px`);
+    const vb = viewbarEl?.getBoundingClientRect();
+    if (!vb || barRect.top >= vb.bottom || barRect.bottom <= vb.top) return;
     const plan = planAnimBarPlacement({
       stageWidth: stageRect.width,
       barWidth: barRect.width,
@@ -581,6 +599,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     placementObserver.observe(bar);
     if (viewbarEl) placementObserver.observe(viewbarEl);
   }
+  onStructureChanged = schedulePlacement; // see the hook's declaration above
   schedulePlacement();
 
   const runtime = {
@@ -662,6 +681,7 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       scrubWrap.removeEventListener("pointercancel", onWrapPointerLeave);
       hideChapterBubble(); // also clears hoverInside
       chapterBubble.remove(); // a stage child, so the bar taking itself out misses it
+      container.style.removeProperty("--pf-anim-clear"); // no bar, no claim
       bar.remove();
     },
     __viewer: viewer, // test hook only

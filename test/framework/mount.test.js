@@ -481,8 +481,34 @@ test("legacy host page: default IDs still resolve (no elements option)", () => {
   const { workers, createWorker } = makeWorkers();
   const runtime = mount(makePart(), { createWorker });
   finishFirstBuild(workers);
-  expect(document.getElementById("status").textContent).toContain("triangles");
+  // The phase text proves the default IDs resolved and were written through;
+  // the status line ends the build cleared (triangle counts go to the console).
+  expect(document.getElementById("phase").textContent).toContain("generating");
+  expect(document.getElementById("status").textContent).toBe("");
   return expect(runtime.ready).resolves.toBeUndefined();
+});
+
+test("a successful build clears the status line and logs triangles/time to the console", () => {
+  const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: els });
+  finishFirstBuild(workers, 1234);
+  expect(els.status.status.textContent).toBe("");
+  expect(debug).toHaveBeenCalledWith(expect.stringMatching(/triangles in 1\.2 s/));
+  debug.mockRestore();
+});
+
+test("a build error lands in the status line even when the view is still current", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: els });
+  finishFirstBuild(workers);
+  // Geometry is all current, so refreshView's clear runs — the failure text
+  // must be written after it, not wiped by it.
+  workers.manifold.onmessage({ data: { type: "error", message: "boom" } });
+  expect(els.status.status.textContent).toBe("failed: boom");
+  expect(els.status.status.classList.contains("err")).toBe(true);
 });
 
 test("onBuild reports success with ms, and error with the message", () => {

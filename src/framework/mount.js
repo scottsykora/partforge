@@ -453,8 +453,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       if (needed.every(isCurrent)) {
         showView(needed);
         ui.setExportEnabled(true);
-        const tris = needed.reduce((s, n) => s + viewer.subTriangles(n), 0);
-        ui.setStatus(`${tris.toLocaleString()} triangles`);
+        // The line used to read "N triangles" here; that debug readout now goes
+        // to the console (see the `meshes` case). Clearing keeps a stale
+        // "phase…" from outliving the build it described.
+        ui.setStatus("");
       } else if (needed.every((n) => viewer.hasSubMesh(n))) {
         showView(needed); // stale but present — keep it visible during regenerate
         ui.setExportEnabled(false);
@@ -498,7 +500,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             ui.hideBusy();
             refreshView();
             if (data.ms && missingParts().length === 0) {
-              ui.setStatus(`${ui.statusText()} · ${(data.ms / 1000).toFixed(1)} s`);
+              const tris = viewSubParts(part, view(), params).reduce((s, n) => s + viewer.subTriangles(n), 0);
+              console.debug(`partforge: built ${tris.toLocaleString()} triangles in ${(data.ms / 1000).toFixed(1)} s`);
             }
             dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed });
             onBuild?.({ status: "success", ms: data.ms });
@@ -545,8 +548,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         case "error":
           loop.buildDone();
           ui.hideBusy();
-          ui.setStatus(`failed: ${data.message}`, true);
+          // refreshView FIRST: its all-current branch clears the status line,
+          // so writing the failure after it keeps the message on screen.
           refreshView();
+          ui.setStatus(`failed: ${data.message}`, true);
           onBuild?.({ status: "error", error: data.message });
           if (!readySettled) { readySettled = true; rejectReady(new Error(data.message)); }
           break;
