@@ -30,6 +30,11 @@ test("radius that does not fit throws with the max that would", () => {
   expect(() => filletProfile(sq, 6)).toThrow(/corner \d+ at \(.*\): r=6 does not fit; max ≈ 5/);
 });
 
+test("an isolated corner's cap isn't halved by an unselected neighbour", () => {
+  const out = filletProfile(sq, 9, { corners: { near: [0, 0] } });
+  expect(out.segments.filter((s) => s.via).length).toBe(1);
+});
+
 test("adjacent fillets consuming one segment throw an overlap error", () => {
   const thin = [[0, 0], [3, 0], [3, 20], [0, 20]];
   expect(() => filletProfile(thin, 2)).toThrow(/overlap on segment/);

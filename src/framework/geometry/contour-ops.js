@@ -238,6 +238,7 @@ function buildCornerOpRing(contour, picks, isFillet, label) {
   const n = contour.segments.length;
   const pts = [contour.start, ...contour.segments.map((s) => s.to)].slice(0, n);
   const plans = new Map();   // vertex index -> {A, B, M, setback}
+  const selected = new Set(picks.map((p) => p.corner.index));   // this ring's selected vertex indices
 
   for (const { corner, param } of picks) {
     const i = corner.index;
@@ -250,11 +251,17 @@ function buildCornerOpRing(contour, picks, isFillet, label) {
     const cosA = Math.max(-1, Math.min(1, v0[0] * v2[0] + v0[1] * v2[1]));
     const half = Math.acos(cosA) / 2;                        // angle between the two edges, halved
     const setback = isFillet ? param / Math.tan(half) : param;
-    // Per-corner ceiling: never past either edge's own end (hard cap), and never past
-    // half the LONGER edge (soft cap — the generous split a same-setback neighbour would
-    // still leave room for). Exceeding the shorter edge's own half alone isn't fatal here;
-    // that's exactly what the segment-level overlap check below is for.
-    const maxSetback = Math.min(l0, l2, Math.max(l0, l2) / 2);
+    // Per-corner ceiling: never past either edge's own end (hard cap, always full — a
+    // tangent point can never pass an edge's own extent regardless of who else is
+    // selected), and never past half the LONGER edge's "fair share" (soft cap). The soft
+    // cap only halves an edge when its OTHER endpoint is ALSO among this operation's
+    // selected corners — an isolated corner with an unselected neighbour gets that edge's
+    // full length, since nothing else is claiming it. Exceeding one edge's fair share
+    // alone isn't fatal (soft cap uses the more generous of the two); that's exactly what
+    // the segment-level overlap check below is for.
+    const prevShared = selected.has((i - 1 + n) % n), nextShared = selected.has((i + 1) % n);
+    const softL0 = prevShared ? l0 / 2 : l0, softL2 = nextShared ? l2 / 2 : l2;
+    const maxSetback = Math.min(l0, l2, Math.max(softL0, softL2));
     if (setback > maxSetback + 1e-9) {
       const maxParam = roundNice(isFillet ? maxSetback * Math.tan(half) : maxSetback);
       const paramTxt = isFillet ? `r=${param}` : `dist=${param}`;
