@@ -1,5 +1,6 @@
 import { isPathContour, tessellateContour } from "./profile.js";
 import { ringArea } from "./shape2d-regions.js";
+import { arcToCubicSegments } from "./paper-bridge.js";
 
 const WINDING_SEGS = 64;   // tessellation LOD for orientation/containment sampling
 
@@ -57,4 +58,68 @@ export function ensureRegionWinding(region) {
     outer: contourIsCCW(region.outer) ? region.outer : reverseContour(region.outer),
     holes: region.holes.map((h) => (contourIsCCW(h) ? reverseContour(h) : h)),
   };
+}
+
+// Affine transform core: M = [a, b, c, d, tx, ty], p' = [a·x + c·y + tx, b·x + d·y + ty]
+const apply = (M, [x, y]) => [M[0] * x + M[2] * y + M[4], M[1] * x + M[3] * y + M[5]];
+const isSimilarity = (M) => {
+  const [a, b, c, d] = M;
+  return Math.abs(a * a + b * b - (c * c + d * d)) < 1e-9 && Math.abs(a * c + b * d) < 1e-9;
+};
+
+function transformContour(contour, M) {
+  const similar = isSimilarity(M);
+  const segments = [];
+  let prev = contour.start;
+  for (const s of contour.segments) {
+    if (s.via && !similar) {           // arc under a non-similarity map → cubics first
+      for (const piece of arcToCubicSegments(prev, s.via, s.to)) segments.push(piece);
+    } else segments.push(s);
+    prev = s.to;
+  }
+  return { start: apply(M, contour.start), segments: segments.map((s) => {
+    const m = { to: apply(M, s.to) };
+    if (s.via) m.via = apply(M, s.via);
+    if (s.c1) { m.c1 = apply(M, s.c1); m.c2 = apply(M, s.c2); }
+    return m;
+  }) };
+}
+
+function transformProfile(input, M) {
+  const { kind, regions } = liftProfile(input);
+  const flips = M[0] * M[3] - M[1] * M[2] < 0;
+  let out = regions.map((rg) => ({ outer: transformContour(rg.outer, M), holes: rg.holes.map((h) => transformContour(h, M)) }));
+  if (flips) {
+    out = (kind === "region" || kind === "regions")
+      ? out.map(ensureRegionWinding)
+      // bare inputs: restore the ORIGINAL orientation sense of each ring
+      : out.map((rg, i) => ({
+          outer: contourIsCCW(rg.outer) === contourIsCCW(regions[i].outer) ? rg.outer : reverseContour(rg.outer),
+          holes: rg.holes,
+        }));
+  }
+  return restoreProfile(kind, out);
+}
+
+export const translateProfile = (input, [dx, dy]) => transformProfile(input, [1, 0, 0, 1, dx, dy]);
+export function rotateProfile(input, deg, center = [0, 0]) {
+  const t = (deg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t), [cx, cy] = center;
+  return transformProfile(input, [c, s, -s, c, cx - c * cx + s * cy, cy - s * cx - c * cy]);
+}
+export function scaleProfile(input, s, center = [0, 0]) {
+  const [sx, sy] = Array.isArray(s) ? s : [s, s];
+  if (!(sx !== 0 && sy !== 0) || !Number.isFinite(sx) || !Number.isFinite(sy))
+    throw new Error("scaleProfile: scale factors must be finite and non-zero");
+  const [cx, cy] = center;
+  return transformProfile(input, [sx, 0, 0, sy, cx - sx * cx, cy - sy * cy]);
+}
+export function mirrorProfile(input, axis) {
+  if (axis === "x") return transformProfile(input, [1, 0, 0, -1, 0, 0]);
+  if (axis === "y") return transformProfile(input, [-1, 0, 0, 1, 0, 0]);
+  const { point: [px, py], dir: [ux0, uy0] } = axis;
+  const L = Math.hypot(ux0, uy0);
+  if (!(L > 0)) throw new Error('mirrorProfile: axis must be "x", "y", or {point, dir} with a non-zero dir');
+  const ux = ux0 / L, uy = uy0 / L;
+  const a = ux * ux - uy * uy, b = 2 * ux * uy;        // reflection across line through point along dir
+  return transformProfile(input, [a, b, b, -a, px - a * px - b * py, py - b * px + a * py]);
 }
