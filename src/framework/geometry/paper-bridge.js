@@ -221,4 +221,33 @@ export function booleanRegions(aRegions, bRegions, op) {
   }
 }
 
+// Self-resolve one region list: per-region self-unite resolves self-intersections and
+// winding-inverted loops inside each region; pairwise unite fold merges overlaps BETWEEN
+// regions. This two-stage approach avoids the cancellation issue of whole-list evenodd
+// self-unite (which cancelled overlapping children). Same readback and winding normalization
+// as booleanRegions. Empty result → []. NB paper has no arc primitive, so arcs return as
+// cubic approximations (arcToCubicSegments) — identical to what every boolean already does.
+export function resolveSelfRegions(regions) {
+  if (regions.length === 0) return [];
+  const scope = paperScope();
+  try {
+    let acc = null;
+    for (const rg of regions) {
+      const R = regionsToCompound(scope, [rg]);
+      const netInverted = R.area < -1e-9;
+      const r = R.unite(R, { insert: false });
+      if (netInverted && r.area > 1e-9) continue;   // collapsed/inverted region cancels
+      if (Math.abs(r.area) <= 1e-9) continue;
+      acc = acc ? acc.unite(r, { insert: false }) : r;
+    }
+    if (!acc) return [];
+    const paths = (acc.className === "CompoundPath" ? acc.children : [acc])
+      .filter((p) => p.segments && p.segments.length >= 2 && Math.abs(p.area) > 1e-9);
+    if (!paths.length) return [];
+    return groupPaperPathsOriented(paths);
+  } finally {
+    scope.project.clear();
+  }
+}
+
 export { paperScope, toContour, toOpenContour, groupPaperPaths };
