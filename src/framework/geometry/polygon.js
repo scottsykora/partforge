@@ -430,3 +430,11 @@ export function offsetPolygon(profile, delta, opts = {}) {
     throw new Error("offsetPolygon: offset result self-intersects (reduce |delta| or simplify the profile)");
   return cleaned;
 }
+
+// The 2-D editing surface (transforms, corner ops, queries, cleanup, validation) lives in
+// contour-ops.js; re-exported here so `partforge/geometry` stays the single import surface.
+export { translateProfile, rotateProfile, scaleProfile, mirrorProfile,
+  filletProfile, chamferProfile, profileCorners,
+  profileLength, profilePointAt, profileTangentAt, profileNearestPoint,
+  profileBounds, profileArea, profileContains,
+  simplifyProfile, validateProfile } from "./contour-ops.js";

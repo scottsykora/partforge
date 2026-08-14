@@ -2,11 +2,11 @@ import { helixTube } from "./helix-tube.js";
 import { loftMesh } from "./loft.js";
 import { sweepMesh } from "./sweep.js";
 import { roundedBoxRings } from "./rounded-solids.js";
-import { tessellateContour, tessellateProfile } from "./profile.js";
+import { tessellateContour, tessellateProfile, pointsToContour } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
 import { addSugar } from "./solid-sugar.js";
-import { addShape2dSugar } from "./shape2d-sugar.js";
+import { makeShape2dFactory } from "./shape2d.js";
 import { assembleRegions } from "./shape2d-regions.js";
 import { finishKernel } from "./kernel-front.js";
 import { meshToStl } from "./mesh-stl.js";
@@ -53,62 +53,69 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return { value: wrap(m, hash), pin: m, dispose: () => m.delete?.() };
   });
 
-  // 2-D cross-section value. Mirrors wrap()/cached(): booleans route through the
-  // solid cache (dispose frees the CrossSection); operands fold by _hash.
-  const cachedCS = (hash, computeCS) => cache.lookup(hash, () => {
-    const cs = computeCS();                     // already T()-tracked
-    return { value: wrapShape2d(cs, hash), pin: cs, dispose: () => cs.delete?.() };
-  });
-  const liftCS = (x) => (x && x._shape2d ? x : shape2d(x));
-  const wrapShape2d = (cs, hash) => addShape2dSugar({
-    _cs: cs,
-    _shape2d: true,
-    _hash: hash,
-    union:     (o) => { const t = liftCS(o); return cachedCS(h("union2d", hash, t._hash), () => T(cs.add(t._cs))); },
-    cut:       (o) => { const t = liftCS(o); return cachedCS(h("cut2d", hash, t._hash), () => T(cs.subtract(t._cs))); },
-    cutAll:    (os) => {
-      if (os.length === 0) return wrapShape2d(cs, hash);            // identity — no new WASM / cache entry (avoids double-free)
-      const ts = os.map(liftCS);
-      // The reducer's inner T() already tracks every step (incl. the final) — no
-      // outer T() around the reduce, or the result lands in `tracked` twice and
-      // cleanup() double-frees it. os is non-empty here, so the seed cs is never
-      // returned; the result is always a fresh subtract, never aliasing the input.
-      return cachedCS(h("cutAll2d", hash, ts.map((t) => t._hash)), () => ts.reduce((acc, t) => T(acc.subtract(t._cs)), cs));
-    },
-    intersect: (o) => { const t = liftCS(o); return cachedCS(h("intersect2d", hash, t._hash), () => T(cs.intersect(t._cs))); },
-    offset: (delta, { corners = "round", segs: nSeg = segs } = {}) => {
-      if (!["round", "chamfer", "sharp"].includes(corners))
-        throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
-      if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
-      // chamfer is a true 45° bevel — Clipper2 has no bevel join, but a Round join
-      // forced to a single chord per corner (circularSegments=4 → 1 segment per corner
-      // whose turn ≤ 90°, i.e. interior angle ≥ 90°) IS the bevel: round's tangent points
-      // are exactly the bevel's endpoints. Matches OCCT's `bevel` to float precision for
-      // interior angle ≥ 90° (square 142.0000, pentagon 298.920). At acute (<90°) convex
-      // corners Clipper2 emits 2 chords (ceil(turn/90°)), so Manifold bulges ~0.4% beyond
-      // OCCT's single-chord bevel there. round = arc at mesh LOD; sharp = miter.
-      const [joinType, cseg] = corners === "sharp" ? ["Miter", nSeg]
-        : corners === "chamfer" ? ["Round", 4]
-        : ["Round", nSeg];
-      return cachedCS(h("offset2d", hash, delta, corners, cseg), () => {
-        const out = T(cs.offset(delta, joinType, 2, cseg));       // miterLimit 2 (Clipper2 default)
-        if (out.numContour() === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
-        return out;
-      });
-    },
-    area: () => cs.area(),
-    boundingBox: () => { const r = cs.bounds(); return { min: [r.min[0], r.min[1]], max: [r.max[0], r.max[1]] }; },
-    toRegions: () => assembleRegions(cs.toPolygons()),
-    clone: () => wrapShape2d(cs, hash),
-  }, { shape2d, extrude: kernel.extrude, revolve: kernel.revolve });
-  const shape2d = (profile) => {
-    if (profile && profile._shape2d) return profile;                // idempotent
-    const hash = h("shape2d", profile, segs);
-    return cachedCS(hash, () => {
-      const { outer, holes } = tessellateProfile(profile, segs);
-      return T(CrossSection.ofPolygons([outer, ...holes], "EvenOdd"));
-    });
+  // 2-D offset logic. This is the ONE op the shared Shape2D cannot do on the
+  // contour IR itself, so it is the backend's hook into the factory below (and
+  // is also published as k._offsetRegions). resolveOffsetJoin validates corners/delta and picks
+  // Clipper2's join type + segment count:
+  // chamfer is a true 45° bevel — Clipper2 has no bevel join, but a Round join
+  // forced to a single chord per corner (circularSegments=4 → 1 segment per corner
+  // whose turn ≤ 90°, i.e. interior angle ≥ 90°) IS the bevel: round's tangent points
+  // are exactly the bevel's endpoints. Matches OCCT's `bevel` to float precision for
+  // interior angle ≥ 90° (square 142.0000, pentagon 298.920). At acute (<90°) convex
+  // corners Clipper2 emits 2 chords (ceil(turn/90°)), so Manifold bulges ~0.4% beyond
+  // OCCT's single-chord bevel there. round = arc at mesh LOD; sharp = miter.
+  const resolveOffsetJoin = (delta, corners, nSeg) => {
+    if (!["round", "chamfer", "sharp"].includes(corners))
+      throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
+    if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
+    return corners === "sharp" ? ["Miter", nSeg]
+      : corners === "chamfer" ? ["Round", 4]
+      : ["Round", nSeg];
   };
+  // Run the offset op on a T-tracked CrossSection; throws the pinned collapse message.
+  const offsetCS = (cs, delta, joinType, cseg) => {
+    const out = T(cs.offset(delta, joinType, 2, cseg));       // miterLimit 2 (Clipper2 default)
+    if (out.numContour() === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
+    return out;
+  };
+
+  // Contour-IR region list -> flat point rings at `nSeg` (outer + holes, even/odd
+  // fill sorts them out). The one place the IR meets CrossSection.ofPolygons.
+  const regionPolys = (regions, nSeg) => regions.flatMap((rg) =>
+    [tessellateContour(rg.outer, nSeg), ...rg.holes.map((hl) => tessellateContour(hl, nSeg))]);
+
+  // Region-in / region-out offset: tessellate the contour IR at `nSeg`, build a
+  // CrossSection, run the shared offset logic above, then lift the resulting point
+  // rings back into line contours via pointsToContour. This is Shape2D.offset's
+  // engine (wired into the factory below) and is also published as k._offsetRegions.
+  const offsetRegions = (regions, delta, { corners = "round", segs: nSeg = segs } = {}) => {
+    const [joinType, cseg] = resolveOffsetJoin(delta, corners, nSeg);
+    const cs = T(CrossSection.ofPolygons(regionPolys(regions, nSeg), "EvenOdd"));
+    const out = offsetCS(cs, delta, joinType, cseg);
+    return assembleRegions(out.toPolygons()).map((rg) => ({
+      outer: pointsToContour(rg.outer),
+      holes: rg.holes.map(pointsToContour),
+    }));
+  };
+
+  // 2-D boolean value: the SHARED Shape2D (shape2d.js). Storage is the curve-native
+  // contour IR and every op but `offset` runs on it in pure JS — no CrossSection is
+  // built until a shape is handed to a kernel op. `extrude`/`revolve` are thunks
+  // because `kernel` below is defined after this.
+  const shape2d = makeShape2dFactory({
+    segs,
+    offsetRegions,
+    extrude: (o) => kernel.extrude(o),
+    revolve: (o) => kernel.revolve(o),
+  });
+  // Lazy CrossSection materialization, memoized through the solid cache by content
+  // hash + LOD: the same shape extruded twice (or extruded and revolved) tessellates
+  // once, and the cache's pin/dispose keeps the WASM object alive exactly as long as
+  // the entry (cleanup() skips pinned objects).
+  const csFor = (shape) => cache.lookup(h("cs2d", shape._hash, segs), () => {
+    const cs = T(CrossSection.ofPolygons(regionPolys(shape._regions, segs), "EvenOdd"));
+    return { value: cs, pin: cs, dispose: () => cs.delete?.() };
+  });
 
   // Copy the mesh out into JS-owned arrays (so it survives cleanup) and free the
   // transient mesh handle.
@@ -270,13 +277,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       }),
     // Polygon-with-holes extrude in one op: even/odd fill turns the extra contours into
     // holes regardless of their winding (outer + holes, no per-hole boolean cut).
-    // A Shape2D `profile` (already a CrossSection, possibly multi-region) extrudes
-    // directly off its own `_cs` — no re-tessellation — and folds into the cache
-    // key by `_hash` like any other solid operand.
+    // A Shape2D `profile` (curve-native, possibly multi-region) materializes through
+    // csFor — one memoized tessellation per shape+LOD — and folds into the cache key
+    // by `_hash` like any other solid operand.
     extrude: (profile, height, { twist = 0, scaleTop = 1 } = {}) => {
       const shape = profile && profile._shape2d ? profile : null;
       return cached(h("extrude", shape ? shape._hash : profile, height, twist, scaleTop, segs), () => {
-        const cs = shape ? shape._cs : (() => {
+        const cs = shape ? csFor(shape) : (() => {
           const { outer, holes } = tessellateProfile(profile, segs);
           return T(CrossSection.ofPolygons([outer, ...holes], "EvenOdd"));
         })();
@@ -309,7 +316,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     helixSweptTube: (o) => cached(h("helixSweptTube", o, tube), () => T(helixTube(wasm, { ...o, ...tube }))),
     revolve: (pts, { degrees = 360 } = {}) => {
       if (pts && pts._shape2d)
-        return cached(h("revolve", pts._hash, degrees, segs), () => T(pts._cs.revolve(segs, degrees)));
+        return cached(h("revolve", pts._hash, degrees, segs), () => T(csFor(pts).revolve(segs, degrees)));
       return cached(h("revolve", pts, degrees, segs), () => T(Manifold.revolve([pts], segs, degrees)));
     },
     // A one-solid union is an identity — no new WASM / cache entry (avoids double-free):
@@ -319,6 +326,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       ? solids[0]
       : cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
     shape2d,
+    // Backend-internal region adapter: the same function Shape2D.offset runs on
+    // (defined above). `_`-prefixed — not part of the public kernel surface.
+    _offsetRegions: offsetRegions,
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
     sweepCache: () => cache.sweep(),

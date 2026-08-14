@@ -139,8 +139,9 @@ and runs on either backend unchanged:
   native fillet/chamfer/shell.
 
 Before building, the framework runs a **geometry-free probe** of `build` to
-detect CAD-only ops (`fillet`/`chamfer`/`shell`); if present it routes the whole
-part to OCCT, otherwise Manifold. Override with `meta.backend: "occt" |
+detect CAD-only ops (`fillet`/`chamfer`/`shell` **on a Solid** — `Shape2D`'s
+fillet/chamfer are shared pure JS and don't count); if present it routes the
+whole part to OCCT, otherwise Manifold. Override with `meta.backend: "occt" |
 "manifold"`. The two WASM kernels run in **separate Web Workers** (`name` =
 `"manifold"` / `"occt"`). See `docs/geometry-backend-strategy.md` for the why
 (OCCT booleans are about 75-1400x slower).

@@ -143,3 +143,54 @@ export function tessellateProfile(profile, segs) {
   const { outer, holes } = normalizeProfile(profile);
   return { outer: tessellateContour(outer, segs), holes: holes.map((hl) => tessellateContour(hl, segs)) };
 }
+
+// Build a straight-edged path contour from a bare point list — the canonical lift for
+// legacy [[x,y],…] inputs into the { start, segments } IR. Lives here (not contour-ops.js)
+// so paper-bridge.js can reach it without importing contour-ops (contour-ops already
+// imports paper-bridge; this module is a pure leaf both can share without a cycle).
+export function pointsToContour(points) {
+  return { start: [points[0][0], points[0][1]],
+    segments: [...points.slice(1).map((p) => ({ to: [p[0], p[1]] })), { to: [points[0][0], points[0][1]] }] };
+}
+
+// Ensure a contour's ring is EXPLICITLY closed: the last segment's `to` must coincide
+// with `start`. Several contour producers leave that closing edge only implicit —
+// paper.js's own Path#closePath() (see toContour() in paper-bridge.js, which drops a
+// straight closing edge as redundant) and any hand-authored `pathProfile(...).close()`
+// that never revisits its own start — relying on a downstream consumer (tessellation,
+// an SVG "Z") to re-synthesize the missing edge. `contourCorners`/`buildCornerOpRing`
+// (contour-ops.js) don't re-synthesize anything: they read `contour.segments` directly
+// and assume `segments[n-1]` really is the edge arriving back at `start` (corner 0's
+// "previous segment", and the wraparound neighbor for every other corner's modular
+// indexing). When that assumption is false, corner 0 gets paired with the wrong
+// segment entirely — if that segment is curved, the fillet/chamfer tangency solve
+// fails outright (`could not fit ... max ≈ 0`); if it's a line, the corner's position
+// and radius are silently miscomputed instead. Call this wherever a contour is about
+// to be stored (Shape2D regions) or handed to any contour-ops function; a no-op when
+// the ring is already closed, so it's safe to call unconditionally.
+export function closeContourGap(contour) {
+  const segs = contour.segments;
+  if (!segs || segs.length === 0) return contour;
+  const [sx, sy] = contour.start;
+  const [lx, ly] = segs[segs.length - 1].to;
+  if (Math.hypot(lx - sx, ly - sy) <= 1e-9) return contour;
+  return { start: contour.start, segments: [...segs, { to: [sx, sy] }] };
+}
+
+// Reverse a contour's traversal direction: walks segments back-to-front, swapping each
+// cubic's control points (c1 ↔ c2) and keeping `via` (an arc's through-point is
+// direction-independent). Lives here alongside pointsToContour for the same reason —
+// paper-bridge.js's booleanRegions needs it to normalize emitted winding without
+// importing contour-ops.js.
+export function reverseContour(contour) {
+  const pts = [contour.start, ...contour.segments.map((s) => s.to)];
+  const segments = [];
+  for (let i = contour.segments.length - 1; i >= 0; i--) {
+    const s = contour.segments[i];
+    const m = { to: [pts[i][0], pts[i][1]] };
+    if (s.via) m.via = [s.via[0], s.via[1]];
+    if (s.c1) { m.c1 = [s.c2[0], s.c2[1]]; m.c2 = [s.c1[0], s.c1[1]]; }
+    segments.push(m);
+  }
+  return { start: [pts[pts.length - 1][0], pts[pts.length - 1][1]], segments };
+}

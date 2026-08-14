@@ -51,8 +51,10 @@ have gone unbuilt for three consecutive rebinds.
 
 `KernelCapabilityError` is a *routing signal*, not a failure: partforge's geometry-free
 probe (`probe.js`) runs `build` against a fake kernel, and any use of an `OCCT_ONLY_OPS`
-op routes the whole part to a B-rep-class kernel. A host with only a core kernel must
-surface the error ("this part needs a B-rep backend") rather than swallow it.
+op **on a Solid handle** routes the whole part to a B-rep-class kernel (the probe tracks
+handle kinds, so the same names on a `Shape2D` — shared pure JS, backend-identical — do
+not route). A host with only a core kernel must surface the error ("this part needs a
+B-rep backend") rather than swallow it.
 
 ## Global semantics
 
@@ -328,44 +330,79 @@ build, and authors should expect all-or-nothing filleting per call, not per edge
 ## Shape2D (2-D booleans)
 
 `k.shape2d(profile)` (`KERNEL_OPS`) lifts a point list, `{outer,
-holes?}` region, or arc/curve contour into a `Shape2D` — an opaque 2-D boolean
-value. Idempotent: `shape2d(x)` returns `x`
-unchanged if `x` is already a `Shape2D`. `_`-prefixed keys are backend internals.
-Normative signatures: `kernel.js`'s `@typedef
-Shape2D`; the full public surface is `SHAPE2D_OPS`. **Both backends implement it**:
-Manifold wraps a `CrossSection` (each method returns a fresh content-hash-cached
-value, same caching/dispose discipline as `Solid`); OCCT wraps a replicad `Drawing`
-(curve-preserving, so a curved boolean survives to exact STEP — content-hashed so
-downstream `Solid` ops can key on it, but itself uncached; OCCT's `Solid` ops go
-through the same solid cache as Manifold's, with rigid transforms kept pose-lazy so
-re-posing a cached solid re-runs no B-rep work). The `kernel-front.js` `KernelCapabilityError` stub for `shape2d` is
-now a dead / future-backend safety net only (both current backends define the op),
-not an OCCT limitation.
+holes?}` region, region array, or arc/curve contour into a `Shape2D` — a 2-D
+sketch value carrying booleans, transforms, corner ops and queries. Idempotent:
+`shape2d(x)` returns `x` unchanged if `x` is already a `Shape2D`. `_`-prefixed
+keys are internals. Normative signatures: `kernel.js`'s `@typedef Shape2D`; the
+full public surface is `SHAPE2D_OPS`. The `kernel-front.js`
+`KernelCapabilityError` stub for `shape2d` is a dead / future-backend safety net
+only (both current backends define the op), not an OCCT limitation.
+
+**Contour storage.** A `Shape2D` stores a **curve-native contour IR** — a region
+list `[{outer, holes[]}]` whose contours are `{start, segments}` with line, arc
+(`{to, via}`) and cubic (`{to, c1, c2}`) segments. It is *not* a backend handle:
+no `CrossSection` and no replicad `Drawing` exists until the shape is handed to a
+kernel op. Curves therefore survive every op, on both backends — a rounded corner
+is still a circle after a union, and reaches STEP as a real `CIRCLE` entity.
+
+**One shared implementation.** `geometry/shape2d.js` implements the whole surface
+against that IR, and both backends instantiate it. Booleans run through **paper.js**
+(pure JS, curve-exact), as do the transforms, corner ops and queries — so
+`union`/`cut`/`intersect`/`cutAll`, `translate`/`rotate`/`scale`/`mirror`,
+`fillet`/`chamfer`/`simplify`, and `area`/`boundingBox`/`corners`/`contains` are
+**backend-identical**, not merely parity-tolerant. `area()` and `boundingBox()` are
+curve-exact (they integrate the real curves; they do not measure a tessellation).
+
+**Lazy materialization.** Backend geometry is built only where it is unavoidable.
+Three readbacks tessellate to point rings at the backend's own LOD (Manifold 116
+preview / 480 print, OCCT 64): `toRegions()`, `simple()` (its unwrapped form), and
+`regions()` — scission currently round-trips through `toRegions()`, so each returned
+`Shape2D` is a faceted copy, not a curve-native slice of the original. `extrude` and
+`revolve` materialize the shape into the backend's own form instead (Manifold: a
+`CrossSection`, memoized in the solid cache by content hash + LOD, so extruding the
+same shape twice tessellates once; OCCT: a fresh `Drawing` per call, drawn from the
+contours — arcs and cubics become true B-rep edges). A `Shape2D` may be passed
+directly as the `profile` to `extrude`/`revolve`, holes included. `toContours()` is
+the one readback that tessellates nothing.
+
+**Offset is the carve-out.** `offset` is the one op that cannot run on the contour
+IR, so it routes into the backend's own 2-D engine (Clipper2 via `CrossSection` on
+Manifold, replicad's `Drawing.offset` on OCCT) and its result is lifted back into the
+IR. Manifold's returns line contours at mesh LOD; OCCT's stays curve-native. See the
+cross-backend note below.
 
 | Op | Contract |
 |---|---|
-| `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). |
-| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Curve-preserving on OCCT, faceted at mesh LOD on Manifold. Throws if the offset collapses the shape. |
-| `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². |
-| `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds (no `center`/`size`, unlike `Solid.boundingBox`). |
-| `toRegions()` | Materialize into `{outer, holes}[]` region arrays (`assembleRegions`); a boolean result may be several disjoint regions. |
+| `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). Curve-exact and backend-identical (paper.js). |
+| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. The one backend-specific op: curve-preserving on OCCT, faceted at mesh LOD on Manifold. Throws if the offset collapses the shape. |
+| `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². Curve-exact. |
+| `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds, curve-exact (no `center`/`size`, unlike `Solid.boundingBox`). |
+| `toRegions()` | Materialize into `{outer, holes}[]` point-ring region arrays (`assembleRegions`), tessellating curves at the backend's LOD; a boolean result may be several disjoint regions. |
+| `toContours()` | The stored contour IR — `{outer, holes}[]` of `{start, segments}` contours, **curve-native and lossless** (no tessellation). Returns a deep copy, safe to mutate. |
 | `simple()` | `toRegions()` unwrapped — throws unless the result is exactly one region. |
-| `regions()` | Scission: each disjoint region as its own live `Shape2D[]` (each further boolean-able), vs `toRegions()` which returns raw `{outer, holes}` data. |
+| `regions()` | Scission: each disjoint region as its own live `Shape2D[]` (each further boolean-able), vs `toRegions()` which returns raw `{outer, holes}` data. Goes through `toRegions()`, so the pieces are tessellated at the backend's LOD — curves do not survive scission. |
+| `translate([dx,dy])` / `rotate(deg, center?)` / `scale(f\|[sx,sy], center?)` / `mirror(axis)` | Rigid/similarity transforms on the contours (curve-preserving). `center` defaults to the origin; `axis` is `"x"`, `"y"`, or `{point, dir}`. `scale`'s factor is uniform when a bare number, per-axis when `[sx,sy]`. |
+| `fillet(r, {corners?})` / `chamfer(d, {corners?})` | Round (true arcs) or bevel (straight chords) selected corners. `corners` = `"all"` (default) / `"convex"` / `"concave"` / `{indices}` / `{near, count?}`; `r`/`d` may be an array paired positionally with `{indices}`. Throws when no corner matches. |
+| `simplify(tolerance)` | Corner-preserving decimation/refit within `tolerance` mm — dense point rings become fewer segments (and refit arcs/cubics) without moving corners. |
+| `corners()` | The corner list — `{index, point, interiorAngleDeg, convex, segTypes}[]`. This positional order is what `fillet`/`chamfer`'s `{indices}` selects into. |
+| `contains([x,y])` | Point-in-shape test (inside an outer, not inside a hole). |
 | `extrude({h, twist?, scaleTop?})` | Sugar for `k.extrude({profile: this, …})` → `Solid`. |
 | `revolve({degrees?})` | Sugar for `k.revolve({profile: this, …})` → `Solid`. |
-| `clone()` | Independent handle. |
+| `clone()` | Independent copy. Every op returns a NEW `Shape2D`; no operand is ever mutated. |
 
 On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **for convex corners with interior angle ≥ 90°** (the common case: rectangles, hexagons, rounded-rects, pentagons, …). `chamfer` is a true 45° bevel — a straight chord across the corner — matching OCCT to float precision there (a 10×10 square offset +1 gives 142.0 on both; a pentagon 298.920 on both). Manifold has no native bevel join, so it renders `chamfer` as a Round join forced to a single chord per corner (`circularSegments=4`). **At acute (<90° interior) convex corners** — triangles, star points, V-notches — Clipper2 emits 2 chords rather than 1, so Manifold's chamfer bulges ~0.4% beyond OCCT's single-chord bevel (e.g. an equilateral triangle: Manifold 235.46 vs OCCT 234.50). `round` and `sharp` are exact across backends at every angle; prefer them, or accept the small acute-corner difference on `chamfer`.
 
-2-D boolean ops are a **parity-relevant operation**: on OCCT they carry exact circular arcs and Bézier curves; on Manifold they facet curves to mesh LOD. Measure-parity (area, bounding box) holds within the tessellation tolerance as LOD converges — this is not a parity waiver.
+`offset` is therefore **parity-relevant**: on OCCT the result carries exact arcs, on Manifold it is faceted at mesh LOD, and measure-parity holds within the tessellation tolerance as LOD converges (not a parity waiver). The three tessellating readbacks — `toRegions()`, `simple()`, `regions()` — are LOD-dependent for the same reason: they hand back point rings sampled at the backend's own segment count, so the two backends' output differs in vertex count and by the chord error, converging as LOD rises. Those four ops are the whole LOD-dependent surface; everything else is backend-identical.
 
-A `Shape2D` may be passed directly as the `profile` to `extrude` — Manifold
-extrudes its `CrossSection` directly (no re-tessellation) and OCCT extrudes its
-`Drawing` directly, including any holes it already carries.
+**Fillet after a boolean reaches STEP as real arcs.** Because booleans preserve curves
+and `fillet` inserts true arc segments, `shape2d(a).union(b).fillet(2).extrude({h})`
+exports a filleted profile as `CIRCLE` B-rep entities on OCCT — the corner op does not
+have to run before the boolean, and no facet fan is baked in along the way. (Manifold
+facets at mesh LOD, as always, since its meshes have no curve representation.)
 
 ## The 2-D helper library
 
-`partforge/geometry` ships pure-JS helpers of two kinds. The **contour builders**
+`partforge/geometry` ships pure-JS helpers of several kinds. The **contour builders**
 (`piePolygon`, `hexPolygon`, `regularPolygon`, `roundedRectPolygon`, `ellipsePolygon`,
 `slotPolygon`, `starPolygon`, `ringSectorPolygon`, `circleProfile`, `cornerArc`,
 `filletPolygon`, `roundedProfile`) are pure functions from numbers to plain CCW point
@@ -376,13 +413,53 @@ dependency at all. The **solid patterns** (`linearPattern`, `circularPattern`) t
 `{outer, holes}` region and grows or shrinks it by a delta in mm — printer-clearance
 offsetting with round/chamfer/sharp corner styles — validating its input and result and
 throwing rather than ever returning degenerate (self-intersecting or collapsed)
-geometry. All three kinds are therefore portable by construction: a host implements
-the kernel and the helpers come along unmodified. (`test/kernel-contract.test.js`
-asserts every `polygon.js` export is named here.)
+geometry. All are therefore portable by construction: a host implements the kernel and
+the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
+`polygon.js` export is named here.)
 
 - `pathProfile` — fluent builder for a curve-native path contour (`lineTo` /
   `arcTo` / `cubicTo` / `close`); cubic segments become exact B-rep on OCCT and
   facet at mesh LOD on Manifold.
+
+### 2-D editing ops
+
+The **2-D editing ops** are the free-function twins of the `Shape2D` transforms,
+corner ops and queries documented above — the same `contour-ops.js`/paper.js
+machinery, callable directly on a point list, a `{start, segments}` contour, a
+`{outer, holes}` region, or a region array, with no `shape2d()` lift required.
+Every op returns the same shape of input it was given (a bare point list stays a
+point list, upgrading to a contour only if the op introduces curves — e.g. a
+non-uniform scale on an arc). The arc-length queries are the one exception:
+being single-contour by nature, they throw on a region. The full set: `translateProfile`,
+`rotateProfile`, `scaleProfile`, `mirrorProfile`, `filletProfile`, `chamferProfile`,
+`profileCorners`, `profileLength`, `profilePointAt`, `profileTangentAt`,
+`profileNearestPoint`, `profileBounds`, `profileArea`, `profileContains`,
+`simplifyProfile`, `validateProfile`.
+
+| Group | Function | Notes |
+|---|---|---|
+| Transforms | `translateProfile(input, [dx,dy])` | exact on all segment types |
+| | `rotateProfile(input, deg, center?)` | arcs stay arcs |
+| | `scaleProfile(input, s \| [sx,sy], center?)` | non-uniform scale converts `{to,via}` arcs to cubics |
+| | `mirrorProfile(input, axis)` | `axis: "x" \| "y" \| {point, dir}` |
+| Corners | `filletProfile(input, r, opts?)` | `r` may be an array paired with `{indices}` |
+| | `chamferProfile(input, dist, opts?)` | symmetric setback, straight connector |
+| | `profileCorners(input)` | `[{index, point, interiorAngleDeg, convex, segTypes}]` |
+| Queries | `profileLength(contour)` | mm; single contour only |
+| | `profilePointAt(contour, {t} \| {length})` | single contour only |
+| | `profileTangentAt(contour, {t} \| {length})` | unit vector; single contour only |
+| | `profileNearestPoint(input, [x,y])` | `{point, distance, contourIndex, segmentIndex, t}`; accepts regions |
+| | `profileBounds(input)` | curve-exact `{min, max}` |
+| | `profileArea(input)` | outers − holes, curve-exact |
+| | `profileContains(input, [x,y])` | curve-aware containment |
+| Cleanup | `simplifyProfile(input, tolerance)` | corner-preserving decimation/refit |
+| Validation | `validateProfile(input)` | `{ok, issues}`; never throws |
+
+`filletProfile`/`chamferProfile`'s `opts.corners` selector and `profileCorners`'s
+positional order match `Shape2D.fillet`/`Shape2D.chamfer`/`Shape2D.corners`
+exactly — `CornerSelector` above applies unchanged. Mirror and negative-scale
+inputs re-normalize winding (outer CCW, holes CW) before returning, so no op can
+hand the kernel inverted regions.
 
 ## Worker rebind
 
