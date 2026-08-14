@@ -400,7 +400,7 @@ facets at mesh LOD, as always, since its meshes have no curve representation.)
 
 ## The 2-D helper library
 
-`partforge/geometry` ships pure-JS helpers of two kinds. The **contour builders**
+`partforge/geometry` ships pure-JS helpers of several kinds. The **contour builders**
 (`piePolygon`, `hexPolygon`, `regularPolygon`, `roundedRectPolygon`, `ellipsePolygon`,
 `slotPolygon`, `starPolygon`, `ringSectorPolygon`, `circleProfile`, `cornerArc`,
 `filletPolygon`, `roundedProfile`) are pure functions from numbers to plain CCW point
@@ -411,13 +411,53 @@ dependency at all. The **solid patterns** (`linearPattern`, `circularPattern`) t
 `{outer, holes}` region and grows or shrinks it by a delta in mm — printer-clearance
 offsetting with round/chamfer/sharp corner styles — validating its input and result and
 throwing rather than ever returning degenerate (self-intersecting or collapsed)
-geometry. All three kinds are therefore portable by construction: a host implements
-the kernel and the helpers come along unmodified. (`test/kernel-contract.test.js`
-asserts every `polygon.js` export is named here.)
+geometry. All are therefore portable by construction: a host implements the kernel and
+the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
+`polygon.js` export is named here.)
 
 - `pathProfile` — fluent builder for a curve-native path contour (`lineTo` /
   `arcTo` / `cubicTo` / `close`); cubic segments become exact B-rep on OCCT and
   facet at mesh LOD on Manifold.
+
+### 2-D editing ops
+
+The **2-D editing ops** are the free-function twins of the `Shape2D` transforms,
+corner ops and queries documented above — the same `contour-ops.js`/paper.js
+machinery, callable directly on a point list, a `{start, segments}` contour, a
+`{outer, holes}` region, or a region array, with no `shape2d()` lift required.
+Every op returns the same shape of input it was given (a bare point list stays a
+point list, upgrading to a contour only if the op introduces curves — e.g. a
+non-uniform scale on an arc). The arc-length queries are the one exception:
+being single-contour by nature, they throw on a region. The full set: `translateProfile`,
+`rotateProfile`, `scaleProfile`, `mirrorProfile`, `filletProfile`, `chamferProfile`,
+`profileCorners`, `profileLength`, `profilePointAt`, `profileTangentAt`,
+`profileNearestPoint`, `profileBounds`, `profileArea`, `profileContains`,
+`simplifyProfile`, `validateProfile`.
+
+| Group | Function | Notes |
+|---|---|---|
+| Transforms | `translateProfile(input, [dx,dy])` | exact on all segment types |
+| | `rotateProfile(input, deg, center?)` | arcs stay arcs |
+| | `scaleProfile(input, s \| [sx,sy], center?)` | non-uniform scale converts `{to,via}` arcs to cubics |
+| | `mirrorProfile(input, axis)` | `axis: "x" \| "y" \| {point, dir}` |
+| Corners | `filletProfile(input, r, opts?)` | `r` may be an array paired with `{indices}` |
+| | `chamferProfile(input, dist, opts?)` | symmetric setback, straight connector |
+| | `profileCorners(input)` | `[{index, point, interiorAngleDeg, convex, segTypes}]` |
+| Queries | `profileLength(contour)` | mm; single contour only |
+| | `profilePointAt(contour, {t} \| {length})` | single contour only |
+| | `profileTangentAt(contour, {t} \| {length})` | unit vector; single contour only |
+| | `profileNearestPoint(input, [x,y])` | `{point, distance, contourIndex, segmentIndex, t}`; accepts regions |
+| | `profileBounds(input)` | curve-exact `{min, max}` |
+| | `profileArea(input)` | outers − holes, curve-exact |
+| | `profileContains(input, [x,y])` | curve-aware containment |
+| Cleanup | `simplifyProfile(input, tolerance)` | corner-preserving decimation/refit |
+| Validation | `validateProfile(input)` | `{ok, issues}`; never throws |
+
+`filletProfile`/`chamferProfile`'s `opts.corners` selector and `profileCorners`'s
+positional order match `Shape2D.fillet`/`Shape2D.chamfer`/`Shape2D.corners`
+exactly — `CornerSelector` above applies unchanged. Mirror and negative-scale
+inputs re-normalize winding (outer CCW, holes CW) before returning, so no op can
+hand the kernel inverted regions.
 
 ## Worker rebind
 
