@@ -493,11 +493,26 @@ function buildCornerOpRing(contour, picks, isFillet, label) {
     plans.set(i, { A, B, M, setback });
   }
 
-  for (let k = 0; k < n; k++) {                                // overlap: sum of claims on segment k vs its length
-    const kNext = (k + 1) % n;
-    const startClaim = plans.get(k)?.setback ?? 0, endClaim = plans.get(kNext)?.setback ?? 0;
-    if (startClaim > 0 && endClaim > 0) {
+  for (let k = 0; k < n; k++) {                                // overlap: claims from BOTH ends of segment k,
+    const kNext = (k + 1) % n;                                 // from either plans (line-line) or curvePlans
+    const startPlan = plans.get(k), endPlan = plans.get(kNext);
+    const startCurve = curvePlans.get(k), endCurve = curvePlans.get(kNext);
+    if (!(startPlan || startCurve) || !(endPlan || endCurve)) continue;   // only one end claimed → no overlap possible
+    const seg = contour.segments[k];
+    if (seg.c1 || seg.via) {
+      // Curved segment: only curve corners can claim it (line-line requires both
+      // neighbors to be "line", so a curved seg is never in `plans`). Overlap ⇔
+      // the kept t-span [startCurve.tB, endCurve.tA] collapses or reverses.
+      if (endCurve.tA - startCurve.tB <= 1e-9)
+        throw new Error(`${label}: corners ${k} and ${kNext} overlap on segment ${k} (reduce r)`);
+    } else {
+      // Line segment: a curve-corner claim on it is a t-parameter (curvePlans.tB
+      // measures forward from this segment's start; curvePlans.tA forward from its
+      // start too, so the far-end claim is the remainder (1−tA)) — convert both to
+      // the same setback-distance units buildCornerOpRing's line-line plans use.
       const segLen = Math.hypot(pts[kNext][0] - pts[k][0], pts[kNext][1] - pts[k][1]);
+      const startClaim = startPlan ? startPlan.setback : startCurve.tB * segLen;
+      const endClaim = endPlan ? endPlan.setback : (1 - endCurve.tA) * segLen;
       if (startClaim + endClaim > segLen + 1e-9)
         throw new Error(`${label}: corners ${k} and ${kNext} overlap on segment ${k} (reduce r)`);
     }
