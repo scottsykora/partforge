@@ -122,8 +122,7 @@ export function _offsetContour(contour, delta, corners) {
   const pieces = segs.map((s, i) => _offsetSegment(fromsKept[i], s, delta));
   let dirty = pieces.some((p) => p.dirty);
   const n = segs.length;
-  const joins = new Array(n).fill(null);      // joins[i] bridges piece[i-1] → piece[i] at vertex i
-  const trimmed = new Array(n).fill(null);    // trimmed[i]: { aEnd, bStart } pre-trim endpoints, if corner i committed an exact line-line trim
+  const joins = new Array(n).fill(null);   // joins[i] bridges piece[i-1] → piece[i] at vertex i
 
   for (let i = 0; i < n; i++) {
     const prev = pieces[(i - 1 + n) % n], next = pieces[i];
@@ -137,43 +136,29 @@ export function _offsetContour(contour, delta, corners) {
     const aSeg = prev.segments.at(-1), bSeg = next.segments[0];
     if (!aSeg.via && !aSeg.c1 && !bSeg.via && !bSeg.c1) {
       const X = lineIntersect(aEnd, inTan, bStart, outTan);
-      if (X) { aSeg.to = X; next.start = X; trimmed[i] = { aEnd, bStart }; continue; }    // exact trim, stays clean
+      if (X) { aSeg.to = X; next.start = X; continue; }    // exact trim, stays clean
     }
     joins[i] = [{ to: bStart }]; dirty = true;
   }
 
-  // A line piece trimmed at both ends (above) can flip past its own extent when delta
-  // exceeds the local feature size — e.g. a hole/neck offsetting past its own center. The
-  // reflected result is itself a valid-looking simple ring (post-hoc self-intersection
-  // checks on the FINAL ring can't tell it apart), so this is the only point that still has
-  // the pre-offset direction to compare against: if a trimmed piece's direction reversed
-  // relative to its original segment, the exact trim overran into invalid territory. Undo
-  // it back to its pre-trim (overshooting) endpoints bridged by a chord — that restores the
-  // real self-overlapping topology for cleanup (resolveSelfRegions) to untangle, instead of
-  // silently keeping geometry that merely looks clean.
+  // Whole-ring collapse check: when delta exceeds the ring's own inradius, EVERY plain-line
+  // piece's trimmed direction reverses relative to its pre-offset direction — reflection
+  // through the collapse point preserves winding, so the reflected ring passes every other
+  // validity check there is (paper.js included: it's a genuinely simple polygon, just the
+  // wrong one). That whole-ring signal is reliable; a PER-PIECE version of it is not — it
+  // also fires on ordinary trims (acute barbs, narrow slots, non-square holes, 45° chamfers)
+  // that never reflected, and "fixing" those by un-trimming produces over-inclusive geometry
+  // instead of the correct, already-exact Task 1-4 result. So: only act when ALL plain-line
+  // pieces agree; when some but not all do, this is a normal partial trim — leave it alone.
+  const lineReversals = [];
   for (let i = 0; i < n; i++) {
     const p = pieces[i];
     if (p.segments.length !== 1 || p.segments[0].via || p.segments[0].c1) continue;
     const origDir = sub(segs[i].to, fromsKept[i]);
     const newDir = sub(p.segments[0].to, p.start);
-    if (dot(newDir, origDir) > 0) continue;                // clean, forward trim: leave it
-    dirty = true;
-    const startCorner = i, endCorner = (i + 1) % n;
-    if (trimmed[startCorner]) {
-      const { aEnd, bStart } = trimmed[startCorner];
-      pieces[(startCorner - 1 + n) % n].segments.at(-1).to = aEnd;
-      p.start = bStart;
-      joins[startCorner] = [{ to: bStart }];
-      trimmed[startCorner] = null;
-    }
-    if (trimmed[endCorner]) {
-      const { aEnd, bStart } = trimmed[endCorner];
-      p.segments[0].to = aEnd;
-      pieces[endCorner].start = bStart;
-      joins[endCorner] = [{ to: bStart }];
-      trimmed[endCorner] = null;
-    }
+    lineReversals.push(dot(newDir, origDir) <= 0);
   }
+  if (lineReversals.length > 0 && lineReversals.every(Boolean)) return { contour: null, dirty: true };
 
   const out = [];
   for (let i = 0; i < n; i++) {
@@ -255,8 +240,10 @@ export function validateRawOffset(regions) {
 
 // A raw all-line outer ring can retrace the very same edge twice, in the same direction,
 // when a narrow neck (or a hole) offsets past its own width: the two sides of the pinch
-// land exactly on top of each other (see the reversal fixup in _offsetContour for the
-// convex-corner sibling of this). That's a *valid, simple* polygon as far as paper.js is
+// land exactly on top of each other (see the whole-ring collapse check in _offsetContour
+// for the convex-corner sibling of this — same underlying reflection, reached through a
+// reflex-corner join instead of a trim, so it isn't a single collapsed ring to drop but a
+// self-touching one to cut). That's a *valid, simple* polygon as far as paper.js is
 // concerned — a zero-width slit, not a crossing — so resolveSelfRegions has nothing to
 // untangle and leaves the two halves connected. Cut the ring at each duplicate edge
 // instead: it always severs the ring into two closed sub-loops (repeat until none remain).
@@ -302,19 +289,29 @@ export function offsetRegions(regions, delta, { corners = "round" } = {}) {
   if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
   if (delta === 0) return JSON.parse(JSON.stringify(regions));
 
+  // _offsetContour signals a whole-ring collapse with contour:null (see its comment) — a
+  // dropped outer removes its whole region, a dropped hole is simply omitted. If everything
+  // drops, raw ends up [] and the "no regions survive" throw below fires naturally.
   let dirty = false;
-  const raw = regions.map((rg) => {
+  const raw = [];
+  for (const rg of regions) {
     const o = _offsetContour(closeContourGap(rg.outer), delta, corners);
+    dirty = dirty || o.dirty;
+    if (!o.contour) continue;
     const hs = rg.holes.map((h) => _offsetContour(closeContourGap(h), delta, corners));
-    dirty = dirty || o.dirty || hs.some((h) => h.dirty);
-    return { outer: o.contour, holes: hs.map((h) => h.contour) };
-  });
+    dirty = dirty || hs.some((h) => h.dirty);
+    raw.push({ outer: o.contour, holes: hs.filter((h) => h.contour).map((h) => h.contour) });
+  }
 
   let out = (!dirty && validateRawOffset(raw)) ? raw : null;
   if (!out) {
     const split = raw.length === 1 && raw[0].holes.length === 0 ? splitAtDuplicateEdges(raw[0].outer) : null;
     const recovered = split && split.map((outer) => ({ outer, holes: [] }));
-    out = recovered && validateRawOffset(recovered) ? recovered : resolveSelfRegions(raw);
+    // recovered can be [] (every split piece came back CW, i.e. a spurious artifact rather
+    // than real material) — validateRawOffset([]) is vacuously true, so an explicit length
+    // check is required or a fully-collapsed split silently short-circuits past cleanup and
+    // this throws "collapses the shape" even when resolveSelfRegions would find real area.
+    out = recovered && recovered.length > 0 && validateRawOffset(recovered) ? recovered : resolveSelfRegions(raw);
   }
   if (out.length === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
   return out;

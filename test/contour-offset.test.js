@@ -183,3 +183,51 @@ describe("offsetRegions", () => {
     expect(validateRawOffset(out)).toBe(true);             // output must be simple
   });
 });
+
+// Pins the regression class from fix round 1: a per-piece "did this trim reverse" check is
+// a LOCAL signal that also fires on ordinary, non-reflected trims (acute barbs, narrow
+// slots, non-square holes, 45° chamfers) — these are not full-ring reflections, and
+// un-trimming them produces an over-inclusive result (or a false collapse throw). Loose
+// tolerances on purpose: the point is the failure class, not exact areas.
+describe("offsetRegions — whole-ring collapse vs. partial trims", () => {
+  test("U-slot block insets cleanly, no false collapse", () => {
+    const uSlot = { start: [0, 0], segments: [
+      { to: [10, 0] }, { to: [10, 10] }, { to: [6, 10] }, { to: [6, 4] },
+      { to: [4, 4] }, { to: [4, 10] }, { to: [0, 10] }, { to: [0, 0] }] };
+    // Region count is deliberately not pinned here: the slot's two prongs (each 4 wide)
+    // are exactly critical at delta -2 (half-width 2), so whether the sliver remainder
+    // comes back as one connected piece or splits into near-cancelling slivers right at
+    // that threshold is a precision detail, not the thing this test is pinning — the bug
+    // was a false collapse throw, not the resulting region count.
+    let out;
+    expect(() => { out = offsetRegions([region(uSlot)], -2, { corners: "round" }); }).not.toThrow();
+    expect(profileArea(out)).toBeGreaterThan(1);
+    expect(profileArea(out)).toBeLessThan(3);
+  });
+  test("plate with a star-shaped hole: hole vanishes, plate itself does not", () => {
+    // The star hole is the reviewer's own explicitly-verified case ("restores every
+    // regression case including the star-hole (+2) one that un-trimming could not fix").
+    const plate = { start: [0, 0], segments: [{ to: [30, 0] }, { to: [30, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
+    const starPts = [];
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? 4 : 1.6;
+      const ang = (Math.PI / 5) * i - Math.PI / 2;
+      starPts.push([15 + r * Math.cos(ang), 10 + r * Math.sin(ang)]);
+    }
+    starPts.reverse();     // CW winding for a hole
+    const star = { start: starPts[0], segments: [...starPts.slice(1), starPts[0]].map((p) => ({ to: p })) };
+    const out = offsetRegions([region(plate, [star])], 2, { corners: "round" });
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(0);
+    expect(profileArea(out)).toBeGreaterThan(805);
+    expect(profileArea(out)).toBeLessThan(815);
+  });
+  test("chamfered rectangle insets without a false collapse throw", () => {
+    const chamfered = { start: [0, 0], segments: [
+      { to: [10, 0] }, { to: [10, 4] }, { to: [9, 5] }, { to: [1, 5] }, { to: [0, 4] }, { to: [0, 0] }] };
+    let out;
+    expect(() => { out = offsetRegions([region(chamfered)], -2, { corners: "round" }); }).not.toThrow();
+    expect(profileArea(out)).toBeGreaterThan(5.5);
+    expect(profileArea(out)).toBeLessThan(6.6);
+  });
+});
