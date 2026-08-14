@@ -9,6 +9,9 @@ import { safeName } from "./safe-name.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
 import { measure } from "./oracle/measure.js";
 import { verify } from "./oracle/verify.js";
+import { buildView } from "./oracle/build.js";
+import { MATCH_VIEWS, rasterizeMeshMask, rasterizeRingsMask } from "./oracle/silhouette.js";
+import { matchViews } from "./oracle/match.js";
 
 // Handle one geometry job, posting results/progress via `post(msg, transfer?)`.
 // Backend-agnostic and part-agnostic: every part specific comes through `part`.
@@ -25,6 +28,67 @@ import { verify } from "./oracle/verify.js";
 // progress callback into build() so a part's own per-feature progress surfaces;
 // preview generates stay quiet (no callback) to avoid flicker during slider drags.
 const bufferOf = (data) => (ArrayBuffer.isView(data) ? data.buffer : data);
+
+// One caller-supplied match target as a reference mask, or null when it is not one we
+// can score. Every field here is untrusted wire data, so shape is checked rather than
+// assumed — a target the caller got wrong is skipped, never thrown, so one bad entry
+// cannot cost the others their scores (or the caller their geometry report).
+//   {kind: "profile", rings: [[[x,y], ...], ...]}  — millimetres, so it carries scale
+//   {kind: "image",   mask: {data, width, height}} — a photo, so it carries none
+function referenceMask(target) {
+  if (target?.kind === "profile") return Array.isArray(target.rings) ? rasterizeRingsMask(target.rings) : null;
+  if (target?.kind === "image") {
+    const m = target.mask;
+    if (!m?.data || !(m.width > 0) || !(m.height > 0)) return null;
+    // mmPerPx is deliberately absent: a photograph has no millimetres, which is what
+    // keeps the scale-aware comparison off for an image target no matter what is asked.
+    return { data: m.data, width: m.width, height: m.height };
+  }
+  return null;
+}
+
+// Score the part's six canonical silhouettes against each match target.
+// `built` is the view's already-built sub-parts — the meshes are JS-owned, so this
+// reads correctly after the kernel has been cleaned up.
+//
+// Total by construction: match scoring is an EXTRA on top of the geometric report, so
+// any failure here omits `match` and leaves the report itself intact. A caller who
+// asked for a score and got none can ask again; a caller who lost their measurement
+// because a mask blew up has lost the thing they actually came for.
+//
+// The six mesh masks are rasterized ONCE and shared across every target — the targets
+// are the cheap side of this (a couple of reference masks), the part is not.
+function scoreMatchTargets(built, targets, onProgress) {
+  if (!targets?.length) return null;
+  try {
+    const meshes = built.map((b) => b.mesh);
+    const viewMasks = {};
+    for (const view of MATCH_VIEWS) viewMasks[view] = rasterizeMeshMask(meshes, view);
+
+    const out = [];
+    for (const target of targets) {
+      try {
+        const reference = referenceMask(target);
+        if (!reference) continue;
+        // scaleAware is the CALLER's promise that both sides are in millimetres, and
+        // this is the caller: rings are mm and the mesh masks carry mmPerPx, so a
+        // profile target gets the absolute-size score (`iouScale`, contourDist in mm)
+        // while an image target gets the pose-normalized one.
+        const scoreOpts = { scaleAware: target.kind === "profile" };
+        const { best, views } = matchViews(viewMasks, reference, scoreOpts);
+        if (!best) continue; // nothing scoreable — a dropped target, never a zero score
+        const { delta, ...scores } = best;
+        out.push({ kind: target.kind, best: scores, views, delta: { view: best.view, ...delta } });
+      } catch (err) {
+        onProgress(`match target skipped: ${String(err?.message || err)}`);
+      }
+    }
+    return out.length ? out : null;
+  } catch (err) {
+    onProgress(`match scoring skipped: ${String(err?.message || err)}`);
+    return null;
+  }
+}
 
 export async function handle(kernel, part, msg, post, opts = {}) {
   const isStale = opts.isStale ?? (() => false);
@@ -147,7 +211,12 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // true }` here is what makes the seed usable by any verify run, min-wall
       // gated or not — the result says so itself (`measuredMinWall`), so this
       // call and the seed cannot drift apart.
-      const measured = measure(kernel, part, msg.view, msg.params ?? {}, { minWall: true });
+      //
+      // The view is built HERE rather than inside measure, and handed down through
+      // `opts.built`, because optional match scoring needs the same meshes: one build
+      // feeds the measurement and the six silhouette rasterizations both.
+      const built = buildView(kernel, part, msg.view, msg.params ?? {});
+      const measured = measure(kernel, part, msg.view, msg.params ?? {}, { minWall: true, built });
       const report = {
         measure: measured,
         verify: verify(kernel, part, {
@@ -155,7 +224,11 @@ export async function handle(kernel, part, msg, post, opts = {}) {
           seed: { params: msg.params ?? {}, result: measured },
         }),
       };
-      post({ type: "report", ...report });
+      // `match` is present only when the caller asked for it AND something scored, so
+      // an inspect with no `matchTargets` answers on exactly the shape it always has.
+      const match = scoreMatchTargets(built, msg.matchTargets, onProgress);
+      if (match) report.match = match;
+      post({ type: "report", ...report }, match?.map((m) => m.delta.data.buffer) ?? []);
     }
   } catch (err) {
     if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt", jobId: msg.jobId });
