@@ -1,6 +1,6 @@
 import { isPathContour, tessellateContour } from "./profile.js";
 import { ringArea } from "./shape2d-regions.js";
-import { arcToCubicSegments, arcCenterAndSweep } from "./paper-bridge.js";
+import { arcToCubicSegments, arcCenterAndSweep, paperScope, toPaperPath } from "./paper-bridge.js";
 
 const WINDING_SEGS = 64;   // tessellation LOD for orientation/containment sampling
 
@@ -230,6 +230,235 @@ function resolveCornerSelector(corners, param, opts, label) {
 
 const roundNice = (x) => Math.round(x * 1e6) / 1e6;
 
+// ── Curve-adjacent corners (Task 7) ─────────────────────────────────────────
+// Line-line corners keep buildCornerOpRing's exact closed-form path below.
+// A corner with at least one curved (cubic/arc) neighbor goes through this
+// numeric machinery instead: a 2-D evaluator per segment (`at(t)`/`tan(t)`),
+// a damped-Newton tangency solver for fillet, and an arc-length solver (via
+// paper.js) for chamfer. Both trim their curved neighbor exactly via
+// de Casteljau splitting (cubic) or angle interpolation (arc).
+
+const normalize2 = ([x, y]) => { const L = Math.hypot(x, y) || 1; return [x / L, y / L]; };
+const rot90 = ([x, y]) => [-y, x];
+const addScaled = (p, v, s) => [p[0] + v[0] * s, p[1] + v[1] * s];
+
+function cubicAt(p0, c1, c2, p1, t) {
+  const u = 1 - t;
+  return [0, 1].map((k) => u * u * u * p0[k] + 3 * u * u * t * c1[k] + 3 * u * t * t * c2[k] + t * t * t * p1[k]);
+}
+function cubicDeriv(p0, c1, c2, p1, t) {
+  const u = 1 - t;
+  return [0, 1].map((k) => 3 * u * u * (c1[k] - p0[k]) + 6 * u * t * (c2[k] - c1[k]) + 3 * t * t * (p1[k] - c2[k]));
+}
+// Exact de Casteljau split of cubic (p0,c1,c2,p1) at t → two exact cubic pieces.
+function splitCubic(p0, c1, c2, p1, t) {
+  const lerp = (a, b) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  const p01 = lerp(p0, c1), p12 = lerp(c1, c2), p23 = lerp(c2, p1);
+  const p012 = lerp(p01, p12), p123 = lerp(p12, p23);
+  const p0123 = lerp(p012, p123);
+  return [{ p0, c1: p01, c2: p012, p1: p0123 }, { p0: p0123, c1: p123, c2: p23, p1 }];
+}
+
+// Evaluable curve E = {at(t), tan(t)} for a segment `seg` running from `from`
+// (t=0) to seg.to (t=1). Mirrors segTangent's arc-tangent recovery exactly.
+function curveEvaluator(from, seg) {
+  if (seg.c1) {
+    const p0 = from, c1 = seg.c1, c2 = seg.c2, p1 = seg.to;
+    return { at: (t) => cubicAt(p0, c1, c2, p1, t), tan: (t) => normalize2(cubicDeriv(p0, c1, c2, p1, t)) };
+  }
+  if (seg.via) {
+    const c = arcCenterAndSweep(from, seg.via, seg.to);
+    if (c) {
+      const a0 = Math.atan2(from[1] - c.center[1], from[0] - c.center[0]);
+      return {
+        at: (t) => { const a = a0 + c.dA * t; return [c.center[0] + c.r * Math.cos(a), c.center[1] + c.r * Math.sin(a)]; },
+        tan: (t) => { const a = a0 + c.dA * t, rx = Math.cos(a), ry = Math.sin(a); return c.dA >= 0 ? [-ry, rx] : [ry, -rx]; },
+      };
+    }   // collinear (degenerate) triple → fall through to line below
+  }
+  const p0 = from, p1 = seg.to, d = normalize2([p1[0] - p0[0], p1[1] - p0[1]]);
+  return { at: (t) => [p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t], tan: () => d };
+}
+
+// Trim segment `seg` (running `from` → seg.to) to the sub-range [tStart,tEnd]
+// of its own parameterization, returning {from, seg} for the kept portion.
+// Cubic: two exact de Casteljau splits. Arc: angle interpolation, `via`
+// recomputed at the kept sweep's angular midpoint. Line: trivial endpoints.
+function trimSegment(from, seg, tStart, tEnd) {
+  if (seg.c1) {
+    let cur = { p0: from, c1: seg.c1, c2: seg.c2, p1: seg.to };
+    if (tStart > 1e-12) { cur = splitCubic(cur.p0, cur.c1, cur.c2, cur.p1, tStart)[1]; }
+    const localEnd = tStart > 1e-12 ? (tEnd - tStart) / (1 - tStart) : tEnd;
+    if (localEnd < 1 - 1e-12) cur = splitCubic(cur.p0, cur.c1, cur.c2, cur.p1, localEnd)[0];
+    return { from: cur.p0, seg: { to: cur.p1, c1: cur.c1, c2: cur.c2 } };
+  }
+  if (seg.via) {
+    const c = arcCenterAndSweep(from, seg.via, seg.to);
+    if (c) {
+      const a0 = Math.atan2(from[1] - c.center[1], from[0] - c.center[0]);
+      const pointAt = (a) => [c.center[0] + c.r * Math.cos(a), c.center[1] + c.r * Math.sin(a)];
+      const aS = a0 + c.dA * tStart, aE = a0 + c.dA * tEnd;
+      return { from: pointAt(aS), seg: { to: pointAt(aE), via: pointAt((aS + aE) / 2) } };
+    }
+  }
+  const p0 = from, p1 = seg.to;
+  const at = (t) => [p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t];
+  return { from: at(tStart), seg: { to: at(tEnd) } };
+}
+
+const T_LO = 1e-6, T_HI = 1 - 1e-6;
+const clampT = (v) => Math.min(T_HI, Math.max(T_LO, v));
+const pinnedT = (t) => t[0] <= T_LO + 1e-12 || t[0] >= T_HI - 1e-12 || t[1] <= T_LO + 1e-12 || t[1] >= T_HI - 1e-12;
+
+// Damped Newton on F: R² → R² (numeric Jacobian, h=1e-6), 40 iterations, step
+// clamp 0.25, halving while |F| doesn't decrease (max 8 halvings). Returns
+// {t, pinned} on convergence (|F| < 1e-9·max(1,r)) or null.
+function newton2D(F, t0, r) {
+  const h = 1e-6, tol = 1e-9 * Math.max(1, r);
+  let t = [clampT(t0[0]), clampT(t0[1])];
+  let Fv = F(t), normF = Math.hypot(Fv[0], Fv[1]);
+  for (let iter = 0; iter < 40; iter++) {
+    if (normF < tol) return { t, pinned: pinnedT(t) };
+    const Fx = F([t[0] + h, t[1]]), Fy = F([t[0], t[1] + h]);
+    const J00 = (Fx[0] - Fv[0]) / h, J10 = (Fx[1] - Fv[1]) / h;
+    const J01 = (Fy[0] - Fv[0]) / h, J11 = (Fy[1] - Fv[1]) / h;
+    const det = J00 * J11 - J01 * J10;
+    if (Math.abs(det) < 1e-300) break;
+    // Cramer's rule: [J00 J01; J10 J11]·delta = -Fv
+    let delta = [(-Fv[0] * J11 + Fv[1] * J01) / det, (J00 * -Fv[1] - J10 * -Fv[0]) / det];
+    delta = delta.map((d) => Math.max(-0.25, Math.min(0.25, d)));
+    let tNew = [clampT(t[0] + delta[0]), clampT(t[1] + delta[1])];
+    let FvNew = F(tNew), normNew = Math.hypot(FvNew[0], FvNew[1]);
+    for (let halvings = 0; normNew >= normF && halvings < 8; halvings++) {
+      delta = [delta[0] / 2, delta[1] / 2];
+      tNew = [clampT(t[0] + delta[0]), clampT(t[1] + delta[1])];
+      FvNew = F(tNew); normNew = Math.hypot(FvNew[0], FvNew[1]);
+    }
+    t = tNew; Fv = FvNew; normF = normNew;
+  }
+  return normF < tol ? { t, pinned: pinnedT(t) } : null;
+}
+
+// Solve for tangency points (tA on incoming curve A, tB on outgoing curve B)
+// of a radius-r circle tangent to both, per the brief's F(tA,tB) = C_A − C_B.
+// Tries all 4 inward-normal sign combos at the seed, keeping the one that
+// minimizes |F| there (the combo landing on the corner's bisector side).
+function solveFilletTangency(A, B, r) {
+  const seed = [1 - 1e-3, 1e-3];
+  const Ffor = (sA, sB) => (t) => {
+    const CA = addScaled(A.at(t[0]), rot90(A.tan(t[0])), sA * r);
+    const CB = addScaled(B.at(t[1]), rot90(B.tan(t[1])), sB * r);
+    return [CA[0] - CB[0], CA[1] - CB[1]];
+  };
+  let best = null, bestNorm = Infinity;
+  for (const sA of [1, -1]) for (const sB of [1, -1]) {
+    const F = Ffor(sA, sB), f0 = F(seed), n = Math.hypot(f0[0], f0[1]);
+    if (n < bestNorm) { bestNorm = n; best = { sA, sB, F }; }
+  }
+  const solved = newton2D(best.F, seed, r);
+  if (!solved || solved.pinned) return null;
+  const [tA, tB] = solved.t;
+  const TA = A.at(tA), C = addScaled(TA, rot90(A.tan(tA)), best.sA * r);
+  return { tA, tB, TA, TB: B.at(tB), C };
+}
+
+// Arc length of segment `seg` (from `from`); cubic arc length via a scratch
+// open paper path (paper's numeric integration), line/arc in closed form.
+function curveLength(from, seg) {
+  if (seg.via) { const c = arcCenterAndSweep(from, seg.via, seg.to); return c ? Math.abs(c.dA) * c.r : Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]); }
+  if (seg.c1) return toPaperPath(paperScope(), { start: from, segments: [seg] }, null, { open: true }).length;
+  return Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]);
+}
+// Arc length traveled from `from` (t=0) up to parameter t.
+function lengthUpTo(from, seg, t) {
+  if (seg.via) { const c = arcCenterAndSweep(from, seg.via, seg.to); return c ? Math.abs(c.dA) * c.r * t : Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]) * t; }
+  if (seg.c1) return toPaperPath(paperScope(), { start: from, segments: [seg] }, null, { open: true }).curves[0].getOffsetAtTime(t);
+  return Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]) * t;
+}
+// t-parameter at arc-length `dist` along segment `seg` (from `from`, t=0).
+function paramAtArcLength(from, seg, dist) {
+  if (seg.via) { const c = arcCenterAndSweep(from, seg.via, seg.to); return c ? dist / (Math.abs(c.dA) * c.r) : dist / Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]); }
+  if (seg.c1) return toPaperPath(paperScope(), { start: from, segments: [seg] }, null, { open: true }).curves[0].getParameterAt(dist);
+  return dist / Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]);
+}
+
+// Curve-adjacent corners have no equivalent of line-line's `selected` bookkeeping
+// (buildCornerOpRing's per-edge Set), so there's no cheap way to tell whether a
+// curved neighbor's far end is also spoken for by another operation. Conservatively
+// cap each side's setback at half its own arc length — the same "never bet on a
+// neighbor being free" caution line-line only relaxes once it can PROVE the far
+// end is unclaimed (Task 6's isolated-corner fix). Applied uniformly (fillet's
+// tangent setback and chamfer's arc-length setback alike).
+function fitsHalfLength(fromA, segA, tA, fromB, segB, tB) {
+  const lenA = curveLength(fromA, segA), lenB = curveLength(fromB, segB);
+  const setbackA = lenA - lengthUpTo(fromA, segA, tA), setbackB = lengthUpTo(fromB, segB, tB);
+  return setbackA <= lenA / 2 + 1e-9 && setbackB <= lenB / 2 + 1e-9;
+}
+
+function trySolveFillet(fromA, segA, fromB, segB, A, B, r) {
+  const solved = solveFilletTangency(A, B, r);
+  if (!solved || !fitsHalfLength(fromA, segA, solved.tA, fromB, segB, solved.tB)) return null;
+  return solved;
+}
+
+function bisectMaxRFillet(fromA, segA, fromB, segB, A, B, r) {
+  let lo = 0, hi = r;
+  for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (trySolveFillet(fromA, segA, fromB, segB, A, B, mid)) lo = mid; else hi = mid; }
+  return lo;
+}
+
+// Chamfer's curve solver: no Newton needed — tA/tB are set directly by
+// arc-length setbacks of `dist` from the corner, measured along each curve
+// (`dist` IS the setback here, so the half-length cap above is just a bound on it).
+function solveChamferArcLength(fromA, segA, fromB, segB, dist) {
+  if (!(dist > 0)) return null;
+  const totalA = curveLength(fromA, segA), totalB = curveLength(fromB, segB);
+  if (dist > totalA / 2 + 1e-9 || dist > totalB / 2 + 1e-9) return null;
+  const tA = paramAtArcLength(fromA, segA, totalA - dist);
+  const tB = paramAtArcLength(fromB, segB, dist);
+  if (!(tA > T_LO && tA < T_HI && tB > T_LO && tB < T_HI)) return null;
+  return { tA, tB, TA: curveEvaluator(fromA, segA).at(tA), TB: curveEvaluator(fromB, segB).at(tB) };
+}
+
+function bisectMaxDistChamfer(fromA, segA, fromB, segB, dist) {
+  let lo = 0, hi = dist;
+  for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (solveChamferArcLength(fromA, segA, fromB, segB, mid)) lo = mid; else hi = mid; }
+  return lo;
+}
+
+// Solve one curve-adjacent corner (at least one of its two neighbors is a
+// cubic or arc) and return {tA, tB, TA, TB, connector} — tA/tB in the
+// neighbors' own parameterizations, ready for trimSegment(); connector is
+// the {to,via?} spliced between the trimmed neighbors.
+function solveCurveCorner(pts, contour, n, i, param, isFillet, label) {
+  const inIdx = (i - 1 + n) % n, fromA = pts[inIdx], segA = contour.segments[inIdx];
+  const fromB = pts[i], segB = contour.segments[i];
+  const A = curveEvaluator(fromA, segA), B = curveEvaluator(fromB, segB);
+  const p1 = pts[i];
+  if (isFillet) {
+    const solved = trySolveFillet(fromA, segA, fromB, segB, A, B, param);
+    if (!solved) {
+      const maxR = roundNice(bisectMaxRFillet(fromA, segA, fromB, segB, A, B, param));
+      throw new Error(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): could not fit r=${param} against the curved segment; max ≈ ${maxR}`);
+    }
+    const { tA, tB, TA, TB, C } = solved;
+    const a0 = Math.atan2(TA[1] - C[1], TA[0] - C[0]);
+    let dA = Math.atan2(TB[1] - C[1], TB[0] - C[0]) - a0;
+    while (dA <= -Math.PI) dA += 2 * Math.PI;
+    while (dA > Math.PI) dA -= 2 * Math.PI;
+    const mid = a0 + dA / 2;
+    const M = [C[0] + param * Math.cos(mid), C[1] + param * Math.sin(mid)];
+    return { tA, tB, TA, connector: { to: TB, via: M } };
+  }
+  const solved = solveChamferArcLength(fromA, segA, fromB, segB, param);
+  if (!solved) {
+    const maxDist = roundNice(bisectMaxDistChamfer(fromA, segA, fromB, segB, param));
+    throw new Error(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): could not fit dist=${param} against the curved segment; max ≈ ${maxDist}`);
+  }
+  const { tA, tB, TA, TB } = solved;
+  return { tA, tB, TA, connector: { to: TB } };
+}
+
 // Fillet/chamfer a single ring given its already-resolved {corner, param} picks.
 // Mirrors cornerArc's tangent/center math (polygon.js:107) but WITHOUT its silent
 // per-corner clamp — filletProfile/chamferProfile throw instead of clamping, so the
@@ -237,13 +466,18 @@ const roundNice = (x) => Math.round(x * 1e6) / 1e6;
 function buildCornerOpRing(contour, picks, isFillet, label) {
   const n = contour.segments.length;
   const pts = [contour.start, ...contour.segments.map((s) => s.to)].slice(0, n);
-  const plans = new Map();   // vertex index -> {A, B, M, setback}
+  const plans = new Map();   // vertex index -> {A, B, M, setback} (line-line corners only)
+  const curvePlans = new Map();   // vertex index -> {tA, tB, connector} (curve-adjacent corners)
   const selected = new Set(picks.map((p) => p.corner.index));   // this ring's selected vertex indices
 
   for (const { corner, param } of picks) {
     const i = corner.index;
-    if (corner.segTypes[0] !== "line" || corner.segTypes[1] !== "line")
-      throw new Error(`${label}: corner ${i} involves a curved segment — supported in Task 7`);
+    if (corner.segTypes[0] !== "line" || corner.segTypes[1] !== "line") {
+      // Curve-adjacent corner: routed through the numeric tangency solver, never
+      // through the line-line closed-form math below (exactness/speed for lines).
+      curvePlans.set(i, solveCurveCorner(pts, contour, n, i, param, isFillet, label));
+      continue;
+    }
     const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n];
     const v0x = p0[0] - p1[0], v0y = p0[1] - p1[1], v2x = p2[0] - p1[0], v2y = p2[1] - p1[1];
     const l0 = Math.hypot(v0x, v0y), l2 = Math.hypot(v2x, v2y);
@@ -299,10 +533,20 @@ function buildCornerOpRing(contour, picks, isFillet, label) {
   let start = null;
   for (let i = 0; i < n; i++) {
     const startPlan = plans.get(i), endPlan = plans.get((i + 1) % n);
-    const effEnd = endPlan ? endPlan.A : pts[(i + 1) % n];
-    segments.push(startPlan || endPlan ? { to: effEnd } : contour.segments[i]);
-    if (i === 0) start = startPlan ? startPlan.B : pts[0];
+    const startCurve = curvePlans.get(i), endCurve = curvePlans.get((i + 1) % n);
+    const seg = contour.segments[i];
+    if ((seg.c1 || seg.via) && (startCurve || endCurve)) {
+      // Segment itself is curved and trimmed by a curve-corner solve on one or
+      // both ends: exact de Casteljau split (cubic) / angle interpolation (arc).
+      const tStart = startCurve ? startCurve.tB : 0, tEnd = endCurve ? endCurve.tA : 1;
+      segments.push(trimSegment(pts[i], seg, tStart, tEnd).seg);
+    } else {
+      const effEnd = endPlan ? endPlan.A : endCurve ? endCurve.TA : pts[(i + 1) % n];
+      segments.push(startPlan || endPlan || startCurve || endCurve ? { to: effEnd } : seg);
+    }
+    if (i === 0) start = startPlan ? startPlan.B : startCurve ? startCurve.connector.to : pts[0];
     if (endPlan) segments.push(isFillet ? { to: endPlan.B, via: endPlan.M } : { to: endPlan.B });
+    if (endCurve) segments.push(endCurve.connector);
   }
   return { start, segments };
 }

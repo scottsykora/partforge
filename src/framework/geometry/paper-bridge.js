@@ -58,7 +58,7 @@ export function arcToCubicSegments(p0, via, to) {
   return out;
 }
 
-export function toPaperPath(scope, contour, segMap = null) {
+export function toPaperPath(scope, contour, segMap = null, { open = false } = {}) {
   const path = new scope.Path({ insert: false });
   path.moveTo(new scope.Point(contour.start[0], contour.start[1]));
   let prev = contour.start;
@@ -92,7 +92,7 @@ export function toPaperPath(scope, contour, segMap = null) {
       prev = s.to;
     }
   });
-  path.closePath();
+  if (!open) path.closePath();
   return path;
 }
 
