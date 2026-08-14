@@ -52,8 +52,8 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 ## probe-routed-to-occt
 
 - **Symptom:** A part builds far slower than expected (preview takes seconds instead of milliseconds), and the worker logs show it running on the `occt` worker.
-- **Cause:** The geometry-free probe runs `build` against a recording proxy (dummy query values), and a `fillet`/`chamfer`/`shell` call it reaches — including a branch the real build wouldn't take, since queries return dummies — routes the whole part to OCCT.
-- **Fix:** Remove the CAD-only call the probe reaches unnecessarily, or force the backend with `meta.backend: "manifold"` (or `"occt"`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Fillet & chamfer (automatic OCCT backend)".
+- **Cause:** The geometry-free probe runs `build` against a recording proxy (dummy query values), and a **Solid** `fillet`/`chamfer`/`shell` call it reaches — including a branch the real build wouldn't take, since queries return dummies — routes the whole part to OCCT. (`Shape2D.fillet`/`.chamfer` are the shared pure-JS implementation and do **not** route; the probe tracks which handle kind an op ran on.)
+- **Fix:** Remove the CAD-only call the probe reaches unnecessarily, or force the backend with `meta.backend: "manifold"` (or `"occt"`). If the rounding is on a 2-D profile, `Shape2D.fillet` before extruding keeps the part on Manifold. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Fillet & chamfer (automatic OCCT backend)".
 
 ## fillet-chamfer-many-edges-slow
 
@@ -305,6 +305,32 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 - **Fix:** Reduce `|delta|`, or check the source profile is large enough for the
   inset. Realistic clearances (fractions of a mm) and wall insets up to the
   narrowest feature never trip this.
+
+## fillet-chamfer-radius-does-not-fit
+
+- **Symptom:** `filletProfile: corner <i> at (<x>, <y>): r=<r> does not fit; max ≈ <m>` (or `chamferProfile: … dist=<d> does not fit; max ≈ <m>`) thrown from `Shape2D.fillet`/`.chamfer` or the free `filletProfile`/`chamferProfile` functions.
+- **Cause:** The requested radius/distance exceeds what the corner's adjacent edges (or curved neighbor) can hold before the tangent point runs past the segment's own end.
+- **Fix:** Use the reported `max ≈` value, or narrow `opts.corners` to skip that corner. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Editing profiles".
+
+Variant literal for a curve-adjacent corner (note the semicolon form, not parenthesized): `filletProfile: corner <i> at (<x>, <y>): could not fit r=<r> against the curved segment; max ≈ <m>` (`chamferProfile: … could not fit dist=<d> against the curved segment; max ≈ <m>` for chamfer).
+
+## fillet-chamfer-corners-overlap
+
+- **Symptom:** `filletProfile: corners <i> and <j> overlap on segment <k> (reduce r)` (or the same from `chamferProfile`).
+- **Cause:** Two adjacent selected corners each claim more of the edge between them than it has — their combined setbacks exceed the segment's length (or curved arc-length span).
+- **Fix:** Reduce `r`/`dist`, or fillet/chamfer only one of the two corners (drop the other from `opts.corners`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Editing profiles".
+
+## profile-query-needs-single-contour
+
+- **Symptom:** `profilePointAt: pass a single contour (use region.outer / region.holes[i])` (same shape from `profileLength`/`profileTangentAt`, with their own name in place of `profilePointAt`).
+- **Cause:** The arc-length queries (`profileLength`, `profilePointAt`, `profileTangentAt`) are single-contour by nature, and a `{outer, holes}` region or region array was passed instead of a specific contour.
+- **Fix:** Pass `region.outer` or `region.holes[i]`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Editing profiles" polymorphic input contract.
+
+## validate-profile-regions-overlap-or-nest
+
+- **Symptom:** `regions overlap or nest — merge with union() or make it a hole` in a `validateProfile(...).issues` entry (`type: "nesting"`) — reported, never thrown.
+- **Cause:** Two regions in the profile occupy overlapping area without one being declared a hole of the other.
+- **Fix:** Union the two regions into one shape, or restructure the overlapping region as a `holes` entry of its container. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Editing profiles" — run `validateProfile` after mutations.
 
 ## curve-fill-resolved-hole-uncontained
 

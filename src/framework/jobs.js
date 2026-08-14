@@ -215,12 +215,25 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // The view is built HERE rather than inside measure, and handed down through
       // `opts.built`, because optional match scoring needs the same meshes: one build
       // feeds the measurement and the six silhouette rasterizations both.
-      const built = buildView(kernel, part, msg.view, msg.params ?? {});
-      const measured = measure(kernel, part, msg.view, msg.params ?? {}, { minWall: true, built });
+      //
+      // The default matters and must match measure()'s own: buildView has NO view
+      // default — viewSubParts(part, undefined) returns [] without erroring — so an
+      // inspect with no `view` (partforge-cloud's requestReport has always sent
+      // undefined, meaning "the current view") built an EMPTY view here, and every
+      // downstream consumer degraded silently: measure reported zero subparts and a
+      // [0,0,0] bbox, match scored nothing, and verify still passed. Pre-0.55,
+      // measure built internally and its own signature default hid this. Found by a
+      // live browser check, not by tests: this suite passes explicit views, and the
+      // cloud's unit tests fake the worker.
+      const view = msg.view ?? Object.keys(part.views)[0];
+      const built = buildView(kernel, part, view, msg.params ?? {});
+      const measured = measure(kernel, part, view, msg.params ?? {}, { minWall: true, built });
       const report = {
         measure: measured,
         verify: verify(kernel, part, {
-          view: msg.view,
+          // The defaulted view, not msg.view: the seed below was measured on it, and
+          // verify's seed reuse is only sound when both name the same view.
+          view,
           seed: { params: msg.params ?? {}, result: measured },
         }),
       };

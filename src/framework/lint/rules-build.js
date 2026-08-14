@@ -28,7 +28,7 @@ export const BUILD_RULES = [
   {
     id: "unknown-solid-op",
     run: ({ probe }) => unique(probe().issues
-      .filter((i) => i.kind === "unknown-op" && i.scope === "solid").map((i) => i.op))
+      .filter((i) => i.kind === "unknown-op" && i.scope !== "kernel").map((i) => i.op))
       .map((op) => err("unknown-solid-op", `\`.${op}(…)\` is not a Solid or Shape2D method`,
         `Remove the call or correct the name — see the Solid and Shape2D method tables in docs/AUTHORING-PARTS.md.`,
         "parts")),
@@ -52,7 +52,10 @@ export const BUILD_RULES = [
     id: "manifold-backend-uses-occt-op",
     run: ({ part, probe }) => {
       if (part?.meta?.backend !== "manifold") return [];
-      return [...probe().used].filter((op) => OCCT_ONLY.has(op))
+      // solidUsed, not used: `Shape2D.fillet`/`.chamfer` are backend-identical pure
+      // JS and are fine under a pinned Manifold backend; only Solid-handle uses of
+      // these names are CAD-only.
+      return [...probe().solidUsed].filter((op) => OCCT_ONLY.has(op))
         .map((op) => err("manifold-backend-uses-occt-op",
           `\`meta.backend\` pins Manifold, but the build calls \`${op}\`, which only OCCT implements`,
           `Remove \`meta.backend: "manifold"\` and let the probe route this part to OCCT, or replace \`${op}\` with a mesh-friendly construction — as written the build throws KernelCapabilityError.`,

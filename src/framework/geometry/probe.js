@@ -19,12 +19,20 @@ import {
 } from "./kernel.js";
 import { KERNEL_OP_SPECS, SOLID_OP_SPECS, isPlainOptions } from "./op-options.js";
 
-// The probe returns ONE chainable handle for every non-query op, so it cannot tell a
-// Solid from a Shape2D — k.box() and k.shape2d() yield the same object. The solid-scope
-// allowlist is therefore the union of all three surfaces: deliberately permissive, so
-// it never false-positives on an error-severity rule.
+// The probe hands out TWO chainable handles: k.shape2d()/k.text2d() yield a Shape2D
+// handle (whose extrude/revolve yield the Solid handle), everything else yields the
+// Solid handle. The split exists for one reason — backend routing: `Shape2D.fillet`
+// is the shared pure-JS implementation and must NOT route a part to OCCT, while
+// `Solid.fillet` must. Handle-level VALIDATION stays deliberately permissive (one
+// union allowlist for both handle kinds), so the split can never false-positive on
+// an error-severity rule.
 const KERNEL_ALLOWED = new Set([...KERNEL_OPS, ...KERNEL_OPTIONAL_OPS]);
 const SOLID_ALLOWED = new Set([...SOLID_OPS, ...SOLID_OPTIONAL_OPS, ...SHAPE2D_OPS]);
+
+// Kernel ops whose result is a Shape2D, and Shape2D ops whose result is a Solid —
+// the only two places the probe's handle kind changes.
+const SHAPE2D_YIELDING_KERNEL_OPS = new Set(["shape2d", "text2d"]);
+const SOLID_YIELDING_SHAPE2D_OPS = new Set(["extrude", "revolve"]);
 
 export const MAX_PROBE_OPS = 100000;
 
@@ -64,37 +72,52 @@ function makeProbe(onCall) {
   // every query bypass the counter entirely, so a query-only loop (`for(;;)
   // s.volume()`) never tripped MAX_PROBE_OPS and hung forever. Wrap it the same
   // way as the chaining branch below: observe the call, then run the real query.
-  const opProxy = (queries, scope) => new Proxy({}, {
+  // `routeFor(op)` picks which handle an op's result chains to — resolved at call
+  // time so the three proxies can reference each other despite declaration order.
+  const opProxy = (queries, scope, routeFor) => new Proxy({}, {
     get(_t, key) {
       if (ignore(key)) return undefined;
       if (key in queries) return (...args) => { onCall(scope, key, args); return queries[key](...args); };
-      return (...args) => { onCall(scope, key, args); return proxy; };
+      return (...args) => { onCall(scope, key, args); return routeFor(key); };
     },
   });
 
-  const proxy = opProxy(solidQueries, "solid");   // a solid handle: every op chains back to itself
-  const kernel = opProxy(kernelQueries, "kernel"); // factory ops (cylinder/box/prism/…) return a solid
-  return { kernel, proxy };
+  // Shape2D handles reuse solidQueries: boundingBox/volume/… dummies chain the same
+  // either way, and a 3-component bbox is as good a dummy as a 2-component one.
+  const proxy = opProxy(solidQueries, "solid", () => proxy);   // a solid handle: every op chains back to itself
+  const shape2d = opProxy(solidQueries, "shape2d",
+    (key) => (SOLID_YIELDING_SHAPE2D_OPS.has(key) ? proxy : shape2d));
+  const kernel = opProxy(kernelQueries, "kernel",             // factory ops (cylinder/box/prism/…) return a solid
+    (key) => (SHAPE2D_YIELDING_KERNEL_OPS.has(key) ? shape2d : proxy));
+  return { kernel, proxy, shape2d };
 }
 
 export function createProbeKernel() {
-  const used = new Set();
-  const { kernel } = makeProbe((_scope, key) => used.add(key));
-  return { kernel, used };
+  const used = new Set();       // every op name, any handle kind
+  const solidUsed = new Set();  // ops recorded on kernel/Solid handles only — the
+                                // routing set: Shape2D.fillet must not look like Solid.fillet
+  const { kernel } = makeProbe((scope, key) => {
+    used.add(key);
+    if (scope !== "shape2d") solidUsed.add(key);
+  });
+  return { kernel, used, solidUsed };
 }
 
 export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
   const calls = [];
   const issues = [];
   const used = new Set();
+  const solidUsed = new Set();  // same split as createProbeKernel: non-Shape2D-handle ops
   let count = 0;
   let solidProxy = null;
+  let shape2dProxy = null;
 
   // Args are recorded as strings so two probe runs can be compared for determinism.
-  // The chainable handle is a single shared object, so identity is enough to spot it —
+  // Each chainable handle is a single shared object, so identity is enough to spot it —
   // and checking identity FIRST matters, because JSON.stringify would trip its traps.
   const describe = (a) => {
     if (a === solidProxy) return "<solid>";
+    if (a === shape2dProxy) return "<shape2d>";
     if (typeof a === "function") return "<fn>";
     try { return JSON.stringify(a) ?? String(a); } catch { return "<unserializable>"; }
   };
@@ -102,6 +125,7 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
   const onCall = (scope, op, args) => {
     if (++count > maxOps) throw new ProbeRunawayError(`build exceeded ${maxOps} kernel operations`);
     used.add(op);
+    if (scope !== "shape2d") solidUsed.add(op);
     const allowed = scope === "kernel" ? KERNEL_ALLOWED : SOLID_ALLOWED;
     if (!allowed.has(op)) issues.push({ kind: "unknown-op", scope, op });
     // Validate ONLY the options form — the normative rule (KERNEL-CONTRACT.md
@@ -118,9 +142,10 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
     calls.push({ scope, op, args: args.map(describe) });
   };
 
-  const { kernel, proxy } = makeProbe(onCall);
+  const { kernel, proxy, shape2d } = makeProbe(onCall);
   solidProxy = proxy;
-  return { kernel, calls, issues, used };
+  shape2dProxy = shape2d;
+  return { kernel, calls, issues, used, solidUsed };
 }
 
 /**
@@ -140,5 +165,5 @@ export function runValidatingProbe(part, p, d, { maxOps = MAX_PROBE_OPS } = {}) 
       throws.push({ subpart: name, message: e?.message || String(e) });
     }
   }
-  return { calls: probe.calls, issues: probe.issues, used: probe.used, throws, runaway };
+  return { calls: probe.calls, issues: probe.issues, used: probe.used, solidUsed: probe.solidUsed, throws, runaway };
 }

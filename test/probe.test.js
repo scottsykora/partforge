@@ -22,6 +22,32 @@ test("a part using shell routes to occt", () => {
   expect(detectBackend(shelled)).toBe("occt");
 });
 
+test("Shape2D.fillet does not route to OCCT (shared pure-JS implementation)", () => {
+  const part = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) =>
+    k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]).fillet(2).extrude({ h: 3 }) } } };
+  expect(detectBackend(part)).toBe("manifold");
+});
+
+test("Solid.fillet after a Shape2D chain still routes to OCCT", () => {
+  const part = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) =>
+    k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]).extrude({ h: 3 }).fillet(1) } } };
+  expect(detectBackend(part)).toBe("occt");
+});
+
+test("a text2d chain (Shape2D handle) does not route to OCCT", () => {
+  const part = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) =>
+    k.text2d("Hi", { size: 10 }).chamfer(0.5).extrude({ h: 2 }) } } };
+  expect(detectBackend(part)).toBe("manifold");
+});
+
+test("Shape2D.fillet on one sub-part does not mask Solid.fillet on another", () => {
+  const part = { defaults: {}, views: view, parts: {
+    a: { views: ["v"], build: (k) => k.shape2d([[0, 0], [1, 0], [1, 1]]).fillet(0.1).extrude({ h: 1 }) },
+    b: { views: ["v"], build: (k) => k.box({ min: [0, 0, 0], max: [1, 1, 1] }).fillet(0.1) },
+  } };
+  expect(detectBackend(part)).toBe("occt");
+});
+
 test("label() chains on the probe kernel and does not force OCCT", () => {
   const part = {
     defaults: { a: 5 },

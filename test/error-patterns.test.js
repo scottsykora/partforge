@@ -47,6 +47,10 @@ const BASELINE_IDS = [
   "when-condition-never-true",
   "readout-shows-em-dash",
   "select-default-unreachable",
+  "fillet-chamfer-radius-does-not-fit",
+  "fillet-chamfer-corners-overlap",
+  "profile-query-needs-single-contour",
+  "validate-profile-regions-overlap-or-nest",
 ];
 
 const entries = parsePatterns(doc);

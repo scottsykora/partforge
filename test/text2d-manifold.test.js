@@ -64,9 +64,12 @@ test("inline font as an offset Uint8Array view parses (byteOffset > 0)", () => {
   expect(k.text2d("I", { font: view, size: 4 }).area()).toBeGreaterThan(0);
 });
 
-test("text2d is content-hash cached (hit on repeat)", () => {
+// text2d builds a Shape2D out of glyph contours — pure JS over the contour IR, so
+// there is no 2-D cache entry of its own. The content hash still keys everything
+// downstream: the same string+font rebuilt extrudes off the cached CrossSection/solid.
+test("text2d is content-hashed: an identical rebuild hits the solid cache", () => {
   k.beginSubPart("t"); k.resetCacheStats();
-  const one = () => k.text2d("HI", { font: "test", size: 5 }).area();
+  const one = () => k.extrude({ profile: k.text2d("HI", { font: "test", size: 5 }), h: 1 }).volume();
   one(); const before = k.cacheStats().hits; one();
   expect(k.cacheStats().hits).toBeGreaterThan(before);
   k.endSubPart();
@@ -135,6 +138,12 @@ test("real glyphs materialize with the correct regions and counters", () => {
     expect(regions.reduce((n, r) => n + r.holes.length, 0), ch).toBe(expectedHoles);
     expect(shape.area(), ch).toBeGreaterThan(0);
     const solid = k.extrude({ profile: shape, h: 2 });
-    expect(solid.volume(), ch).toBeCloseTo(shape.area() * 2, 2);
+    // Relative, not absolute: Shape2D.area() is curve-exact (it integrates the glyph's
+    // real béziers) while the extrusion tessellates them at mesh LOD, so a curvy glyph's
+    // solid is inscribed inside the true outline and comes out a few hundredths of a mm³
+    // smaller (Roboto 'O': 63.206 vs 63.224, 0.03%). That chord error is the expected
+    // faceting gap, and it scales with the glyph — an absolute tolerance would just be
+    // a size-dependent restatement of it.
+    expect(Math.abs(solid.volume() - shape.area() * 2) / (shape.area() * 2), ch).toBeLessThan(0.002);
   }
 });

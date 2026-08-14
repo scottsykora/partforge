@@ -79,6 +79,13 @@ test("an OCCT-only op without a pinned backend is fine — routing handles it", 
   expect(ids(r.errors)).not.toContain("manifold-backend-uses-occt-op");
 });
 
+test("Shape2D.fillet under a pinned Manifold backend is fine — it is the shared pure-JS op", () => {
+  const r = lintPart(partWith(
+    (k) => k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]).fillet(2).extrude({ h: 3 }),
+    { meta: { title: "T", backend: "manifold" } }));
+  expect(ids(r.errors)).not.toContain("manifold-backend-uses-occt-op");
+});
+
 test("a runaway build is an error, not a hang", () => {
   const r = lintPart(partWith((k) => { for (;;) k.box({ size: [1, 1, 1] }); }));
   expect(ids(r.errors)).toContain("build-runaway");

@@ -97,6 +97,62 @@ function sampleSvgArc(from, rx, ry, rotDeg, largeArc, sweep, to, segs) {
   return out;
 }
 
+// Split an SVG elliptical-arc segment (endpoint parameterization, same center-form
+// math as sampleSvgArc above) into ≤90° cubic Bézier pieces via the standard
+// k = (4/3)tan(dθ/4) control-point formula in the ellipse's own rotated/scaled
+// frame, then mapped back through the rotation+translation into model space.
+// Returns segments as { to, c1, c2 } (no `from` — the caller already holds it).
+function svgArcToCubics(from, rx, ry, rotDeg, largeArc, sweep, to) {
+  const [x1, y1] = from, [x2, y2] = to;
+  if (rx === 0 || ry === 0) return [{ to: [x2, y2] }];
+  const phi = (rotDeg * Math.PI) / 180, cosP = Math.cos(phi), sinP = Math.sin(phi);
+  const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
+  const x1p = cosP * dx + sinP * dy, y1p = -sinP * dx + cosP * dy;
+  let RX = Math.abs(rx), RY = Math.abs(ry);
+  const lambda = (x1p * x1p) / (RX * RX) + (y1p * y1p) / (RY * RY);
+  if (lambda > 1) { const s = Math.sqrt(lambda); RX *= s; RY *= s; }
+  const numr = RX * RX * RY * RY - RX * RX * y1p * y1p - RY * RY * x1p * x1p;
+  const den = RX * RX * y1p * y1p + RY * RY * x1p * x1p;
+  let coef = Math.sqrt(Math.max(0, numr / den));
+  if (Boolean(largeArc) === Boolean(sweep)) coef = -coef;
+  const cxp = (coef * RX * y1p) / RY, cyp = (-coef * RY * x1p) / RX;
+  const cx = cosP * cxp - sinP * cyp + (x1 + x2) / 2;
+  const cy = sinP * cxp + cosP * cyp + (y1 + y2) / 2;
+  const angle = (ux, uy, vx, vy) => {
+    const dot = ux * vx + uy * vy, len = Math.hypot(ux, uy) * Math.hypot(vx, vy) || 1e-12;
+    let a = Math.acos(Math.min(1, Math.max(-1, dot / len)));
+    if (ux * vy - uy * vx < 0) a = -a;
+    return a;
+  };
+  const theta1 = angle(1, 0, (x1p - cxp) / RX, (y1p - cyp) / RY);
+  let dTheta = angle((x1p - cxp) / RX, (y1p - cyp) / RY, (-x1p - cxp) / RX, (-y1p - cyp) / RY);
+  if (!sweep && dTheta > 0) dTheta -= 2 * Math.PI;
+  if (sweep && dTheta < 0) dTheta += 2 * Math.PI;
+  // point on the ellipse (model space) + its tangent direction, at parameter t
+  const pointAt = (t) => {
+    const ex = RX * Math.cos(t), ey = RY * Math.sin(t);
+    return [cx + cosP * ex - sinP * ey, cy + sinP * ex + cosP * ey];
+  };
+  const tangentAt = (t) => {
+    const ex = -RX * Math.sin(t), ey = RY * Math.cos(t);
+    return [cosP * ex - sinP * ey, sinP * ex + cosP * ey];
+  };
+  const pieces = Math.max(1, Math.ceil(Math.abs(dTheta) / (Math.PI / 2)));
+  const dSeg = dTheta / pieces;
+  const kFac = (4 / 3) * Math.tan(dSeg / 4);
+  const out = [];
+  for (let i = 0; i < pieces; i++) {
+    const tA = theta1 + dSeg * i, tB = theta1 + dSeg * (i + 1);
+    const pA = i === 0 ? [x1, y1] : pointAt(tA);
+    const pB = i === pieces - 1 ? [x2, y2] : pointAt(tB);
+    const tanA = tangentAt(tA), tanB = tangentAt(tB);
+    const c1 = [pA[0] + kFac * tanA[0], pA[1] + kFac * tanA[1]];
+    const c2 = [pB[0] - kFac * tanB[0], pB[1] - kFac * tanB[1]];
+    out.push({ to: pB, c1, c2 });
+  }
+  return out;
+}
+
 // Minimal SVG-path tokenizer for the absolute commands replicad emits: M, L, C,
 // Q, A, Z. Coordinates are numbers separated by spaces or commas; a command may
 // be followed by several coordinate sets (implicit repeat). One subpath (M…Z) →
@@ -131,4 +187,48 @@ export function svgPathToRings(d, segs) {
   }
   pushRing();
   return rings;
+}
+
+// SVG-path tokenizer that emits contour IR ({ start, segments: [{to}|{to,c1,c2}] },
+// the path-contour shape from profile.js) instead of tessellated point rings — the
+// curve-preserving twin of svgPathToRings above, same command set (M L C Q A Z) and
+// the same tokenizer/error-message conventions. C stays a cubic segment as-is; Q
+// degree-elevates to a cubic with the identical control-point math svgPathToRings
+// uses (just not sampled into points); A splits into ≤90° cubic pieces via
+// svgArcToCubics. Z closes the subpath with a straight segment back to its start
+// (mirroring pointsToContour's implicit closing edge) when not already there.
+export function svgPathToContours(d) {
+  const toks = d.match(/[a-zA-Z]|-?\d*\.?\d+(?:e[-+]?\d+)?/g) ?? [];
+  const contours = [];
+  let start = null, segments = null, cur = [0, 0], cmd = null, i = 0;
+  const num = () => Number(toks[i++]);
+  const pt = () => [num(), num()];
+  const pushContour = () => { if (start && segments && segments.length >= 1) contours.push({ start, segments }); start = null; segments = null; };
+  while (i < toks.length) {
+    if (/^[a-zA-Z]$/.test(toks[i])) {
+      cmd = toks[i++];
+      if (!"MLCQAZ".includes(cmd)) throw new Error(`svgPathToContours: unsupported SVG command "${cmd}"`);
+    }
+    if (cmd === "M") { pushContour(); cur = pt(); start = cur.slice(); segments = []; cmd = "L"; }
+    else if (cmd === "L") { cur = pt(); segments.push({ to: cur.slice() }); }
+    else if (cmd === "C") { const c1 = pt(), c2 = pt(), end = pt(); segments.push({ to: end, c1, c2 }); cur = end; }
+    else if (cmd === "Q") {
+      const q = pt(), end = pt();
+      const c1 = [cur[0] + (2 / 3) * (q[0] - cur[0]), cur[1] + (2 / 3) * (q[1] - cur[1])];
+      const c2 = [end[0] + (2 / 3) * (q[0] - end[0]), end[1] + (2 / 3) * (q[1] - end[1])];
+      segments.push({ to: end, c1, c2 }); cur = end;
+    }
+    else if (cmd === "A") {
+      const rx = num(), ry = num(), rot = num(), large = num(), sweep = num(), end = pt();
+      for (const seg of svgArcToCubics(cur, rx, ry, rot, large, sweep, end)) segments.push(seg);
+      cur = end;
+    }
+    else if (cmd === "Z") {
+      if (cur[0] !== start[0] || cur[1] !== start[1]) segments.push({ to: start.slice() });
+      pushContour(); cmd = null;
+    }
+    else throw new Error("svgPathToContours: coordinate before or after a command");
+  }
+  pushContour();
+  return contours;
 }

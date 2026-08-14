@@ -34,11 +34,28 @@ test("toRegions materializes; simple unwraps the single region", () => {
   expect(s.simple().holes).toHaveLength(1);
 });
 
-test("boolean is content-hash cached (hit on repeat)", () => {
+// Shape2D booleans themselves are pure JS over the contour IR — no WASM, nothing to
+// cache. What the content hash still buys is downstream: an identical shape rebuilt
+// from scratch keys the SAME solid-cache entries, so the CrossSection materialization
+// and the extrude behind it are done once.
+test("an identical rebuilt shape hits the solid cache downstream (content hash)", () => {
   k.beginSubPart("t");
   k.resetCacheStats();
-  const one = () => k.shape2d(SQ(0, 0, 10)).cut(SQ(5, 5, 10)).area();
+  const one = () => k.extrude({ profile: k.shape2d(SQ(0, 0, 10)).cut(SQ(5, 5, 10)), h: 2 }).volume();
   one(); const before = k.cacheStats().hits; one();
+  expect(k.cacheStats().hits).toBeGreaterThan(before);
+  k.endSubPart();
+});
+
+// The same shape used twice (extrude AND revolve) tessellates ONE CrossSection —
+// csFor memoizes it in the solid cache by shape hash + LOD.
+test("materialization is memoized: two kernel ops over one shape tessellate once", () => {
+  k.beginSubPart("cs");
+  k.resetCacheStats();
+  const shape = k.shape2d(SQ(2, 0, 6));
+  k.extrude({ profile: shape, h: 2 });
+  const before = k.cacheStats().hits;
+  k.revolve({ profile: shape, degrees: 360 });
   expect(k.cacheStats().hits).toBeGreaterThan(before);
   k.endSubPart();
 });
@@ -121,9 +138,12 @@ test("offset validates delta and corners", () => {
     .toThrow('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
 });
 
-test("offset is content-hash cached (hit on repeat)", () => {
+// Offset is the one op that still runs backend geometry (Clipper2), but its RESULT
+// is a contour-IR shape like any other — so the repeat payoff is again downstream:
+// the same offset shape extrudes off a cached CrossSection + solid.
+test("an offset result is content-hashed: repeat rebuild hits the solid cache", () => {
   k.beginSubPart("off"); k.resetCacheStats();
-  const one = () => k.shape2d(SQ(0, 0, 10)).offset(1).area();
+  const one = () => k.extrude({ profile: k.shape2d(SQ(0, 0, 10)).offset(1), h: 2 }).volume();
   one(); const before = k.cacheStats().hits; one();
   expect(k.cacheStats().hits).toBeGreaterThan(before);
   k.endSubPart();
