@@ -362,18 +362,18 @@ function solveFilletTangency(A, B, r) {
   return { tA, tB, TA, TB: B.at(tB), C };
 }
 
+function bisectMaxRFillet(A, B, r) {
+  let lo = 0, hi = r;
+  for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (solveFilletTangency(A, B, mid)) lo = mid; else hi = mid; }
+  return lo;
+}
+
 // Arc length of segment `seg` (from `from`); cubic arc length via a scratch
 // open paper path (paper's numeric integration), line/arc in closed form.
 function curveLength(from, seg) {
   if (seg.via) { const c = arcCenterAndSweep(from, seg.via, seg.to); return c ? Math.abs(c.dA) * c.r : Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]); }
   if (seg.c1) return toPaperPath(paperScope(), { start: from, segments: [seg] }, null, { open: true }).length;
   return Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]);
-}
-// Arc length traveled from `from` (t=0) up to parameter t.
-function lengthUpTo(from, seg, t) {
-  if (seg.via) { const c = arcCenterAndSweep(from, seg.via, seg.to); return c ? Math.abs(c.dA) * c.r * t : Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]) * t; }
-  if (seg.c1) return toPaperPath(paperScope(), { start: from, segments: [seg] }, null, { open: true }).curves[0].getOffsetAtTime(t);
-  return Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]) * t;
 }
 // t-parameter at arc-length `dist` along segment `seg` (from `from`, t=0).
 function paramAtArcLength(from, seg, dist) {
@@ -382,38 +382,12 @@ function paramAtArcLength(from, seg, dist) {
   return dist / Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]);
 }
 
-// Curve-adjacent corners have no equivalent of line-line's `selected` bookkeeping
-// (buildCornerOpRing's per-edge Set), so there's no cheap way to tell whether a
-// curved neighbor's far end is also spoken for by another operation. Conservatively
-// cap each side's setback at half its own arc length — the same "never bet on a
-// neighbor being free" caution line-line only relaxes once it can PROVE the far
-// end is unclaimed (Task 6's isolated-corner fix). Applied uniformly (fillet's
-// tangent setback and chamfer's arc-length setback alike).
-function fitsHalfLength(fromA, segA, tA, fromB, segB, tB) {
-  const lenA = curveLength(fromA, segA), lenB = curveLength(fromB, segB);
-  const setbackA = lenA - lengthUpTo(fromA, segA, tA), setbackB = lengthUpTo(fromB, segB, tB);
-  return setbackA <= lenA / 2 + 1e-9 && setbackB <= lenB / 2 + 1e-9;
-}
-
-function trySolveFillet(fromA, segA, fromB, segB, A, B, r) {
-  const solved = solveFilletTangency(A, B, r);
-  if (!solved || !fitsHalfLength(fromA, segA, solved.tA, fromB, segB, solved.tB)) return null;
-  return solved;
-}
-
-function bisectMaxRFillet(fromA, segA, fromB, segB, A, B, r) {
-  let lo = 0, hi = r;
-  for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (trySolveFillet(fromA, segA, fromB, segB, A, B, mid)) lo = mid; else hi = mid; }
-  return lo;
-}
-
 // Chamfer's curve solver: no Newton needed — tA/tB are set directly by
-// arc-length setbacks of `dist` from the corner, measured along each curve
-// (`dist` IS the setback here, so the half-length cap above is just a bound on it).
+// arc-length setbacks of `dist` from the corner, measured along each curve.
 function solveChamferArcLength(fromA, segA, fromB, segB, dist) {
   if (!(dist > 0)) return null;
   const totalA = curveLength(fromA, segA), totalB = curveLength(fromB, segB);
-  if (dist > totalA / 2 + 1e-9 || dist > totalB / 2 + 1e-9) return null;
+  if (dist > totalA - 1e-9 || dist > totalB - 1e-9) return null;
   const tA = paramAtArcLength(fromA, segA, totalA - dist);
   const tB = paramAtArcLength(fromB, segB, dist);
   if (!(tA > T_LO && tA < T_HI && tB > T_LO && tB < T_HI)) return null;
@@ -436,9 +410,9 @@ function solveCurveCorner(pts, contour, n, i, param, isFillet, label) {
   const A = curveEvaluator(fromA, segA), B = curveEvaluator(fromB, segB);
   const p1 = pts[i];
   if (isFillet) {
-    const solved = trySolveFillet(fromA, segA, fromB, segB, A, B, param);
+    const solved = solveFilletTangency(A, B, param);
     if (!solved) {
-      const maxR = roundNice(bisectMaxRFillet(fromA, segA, fromB, segB, A, B, param));
+      const maxR = roundNice(bisectMaxRFillet(A, B, param));
       throw new Error(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): could not fit r=${param} against the curved segment; max ≈ ${maxR}`);
     }
     const { tA, tB, TA, TB, C } = solved;

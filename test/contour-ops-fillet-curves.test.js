@@ -28,6 +28,6 @@ test("curved neighbor is trimmed, not replaced: remaining cubic still ends where
 });
 
 test("oversized radius on a curve corner throws with a computed max", () => {
-  expect(() => filletProfile(tab(), 9, { corners: { near: [20, 10] } }))
-    .toThrow(/could not fit r=9 .* max ≈ /);
+  expect(() => filletProfile(tab(), 20, { corners: { near: [20, 10] } }))
+    .toThrow(/could not fit r=20 .* max ≈ /);
 });
