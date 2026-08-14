@@ -1121,6 +1121,111 @@ const wall  = k.shape2d(outer).offset(-2, { corners: "sharp" });  // inset, mite
 
 `Shape2D.offset(delta, {corners})` grows (`delta>0`) or insets (`delta<0`) a shape with round/chamfer/sharp corners — curve-preserving on OCCT, faceted at mesh LOD on Manifold; it throws if the offset collapses the shape. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.)
 
+## Editing profiles
+
+Once a profile exists — imported SVG, `pathProfile`, or the result of a boolean — the
+**2-D editing ops** let you reshape it with named operations instead of hand-editing
+control points: round or bevel a corner, nudge/rotate/mirror it, measure it, simplify
+it, or validate it. This is deliberately the same vocabulary an LLM agent calls: pick a
+corner, name a radius, get back a profile — never coordinate math. Every op is
+available two ways — as a `Shape2D` method (`plate.fillet(2)`) and as a free function
+over plain contour data (`filletProfile(outline, 2)`) — both run the same
+`contour-ops.js`/paper.js machinery.
+
+**Polymorphic input contract.** Every op below accepts a point list, a `{start,
+segments}` contour, a `{outer, holes}` region, or a region array, and returns the
+**same shape it was given** — a bare point list stays a point list, upgrading to a
+`{start, segments}` contour only if the op introduces curves (e.g. a fillet, or a
+non-uniform scale on an arc). The exception is the three arc-length queries
+(`profileLength`, `profilePointAt`, `profileTangentAt`): they are single-contour by
+nature, so passing a region throws, naming the accessor to use —
+`profilePointAt: pass a single contour (use region.outer / region.holes[i])`.
+
+**Transforms** — exact on every segment type (line, arc, cubic); mirror and
+non-uniform scale re-normalize winding (outer CCW, holes CW) afterward, so no op can
+hand the kernel an inverted region:
+
+| Function | Notes |
+|---|---|
+| `translateProfile(input, [dx,dy])` | exact on all segment types |
+| `rotateProfile(input, deg, center = [0,0])` | arcs stay arcs |
+| `scaleProfile(input, s \| [sx,sy], center = [0,0])` | non-uniform scale converts `{to,via}` arcs to cubics (an ellipse is not a circular arc) |
+| `mirrorProfile(input, axis)` | `axis: "x" \| "y" \| {point:[x,y], dir:[dx,dy]}` |
+
+**Corners** — fillet inserts a true `{to,via}` arc (a real STEP `CIRCLE` on OCCT);
+chamfer sets back `dist` along each adjacent segment and connects with a straight
+`{to}`. Both throw, precisely, when a radius/distance doesn't fit — naming the corner,
+its coordinates, and the max that would work — rather than silently clamping:
+
+| Function | Notes |
+|---|---|
+| `filletProfile(input, r, opts?)` | `r`: number, or an array matched positionally with `opts.corners.indices` |
+| `chamferProfile(input, dist, opts?)` | symmetric setback, straight connector |
+| `profileCorners(input)` | `[{index, point, interiorAngleDeg, convex, segTypes}]` |
+
+`opts.corners` selects which corners an op touches (default `"all"`):
+
+- `"all"` · `"convex"` · `"concave"`
+- `{indices: [...]}` — positions into `profileCorners(input)`'s own return order; pair
+  with an array `r`/`dist` for per-corner radii (the `roundedProfile` pattern)
+- `{near: [x,y], count?: 1}` — nearest-corner selection; the hook for a human pick or
+  an agent resolving "the top-left corner" from bbox reasoning
+
+```js
+// Fillet only the two corners nearest the profile's top edge, 3mm and 1.5mm:
+const corners = profileCorners(outline);
+const top = corners.filter((c) => c.point[1] > 20).map((c) => c.index);
+const rounded = filletProfile(outline, [3, 1.5], { corners: { indices: top } });
+
+// Fillet every convex corner of a Shape2D by the same amount:
+plate = plate.fillet(p.cornerR, { corners: "convex" });
+```
+
+**Queries, cleanup and validation:**
+
+| Function | Notes |
+|---|---|
+| `profileLength(contour)` | mm; single contour only |
+| `profilePointAt(contour, {t} \| {length})` | `t` ∈ [0,1] normalized arc length; single contour only |
+| `profileTangentAt(contour, {t} \| {length})` | unit vector; single contour only |
+| `profileNearestPoint(input, [x,y])` | `{point, distance, contourIndex, segmentIndex, t}` — accepts regions; the pick-resolution primitive |
+| `profileBounds(input)` | curve-exact `{min, max}` |
+| `profileArea(input)` | outers − holes, curve-exact |
+| `profileContains(input, [x,y])` | curve-aware containment (inside an outer, not inside a hole) |
+| `simplifyProfile(input, tolerance)` | corner-preserving: splits at corners, refits each smooth run within `tolerance` mm, rejoins — corners survive exactly, arcs entering it return as cubics |
+| `validateProfile(input)` | `{ok, issues: [{type, contourIndex, segmentIndex?, point?, message}]}`; never throws — `type` is `self-intersection`, `winding`, `nesting`, or `degenerate` |
+
+Two rules worth internalizing before reaching for any of this:
+
+- **Fillet after booleans if STEP `CIRCLE` fidelity matters.** Booleans run through
+  paper.js, which is cubic-only — an arc entering a boolean returns as a cubic
+  approximation (relative error ~1e-6). `union`/`cut` first, `fillet` last keeps the
+  rounded corners true circular arcs all the way to STEP export.
+- **Run `validateProfile` after mutations.** `fillet`/`chamfer` check only their own
+  corner's local fit — not whether the result self-intersects globally (a large radius
+  on a narrow profile can produce arcs that cross the far side). `validateProfile`
+  never throws, so it's cheap to call after any edit and inspect `issues` before
+  committing to the result.
+
+A practical trap with the broad selectors: `"all"`/`"convex"`/`"concave"` match **every**
+matching corner, including ones you didn't mean to touch. Union a curve-native outline
+with a *tessellated* point-list shape (e.g. `circleProfile`, still a faceted polygon —
+see "Profiles & patterns") and every one of that polygon's facet vertices becomes its
+own small convex corner in the result; a `corners: "convex"` fillet then tries to round
+all of them, including the tiny ones whose neighboring facet is too short to hold any
+useful radius. `profileCorners(input)` reports each corner's `interiorAngleDeg`, which
+cleanly tells a facet artifact (close to 180°, barely bent) from a real corner (well
+away from 180°) — filter on that, or pass a coarser `segs` to the tessellated shape
+before unioning, rather than fighting the selector after the fact.
+
+**`Shape2D` methods.** Existing: `union`, `cut`, `cutAll`, `intersect`, `offset`,
+`area`, `boundingBox`, `toRegions`, `simple`, `regions`, `clone`, `extrude`, `revolve`.
+New, all delegating to the pure functions above over the shape's stored contours:
+`translate([dx,dy])`, `rotate(deg, center?)`, `scale(s | [sx,sy], center?)`,
+`mirror(axis)`, `toContours()` (the stored contour IR, deep-copied — the one readback
+that tessellates nothing, unlike `toRegions()`), `fillet(r, opts?)`, `chamfer(dist,
+opts?)`, `simplify(tolerance)`, `corners()`, `contains([x,y])`.
+
 ## Convex hull
 
 `k.hull([a, b, …])` wraps its inputs (Shape2Ds, curve contours, or point lists) in a
