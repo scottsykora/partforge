@@ -33,12 +33,18 @@ import {
   bootManifoldKernel,
   buildBVH,
   buildView,
+  matchMasks,
+  matchViews,
+  MATCH_VIEWS,
   measure,
   minWall,
+  rasterizeMeshMask,
+  rasterizeRingsMask,
   relevantParamKeys,
   RELEVANT_ALL,
   verify,
 } from "partforge/testing";
+import type { SilhouetteMask } from "partforge/testing";
 
 // A tiny assertion helper: `expectType<T>(value)` fails to compile unless
 // `value` is assignable to `T`.
@@ -411,8 +417,35 @@ expectType<number | null | undefined>(minWall(built[0]!.mesh, { bvh })?.value);
 const relevant = relevantParamKeys(spacer, "spacer", spacer.defaults);
 if (relevant !== RELEVANT_ALL) expectType<boolean>(relevant.has("od"));
 
+// The single-build pattern the `inspect` job ships: build the view ONCE, measure
+// that build, and rasterize the same meshes for match scoring. This shipped
+// untypeable — `opts.built` was in the code and not in the declarations — so the
+// exact call the job makes is the thing worth compiling here.
+expectType<number>(measure(kernel, spacer, "spacer", {}, { minWall: true, built }).subparts.length);
+
+const viewMasks: Record<string, SilhouetteMask | null> = {};
+for (const view of MATCH_VIEWS) viewMasks[view] = rasterizeMeshMask(built.map((b) => b.mesh), view);
+expectType<number | undefined>(viewMasks.top?.mmPerPx);
+
+const target = rasterizeRingsMask([[[0, 0], [10, 0], [10, 10]]]);
+const scored = matchViews(viewMasks, target, { scaleAware: true });
+expectType<string | undefined>(scored.best?.view);
+expectType<"mm" | "%bbox-diag" | undefined>(scored.best?.contourUnit);
+expectType<number | undefined>(scored.best?.iouScale);
+expectType<number | undefined>(scored.views.top);
+expectType<Uint8Array | undefined>(scored.best?.delta.data);
+
+// A photo mask carries no scale, and matchMasks accepts one that is not there at
+// all — plus the unscoreable answer, which is null rather than a zero score.
+expectType<number | undefined>(
+  matchMasks({ data: new Uint8Array(16), width: 4, height: 4 }, viewMasks.front)?.iou,
+);
+
 // @ts-expect-error - measure's `view` is a string, not a number
 measure(kernel, spacer, 0);
+
+// @ts-expect-error - `built` is a buildView result, not a bare mesh list
+measure(kernel, spacer, "spacer", {}, { built: [built[0]!.mesh] });
 
 // A step may carry only a camera — an establishing shot that holds the pose while
 // the view swings round. `partforge lint` allows it and the runtime plays it, so

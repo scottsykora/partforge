@@ -86,6 +86,32 @@ describe("inspect job match scoring", () => {
     expect(m.best.iouScale).toBeUndefined();
   });
 
+  test("a mixed image + profile pair is reported in input order, each scored its own way", async () => {
+    // The shape a real caller sends: the user's reference photo alongside a profile
+    // traced from it. Results are attributed by `kind` and input order — never by
+    // index, since an unscoreable target is dropped rather than padded.
+    const built = buildView(kernel, part, VIEW, {});
+    const mask = rasterizeMeshMask(built.map((b) => b.mesh), "top");
+    kernel.cleanup?.();
+
+    const report = await inspect({
+      matchTargets: [
+        { kind: "image", mask: { data: mask.data, width: mask.width, height: mask.height } },
+        { kind: "profile", rings: spacerRings() },
+      ],
+    });
+
+    expect(report.match.map((m) => m.kind)).toEqual(["image", "profile"]);
+    // Each target keeps its own comparison: the photo has no millimetres, the
+    // profile does — one shared rasterization of the part, two different questions.
+    expect(report.match[0].best.contourUnit).toBe("%bbox-diag");
+    expect(report.match[0].best.iouScale).toBeUndefined();
+    expect(report.match[1].best.contourUnit).toBe("mm");
+    expect(report.match[1].best.iouScale).toBeGreaterThan(0.9);
+    // Two targets, two independent delta frames.
+    expect(report.match[0].delta.data).not.toBe(report.match[1].delta.data);
+  });
+
   test("an inspect without matchTargets carries no match key at all", async () => {
     const report = await inspect({});
     expect(report.measure.subparts.length).toBeGreaterThan(0);

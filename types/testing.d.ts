@@ -61,8 +61,12 @@ export interface WorkerJob {
   name?: string;
   /**
    * `inspect`: score the part's six canonical silhouettes against these. Absent or
-   * empty leaves `match` off the report entirely; a target that cannot be scored is
-   * dropped rather than reported as a zero.
+   * empty leaves `match` off the report entirely.
+   *
+   * A target that cannot be scored — malformed, or with no foreground to score
+   * against — is DROPPED rather than reported as a zero, so `report.match` is not
+   * index-aligned with this list. Attribute a result by its `kind` and by the
+   * relative order of the targets sharing that kind, never by index.
    */
   matchTargets?: MatchTarget[];
 }
@@ -287,7 +291,16 @@ export function measure(
   part: PartDefinition,
   view?: string,
   params?: ResolvedParams,
-  opts?: { minWall?: boolean; gapThreshold?: number },
+  opts?: {
+    minWall?: boolean;
+    gapThreshold?: number;
+    /**
+     * A build of this view the caller already has, measured instead of building a
+     * second time. It is trusted, not checked against `view`/`params` — hand in a
+     * build of the same view you are asking about.
+     */
+    built?: BuiltSubPart[];
+  },
 ): MeasureReport;
 
 // --- verify -----------------------------------------------------------------

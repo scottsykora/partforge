@@ -75,7 +75,7 @@ function scoreMatchTargets(built, targets, onProgress) {
         // profile target gets the absolute-size score (`iouScale`, contourDist in mm)
         // while an image target gets the pose-normalized one.
         const scoreOpts = { scaleAware: target.kind === "profile" };
-        const { best, views } = matchViews(viewMasks, reference, scoreOpts) ?? {};
+        const { best, views } = matchViews(viewMasks, reference, scoreOpts);
         if (!best) continue; // nothing scoreable — a dropped target, never a zero score
         const { delta, ...scores } = best;
         out.push({ kind: target.kind, best: scores, views, delta: { view: best.view, ...delta } });
