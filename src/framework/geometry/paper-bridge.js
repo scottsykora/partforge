@@ -92,7 +92,15 @@ export function toPaperPath(scope, contour, segMap = null, { open = false } = {}
       prev = s.to;
     }
   });
-  if (!open) path.closePath();
+  if (!open) {
+    path.closePath();
+    // A contour authored without an explicit closing segment (e.g. pathProfile(...).close())
+    // relies on closePath() to synthesize the closing curve — segMap never saw it. Give it
+    // the next index after the last authored segment so callers can recognize "the implicit
+    // close". When the contour DOES have an explicit closing segment, closePath() joins the
+    // coincident start/end segments and curve count already matches segMap — don't push then.
+    if (segMap && path.curves.length === segMap.length + 1) segMap.push(contour.segments.length);
+  }
   return path;
 }
 

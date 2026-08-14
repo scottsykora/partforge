@@ -26,6 +26,25 @@ test("segMap is identity for line/cubic contours", () => {
   scope.project.clear();
 });
 
+test("segMap gets an entry for the implicit closing edge when the contour has no explicit close segment", () => {
+  const scope = paperScope();
+  const ct = { start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 10] }] };   // no {to:[0,0]}
+  const segMap = [];
+  const path = toPaperPath(scope, ct, segMap);
+  expect(path.curves.length).toBe(3);
+  expect(segMap).toEqual([0, 1, 2]);   // synthesized closing curve gets the next index
+  scope.project.clear();
+});
+
+test("segMap is unchanged (no extra entry) when the contour already has an explicit close segment", () => {
+  const scope = paperScope();
+  const ct = { start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 10] }, { to: [0, 0] }] };
+  const segMap = [];
+  toPaperPath(scope, ct, segMap);
+  expect(segMap).toEqual([0, 1, 2]);
+  scope.project.clear();
+});
+
 test("quarter-circle arc → single cubic within precision 2", () => {
   const p0 = [10, 0], via = [Math.SQRT1_2 * 10, Math.SQRT1_2 * 10], to = [0, 10];
   const cubics = arcToCubicSegments(p0, via, to);

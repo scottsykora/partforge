@@ -24,6 +24,15 @@ test("nearestPoint maps back to our segment index through arc expansion", () => 
   expect(near.distance).toBeGreaterThan(0);
 });
 
+test("nearestPoint on the implicit closing edge (no explicit close segment) still gets a segmentIndex", () => {
+  // Authored WITHOUT an explicit closing {to:[0,0]} segment — toPaperPath's closePath()
+  // synthesizes the closing curve. [5.1, 4.9] sits nearest that synthesized diagonal edge.
+  const ct = { start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 10] }] };
+  const near = profileNearestPoint(ct, [5.1, 4.9]);
+  expect(near.segmentIndex).toBe(2);
+  expect(Number.isFinite(near.segmentIndex)).toBe(true);
+});
+
 test("bounds and area are curve-exact for a cubic circle", () => {
   const KAPPA = 0.5522847498307936, R = 10, k4 = R * KAPPA;
   const circle = { start: [R, 0], segments: [
