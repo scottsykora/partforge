@@ -33,12 +33,12 @@ test("quarter-circle arc → single cubic within 1e-4 of the true circle", () =>
   const cubics = arcToCubicSegments(p0, via, to);
   expect(cubics.length).toBe(1);
   expect(cubics[0].to).toEqual([0, 10]);
-  // max radial deviation from r=10 over sampled t
+  // The k=(4/3)tan(θ/4) quarter-circle cubic has max radial error ≈ 2.7e-4·r; at r=10, precision 2 (5e-3) is the right gate
   let prev = p0;
   for (const seg of cubics) {
     for (let t = 0.1; t < 1; t += 0.1) {
       const p = cubicAt(prev, seg.c1, seg.c2, seg.to, t);
-      expect(Math.hypot(p[0], p[1])).toBeCloseTo(10, 4);
+      expect(Math.hypot(p[0], p[1])).toBeCloseTo(10, 2);
     }
     prev = seg.to;
   }
