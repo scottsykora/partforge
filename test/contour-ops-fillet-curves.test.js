@@ -1,6 +1,7 @@
 import { test, expect } from "vitest";
-import { filletProfile, profileCorners, jointTangents } from "../src/framework/geometry/contour-ops.js";
-import { pathProfile } from "../src/framework/geometry/polygon.js";
+import { filletProfile, profileCorners, jointTangents, liftProfile } from "../src/framework/geometry/contour-ops.js";
+import { pathProfile, circleProfile } from "../src/framework/geometry/polygon.js";
+import { booleanRegions } from "../src/framework/geometry/paper-bridge.js";
 
 // A "tab" whose top edge is a shallow cubic bulge meeting straight sides at corners.
 const tab = () => pathProfile([0, 0])
@@ -57,4 +58,45 @@ test("two curve corners that fit leave the shared line running forward, not self
   // the remaining flat run must go forward (increasing x): from the first arc's
   // end to the line's own end, not backward (which is what the bug produced).
   expect(lineSeg.to[0]).toBeGreaterThan(out.segments[arcIdx].to[0]);
+});
+
+// A rectangle-with-one-cubic-bulge outline, authored so `start`'s closing edge (the
+// last segment's `to` back to `start`) is left IMPLICIT — `close()` never revisits
+// `start` itself, and that closing edge is adjacent to the cubic. This is the exact
+// shape src/parts/gasket.js's outline construction bumped into: contourCorners/
+// buildCornerOpRing (contour-ops.js) index corner 0 as "the joint arriving via
+// segments[n-1]", which is only true if the ring is EXPLICITLY closed — here
+// segments[n-1] is really the cubic bulge (nowhere near `start`), not the missing
+// straight closer, so corner 0's fillet solve pairs the cubic against the wrong
+// neighbor entirely.
+const bulgeRectImplicitlyClosed = () => pathProfile([-10, 0])
+  .lineTo([10, 0])
+  .lineTo([10, 10])
+  .cubicTo([-10, 10], [5, 13], [-5, 13])   // ends at [-10,10] — NOT back at start [-10,0]
+  .close();                                 // the [-10,10]→[-10,0] edge is left implicit
+
+test("fillet on a raw contour with an implicit closing edge adjacent to a curve does not misfire at corner 0", () => {
+  // Target exactly the seam corner (near start, [-10,0]) rather than "convex" (which
+  // would fillet all 4 corners and leave none sharp to compare against) — this is the
+  // one whose neighbor buildCornerOpRing misidentified pre-fix.
+  const out = filletProfile(bulgeRectImplicitlyClosed(), 2, { corners: { near: [-10, 0], count: 1 } });
+  const arcIdx = out.segments.findIndex((s) => s.via);
+  expect(arcIdx).toBeGreaterThan(-1);          // a real arc was inserted at the seam
+  const tans = jointTangents(out);
+  const dotIn = tans[arcIdx].inTan[0] * tans[arcIdx].outTan[0] + tans[arcIdx].inTan[1] * tans[arcIdx].outTan[1];
+  expect(dotIn).toBeGreaterThan(0.9999);        // G1 at the arc's incoming tangency point
+  // The other 3 corners were left untouched — still reported as sharp.
+  expect(profileCorners(out).length).toBe(3);
+});
+
+test("fillet on a UNION's readback contour with the same implicit-closing-edge shape does not misfire (gasket regression)", () => {
+  // A tab unioned in elsewhere doesn't touch the seam corner directly, but paper.js's
+  // boolean still round-trips the WHOLE contour through toContour() — which is where
+  // the closing edge becomes implicit in the first place (see paper-bridge.js).
+  let regions = liftProfile(bulgeRectImplicitlyClosed()).regions;
+  regions = booleanRegions(regions, liftProfile(circleProfile(2, [5, 0])).regions, "unite");
+  const out = filletProfile(regions, 1, { corners: "convex" });
+  const kinds = out[0].outer.segments.map((s) => (s.via ? "arc" : s.c1 ? "cubic" : "line"));
+  expect(kinds).toContain("arc");    // the fillet actually ran, not a silent no-op
+  expect(kinds).toContain("cubic");  // the bulge survived the union
 });

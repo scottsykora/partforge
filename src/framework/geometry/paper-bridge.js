@@ -2,7 +2,7 @@
 // call k.text2d don't pull paper-core's setup onto the geometry worker. Never paper's
 // package-global project — another consumer in the same worker may import paper too.
 import paper from "paper/dist/paper-core.js";
-import { tessellateContour, reverseContour } from "./profile.js";
+import { tessellateContour, reverseContour, closeContourGap } from "./profile.js";
 
 const WINDING_SEGS = 8;   // points/segment for the local orientation sampler below
 
@@ -174,11 +174,16 @@ function shoelaceArea(ring) {
 // model y-up space). Paper's own `clockwise` flag is in paper's y-down coordinate frame,
 // so it doesn't map onto that invariant directly — decide by area sign of the emitted
 // contour instead: tessellate it and check the shoelace sign, reversing when wrong.
+// closeContourGap re-closes the ring explicitly: toContour() (used by groupPaperPaths,
+// via curve-fill.js too — see its own comment) drops a straight closing edge as
+// "implicit," but every Shape2D region stored from here on must be explicitly closed —
+// contour-ops.js's corner math reads `segments[n-1]` directly as the edge arriving back
+// at `start` and has no other way to know the ring isn't fully spelled out.
 function groupPaperPathsOriented(paths) {
   const regions = groupPaperPaths(paths);
   return regions.map(({ outer, holes }) => ({
-    outer: shoelaceArea(tessellateContour(outer, WINDING_SEGS)) >= 0 ? outer : reverseContour(outer),
-    holes: holes.map((h) => (shoelaceArea(tessellateContour(h, WINDING_SEGS)) < 0 ? h : reverseContour(h))),
+    outer: closeContourGap(shoelaceArea(tessellateContour(outer, WINDING_SEGS)) >= 0 ? outer : reverseContour(outer)),
+    holes: holes.map((h) => closeContourGap(shoelaceArea(tessellateContour(h, WINDING_SEGS)) < 0 ? h : reverseContour(h))),
   }));
 }
 

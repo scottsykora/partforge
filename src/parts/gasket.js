@@ -17,17 +17,6 @@
 // takes the OCCT route and stays lint-clean. test/gasket-part.test.js still builds it
 // directly against a Manifold kernel (bypassing detectBackend/lint entirely), since
 // the two backends produce the same profile.
-//
-// Outline authoring order matters here in a way that's worth spelling out: `start` is
-// the bottom-right corner, with the cubic bulge in the MIDDLE of the segment list
-// rather than adjacent to the closing seam. A union's paper.js round-trip drops the
-// closing edge from the last segment back to `start` whenever it's straight (an
-// "implicit close" — see toContour() in paper-bridge.js), and corner ops read
-// `contour.segments` directly, so if `start` sat where the cubic meets that dropped
-// edge, `fillet`'s corner-0 solving would pair the cubic with a segment that isn't
-// really its neighbor. Starting where two straight edges flank the seam sidesteps
-// it — every corner op below only ever touches joints that are genuinely adjacent in
-// the stored contour.
 import { pathProfile, circleProfile } from "partforge/geometry";
 
 // Pure dimension math shared with test/gasket-part.test.js, which re-derives the same
@@ -83,12 +72,13 @@ export default {
       build: (k, p) => {
         const { w2, dep, bulge, tabR, tabX, tabSegs, filletR } = gasketGeometry(p);
 
-        // Curve-native outline: start at the bottom-right (see the module comment on
-        // why), straight sides, one cubic bulge across the top, straight bottom.
-        const outline = pathProfile([w2, 0])
+        // Curve-native outline: straight sides and bottom, one cubic bulge across the
+        // top. `close()` leaves the bottom-left→start edge implicit; contour-ops
+        // re-closes it explicitly wherever that matters (corner/fillet math).
+        const outline = pathProfile([-w2, 0])
+          .lineTo([w2, 0])
           .lineTo([w2, dep])
           .cubicTo([-w2, dep], [w2 * 0.5, dep + bulge], [-w2 * 0.5, dep + bulge])
-          .lineTo([-w2, 0])
           .close();
 
         // Boss centers sit exactly ON the bottom edge (y = 0) — the coincident-edge

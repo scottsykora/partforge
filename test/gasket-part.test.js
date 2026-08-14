@@ -38,10 +38,10 @@ function pureGasketFilletedRegions(overrides = {}) {
   const p = { ...part.defaults, ...overrides };
   const { w2, dep, bulge, tabR, tabX, tabSegs, filletR } = gasketGeometry(p);
 
-  const outline = pathProfile([w2, 0])
+  const outline = pathProfile([-w2, 0])
+    .lineTo([w2, 0])
     .lineTo([w2, dep])
     .cubicTo([-w2, dep], [w2 * 0.5, dep + bulge], [-w2 * 0.5, dep + bulge])
-    .lineTo([-w2, 0])
     .close();
 
   let regions = liftProfile(outline).regions;

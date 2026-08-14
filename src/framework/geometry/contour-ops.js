@@ -1,4 +1,4 @@
-import { isPathContour, tessellateContour, pointsToContour, reverseContour } from "./profile.js";
+import { isPathContour, tessellateContour, pointsToContour, reverseContour, closeContourGap } from "./profile.js";
 import { ringArea, pointInRing } from "./shape2d-regions.js";
 import { arcToCubicSegments, arcCenterAndSweep, paperScope, toPaperPath, toContour, toOpenContour } from "./paper-bridge.js";
 
@@ -11,12 +11,16 @@ export { pointsToContour, reverseContour };
 const WINDING_SEGS = 64;   // tessellation LOD for orientation/containment sampling
 
 const isPointList = (x) => Array.isArray(x) && x.length > 0 && Array.isArray(x[0]);
-const liftContour = (c) => (isPointList(c) ? pointsToContour(c) : c);
+// pointsToContour always closes explicitly; a raw {start,segments} contour (hand-authored
+// via pathProfile, or handed back from a Shape2D's own stored regions) might not —
+// closeContourGap is a no-op when it's already closed, so every ring liftProfile hands to
+// contour-ops' corner/transform/query functions is guaranteed explicitly closed.
+const liftContour = (c) => (isPointList(c) ? pointsToContour(c) : closeContourGap(c));
 
 export function liftProfile(input) {
   if (input && input._shape2d) return { kind: "regions", regions: input.toContours() };
   if (isPointList(input)) return { kind: "points", regions: [{ outer: pointsToContour(input), holes: [] }] };
-  if (isPathContour(input)) return { kind: "contour", regions: [{ outer: input, holes: [] }] };
+  if (isPathContour(input)) return { kind: "contour", regions: [{ outer: closeContourGap(input), holes: [] }] };
   if (Array.isArray(input) && input.every((r) => r && r.outer))
     return { kind: "regions", regions: input.map((r) => ({ outer: liftContour(r.outer), holes: (r.holes ?? []).map(liftContour) })) };
   if (input && input.outer)
@@ -649,7 +653,7 @@ function simplifyContour(scope, contour, tolerance) {
     // the seam instead of treating the start point as a free open endpoint.
     const path = toPaperPath(scope, contour);
     flattenThenSimplify(path, tolerance);
-    return toContour(path);
+    return closeContourGap(toContour(path));
   }
   const n = contour.segments.length;
   const startIdx = corners[0].index;
