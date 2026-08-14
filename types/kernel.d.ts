@@ -199,9 +199,11 @@ export interface Shape2D {
   corners(): Corner2D[];
   /** Is `[x, y]` inside the shape (inside an outer, not inside a hole)? */
   contains(p: Point2): boolean;
-  /** Sugar for `k.extrude({ profile: this, ... })`. */
+  /** No regions left (a cut/intersect removed everything)? Guard before `extrude`/`revolve`, which throw on an empty shape. */
+  isEmpty(): boolean;
+  /** Sugar for `k.extrude({ profile: this, ... })`. Throws if the shape is empty — guard with `isEmpty()`. */
   extrude(opts: { h: number; twist?: number; scaleTop?: number }): Solid;
-  /** Sugar for `k.revolve({ profile: this, ... })`. */
+  /** Sugar for `k.revolve({ profile: this, ... })`. Throws if the shape is empty — guard with `isEmpty()`. */
   revolve(opts?: { degrees?: number }): Solid;
 }
 

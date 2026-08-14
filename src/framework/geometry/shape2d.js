@@ -66,8 +66,12 @@ export function makeShape2dFactory({ segs, offsetRegions, extrude, revolve }) {
       // rings are explicitly closed. Both backends' readbacks close explicitly today, so this
       // is a no-op in practice; it's here so the storage invariant (every stored ring
       // explicitly closed — see closeContourGap's own comment) holds unconditionally.
-      offset:    (delta, opts = {}) => make(offsetRegions(regions, delta, opts)
+      // Empty in → empty out without calling the hook: the 2-D ops stay total on the
+      // empty shape on both backends (the OCCT hook would otherwise choke on a null
+      // Drawing); only 3-D materialization (extrude/revolve) rejects it.
+      offset:    (delta, opts = {}) => regions.length === 0 ? make([]) : make(offsetRegions(regions, delta, opts)
         .map((rg) => ({ outer: closeContourGap(rg.outer), holes: rg.holes.map(closeContourGap) }))),
+      isEmpty:   () => regions.length === 0,
       area:      () => profileArea(regions),
       boundingBox: () => profileBounds(regions),
       toRegions: () => assembleRegions(regions.flatMap((rg) =>
