@@ -9,7 +9,7 @@
 // (https://github.com/glenzli/paperjs-offset, MIT License, Copyright (c) glenzli),
 // adapted from paper.js Segments to the partforge contour IR.
 import { arcCenterAndSweep } from "./paper-bridge.js";
-import { cubicAt, splitCubic } from "./contour-ops.js";
+import { cubicAt, splitCubic, jointTangents, SMOOTH_JOINT_DEG } from "./contour-ops.js";
 
 export const OFFSET_TOL = 1e-3;   // mm — max deviation of a cubic offset approximation
 const MAX_DEPTH = 12;             // cubic subdivision recursion cap
@@ -77,4 +77,76 @@ export function _offsetSegment(from, seg, delta) {
   if (seg.c1) return offsetCubic(from, seg.c1, seg.c2, seg.to, delta, 0);
   if (seg.via) return offsetArc(from, seg, delta);
   return offsetLine(from, seg.to, delta);
+}
+
+const MITER_LIMIT = 2;
+
+// Intersection of the line through P (direction u) with the line through Q (direction v).
+function lineIntersect(P, u, Q, v) {
+  const d = cross(u, v);
+  if (Math.abs(d) < 1e-12) return null;
+  const w = sub(Q, P);
+  return add(P, scl(u, cross(w, v) / d));
+}
+
+// Segments bridging aEnd → bStart around `corner` on the gap side.
+function joinSegs(corner, aEnd, bStart, inTan, outTan, delta, corners) {
+  if (corners === "chamfer") return [{ to: bStart }];
+  if (corners === "sharp") {
+    const X = lineIntersect(aEnd, inTan, bStart, outTan);
+    if (X && dist(X, corner) <= MITER_LIMIT * Math.abs(delta)) return [{ to: X }, { to: bStart }];
+    return [{ to: bStart }];                               // miter-limit fallback = bevel
+  }
+  // round: exact arc about the corner, via on the displacement bisector
+  const d1 = sub(aEnd, corner), d2 = sub(bStart, corner);
+  let m = add(d1, d2);
+  if (len(m) < 1e-9) m = delta > 0 ? rightOf(norm(d1)) : scl(rightOf(norm(d1)), -1); // 180° turn
+  return [{ via: add(corner, scl(norm(m), Math.abs(delta))), to: bStart }];
+}
+
+// Offset one explicitly-closed ring. Returns { contour, dirty }.
+export function _offsetContour(contour, delta, corners) {
+  const pts = [contour.start, ...contour.segments.map((s) => s.to)];
+  // drop zero-length line segments (they carry no direction)
+  const keep = contour.segments.map((s, i) => s.c1 || s.via || dist(pts[i], s.to) > 1e-9);
+  const segs = contour.segments.filter((_, i) => keep[i]);
+  const froms = [];
+  { let p = contour.start; for (const s of contour.segments) { froms.push(p); p = s.to; } }
+  const fromsKept = froms.filter((_, i) => keep[i]);
+  // NB: feed jointTangents the KEPT chain's start — if the first segment was dropped
+  // as zero-length, contour.start no longer heads the filtered ring.
+  const joints = jointTangents({ start: fromsKept[0] ?? contour.start, segments: segs });
+  const pieces = segs.map((s, i) => _offsetSegment(fromsKept[i], s, delta));
+  let dirty = pieces.some((p) => p.dirty);
+  const n = segs.length;
+  const joins = new Array(n).fill(null);   // joins[i] bridges piece[i-1] → piece[i] at vertex i
+
+  for (let i = 0; i < n; i++) {
+    const prev = pieces[(i - 1 + n) % n], next = pieces[i];
+    const aEnd = prev.segments.at(-1).to, bStart = next.start;
+    const { point, inTan, outTan } = joints[i];
+    const turn = cross(inTan, outTan);
+    const turnDeg = (Math.atan2(Math.abs(turn), Math.max(-1, Math.min(1, inTan[0] * outTan[0] + inTan[1] * outTan[1]))) * 180) / Math.PI;
+    if (dist(aEnd, bStart) <= JOIN_EPS || turnDeg < SMOOTH_JOINT_DEG) continue;   // smooth
+    if (turn * delta > 0) { joins[i] = joinSegs(point, aEnd, bStart, inTan, outTan, delta, corners); continue; }
+    // overlap side: trim when both neighbors are plain lines, else chord + dirty
+    const aSeg = prev.segments.at(-1), bSeg = next.segments[0];
+    if (!aSeg.via && !aSeg.c1 && !bSeg.via && !bSeg.c1) {
+      const X = lineIntersect(aEnd, inTan, bStart, outTan);
+      if (X) { aSeg.to = X; next.start = X; continue; }    // exact trim, stays clean
+    }
+    joins[i] = [{ to: bStart }]; dirty = true;
+  }
+
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(...pieces[i].segments);
+    const j = joins[(i + 1) % n];
+    if (j) out.push(...j);
+  }
+  const start = pieces[0].start;
+  const last = out.at(-1);
+  if (dist(last.to, start) <= JOIN_EPS) last.to = [start[0], start[1]];  // snap the closure exactly
+  else out.push({ to: [start[0], start[1]] });
+  return { contour: { start, segments: out }, dirty };
 }

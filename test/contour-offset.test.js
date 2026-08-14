@@ -54,3 +54,50 @@ describe("cubic offset", () => {
     expect(r.segments.length).toBeGreaterThan(1);
   });
 });
+
+import { _offsetContour } from "../src/framework/geometry/contour-offset.js";
+import { tessellateContour } from "../src/framework/geometry/profile.js";
+import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
+
+const sq = (s) => ({ start: [0, 0], segments: [{ to: [s, 0] }, { to: [s, s] }, { to: [0, s] }, { to: [0, 0] }] });
+const area = (c) => ringArea(tessellateContour(c, 256));
+const kinds = (c) => c.segments.map((s) => (s.c1 ? "cubic" : s.via ? "arc" : "line"));
+
+describe("offsetContour", () => {
+  test("sharp outset of a square is the exact bigger square", () => {
+    const { contour, dirty } = _offsetContour(sq(10), 1, "sharp");
+    expect(dirty).toBe(false);
+    expect(area(contour)).toBeCloseTo(144, 9);
+    expect(kinds(contour).every((k) => k === "line")).toBe(true);
+  });
+  test("round outset adds exact quarter-circle arcs", () => {
+    const { contour, dirty } = _offsetContour(sq(10), 1, "round");
+    expect(dirty).toBe(false);
+    expect(kinds(contour).filter((k) => k === "arc").length).toBe(4);
+    expect(area(contour)).toBeCloseTo(140 + Math.PI, 2);  // exact πd² corners (tessellation-limited)
+  });
+  test("chamfer outset cuts 2d² off the sharp area", () => {
+    const { contour } = _offsetContour(sq(10), 1, "chamfer");
+    expect(area(contour)).toBeCloseTo(142, 9);
+  });
+  test("inset square trims line-line corners exactly on the fast path", () => {
+    const { contour, dirty } = _offsetContour(sq(10), -1, "round");
+    expect(dirty).toBe(false);                             // trimmed, not chord+dirty
+    expect(area(contour)).toBeCloseTo(64, 9);
+    expect(kinds(contour).every((k) => k === "line")).toBe(true);
+  });
+  test("circle offset is exact concentric arcs, no joins", () => {
+    // a circle is two half-arcs (the storage convention — one full-circle arc is ambiguous)
+    const circ = { start: [5, 0], segments: [{ via: [0, 5], to: [-5, 0] }, { via: [0, -5], to: [5, 0] }] };
+    const { contour, dirty } = _offsetContour(circ, 1, "round");
+    expect(dirty).toBe(false);
+    expect(kinds(contour)).toEqual(["arc", "arc"]);
+    for (const p of tessellateContour(contour, 64)) expect(Math.hypot(p[0], p[1])).toBeCloseTo(6, 6);
+  });
+  test("acute triangle chamfer is a single chord per corner (true bevel)", () => {
+    const tri = { start: [0, 0], segments: [{ to: [20, 0] }, { to: [10, 3] }, { to: [0, 0] }] };
+    const { contour } = _offsetContour(tri, 1, "chamfer");
+    // every corner contributes exactly one extra line: 3 edges + 3 chamfer chords
+    expect(contour.segments.filter((s) => !s.via && !s.c1).length).toBe(6);
+  });
+});
