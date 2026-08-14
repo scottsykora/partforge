@@ -220,6 +220,16 @@ const checkScaleTop = (op) => (_profile, _h, opts) => {
   if ((opts?.scaleTop ?? 1) < 0) throw new Error(`${op}: scaleTop must be ≥ 0`);
 };
 
+// An empty Shape2D (a cut/intersect can legitimately remove everything) is a
+// valid 2-D value, but 3-D materialization must reject it identically on both
+// backends — Manifold would silently build an empty solid, OCCT would throw a
+// backend-specific error. `?.` because the probe's fake handle has no _regions.
+const checkNonEmptyProfile = (op, profile) => {
+  if (profile && profile._shape2d && profile._regions?.length === 0)
+    throw new Error(`${op}: the profile Shape2D is empty — nothing to build ` +
+      "(a cut/intersect may have removed everything; guard with .isEmpty())");
+};
+
 // Ops that were always options-only have no positional form to normalize —
 // toArgs validates keys/required and passes the object through unchanged, so a
 // typo'd key fails loudly instead of destructuring to undefined → NaN geometry.
@@ -236,8 +246,12 @@ export const KERNEL_OP_SPECS = {
   sphere:   { toArgs: sphereArgs },
   box:      { toArgs: boxArgs },
   prism:    { toArgs: prismArgs, check: checkScaleTop("prism") },
-  extrude:  { toArgs: extrudeArgs, check: checkScaleTop("extrude") },
+  extrude:  { toArgs: extrudeArgs, check: (profile, h, opts) => {
+    checkNonEmptyProfile("extrude", profile);
+    checkScaleTop("extrude")(profile, h, opts);
+  } },
   revolve:  { toArgs: revolveArgs, check: (pts) => {
+    checkNonEmptyProfile("revolve", pts);
     if (pts && pts._shape2d) {
       // The B-rep backend's Drawing bounding box is tolerance-padded (1e-6 on
       // every side, measured), so a lathe profile touching the revolve axis at

@@ -51,6 +51,7 @@ export const SHAPE2D_OPS = [
   "union", "cut", "cutAll", "intersect", "offset", "area", "boundingBox", "toRegions", "simple", "regions", "clone",
   "extrude", "revolve",
   "translate", "rotate", "scale", "mirror", "toContours", "fillet", "chamfer", "simplify", "corners", "contains",
+  "isEmpty",
 ];
 
 // Solid ops only OCCT implements natively. Single source of truth: probe.js routes
@@ -94,7 +95,8 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(other: Shape2D|number[][]) => Shape2D} cut
  * @property {(others: (Shape2D|number[][])[]) => Shape2D} cutAll   batch subtract
  * @property {(other: Shape2D|number[][]) => Shape2D} intersect
- * @property {(delta:number, opts?:{corners?:"round"|"chamfer"|"sharp",segs?:number}) => Shape2D} offset   grow (+) / shrink (−) by delta; the one backend-specific op (Clipper2 vs OCCT) — throws when the shape collapses
+ * @property {(delta:number, opts?:{corners?:"round"|"chamfer"|"sharp",segs?:number}) => Shape2D} offset   grow (+) / shrink (−) by delta; the one backend-specific op (Clipper2 vs OCCT) — throws when the shape collapses; empty in → empty out
+ * @property {() => boolean} isEmpty   true when the shape has no regions (a cut/intersect removed everything); guard before extrude/revolve, which throw on an empty profile
  * @property {() => number} area   net area (outers minus holes), mm² — curve-exact, not tessellated
  * @property {() => {min:number[],max:number[]}} boundingBox   axis-aligned 2-D bounds (curve-exact)
  * @property {() => {outer:number[][],holes:number[][][]}[]} toRegions   materialize into point-ring region arrays (tessellated at the backend's LOD)

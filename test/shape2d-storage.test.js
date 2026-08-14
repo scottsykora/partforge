@@ -60,3 +60,15 @@ test("simple() error message is preserved verbatim", () => {
   const two = shape2d(sq).union(shape2d([[30, 0], [40, 0], [40, 10], [30, 10]]));
   expect(() => two.simple()).toThrow("Shape2D.simple: result has 2 regions, not 1 (use toRegions())");
 });
+
+test("isEmpty: false for a real shape, true after an intersect removes everything", () => {
+  const s = shape2d(sq);
+  expect(s.isEmpty()).toBe(false);
+  expect(s.intersect([[20, 20], [30, 20], [30, 30], [20, 30]]).isEmpty()).toBe(true);
+});
+
+test("offset of an empty shape short-circuits: empty out, backend hook never called", () => {
+  const empty = shape2d(sq).intersect([[20, 20], [30, 20], [30, 30], [20, 30]]);
+  expect(empty.offset(2).isEmpty()).toBe(true);
+  expect(calls).toEqual([]);
+});

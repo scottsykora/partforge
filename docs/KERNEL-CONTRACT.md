@@ -374,7 +374,7 @@ cross-backend note below.
 | Op | Contract |
 |---|---|
 | `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). Curve-exact and backend-identical (paper.js). |
-| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. The one backend-specific op: curve-preserving on OCCT, faceted at mesh LOD on Manifold. Throws if the offset collapses the shape. |
+| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. The one backend-specific op: curve-preserving on OCCT, faceted at mesh LOD on Manifold. Throws if the offset collapses the shape. Empty in → empty out (short-circuits before the backend). |
 | `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². Curve-exact. |
 | `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds, curve-exact (no `center`/`size`, unlike `Solid.boundingBox`). |
 | `toRegions()` | Materialize into `{outer, holes}[]` point-ring region arrays (`assembleRegions`), tessellating curves at the backend's LOD; a boolean result may be several disjoint regions. |
@@ -386,9 +386,23 @@ cross-backend note below.
 | `simplify(tolerance)` | Corner-preserving decimation/refit within `tolerance` mm — dense point rings become fewer segments (and refit arcs/cubics) without moving corners. |
 | `corners()` | The corner list — `{index, point, interiorAngleDeg, convex, segTypes}[]`. This positional order is what `fillet`/`chamfer`'s `{indices}` selects into. |
 | `contains([x,y])` | Point-in-shape test (inside an outer, not inside a hole). |
-| `extrude({h, twist?, scaleTop?})` | Sugar for `k.extrude({profile: this, …})` → `Solid`. |
-| `revolve({degrees?})` | Sugar for `k.revolve({profile: this, …})` → `Solid`. |
+| `isEmpty()` | `true` when the shape has no regions at all — a `cut`/`intersect` legitimately removed everything. Pure JS on the stored IR, backend-identical. See "Empty shapes" below. |
+| `extrude({h, twist?, scaleTop?})` | Sugar for `k.extrude({profile: this, …})` → `Solid`. Throws on an empty shape (see "Empty shapes"). |
+| `revolve({degrees?})` | Sugar for `k.revolve({profile: this, …})` → `Solid`. Throws on an empty shape (see "Empty shapes"). |
 | `clone()` | Independent copy. Every op returns a NEW `Shape2D`; no operand is ever mutated. |
+
+**Empty shapes.** An empty `Shape2D` is a legal 2-D value, and every 2-D op is total
+on it: booleans treat it as the identity/absorbing element, transforms and `offset`
+return it unchanged, `area()` is 0, `toRegions()` is `[]`. What it cannot do is become
+3-D: `extrude` and `revolve` (either calling form, on both backends) throw
+`"<op>: the profile Shape2D is empty — nothing to build (a cut/intersect may have
+removed everything; guard with .isEmpty())"`. The check runs in the shared op-spec
+layer before any backend materialization, so the two backends agree by construction.
+A part whose parameters can drive a feature to nothing guards explicitly:
+`if (!pocket.isEmpty()) body = body.cut(pocket.extrude({ h }))`. (Before this was
+pinned, Manifold silently built an empty solid where OCCT threw — behavior no part
+could rely on portably, so defining it follows the reference backend and is not a
+contract break.)
 
 On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **for convex corners with interior angle ≥ 90°** (the common case: rectangles, hexagons, rounded-rects, pentagons, …). `chamfer` is a true 45° bevel — a straight chord across the corner — matching OCCT to float precision there (a 10×10 square offset +1 gives 142.0 on both; a pentagon 298.920 on both). Manifold has no native bevel join, so it renders `chamfer` as a Round join forced to a single chord per corner (`circularSegments=4`). **At acute (<90° interior) convex corners** — triangles, star points, V-notches — Clipper2 emits 2 chords rather than 1, so Manifold's chamfer bulges ~0.4% beyond OCCT's single-chord bevel (e.g. an equilateral triangle: Manifold 235.46 vs OCCT 234.50). `round` and `sharp` are exact across backends at every angle; prefer them, or accept the small acute-corner difference on `chamfer`.
 

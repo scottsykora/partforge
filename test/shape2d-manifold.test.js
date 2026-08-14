@@ -176,3 +176,16 @@ test("Shape2D.regions() splits disjoint regions into separate live Shape2Ds", ()
 test("Shape2D.extrude with no h throws the kernel's required-arg error (not silent garbage)", () => {
   expect(() => k.shape2d(SQ(0, 0, 10)).extrude({})).toThrow(/h is required/);
 });
+
+// Empty-shape semantics, aligned across backends (see the twin test in
+// shape2d-occt.test.js): empty is a legal 2-D value — booleans/offset stay total
+// on it — but 3-D materialization fails loudly instead of silently building an
+// empty solid, so a part that vanishes a feature must guard with .isEmpty().
+test("empty shape: extrude/revolve throw, offset stays empty, union is identity", () => {
+  const empty = k.shape2d(SQ(0, 0, 10)).intersect(SQ(20, 20, 10));
+  expect(empty.isEmpty()).toBe(true);
+  expect(() => k.extrude({ profile: empty, h: 5 })).toThrow("extrude: the profile Shape2D is empty");
+  expect(() => empty.revolve()).toThrow("revolve: the profile Shape2D is empty");
+  expect(empty.offset(1).isEmpty()).toBe(true);
+  expect(k.shape2d(SQ(0, 0, 10)).union(empty).area()).toBeCloseTo(100, 4);
+});
