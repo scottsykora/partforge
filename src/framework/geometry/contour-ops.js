@@ -1,5 +1,5 @@
 import { isPathContour, tessellateContour } from "./profile.js";
-import { ringArea } from "./shape2d-regions.js";
+import { ringArea, pointInRing } from "./shape2d-regions.js";
 import { arcToCubicSegments, arcCenterAndSweep, paperScope, toPaperPath, toContour, toOpenContour } from "./paper-bridge.js";
 
 const WINDING_SEGS = 64;   // tessellation LOD for orientation/containment sampling
@@ -824,4 +824,247 @@ export function profileContains(input, [x, y]) {
   } finally {
     scope.project.clear();
   }
+}
+
+// ── validateProfile (Task 10) ─────────────────────────────────────────────────
+// Geometric sanity checks against a profile's SAMPLED (piecewise-linear) approximation.
+// Never throws on geometric badness — only liftProfile's own "can't make sense of this
+// input" throw propagates. contourIndex uses the same flattened outer-then-holes-per-region
+// numbering as profileNearestPoint.
+
+const VALIDATE_SEGS = 8;             // uniform-parameter samples per curved segment
+const DEGENERATE_EPS = 1e-9;         // chord+control-net length / |ringArea| floor
+
+const ptDist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+
+// Per segment: line -> [to]; cubic/arc -> VALIDATE_SEGS uniform-parameter points (t =
+// i/VALIDATE_SEGS, i=1..VALIDATE_SEGS), last pinned exactly to `to`. A collinear (degenerate)
+// arc triple has no center — falls back to a single point, same as a line. Every sample keeps
+// its source segmentIndex.
+function sampleForValidation(contour) {
+  const out = [];
+  let from = contour.start;
+  contour.segments.forEach((seg, si) => {
+    if (seg.c1) {
+      for (let i = 1; i <= VALIDATE_SEGS; i++) out.push({ p: cubicAt(from, seg.c1, seg.c2, seg.to, i / VALIDATE_SEGS), segmentIndex: si });
+      out[out.length - 1].p = [seg.to[0], seg.to[1]];
+    } else if (seg.via) {
+      const c = arcCenterAndSweep(from, seg.via, seg.to);
+      if (c) {
+        const a0 = Math.atan2(from[1] - c.center[1], from[0] - c.center[0]);
+        for (let i = 1; i <= VALIDATE_SEGS; i++) {
+          const a = a0 + c.dA * (i / VALIDATE_SEGS);
+          out.push({ p: [c.center[0] + c.r * Math.cos(a), c.center[1] + c.r * Math.sin(a)], segmentIndex: si });
+        }
+        out[out.length - 1].p = [seg.to[0], seg.to[1]];
+      } else out.push({ p: [seg.to[0], seg.to[1]], segmentIndex: si });
+    } else out.push({ p: [seg.to[0], seg.to[1]], segmentIndex: si });
+    from = seg.to;
+  });
+  return out;
+}
+
+// chord + control-net length < DEGENERATE_EPS — both the endpoints AND any control/via
+// points must collapse together; a curve that loops back near its own start (small chord,
+// large control net) is real shape, not degeneracy.
+function segmentDegenerate(from, seg) {
+  const chord = ptDist(from, seg.to);
+  let controlNet = 0;
+  if (seg.c1) controlNet = ptDist(from, seg.c1) + ptDist(seg.c1, seg.c2) + ptDist(seg.c2, seg.to);
+  else if (seg.via) controlNet = ptDist(from, seg.via) + ptDist(seg.via, seg.to);
+  return chord + controlNet < DEGENERATE_EPS;
+}
+
+// Two 2-D line segments p1->p2 and p3->p4 → their intersection point, or null. Tiny outward
+// epsilon on the [0,1] parameter clamp so touching-at-an-endpoint pairs still register.
+function segmentIntersect(p1, p2, p3, p4) {
+  const d1x = p2[0] - p1[0], d1y = p2[1] - p1[1];
+  const d2x = p4[0] - p3[0], d2y = p4[1] - p3[1];
+  const denom = d1x * d2y - d1y * d2x;
+  if (Math.abs(denom) < 1e-15) return null;   // parallel (collinear overlap not specially handled)
+  const ex = p3[0] - p1[0], ey = p3[1] - p1[1];
+  const t = (ex * d2y - ey * d2x) / denom;
+  const u = (ex * d1y - ey * d1x) / denom;
+  if (t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9) return null;
+  return [p1[0] + t * d1x, p1[1] + t * d1y];
+}
+
+// One contour's cyclic vertex loop, deduplicated: `start` plus every sample, with the
+// trailing duplicate-of-`start` point (contours that close via their own last segment,
+// the common case) dropped so the wraparound edge lands exactly on the real final segment
+// instead of a spurious zero-length "closing" edge — that phantom edge would otherwise
+// break index-adjacency between the first and last real edges (they'd no longer be ±1
+// apart). ownerFor(i) reports the ORIGINAL segmentIndex that produced edge i's target
+// vertex; an open contour's synthetic wraparound edge (start not reached by any real
+// segment) is tagged with the synthetic index contour.segments.length, matching
+// profileNearestPoint's convention for paper's own synthesized closing curve.
+function contourLoop(contour) {
+  const samples = sampleForValidation(contour);
+  const N = samples.length;
+  const V = [[contour.start[0], contour.start[1]], ...samples.map((s) => s.p)];
+  const closed = N > 0 && ptDist(V[N], V[0]) < DEGENERATE_EPS;
+  const verts = closed ? V.slice(0, N) : V;
+  const n = verts.length;
+  const ownerFor = (localI) => {
+    const targetIdx = (localI + 1) % n;
+    if (targetIdx === 0) return closed ? samples[N - 1].segmentIndex : contour.segments.length;
+    return samples[targetIdx - 1].segmentIndex;
+  };
+  return { verts, n, ownerFor, samples };
+}
+
+// Flattened outer-then-holes-per-region list, contourIndex running across ALL regions —
+// same order/numbering profileNearestPoint uses.
+function flattenForValidation(regions) {
+  const flat = [];
+  let contourIndex = 0;
+  regions.forEach((rg, regionIndex) => {
+    flat.push({ contour: rg.outer, role: "outer", regionIndex, contourIndex: contourIndex++ });
+    rg.holes.forEach((h, holeIndex) => flat.push({ contour: h, role: "hole", holeIndex, regionIndex, contourIndex: contourIndex++ }));
+  });
+  return flat.map((f) => ({ ...f, loop: contourLoop(f.contour) }));
+}
+
+// Self-intersection within ONE region: all sampled edges of ALL its contours (outer +
+// holes) go into a uniform grid (cell = region bbox max-dim / 64); candidate pairs sharing
+// a cell are tested once each (deduped across cells), skipping edges adjacent in the same
+// contour (index ±1, wrap-aware — see contourLoop). Cross-contour pairs within the region
+// (e.g. outer vs. its own hole) are NOT skipped; cross-REGION pairs are never considered
+// here (handled by nesting).
+function selfIntersectionInRegion(contours) {
+  const edges = [];
+  for (const c of contours) {
+    for (let i = 0; i < c.loop.n; i++) {
+      edges.push({
+        a: c.loop.verts[i], b: c.loop.verts[(i + 1) % c.loop.n],
+        contourIndex: c.contourIndex, localIndex: i, n: c.loop.n, segmentIndex: c.loop.ownerFor(i),
+      });
+    }
+  }
+  const issues = [], flagged = new Set();
+  if (edges.length < 2) return { issues, flagged };
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const e of edges) for (const p of [e.a, e.b]) {
+    minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]);
+    maxX = Math.max(maxX, p[0]); maxY = Math.max(maxY, p[1]);
+  }
+  const cellSize = Math.max(maxX - minX, maxY - minY) / 64 || 1e-6;
+  const grid = new Map();
+  edges.forEach((e, idx) => {
+    const lox = Math.min(e.a[0], e.b[0]), hix = Math.max(e.a[0], e.b[0]);
+    const loy = Math.min(e.a[1], e.b[1]), hiy = Math.max(e.a[1], e.b[1]);
+    const cx0 = Math.floor((lox - minX) / cellSize), cx1 = Math.floor((hix - minX) / cellSize);
+    const cy0 = Math.floor((loy - minY) / cellSize), cy1 = Math.floor((hiy - minY) / cellSize);
+    for (let cx = cx0; cx <= cx1; cx++) for (let cy = cy0; cy <= cy1; cy++) {
+      const key = `${cx},${cy}`;
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key).push(idx);
+    }
+  });
+
+  const tested = new Set();
+  for (const cellEdges of grid.values()) {
+    for (let a = 0; a < cellEdges.length; a++) {
+      for (let b = a + 1; b < cellEdges.length; b++) {
+        const i = cellEdges[a], j = cellEdges[b];
+        const key = i < j ? `${i}:${j}` : `${j}:${i}`;
+        if (tested.has(key)) continue;
+        tested.add(key);
+        const eI = edges[i], eJ = edges[j];
+        if (eI.contourIndex === eJ.contourIndex) {
+          const d = (eI.localIndex - eJ.localIndex + eI.n) % eI.n;
+          if (d === 1 || d === eI.n - 1) continue;   // adjacent in the same contour
+        }
+        const pt = segmentIntersect(eI.a, eI.b, eJ.a, eJ.b);
+        if (!pt) continue;
+        const first = eI.contourIndex <= eJ.contourIndex ? eI : eJ;
+        const other = first === eI ? eJ : eI;
+        issues.push({
+          type: "self-intersection", contourIndex: first.contourIndex, segmentIndex: first.segmentIndex, point: pt,
+          message: `contour ${first.contourIndex} self-intersects (or crosses contour ${other.contourIndex}) near (${pt[0].toFixed(4)}, ${pt[1].toFixed(4)})`,
+        });
+        flagged.add(eI.contourIndex); flagged.add(eJ.contourIndex);
+      }
+    }
+  }
+  return { issues, flagged };
+}
+
+export function validateProfile(input) {
+  const { kind, regions } = liftProfile(input);
+  const issues = [];
+  const flat = flattenForValidation(regions);
+
+  // 1a. Per-segment degenerate (chord + control-net length near zero).
+  for (const f of flat) {
+    let from = f.contour.start;
+    f.contour.segments.forEach((seg, si) => {
+      if (segmentDegenerate(from, seg))
+        issues.push({ type: "degenerate", contourIndex: f.contourIndex, segmentIndex: si, message: `contour ${f.contourIndex} segment ${si} is degenerate (near-zero length)` });
+      from = seg.to;
+    });
+  }
+
+  // 2. Self-intersection, within-region only.
+  const byRegion = new Map();
+  for (const f of flat) {
+    if (!byRegion.has(f.regionIndex)) byRegion.set(f.regionIndex, []);
+    byRegion.get(f.regionIndex).push(f);
+  }
+  const selfIntersecting = new Set();
+  for (const contours of byRegion.values()) {
+    const { issues: regionIssues, flagged } = selfIntersectionInRegion(contours);
+    issues.push(...regionIssues);
+    for (const c of flagged) selfIntersecting.add(c);
+  }
+
+  // 1b. Per-contour degenerate area (sampled |ringArea| near zero) — skip contours already
+  // flagged self-intersecting: a self-crossing ring's near-zero SIGNED area is a byproduct
+  // of the crossing (opposite-winding lobes cancel), not evidence the ring is truly tiny.
+  for (const f of flat) {
+    if (selfIntersecting.has(f.contourIndex)) continue;
+    if (Math.abs(ringArea(f.loop.verts)) < DEGENERATE_EPS)
+      issues.push({ type: "degenerate", contourIndex: f.contourIndex, message: `contour ${f.contourIndex} has near-zero area` });
+  }
+
+  // 3. Winding — explicit region/regions input only (a bare contour/point list has no
+  // declared outer/hole role to check).
+  if (kind === "region" || kind === "regions") {
+    for (const f of flat) {
+      const area = ringArea(f.loop.verts);
+      if (f.role === "outer" && area < 0)
+        issues.push({ type: "winding", contourIndex: f.contourIndex, message: `contour ${f.contourIndex} (outer) winds clockwise; outers must be CCW` });
+      if (f.role === "hole" && area > 0)
+        issues.push({ type: "winding", contourIndex: f.contourIndex, message: `contour ${f.contourIndex} (hole) winds counter-clockwise; holes must be CW` });
+    }
+  }
+
+  // 4a. Nesting: each hole's first sample must land inside its own outer.
+  const outerByRegion = new Map();
+  for (const f of flat) if (f.role === "outer") outerByRegion.set(f.regionIndex, f);
+  for (const f of flat) {
+    if (f.role !== "hole") continue;
+    const outer = outerByRegion.get(f.regionIndex);
+    const testPoint = f.loop.samples.length ? f.loop.samples[0].p : f.contour.start;
+    if (!pointInRing(testPoint, outer.loop.verts))
+      issues.push({ type: "nesting", contourIndex: f.contourIndex, message: `contour ${f.contourIndex} (hole) lies outside its outer (contour ${outer.contourIndex})` });
+  }
+
+  // 4b. Nesting: region pairs — any sampled vertex of one region's outer inside the
+  // other's outer (checked both directions: overlap and full containment either way).
+  const outers = flat.filter((f) => f.role === "outer");
+  for (let a = 0; a < outers.length; a++) {
+    for (let b = a + 1; b < outers.length; b++) {
+      const A = outers[a], B = outers[b];
+      const overlaps = B.loop.verts.some((p) => pointInRing(p, A.loop.verts)) || A.loop.verts.some((p) => pointInRing(p, B.loop.verts));
+      if (overlaps)
+        issues.push({
+          type: "nesting", contourIndex: A.contourIndex,
+          message: `regions overlap or nest — merge with union() or make it a hole (contours ${A.contourIndex} and ${B.contourIndex})`,
+        });
+    }
+  }
+
+  return { ok: issues.length === 0, issues };
 }
