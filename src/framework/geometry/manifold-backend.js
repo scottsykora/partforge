@@ -2,7 +2,7 @@ import { helixTube } from "./helix-tube.js";
 import { loftMesh } from "./loft.js";
 import { sweepMesh } from "./sweep.js";
 import { roundedBoxRings } from "./rounded-solids.js";
-import { tessellateContour, tessellateProfile } from "./profile.js";
+import { tessellateContour, tessellateProfile, pointsToContour } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
 import { addSugar } from "./solid-sugar.js";
@@ -53,6 +53,32 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return { value: wrap(m, hash), pin: m, dispose: () => m.delete?.() };
   });
 
+  // Shared 2-D offset logic, single-sourced between Shape2D.offset (below) and
+  // k._offsetRegions (the region-materializing adapter ahead of the Shape2D flip
+  // — see shape2d-regions.js). resolveOffsetJoin validates corners/delta and picks
+  // Clipper2's join type + segment count:
+  // chamfer is a true 45° bevel — Clipper2 has no bevel join, but a Round join
+  // forced to a single chord per corner (circularSegments=4 → 1 segment per corner
+  // whose turn ≤ 90°, i.e. interior angle ≥ 90°) IS the bevel: round's tangent points
+  // are exactly the bevel's endpoints. Matches OCCT's `bevel` to float precision for
+  // interior angle ≥ 90° (square 142.0000, pentagon 298.920). At acute (<90°) convex
+  // corners Clipper2 emits 2 chords (ceil(turn/90°)), so Manifold bulges ~0.4% beyond
+  // OCCT's single-chord bevel there. round = arc at mesh LOD; sharp = miter.
+  const resolveOffsetJoin = (delta, corners, nSeg) => {
+    if (!["round", "chamfer", "sharp"].includes(corners))
+      throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
+    if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
+    return corners === "sharp" ? ["Miter", nSeg]
+      : corners === "chamfer" ? ["Round", 4]
+      : ["Round", nSeg];
+  };
+  // Run the offset op on a T-tracked CrossSection; throws the pinned collapse message.
+  const offsetCS = (cs, delta, joinType, cseg) => {
+    const out = T(cs.offset(delta, joinType, 2, cseg));       // miterLimit 2 (Clipper2 default)
+    if (out.numContour() === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
+    return out;
+  };
+
   // 2-D cross-section value. Mirrors wrap()/cached(): booleans route through the
   // solid cache (dispose frees the CrossSection); operands fold by _hash.
   const cachedCS = (hash, computeCS) => cache.lookup(hash, () => {
@@ -77,24 +103,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     intersect: (o) => { const t = liftCS(o); return cachedCS(h("intersect2d", hash, t._hash), () => T(cs.intersect(t._cs))); },
     offset: (delta, { corners = "round", segs: nSeg = segs } = {}) => {
-      if (!["round", "chamfer", "sharp"].includes(corners))
-        throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
-      if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
-      // chamfer is a true 45° bevel — Clipper2 has no bevel join, but a Round join
-      // forced to a single chord per corner (circularSegments=4 → 1 segment per corner
-      // whose turn ≤ 90°, i.e. interior angle ≥ 90°) IS the bevel: round's tangent points
-      // are exactly the bevel's endpoints. Matches OCCT's `bevel` to float precision for
-      // interior angle ≥ 90° (square 142.0000, pentagon 298.920). At acute (<90°) convex
-      // corners Clipper2 emits 2 chords (ceil(turn/90°)), so Manifold bulges ~0.4% beyond
-      // OCCT's single-chord bevel there. round = arc at mesh LOD; sharp = miter.
-      const [joinType, cseg] = corners === "sharp" ? ["Miter", nSeg]
-        : corners === "chamfer" ? ["Round", 4]
-        : ["Round", nSeg];
-      return cachedCS(h("offset2d", hash, delta, corners, cseg), () => {
-        const out = T(cs.offset(delta, joinType, 2, cseg));       // miterLimit 2 (Clipper2 default)
-        if (out.numContour() === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
-        return out;
-      });
+      const [joinType, cseg] = resolveOffsetJoin(delta, corners, nSeg);
+      return cachedCS(h("offset2d", hash, delta, corners, cseg), () => offsetCS(cs, delta, joinType, cseg));
     },
     area: () => cs.area(),
     boundingBox: () => { const r = cs.bounds(); return { min: [r.min[0], r.min[1]], max: [r.max[0], r.max[1]] }; },
@@ -319,6 +329,25 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       ? solids[0]
       : cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
     shape2d,
+    // Backend-internal region adapter (Task 13 — materialization + offset, not yet
+    // wired into Shape2D.offset itself). Tessellates each region's contour IR at
+    // `segs`, builds a CrossSection, runs the shared offset logic above, and lifts
+    // the resulting point rings back into line contours via pointsToContour —
+    // ahead of the flip that will route the real Shape2D storage through this path.
+    // `_`-prefixed: backend-internal, not part of the public kernel surface.
+    _offsetRegions: (regions, delta, { corners = "round", segs: nSeg = segs } = {}) => {
+      const [joinType, cseg] = resolveOffsetJoin(delta, corners, nSeg);
+      const polys = regions.flatMap((rg) => [
+        tessellateContour(rg.outer, nSeg),
+        ...rg.holes.map((hole) => tessellateContour(hole, nSeg)),
+      ]);
+      const cs = T(CrossSection.ofPolygons(polys, "EvenOdd"));
+      const out = offsetCS(cs, delta, joinType, cseg);
+      return assembleRegions(out.toPolygons()).map((rg) => ({
+        outer: pointsToContour(rg.outer),
+        holes: rg.holes.map(pointsToContour),
+      }));
+    },
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
     sweepCache: () => cache.sweep(),

@@ -19,13 +19,13 @@ import { toEdgeFinder } from "./edge-selector.js";
 import { toFaceFinder } from "./face-selector.js";
 import { addSugar } from "./solid-sugar.js";
 import { addShape2dSugar } from "./shape2d-sugar.js";
-import { assembleRegions, svgPathToRings, regionsArea, pointInRing, ringArea } from "./shape2d-regions.js";
+import { assembleRegions, svgPathToRings, svgPathToContours, regionsArea, pointInRing, ringArea } from "./shape2d-regions.js";
 import { finishKernel } from "./kernel-front.js";
 import { createOcctRepair } from "./occt-repair.js";
 import { classifyFaceGroups } from "./feature-attribution.js";
 import { resolveRings } from "./loft.js";
 import { resolveSweepStations } from "./sweep.js";
-import { normalizeProfile } from "./profile.js";
+import { normalizeProfile, tessellateContour, reverseContour } from "./profile.js";
 import { roundedRectContour } from "./rounded-solids.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
@@ -366,6 +366,80 @@ export function createOcctKernel(replicad) {
       return (ringArea(r) >= 0) === wantOuter ? r : r.slice().reverse();
     });
   };
+
+  // Region list -> fused Drawing: draw each region's outer contour, cut its holes
+  // out, then fuse every region together — the multi-region generalization of
+  // drawingFromProfile above, used by _offsetRegions to materialize an arbitrary
+  // region LIST (not a single { outer, holes }) into one Drawing to offset.
+  const drawingFromRegions = (regions) => regions.reduce((acc, rg) => {
+    let region = contourDrawing(rg.outer);
+    for (const hole of rg.holes) region = region.cut(contourDrawing(hole));
+    return acc ? acc.fuse(region) : region;
+  }, null);
+
+  // y-negate a whole contour (start + every segment's to/via/c1/c2) — the contour-IR
+  // twin of drawingRegionRings' per-point `[x, -y]` correction for toSVGPathD()'s
+  // y-down convention.
+  const negateContourY = (c) => ({
+    start: [c.start[0], -c.start[1]],
+    segments: c.segments.map((s) => {
+      const m = { to: [s.to[0], -s.to[1]] };
+      if (s.via) m.via = [s.via[0], -s.via[1]];
+      if (s.c1) { m.c1 = [s.c1[0], -s.c1[1]]; m.c2 = [s.c2[0], -s.c2[1]]; }
+      return m;
+    }),
+  });
+
+  // Classify + nest a flat list of curve-native contours into region list, the
+  // contour-IR twin of drawingRegionRings + assembleRegions above (same
+  // containment-depth-parity reasoning: replicad's raw winding carries no
+  // outer/hole signal, so classify by how many OTHER contours contain a sample
+  // point, force winding to match depth parity via reverseContour, then hand the
+  // now-correctly-signed tessellations to assembleRegions for the actual
+  // smallest-containing-outer nesting — reusing that logic rather than
+  // reimplementing it). 32-segment sampling (vs. SHAPE2D_SEGS=64 above) matches
+  // the brief's classification LOD for this adapter.
+  const OFFSET_CLASSIFY_SEGS = 32;
+  const groupOffsetContours = (contours) => {
+    const samples = contours.map((c) => tessellateContour(c, OFFSET_CLASSIFY_SEGS));
+    const containedBy = contours.map((_, i) =>
+      samples.reduce((n, ring, j) => (i !== j && pointInRing(samples[i][0], ring) ? n + 1 : n), 0));
+    const oriented = contours.map((c, i) => {
+      const wantOuter = containedBy[i] % 2 === 0;                 // even depth = outer
+      const isCCW = ringArea(samples[i]) >= 0;
+      return isCCW === wantOuter
+        ? { contour: c, ring: samples[i] }
+        : { contour: reverseContour(c), ring: samples[i].slice().reverse() };
+    });
+    const byRing = new Map(oriented.map(({ contour, ring }) => [ring, contour]));
+    const regions = assembleRegions(oriented.map(({ ring }) => ring));
+    return regions.map((rg) => ({ outer: byRing.get(rg.outer), holes: rg.holes.map((ring) => byRing.get(ring)) }));
+  };
+
+  // Shared offset logic (corners validation, replicad Offset2DConfig join-type
+  // mapping, collapse detection via `innerShape`) — single-sourced between the
+  // old Shape2D.offset (below, Drawing-in/Drawing-out) and the new
+  // k._offsetRegions adapter (region-in/region-out, ahead of the Shape2D flip —
+  // see shape2d-regions.js). corners map onto replicad's Offset2DConfig
+  // lineJoinType; "chamfer" -> "bevel", a true 45° bevel — a straight chord.
+  // Manifold now matches this via a single-chord Round join (see
+  // manifold-backend offset) — the two agree to float precision for convex
+  // corners with interior angle >= 90°; at acute (<90°) corners Manifold uses a
+  // 2-facet approximation that departs slightly. See KERNEL-CONTRACT.
+  const offsetDrawing = (drawing, delta, corners) => {
+    const lineJoinType = { round: "round", chamfer: "bevel", sharp: "miter" }[corners];
+    if (!lineJoinType) throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
+    if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
+    const result = drawing.clone().offset(delta, { lineJoinType });   // clone — replicad consumes the operand
+    // Collapse doesn't throw and Drawing has no public `blueprints` array (that's on
+    // Blueprints/CompoundBlueprint, not Drawing) — replicad instead returns a Drawing
+    // whose private `innerShape` is null (confirmed by probe). That's the collapse signal.
+    // NB: `innerShape` is replicad-internal; the "collapse throws immediately (OCCT)" test
+    // guards this — a replicad upgrade that renames it must keep that test green.
+    if (!result || !result.innerShape)
+      throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
+    return result;
+  };
   // Shape2D carries a content hash (so a Solid op over a profile can key on it)
   // but stays UNCACHED — Drawings already clone before every consuming replicad
   // call, and 2-D booleans are cheap next to the B-rep work they feed.
@@ -382,25 +456,10 @@ export function createOcctKernel(replicad) {
         return wrapShape2d(ts.reduce((acc, t) => acc.cut(t._drawing.clone()), drawing.clone()), h("cutAll2d", hash, ts.map((t) => t._hash)));
       },
       intersect: (o) => { const t = liftDrawing(o); return wrapShape2d(drawing.clone().intersect(t._drawing.clone()), h("intersect2d", hash, t._hash)); },
-      // corners map onto replicad's Offset2DConfig.lineJoinType; "chamfer" → "bevel", a
-      // true 45° corner cut (a straight chord). Manifold now matches this via a
-      // single-chord Round join (see manifold-backend offset) — the two agree to float
-      // precision for convex corners with interior angle ≥ 90°; at acute (<90°) corners
-      // Manifold uses a 2-facet approximation that departs slightly. See KERNEL-CONTRACT.
-      offset: (delta, { corners = "round" } = {}) => {
-        const lineJoinType = { round: "round", chamfer: "bevel", sharp: "miter" }[corners];
-        if (!lineJoinType) throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
-        if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
-        const result = drawing.clone().offset(delta, { lineJoinType });   // clone — replicad consumes the operand
-        // Collapse doesn't throw and Drawing has no public `blueprints` array (that's on
-        // Blueprints/CompoundBlueprint, not Drawing) — replicad instead returns a Drawing
-        // whose private `innerShape` is null (confirmed by probe). That's the collapse signal.
-        // NB: `innerShape` is replicad-internal; the "collapse throws immediately (OCCT)" test
-        // guards this — a replicad upgrade that renames it must keep that test green.
-        if (!result || !result.innerShape)
-          throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
-        return wrapShape2d(result, h("offset2d", hash, delta, corners));
-      },
+      // See offsetDrawing above for the corners/collapse contract this shares with
+      // k._offsetRegions.
+      offset: (delta, { corners = "round" } = {}) =>
+        wrapShape2d(offsetDrawing(drawing, delta, corners), h("offset2d", hash, delta, corners)),
       area: () => regionsArea(toRegions()),                 // no native Drawing area → derive from materialized regions
       boundingBox: () => { const b = drawing.boundingBox; return { min: [b.bounds[0][0], b.bounds[0][1]], max: [b.bounds[1][0], b.bounds[1][1]] }; },
       toRegions,
@@ -518,6 +577,19 @@ export function createOcctKernel(replicad) {
       });
     },
     shape2d,
+    // Backend-internal region adapter (Task 13 — materialization + offset, not yet
+    // wired into Shape2D.offset itself). Fuses the region list into one Drawing,
+    // runs the shared offset logic, then reads the curve-native result back via
+    // SVG paths: y-negate (toSVGPathD is y-down), svgPathToContours per subpath
+    // (curves survive as cubics — no facet fan), then classify/orient/nest via
+    // groupOffsetContours. `_`-prefixed: backend-internal, not part of the public
+    // kernel surface.
+    _offsetRegions: (regions, delta, { corners = "round" } = {}) => {
+      const result = offsetDrawing(drawingFromRegions(regions), delta, corners);
+      const contours = result.toSVGPaths().flat(Infinity)
+        .flatMap((d) => svgPathToContours(d).map(negateContourY));
+      return groupOffsetContours(contours);
+    },
     toSTEP: (named) => exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._mat()._s }))).arrayBuffer(),
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
