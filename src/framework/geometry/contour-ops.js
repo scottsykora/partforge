@@ -200,3 +200,145 @@ export function profileCorners(input) {
   });
   return out;
 }
+
+// ── Fillet / chamfer ─────────────────────────────────────────────────────────
+// Resolve opts.corners against a flat corner list (contourCorners()'s order, or
+// profileCorners()'s flattened order for region/regions input — {indices} always
+// indexes this array POSITIONALLY, matching profileCorners' documented contract).
+// r/dist may be an array paired positionally with {indices}; every other selector
+// broadcasts the scalar to every match. Throws when nothing matches.
+function resolveCornerSelector(corners, param, opts, label) {
+  const sel = (opts && opts.corners) ?? "all";
+  let picked;
+  if (sel === "all") picked = corners.map((corner) => ({ corner, param }));
+  else if (sel === "convex") picked = corners.filter((c) => c.convex).map((corner) => ({ corner, param }));
+  else if (sel === "concave") picked = corners.filter((c) => !c.convex).map((corner) => ({ corner, param }));
+  else if (sel && Array.isArray(sel.indices)) {
+    const perCorner = Array.isArray(param) ? param : null;
+    picked = sel.indices
+      .map((idx, j) => ({ corner: corners[idx], param: perCorner ? perCorner[j] : param }))
+      .filter((p) => p.corner);
+  } else if (sel && Array.isArray(sel.near)) {
+    const [nx, ny] = sel.near;
+    const count = sel.count ?? 1;
+    const distSq = (c) => (c.point[0] - nx) ** 2 + (c.point[1] - ny) ** 2;
+    picked = corners.slice().sort((a, b) => distSq(a) - distSq(b)).slice(0, count).map((corner) => ({ corner, param }));
+  } else picked = [];
+  if (picked.length === 0) throw new Error(`${label}: no corner matched selector ${JSON.stringify(sel)}`);
+  return picked;
+}
+
+const roundNice = (x) => Math.round(x * 1e6) / 1e6;
+
+// Fillet/chamfer a single ring given its already-resolved {corner, param} picks.
+// Mirrors cornerArc's tangent/center math (polygon.js:107) but WITHOUT its silent
+// per-corner clamp — filletProfile/chamferProfile throw instead of clamping, so the
+// clamp math is reproduced here unclamped, gated by our own explicit fit checks.
+function buildCornerOpRing(contour, picks, isFillet, label) {
+  const n = contour.segments.length;
+  const pts = [contour.start, ...contour.segments.map((s) => s.to)].slice(0, n);
+  const plans = new Map();   // vertex index -> {A, B, M, setback}
+
+  for (const { corner, param } of picks) {
+    const i = corner.index;
+    if (corner.segTypes[0] !== "line" || corner.segTypes[1] !== "line")
+      throw new Error(`${label}: corner ${i} involves a curved segment — supported in Task 7`);
+    const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n];
+    const v0x = p0[0] - p1[0], v0y = p0[1] - p1[1], v2x = p2[0] - p1[0], v2y = p2[1] - p1[1];
+    const l0 = Math.hypot(v0x, v0y), l2 = Math.hypot(v2x, v2y);
+    const v0 = [v0x / l0, v0y / l0], v2 = [v2x / l2, v2y / l2];
+    const cosA = Math.max(-1, Math.min(1, v0[0] * v2[0] + v0[1] * v2[1]));
+    const half = Math.acos(cosA) / 2;                        // angle between the two edges, halved
+    const setback = isFillet ? param / Math.tan(half) : param;
+    // Per-corner ceiling: never past either edge's own end (hard cap), and never past
+    // half the LONGER edge (soft cap — the generous split a same-setback neighbour would
+    // still leave room for). Exceeding the shorter edge's own half alone isn't fatal here;
+    // that's exactly what the segment-level overlap check below is for.
+    const maxSetback = Math.min(l0, l2, Math.max(l0, l2) / 2);
+    if (setback > maxSetback + 1e-9) {
+      const maxParam = roundNice(isFillet ? maxSetback * Math.tan(half) : maxSetback);
+      const paramTxt = isFillet ? `r=${param}` : `dist=${param}`;
+      throw new Error(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): ${paramTxt} does not fit; max ≈ ${maxParam}`);
+    }
+    const A = [p1[0] + v0[0] * setback, p1[1] + v0[1] * setback];
+    const B = [p1[0] + v2[0] * setback, p1[1] + v2[1] * setback];
+    let M;
+    if (isFillet) {
+      let bx = v0[0] + v2[0], by = v0[1] + v2[1];
+      const bl = Math.hypot(bx, by);
+      bx /= bl; by /= bl;
+      const C = [p1[0] + bx * (param / Math.sin(half)), p1[1] + by * (param / Math.sin(half))];
+      const a0 = Math.atan2(A[1] - C[1], A[0] - C[0]);
+      let dA = Math.atan2(B[1] - C[1], B[0] - C[0]) - a0;      // short sweep from A to B
+      while (dA <= -Math.PI) dA += 2 * Math.PI;
+      while (dA > Math.PI) dA -= 2 * Math.PI;
+      const mid = a0 + dA / 2;
+      M = [C[0] + param * Math.cos(mid), C[1] + param * Math.sin(mid)];
+    }
+    plans.set(i, { A, B, M, setback });
+  }
+
+  for (let k = 0; k < n; k++) {                                // overlap: sum of claims on segment k vs its length
+    const kNext = (k + 1) % n;
+    const startClaim = plans.get(k)?.setback ?? 0, endClaim = plans.get(kNext)?.setback ?? 0;
+    if (startClaim > 0 && endClaim > 0) {
+      const segLen = Math.hypot(pts[kNext][0] - pts[k][0], pts[kNext][1] - pts[k][1]);
+      if (startClaim + endClaim > segLen + 1e-9)
+        throw new Error(`${label}: corners ${k} and ${kNext} overlap on segment ${k} (reduce r)`);
+    }
+  }
+
+  const segments = [];
+  let start = null;
+  for (let i = 0; i < n; i++) {
+    const startPlan = plans.get(i), endPlan = plans.get((i + 1) % n);
+    const effEnd = endPlan ? endPlan.A : pts[(i + 1) % n];
+    segments.push(startPlan || endPlan ? { to: effEnd } : contour.segments[i]);
+    if (i === 0) start = startPlan ? startPlan.B : pts[0];
+    if (endPlan) segments.push(isFillet ? { to: endPlan.B, via: endPlan.M } : { to: endPlan.B });
+  }
+  return { start, segments };
+}
+
+function applyCornerOp(input, param, opts, label, isFillet) {
+  const { kind, regions } = liftProfile(input);
+  if (kind === "points" || kind === "contour") {
+    const picks = resolveCornerSelector(contourCorners(regions[0].outer), param, opts, label);
+    const outer = buildCornerOpRing(regions[0].outer, picks, isFillet, label);
+    // Always surface a {start,segments} contour, even for a "points" input and an
+    // all-line chamfer result: restoreProfile's points-downgrade is for shape-preserving
+    // transforms, but a corner op changes the vertex count — it must not collapse back.
+    return restoreProfile(kind === "points" ? "contour" : kind, [{ outer, holes: [] }]);
+  }
+  // region/regions: selector resolves against the flattened profileCorners() order;
+  // picks are then grouped back by ring so each ring rebuilds independently.
+  const newRegions = regions.map((rg) => ({ outer: rg.outer, holes: rg.holes.slice() }));
+  const flat = [];
+  newRegions.forEach((rg, ri) => {
+    for (const c of contourCorners(rg.outer)) flat.push({ ...c, ringRef: { ri, key: "outer" } });
+    rg.holes.forEach((h, hi) => { for (const c of contourCorners(h)) flat.push({ ...c, ringRef: { ri, key: "hole", hi } }); });
+  });
+  const picks = resolveCornerSelector(flat, param, opts, label);
+  const byRing = new Map();
+  for (const p of picks) {
+    const r = p.corner.ringRef;
+    const key = r.key === "outer" ? `${r.ri}:outer` : `${r.ri}:hole:${r.hi}`;
+    if (!byRing.has(key)) byRing.set(key, { ringRef: r, picks: [] });
+    byRing.get(key).picks.push(p);
+  }
+  for (const { ringRef, picks: ringPicks } of byRing.values()) {
+    const rg = newRegions[ringRef.ri];
+    const contour = ringRef.key === "outer" ? rg.outer : rg.holes[ringRef.hi];
+    const rebuilt = buildCornerOpRing(contour, ringPicks, isFillet, label);
+    if (ringRef.key === "outer") rg.outer = rebuilt; else rg.holes[ringRef.hi] = rebuilt;
+  }
+  return restoreProfile(kind, newRegions);
+}
+
+export function filletProfile(input, r, opts) {
+  return applyCornerOp(input, r, opts, "filletProfile", true);
+}
+
+export function chamferProfile(input, dist, opts) {
+  return applyCornerOp(input, dist, opts, "chamferProfile", false);
+}
