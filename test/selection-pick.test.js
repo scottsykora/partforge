@@ -221,3 +221,43 @@ test("active picker with a ray that misses all meshes calls neither onPick nor f
   expect(flashPoint).not.toHaveBeenCalled();
   picker.detach();
 });
+
+test("a suppressed picker neither picks nor flashes, and recovers when the guard clears", () => {
+  // mount passes measure mode's isEnabled as this guard: while measuring, a
+  // click pins a dimension and must not ALSO select-and-flash. Pull-based, so
+  // clearing the condition restores picks with no resync call.
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+  camera.position.set(0, 0, 10);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4));
+  mesh.name = "one";
+  mesh.visible = true;
+  mesh.updateMatrixWorld(true);
+
+  const domElement = document.createElement("div");
+  domElement.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  document.body.appendChild(domElement);
+
+  const flashPoint = vi.fn();
+  const onPick = vi.fn();
+  let measuring = true;
+  const picker = attachPicker({ camera, domElement, _subMeshes: { one: mesh }, flashPoint }, {
+    part,
+    getContext: () => ({ view: "v", params: { a: 1 }, derived: {} }),
+    onPick,
+    suppressed: () => measuring,
+  });
+  picker.setActive(true);
+
+  domElement.dispatchEvent(new MouseEvent("click", { clientX: 100, clientY: 100, bubbles: true }));
+  expect(onPick).not.toHaveBeenCalled();
+  expect(flashPoint).not.toHaveBeenCalled();
+
+  measuring = false;
+  domElement.dispatchEvent(new MouseEvent("click", { clientX: 100, clientY: 100, bubbles: true }));
+  expect(onPick).toHaveBeenCalledTimes(1);
+  expect(flashPoint).toHaveBeenCalledTimes(1);
+  picker.detach();
+});
