@@ -24,10 +24,12 @@ const deepCopy = (regions) => JSON.parse(JSON.stringify(regions));
 // backend used to lift through: a 2-point "polygon" bounds no area, and silently
 // accepting one yields an empty shape instead of an error. POINT LISTS only — a
 // curve contour legitimately closes in one or two segments (a circle is two arcs),
-// so no segment-count rule applies there.
+// so no segment-count rule applies there. Every lift runs this, including the ones
+// behind a boolean operand (`.cut([[0,0],[1,0]])`), so the message names the VALUE
+// (Shape2D) rather than the `shape2d()` entry point.
 const isPointList = (x) => Array.isArray(x) && Array.isArray(x[0]);
 const checkPointRing = (c, role) => {
-  if (isPointList(c) && c.length < 3) throw new Error(`shape2d: ${role} needs ≥3 points`);
+  if (isPointList(c) && c.length < 3) throw new Error(`Shape2D: a point-list ${role} needs ≥3 points`);
 };
 const checkProfile = (x) => {
   if (!x || x._shape2d) return;

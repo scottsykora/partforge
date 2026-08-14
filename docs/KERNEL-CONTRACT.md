@@ -351,13 +351,17 @@ against that IR, and both backends instantiate it. Booleans run through **paper.
 **backend-identical**, not merely parity-tolerant. `area()` and `boundingBox()` are
 curve-exact (they integrate the real curves; they do not measure a tessellation).
 
-**Lazy materialization.** Backend geometry is built only where it is unavoidable:
-`toRegions()`/`simple()` tessellate to point rings for handoff or export, and
-`extrude`/`revolve` materialize the shape into the backend's own form (Manifold: a
+**Lazy materialization.** Backend geometry is built only where it is unavoidable.
+Three readbacks tessellate to point rings at the backend's own LOD (Manifold 116
+preview / 480 print, OCCT 64): `toRegions()`, `simple()` (its unwrapped form), and
+`regions()` — scission currently round-trips through `toRegions()`, so each returned
+`Shape2D` is a faceted copy, not a curve-native slice of the original. `extrude` and
+`revolve` materialize the shape into the backend's own form instead (Manifold: a
 `CrossSection`, memoized in the solid cache by content hash + LOD, so extruding the
 same shape twice tessellates once; OCCT: a fresh `Drawing` per call, drawn from the
 contours — arcs and cubics become true B-rep edges). A `Shape2D` may be passed
-directly as the `profile` to `extrude`/`revolve`, holes included.
+directly as the `profile` to `extrude`/`revolve`, holes included. `toContours()` is
+the one readback that tessellates nothing.
 
 **Offset is the carve-out.** `offset` is the one op that cannot run on the contour
 IR, so it routes into the backend's own 2-D engine (Clipper2 via `CrossSection` on
@@ -374,7 +378,7 @@ cross-backend note below.
 | `toRegions()` | Materialize into `{outer, holes}[]` point-ring region arrays (`assembleRegions`), tessellating curves at the backend's LOD; a boolean result may be several disjoint regions. |
 | `toContours()` | The stored contour IR — `{outer, holes}[]` of `{start, segments}` contours, **curve-native and lossless** (no tessellation). Returns a deep copy, safe to mutate. |
 | `simple()` | `toRegions()` unwrapped — throws unless the result is exactly one region. |
-| `regions()` | Scission: each disjoint region as its own live `Shape2D[]` (each further boolean-able), vs `toRegions()` which returns raw `{outer, holes}` data. |
+| `regions()` | Scission: each disjoint region as its own live `Shape2D[]` (each further boolean-able), vs `toRegions()` which returns raw `{outer, holes}` data. Goes through `toRegions()`, so the pieces are tessellated at the backend's LOD — curves do not survive scission. |
 | `translate([dx,dy])` / `rotate(deg, center?)` / `scale(f, center?)` / `mirror(axis)` | Rigid/similarity transforms on the contours (curve-preserving). `center` defaults to the origin; `axis` is `"x"`, `"y"`, or `{point, dir}`. |
 | `fillet(r, {corners?})` / `chamfer(d, {corners?})` | Round (true arcs) or bevel (straight chords) selected corners. `corners` = `"all"` (default) / `"convex"` / `"concave"` / `{indices}` / `{near, count?}`; `r`/`d` may be an array paired positionally with `{indices}`. Throws when no corner matches. |
 | `simplify(tolerance)` | Corner-preserving decimation/refit within `tolerance` mm — dense point rings become fewer segments (and refit arcs/cubics) without moving corners. |
@@ -386,7 +390,7 @@ cross-backend note below.
 
 On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **for convex corners with interior angle ≥ 90°** (the common case: rectangles, hexagons, rounded-rects, pentagons, …). `chamfer` is a true 45° bevel — a straight chord across the corner — matching OCCT to float precision there (a 10×10 square offset +1 gives 142.0 on both; a pentagon 298.920 on both). Manifold has no native bevel join, so it renders `chamfer` as a Round join forced to a single chord per corner (`circularSegments=4`). **At acute (<90° interior) convex corners** — triangles, star points, V-notches — Clipper2 emits 2 chords rather than 1, so Manifold's chamfer bulges ~0.4% beyond OCCT's single-chord bevel (e.g. an equilateral triangle: Manifold 235.46 vs OCCT 234.50). `round` and `sharp` are exact across backends at every angle; prefer them, or accept the small acute-corner difference on `chamfer`.
 
-`offset` is therefore the only **parity-relevant** `Shape2D` op: on OCCT the result carries exact arcs, on Manifold it is faceted at mesh LOD, and measure-parity holds within the tessellation tolerance as LOD converges (not a parity waiver). Everything else on the surface is backend-identical.
+`offset` is therefore **parity-relevant**: on OCCT the result carries exact arcs, on Manifold it is faceted at mesh LOD, and measure-parity holds within the tessellation tolerance as LOD converges (not a parity waiver). The three tessellating readbacks — `toRegions()`, `simple()`, `regions()` — are LOD-dependent for the same reason: they hand back point rings sampled at the backend's own segment count, so the two backends' output differs in vertex count and by the chord error, converging as LOD rises. Those four ops are the whole LOD-dependent surface; everything else is backend-identical.
 
 **Fillet after a boolean reaches STEP as real arcs.** Because booleans preserve curves
 and `fillet` inserts true arc segments, `shape2d(a).union(b).fillet(2).extrude({h})`

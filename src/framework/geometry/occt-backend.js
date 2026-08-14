@@ -400,7 +400,9 @@ export function createOcctKernel(replicad) {
     const lineJoinType = { round: "round", chamfer: "bevel", sharp: "miter" }[corners];
     if (!lineJoinType) throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
     if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
-    const result = drawing.clone().offset(delta, { lineJoinType });   // clone — replicad consumes the operand
+    // No clone: offset CONSUMES its operand, and the sole caller (offsetRegions) hands
+    // in a Drawing it just built from the contour IR, owned by nobody else.
+    const result = drawing.offset(delta, { lineJoinType });
     // Collapse doesn't throw and Drawing has no public `blueprints` array (that's on
     // Blueprints/CompoundBlueprint, not Drawing) — replicad instead returns a Drawing
     // whose private `innerShape` is null (confirmed by probe). That's the collapse signal.
