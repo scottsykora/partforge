@@ -98,6 +98,24 @@ test("switching to a view without animations hides the bar; back shows it", () =
   expect(ctl.runtime.state()).toMatchObject({ view: "box", animation: "open" });
 });
 
+test("publishes --pf-anim-clear on the stage: bar height while shown, 0px hidden, unset on detach", async () => {
+  const { container, ctl, switchView } = setup();
+  const bar = container.querySelector(".pf-anim-bar");
+  const rect = (o) => () => ({ left: 0, right: 800, width: 800, height: 0, ...o });
+  container.getBoundingClientRect = rect({ top: 0, bottom: 600, height: 600 });
+  bar.getBoundingClientRect = rect({ top: 540, bottom: 580, left: 200, right: 600, width: 400, height: 40 });
+  switchView("box"); // re-syncs structure, scheduling a placement pass
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(container.style.getPropertyValue("--pf-anim-clear")).toBe("60px");
+
+  switchView("solo"); // no animations → hidden bar claims nothing
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(container.style.getPropertyValue("--pf-anim-clear")).toBe("0px");
+
+  ctl.detach();
+  expect(container.style.getPropertyValue("--pf-anim-clear")).toBe("");
+});
+
 test("a view switch resets: snapshot restored, opacities cleared, position zeroed", () => {
   const { applied, ctl, switchView } = setup(); handles.push(ctl);
   const viewer = ctl.__viewer;

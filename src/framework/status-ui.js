@@ -10,6 +10,5 @@ export function createStatusUi({ status, busy, phase, exports = [] }) {
     showBusy(p) { phase.textContent = `${p}…`; busy.classList.add("show"); },
     hideBusy() { busy.classList.remove("show"); },
     setExportEnabled(on) { exportBtns.forEach((b) => { b.disabled = !on; }); },
-    statusText: () => status.textContent,
   };
 }

@@ -234,7 +234,13 @@
    #viewbar's, so a host that re-anchors this bar still inherits its chrome.
    animation-controls.js may inline-override left/transform/max-width (and
    overflow while width-capped) to hold a 10px gap to #viewbar, and clears
-   the overrides whenever centered placement fits. */
+   the overrides whenever centered placement fits.
+
+   animation-controls.js also publishes --pf-anim-clear on the STAGE element:
+   the px distance from the stage's bottom edge to the visible bar's top (0px
+   while the active view has no animations; unset when no view declares any).
+   A host floating its own chrome at the stage's bottom-centre should anchor it
+   at calc(var(--pf-anim-clear, 0px) + <gap>) to stack above the bar. */
 .pf-anim-bar {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
   z-index: 15; max-width: calc(100% - 24px);

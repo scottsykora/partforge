@@ -1,7 +1,7 @@
 // Headless smoke check: start a dev server, load a part app in real Chromium, and
-// confirm the geometry worker actually boots (the status line shows a triangle count)
-// with no console/worker errors. Catches WASM/worker/wiring failures that a passing
-// build and unit tests miss.
+// confirm the geometry worker actually boots (the STL export button enables once
+// the first build's geometry is current) with no console/worker errors. Catches
+// WASM/worker/wiring failures that a passing build and unit tests miss.
 //
 //   node scripts/check-app.mjs [entry.html] [--keep] [--allow-no-cutaway]
 //   (entry defaults to demo.html)
@@ -760,8 +760,11 @@ try {
   page.on("worker", (w) => w.on("console", (m) => { if (m.type() === "error") errors.push("worker: " + m.text()); }));
 
   await page.goto(url, { waitUntil: "load", timeout: 30000 });
+  // The STL button enables exactly when the first build's geometry is current
+  // (mount's setExportEnabled) — the status line no longer carries a triangle
+  // count to wait on (that readout moved to console.debug).
   await page.waitForFunction(
-    () => /triangle/i.test(document.getElementById("status")?.textContent || ""),
+    () => document.getElementById("download")?.disabled === false,
     { timeout: 60000 }
   );
   booted = true;
