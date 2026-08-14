@@ -20,11 +20,34 @@ import {
 
 const deepCopy = (regions) => JSON.parse(JSON.stringify(regions));
 
+// Degenerate-input guard, carried over from the tessellation path the Manifold
+// backend used to lift through: a 2-point "polygon" bounds no area, and silently
+// accepting one yields an empty shape instead of an error. POINT LISTS only — a
+// curve contour legitimately closes in one or two segments (a circle is two arcs),
+// so no segment-count rule applies there.
+const isPointList = (x) => Array.isArray(x) && Array.isArray(x[0]);
+const checkPointRing = (c, role) => {
+  if (isPointList(c) && c.length < 3) throw new Error(`shape2d: ${role} needs ≥3 points`);
+};
+const checkProfile = (x) => {
+  if (!x || x._shape2d) return;
+  if (isPointList(x)) { checkPointRing(x, "profile"); return; }
+  for (const rg of Array.isArray(x) ? x : [x]) {
+    if (!rg || !rg.outer) continue;
+    checkPointRing(rg.outer, "outer contour");
+    for (const hole of rg.holes ?? []) checkPointRing(hole, "hole");
+  }
+};
+
 export function makeShape2dFactory({ segs, offsetRegions, extrude, revolve }) {
   // Lift any accepted profile form into stored regions: a live Shape2D is deep-copied out
   // via its own toContours() (value semantics — never alias another shape's storage);
   // anything else goes through liftProfile + per-ring winding normalization.
-  const liftRegions = (x) => (x && x._shape2d ? deepCopy(x._regions) : liftProfile(x).regions.map(ensureRegionWinding));
+  const liftRegions = (x) => {
+    if (x && x._shape2d) return deepCopy(x._regions);
+    checkProfile(x);
+    return liftProfile(x).regions.map(ensureRegionWinding);
+  };
 
   const make = (regions) => {
     const hash = h("shape2d", regions);

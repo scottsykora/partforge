@@ -44,9 +44,13 @@ export const SOLID_OPS = [
 export const SOLID_OPTIONAL_OPS = ["genus", "isEmpty"];
 
 // Public methods every Shape2D exposes (2-D boolean value; contract-linted).
+// One shared implementation backs both backends (geometry/shape2d.js) — storage is
+// the curve-native contour IR, so booleans/transforms/queries are backend-identical
+// and only `offset` routes into the backend's own 2-D engine.
 export const SHAPE2D_OPS = [
   "union", "cut", "cutAll", "intersect", "offset", "area", "boundingBox", "toRegions", "simple", "regions", "clone",
   "extrude", "revolve",
+  "translate", "rotate", "scale", "mirror", "toContours", "fillet", "chamfer", "simplify", "corners", "contains",
 ];
 
 // Solid ops only OCCT implements natively. Single source of truth: probe.js routes
@@ -85,16 +89,30 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {() => number} [genus]     through-hole count (Manifold only)
  * @property {() => boolean} [isEmpty]  no geometry at all (Manifold only)
  *
- * @typedef {Object} Shape2D  An opaque 2-D boolean value (both backends: Manifold wraps a CrossSection, OCCT a replicad Drawing). `_`-prefixed keys are backend internals.
+ * @typedef {Object} Shape2D  A 2-D boolean value. ONE shared implementation on both backends: storage is the curve-native contour IR (arcs/cubics survive every op), so results are backend-identical except `offset`. `_`-prefixed keys are internals.
  * @property {(other: Shape2D|number[][]) => Shape2D} union
  * @property {(other: Shape2D|number[][]) => Shape2D} cut
  * @property {(others: (Shape2D|number[][])[]) => Shape2D} cutAll   batch subtract
  * @property {(other: Shape2D|number[][]) => Shape2D} intersect
- * @property {() => number} area   net area (outers minus holes), mm²
- * @property {() => {min:number[],max:number[]}} boundingBox   axis-aligned 2-D bounds
- * @property {() => {outer:number[][],holes:number[][][]}[]} toRegions   materialize into region arrays (assembleRegions)
+ * @property {(delta:number, opts?:{corners?:"round"|"chamfer"|"sharp",segs?:number}) => Shape2D} offset   grow (+) / shrink (−) by delta; the one backend-specific op (Clipper2 vs OCCT) — throws when the shape collapses
+ * @property {() => number} area   net area (outers minus holes), mm² — curve-exact, not tessellated
+ * @property {() => {min:number[],max:number[]}} boundingBox   axis-aligned 2-D bounds (curve-exact)
+ * @property {() => {outer:number[][],holes:number[][][]}[]} toRegions   materialize into point-ring region arrays (tessellated at the backend's LOD)
  * @property {() => {outer:number[][],holes:number[][][]}} simple   toRegions(), unwrapped — throws unless exactly 1 region
- * @property {() => Shape2D} clone   independent handle
+ * @property {() => Shape2D[]} regions   scission: each disjoint region as its own Shape2D
+ * @property {() => {outer:object,holes:object[]}[]} toContours   the stored contour IR (curve-native, lossless) — a deep copy, safe to mutate
+ * @property {() => Shape2D} clone   independent copy
+ * @property {(v:number[]) => Shape2D} translate   translate by [dx,dy]
+ * @property {(deg:number, center?:number[]) => Shape2D} rotate   rotate about center (default origin)
+ * @property {(f:number, center?:number[]) => Shape2D} scale   uniform scale about center (default origin)
+ * @property {(axis:"x"|"y"|{point:number[],dir:number[]}) => Shape2D} mirror   reflect across an axis line
+ * @property {(r:number|number[], opts?:{corners?:"all"|"convex"|"concave"|{indices:number[]}|{near:number[],count?:number}}) => Shape2D} fillet   round selected corners with true arcs
+ * @property {(d:number|number[], opts?:{corners?:"all"|"convex"|"concave"|{indices:number[]}|{near:number[],count?:number}}) => Shape2D} chamfer   bevel selected corners with straight chords
+ * @property {(tolerance:number) => Shape2D} simplify   corner-preserving decimation/refit within tolerance
+ * @property {() => {index:number,point:number[],interiorAngleDeg:number,convex:boolean,segTypes:string[]}[]} corners   corner list (the positional order fillet/chamfer `{indices}` index into)
+ * @property {(p:number[]) => boolean} contains   is point [x,y] inside the shape (holes excluded)
+ * @property {(o?:{h:number,twist?:number,scaleTop?:number}) => Solid} extrude   sugar for k.extrude({profile:this,…})
+ * @property {(o?:{degrees?:number}) => Solid} revolve   sugar for k.revolve({profile:this,…})
  *
  * @typedef {Object} GeometryKernel
  * @property {(o:{r?:number,d?:number,r1?:number,r2?:number,d1?:number,d2?:number,h:number,center?:boolean}) => Solid} cylinder   canonical: {r|d,h} straight, {r1,r2,h}|{d1,d2,h} cone; legacy (rBottom,rTop,h,opts) accepted until contract v2
@@ -112,7 +130,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(o:{profile:number[][],pitch:number,turns:number,lefthand?:boolean}) => Solid} screwSweep   screw-motion sweep of an axial [[r,z]] profile — threads; options-only
  * @property {(solids:Solid[]) => Solid} union
- * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|Shape2D) => Shape2D} shape2d   2-D boolean value (both backends: Manifold wraps a CrossSection, OCCT a replicad Drawing)
+ * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|{start:number[],segments:object[]}|Shape2D) => Shape2D} shape2d   2-D boolean value; one shared contour-storage implementation on both backends
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hull   convex hull of all inputs → a convex Shape2D (faceted; pure-JS monotone chain)
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hullChain   swept hull over an ordered sequence (≥2): union of hull([inᵢ,inᵢ₊₁])
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)

@@ -95,6 +95,39 @@ export type AxisName = "X" | "Y" | "Z";
 /** Convex-corner style for an offset. */
 export type OffsetCorners = "round" | "chamfer" | "sharp";
 
+/** A stored contour-IR region: curve-native contours, nothing flattened. */
+export interface ContourRegion {
+  outer: ArcContour;
+  holes: ArcContour[];
+}
+
+/** One corner of a `Shape2D`, as `Shape2D.corners()` reports it. */
+export interface Corner2D {
+  /** Index of the joint within its own contour. */
+  index: number;
+  point: Point2;
+  interiorAngleDeg: number;
+  convex: boolean;
+  /** Segment kinds meeting here, incoming then outgoing. */
+  segTypes: Array<"line" | "arc" | "cubic">;
+  /** Present only for multi-region shapes. */
+  regionIndex?: number;
+  /** Present only for multi-region shapes. */
+  ring?: "outer" | { hole: number };
+}
+
+/** Which corners a `Shape2D` `fillet`/`chamfer` applies to. Default `"all"`. */
+export type CornerSelector =
+  | "all"
+  | "convex"
+  | "concave"
+  /** Positional indices into `corners()`; a per-corner `r`/`d` array pairs with these. */
+  | { indices: number[] }
+  | { near: Point2; count?: number };
+
+/** A mirror line for `Shape2D.mirror`. */
+export type MirrorAxis2 = "x" | "y" | { point: Point2; dir: Point2 };
+
 // --- edge / face selectors (OCCT-only ops) ---------------------------------
 
 /**
@@ -115,8 +148,13 @@ export type FaceSelector = EdgeSelector;
 // --- Shape2D ----------------------------------------------------------------
 
 /**
- * An opaque 2-D boolean value (Manifold wraps a CrossSection, OCCT a replicad
- * Drawing). `_`-prefixed keys are backend internals and are not declared.
+ * A 2-D sketch value: booleans, transforms, corner ops and queries. ONE shared
+ * implementation on both backends — storage is the curve-native contour IR, so
+ * arcs and béziers survive every op and results are backend-identical except
+ * `offset`. No backend geometry exists until the shape is extruded/revolved or
+ * materialized via `toRegions()`. `_`-prefixed keys are internals, not declared.
+ *
+ * Every op returns a NEW `Shape2D`; no operand is ever mutated.
  */
 export interface Shape2D {
   union(other: Shape2D | Contour): Shape2D;
@@ -125,20 +163,42 @@ export interface Shape2D {
   cutAll(others: Array<Shape2D | Contour>): Shape2D;
   intersect(other: Shape2D | Contour): Shape2D;
   /**
-   * Grow (`delta > 0`) or inset (`delta < 0`). Curve-preserving on OCCT,
-   * faceted at mesh LOD on Manifold. Throws if the offset collapses the shape.
+   * Grow (`delta > 0`) or inset (`delta < 0`). The one backend-specific op:
+   * curve-preserving on OCCT, faceted at mesh LOD on Manifold. Throws if the
+   * offset collapses the shape.
    */
   offset(delta: number, opts?: { corners?: OffsetCorners; segs?: number }): Shape2D;
-  /** Net area (outers minus holes), mm². */
+  /** Net area (outers minus holes), mm². Curve-exact — not measured off a tessellation. */
   area(): number;
+  /** Axis-aligned 2-D bounds, curve-exact. */
   boundingBox(): BoundingBox2;
-  /** Materialize into region arrays. */
+  /** Materialize into point-ring region arrays, tessellating curves at the backend's LOD. */
   toRegions(): MaterializedRegion[];
+  /** The stored contour IR — curve-native and lossless. A deep copy, safe to mutate. */
+  toContours(): ContourRegion[];
   /** `toRegions()` unwrapped — throws unless there is exactly one region. */
   simple(): MaterializedRegion;
   /** Scission: each disjoint region as its own live `Shape2D`. */
   regions(): Shape2D[];
   clone(): Shape2D;
+  /** Translate by `[dx, dy]`. */
+  translate(v: Point2): Shape2D;
+  /** Rotate `deg` about `center` (default the origin). */
+  rotate(deg: number, center?: Point2): Shape2D;
+  /** Uniform scale about `center` (default the origin). */
+  scale(factor: number, center?: Point2): Shape2D;
+  /** Reflect across an axis line. */
+  mirror(axis: MirrorAxis2): Shape2D;
+  /** Round selected corners with true arcs. `r` may be an array paired with `{ indices }`. */
+  fillet(r: number | number[], opts?: { corners?: CornerSelector }): Shape2D;
+  /** Bevel selected corners with straight chords. `d` may be an array paired with `{ indices }`. */
+  chamfer(d: number | number[], opts?: { corners?: CornerSelector }): Shape2D;
+  /** Corner-preserving decimation/refit within `tolerance` mm. */
+  simplify(tolerance: number): Shape2D;
+  /** The corner list — the positional order `fillet`/`chamfer`'s `{ indices }` selects into. */
+  corners(): Corner2D[];
+  /** Is `[x, y]` inside the shape (inside an outer, not inside a hole)? */
+  contains(p: Point2): boolean;
   /** Sugar for `k.extrude({ profile: this, ... })`. */
   extrude(opts: { h: number; twist?: number; scaleTop?: number }): Solid;
   /** Sugar for `k.revolve({ profile: this, ... })`. */
