@@ -35,6 +35,15 @@ export function bootOcctKernel(opts?: { fonts?: Record<string, FontSource> }): P
 
 // --- the job loop -----------------------------------------------------------
 
+/**
+ * A reference shape for the `inspect` job to score the part's silhouettes against.
+ * A `profile` is millimetres and so is compared at absolute scale too; an `image`
+ * is a photo mask with no scale, compared on shape alone.
+ */
+export type MatchTarget =
+  | { kind: "profile"; rings: Array<Array<[number, number]>> }
+  | { kind: "image"; mask: { data: Uint8Array; width: number; height: number } };
+
 /** A job the worker loop accepts. */
 export interface WorkerJob {
   type: "generate" | "export-stl" | "export-step" | "export-3mf" | "inspect";
@@ -50,6 +59,16 @@ export interface WorkerJob {
   jobId?: number;
   /** Single-file export name base. */
   name?: string;
+  /**
+   * `inspect`: score the part's six canonical silhouettes against these. Absent or
+   * empty leaves `match` off the report entirely.
+   *
+   * A target that cannot be scored — malformed, or with no foreground to score
+   * against — is DROPPED rather than reported as a zero, so `report.match` is not
+   * index-aligned with this list. Attribute a result by its `kind` and by the
+   * relative order of the targets sharing that kind, never by index.
+   */
+  matchTargets?: MatchTarget[];
 }
 
 /**
@@ -272,7 +291,16 @@ export function measure(
   part: PartDefinition,
   view?: string,
   params?: ResolvedParams,
-  opts?: { minWall?: boolean; gapThreshold?: number },
+  opts?: {
+    minWall?: boolean;
+    gapThreshold?: number;
+    /**
+     * A build of this view the caller already has, measured instead of building a
+     * second time. It is trusted, not checked against `view`/`params` — hand in a
+     * build of the same view you are asking about.
+     */
+    built?: BuiltSubPart[];
+  },
 ): MeasureReport;
 
 // --- verify -----------------------------------------------------------------
@@ -338,6 +366,93 @@ export function verify(
     seed?: { params?: ResolvedParams; result: MeasureReport };
   },
 ): VerifyReport;
+
+// --- silhouette match scoring -----------------------------------------------
+
+/**
+ * A binary silhouette. `data` is 0 or 255, one byte per pixel, row 0 at the TOP.
+ * `minX`/`minY` are the projected-plane coordinates of the image's BOTTOM-LEFT
+ * corner. A mask with no `mmPerPx` carries no scale (a photo), which is what makes
+ * the scale-aware comparison unavailable for it.
+ */
+export interface SilhouetteMask {
+  data: Uint8Array;
+  width: number;
+  height: number;
+  mmPerPx?: number;
+  minX?: number;
+  minY?: number;
+}
+
+/** The six canonical orthographic views a part is rasterized into for matching. */
+export const MATCH_VIEWS: string[];
+
+/**
+ * Project posed meshes onto one of `MATCH_VIEWS` and scanline-fill the silhouette.
+ * `null` when there is nothing to draw or the projection has zero extent.
+ */
+export function rasterizeMeshMask(
+  meshes: Array<Pick<Mesh, "positions" | "indices">>,
+  view: string,
+  size?: number,
+): SilhouetteMask | null;
+
+/**
+ * Fill a set of closed 2-D rings (millimetres) into a mask. All rings share one
+ * even-odd group, so a ring inside another is a hole. `null` when nothing fills.
+ */
+export function rasterizeRingsMask(
+  rings: Array<Array<[number, number]>>,
+  size?: number,
+): SilhouetteMask | null;
+
+/**
+ * Per-pixel comparison of the two masks: `0` background, `1` overlap, `2` missing
+ * (reference only), `3` excess (candidate only).
+ */
+export interface MatchDelta {
+  width: number;
+  height: number;
+  data: Uint8Array;
+}
+
+/**
+ * How close a candidate silhouette is to a reference one. Shape is compared
+ * pose-normalized, so `iou` and `boundaryIoU` ignore position and size. `iouScale`
+ * appears only for a scale-aware comparison, which also makes `contourDist` a real
+ * millimetre distance instead of a percentage of the reference's bbox diagonal.
+ */
+export interface MatchScores {
+  iou: number;
+  boundaryIoU: number;
+  contourDist: number;
+  contourUnit: "mm" | "%bbox-diag";
+  iouScale?: number;
+  delta: MatchDelta;
+}
+
+/**
+ * Score one candidate mask against a reference. `null` when either has no
+ * foreground at all — unscoreable is not the same as scoring zero.
+ *
+ * `scaleAware` is the caller's promise that both masks are in millimetres; it takes
+ * effect only when both actually carry a finite `mmPerPx`.
+ */
+export function matchMasks(
+  candidate: SilhouetteMask | null | undefined,
+  reference: SilhouetteMask | null | undefined,
+  opts?: { scaleAware?: boolean },
+): MatchScores | null;
+
+/**
+ * Score every view's mask against one reference and name the best. Unscoreable
+ * views are left out of `views` entirely; `best` is `null` when none scored.
+ */
+export function matchViews(
+  viewMasks: Record<string, SilhouetteMask | null>,
+  reference: SilhouetteMask | null | undefined,
+  opts?: { scaleAware?: boolean },
+): { best: ({ view: string } & MatchScores) | null; views: Record<string, number> };
 
 // --- rendering --------------------------------------------------------------
 

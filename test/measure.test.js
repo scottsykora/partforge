@@ -1,6 +1,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { measure } from "../src/framework/oracle/measure.js";
+import { buildView } from "../src/framework/oracle/build.js";
 import gapPart from "./fixtures/gap-part.js";
 
 let k;
@@ -134,4 +135,26 @@ test("aggregate bounds spans all sub-parts and centerOfMass is volume-weighted",
   expect(r.aggregate.centerOfMass[0]).toBeCloseTo(36.11, 1);
   expect(r.aggregate.centerOfMass[1]).toBeCloseTo(9.44, 1);
   expect(r.aggregate.centerOfMass[2]).toBeCloseTo(9.44, 1);
+});
+
+// `opts.built` — the inspect job builds the view once and shares it with both the
+// measurement and the silhouette rasterizer, so measure must consume a build rather
+// than always making its own. The seam is worth pinning in both directions: the
+// facts read off a supplied build must match a self-built run exactly, and a
+// supplied build must actually be the one measured.
+test("measure accepts a pre-built view and reads the same facts from it", () => {
+  const built = buildView(k, boxPart, "v");
+  const supplied = measure(k, boxPart, "v", {}, { built });
+  const own = measure(k, boxPart, "v");
+  expect(supplied.subparts.map((s) => s.name)).toEqual(own.subparts.map((s) => s.name));
+  expect(supplied.subparts[0].volume).toBeCloseTo(own.subparts[0].volume, 6);
+  expect(supplied.aggregate.bbox).toEqual(own.aggregate.bbox);
+});
+
+test("a supplied build is what gets measured, not a rebuild of the part", () => {
+  // A build of the TUBE handed in against the BOX part: the reported sub-part is the
+  // tube's, which a rebuild-anyway implementation could not produce.
+  const built = buildView(k, tubePart, "v");
+  const r = measure(k, boxPart, "v", {}, { built });
+  expect(r.subparts.map((s) => s.name)).toEqual(["tube"]);
 });

@@ -19,7 +19,11 @@ const unionBounds = (list) => list.reduce(
 //   → { part, view, measuredMinWall, subparts[], aggregate, overlaps[], gaps[],
 //       nearMisses[], ok }
 export function measure(kernel, part, view = Object.keys(part.views)[0], params = {}, opts = {}) {
-  const built = buildView(kernel, part, view, params);
+  // `opts.built` is a build of this view the caller already has. The inspect job
+  // needs those meshes anyway — it rasterizes them for silhouette match scoring —
+  // and a second buildView here would be a whole duplicate build of the part for
+  // nothing. Absent, this measures its own build exactly as it always did.
+  const built = opts.built ?? buildView(kernel, part, view, params);
   // ONE BVH per sub-part mesh for this call, shared by the two passes that need
   // one: min-wall (inward rays per triangle) and meshGaps (pair distances). They
   // used to index the same mesh objects independently, so every sub-part of a
