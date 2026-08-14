@@ -57,7 +57,7 @@ describe("cubic offset", () => {
 
 import { _offsetContour, validateRawOffset } from "../src/framework/geometry/contour-offset.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
-import { ringArea, pointInRing } from "../src/framework/geometry/shape2d-regions.js";
+import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
 
 const sq = (s) => ({ start: [0, 0], segments: [{ to: [s, 0] }, { to: [s, s] }, { to: [0, s] }, { to: [0, 0] }] });
 const area = (c) => ringArea(tessellateContour(c, 256));
@@ -111,6 +111,11 @@ describe("validateRawOffset", () => {
   test("rejects a self-intersecting (butterfly) ring", () => {
     expect(validateRawOffset([{ outer: ring([[0, 0], [10, 10], [10, 0], [0, 10]]), holes: [] }])).toBe(false);
   });
+  // The butterfly case above short-circuits on zero net area; this pins the
+  // ringSelfIntersects branch itself with a self-intersecting quad whose net area is nonzero.
+  test("rejects a self-intersecting ring with nonzero net area", () => {
+    expect(validateRawOffset([{ outer: ring([[0, 0], [10, 10], [10, 0], [0, 20]]), holes: [] }])).toBe(false);
+  });
   test("rejects a flipped (CW) outer", () => {
     expect(validateRawOffset([{ outer: ring([[0, 0], [0, 10], [10, 10], [10, 0]]), holes: [] }])).toBe(false);
   });
@@ -119,5 +124,62 @@ describe("validateRawOffset", () => {
       { outer: ring([[0, 0], [10, 0], [10, 10], [0, 10]]), holes: [] },
       { outer: ring([[5, 5], [15, 5], [15, 15], [5, 15]]), holes: [] },
     ])).toBe(false);
+  });
+});
+
+import { offsetRegions } from "../src/framework/geometry/contour-offset.js";
+import { profileArea } from "../src/framework/geometry/contour-ops.js";
+
+const region = (outer, holes = []) => ({ outer, holes });
+const sqRegion = (s) => region(sq(s));
+
+describe("offsetRegions", () => {
+  test("validates corners and delta with the pinned messages", () => {
+    expect(() => offsetRegions([sqRegion(10)], 1, { corners: "bevel" }))
+      .toThrow('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
+    expect(() => offsetRegions([sqRegion(10)], NaN)).toThrow("Shape2D.offset: delta must be a finite number");
+  });
+  test("collapse throws the pinned message", () => {
+    expect(() => offsetRegions([sqRegion(10)], -6)).toThrow("Shape2D.offset: offset collapses the shape (reduce |delta|)");
+  });
+  test("zero delta returns an equal-area copy", () => {
+    const out = offsetRegions([sqRegion(10)], 0);
+    expect(profileArea(out)).toBeCloseTo(100, 9);
+  });
+  test("hole shrinks when the region grows", () => {
+    const hole = { start: [4, 4], segments: [{ to: [4, 6] }, { to: [6, 6] }, { to: [6, 4] }, { to: [4, 4] }] }; // CW
+    // delta 0.5 keeps this short of the hole's own half-width (1) — past that the hole
+    // collapses entirely (see "hole vanishing" below), so this is the largest delta that
+    // still leaves a partially-shrunk hole to assert against.
+    const out = offsetRegions([region(sq(10), [hole])], 0.5, { corners: "sharp" });
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(121 - 1, 6);      // hole 2×2 shrank to 1×1
+  });
+  test("hole vanishing under positive delta is absorbed", () => {
+    const hole = { start: [4, 4], segments: [{ to: [4, 6] }, { to: [6, 6] }, { to: [6, 4] }, { to: [4, 4] }] };
+    const out = offsetRegions([region(sq(10), [hole])], 2, { corners: "sharp" });
+    expect(out[0].holes.length).toBe(0);
+    expect(profileArea(out)).toBeCloseTo(196, 6);
+  });
+  test("dumbbell inset splits into two regions via cleanup", () => {
+    const db = { start: [0, 0], segments: [
+      { to: [10, 0] }, { to: [10, 4] }, { to: [20, 4] }, { to: [20, 0] }, { to: [30, 0] },
+      { to: [30, 10] }, { to: [20, 10] }, { to: [20, 6] }, { to: [10, 6] }, { to: [10, 10] },
+      { to: [0, 10] }, { to: [0, 0] }] };
+    const out = offsetRegions([region(db)], -2, { corners: "sharp" });
+    expect(out.length).toBe(2);
+    expect(profileArea(out)).toBeCloseTo(72, 4);           // two 6×6 squares
+  });
+  test("L-shape inset stays on the fast path with exact area", () => {
+    const L = { start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 10] }, { to: [5, 10] }, { to: [5, 5] }, { to: [0, 5] }, { to: [0, 0] }] };
+    const out = offsetRegions([region(L)], -2, { corners: "sharp" });
+    expect(profileArea(out)).toBeCloseTo(11, 9);
+    for (const s of out[0].outer.segments) { expect(s.via).toBeUndefined(); expect(s.c1).toBeUndefined(); }
+  });
+  test("cusp-producing inward cubic offset yields a simple result", () => {
+    const arch = { start: [10, 0], segments: [{ c1: [7, 4], c2: [3, 4], to: [0, 0] }, { to: [10, 0] }] };
+    const out = offsetRegions([region(arch)], -0.8, { corners: "round" });
+    expect(validateRawOffset(out)).toBe(true);             // output must be simple
   });
 });
