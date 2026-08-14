@@ -87,6 +87,7 @@ export interface MountElements {
     reframe?: HTMLElement | null;
     theme?: HTMLElement | null;
     cutaway?: HTMLElement | null;
+    measure?: HTMLElement | null;
     railToggle?: HTMLElement | null;
   };
 }
@@ -140,6 +141,19 @@ export interface CaptureViewOptions {
   quality?: number;
   /** Canonical angle to render from. Default `"iso"`. */
   angle?: CanonicalView | string;
+}
+
+/**
+ * Measurement mode runtime controls. Dimensioned captures come straight from
+ * `captureCurrent()` while the mode is enabled — in-scene dims render into
+ * the frame natively (canonical-view captures and thumbnails never include
+ * them).
+ */
+export interface MeasureRuntime {
+  isEnabled(): boolean;
+  setEnabled(on: boolean): void;
+  clearPins(): void;
+  pinCount(): number;
 }
 
 /** Where playback is: idle, swinging the camera to an intro cue, playing, or paused. */
@@ -253,6 +267,8 @@ export interface PartRuntime {
    * active view has none, where `state().animation` reads `null`.
    */
   animation: AnimationRuntime | null;
+  /** Measurement mode's runtime-controls API — mode on/off, unit, and pin state; dimensioned captures come from `captureCurrent()` while enabled. Always present (a no-op stand-in outside `makeHandle` tests). */
+  measure: MeasureRuntime;
 }
 
 /** Mount a full parametric-part app from a `PartDefinition`. */

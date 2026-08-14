@@ -487,6 +487,12 @@ if (p.drain > 0) s = s.cut(k.cylinder({ r: d.drainR, h: p.floor + 4 }).at([0, 0,
 - Names should describe intent ("Drainage hole", not "cylinder2"); make them
   unique per sub-part unless you specifically want the merge behavior.
 
+Labels do double duty in the viewer: the hover tooltip names the feature, and
+**measurement mode** (the ruler button in the viewbar) measures it — a labeled
+hole reads ⌀ + depth, a labeled face reads its extents, and a click pins that
+dimension so it tracks parameter changes live. Label the features a user would
+want to measure; unlabeled geometry still measures as its bounding box.
+
 ### Caching & determinism
 
 The preview kernel memoizes geometry by content hash, so editing a parameter only
@@ -1230,7 +1236,7 @@ stylesheet). `mount` looks up these element IDs:
 | `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
-| `#viewbar` with `#reframe` / `#cutaway` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#viewbar` with `#reframe` / `#cutaway` / `#measure` / `#theme` | optional viewer controls (omit any you don't want) |
 | `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
 | `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme` |
 
@@ -1296,7 +1302,10 @@ pane's pixel size:
   `null` when the runtime is disposed or nothing is built/visible yet — it never throws.
   `hideGrid: false` keeps the floor grid so the capture matches the on-screen look
   exactly. The live view is untouched: the camera never moves, and lights/grid/render
-  target are restored after the render.
+  target are restored after the render. Measurement-mode dimensions render directly
+  in the scene, so a dimensioned capture needs no special handling — enable measure
+  mode (`runtime.measure.setEnabled(true)`) and call `captureCurrent()`; the dims are
+  just part of the rendered frame.
 - `runtime.captureViews(viewNames) → [{ view, dataUrl }]` — the canonical-angle
   counterpart (fixed poses, framed to the visible assembly, 1024², grid hidden). Sized
   for feeding a vision model, not for display; use `captureCurrent` for showcase images.
@@ -1370,6 +1379,7 @@ mount(part, {
     chrome: {
       reframe,
       cutaway,
+      measure,
       theme,
       railToggle,
     },

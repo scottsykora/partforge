@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
 
-const GIZMO_RENDER_ORDER = CUTAWAY_OVERLAY_RENDER_ORDER + 1;
+// +10: above the caps/highlight tier AND above measure mode's dims
+// (dim3-scene renders at +2/+3) — an actively-dragged control outranks ink.
+const GIZMO_RENDER_ORDER = CUTAWAY_OVERLAY_RENDER_ORDER + 10;
 const HANDLE_HOVER_THICKNESS = 1.6;
 
 /**
