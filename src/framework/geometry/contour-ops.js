@@ -1,6 +1,6 @@
 import { isPathContour, tessellateContour } from "./profile.js";
 import { ringArea } from "./shape2d-regions.js";
-import { arcToCubicSegments } from "./paper-bridge.js";
+import { arcToCubicSegments, arcCenterAndSweep } from "./paper-bridge.js";
 
 const WINDING_SEGS = 64;   // tessellation LOD for orientation/containment sampling
 
@@ -122,4 +122,81 @@ export function mirrorProfile(input, axis) {
   const ux = ux0 / L, uy = uy0 / L;
   const a = ux * ux - uy * uy, b = 2 * ux * uy;        // reflection across line through point along dir
   return transformProfile(input, [a, b, b, -a, px - a * px - b * py, py - b * px + a * py]);
+}
+
+// ── Corner model ────────────────────────────────────────────────────────────
+// profileCorners() walks a contour's joints and reports each non-smooth one: the interior
+// angle, whether it's convex (material-relative — see below), and the segment kinds either
+// side of it. jointTangents() is the shared per-vertex tangent computation, reused by Task 6.
+
+export const SMOOTH_JOINT_DEG = 1;
+
+// Unit tangent of segment `s` (from `from`) at its start (dir=+1) or end (dir=-1 → arrival direction).
+function segTangent(from, s, atStart) {
+  const norm = ([x, y]) => { const L = Math.hypot(x, y) || 1; return [x / L, y / L]; };
+  if (s.c1) {
+    if (atStart) {
+      const d = [s.c1[0] - from[0], s.c1[1] - from[1]];
+      return norm(Math.hypot(d[0], d[1]) > 1e-9 ? d : [s.c2[0] - from[0], s.c2[1] - from[1]]);
+    }
+    const d = [s.to[0] - s.c2[0], s.to[1] - s.c2[1]];
+    return norm(Math.hypot(d[0], d[1]) > 1e-9 ? d : [s.to[0] - s.c1[0], s.to[1] - s.c1[1]]);
+  }
+  if (s.via) {
+    // tangent ⊥ radius, oriented along the sweep (recover center like arcToCubicSegments)
+    const c = arcCenterAndSweep(from, s.via, s.to);          // {center:[x,y], dA} or null
+    if (!c) return norm([s.to[0] - from[0], s.to[1] - from[1]]);
+    const p = atStart ? from : s.to;
+    const r = [p[0] - c.center[0], p[1] - c.center[1]];
+    const t = c.dA >= 0 ? [-r[1], r[0]] : [r[1], -r[0]];
+    return norm(t);
+  }
+  return norm([s.to[0] - from[0], s.to[1] - from[1]]);
+}
+
+export function jointTangents(contour) {  // per vertex i: tangent arriving at and leaving vertex i
+  const n = contour.segments.length;
+  const pts = [contour.start, ...contour.segments.map((s) => s.to)];
+  return contour.segments.map((_, i) => {
+    const prevSeg = contour.segments[(i - 1 + n) % n];
+    const prevFrom = pts[(i - 1 + n) % n];
+    return {
+      point: pts[i],
+      inTan: segTangent(prevFrom, prevSeg, false),
+      outTan: segTangent(pts[i], contour.segments[i], true),
+    };
+  });
+}
+
+const segType = (s) => (s.c1 ? "cubic" : s.via ? "arc" : "line");
+
+function contourCorners(contour) {
+  const ccw = contourIsCCW(contour);
+  const n = contour.segments.length;
+  const out = [];
+  jointTangents(contour).forEach(({ point, inTan, outTan }, i) => {
+    const cross = inTan[0] * outTan[1] - inTan[1] * outTan[0];
+    const dot = Math.min(1, Math.max(-1, inTan[0] * outTan[0] + inTan[1] * outTan[1]));
+    const turnDeg = (Math.atan2(Math.abs(cross), dot) * 180) / Math.PI;
+    if (turnDeg < SMOOTH_JOINT_DEG) return;
+    const leftTurn = cross > 0;
+    out.push({
+      index: i, point: [point[0], point[1]],
+      interiorAngleDeg: ccw === leftTurn ? 180 - turnDeg : 180 + turnDeg,
+      convex: leftTurn === ccw,
+      segTypes: [segType(contour.segments[(i - 1 + n) % n]), segType(contour.segments[i])],
+    });
+  });
+  return out;
+}
+
+export function profileCorners(input) {
+  const { kind, regions } = liftProfile(input);
+  if (kind === "points" || kind === "contour") return contourCorners(regions[0].outer);
+  const out = [];
+  regions.forEach((rg, regionIndex) => {
+    for (const c of contourCorners(rg.outer)) out.push({ regionIndex, ring: "outer", ...c });
+    rg.holes.forEach((h, hi) => { for (const c of contourCorners(h)) out.push({ regionIndex, ring: { hole: hi }, ...c }); });
+  });
+  return out;
 }

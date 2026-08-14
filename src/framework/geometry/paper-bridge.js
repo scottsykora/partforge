@@ -9,14 +9,14 @@ function paperScope() {
   return _scope;
 }
 
-// Circular arc through (p0, via, to) → cubic Bézier segments, ≤90° each, endpoints
-// exact. Same circumcircle + sweep-direction recovery as profile.js's sampleArc
-// (the sweep is the one passing through `via`); each piece uses the standard
-// k = (4/3)·tan(θ/4) control-point offset. Collinear triple → straight segment.
-export function arcToCubicSegments(p0, via, to) {
+// Circumcircle center + signed sweep for the arc through (p0, via, to) — the sweep is the
+// one passing through `via` (sign-free, winding-free), same recovery as profile.js's
+// sampleArc. Returns null for a collinear (degenerate) triple. Shared by arcToCubicSegments
+// below and contour-ops.js's jointTangents (arc tangents are ⊥ radius, oriented by dA's sign).
+export function arcCenterAndSweep(p0, via, to) {
   const [ax, ay] = p0, [bx, by] = via, [cx, cy] = to;
   const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
-  if (Math.abs(d) < 1e-12) return [{ to: [cx, cy] }];
+  if (Math.abs(d) < 1e-12) return null;
   const sa = ax*ax + ay*ay, sb = bx*bx + by*by, sc = cx*cx + cy*cy;
   const ux = (sa * (by - cy) + sb * (cy - ay) + sc * (ay - by)) / d;
   const uy = (sa * (cx - bx) + sb * (ax - cx) + sc * (bx - ax)) / d;
@@ -28,6 +28,18 @@ export function arcToCubicSegments(p0, via, to) {
   const ccw = (x) => { let v = x % twoPi; if (v < 0) v += twoPi; return v; };
   const dCCW = ccw(a1 - a0), vCCW = ccw(av - a0);
   const dA = vCCW <= dCCW ? dCCW : dCCW - twoPi;
+  return { center: [ux, uy], r, dA };
+}
+
+// Circular arc through (p0, via, to) → cubic Bézier segments, ≤90° each, endpoints
+// exact. Each piece uses the standard k = (4/3)·tan(θ/4) control-point offset.
+// Collinear triple → straight segment.
+export function arcToCubicSegments(p0, via, to) {
+  const cx = to[0], cy = to[1];
+  const c = arcCenterAndSweep(p0, via, to);
+  if (!c) return [{ to: [cx, cy] }];
+  const { center: [ux, uy], r, dA } = c;
+  const a0 = Math.atan2(p0[1] - uy, p0[0] - ux);
   // Handle floating-point precision: angles very close to π/2 boundaries
   const pieces = Math.max(1, Math.ceil((Math.abs(dA) - 1e-9) / (Math.PI / 2)));
   const out = [];
