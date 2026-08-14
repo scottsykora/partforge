@@ -2,6 +2,9 @@
 // call k.text2d don't pull paper-core's setup onto the geometry worker. Never paper's
 // package-global project — another consumer in the same worker may import paper too.
 import paper from "paper/dist/paper-core.js";
+import { tessellateContour, reverseContour } from "./profile.js";
+
+const WINDING_SEGS = 8;   // points/segment for the local orientation sampler below
 
 let _scope = null;
 function paperScope() {
@@ -153,6 +156,64 @@ function groupPaperPaths(paths) {
     outer: toContour(path),
     holes: holes.map(toContour),
   }));
+}
+
+// Signed shoelace area of a tessellated ring (CCW positive) — a tiny local sampler so
+// this module doesn't need shape2d-regions.js's ringArea for one call site.
+function shoelaceArea(ring) {
+  let a = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [x1, y1] = ring[i], [x2, y2] = ring[(i + 1) % ring.length];
+    a += x1 * y2 - x2 * y1;
+  }
+  return a / 2;
+}
+
+// groupPaperPaths (containment-based outer/hole assignment), plus a winding-normalization
+// pass so the emitted contours carry the storage invariant (outer CCW, holes CW in
+// model y-up space). Paper's own `clockwise` flag is in paper's y-down coordinate frame,
+// so it doesn't map onto that invariant directly — decide by area sign of the emitted
+// contour instead: tessellate it and check the shoelace sign, reversing when wrong.
+function groupPaperPathsOriented(paths) {
+  const regions = groupPaperPaths(paths);
+  return regions.map(({ outer, holes }) => ({
+    outer: shoelaceArea(tessellateContour(outer, WINDING_SEGS)) >= 0 ? outer : reverseContour(outer),
+    holes: holes.map((h) => (shoelaceArea(tessellateContour(h, WINDING_SEGS)) < 0 ? h : reverseContour(h))),
+  }));
+}
+
+function cloneRegion(rg) {
+  return JSON.parse(JSON.stringify(rg));
+}
+
+function regionsToCompound(scope, regions) {
+  const children = [];
+  for (const rg of regions) {
+    children.push(toPaperPath(scope, rg.outer));
+    for (const h of rg.holes) children.push(toPaperPath(scope, h));
+  }
+  return new scope.CompoundPath({ children, fillRule: "evenodd" });
+}
+
+// Boolean op between two region lists (each in contour IR) via paper.js's planar boolean
+// engine. op: "unite" | "subtract" | "intersect" — same semantics as bracket.js's Shape2D
+// toolkit. Result regions come back in contour IR with the storage winding invariant
+// (outer CCW, holes CW) restored by groupPaperPathsOriented. Empty result → [].
+export function booleanRegions(aRegions, bRegions, op) {
+  if (!["unite", "subtract", "intersect"].includes(op)) throw new Error(`booleanRegions: unknown op "${op}"`);
+  if (aRegions.length === 0) return op === "unite" ? bRegions.map(cloneRegion) : [];
+  if (bRegions.length === 0) return op === "intersect" ? [] : aRegions.map(cloneRegion);
+  const scope = paperScope();
+  try {
+    const A = regionsToCompound(scope, aRegions), B = regionsToCompound(scope, bRegions);
+    const out = A[op](B, { insert: false });
+    const paths = (out.className === "CompoundPath" ? out.children : [out])
+      .filter((p) => p.segments && p.segments.length >= 2 && Math.abs(p.area) > 1e-9);
+    if (!paths.length) return [];
+    return groupPaperPathsOriented(paths);
+  } finally {
+    scope.project.clear();
+  }
 }
 
 export { paperScope, toContour, toOpenContour, groupPaperPaths };

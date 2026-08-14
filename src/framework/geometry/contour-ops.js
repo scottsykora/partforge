@@ -1,13 +1,14 @@
-import { isPathContour, tessellateContour } from "./profile.js";
+import { isPathContour, tessellateContour, pointsToContour, reverseContour } from "./profile.js";
 import { ringArea, pointInRing } from "./shape2d-regions.js";
 import { arcToCubicSegments, arcCenterAndSweep, paperScope, toPaperPath, toContour, toOpenContour } from "./paper-bridge.js";
 
-const WINDING_SEGS = 64;   // tessellation LOD for orientation/containment sampling
+// Re-exported so existing importers (test/contour-ops-lift.test.js and others) keep
+// working unchanged — the definitions live in profile.js (the contour-IR home) so
+// paper-bridge.js can use them without importing this module (which already imports
+// paper-bridge.js; importing back would cycle).
+export { pointsToContour, reverseContour };
 
-export function pointsToContour(points) {
-  return { start: [points[0][0], points[0][1]],
-    segments: [...points.slice(1).map((p) => ({ to: [p[0], p[1]] })), { to: [points[0][0], points[0][1]] }] };
-}
+const WINDING_SEGS = 64;   // tessellation LOD for orientation/containment sampling
 
 const isPointList = (x) => Array.isArray(x) && x.length > 0 && Array.isArray(x[0]);
 const liftContour = (c) => (isPointList(c) ? pointsToContour(c) : c);
@@ -39,19 +40,6 @@ export function restoreProfile(kind, regions) {
 }
 
 export const contourIsCCW = (c) => ringArea(tessellateContour(c, WINDING_SEGS)) >= 0;
-
-export function reverseContour(contour) {
-  const pts = [contour.start, ...contour.segments.map((s) => s.to)];
-  const segments = [];
-  for (let i = contour.segments.length - 1; i >= 0; i--) {
-    const s = contour.segments[i];
-    const m = { to: [pts[i][0], pts[i][1]] };
-    if (s.via) m.via = [s.via[0], s.via[1]];
-    if (s.c1) { m.c1 = [s.c2[0], s.c2[1]]; m.c2 = [s.c1[0], s.c1[1]]; }
-    segments.push(m);
-  }
-  return { start: [pts[pts.length - 1][0], pts[pts.length - 1][1]], segments };
-}
 
 export function ensureRegionWinding(region) {
   return {

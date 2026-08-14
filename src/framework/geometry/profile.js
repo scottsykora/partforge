@@ -143,3 +143,30 @@ export function tessellateProfile(profile, segs) {
   const { outer, holes } = normalizeProfile(profile);
   return { outer: tessellateContour(outer, segs), holes: holes.map((hl) => tessellateContour(hl, segs)) };
 }
+
+// Build a straight-edged path contour from a bare point list — the canonical lift for
+// legacy [[x,y],…] inputs into the { start, segments } IR. Lives here (not contour-ops.js)
+// so paper-bridge.js can reach it without importing contour-ops (contour-ops already
+// imports paper-bridge; this module is a pure leaf both can share without a cycle).
+export function pointsToContour(points) {
+  return { start: [points[0][0], points[0][1]],
+    segments: [...points.slice(1).map((p) => ({ to: [p[0], p[1]] })), { to: [points[0][0], points[0][1]] }] };
+}
+
+// Reverse a contour's traversal direction: walks segments back-to-front, swapping each
+// cubic's control points (c1 ↔ c2) and keeping `via` (an arc's through-point is
+// direction-independent). Lives here alongside pointsToContour for the same reason —
+// paper-bridge.js's booleanRegions needs it to normalize emitted winding without
+// importing contour-ops.js.
+export function reverseContour(contour) {
+  const pts = [contour.start, ...contour.segments.map((s) => s.to)];
+  const segments = [];
+  for (let i = contour.segments.length - 1; i >= 0; i--) {
+    const s = contour.segments[i];
+    const m = { to: [pts[i][0], pts[i][1]] };
+    if (s.via) m.via = [s.via[0], s.via[1]];
+    if (s.c1) { m.c1 = [s.c2[0], s.c2[1]]; m.c2 = [s.c1[0], s.c1[1]]; }
+    segments.push(m);
+  }
+  return { start: [pts[pts.length - 1][0], pts[pts.length - 1][1]], segments };
+}
