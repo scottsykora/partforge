@@ -256,18 +256,24 @@ describe("offsetRegions — whole-ring collapse vs. partial trims", () => {
     expect(out[0].holes.length).toBe(1);                       // NOT 0 — see comment above
     expect(profileArea(out)).toBeCloseTo(812.566 - (4 - Math.PI), 1);   // outer growth − exact uncut-corner residual
   });
-  test("wide L-shaped hole (5-unit arms) at +3 fully absorbs the hole", () => {
-    // Cleanup (resolveSelfRegions) already runs for this case — validateRawOffset is false
-    // — and still leaves a residual today; this pins that the global distance prune closes
-    // the gap cleanup alone cannot.
-    const plate = { start: [0, 0], segments: [{ to: [30, 0] }, { to: [30, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
-    const lHole = { start: [10, 5], segments: [
-      { to: [10, 15] }, { to: [15, 15] }, { to: [15, 10] }, { to: [20, 10] }, { to: [20, 5] }, { to: [10, 5] }] };
-    const out = offsetRegions([region(plate, [lHole])], 3, { corners: "round" });
-    expect(out.length).toBe(1);
-    expect(out[0].holes.length).toBe(0);
-    expect(profileArea(out)).toBeCloseTo(928.27, 1);
-  });
+  // Task 5B, round 2: the wide-arm L-pocket case genuinely doesn't fully absorb its hole
+  // with cleanup alone — this stayed true across both review rounds (0 holes / area≈928.27 is
+  // the verified-correct truth: max inscribed circle in a 5-wide-arm L has radius 2.5 < the
+  // delta=3 offset, confirmed by the same grid-search method validated on the narrow-L-pocket
+  // case above). A global distance-from-source prune (Part 2) closed this gap across two
+  // review rounds of tightening, but its round-2 form — even with EXACT line/arc distance and
+  // an adaptively-flattened cubic distance, eliminating discretization error rather than just
+  // bounding it — still silently deleted 36 of 84 real glyph-counter holes at delta as small
+  // as 0.1mm on 10mm text (every failure total hole loss, none recoverable by further
+  // tolerance tuning: the wide-L-pocket's own raw hole is already `dirty` from Part 1 before
+  // any distance check runs, and so are the failing glyph counters — there is no scoping
+  // condition available on the raw, pre-cleanup ring that tells the two cases apart). Per the
+  // standing instruction that this collateral is strictly worse than the single defect it
+  // fixes, Part 2 was removed entirely rather than shipped delicately tuned. Parked here
+  // pending a proper oracle (Clipper2 or the OCCT backend) rather than more per-ring
+  // heuristics in this engine — see task-5B-report.md's round-2 section for the full 76-combo
+  // sweep and the two curved-hole/false-throw repros that motivated the removal.
+  test.todo("wide L-shaped hole (5-unit arms) at +3 fully absorbs the hole (needs a Clipper2/OCCT oracle, not a per-ring heuristic)");
   test("chamfered rectangle insets without a false collapse throw", () => {
     const chamfered = { start: [0, 0], segments: [
       { to: [10, 0] }, { to: [10, 4] }, { to: [9, 5] }, { to: [1, 5] }, { to: [0, 4] }, { to: [0, 0] }] };
@@ -321,35 +327,27 @@ describe("offsetRegions — whole-ring collapse must span the whole ring, not ju
   });
 });
 
-// Pins the regression class from task 5B's round-1 review: Part 2's distance prune was
-// checking each raw hole against EVERY ring of its region (outer + siblings), not just its
-// own source hole — which made the prune indistinguishable from two features legitimately
-// merging (a case cleanup exists to resolve, not something to prune away). It also derived
-// its tolerance from every tessellated chord, including straight ones with zero
-// approximation error to actually be tolerant of, which on larger parts made the tolerance
-// balloon past |delta| and silently no-op the prune.
-describe("offsetRegions — round-1 review: distance prune must be per-hole and tolerance must be curve-only", () => {
-  // These two pin the CORE Critical-1 defect using locally-constructed fixtures (the review's
-  // own exact coordinates aren't available here): before this fix, offsetRegions([region(plate,
-  // holes)], -2, {corners:"sharp"}) on BOTH fixtures below returns area 576 — the bare plate,
-  // holes.length===0 — because the pre-fix whole-region prune checked each hole against every
-  // ring of its region and, seeing that a legitimately-merging/breaking-through hole comes
-  // within |delta| of a DIFFERENT ring, deleted it outright. Verified directly against the
-  // pre-round-1 commit (aa82380) with these exact fixtures before writing this test.
-  //
-  // The post-fix numbers below (336 / 380) are NOT independently re-derived truth values the
-  // way the wide-L-pocket and 9-gon numbers elsewhere in this file are — they're what this
-  // specific fixture currently resolves to, which is already a large, verified improvement
-  // over the 576/0-holes bug (holes now survive as real, substantially-sized geometry instead
-  // of being erased) but is short of the fully-precise merged/broken-through shape a truth
-  // computation puts at ~352.68 and ~409.72 respectively for geometry in this neighborhood.
-  // The residual gap traces to two SEPARATE, pre-existing limitations neither Critical 1 nor
-  // this task touches: validateRawOffset's hole/outer containment check tests only the hole
-  // ring's first point (not the whole ring), and ringsCross (unlike ringSelfIntersects) never
-  // checks segsOverlap, so two rings that overlap via parallel/collinear edges (as two same-
-  // height rectangles offset by the same amount do) don't register as crossing. Both let a
-  // case that should route to cleanup slip through the fast path instead. Flagged in the task
-  // report as a follow-up, not fixed here.
+// Pins the regression class from task 5B's round-1 review, Critical 1: an early version of
+// Part 2's distance prune checked each raw hole against EVERY ring of its region (outer +
+// siblings), not just its own source hole — indistinguishable from two features legitimately
+// merging (a case cleanup exists to resolve, not something to prune away). These two survive
+// unchanged now that Part 2 has been removed entirely (round 2 — see the describe block
+// below), but are kept as general correctness coverage: a hole must never be deleted outright
+// just because it's about to merge with another hole or break through the outer edge.
+describe("offsetRegions — merging/breaking-through holes must survive", () => {
+  // Verified directly against the pre-round-1 commit (aa82380), which HAD the whole-region
+  // prune: both fixtures below returned area 576 there — the bare plate, holes.length===0 —
+  // because the whole-region prune saw a legitimately-merging/breaking-through hole come
+  // within |delta| of a DIFFERENT ring and deleted it outright. The numbers below (336 / 380)
+  // aren't independently re-derived truth values the way the wide-L-pocket and 9-gon numbers
+  // elsewhere in this file are — they're what this fixture resolves to today, already a large
+  // improvement over the 576/0-holes bug (real, substantially-sized hole geometry survives)
+  // but short of full precision on the merged/broken-through shape (a from-scratch truth
+  // computation puts that at ~352.68 / ~409.72). The gap traces to two separate, pre-existing
+  // limitations found while verifying this in round 1 and still open: validateRawOffset's
+  // hole/outer containment check tests only the hole ring's first point, not the whole ring;
+  // and ringsCross (unlike ringSelfIntersects) never checks segsOverlap, so two rings that
+  // overlap via parallel/collinear edges don't register as crossing. Flagged as a follow-up.
   test("two holes 3mm apart survive as real geometry instead of both vanishing", () => {
     const plate = { start: [0, 0], segments: [{ to: [40, 0] }, { to: [40, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
     const holeA = { start: [5, 6], segments: [{ to: [5, 14] }, { to: [11, 14] }, { to: [11, 6] }, { to: [5, 6] }] };
@@ -365,19 +363,87 @@ describe("offsetRegions — round-1 review: distance prune must be per-hole and 
     expect(profileArea(out)).toBeLessThan(500);       // real hole area removed — not the bare 576 plate
     expect(profileArea(out)).toBeGreaterThan(300);
   });
-  test("wide L-pocket at +3 fully absorbs the hole on a larger (60×40) plate too", () => {
-    // The old whole-region tolerance was ~0.736mm on the 30×20 fixture above but scales with
-    // plate size (max chord over EVERY tessellated point, including the plate's own long
-    // straight edges) — 1.473mm at 60×60, 7.363mm at 300×200 — so a delta=3 prune quietly
-    // stopped pruning anything at all once the plate was big enough. The curve-only,
-    // per-hole-scoped tolerance is ~0 for this all-line hole regardless of plate size.
+});
+
+// Task 5B, round 2: Part 2 (the global distance-from-source prune added in round 0 and
+// narrowed in round 1) was found to silently delete real CURVED holes on outward offsets —
+// a cubic-circle hole, an arc-cornered rounded-rect hole, and 36 of 76 real glyph-counter
+// combinations (uppercase/lowercase/digit counters on 10mm Roboto text at delta 0.1–0.5mm),
+// every failure a total hole loss with no warning. Root cause: the round-1 tolerance bounded
+// discretization error with a sagitta model valid only for sampleArc's angle-capped stepping,
+// not for sampleBezier, and it ignored OFFSET_TOL (the cubic-offset approximation's own error
+// budget) entirely — on the r=5 cubic-circle case the deficit against the flattened source was
+// 2.404e-2 against a tolerance of 2.372e-2, a 1.3% margin, so curved-hole survival was close
+// to a coin flip. Attempted the prescribed fix (exact line/arc distance via closed-form
+// point-to-circle math, adaptive cubic flattening to OFFSET_TOL/10, tolerance derived from
+// OFFSET_TOL rather than chord length) — it fixed the circle, the rounded-rect, and the "P"
+// counter exactly, but 36/76 glyph combinations STILL lost their counter, because the defect
+// isn't really about tolerance sizing: the wide-L-pocket's own raw hole (Part 2's one
+// justification) is already `dirty` from Part 1 before Part 2's check ever runs, and so are
+// the failing glyph counters — there is no scoping condition available on a raw, pre-cleanup
+// ring that reliably tells "prune this, it's really gone" apart from "leave it, cleanup will
+// recover it." Per the standing instruction that silently deleting real geometry is strictly
+// worse than the single defect (the wide-L-pocket) the prune existed to fix, Part 2 is REMOVED
+// entirely as of this round rather than shipped delicately tuned — see the wide-L-pocket
+// test.todo above and task-5B-report.md's round-2 section for the full derivation and the
+// 76-combo sweep. These three are kept as permanent regression coverage against reintroducing
+// that failure class (a future distance-based prune, or any other mechanism that can delete a
+// whole hole based on a raw pre-cleanup sample, should be checked against these first).
+describe("offsetRegions — curved holes must survive outward offsets (Part 2 removal coverage)", () => {
+  test("cubic-circle hole (r=5) keeps its hole at +0.2", () => {
     const plate = { start: [0, 0], segments: [{ to: [60, 0] }, { to: [60, 40] }, { to: [0, 40] }, { to: [0, 0] }] };
-    const lHole = { start: [10, 5], segments: [
-      { to: [10, 15] }, { to: [15, 15] }, { to: [15, 10] }, { to: [20, 10] }, { to: [20, 5] }, { to: [10, 5] }] };
-    const out = offsetRegions([region(plate, [lHole])], 3, { corners: "round" });
+    const k = 0.551915 * 5, cx = 20, cy = 20, r = 5;
+    // CW (hole) winding, built from 4 cubic quarter-arcs — the same kappa-approximation shape
+    // a font or CAD import would hand this engine, not a native arc.
+    const circleHole = { start: [cx + r, cy], segments: [
+      { c1: [cx + r, cy - k], c2: [cx + k, cy - r], to: [cx, cy - r] },
+      { c1: [cx - k, cy - r], c2: [cx - r, cy - k], to: [cx - r, cy] },
+      { c1: [cx - r, cy + k], c2: [cx - k, cy + r], to: [cx, cy + r] },
+      { c1: [cx + k, cy + r], c2: [cx + r, cy + k], to: [cx + r, cy] },
+    ] };
+    const out = offsetRegions([region(plate, [circleHole])], 0.2, { corners: "round" });
     expect(out.length).toBe(1);
-    expect(out[0].holes.length).toBe(0);
-    expect(profileArea(out)).toBeCloseTo(3028.274, 1);
+    expect(out[0].holes.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(2367.71, 1);
+  });
+  test("arc-cornered rounded-rect hole (16×10, r2) keeps its hole at +2", async () => {
+    const { reverseContour } = await import("../src/framework/geometry/profile.js");
+    const plate = { start: [0, 0], segments: [{ to: [60, 0] }, { to: [60, 40] }, { to: [0, 40] }, { to: [0, 0] }] };
+    // Built CCW (bottom edge rightward, right edge up, top edge leftward, left edge down —
+    // the walk that traces a rectangle's boundary counterclockwise) then reversed to the CW
+    // winding a hole needs, rather than hand-deriving the CW arc `via` points directly — this
+    // engine's own storage/winding convention is exercised by _offsetContour either way, and
+    // reverseContour is already the tested, correct way to flip a contour's direction. Native
+    // {via,to} arc corners (not cubics) — covers the exact-arc-distance half of the fix.
+    const cx = 40, cy = 20, w = 16, h = 10, r = 2;
+    const x0 = cx - w / 2, x1 = cx + w / 2, y0 = cy - h / 2, y1 = cy + h / 2, k = r * 0.7071;
+    const rrCCW = { start: [x0 + r, y0], segments: [
+      { to: [x1 - r, y0] },
+      { via: [x1 - r + k, y0 + r - k], to: [x1, y0 + r] },
+      { to: [x1, y1 - r] },
+      { via: [x1 - r + k, y1 - r + k], to: [x1 - r, y1] },
+      { to: [x0 + r, y1] },
+      { via: [x0 + r - k, y1 - r + k], to: [x0, y1 - r] },
+      { to: [x0, y0 + r] },
+      { via: [x0 + r - k, y0 + r - k], to: [x0 + r, y0] },
+    ] };
+    const rr = reverseContour(rrCCW);
+    const out = offsetRegions([region(plate, [rr])], 2, { corners: "round" });
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(2740.57, 1);
+  });
+  test("Roboto 'P' counter (10mm) keeps its hole at +0.3", async () => {
+    const opentype = (await import("opentype.js")).default;
+    const { textGlyphs } = await import("../src/framework/geometry/text2d.js");
+    const { DEFAULT_FONT_BYTES } = await import("../src/framework/geometry/fonts/default-font.js");
+    const bytes = DEFAULT_FONT_BYTES;
+    const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    const regions = textGlyphs(font, "P", { size: 10 });
+    expect(regions[0].holes.length).toBe(1);           // sanity: the glyph has a counter to lose
+    const out = offsetRegions(regions, 0.3, { corners: "round" });
+    expect(out.reduce((a, r) => a + r.holes.length, 0)).toBeGreaterThan(0);
+    expect(profileArea(out)).toBeCloseTo(42.843, 1);
   });
 });
 

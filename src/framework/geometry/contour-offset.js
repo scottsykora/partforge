@@ -347,113 +347,32 @@ function splitAtDuplicateEdges(contour) {
     .map((r) => ({ start: r[0], segments: [...r.slice(1).map((p) => ({ to: p })), { to: [r[0][0], r[0][1]] }] }));
 }
 
-// Part 2 of the partial-reflection fix (task 5B): a per-corner trim in _offsetContour can
-// produce a ring that is locally valid everywhere — validateRawOffset finds nothing wrong,
-// winding and simplicity all check out — while still lying INSIDE the region the offset was
-// supposed to sweep clear of. That's the residual Part 1's per-piece deletion doesn't fully
-// reach (it only removes individually-reversed pieces; a trimmed corner can land short of
-// |delta| without any single piece reversing). The invariant a partial reflection violates:
-// every point on a valid offset boundary sits at distance ≥ |delta| from its OWN pre-offset
-// source ring. This is a GLOBAL check by construction — nothing here is scoped to a single
-// corner or segment.
-//
-// Scoped to each hole's OWN source ring only (review round 1, Critical 1) — not the region's
-// outer, and not sibling holes. The invariant "distance ≥ |delta| from the source" holds for
-// the FINAL, reconciled boundary, but not for a RAW per-ring offset in isolation: a raw hole
-// legitimately comes within |delta| of some OTHER ring exactly when two features are about to
-// merge (two holes growing into each other, or a hole about to break through the outer edge)
-// — which is precisely the case resolveSelfRegions/cleanup exists to resolve. Checking against
-// every ring of the region made the prune indistinguishable from "two features are merging"
-// and threw that real geometry away (measured: two adjacent 6×8 holes 3mm apart correctly
-// merge pre-fix but come back as a solid plate — both holes gone — with the whole-region
-// version of this check; likewise a hole 2mm from an edge that should break through). A raw
-// hole's OWN source ring has no such legitimate near-|delta| case — it's the one ring this
-// hole is a direct offset OF — so scoping there keeps every genuine merge/breakthrough intact
-// while still catching a corner trim that fell short of clearing its own source.
-
-// Distance from point p to the closest point on segment [a,b].
-function distToSeg(p, a, b) {
-  const ab = sub(b, a);
-  const L2 = dot(ab, ab);
-  const t = L2 > 1e-18 ? Math.max(0, Math.min(1, dot(sub(p, a), ab) / L2)) : 0;
-  return dist(p, add(a, scl(ab, t)));
-}
-
-function distToRing(p, ring) {
-  let best = Infinity;
-  for (let i = 0; i < ring.length; i++) best = Math.min(best, distToSeg(p, ring[i], ring[(i + 1) % ring.length]));
-  return best;
-}
-
-// A minimum floor on top of the sampling-derived tolerance below, purely to absorb ordinary
-// floating-point noise: a point that's exactly AT distance |delta| from its source (e.g. every
-// sample on a polygonal hole trimmed exactly to its critical width) can come back a few ULPs
-// under |delta| from accumulated sqrt/trig rounding, which a geometrically-derived tol of
-// exactly 0 (an all-line source has no curve to dip below) would incorrectly treat as a
-// violation. 1e-7mm is many orders below any real geometric feature this engine operates at
-// (mm-scale parts) and orders above float64 rounding at those magnitudes.
-const PRUNE_EPS_FLOOR = 1e-7;
-
-// A tessellated chord standing in for a curved SOURCE edge dips inside the true curve by its
-// sagitta, so a legitimately-cleared sample point can read as slightly closer to the polygonal
-// approximation than |delta|. Each chord's angular step is capped at 2π/VALIDATE_SEGS by
-// construction (profile.js's sampleArc scales step count to keep every step ≤ that bound), so
-// for a chord of length L the sagitta L·(1−cos(θ/2)) MATCHES L·θ/8 to leading order in θ
-// (review round 1, minor: the earlier "bounded above by" was wrong — it's an under-estimate by
-// O(θ⁴), not a bound — but at VALIDATE_SEGS=32, θ≈0.196rad, the O(θ⁴) term is ~6e-5 relative,
-// negligible next to the tolerances this feeds). Only chords that came from an actual curve
-// (an arc or cubic segment) carry any such approximation error, so this walks the SOURCE
-// contour's own segments rather than its flattened tessellation (review round 1, Important 2:
-// the old version took the max chord over every tessellated point INCLUDING straight edges,
-// whose chord has zero approximation error but can still be long — on a 60×60 plate that gave
-// a ≈1.47mm tolerance, 59% of a |delta|=2.5 offset, silently turning the prune into a near
-// no-op). A polygonal (all-line) source now yields tol=PRUNE_EPS_FLOOR (~0), so the prune is
-// exact for polygons, not just "small."
-function chordTolerance(sourceContour) {
-  const theta = (2 * Math.PI) / VALIDATE_SEGS;
-  let maxL = 0;
-  let prev = sourceContour.start;
-  for (const seg of sourceContour.segments) {
-    if (seg.via || seg.c1) {
-      const piece = tessellateContour({ start: prev, segments: [seg] }, VALIDATE_SEGS);
-      for (let i = 0; i < piece.length - 1; i++) maxL = Math.max(maxL, dist(piece[i], piece[i + 1]));
-    }
-    prev = seg.to;
-  }
-  return Math.max((maxL * theta) / 8, PRUNE_EPS_FLOOR);
-}
-
-// True when every sampled point of `ring` clears `sourceRing` by ≥ |delta| (within tol).
-function ringClearsSource(ring, sourceRing, absDelta, tol) {
-  for (const p of ring) if (distToRing(p, sourceRing) < absDelta - tol) return false;
-  return true;
-}
-
-// Prune one region's raw HOLES, each against its OWN pre-offset source hole ring only (see the
-// comment above for why not the outer or sibling holes): drop a raw hole whose candidate
-// boundary fails to clear its own source by |delta| (a hole that should have fully vanished,
-// or a spurious sliver). `holeSources[i]` must be `rawHoles[i]`'s own pre-offset contour — see
-// offsetRegions for how the two lists are kept aligned once collapsed holes are filtered out
-// together. Returns { holes, changed }.
-function pruneHolesByDistance(rawHoles, holeSources, delta) {
-  const absDelta = Math.abs(delta);
-  let changed = false;
-  const holes = rawHoles.filter((h, i) => {
-    const source = closeContourGap(holeSources[i]);
-    const tol = chordTolerance(source);
-    const ok = ringClearsSource(tessellateContour(h, VALIDATE_SEGS), tessellateContour(source, VALIDATE_SEGS), absDelta, tol);
-    if (!ok) changed = true;
-    return ok;
-  });
-  return { holes, changed };
-}
+// Part 2 of the partial-reflection fix (task 5B) — REMOVED (review round 2). A global
+// distance-from-source prune existed here through two review rounds, narrowing its scope each
+// time (round 1: per-hole rather than whole-region, to stop swallowing legitimate hole
+// merges/breakthroughs; round 2: exact closed-form line/arc distance and an adaptively-
+// flattened cubic distance instead of a chord-length-bounded tolerance, to stop losing curved
+// holes to discretization noise). Round 2 confirmed the prune's own justification was sound —
+// the wide-arm-L-pocket case it exists to fix is a genuine defect (max inscribed circle in a
+// 5-wide-arm L has radius 2.5 < delta 3, so the hole DOES fully vanish; a truth value is
+// derivable and the pre-fix engine got it wrong) — but even with exact-geometry distances, an
+// 84-combination sweep of real glyph counters (uppercase/lowercase/digit counters on 10mm text
+// at delta 0.1–0.5mm) still lost 36 of them entirely, all silent total-hole-loss, none
+// recoverable by further tolerance tuning: the wide-L-pocket's own raw hole ring is ALREADY
+// `dirty` from Part 1 before any distance check runs, and so are the failing glyph counters —
+// there is no scoping condition (dirty vs not, tolerance size, source curve type) that
+// distinguishes "prune this, it's really gone" from "don't prune this, cleanup will recover
+// it" using only the raw, pre-cleanup ring. The prune's collateral (silently deleting real
+// text counters at sub-millimetre offsets) is strictly worse than the single defect it fixes,
+// so it's gone rather than shipped delicately tuned. The wide-L-pocket case is parked as a
+// test.todo pending a proper oracle (Clipper2 or the OCCT backend) rather than this engine's
+// own per-ring heuristics. See task-5B-report.md's round-2 section for the full sweep.
 
 // Region-in / region-out offset: the engine behind Shape2D.offset on BOTH backends.
-// Fast path: raw per-ring offsets that validate cleanly (AND clear the distance-prune
-// invariant above) are returned as-is (lines/arcs exact). Cleanup path: anything dirty or
-// invalid is self-united through paper.js, with one recovery attempted first (see
-// splitAtDuplicateEdges) for the specific degenerate shape paper.js's boolean engine can't
-// see as invalid.
+// Fast path: raw per-ring offsets that validate cleanly are returned as-is (lines/arcs
+// exact). Cleanup path: anything dirty or invalid is self-united through paper.js, with
+// one recovery attempted first (see splitAtDuplicateEdges) for the specific degenerate
+// shape paper.js's boolean engine can't see as invalid.
 export function offsetRegions(regions, delta, { corners = "round" } = {}) {
   if (!["round", "chamfer", "sharp"].includes(corners))
     throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
@@ -461,43 +380,28 @@ export function offsetRegions(regions, delta, { corners = "round" } = {}) {
   if (delta === 0) return JSON.parse(JSON.stringify(regions));
 
   // _offsetContour signals a whole-ring collapse with contour:null (see its comment) — a
-  // dropped outer removes its whole region, a dropped hole is simply omitted. rawHoleSources
-  // tracks each SURVIVING raw hole's own pre-offset contour, index-aligned with raw[].holes —
-  // filtered together with it below so the alignment holds even when some holes collapse. If
-  // everything drops, raw ends up [] and the "no regions survive" throw below fires naturally.
+  // dropped outer removes its whole region, a dropped hole is simply omitted. If everything
+  // drops, raw ends up [] and the "no regions survive" throw below fires naturally.
   let dirty = false;
   const raw = [];
-  const rawHoleSources = [];
   for (const rg of regions) {
     const o = _offsetContour(closeContourGap(rg.outer), delta, corners);
     dirty = dirty || o.dirty;
     if (!o.contour) continue;
     const hs = rg.holes.map((h) => _offsetContour(closeContourGap(h), delta, corners));
     dirty = dirty || hs.some((h) => h.dirty);
-    const survivors = hs.map((h, i) => ({ h, source: rg.holes[i] })).filter((s) => s.h.contour);
-    raw.push({ outer: o.contour, holes: survivors.map((s) => s.h.contour) });
-    rawHoleSources.push(survivors.map((s) => s.source));
+    raw.push({ outer: o.contour, holes: hs.filter((h) => h.contour).map((h) => h.contour) });
   }
 
-  // Distance prune runs BEFORE the fast-path decision (dirty/validateRawOffset), on every
-  // raw region regardless of its dirty state — the fast-path bug is precisely that dirty
-  // can be false and validateRawOffset can be true for a hole ring this prune catches.
-  // Pruning forces `dirty` so a hit always routes through cleanup, which then untangles
-  // whatever the now-missing hole leaves behind (or simply confirms the outer alone,
-  // holeless, is already the correct answer).
-  const pruned = raw.map((rg, i) => pruneHolesByDistance(rg.holes, rawHoleSources[i], delta));
-  if (pruned.some((p) => p.changed)) dirty = true;
-  const rawPruned = raw.map((rg, i) => ({ outer: rg.outer, holes: pruned[i].holes }));
-
-  let out = (!dirty && validateRawOffset(rawPruned)) ? rawPruned : null;
+  let out = (!dirty && validateRawOffset(raw)) ? raw : null;
   if (!out) {
-    const split = rawPruned.length === 1 && rawPruned[0].holes.length === 0 ? splitAtDuplicateEdges(rawPruned[0].outer) : null;
+    const split = raw.length === 1 && raw[0].holes.length === 0 ? splitAtDuplicateEdges(raw[0].outer) : null;
     const recovered = split && split.map((outer) => ({ outer, holes: [] }));
     // recovered can be [] (every split piece came back CW, i.e. a spurious artifact rather
     // than real material) — validateRawOffset([]) is vacuously true, so an explicit length
     // check is required or a fully-collapsed split silently short-circuits past cleanup and
     // this throws "collapses the shape" even when resolveSelfRegions would find real area.
-    out = recovered && recovered.length > 0 && validateRawOffset(recovered) ? recovered : resolveSelfRegions(rawPruned);
+    out = recovered && recovered.length > 0 && validateRawOffset(recovered) ? recovered : resolveSelfRegions(raw);
   }
   if (out.length === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
   return out;
