@@ -756,9 +756,9 @@ const flattenRing = (contour, segs) => {
 // The ladder as named, LAZY rungs — one list, walked by chainFallback below and by
 // scripts/offset-rates.mjs, so a measurement of "what each rung costs" can never drift from
 // the ladder that actually ships. Every rung's whole body (including tessellating the outline
-// for the polyline rungs) runs inside its own thunk, so a rung that throws in its own SETUP
-// moves to the next rung like any other rung failure rather than escaping chainFallback with
-// an unpinned message.
+// for the polyline rungs) runs inside its own thunk. The expected chain-incomplete signal
+// advances to the next rung; any other setup or resolver exception propagates as a bug report,
+// matching offsetRegions' policy instead of being silently hidden by the fallback ladder.
 export function _ladderRungs(regions, raw, delta, corners) {
   return [
     ...[-1, 1].map((sign) => ({ name: `delta*(1${sign < 0 ? "-" : "+"}1e-9)`,
