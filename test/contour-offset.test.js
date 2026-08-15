@@ -151,6 +151,32 @@ describe("offsetRegions", () => {
   test("collapse throws the pinned message", () => {
     expect(() => offsetRegions([sqRegion(10)], -6)).toThrow("Shape2D.offset: offset collapses the shape (reduce |delta|)");
   });
+  test("a zero-extent sliver ring collapses with the pinned message, not a TypeError", () => {
+    // Review finding (execution-confirmed pre-fix): a ring whose every segment drops as
+    // zero-length left _offsetContour with no pieces and assembleRing dereferenced an
+    // empty list. checkPointRing demands three points, not nonzero extent, so a sliver
+    // ring from an upstream boolean reaches here through the public surface.
+    const sliver = { start: [5, 5], segments: [{ to: [5 + 1e-10, 5] }, { to: [5, 5 + 1e-10] }, { to: [5, 5] }] };
+    expect(() => offsetRegions([region(sliver)], 1)).toThrow("Shape2D.offset: offset collapses the shape (reduce |delta|)");
+    // ...and a sliver ring beside a real region must not take the real region down with it
+    const out = offsetRegions([region(sliver), sqRegion(10)], 1, { corners: "sharp" });
+    expect(out).toHaveLength(1);
+    expect(profileArea(out)).toBeCloseTo(144, 6);
+  });
+  test("a zero-width spike gets its round end caps: the stadium, not a flat-capped rectangle", () => {
+    // Review findings (execution-confirmed pre-fix): an EXACT 180° reversal failed the
+    // strict turn*delta > 0 gap test and fell through to the overlap branch (flat cap),
+    // and a NEAR-180° reversal took joinSegs' degenerate-bisector fallback which put the
+    // arc `via` on the diametrically wrong side, sweeping the cap through the interior
+    // where the winding rule cancelled it. Either way the tip cap silently vanished.
+    // Truth: a length-10 segment dilated by 1 is a stadium, area 20 + π.
+    const exact = { start: [0, 0], segments: [{ to: [10, 0] }, { to: [5, 0] }, { to: [0, 0] }] };
+    const near = { start: [0, 0], segments: [{ to: [10, 0] }, { to: [0, 5e-9] }, { to: [0, 0] }] };
+    for (const spike of [exact, near]) {
+      const out = offsetRegions([region(spike)], 1, { corners: "round" });
+      expect(profileArea(out)).toBeCloseTo(20 + Math.PI, 1);
+    }
+  });
   test("zero delta returns an equal-area copy", () => {
     const out = offsetRegions([sqRegion(10)], 0);
     expect(profileArea(out)).toBeCloseTo(100, 9);
@@ -741,6 +767,16 @@ describe("offsetRegions — the chain-incomplete fallback", () => {
       const out = offsetRegions(c.regions, -3.25, { corners: "round" });
       expect(out).toHaveLength(2);                                 // the Minkowski oracle's count
       expect(profileArea(out)).toBeCloseTo(85.466077, 1);          // oracle area, fan=512
+    });
+
+    test("seed 323 at −4/sharp: a genuinely-collapsed shape throws the COLLAPSE message, not chain-incomplete", () => {
+      // The corpus's one former residual. The Minkowski truth at this delta is zero area,
+      // and four ladder rungs independently resolve the arrangement to zero regions —
+      // consensus the ladder now reports as a collapse ("reduce |delta|" is actionable;
+      // "incomplete intersection set" reads as a build failure where none exists).
+      const c = caseFor(323);
+      expect(() => offsetRegions(c.regions, -4, { corners: "sharp" }))
+        .toThrow("Shape2D.offset: offset collapses the shape (reduce |delta|)");
     });
   });
 

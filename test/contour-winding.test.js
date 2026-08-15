@@ -411,6 +411,33 @@ describe("face labeling", () => {
   test("the pinned incomplete-arrangement message is exported byte-exact", () => {
     expect(CHAIN_INCOMPLETE_MESSAGE).toBe("contour-winding: could not chain offset boundary (incomplete intersection set)");
   });
+
+  test("bottom-vertex anchor survives tangent noise dipping below horizontal-right", () => {
+    // Review finding (execution-confirmed pre-fix): a departure tangent of [1, -1e-8] at
+    // the component's bottom-most pool vertex was wrapped to ~2π by the anchor's noise
+    // normalization, handing the local-exterior anchor to the wrong face — every label in
+    // the component shifted by -1 and the whole component silently vanished. A CCW circle
+    // split into two semicircle pieces AT its own bottom point is the minimal shape.
+    const noisyDown = [1, -1e-8], top = [-1, 1e-8];
+    const circle = { center: [0, 5], r: 5 };
+    const arc = (a0, a1) => {
+      const P = (a) => [circle.center[0] + circle.r * Math.sin(a), circle.center[1] - circle.r * Math.cos(a)];
+      return { via: P((a0 + a1) / 2), to: P(a1), from: P(a0) };
+    };
+    const right = arc(0, Math.PI), left = arc(Math.PI, 2 * Math.PI);
+    const pieces = [
+      { ring: 0, from: [0, 0], segs: [{ via: right.via, to: [0, 10] }], vStart: 0, vEnd: 1,
+        tanA: noisyDown, kA: 1 / 5, tanB: top, kB: 1 / 5 },
+      { ring: 0, from: [0, 10], segs: [{ via: left.via, to: [0, 0] }], vStart: 1, vEnd: 0,
+        tanA: top.map((v) => -v), kA: 1 / 5, tanB: [1, 1e-8], kB: 1 / 5 },
+    ];
+    const ringContour = { start: [0, 0], segments: [{ via: right.via, to: [0, 10] }, { via: left.via, to: [0, 0] }] };
+    const cls = _classify(pieces, [tessellateContour(ringContour, 64)], { debug: true, inside: (w) => w >= 1 });
+    for (const c of cls) {
+      expect(c.keep).toBe(true);
+      expect([c.wLeft, c.wRight]).toEqual([1, 0]);
+    }
+  });
 });
 
 describe("coincident piece bookkeeping", () => {

@@ -401,18 +401,20 @@ growing a shape past the hole's own width.
   planar arrangement (paper.js's intersection search bailed, or the input's features sit
   below the resolver's combinatorial resolution). It is deliberately loud: every one of
   these used to be a *silently wrong* result under the pre-0.60 boolean cleanup.
-- **Fix:** Almost none of these reach you: `offsetRegions` retries a failed arrangement
-  through a fallback ladder (probe-corrected labels on the exact arrangement, the delta
-  nudged by 1e-9, the outline as a polyline, the outline snap-rounded to a 1e-3 then
-  5e-3 mm grid) and takes the first rung that resolves. Measured on the committed corpus
+- **Fix:** On the committed corpus, none of these reach you: `offsetRegions` retries a
+  failed arrangement through a fallback ladder (probe-corrected labels on the exact
+  arrangement, the delta nudged by 1e-9, the outline as a polyline, the outline
+  snap-rounded to a 1e-3 then 5e-3 mm grid) and takes the first rung that resolves — and
+  when every rung agrees the shape has genuinely collapsed (zero regions), it throws the
+  actionable collapse message instead of this one. Measured
   (`test/helpers/offset-corpus.js`, 606 seeded shapes × 20 deltas × 3 styles = 36 090
-  offsets; reproduce with `npm run offset-rates`): the resolver alone fails **0.188 %** of
-  attempts (round 0.183 % / chamfer 0.183 % / sharp 0.200 %); after the ladder **one case
-  in all 36 090 still throws** (0.003 % — a multi-region erosion at −4 under `sharp` only;
-  seed 323). Rescued answers sit at a median 0.025 % and a worst 2.9 % from the
-  independently-derived truth, and never lose a region against it. If you are the one case:
+  offsets; reproduce with `npm run offset-rates`): the resolver alone refuses **0.188 %**
+  of attempts (round 0.183 % / chamfer 0.183 % / sharp 0.200 %); after the ladder,
+  **zero** of 36 090 throw this message. Rescued answers sit at a median 0.025 % and a
+  worst 2.9 % from the independently-derived truth, and never lose a region against it.
+  If uncatalogued input still produces the throw:
   - **Nudge `|delta|` by ~1 %** so the shape is not severed at exactly that width, or
-  - **try another corner style** — in the one residual case both other styles build, or
+  - **try another corner style**, or
   - offset the pieces separately and union the results.
 
   The throw stays loud and never silent, so a part that builds is not affected by *this*

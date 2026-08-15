@@ -573,13 +573,17 @@ export function _classify(pieces, tessRings, { debug = false, inside = (w) => w 
       } else {
         // the bottom is a pool vertex: every departure leaves upward (angles in [0, π] up
         // to noise), and the region below the vertex is the LEFT face of the departure
-        // with the LARGEST such angle (the up-left-most edge of the wedge fan).
+        // with the LARGEST such angle (the up-left-most edge of the wedge fan). Only the
+        // horizontal-LEFT side may wrap (an angle a hair below −π/2 cannot occur at a
+        // global minimum, so −π/2 is a safe cut): wrapping anything a hair below ZERO —
+        // ordinary tangent noise on a horizontal-right departure — would promote it to
+        // ~2π and hand the anchor to the wrong face, silently vanishing the component.
         const v = bs.k === 0 ? pieces[eIdx[e0]].vStart : pieces[eIdx[e0]].vEnd;
         let bestH = null, bestA = -Infinity;
         for (const h of dep.get(v)) {
           const [x, y] = outVec(h);
           let a = Math.atan2(y, x);
-          if (a < -1e-9) a += 2 * Math.PI;              // numeric noise just below horizontal
+          if (a < -Math.PI / 2) a += 2 * Math.PI;       // noise just below horizontal-LEFT only
           if (a > bestA) { bestA = a; bestH = h; }
         }
         anchor = bestH;
@@ -764,10 +768,16 @@ export function _chain(classified, pool) {
       const cands = (outgoing.get(at) ?? []).filter((i) => !used[i]);
       if (cands.length === 0) throw new Error(CHAIN_INCOMPLETE_MESSAGE);
       const inDir = dirIn(open[cur]);
-      // leftmost turn: smallest positive rotation from the reversed inbound direction
+      // leftmost turn: smallest positive rotation from the reversed inbound direction.
+      // Ties within angle noise go to the harder-left-curving candidate — the same
+      // second-order convention the face orbits use — so successor choice at a TANGENTIAL
+      // junction (the normal case at an offset pinch: a round join meets the edge it is
+      // tangent to) is decided by geometry, not by float noise in the tangent angle.
+      const turn = (x) => { let a = inDir + Math.PI - dirOut(open[x]); a %= 2 * Math.PI; return a < 0 ? a + 2 * Math.PI : a; };
       cur = cands.reduce((best, i) => {
-        const turn = (x) => { let a = inDir + Math.PI - dirOut(open[x]); a %= 2 * Math.PI; return a < 0 ? a + 2 * Math.PI : a; };
-        return turn(i) < turn(best) ? i : best;
+        const d = turn(i) - turn(best);
+        if (Math.abs(d) > 1e-7) return d < 0 ? i : best;
+        return (open[i].kA ?? 0) > (open[best].kA ?? 0) ? i : best;
       }, cands[0]);
     }
     out.push({ start: startPt, segs: chainSegs });

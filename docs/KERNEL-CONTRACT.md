@@ -485,19 +485,20 @@ The parked class:
 
 Two bounded behaviors worth knowing about, measured by the same script:
 
-- **The chain-incomplete throw still exists, at one case in the whole corpus.** The
-  resolver alone refuses 0.188 % of attempts (round 0.183 % / chamfer 0.183 % / sharp
-  0.200 % — an arrangement its consistency checks cannot vouch for); the fallback ladder
-  resolves all but **one of 36 090** (0.003 % — a multi-region erosion at −4 under `sharp`
-  only, seed 323; the other two styles build it). Rescued answers land a median 0.025 % and
-  a worst 2.9 % from the independently-derived truth, and **never with fewer regions than
-  the truth** — the probe-era rung that welded regions away is gone. Two costs remain and
-  are deliberate: the polyline and snap rungs cost the result its arcs, so **a STEP export
-  of a rescued result has no true circles** (measured on the probe-era corpus: a 10 mm
-  "Scott" at +1 came back 0 arcs / 6 435 line segments; 13 of the 67 current rescues lose
-  every arc the raw offset carried — `npm run offset-rates` lists them), and a
-  collapse-regime offset that walks the ladder takes 0.15–0.35 s against ~10 ms for a
-  clean one.
+- **The chain-incomplete throw is corpus-clean.** The resolver alone refuses 0.188 % of
+  attempts (round 0.183 % / chamfer 0.183 % / sharp 0.200 % — an arrangement its
+  consistency checks cannot vouch for); the fallback ladder resolves **all 36 090** —
+  zero residual throws, with the one genuinely-collapsed former residual (a multi-region
+  erosion at −4 under `sharp`, seed 323, Minkowski truth zero area) now reported as the
+  actionable collapse message on the rungs' consensus. Rescued answers land a median
+  0.025 % and a worst 2.9 % from the independently-derived truth, and **never with fewer
+  regions than the truth** — the probe-era rung that welded regions away is gone. Two
+  costs remain and are deliberate: the polyline and snap rungs cost the result its arcs,
+  so **a STEP export of a rescued result has no true circles** (measured on the probe-era
+  corpus: a 10 mm "Scott" at +1 came back 0 arcs / 6 435 line segments; 13 of the 67
+  current rescues lose every arc the raw offset carried — `npm run offset-rates` lists
+  them), and a collapse-regime offset that walks the ladder takes 0.15–0.35 s against
+  ~10 ms for a clean one.
 - **Degenerate sliver rings.** The resolver can emit extra rings under 1e-3 mm² beside the
   real ones (5 of 2 700 fuzz comparisons, pinned by seed in `test/offset-fuzz.test.js`).
   They cancel under the even-odd assembly `extrude` uses, so area and solids are
