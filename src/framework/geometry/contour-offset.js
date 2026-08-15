@@ -12,7 +12,7 @@ import { arcCenterAndSweep } from "./paper-bridge.js";
 import { cubicAt, splitCubic, jointTangents, SMOOTH_JOINT_DEG } from "./contour-ops.js";
 import { tessellateContour, closeContourGap } from "./profile.js";
 import { ringArea, pointInRing } from "./shape2d-regions.js";
-import { resolveOffsetWinding } from "./contour-winding.js";
+import { resolveOffsetWinding, CLUSTER_TOL, CHAIN_INCOMPLETE_MESSAGE } from "./contour-winding.js";
 
 export const OFFSET_TOL = 1e-3;   // mm — max deviation of a cubic offset approximation
 const MAX_DEPTH = 12;             // cubic subdivision recursion cap
@@ -487,20 +487,13 @@ export function validateRawOffset(regions) {
 // since a fully-eroded hole ring is simply negative-winding everywhere and drops out on its
 // own; see test/contour-offset.test.js's "wide L-shaped hole (5-unit arms) at +3" test.)
 
-// Region-in / region-out offset: the engine behind Shape2D.offset on BOTH backends.
-// Fast path: raw per-ring offsets that validate cleanly are returned as-is (lines/arcs
-// exact). Cleanup path: anything dirty or invalid goes through resolveOffsetWinding
-// (contour-winding.js), which computes the positive-winding region of the raw offset
-// outline directly — no boolean engine, no degenerate-shape recovery heuristics.
-export function offsetRegions(regions, delta, { corners = "round" } = {}) {
-  if (!["round", "chamfer", "sharp"].includes(corners))
-    throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
-  if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
-  if (delta === 0) return JSON.parse(JSON.stringify(regions));
-
+// Raw per-ring offset of a whole region list, plus whether any surviving ring came back
+// approximated. Split out of offsetRegions so the fallback ladder below can re-run it at a
+// perturbed delta without recursing through the public entry point.
+function rawOffset(regions, delta, corners) {
   // _offsetContour signals a whole-ring collapse with contour:null (see its comment) — a
   // dropped outer removes its whole region, a dropped hole is simply omitted. If everything
-  // drops, raw ends up [] and the "no regions survive" throw below fires naturally.
+  // drops, raw ends up [] and offsetRegions' "no regions survive" throw fires naturally.
   let dirty = false;
   const raw = [];
   for (const rg of regions) {
@@ -517,8 +510,120 @@ export function offsetRegions(regions, delta, { corners = "round" } = {}) {
     dirty = dirty || hs.some((h) => h.contour && h.dirty);
     raw.push({ outer: o.contour, holes: hs.filter((h) => h.contour).map((h) => h.contour) });
   }
+  return { raw, dirty };
+}
 
-  let out = (!dirty && validateRawOffset(raw)) ? raw : resolveOffsetWinding(raw);
+const resolveOrRaw = ({ raw, dirty }, opts) =>
+  (!dirty && validateRawOffset(raw)) ? raw : resolveOffsetWinding(raw, opts);
+
+// A ring rebuilt as straight chords at `segs` facets per full turn — arcs and cubics
+// replaced by their own tessellation, lines unchanged (tessellateContour emits a line's
+// endpoints and nothing between). Used only by the fallback ladder's last rungs.
+const flattenRing = (contour, segs) => {
+  const pts = tessellateContour(contour, segs);
+  // closeContourGap, not a bare rebuild: resolveOffsetWinding requires every ring to carry a
+  // real closing segment back to `start` (_splitRings throws on an implicitly-closed one), and
+  // whether tessellateContour's last point lands exactly on the first is a property of the
+  // input, not something to assume.
+  return closeContourGap({ start: [pts[0][0], pts[0][1]],
+                           segments: pts.slice(1).map((p) => ({ to: [p[0], p[1]] })) });
+};
+
+// The fallback ladder for a raw offset whose arrangement the winding resolver cannot close
+// (contour-winding.js's CHAIN_INCOMPLETE_MESSAGE). Each rung re-runs the SAME offset with one
+// numerical nuisance perturbed, and the first rung that produces a non-empty region set wins.
+//
+// Why a ladder exists at all: the chain failure is a defect in resolving a degenerate
+// arrangement, not a statement about the shape — the material is really there. Left as a
+// throw it reads, in a parametric app that re-offsets on every slider move, as "the part
+// builds at 2.4 mm and dies at 2.5 mm", which is a harder failure than any other defect class
+// in this engine (all of which degrade to bounded inaccuracy). Measured on 6 400 randomized
+// notched-plate cases per corner style: `round` had 54 chain failures (0.84 %) and now has 6
+// (0.09 %); `chamfer` had 4 (0.06 %) and now has none; `sharp` had none either way. Against the
+// Minkowski oracle (test/helpers/minkowski-oracle.js) the resolved answers land a median
+// 0.012 % / worst 0.048 mm² from truth — the same accuracy band the engine already has on cases
+// that never failed at all (median 0.004 %, worst 0.43 % relative), and three orders of
+// magnitude inside the divergences KERNEL-CONTRACT.md already parks. See task-7D-report.md.
+//
+// Rung ORDER is by fidelity of what survives, not by hit rate:
+//   1. delta perturbed by ±1e-9 relative. Escapes an exactly-degenerate arrangement (two
+//      offset walls landing on the same coordinate) with the requested corner style and the
+//      exact curve IR both intact. Resolves 26 of the 59 measured failures on its own.
+//   2. a coarser crossing-merge radius (4x and 20x CLUSTER_TOL). Also keeps corner style AND
+//      the exact IR — a trimmed arc is still an arc — at the cost of collapsing crossings up
+//      to that radius apart onto one vertex, which moves the emitted boundary by at most the
+//      radius. Resolves 38 of the 59 on its own at 20x.
+//   3. the raw outline re-run as polylines (64/256/1024 facets per turn). Geometrically
+//      faithful to the chord error of that tessellation, but it DEGRADES THE IR: round joins
+//      come back as chords rather than arcs, so a STEP export of the result loses its true
+//      circles. Last for that reason, even though it is the most accurate rung by area.
+// Coverage is not monotonic in any rung's parameter (64 facets resolves cases 256 does not) —
+// these are escapes from degeneracy, not refinements, so every rung earns its place by cases
+// no other rung covers.
+//
+// Two things this deliberately does NOT do. It never retries under a different JOIN: swapping
+// to chamfer resolves 58 of the 59, but at a median 5 % from the round truth (worst 4 800 %),
+// and it would hand back geometry with visibly different corners than the caller asked for —
+// silently wrong beats loudly failed only when the wrongness is bounded, and that one is not.
+// And it never perturbs delta by more than 1e-9: the failures are NOT the knife-edge
+// degeneracies they look like (the four-notch comb throws across a whole 0.02 mm band of delta,
+// not at one value), so escaping by delta alone takes ~1e-2 relative, which resolves 100 % at a
+// median 0.15 % and a worst 9 % error — well outside the band above. A bounded middle ground
+// (±1e-4 and ±1e-3 mm absolute rungs) was measured too: it bought ONE extra case out of 62 and
+// more than doubled the worst absolute error, 0.048 → 0.112 mm², so it is not here either.
+//
+// Returns null when every rung fails, which is the caller's signal to rethrow the original.
+function chainFallback(regions, raw, delta, corners) {
+  const attempt = (fn) => {
+    try {
+      const out = fn();
+      return out.length > 0 ? out : null;
+    } catch {
+      return null;                          // any rung may fail its own way; try the next
+    }
+  };
+  for (const sign of [-1, 1]) {
+    const out = attempt(() => resolveOrRaw(rawOffset(regions, delta * (1 + sign * 1e-9), corners)));
+    if (out) return out;
+  }
+  for (const mult of [4, 20]) {
+    const out = attempt(() => resolveOffsetWinding(raw, { clusterTol: CLUSTER_TOL * mult }));
+    if (out) return out;
+  }
+  for (const segs of [64, 256, 1024]) {
+    const flat = raw.map((rg) => ({ outer: flattenRing(rg.outer, segs),
+                                    holes: rg.holes.map((h) => flattenRing(h, segs)) }));
+    const out = attempt(() => resolveOffsetWinding(flat));
+    if (out) return out;
+  }
+  return null;
+}
+
+// Region-in / region-out offset: the engine behind Shape2D.offset on BOTH backends.
+// Fast path: raw per-ring offsets that validate cleanly are returned as-is (lines/arcs
+// exact). Cleanup path: anything dirty or invalid goes through resolveOffsetWinding
+// (contour-winding.js), which computes the positive-winding region of the raw offset
+// outline directly — no boolean engine, no degenerate-shape recovery heuristics. When THAT
+// cannot close its arrangement, chainFallback above retries it a few ways before the failure
+// is allowed to reach the caller.
+export function offsetRegions(regions, delta, { corners = "round" } = {}) {
+  if (!["round", "chamfer", "sharp"].includes(corners))
+    throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
+  if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
+  if (delta === 0) return JSON.parse(JSON.stringify(regions));
+
+  const first = rawOffset(regions, delta, corners);
+  let out;
+  try {
+    out = resolveOrRaw(first);
+  } catch (err) {
+    // Only the unclosable-arrangement failure has a measured degradation behind it. Anything
+    // else out of the resolver (a clustering regression, an implicitly-closed ring) is a bug
+    // report, not a case to paper over, and goes straight up.
+    if (err?.message !== CHAIN_INCOMPLETE_MESSAGE) throw err;
+    out = chainFallback(regions, first.raw, delta, corners);
+    if (out === null) throw err;            // pinned message, unchanged, when nothing works
+  }
   if (out.length === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
   return out;
 }

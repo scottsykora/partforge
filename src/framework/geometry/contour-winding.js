@@ -458,6 +458,14 @@ const dirIn = (p) => {
 // exactly 0, the minimum possible, so it is the FIRST-preferred candidate, not a last
 // resort — it is only actually taken when it's the sole outgoing option (a degree-1
 // vertex), which is the standard DCEL `next = twin` behavior.
+// The literal message every unclosable-arrangement site in _chain throws, and the string
+// ERROR-PATTERNS.md § shape2d-offset-winding-chain-incomplete documents. Exported so
+// contour-offset.js's fallback ladder can recognise THIS failure — the one it has a
+// documented, measured degradation for — without pattern-matching on message text at a
+// distance, and without swallowing an unrelated throw from the same call.
+export const CHAIN_INCOMPLETE_MESSAGE =
+  "contour-winding: could not chain offset boundary (incomplete intersection set)";
+
 export function _chain(classified, pool) {
   const kept = classified.filter((c) => c.keep)
     .map((c) => (c.reverse ? reversePieceSegs(c.piece) : { from: c.piece.from, segs: c.piece.segs,
@@ -480,13 +488,13 @@ export function _chain(classified, pool) {
     // (as in the test suite) is on the hook to keep consistent, not this function.
     const startPt = [pool[startV][0], pool[startV][1]];
     for (;;) {
-      if (guard++ > open.length + 1) throw new Error("contour-winding: could not chain offset boundary (incomplete intersection set)");
+      if (guard++ > open.length + 1) throw new Error(CHAIN_INCOMPLETE_MESSAGE);
       used[cur] = true;
       chainSegs.push(...open[cur].segs);
       const at = open[cur].vEnd;
       if (at === startV) break;
       const cands = (outgoing.get(at) ?? []).filter((i) => !used[i]);
-      if (cands.length === 0) throw new Error("contour-winding: could not chain offset boundary (incomplete intersection set)");
+      if (cands.length === 0) throw new Error(CHAIN_INCOMPLETE_MESSAGE);
       const inDir = dirIn(open[cur]);
       // leftmost turn: smallest positive rotation from the reversed inbound direction
       cur = cands.reduce((best, i) => {
@@ -497,7 +505,7 @@ export function _chain(classified, pool) {
     out.push({ start: startPt, segs: chainSegs });
   }
 
-  if (used.some((u) => !u)) throw new Error("contour-winding: could not chain offset boundary (incomplete intersection set)");
+  if (used.some((u) => !u)) throw new Error(CHAIN_INCOMPLETE_MESSAGE);
   return out.map(({ start, segs }) => {
     const last = segs[segs.length - 1].to;
     if (Math.hypot(last[0] - start[0], last[1] - start[1]) <= 1e-9) {
@@ -513,12 +521,17 @@ export function _chain(classified, pool) {
 
 // Resolve a raw offset region list into the POSITIVE winding region it denotes (w >= 1;
 // see the module header). This is contour-offset.js's cleanup path.
-export function resolveOffsetWinding(rawRegions) {
+//
+// `clusterTol` is _mergeCrossings' "these crossings are one vertex" radius, CLUSTER_TOL by
+// default. It is an option only so the caller's fallback ladder can RETRY a failed
+// arrangement more coarsely (see contour-offset.js); nothing should raise it as a matter of
+// course, because every crossing it merges moves the emitted boundary by up to that radius.
+export function resolveOffsetWinding(rawRegions, { clusterTol = CLUSTER_TOL } = {}) {
   const rings = [];
   for (const rg of rawRegions) { rings.push(rg.outer); for (const h of rg.holes) rings.push(h); }
   if (rings.length === 0) return [];
 
-  const merged = _mergeCrossings(ringCrossings(rings));
+  const merged = _mergeCrossings(ringCrossings(rings), clusterTol);
   const pieces = _splitRings(rings, merged);
   const tessRings = rings.map((r) => tessellateContour(r, WINDING_SEGS));
   // _classify is a general classifier parameterized by a fill rule (see its own comment); the

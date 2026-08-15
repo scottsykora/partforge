@@ -129,6 +129,8 @@ describe("validateRawOffset", () => {
 
 import { offsetRegions } from "../src/framework/geometry/contour-offset.js";
 import { profileArea } from "../src/framework/geometry/contour-ops.js";
+import { resolveOffsetWinding, _chain, CHAIN_INCOMPLETE_MESSAGE }
+  from "../src/framework/geometry/contour-winding.js";
 
 const region = (outer, holes = []) => ({ outer, holes });
 const sqRegion = (s) => region(sq(s));
@@ -640,5 +642,80 @@ describe("offsetRegions — a ring that crosses itself AT a vertex is not simple
     expect(validateRawOffset([{ outer: _offsetContour(square, -1, "sharp").contour, holes: [] }])).toBe(true);
     expect(validateRawOffset([{ outer: _offsetContour(L, -1, "round").contour, holes: [] }])).toBe(true);
     expect(profileArea(offsetRegions([region(square)], -1, { corners: "sharp" }))).toBeCloseTo(324, 9);
+  });
+});
+
+// ── the chain-incomplete fallback (Task 7D) ──────────────────────────────────────────────
+//
+// When the winding resolver cannot close its arrangement it throws CHAIN_INCOMPLETE_MESSAGE.
+// That throw used to reach the caller, which in a parametric app reads as "the part builds at
+// 2.4 mm and dies at 2.5 mm" — a hard failure where every other defect class in this engine
+// degrades to bounded inaccuracy. offsetRegions now retries the same offset a few ways
+// (perturbed delta, coarser crossing-merge radius, polyline outline) before letting it out.
+//
+// The truth here is NOT hardcoded: it is bracketed by the SAME shape at neighbouring deltas,
+// which never failed and which the Minkowski oracle confirms exactly (see
+// test/offset-oracle-manifold.test.js, where the same comb is checked against the oracle).
+describe("offsetRegions — the chain-incomplete fallback", () => {
+  const shape = (pts) => ({ start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] });
+  // 38×10 plate with four notches of differing depth cut into its top edge. Eroded by 2.5 the
+  // two 5-deep notch floors reach the eroded bottom edge exactly, severing two webs.
+  const comb = shape([[0, 0], [38, 0], [38, 10], [15, 10], [15, 5], [12, 5], [12, 10],
+    [9, 10], [9, 4.5], [7, 4.5], [7, 10], [5, 10], [5, 5], [4, 5], [4, 10], [0, 10]]);
+  const areaAt = (d) => profileArea(offsetRegions([region(comb)], d, { corners: "round" }));
+
+  test("the raw arrangement at −2.5/round genuinely cannot be chained", () => {
+    // Belt and braces on the ROUTING: without the fallback this input still throws, so the
+    // assertions below cannot go quiet by the resolver quietly starting to cope. If the
+    // resolver is ever fixed at the root this test fails, which is the signal to retire it.
+    const o = _offsetContour(comb, -2.5, "round");
+    expect(() => resolveOffsetWinding([{ outer: o.contour, holes: [] }]))
+      .toThrow(CHAIN_INCOMPLETE_MESSAGE);
+  });
+
+  test("−2.5/round returns geometry instead of throwing", () => {
+    expect(() => areaAt(-2.5)).not.toThrow();
+    // Three regions, not one: the two 5-deep notches erode through their webs at exactly this
+    // delta, so the comb really does fall into three pieces. That it SEVERS is the point — the
+    // resolver's job is to report the three, not to give up on the arrangement.
+    expect(offsetRegions([region(comb)], -2.5, { corners: "round" })).toHaveLength(3);
+  });
+
+  test("the recovered area is bracketed by the same shape at deltas that never failed", () => {
+    // Area is strictly decreasing in |delta| here, so the two nearest deltas OUTSIDE the old
+    // failing band bound the answer on both sides. Both bounds come from the engine's own
+    // never-failing output, not a pinned constant. (The tight check — within 0.006 % of the
+    // Minkowski oracle's 91.744 — lives in test/offset-oracle-manifold.test.js, where truth is
+    // derived rather than asserted. A midpoint/linearity bound would be wrong here: |delta| =
+    // 2.5 is exactly where the webs sever, so the area curve has a genuine kink at it.)
+    expect(areaAt(-2.5)).toBeLessThan(areaAt(-2.49));
+    expect(areaAt(-2.5)).toBeGreaterThan(areaAt(-2.52));
+  });
+
+  test("the recovered stretch of the old failing band is monotone, with no holes", () => {
+    // The failure was a BAND, not a knife edge — that was the premise the measurement killed:
+    // −2.4950 through −2.5150 all threw, and a slider dragged through it died the whole way.
+    // −2.500 downwards is now continuous; walk it at 0.001 and require every step to build and
+    // to keep decreasing. (−2.4955 … −2.4995 is NOT yet covered — see the parked case in
+    // test/offset-oracle-manifold.test.js — which is why this walk starts at −2.500.)
+    let prev = Infinity;
+    for (let i = 0; i <= 20; i++) {
+      const a = areaAt(-2.5 - i * 0.001);
+      expect(a).toBeGreaterThan(80);
+      expect(a).toBeLessThan(prev);
+      prev = a;
+    }
+  });
+
+  test("a genuinely unresolvable arrangement still throws the pinned message", () => {
+    // _chain is the throw's own home; feeding it a piece whose end vertex has no outgoing
+    // continuation is the failure the fallback exists for, and no ladder rung applies below
+    // offsetRegions. The literal text is pinned because ERROR-PATTERNS.md quotes it.
+    expect(CHAIN_INCOMPLETE_MESSAGE)
+      .toBe("contour-winding: could not chain offset boundary (incomplete intersection set)");
+    const pool = [[0, 0], [1, 0]];
+    const dangling = [{ keep: true, reverse: false,
+      piece: { from: [0, 0], segs: [{ to: [1, 0] }], vStart: 0, vEnd: 1 } }];
+    expect(() => _chain(dangling, pool)).toThrow(CHAIN_INCOMPLETE_MESSAGE);
   });
 });

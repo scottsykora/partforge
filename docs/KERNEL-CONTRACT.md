@@ -425,9 +425,9 @@ On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **at
 The three tessellating readbacks — `toRegions()`, `simple()`, `regions()` — remain LOD-dependent: they hand back point rings sampled at the backend's own segment count, so the two backends' output differs in vertex count and by chord error, converging as LOD rises. Those three ops are the whole LOD-dependent surface; everything else, including `offset`, is backend-identical.
 
 **Known limitations.** The native offset engine has verified defects on specific input
-shapes, concentrated in the `round` join on inward offsets that sever a shape; see
-[Offset: known limitations](#offset-known-limitations) below for the three parked cases,
-their measured values, and the independent construction the truths come from.
+shapes — predominantly, but not exclusively, on inward offsets that sever a shape under the
+`round` join; see [Offset: known limitations](#offset-known-limitations) below for the three
+parked cases, their measured values, and the independent construction the truths come from.
 
 **Fillet after a boolean reaches STEP as real arcs.** Because booleans preserve curves
 and `fillet` inserts true arc segments, `shape2d(a).union(b).fillet(2).extrude({h})`
@@ -453,17 +453,35 @@ that Clipper2's own `offset()` is not an independent check on an offset engine, 
 corners. That helper is validated against thirteen closed-form answers in
 `test/minkowski-oracle.test.js` before it is trusted anywhere.
 
-What the three have in common is the **`round` join**: two of them are round-only, and
-`chamfer` and `sharp` agree with the oracle *exactly* on the same inputs.
+What the three have in common is only that **`sharp` is exact on every one of them**, and
+`chamfer` on two of the three. That is evidence the divergence is a real engine defect rather
+than oracle error; it is **not** a cause, and the three do not share one. In particular they
+are **not** all "the `round` join": the remaining defect surface is *predominantly, but not
+exclusively,* round. The hole-remnant case below is join-independent and an *outward* offset;
+the chain failure has been reproduced under `chamfer` on rectilinear shapes whose chamfered
+offset contains no arcs at all, which disproves the "arcs reaching the chaining pass"
+mechanism this section used to assert. Measured rather than argued: on a 300-shape hole-plate
+sweep the join-independent class is 85/2400 against round-only 2/2400. **The root cause of
+each is open.**
 
 - **`round` keeps too much material when several grown holes reach the eroded outline.**
   A 30×20 plate with three rectangular holes at −2 gives 324.75 against a true 258.18 (~26 %
   over). Under `chamfer` and `sharp` the grown holes correctly become notches in the outline
   and the answer is exact.
-- **`round` can fail to chain at all.** A 38×10 four-notch comb at −2.5 throws
-  `contour-winding: could not chain offset boundary (incomplete intersection set)` where
-  91.744 mm² survives; `sharp` and `chamfer` return the exact 90.000 and 96.375. Loud, never
-  silent — see [ERROR-PATTERNS.md
+- **The winding resolver can fail to close a boundary at all**, throwing
+  `contour-winding: could not chain offset boundary (incomplete intersection set)` where real
+  material survives. `offsetRegions` now retries a failed arrangement several ways before
+  letting the throw out (delta nudged by 1e-9, crossing-merge radius coarsened 4× and 20×,
+  outline re-run as a polyline at three densities), which turns most of these into bounded
+  inaccuracy instead of a build failure: on 6 400 randomized notched plates the `round` rate
+  falls from 0.84 % to 0.09 % and the `chamfer` rate from 0.06 % to 0, and the recovered
+  answers land a worst 0.048 mm² from the oracle. The 38×10 four-notch comb at −2.5 that used
+  to throw now returns 91.750 against a true 91.744 and has moved up into the corpus. What is
+  parked is the residual: a ~0.0045 mm wide band of delta (−2.4955 … −2.4995 on that comb)
+  where every retry still fails, under `round` *and* `chamfer`. There the arrangement is not
+  merely degenerate but misclassified — the piece leaving one pinch vertex probes as winding
+  0 and is dropped, so the boundary has a real dead end — which is a fix in the classifier,
+  not in the retry ladder. Loud, never silent — see [ERROR-PATTERNS.md
   §shape2d-offset-winding-chain-incomplete](ERROR-PATTERNS.md#shape2d-offset-winding-chain-incomplete).
 - **A hole narrower than 2·delta leaves a remnant instead of vanishing.** A 1×1 hole in a
   plate at +2 should close completely; a ~2 mm² hole ring survives instead. Join-independent

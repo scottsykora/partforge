@@ -346,21 +346,27 @@ growing a shape past the hole's own width.
 
 ## shape2d-offset-waist-not-severed-round-join
 
-- **Symptom:** An inward `Shape2D.offset` past the width of a narrow waist does not
-  split the shape in two — the result stays connected (or comes back with a spurious
-  extra blob where the waist was) and `.area()` over-reports — but the *same* offset
-  with `corners: "sharp"` splits correctly. Verified: a 30×10 dumbbell with a 2-wide
-  waist at `delta` −2 gives 72.000 in two regions under `sharp` and 97.258 in three
-  regions under `round` (74.000 vs 96.000 under `chamfer`).
-- **Cause:** The recovery that severs a waist pinched shut by an offset
-  (`splitAtDuplicateEdges` in `contour-offset.js`) works by finding the pair of
-  duplicate, exactly-collinear edges the two sides of the pinch land on — so it only
-  handles rings made entirely of straight lines. A round or chamfer join inserts an
-  arc or a bevel chord at the waist, so there is no duplicate straight edge left to
-  cut and the pinched ring survives as one over-solid blob.
-- **Fix:** Use `corners: "sharp"` for an inward offset that is meant to split a
-  shape; or offset the pieces separately and union them. Check the result's region
-  count (`.toRegions().length`) rather than assuming the split happened.
+- **Symptom:** *(Fixed — kept because IDs are permanent. This pattern no longer
+  exists.)* An inward `Shape2D.offset` past the width of a narrow waist used to leave
+  the shape connected (or add a spurious blob where the waist was) under
+  `corners: "round"` or `"chamfer"`, while `"sharp"` split it correctly. The entry's
+  own witness now behaves: a 30×10 dumbbell with a 2-wide waist at `delta` −2 severs
+  into **two** regions under all three joins — 72.346873 round, 74.000000 chamfer,
+  72.000000 sharp — against the three regions and 97.258 the round join used to give.
+- **Cause:** The waist recovery it described (`splitAtDuplicateEdges` in
+  `contour-offset.js`) matched a pair of duplicate, exactly-collinear edges, so it only
+  ever handled rings made entirely of straight lines; a round or chamfer join left an
+  arc or bevel chord at the pinch with no duplicate edge to cut. That function no longer
+  exists anywhere in `src/` — the whole boolean/heuristic cleanup path was replaced by
+  the winding resolver (`geometry/contour-winding.js`), which computes the
+  positive-winding region of the raw outline directly and severs a pinched waist as an
+  ordinary consequence of that, with no per-shape recovery and no join casing.
+- **Fix:** Nothing to work around; the advice this entry used to give ("use
+  `corners: "sharp"` to split") is obsolete and was making callers change corner style
+  for no reason. If a region count still looks wrong after an inward offset, see
+  [shape2d-offset-winding-chain-incomplete](#shape2d-offset-winding-chain-incomplete)
+  and the parked cases in [KERNEL-CONTRACT.md "Offset: known
+  limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
 
 ## shape2d-offset-kissing-ring-passes-validation
 
@@ -389,18 +395,27 @@ growing a shape past the hole's own width.
   with several narrow webs or notches, most often with the default `corners: "round"`.
 - **Cause:** When a raw offset ring is tangled, the winding resolver
   (`geometry/contour-winding.js`) splits every ring at its crossings and re-chains the
-  positive-winding pieces. This is its own detector for a crossing set it cannot close —
-  a kept piece with nowhere to continue. In practice it fires when a ROUND join's arcs land
-  at a severed web: the same shape under `corners: "sharp"` or `"chamfer"` resolves
-  correctly, which is the quickest way to confirm you have hit this rather than a genuinely
-  collapsing shape. Verified: a 38×10 four-notch comb at `delta` −2.5 throws under `round`
-  while `sharp` and `chamfer` return the exact 90.000 and 96.375, and the true round answer
-  is 91.744. Known limitation — see [KERNEL-CONTRACT.md "Offset: known
+  positive-winding pieces. This is its own detector for a boundary it cannot close — a
+  kept piece with nowhere to continue. The **root cause is open**; what is known is that
+  it needs an inward offset that severs the shape at one or more narrow webs, and that the
+  arrangement there is degenerate. It is *predominantly, but not exclusively,* the default
+  `round` join: `chamfer` fails too, and on rectilinear shapes whose chamfered offset
+  contains no arcs at all, which rules out the "a round join's arcs land at a severed web"
+  mechanism this entry used to assert. Measured on 6 400 randomized notched plates, before
+  the fallback below: 54 failures under `round` (0.84 %), 4 under `chamfer` (0.06 %), 0
+  under `sharp`. Known limitation — see [KERNEL-CONTRACT.md "Offset: known
   limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
-- **Fix:** No general fix yet. Retry the same offset with `corners: "sharp"` or
-  `"chamfer"`; failing that, reduce `|delta|` so the webs are not severed, or offset the
-  pieces separately and union them. The throw is loud and never silent, so a part that
-  builds is not affected by this.
+- **Fix:** Most of these no longer reach you: `offsetRegions` retries a failed
+  arrangement several ways before letting the throw out — the delta nudged by
+  1e-9, the crossing-merge radius coarsened 4× and 20×, and the outline re-run as a
+  polyline at three densities — taking the first that resolves. That drops the same corpus
+  to 6 failures under `round` (0.09 %) and 0 under `chamfer`, at a measured worst 0.048 mm²
+  from the independently-derived truth. If you still see the throw: retry with
+  `corners: "sharp"`, which has never produced it on any measured corpus (this remains the
+  quickest way to tell a resolver failure from a genuinely collapsing shape, even though
+  the round-join *explanation* for it was wrong); failing that, nudge `|delta|` by ~1 % so
+  the webs are not severed at exactly that width, or offset the pieces separately and union
+  them. The throw stays loud and never silent, so a part that builds is not affected.
 
 ## fillet-chamfer-radius-does-not-fit
 
