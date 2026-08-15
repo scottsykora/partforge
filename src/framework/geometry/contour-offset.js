@@ -8,9 +8,9 @@
 // The cubic subdivision approach is ported from glenzli/paperjs-offset
 // (https://github.com/glenzli/paperjs-offset, MIT License, Copyright (c) glenzli),
 // adapted from paper.js Segments to the partforge contour IR.
-import { arcCenterAndSweep, resolveSelfRegions } from "./paper-bridge.js";
+import { arcCenterAndSweep, resolveSelfRegions, booleanRegions } from "./paper-bridge.js";
 import { cubicAt, splitCubic, jointTangents, SMOOTH_JOINT_DEG } from "./contour-ops.js";
-import { tessellateContour, closeContourGap } from "./profile.js";
+import { tessellateContour, closeContourGap, reverseContour } from "./profile.js";
 import { ringArea, pointInRing } from "./shape2d-regions.js";
 
 export const OFFSET_TOL = 1e-3;   // mm — max deviation of a cubic offset approximation
@@ -270,20 +270,78 @@ function segsOverlap(a1, a2, b1, b2) {
   return Math.min(ta2, tb2) - Math.max(ta1, tb1) > 1e-9;    // overlap longer than a touch
 }
 
+// Axis-aligned bounding box of a ring / of one segment, and a disjointness test between
+// two boxes. These exist purely as a rejection filter in front of the pairwise segment
+// tests below: validateRawOffset runs on the geometry worker on EVERY offset (so on every
+// parameter change), and its pairwise loops are O(R²·m²) in ring count and ring resolution
+// with nothing to stop them. Measured on offsetRegions end to end, +0.5 round over N disjoint
+// squares: 40 → 11.6 ms before this filter and 1.0 ms after, 100 → 64.0 / 1.3 ms, 200 → 326.2
+// / 2.0 ms — clean quadratic before, effectively flat after. (Many-region TEXT is a smaller
+// win — a 24-glyph string went 93 → 85 ms — because a glyph's raw offset ring self-intersects,
+// so validation short-circuits early and paper.js cleanup dominates that case regardless.)
+// Boxes never change the ANSWER — two segments whose boxes are disjoint cannot cross or
+// overlap — so this is a pure short-circuit, not an approximation.
+const BOX_EPS = 1e-9;
+function ringBox(ring) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of ring) {
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  return [x0, y0, x1, y1];
+}
+const boxesApart = (a, b) =>
+  a[2] < b[0] - BOX_EPS || b[2] < a[0] - BOX_EPS || a[3] < b[1] - BOX_EPS || b[3] < a[1] - BOX_EPS;
+const segBox = (p, q) => [Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.max(p[0], q[0]), Math.max(p[1], q[1])];
+
 function ringSelfIntersects(ring) {
   const m = ring.length;
+  const boxes = [];
+  for (let i = 0; i < m; i++) boxes.push(segBox(ring[i], ring[(i + 1) % m]));
   for (let i = 0; i < m; i++) for (let j = i + 2; j < m; j++) {
     if (i === 0 && j === m - 1) continue;                  // adjacent via wraparound
+    if (boxesApart(boxes[i], boxes[j])) continue;
     const a1 = ring[i], a2 = ring[(i + 1) % m], b1 = ring[j], b2 = ring[(j + 1) % m];
     if (segsCross(a1, a2, b1, b2) || segsOverlap(a1, a2, b1, b2)) return true;
   }
   return false;
 }
 
-function ringsCross(a, b) {
-  for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++)
-    if (segsCross(a[i], a[(i + 1) % a.length], b[j], b[(j + 1) % b.length])) return true;
+// Two DIFFERENT rings interfering. Like ringSelfIntersects this checks segsOverlap as well
+// as segsCross: two rings can interfere without any transversal crossing at all when their
+// boundaries run along the same line — exactly what two eroding holes that grew into each
+// other produce under a sharp join, where every actual crossing lands on a shared vertex
+// (o === 0, which segsCross deliberately ignores) and the only usable signal is the pair of
+// collinear, partially-overlapping edges. Missing that let an invalid double-ring result
+// pass the fast path and reach extrude, where even-odd fill turned the doubly-covered lens
+// back into SOLID material inside the merged pocket.
+function ringsCross(a, b, boxA = ringBox(a), boxB = ringBox(b)) {
+  if (boxesApart(boxA, boxB)) return false;
+  for (let i = 0; i < a.length; i++) {
+    const a1 = a[i], a2 = a[(i + 1) % a.length];
+    const bx = segBox(a1, a2);
+    if (boxesApart(bx, boxB)) continue;
+    for (let j = 0; j < b.length; j++) {
+      const b1 = b[j], b2 = b[(j + 1) % b.length];
+      if (boxesApart(bx, segBox(b1, b2))) continue;
+      if (segsCross(a1, a2, b1, b2) || segsOverlap(a1, a2, b1, b2)) return true;
+    }
+  }
   return false;
+}
+
+// Every point of `inner` strictly inside `outer`. Sampling ONE point (which this used to do)
+// is satisfied by a hole that has grown most of the way out through its own outer boundary
+// as long as its first vertex happens to still be inside — and a hole ring poking outside
+// its outer is not merely inaccurate, it becomes real material: fed through toRegions() and
+// CrossSection.ofPolygons(…,"EvenOdd"), the escaped part of the ring extrudes to a solid tab
+// hanging off the plate below its own boundary.
+function ringInsideRing(inner, outer, outerBox) {
+  for (const p of inner) {
+    if (p[0] < outerBox[0] || p[0] > outerBox[2] || p[1] < outerBox[1] || p[1] > outerBox[3]) return false;
+    if (!pointInRing(p, outer)) return false;
+  }
+  return true;
 }
 
 // True when a raw offset result is already valid (fast path). Sampled at VALIDATE_SEGS.
@@ -295,15 +353,17 @@ export function validateRawOffset(regions) {
   const allRings = [];
   for (const rg of sampled) {
     if (ringArea(rg.outer) <= AREA_EPS) return false;                  // flipped or collapsed outer
+    const outerBox = ringBox(rg.outer);
     for (const h of rg.holes) {
       if (ringArea(h) >= -AREA_EPS) return false;                      // flipped or collapsed hole
-      if (!pointInRing(h[0], rg.outer)) return false;                  // hole escaped its outer
+      if (!ringInsideRing(h, rg.outer, outerBox)) return false;        // hole escaped its outer
     }
     allRings.push(rg.outer, ...rg.holes);
   }
   for (const r of allRings) if (ringSelfIntersects(r)) return false;
+  const boxes = allRings.map(ringBox);
   for (let i = 0; i < allRings.length; i++) for (let j = i + 1; j < allRings.length; j++)
-    if (ringsCross(allRings[i], allRings[j])) return false;
+    if (ringsCross(allRings[i], allRings[j], boxes[i], boxes[j])) return false;
   return true;
 }
 
@@ -345,6 +405,72 @@ function splitAtDuplicateEdges(contour) {
   return pieces
     .filter((r) => ringArea(r) > AREA_EPS)                         // discard the CW artifact
     .map((r) => ({ start: r[0], segments: [...r.slice(1).map((p) => ({ to: p })), { to: [r[0][0], r[0][1]] }] }));
+}
+
+// Apply splitAtDuplicateEdges to EVERY region's outer ring, re-nesting that region's holes
+// into whichever split piece contains them. Returns null when no outer split (nothing to
+// recover); otherwise the re-nested region list. Severing a pinched neck is the only
+// mechanism this engine has for cutting a ring that an inward offset closed shut, and it
+// applies to holed and multi-region shapes exactly as much as to a single bare ring — a
+// plate with a waist AND bolt holes, inset for print clearance, is the everyday case.
+//
+// A hole whose first point lands inside none of the split pieces (the neck it lived beside
+// was severed out from under it, or it grew past its own outer) is NOT dropped: it is
+// re-attached to the largest piece so validateRawOffset sees it and rejects the candidate,
+// routing the whole thing to cleanupRegions — which subtracts hole rings from the united
+// outers and so clips it correctly. Dropping it here would silently delete real material
+// removal (measured: a dumbbell with a 1×1 hole at delta −2 came back 72 instead of 56).
+function splitPinchedRegions(raw) {
+  let splitAny = false;
+  const out = [];
+  for (const rg of raw) {
+    const split = splitAtDuplicateEdges(rg.outer);
+    if (!split) { out.push(rg); continue; }
+    splitAny = true;
+    if (split.length === 0) continue;          // every piece came back CW: pure artifact
+    const pieces = split.map((outer) => ({ outer, holes: [], ring: tessellateContour(outer, VALIDATE_SEGS) }));
+    for (const h of rg.holes) {
+      const p = tessellateContour(h, VALIDATE_SEGS)[0];
+      const inside = pieces.filter((q) => pointInRing(p, q.ring));
+      const home = inside.length
+        ? inside.reduce((a, b) => (Math.abs(ringArea(a.ring)) <= Math.abs(ringArea(b.ring)) ? a : b))
+        : pieces.reduce((a, b) => (Math.abs(ringArea(a.ring)) >= Math.abs(ringArea(b.ring)) ? a : b));
+      home.holes.push(h);
+    }
+    for (const q of pieces) out.push({ outer: q.outer, holes: q.holes });
+  }
+  return splitAny ? out : null;
+}
+
+// Cleanup stage: resolve a raw offset result that the fast path rejected.
+//
+// This is a SUBTRACTION, not a self-union. Feeding outers and holes into one even-odd
+// compound and self-uniting it (what this used to do) is only equivalent while every hole
+// still sits cleanly inside its own outer and no two holes touch — precisely the conditions
+// an over-offset breaks. Two eroding holes that grew into each other, or a hole that grew
+// through its outer's boundary, cancel under even-odd instead of merging: the doubly-covered
+// lens comes back SOLID. Extruded, that is a solid island inside a merged pocket (40×20
+// plate, two 6×8 holes 3 mm apart, delta −2: 360 mm² instead of 348) or a tab of material
+// hanging off the plate below its own boundary (10×10 hole 2 mm from the edge, delta −2:
+// 436 mm² instead of 408). Uniting the outers and then subtracting the united hole rings
+// gives the right answer in both cases because subtraction has no doubly-covered state.
+//
+// The holes are united into one region list first rather than subtracted one at a time —
+// same result (subtraction distributes over union), one paper.js boolean instead of N, which
+// matters on the worker hot path for many-counter text.
+function cleanupRegions(regions) {
+  const outers = resolveSelfRegions(regions.map((rg) => ({ outer: rg.outer, holes: [] })));
+  const holes = regions.flatMap((rg) => rg.holes);
+  if (outers.length === 0 || holes.length === 0) return outers;
+  // Hole rings are stored CW; reverse each to the CCW "outer" winding resolveSelfRegions
+  // assumes before uniting them, or its inverted-region guard reads a perfectly good hole as
+  // a collapsed artifact and cancels it (measured: every hole silently vanished).
+  const holeUnion = resolveSelfRegions(holes.map((h) => ({
+    outer: ringArea(tessellateContour(h, VALIDATE_SEGS)) < 0 ? reverseContour(h) : h,
+    holes: [],
+  })));
+  if (holeUnion.length === 0) return outers;
+  return booleanRegions(outers, holeUnion, "subtract");
 }
 
 // Part 2 of the partial-reflection fix (task 5B) — REMOVED (review round 2). A global
@@ -389,19 +515,27 @@ export function offsetRegions(regions, delta, { corners = "round" } = {}) {
     dirty = dirty || o.dirty;
     if (!o.contour) continue;
     const hs = rg.holes.map((h) => _offsetContour(closeContourGap(h), delta, corners));
-    dirty = dirty || hs.some((h) => h.dirty);
+    // Only a SURVIVING hole's dirtiness can dirty the result. A hole that collapsed
+    // (contour === null) always reports dirty — that is how _offsetContour signals the drop —
+    // but the drop itself is a clean operation: the hole is simply gone and nothing else about
+    // the region moved. Folding that signal into `dirty` sent an otherwise-exact outer through
+    // paper.js for no reason, and paper.js has no arc primitive: a 10×10 square at +2 round
+    // came back line,cubic,line,cubic… with a collapsing 2×2 hole present and line,arc,line,arc
+    // without it. On OCCT that is the difference between B_SPLINE and CIRCLE in the exported
+    // STEP — exact curve fidelity lost to a hole that isn't even in the output.
+    dirty = dirty || hs.some((h) => h.contour && h.dirty);
     raw.push({ outer: o.contour, holes: hs.filter((h) => h.contour).map((h) => h.contour) });
   }
 
   let out = (!dirty && validateRawOffset(raw)) ? raw : null;
   if (!out) {
-    const split = raw.length === 1 && raw[0].holes.length === 0 ? splitAtDuplicateEdges(raw[0].outer) : null;
-    const recovered = split && split.map((outer) => ({ outer, holes: [] }));
-    // recovered can be [] (every split piece came back CW, i.e. a spurious artifact rather
-    // than real material) — validateRawOffset([]) is vacuously true, so an explicit length
-    // check is required or a fully-collapsed split silently short-circuits past cleanup and
-    // this throws "collapses the shape" even when resolveSelfRegions would find real area.
-    out = recovered && recovered.length > 0 && validateRawOffset(recovered) ? recovered : resolveSelfRegions(raw);
+    const split = splitPinchedRegions(raw);
+    // `split` can be [] (every piece came back CW, i.e. a spurious artifact rather than real
+    // material) — validateRawOffset([]) is vacuously true, so an explicit length check is
+    // required or a fully-collapsed split silently short-circuits past cleanup and this
+    // throws "collapses the shape" even when cleanup would find real area.
+    const cand = split && split.length > 0 ? split : raw;
+    out = cand !== raw && validateRawOffset(cand) ? cand : cleanupRegions(cand);
   }
   if (out.length === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
   return out;

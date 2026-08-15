@@ -132,6 +132,12 @@ import { profileArea } from "../src/framework/geometry/contour-ops.js";
 
 const region = (outer, holes = []) => ({ outer, holes });
 const sqRegion = (s) => region(sq(s));
+// 30×10 dumbbell: two 10×10 lobes joined by a 10-long, 2-wide waist (y 4→6). At delta −2
+// the waist pinches shut and the two lobes become separate 6×6 squares (72 total).
+const dumbbell = (dx = 0) => ({ start: [dx, 0], segments: [
+  { to: [dx + 10, 0] }, { to: [dx + 10, 4] }, { to: [dx + 20, 4] }, { to: [dx + 20, 0] }, { to: [dx + 30, 0] },
+  { to: [dx + 30, 10] }, { to: [dx + 20, 10] }, { to: [dx + 20, 6] }, { to: [dx + 10, 6] }, { to: [dx + 10, 10] },
+  { to: [dx, 10] }, { to: [dx, 0] }] });
 
 describe("offsetRegions", () => {
   test("validates corners and delta with the pinned messages", () => {
@@ -163,13 +169,21 @@ describe("offsetRegions", () => {
     expect(profileArea(out)).toBeCloseTo(196, 6);
   });
   test("dumbbell inset splits into two regions via cleanup", () => {
-    const db = { start: [0, 0], segments: [
-      { to: [10, 0] }, { to: [10, 4] }, { to: [20, 4] }, { to: [20, 0] }, { to: [30, 0] },
-      { to: [30, 10] }, { to: [20, 10] }, { to: [20, 6] }, { to: [10, 6] }, { to: [10, 10] },
-      { to: [0, 10] }, { to: [0, 0] }] };
-    const out = offsetRegions([region(db)], -2, { corners: "sharp" });
+    const out = offsetRegions([region(dumbbell())], -2, { corners: "sharp" });
     expect(out.length).toBe(2);
     expect(profileArea(out)).toBeCloseTo(72, 4);           // two 6×6 squares
+  });
+  test("`segs` is accepted and ignored", () => {
+    // The contract lists `segs` in offset's options for source compatibility with the
+    // v1 Manifold route (where it tuned Clipper2's tessellation) — the native engine has
+    // no tessellation to tune, so it must accept the key and produce identical geometry
+    // for every value, rather than throwing on an unknown option or quietly honoring it.
+    const circ = { start: [5, 0], segments: [{ via: [0, 5], to: [-5, 0] }, { via: [0, -5], to: [5, 0] }] };
+    const base = offsetRegions([region(circ)], 1, { corners: "round" });
+    for (const segs of [4, 64, 256, undefined])
+      expect(offsetRegions([region(circ)], 1, { corners: "round", segs })).toEqual(base);
+    // and the arcs stay arcs regardless — `segs` never facets anything
+    expect(kinds(offsetRegions([region(circ)], 1, { corners: "round", segs: 4 })[0].outer)).toEqual(["arc", "arc"]);
   });
   test("L-shape inset stays on the fast path with exact area", () => {
     const L = { start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 10] }, { to: [5, 10] }, { to: [5, 5] }, { to: [0, 5] }, { to: [0, 0] }] };
@@ -181,6 +195,46 @@ describe("offsetRegions", () => {
     const arch = { start: [10, 0], segments: [{ c1: [7, 4], c2: [3, 4], to: [0, 0] }, { to: [10, 0] }] };
     const out = offsetRegions([region(arch)], -0.8, { corners: "round" });
     expect(validateRawOffset(out)).toBe(true);             // output must be simple
+  });
+});
+
+// Severing a neck that an inward offset pinched shut (splitAtDuplicateEdges) used to be
+// gated on `raw.length === 1 && raw[0].holes.length === 0` — so it fired only on a single
+// bare ring, i.e. on the shipped one-dumbbell fixture's exact shape family and nothing else.
+// A plate with a waist AND bolt holes, or two such plates in one Shape2D, silently missed the
+// recovery. Measured against the deleted Clipper2 route (truth here) at delta −2 sharp:
+// two disjoint dumbbells came back 200.000 in 2 regions instead of 144.000 in 4, and a
+// dumbbell with one 1×1 hole came back 93.000 with the hole GONE instead of 56.000.
+describe("offsetRegions — pinched-neck recovery is not limited to one bare ring", () => {
+  test("two disjoint dumbbells each split: 4 regions, area 144", () => {
+    const out = offsetRegions([region(dumbbell()), region(dumbbell(40))], -2, { corners: "sharp" });
+    expect(out.length).toBe(4);
+    expect(profileArea(out)).toBeCloseTo(144, 4);          // four 6×6 squares
+  });
+  test("dumbbell with a 1×1 hole splits AND keeps the hole", () => {
+    // 1×1 hole (CW) at x,y ∈ [3,4] inside the left lobe. At delta −2 the lobe erodes to
+    // [2,8]² (36) and the hole grows to [1,6]² — clipped by the eroded lobe to [2,6]² (16).
+    // So the left lobe contributes 36 − 16 = 20 and the right the full 36: 56 exactly.
+    const hole = { start: [3, 3], segments: [{ to: [3, 4] }, { to: [4, 4] }, { to: [4, 3] }, { to: [3, 3] }] };
+    const out = offsetRegions([region(dumbbell(), [hole])], -2, { corners: "sharp" });
+    expect(out.length).toBe(2);
+    expect(profileArea(out)).toBeCloseTo(56, 4);
+  });
+});
+
+// A hole that collapses under the offset is dropped from the result — a clean operation that
+// changes nothing about the outer. It used to set the region-wide `dirty` flag anyway (that
+// flag is how _offsetContour signals the drop), pushing an otherwise-exact outer through
+// paper.js, which has no arc primitive and hands every curve back as a cubic. On OCCT that is
+// B_SPLINE where CIRCLE should be — exactly the exact-curve fidelity the STEP tests pin.
+describe("offsetRegions — a collapsing hole must not cost the outer its exact arcs", () => {
+  test("10×10 square at +2 round keeps line,arc,… with a collapsing 2×2 hole present", () => {
+    const hole = { start: [4, 4], segments: [{ to: [4, 6] }, { to: [6, 6] }, { to: [6, 4] }, { to: [4, 4] }] };
+    const withHole = offsetRegions([region(sq(10), [hole])], 2, { corners: "round" });
+    const without = offsetRegions([sqRegion(10)], 2, { corners: "round" });
+    expect(withHole[0].holes.length).toBe(0);              // the hole did collapse
+    expect(kinds(withHole[0].outer)).toEqual(["line", "arc", "line", "arc", "line", "arc", "line", "arc"]);
+    expect(kinds(withHole[0].outer)).toEqual(kinds(without[0].outer));
   });
 });
 
@@ -330,38 +384,37 @@ describe("offsetRegions — whole-ring collapse must span the whole ring, not ju
 // Pins the regression class from task 5B's round-1 review, Critical 1: an early version of
 // Part 2's distance prune checked each raw hole against EVERY ring of its region (outer +
 // siblings), not just its own source hole — indistinguishable from two features legitimately
-// merging (a case cleanup exists to resolve, not something to prune away). These two survive
-// unchanged now that Part 2 has been removed entirely (round 2 — see the describe block
-// below), but are kept as general correctness coverage: a hole must never be deleted outright
-// just because it's about to merge with another hole or break through the outer edge.
+// merging (a case cleanup exists to resolve, not something to prune away). Verified directly
+// against the pre-round-1 commit (aa82380), which HAD the whole-region prune: both fixtures
+// below returned area 576 there — the bare plate, holes.length === 0 — because the prune saw a
+// legitimately-merging/breaking-through hole come within |delta| of a DIFFERENT ring and
+// deleted it outright.
+//
+// These were originally pinned in a loose 300..500 band because the engine could only get
+// them approximately right; both are now EXACT, so they assert the exact value. (The 40×20
+// fixtures with the same shape at 6×8/3 mm spacing and 10×10/2 mm are cross-checked against
+// the Clipper2 oracle in test/offset-oracle-manifold.test.js; these two keep the original
+// round-1 coordinates and stay WASM-free.)
 describe("offsetRegions — merging/breaking-through holes must survive", () => {
-  // Verified directly against the pre-round-1 commit (aa82380), which HAD the whole-region
-  // prune: both fixtures below returned area 576 there — the bare plate, holes.length===0 —
-  // because the whole-region prune saw a legitimately-merging/breaking-through hole come
-  // within |delta| of a DIFFERENT ring and deleted it outright. The numbers below (336 / 380)
-  // aren't independently re-derived truth values the way the wide-L-pocket and 9-gon numbers
-  // elsewhere in this file are — they're what this fixture resolves to today, already a large
-  // improvement over the 576/0-holes bug (real, substantially-sized hole geometry survives)
-  // but short of full precision on the merged/broken-through shape (a from-scratch truth
-  // computation puts that at ~352.68 / ~409.72). The gap traces to two separate, pre-existing
-  // limitations found while verifying this in round 1 and still open: validateRawOffset's
-  // hole/outer containment check tests only the hole ring's first point, not the whole ring;
-  // and ringsCross (unlike ringSelfIntersects) never checks segsOverlap, so two rings that
-  // overlap via parallel/collinear edges don't register as crossing. Flagged as a follow-up.
-  test("two holes 3mm apart survive as real geometry instead of both vanishing", () => {
+  test("two holes 3mm apart merge into one hole, exact area", () => {
     const plate = { start: [0, 0], segments: [{ to: [40, 0] }, { to: [40, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
     const holeA = { start: [5, 6], segments: [{ to: [5, 14] }, { to: [11, 14] }, { to: [11, 6] }, { to: [5, 6] }] };
     const holeB = { start: [14, 6], segments: [{ to: [14, 14] }, { to: [20, 14] }, { to: [20, 6] }, { to: [14, 6] }] };
     const out = offsetRegions([region(plate, [holeA, holeB])], -2, { corners: "sharp" });
-    expect(profileArea(out)).toBeLessThan(500);       // real hole area removed — not the bare 576 plate
-    expect(profileArea(out)).toBeGreaterThan(300);
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(1);              // merged, not two overlapping rings
+    // eroded plate 36×16 = 576; merged hole spans x [3,22] × y [4,16] = 19×12 = 228
+    expect(profileArea(out)).toBeCloseTo(576 - 228, 4);
   });
-  test("a hole 2mm from the edge survives as real geometry instead of the plate coming back solid", () => {
+  test("a hole 2mm from the edge is clipped by the eroded outer, exact area", () => {
     const plate = { start: [0, 0], segments: [{ to: [40, 0] }, { to: [40, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
     const hole = { start: [15, 2], segments: [{ to: [15, 12] }, { to: [25, 12] }, { to: [25, 2] }, { to: [15, 2] }] };
     const out = offsetRegions([region(plate, [hole])], -2, { corners: "sharp" });
-    expect(profileArea(out)).toBeLessThan(500);       // real hole area removed — not the bare 576 plate
-    expect(profileArea(out)).toBeGreaterThan(300);
+    expect(out.length).toBe(1);
+    // the grown hole breaks through the eroded bottom edge, so it is a notch in the
+    // outline rather than a hole: x [13,27] × y [2,14] = 14×12 = 168 removed from 576
+    expect(out[0].holes.length).toBe(0);
+    expect(profileArea(out)).toBeCloseTo(576 - 168, 4);
   });
 });
 
