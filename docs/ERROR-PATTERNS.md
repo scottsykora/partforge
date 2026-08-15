@@ -346,21 +346,27 @@ growing a shape past the hole's own width.
 
 ## shape2d-offset-waist-not-severed-round-join
 
-- **Symptom:** An inward `Shape2D.offset` past the width of a narrow waist does not
-  split the shape in two — the result stays connected (or comes back with a spurious
-  extra blob where the waist was) and `.area()` over-reports — but the *same* offset
-  with `corners: "sharp"` splits correctly. Verified: a 30×10 dumbbell with a 2-wide
-  waist at `delta` −2 gives 72.000 in two regions under `sharp` and 97.258 in three
-  regions under `round` (74.000 vs 96.000 under `chamfer`).
-- **Cause:** The recovery that severs a waist pinched shut by an offset
-  (`splitAtDuplicateEdges` in `contour-offset.js`) works by finding the pair of
-  duplicate, exactly-collinear edges the two sides of the pinch land on — so it only
-  handles rings made entirely of straight lines. A round or chamfer join inserts an
-  arc or a bevel chord at the waist, so there is no duplicate straight edge left to
-  cut and the pinched ring survives as one over-solid blob.
-- **Fix:** Use `corners: "sharp"` for an inward offset that is meant to split a
-  shape; or offset the pieces separately and union them. Check the result's region
-  count (`.toRegions().length`) rather than assuming the split happened.
+- **Symptom:** *(Fixed — kept because IDs are permanent. This pattern no longer
+  exists.)* An inward `Shape2D.offset` past the width of a narrow waist used to leave
+  the shape connected (or add a spurious blob where the waist was) under
+  `corners: "round"` or `"chamfer"`, while `"sharp"` split it correctly. The entry's
+  own witness now behaves: a 30×10 dumbbell with a 2-wide waist at `delta` −2 severs
+  into **two** regions under all three joins — 72.346873 round, 74.000000 chamfer,
+  72.000000 sharp — against the three regions and 97.258 the round join used to give.
+- **Cause:** The waist recovery it described (`splitAtDuplicateEdges` in
+  `contour-offset.js`) matched a pair of duplicate, exactly-collinear edges, so it only
+  ever handled rings made entirely of straight lines; a round or chamfer join left an
+  arc or bevel chord at the pinch with no duplicate edge to cut. That function no longer
+  exists anywhere in `src/` — the whole boolean/heuristic cleanup path was replaced by
+  the winding resolver (`geometry/contour-winding.js`), which computes the
+  positive-winding region of the raw outline directly and severs a pinched waist as an
+  ordinary consequence of that, with no per-shape recovery and no join casing.
+- **Fix:** Nothing to work around; the advice this entry used to give ("use
+  `corners: "sharp"` to split") is obsolete and was making callers change corner style
+  for no reason. If a region count still looks wrong after an inward offset, see
+  [shape2d-offset-winding-chain-incomplete](#shape2d-offset-winding-chain-incomplete)
+  and the parked cases in [KERNEL-CONTRACT.md "Offset: known
+  limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
 
 ## shape2d-offset-kissing-ring-passes-validation
 
@@ -381,6 +387,48 @@ growing a shape past the hole's own width.
   near-edge hole is clipped by its eroded outer. If a ring count still looks wrong
   after an inward offset, see
   [shape2d-offset-waist-not-severed-round-join](#shape2d-offset-waist-not-severed-round-join).
+
+## shape2d-offset-winding-chain-incomplete
+
+- **Symptom:** `contour-winding: could not chain offset boundary (incomplete intersection
+  set)` thrown from `Shape2D.offset` (or `offsetPolygon`) — most often an inward offset on
+  a shape with several narrow webs or notches, and also an *outward* offset of text at a
+  delta large enough to merge glyphs. All three corner styles produce it.
+- **Cause:** When a raw offset ring is tangled, the winding resolver
+  (`geometry/contour-winding.js`) splits every ring at its crossings and re-chains the
+  positive-winding pieces. This is its own detector for a boundary it cannot close — a
+  kept piece with nowhere to continue. The **root cause is open**; what is known is that
+  the arrangement is degenerate where the shape severs (or, on text, where two glyph
+  outlines meet). **It is not a `round`-join effect and no corner style is immune** — the
+  rate is nearly flat across the three. Measured on the committed corpus
+  (`test/helpers/offset-corpus.js`, 606 seeded shapes × 20 deltas × 3 styles = 36 090
+  offsets), before the fallback below: **0.291 % under `round`, 0.241 % under `chamfer`,
+  0.224 % under `sharp`**. Reproduce with `node scripts/offset-rates.mjs`. Known limitation
+  — see [KERNEL-CONTRACT.md "Offset: known
+  limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
+- **Fix:** Many of these no longer reach you: `offsetRegions` retries a failed arrangement
+  several ways before letting the throw out — the delta nudged by 1e-9, the crossing-merge
+  radius coarsened 4× and 20×, and the outline re-run as a polyline at three densities —
+  taking the first that resolves. On the corpus above that takes the rates to **0.133 %
+  (`round`), 0.166 % (`chamfer`), 0.175 % (`sharp`)**, at a median 0.023 % and a worst
+  3.4 % (0.61 mm²) from the independently-derived truth. If you still see the throw:
+  - **Nudge `|delta|` by ~1 %** so the webs are not severed at exactly that width. This is
+    the first thing to try; the failures sit in narrow bands of delta.
+  - **Try the other corner styles**, but do not expect a specific one to be the escape.
+    Measured over the 28 residual (shape, delta) pairs on that corpus: another style builds
+    in 16, and 12 fail under all three. The style that is alone in failing is `chamfer` in
+    5 of them, `sharp` in 5, and `round` in 1 — so if anything `round` is the *safest*
+    here. (Earlier versions of this entry advised retrying with `corners: "sharp"` on the
+    grounds that it "has never produced this throw". That was never measured and is false:
+    a 12-vertex two-notch plate at −3.25 throws under `sharp` and `chamfer` and builds under
+    `round`. It is asserted in `test/offset-oracle-manifold.test.js`.)
+  - **On text**, reduce the offset or emboss the glyphs separately and union the results —
+    dilating 10 mm text by ≥ 2 mm throws on 26 of 90 measured glyph/delta/style combinations
+    regardless of style (`test/offset-oracle-manifold.test.js` § glyphs).
+  - Or offset the pieces separately and union them.
+
+  The throw stays loud and never silent, so a part that builds is not affected by *this*
+  defect — but see the same test file for offset defects on text that are silent.
 
 ## fillet-chamfer-radius-does-not-fit
 

@@ -378,6 +378,33 @@ const polyLen = (poly) => {
   return L;
 };
 
+// Project p onto the nearest edge of `ring` — a tessellated point ring — returning the
+// projected point and that edge's unit direction. Anchors an audit probe exactly on the
+// polyline _windingAt queries: the projected point IS a point of that polyline, so
+// offsetting it along the edge normal cannot straddle a tessellation gap the way an
+// independently-sampled point can (the whole-ring tessellation's sagitta grows with
+// radius, ~1.2e-3·r at WINDING_SEGS=64 — past r≈8.3 mm it exceeds a fixed probe offset).
+// Scanning the WHOLE ring can latch onto a nearby antiparallel branch, but origin and
+// normal then flip together, so the left/right bookkeeping still comes out right.
+function projectToRing(p, ring) {
+  let best = null;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const ex = b[0] - a[0], ey = b[1] - a[1];
+    const L2 = ex * ex + ey * ey;
+    let t = L2 > 1e-18 ? ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / L2 : 0;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const point = [a[0] + t * ex, a[1] + t * ey];
+    const dx = p[0] - point[0], dy = p[1] - point[1];
+    const d2 = dx * dx + dy * dy;
+    if (best === null || d2 < best.d2) {
+      const L = Math.sqrt(L2) || 1;
+      best = { point, dir: [ex / L, ey / L], d2 };
+    }
+  }
+  return best;
+}
+
 // Classify pieces by FACE LABELS of the planar arrangement, never by per-piece probes.
 //
 // Half-edges: every non-duplicate crossed piece of usable length is one arrangement edge
@@ -408,7 +435,7 @@ const polyLen = (poly) => {
 // The record shape matches the historical classifier: { piece, keep, reverse } plus
 // wLeft/wRight in debug mode. wLeft - wRight === mult holds by construction for every
 // arrangement edge; excluded records (duplicates, degenerate pieces) report null.
-export function _classify(pieces, tessRings, { debug = false, inside = (w) => w !== 0 } = {}) {
+export function _classify(pieces, tessRings, { debug = false, inside = (w) => w !== 0, auditTol = CLUSTER_TOL, probeOverride = false } = {}) {
   const { mult, duplicate } = _coincidence(pieces);
   const recs = pieces.map((piece) => ({ piece, keep: false, reverse: false, wLeft: null, wRight: null }));
 
@@ -598,6 +625,54 @@ export function _classify(pieces, tessRings, { debug = false, inside = (w) => w 
         recs[i] = { piece: pieces[i], keep, reverse: keep && !inside(wL), wLeft: wL, wRight: wR };
       }
     }
+
+    // ── audit / override: geometric probes cross-check the combinatorial labels ──────────
+    //
+    // Face labels are consistent by construction but can be consistently WRONG when a
+    // measure-zero degeneracy (an exact tangency between rings — the fuzz corpus constructs
+    // one at delta −2) scrambles the rotational order at the contact — measured: a region
+    // eroded to exact tangency with a growing hole lost its whole 28 mm² face silently, at
+    // EVERY weld scale, because the mis-ordering is systematic rather than numeric. A
+    // midpoint ray-cast probe is immune to that (it measures true winding far from any
+    // contact) but fails at exactly the pinch vertices face labels handle — the two
+    // mechanisms have complementary blind spots. So: probe only pieces LONG enough for the
+    // probe to be well-conditioned, at two interior points, corroborated.
+    //
+    // Default (audit): a corroborated disagreement throws the same incomplete-arrangement
+    // message as a BFS conflict — the fallback ladder responds. probeOverride (the ladder's
+    // "probe-labels" rung): the corroborated probe value REPLACES the face label on that
+    // piece (wRight stays wLeft − mult, so the coincidence invariant holds); short pieces
+    // keep their face labels, and _chain's dangling-vertex throw still catches any global
+    // inconsistency a mixed labeling could introduce.
+    const AUDIT_MIN_LEN = auditTol === null ? Infinity : 20 * auditTol;
+    for (let e = 0; e < E && auditTol !== null; e++) {
+      const i = eIdx[e];
+      const rec = recs[i];
+      if (rec.wLeft === null) continue;
+      const poly = polyOf.get(i);
+      const len = polyLen(poly);
+      if (len < AUDIT_MIN_LEN) continue;                 // short pieces: faces are authoritative
+      // Probe BOTH sides at two interior points. A probe pair is trustworthy only when it
+      // satisfies the arrangement's own jump identity (wLeft − wRight = net multiplicity):
+      // a pair that violates it is straddling OTHER geometry — a surviving sliver thinner
+      // than the probe offset reads the far side on both probes (measured: a 0.006 mm²
+      // sliver region under a 1e-2 probe) — and says nothing about this piece's labels.
+      const eps = Math.min(2 * auditTol, len / 8);
+      const probes = [];
+      for (const f of [1 / 3, 2 / 3]) {
+        const k = Math.max(1, Math.min(poly.length - 1, Math.round(f * (poly.length - 1))));
+        const mid = [(poly[k - 1][0] + poly[k][0]) / 2, (poly[k - 1][1] + poly[k][1]) / 2];
+        const { point: onRing, dir } = projectToRing(mid, tessRings[pieces[i].ring]);
+        const wL = _windingAt([onRing[0] - dir[1] * eps, onRing[1] + dir[0] * eps], tessRings);
+        const wR = _windingAt([onRing[0] + dir[1] * eps, onRing[1] - dir[0] * eps], tessRings);
+        if (wL - wR === mult[i]) probes.push(wL);
+      }
+      if (probes.length < 2 || probes[0] !== probes[1] || probes[0] === rec.wLeft) continue;
+      if (!probeOverride) throw new Error(CHAIN_INCOMPLETE_MESSAGE);
+      const wL = probes[0], wR = wL - mult[i];
+      const keep = inside(wL) !== inside(wR);
+      recs[i] = { piece: pieces[i], keep, reverse: keep && !inside(wL), wLeft: wL, wRight: wR };
+    }
   }
 
   // ── uncrossed whole rings: interior = ambient ± 1 directly ──
@@ -719,7 +794,12 @@ export function _chain(classified, pool) {
 // default. It is an option only so the caller's fallback ladder can RETRY a failed
 // arrangement more coarsely (see contour-offset.js); nothing should raise it as a matter of
 // course, because every crossing it merges moves the emitted boundary by up to that radius.
-export function resolveOffsetWinding(rawRegions, { clusterTol = CLUSTER_TOL } = {}) {
+// `audit` (default on) runs the probe cross-check in _classify; the fallback ladder's
+// rungs disable it — their geometry is deliberately welded/snapped, where weld-local
+// bounded label error is the documented cost of rescue, not a defect to throw on.
+// `probeOverride` is the ladder's "probe-labels" rung: corroborated probe values replace
+// disagreeing face labels on long pieces instead of throwing (see _classify).
+export function resolveOffsetWinding(rawRegions, { clusterTol = CLUSTER_TOL, audit = true, probeOverride = false } = {}) {
   const rings = [];
   for (const rg of rawRegions) { rings.push(rg.outer); for (const h of rg.holes) rings.push(h); }
   if (rings.length === 0) return [];
@@ -734,7 +814,8 @@ export function resolveOffsetWinding(rawRegions, { clusterTol = CLUSTER_TOL } = 
   // offset that shrank past zero and inverted), never real material to reflect back into
   // existence. _classify stays a general classifier parameterized by the fill rule; under
   // this one `reverse` is provably unreachable (mult >= 0, so wRight <= wLeft always).
-  const classified = _classify(pieces, tessRings, { inside: (w) => w >= 1 });
+  const classified = _classify(pieces, tessRings, { inside: (w) => w >= 1,
+    auditTol: audit || probeOverride ? clusterTol : null, probeOverride });
   const contours = _chain(classified, merged.pool);
 
   // drop numerically empty loops, then nest by containment and restore the storage

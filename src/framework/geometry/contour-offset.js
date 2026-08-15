@@ -8,10 +8,11 @@
 // The cubic subdivision approach is ported from glenzli/paperjs-offset
 // (https://github.com/glenzli/paperjs-offset, MIT License, Copyright (c) glenzli),
 // adapted from paper.js Segments to the partforge contour IR.
-import { arcCenterAndSweep, resolveSelfRegions, booleanRegions } from "./paper-bridge.js";
+import { arcCenterAndSweep } from "./paper-bridge.js";
 import { cubicAt, splitCubic, jointTangents, SMOOTH_JOINT_DEG } from "./contour-ops.js";
 import { tessellateContour, closeContourGap, reverseContour } from "./profile.js";
 import { ringArea, pointInRing } from "./shape2d-regions.js";
+import { resolveOffsetWinding, CLUSTER_TOL, CHAIN_INCOMPLETE_MESSAGE } from "./contour-winding.js";
 
 export const OFFSET_TOL = 1e-3;   // mm — max deviation of a cubic offset approximation
 const MAX_DEPTH = 12;             // cubic subdivision recursion cap
@@ -87,6 +88,14 @@ export function _offsetSegment(from, seg, delta) {
 
 const MITER_LIMIT = 2;
 
+// Where X falls along the directed segment P0→P1, as a fraction of its length (null for a
+// degenerate segment). This is the overlap-side trim's validity test — see the trim itself.
+function paramOn(P0, P1, X) {
+  const d = sub(P1, P0), L2 = dot(d, d);
+  if (L2 < 1e-18) return null;
+  return dot(sub(X, P0), d) / L2;
+}
+
 // Intersection of the line through P (direction u) with the line through Q (direction v).
 function lineIntersect(P, u, Q, v) {
   const d = cross(u, v);
@@ -126,6 +135,30 @@ export function _offsetContour(contour, delta, corners) {
   let dirty = pieces.some((p) => p.dirty);
   const n = segs.length;
   const joins = new Array(n).fill(null);   // joins[i] bridges piece[i-1] → piece[i] at vertex i
+  // Each piece's ORIGINAL (pre-trim) first- and last-segment extents, captured before the
+  // join loop starts mutating them. The trim gate below is a question about the raw offset
+  // geometry, so it must be asked of the raw extents: reading the live, partly-trimmed ones
+  // makes the answer depend on which corner the loop happens to have reached, and a ring
+  // whose corners are then trimmed inconsistently (some yes, some no) is worse than either
+  // all-trimmed or none-trimmed — measured: a 6.99×7.78 rectangular hole at delta +3.5 (it
+  // over-collapses in x by 0.008 mm and should vanish) leaves a 12.26 mm² spurious face
+  // under a live-extent gate and 0.007 mm² under this one.
+  //
+  // Built eagerly for every piece, deliberately. Deferring it to the first overlap-side corner
+  // looks like free savings — four .slice() allocations per piece, read only by the trim gate —
+  // and it is not: an INWARD offset (the case the trim exists for, and the one benchmarked
+  // below) puts every convex corner on the overlap side, so every piece's extents get demanded
+  // anyway and laziness buys one closure call per corner. Measured, 300 runs, 100 disjoint
+  // squares: eager 0.328-0.334 ms against lazy 0.336-0.344 at delta -1, and eager 0.842 against
+  // lazy 0.827 at +1 — a wash in both directions. Not worth the ordering invariant it would add
+  // (corner i mutates piece i-1's last `.to` and piece i's `.start`, so a lazy read would have
+  // to be proven to happen before those, forever).
+  const ext = pieces.map((p) => ({
+    aFrom: (p.segments.length > 1 ? p.segments.at(-2).to : p.start).slice(),
+    aEnd: p.segments.at(-1).to.slice(),
+    bStart: p.start.slice(),
+    bEnd: p.segments[0].to.slice(),
+  }));
 
   for (let i = 0; i < n; i++) {
     const prev = pieces[(i - 1 + n) % n], next = pieces[i];
@@ -135,11 +168,35 @@ export function _offsetContour(contour, delta, corners) {
     const turnDeg = (Math.atan2(Math.abs(turn), Math.max(-1, Math.min(1, inTan[0] * outTan[0] + inTan[1] * outTan[1]))) * 180) / Math.PI;
     if (dist(aEnd, bStart) <= JOIN_EPS || turnDeg < SMOOTH_JOINT_DEG) continue;   // smooth
     if (turn * delta > 0) { joins[i] = joinSegs(point, aEnd, bStart, inTan, outTan, delta, corners); continue; }
-    // overlap side: trim when both neighbors are plain lines, else chord + dirty
+    // Overlap side: the two offset pieces run into each other instead of leaving a gap.
+    // When both neighbors are plain lines and the two offset LINES cross WITHIN both
+    // segments' own extents, that crossing is the true corner of the offset outline: trim
+    // both to it and the ring stays simple, so validateRawOffset's exact fast path still
+    // applies (this is the everyday polygon inset, and keeping it on the fast path matters —
+    // 100 disjoint squares at delta −1 measure 0.33 ms against 9.1 ms with the trim ablated,
+    // both as shipped, i.e. with the in-extent gate below in force. An earlier revision of
+    // this comment quoted 0.22 ms, which was the UNGATED trim; the gate costs the difference
+    // and the number to plan against is the one the code actually runs).
+    //
+    // The in-extent test is the whole point and is NOT a formality. Past a corner's own
+    // feature size the two offset lines still cross, but OUTSIDE both segments — the "trim"
+    // then EXTENDS the segments to a point neither of them reaches, fabricating material the
+    // raw offset never covered, and because the result is still a simple, correctly-wound
+    // ring nothing downstream can tell. That was the whole residual gap after the winding
+    // resolver landed: on the clustered-reflex 9-gon at delta −2.79 it produced 4.621926
+    // against a true 3.553831 (Clipper2 and an independent Minkowski-union construction
+    // agree on that value), ~30 % too much surviving area. Untrimmed, the crossing offset
+    // segments are simply emitted and the positive-winding rule cancels the reversed loop,
+    // which is what every standard offset algorithm (Clipper2 included) does — so decline
+    // the trim, bevel across, and let resolveOffsetWinding do it properly.
     const aSeg = prev.segments.at(-1), bSeg = next.segments[0];
     if (!aSeg.via && !aSeg.c1 && !bSeg.via && !bSeg.c1) {
       const X = lineIntersect(aEnd, inTan, bStart, outTan);
-      if (X) { aSeg.to = X; next.start = X; continue; }    // exact trim, stays clean
+      const eA = ext[(i - 1 + n) % n], eB = ext[i];
+      const ta = X && paramOn(eA.aFrom, eA.aEnd, X), tb = X && paramOn(eB.bStart, eB.bEnd, X);
+      if (X && ta !== null && tb !== null && ta > 0 && ta <= 1 && tb >= 0 && tb < 1) {
+        aSeg.to = X; next.start = X; continue;             // exact trim, stays clean
+      }
     }
     joins[i] = [{ to: bStart }]; dirty = true;
   }
@@ -212,7 +269,7 @@ export function _offsetContour(contour, delta, corners) {
   // when deletion isn't simple: cleanup gets a chance to untangle whatever the un-deleted
   // piece leaves behind, which is strictly more recoverable than deletion's dead end.
   const deleted = assembleRing(pieces, joins, keptIdx, n);
-  const deletedRing = tessellateContour(deleted, VALIDATE_SEGS);
+  const deletedRing = sampleRing(deleted, VALIDATE_SEGS);
   const deletedArea = Math.abs(ringArea(deletedRing));
   if (deletedArea <= AREA_EPS || ringSelfIntersects(deletedRing))
     return { contour: assembleRing(pieces, joins, allIdx, n), dirty: true };
@@ -245,18 +302,35 @@ function assembleRing(pieces, joins, idx, n) {
   return { start, segments: out };
 }
 
-function segsCross(a1, a2, b1, b2) {
+// Do two segments meet anywhere — including AT an endpoint of either one? The orientation
+// test `o1 !== o2 && o3 !== o4` already answers that (a vertex-incident crossing shows up as
+// one orientation being 0 and the other two straddling), so the endpoint-incident case costs
+// nothing extra; what it costs is the right to be sloppy about adjacency, which is why every
+// caller must hand this a ring with no duplicate and no zero-length vertices (see dedupeRing).
+//
+// This used to demand all four orientations be nonzero — "strict crossings only" — and that
+// discarded exactly the case an inward offset produces most often: a ring that runs into
+// ITSELF at one of its own vertices. A 20×10 block with an 8-deep slot, inset by 2, offsets
+// the slot floor DOWN past the block's own eroded bottom edge, so the ring dips below y=2 and
+// re-crosses it AT the vertices where the slot walls land — every crossing endpoint-incident,
+// every orientation product zero, `validateRawOffset` satisfied, and the tangled ring taken
+// straight down the exact fast path. It silently kept 32 mm² of a true 48 mm² erosion (the
+// walls' offsets cancel under positive winding, which is what resolveOffsetWinding would have
+// done had the ring ever reached it). Endpoint-incidence is not a degenerate curiosity here;
+// it is the generic case, because offset pieces are BUILT by translating shared vertices.
+function segsIntersect(a1, a2, b1, b2) {
   const o = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
   const o1 = o(a1, a2, b1), o2 = o(a1, a2, b2), o3 = o(b1, b2, a1), o4 = o(b1, b2, a2);
-  return o1 !== o2 && o3 !== o4 && o1 !== 0 && o2 !== 0 && o3 !== 0 && o4 !== 0; // strict crossings only
+  return o1 !== o2 && o3 !== o4;
 }
 
 // True when two (non-adjacent) segments are collinear and overlap along more than a point.
-// segsCross's strict-crossing test deliberately ignores collinear touches, but an offset
-// ring can retrace the same line twice (a neck/hole pinched shut by delta past its own
-// width flips the offset pieces from either side onto each other) — that produces exact
-// duplicate or overlapping collinear edges with no transversal crossing anywhere, which
-// segsCross alone can't see.
+// segsIntersect is an orientation test, and a fully collinear pair makes all four
+// orientations 0, so `o1 !== o2` is false and it reports nothing — yet an offset ring can
+// retrace the same line twice (a neck/hole pinched shut by delta past its own width flips
+// the offset pieces from either side onto each other), producing exact duplicate or
+// overlapping collinear edges with no transversal crossing anywhere. That is this test's
+// job and it stays: widening segsIntersect to endpoint-incidence does not subsume it.
 function segsOverlap(a1, a2, b1, b2) {
   const d = sub(a2, a1);
   const L = len(d);
@@ -294,6 +368,28 @@ const boxesApart = (a, b) =>
   a[2] < b[0] - BOX_EPS || b[2] < a[0] - BOX_EPS || a[3] < b[1] - BOX_EPS || b[3] < a[1] - BOX_EPS;
 const segBox = (p, q) => [Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.max(p[0], q[0]), Math.max(p[1], q[1])];
 
+// Every ring below is read as IMPLICITLY closed — segment i runs ring[i] → ring[(i+1)%m] —
+// and the pairwise loops decide "these two may legitimately touch" purely from index
+// adjacency. `tessellateContour` does not produce such a ring: it emits the closing point,
+// so ring[m-1] === ring[0]. That duplicate is not harmless bookkeeping once segsIntersect
+// counts endpoint contact. It creates a zero-length segment m-1 sitting on ring[0], and it
+// pushes the real closing edge back to index m-2 — which then shares the vertex ring[0] with
+// segment 0 while being two apart in the index, i.e. NON-adjacent by the loop's reckoning.
+// Result: every ring in the repo would report a self-touch at its own start point, and every
+// offset would take the resolver. Coincident interior vertices (a join that lands exactly on
+// its neighbour, a piece trimmed to zero length) do the same thing one index further in.
+// So: normalize first, and let "non-adjacent" mean what it says.
+const RING_EPS = 1e-9;
+function dedupeRing(ring) {
+  const out = [];
+  for (const p of ring) if (!out.length || dist(out.at(-1), p) > RING_EPS) out.push(p);
+  while (out.length > 1 && dist(out[0], out.at(-1)) <= RING_EPS) out.pop();
+  return out;
+}
+// Tessellate a contour into the deduplicated, implicitly-closed ring the tests below expect.
+// (ringArea / ringBox / pointInRing all wrap modularly too, so they read it unchanged.)
+const sampleRing = (contour, segs) => dedupeRing(tessellateContour(contour, segs));
+
 function ringSelfIntersects(ring) {
   const m = ring.length;
   const boxes = [];
@@ -302,19 +398,20 @@ function ringSelfIntersects(ring) {
     if (i === 0 && j === m - 1) continue;                  // adjacent via wraparound
     if (boxesApart(boxes[i], boxes[j])) continue;
     const a1 = ring[i], a2 = ring[(i + 1) % m], b1 = ring[j], b2 = ring[(j + 1) % m];
-    if (segsCross(a1, a2, b1, b2) || segsOverlap(a1, a2, b1, b2)) return true;
+    if (segsIntersect(a1, a2, b1, b2) || segsOverlap(a1, a2, b1, b2)) return true;
   }
   return false;
 }
 
 // Two DIFFERENT rings interfering. Like ringSelfIntersects this checks segsOverlap as well
-// as segsCross: two rings can interfere without any transversal crossing at all when their
-// boundaries run along the same line — exactly what two eroding holes that grew into each
-// other produce under a sharp join, where every actual crossing lands on a shared vertex
-// (o === 0, which segsCross deliberately ignores) and the only usable signal is the pair of
-// collinear, partially-overlapping edges. Missing that let an invalid double-ring result
-// pass the fast path and reach extrude, where even-odd fill turned the doubly-covered lens
-// back into SOLID material inside the merged pocket.
+// as segsIntersect: two rings can interfere without any transversal crossing at all when
+// their boundaries run along the same line — exactly what two eroding holes that grew into
+// each other produce under a sharp join, where the crossings land on shared vertices and the
+// rest of the signal is a pair of collinear, partially-overlapping edges. Missing that let an
+// invalid double-ring result pass the fast path and reach extrude, where even-odd fill turned
+// the doubly-covered lens back into SOLID material inside the merged pocket. (The shared-
+// vertex half of that is now caught directly — segsIntersect counts endpoint contact — but
+// the collinear half still is not, so both tests stay.)
 function ringsCross(a, b, boxA = ringBox(a), boxB = ringBox(b)) {
   if (boxesApart(boxA, boxB)) return false;
   for (let i = 0; i < a.length; i++) {
@@ -324,7 +421,7 @@ function ringsCross(a, b, boxA = ringBox(a), boxB = ringBox(b)) {
     for (let j = 0; j < b.length; j++) {
       const b1 = b[j], b2 = b[(j + 1) % b.length];
       if (boxesApart(bx, segBox(b1, b2))) continue;
-      if (segsCross(a1, a2, b1, b2) || segsOverlap(a1, a2, b1, b2)) return true;
+      if (segsIntersect(a1, a2, b1, b2) || segsOverlap(a1, a2, b1, b2)) return true;
     }
   }
   return false;
@@ -347,8 +444,8 @@ function ringInsideRing(inner, outer, outerBox) {
 // True when a raw offset result is already valid (fast path). Sampled at VALIDATE_SEGS.
 export function validateRawOffset(regions) {
   const sampled = regions.map((rg) => ({
-    outer: tessellateContour(rg.outer, VALIDATE_SEGS),
-    holes: rg.holes.map((h) => tessellateContour(h, VALIDATE_SEGS)),
+    outer: sampleRing(rg.outer, VALIDATE_SEGS),
+    holes: rg.holes.map((h) => sampleRing(h, VALIDATE_SEGS)),
   }));
   const allRings = [];
   for (const rg of sampled) {
@@ -365,112 +462,6 @@ export function validateRawOffset(regions) {
   for (let i = 0; i < allRings.length; i++) for (let j = i + 1; j < allRings.length; j++)
     if (ringsCross(allRings[i], allRings[j], boxes[i], boxes[j])) return false;
   return true;
-}
-
-// A raw all-line outer ring can retrace the very same edge twice, in the same direction,
-// when a narrow neck (or a hole) offsets past its own width: the two sides of the pinch
-// land exactly on top of each other (see the whole-ring collapse check in _offsetContour
-// for the convex-corner sibling of this — same underlying reflection, reached through a
-// reflex-corner join instead of a trim, so it isn't a single collapsed ring to drop but a
-// self-touching one to cut). That's a *valid, simple* polygon as far as paper.js is
-// concerned — a zero-width slit, not a crossing — so resolveSelfRegions has nothing to
-// untangle and leaves the two halves connected. Cut the ring at each duplicate edge
-// instead: it always severs the ring into two closed sub-loops (repeat until none remain).
-// Winding tells real material from the leftover artifact: the artifact comes back CW
-// (negative area — the neck's own boundary retraced backwards) and is discarded; the two
-// severed pieces come back CCW, matching the storage invariant for outers.
-function splitAtDuplicateEdges(contour) {
-  if (contour.segments.some((s) => s.via || s.c1)) return null;   // lines only
-  const pts = [contour.start, ...contour.segments.map((s) => s.to)];
-  const ring = pts.slice(0, -1);                                  // drop the closing repeat of start
-  const eq = (a, b) => dist(a, b) <= JOIN_EPS;
-  const loops = [ring];
-  const pieces = [];
-  let splitAny = false;
-  while (loops.length) {
-    const r = loops.pop();
-    const m = r.length;
-    let found = null;
-    for (let i = 0; i < m && !found; i++) for (let j = i + 1; j < m; j++) {
-      if (eq(r[i], r[j]) && eq(r[(i + 1) % m], r[(j + 1) % m])) { found = [i, j]; break; }
-    }
-    if (!found) { pieces.push(r); continue; }
-    splitAny = true;
-    const [i, j] = found;
-    const a = r.slice(i + 1, j + 1), b = [...r.slice(j + 1), ...r.slice(0, i + 1)];
-    if (a.length >= 3) loops.push(a);
-    if (b.length >= 3) loops.push(b);
-  }
-  if (!splitAny) return null;
-  return pieces
-    .filter((r) => ringArea(r) > AREA_EPS)                         // discard the CW artifact
-    .map((r) => ({ start: r[0], segments: [...r.slice(1).map((p) => ({ to: p })), { to: [r[0][0], r[0][1]] }] }));
-}
-
-// Apply splitAtDuplicateEdges to EVERY region's outer ring, re-nesting that region's holes
-// into whichever split piece contains them. Returns null when no outer split (nothing to
-// recover); otherwise the re-nested region list. Severing a pinched neck is the only
-// mechanism this engine has for cutting a ring that an inward offset closed shut, and it
-// applies to holed and multi-region shapes exactly as much as to a single bare ring — a
-// plate with a waist AND bolt holes, inset for print clearance, is the everyday case.
-//
-// A hole whose first point lands inside none of the split pieces (the neck it lived beside
-// was severed out from under it, or it grew past its own outer) is NOT dropped: it is
-// re-attached to the largest piece so validateRawOffset sees it and rejects the candidate,
-// routing the whole thing to cleanupRegions — which subtracts hole rings from the united
-// outers and so clips it correctly. Dropping it here would silently delete real material
-// removal (measured: a dumbbell with a 1×1 hole at delta −2 came back 72 instead of 56).
-function splitPinchedRegions(raw) {
-  let splitAny = false;
-  const out = [];
-  for (const rg of raw) {
-    const split = splitAtDuplicateEdges(rg.outer);
-    if (!split) { out.push(rg); continue; }
-    splitAny = true;
-    if (split.length === 0) continue;          // every piece came back CW: pure artifact
-    const pieces = split.map((outer) => ({ outer, holes: [], ring: tessellateContour(outer, VALIDATE_SEGS) }));
-    for (const h of rg.holes) {
-      const p = tessellateContour(h, VALIDATE_SEGS)[0];
-      const inside = pieces.filter((q) => pointInRing(p, q.ring));
-      const home = inside.length
-        ? inside.reduce((a, b) => (Math.abs(ringArea(a.ring)) <= Math.abs(ringArea(b.ring)) ? a : b))
-        : pieces.reduce((a, b) => (Math.abs(ringArea(a.ring)) >= Math.abs(ringArea(b.ring)) ? a : b));
-      home.holes.push(h);
-    }
-    for (const q of pieces) out.push({ outer: q.outer, holes: q.holes });
-  }
-  return splitAny ? out : null;
-}
-
-// Cleanup stage: resolve a raw offset result that the fast path rejected.
-//
-// This is a SUBTRACTION, not a self-union. Feeding outers and holes into one even-odd
-// compound and self-uniting it (what this used to do) is only equivalent while every hole
-// still sits cleanly inside its own outer and no two holes touch — precisely the conditions
-// an over-offset breaks. Two eroding holes that grew into each other, or a hole that grew
-// through its outer's boundary, cancel under even-odd instead of merging: the doubly-covered
-// lens comes back SOLID. Extruded, that is a solid island inside a merged pocket (40×20
-// plate, two 6×8 holes 3 mm apart, delta −2: 360 mm² instead of 348) or a tab of material
-// hanging off the plate below its own boundary (10×10 hole 2 mm from the edge, delta −2:
-// 436 mm² instead of 408). Uniting the outers and then subtracting the united hole rings
-// gives the right answer in both cases because subtraction has no doubly-covered state.
-//
-// The holes are united into one region list first rather than subtracted one at a time —
-// same result (subtraction distributes over union), one paper.js boolean instead of N, which
-// matters on the worker hot path for many-counter text.
-function cleanupRegions(regions) {
-  const outers = resolveSelfRegions(regions.map((rg) => ({ outer: rg.outer, holes: [] })));
-  const holes = regions.flatMap((rg) => rg.holes);
-  if (outers.length === 0 || holes.length === 0) return outers;
-  // Hole rings are stored CW; reverse each to the CCW "outer" winding resolveSelfRegions
-  // assumes before uniting them, or its inverted-region guard reads a perfectly good hole as
-  // a collapsed artifact and cancels it (measured: every hole silently vanished).
-  const holeUnion = resolveSelfRegions(holes.map((h) => ({
-    outer: ringArea(tessellateContour(h, VALIDATE_SEGS)) < 0 ? reverseContour(h) : h,
-    holes: [],
-  })));
-  if (holeUnion.length === 0) return outers;
-  return booleanRegions(outers, holeUnion, "subtract");
 }
 
 // Part 2 of the partial-reflection fix (task 5B) — REMOVED (review round 2). A global
@@ -490,24 +481,19 @@ function cleanupRegions(regions) {
 // distinguishes "prune this, it's really gone" from "don't prune this, cleanup will recover
 // it" using only the raw, pre-cleanup ring. The prune's collateral (silently deleting real
 // text counters at sub-millimetre offsets) is strictly worse than the single defect it fixes,
-// so it's gone rather than shipped delicately tuned. The wide-L-pocket case is parked as a
-// test.todo pending a proper oracle (Clipper2 or the OCCT backend) rather than this engine's
-// own per-ring heuristics. See task-5B-report.md's round-2 section for the full sweep.
+// so it's gone rather than shipped delicately tuned. See task-5B-report.md's round-2 section
+// for the full sweep. (The wide-L-pocket case itself is no longer an open gap: task 7's
+// resolveOffsetWinding — see below — resolves it correctly with no per-ring heuristic at all,
+// since a fully-eroded hole ring is simply negative-winding everywhere and drops out on its
+// own; see test/contour-offset.test.js's "wide L-shaped hole (5-unit arms) at +3" test.)
 
-// Region-in / region-out offset: the engine behind Shape2D.offset on BOTH backends.
-// Fast path: raw per-ring offsets that validate cleanly are returned as-is (lines/arcs
-// exact). Cleanup path: anything dirty or invalid is self-united through paper.js, with
-// one recovery attempted first (see splitAtDuplicateEdges) for the specific degenerate
-// shape paper.js's boolean engine can't see as invalid.
-export function offsetRegions(regions, delta, { corners = "round" } = {}) {
-  if (!["round", "chamfer", "sharp"].includes(corners))
-    throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
-  if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
-  if (delta === 0) return JSON.parse(JSON.stringify(regions));
-
+// Raw per-ring offset of a whole region list, plus whether any surviving ring came back
+// approximated. Split out of offsetRegions so the fallback ladder below can re-run it at a
+// perturbed delta without recursing through the public entry point.
+function rawOffset(regions, delta, corners) {
   // _offsetContour signals a whole-ring collapse with contour:null (see its comment) — a
   // dropped outer removes its whole region, a dropped hole is simply omitted. If everything
-  // drops, raw ends up [] and the "no regions survive" throw below fires naturally.
+  // drops, raw ends up [] and offsetRegions' "no regions survive" throw fires naturally.
   let dirty = false;
   const raw = [];
   for (const rg of regions) {
@@ -518,24 +504,245 @@ export function offsetRegions(regions, delta, { corners = "round" } = {}) {
     // Only a SURVIVING hole's dirtiness can dirty the result. A hole that collapsed
     // (contour === null) always reports dirty — that is how _offsetContour signals the drop —
     // but the drop itself is a clean operation: the hole is simply gone and nothing else about
-    // the region moved. Folding that signal into `dirty` sent an otherwise-exact outer through
-    // paper.js for no reason, and paper.js has no arc primitive: a 10×10 square at +2 round
-    // came back line,cubic,line,cubic… with a collapsing 2×2 hole present and line,arc,line,arc
-    // without it. On OCCT that is the difference between B_SPLINE and CIRCLE in the exported
-    // STEP — exact curve fidelity lost to a hole that isn't even in the output.
+    // the region moved. Folding that signal into `dirty` would send an otherwise-exact outer
+    // through resolveOffsetWinding for no reason — unnecessary crossing search over a ring that
+    // was already exact — for a hole that isn't even in the output.
     dirty = dirty || hs.some((h) => h.contour && h.dirty);
     raw.push({ outer: o.contour, holes: hs.filter((h) => h.contour).map((h) => h.contour) });
   }
+  return { raw, dirty };
+}
 
-  let out = (!dirty && validateRawOffset(raw)) ? raw : null;
-  if (!out) {
-    const split = splitPinchedRegions(raw);
-    // `split` can be [] (every piece came back CW, i.e. a spurious artifact rather than real
-    // material) — validateRawOffset([]) is vacuously true, so an explicit length check is
-    // required or a fully-collapsed split silently short-circuits past cleanup and this
-    // throws "collapses the shape" even when cleanup would find real area.
-    const cand = split && split.length > 0 ? split : raw;
-    out = cand !== raw && validateRawOffset(cand) ? cand : cleanupRegions(cand);
+const resolveOrRaw = ({ raw, dirty }) =>
+  (!dirty && validateRawOffset(raw)) ? raw : resolveOffsetWinding(raw);
+
+// Three underscore hooks, none of them part of the public surface, all three existing for
+// ONE reason: `scripts/offset-rates.mjs` is the committed instrument behind every offset rate
+// quoted in docs/ERROR-PATTERNS.md and docs/KERNEL-CONTRACT.md, and it has to measure the
+// SHIPPED ladder rather than a copy of it. Those rates previously came from scratch scripts
+// that were never committed, and several of them turned out to be wrong.
+//   _rawOffset          — the raw per-ring offset, the ladder's input.
+//   _offsetNoFallback   — the offset as it behaved BEFORE the ladder existed (the "before"
+//                         column of the rate table).
+//   _ladderRungs        — the ladder itself, as named lazy thunks.
+export const _rawOffset = rawOffset;
+export const _offsetNoFallback = (regions, delta, corners) =>
+  resolveOrRaw(rawOffset(regions, delta, corners));
+
+// A ring rebuilt as straight chords at `segs` facets per full turn — arcs and cubics
+// replaced by their own tessellation, lines unchanged (tessellateContour emits a line's
+// endpoints and nothing between). Used only by the fallback ladder's last rungs.
+const flattenRing = (contour, segs) => {
+  const pts = tessellateContour(contour, segs);
+  // closeContourGap, not a bare rebuild: resolveOffsetWinding requires every ring to carry a
+  // real closing segment back to `start` (_splitRings throws on an implicitly-closed one), and
+  // whether tessellateContour's last point lands exactly on the first is a property of the
+  // input, not something to assume.
+  return closeContourGap({ start: [pts[0][0], pts[0][1]],
+                           segments: pts.slice(1).map((p) => ({ to: [p[0], p[1]] })) });
+};
+
+// A ring rebuilt as straight chords with every coordinate SNAP-ROUNDED to a grid, duplicate
+// points collapsed. Null when the ring snaps away entirely (fewer than 3 distinct points —
+// pure sub-grid noise). Snap-rounding is the classic robustification for arrangements whose
+// features sit below combinatorial resolution: a raw offset of a nearly-collapsed ring is a
+// hairball of near-parallel strands closer together than CLUSTER_TOL that never exactly
+// intersect (measured on a glyph counter at delta 2: 74 pairs of arrangement edges within
+// 2·CLUSTER_TOL of each other sharing no vertex), so no crossing set at any merge radius
+// describes its true structure and the winding propagation rightly refuses. Quantized to a
+// grid, near-coincident strands become EXACTLY coincident — which the coincidence machinery
+// (contour-winding.js `_coincidence`) already resolves by net multiplicity.
+const SNAP_SEGS = 256;
+function snapRing(contour, grid) {
+  const pts = tessellateContour(contour, SNAP_SEGS)
+    .map(([x, y]) => [Math.round(x / grid) * grid, Math.round(y / grid) * grid]);
+  const out = [];
+  for (const p of pts) if (!out.length || dist(p, out[out.length - 1]) > 1e-12) out.push(p);
+  while (out.length > 1 && dist(out[0], out[out.length - 1]) <= 1e-12) out.pop();
+  if (out.length < 3) return null;
+  return closeContourGap({ start: out[0], segments: out.slice(1).map((p) => ({ to: [p[0], p[1]] })) });
+}
+
+// Snap a whole raw region list. Rings that snap away entirely (sub-grid noise) drop; a
+// region whose OUTER snaps away drops whole.
+function snapRegions(raw, grid) {
+  return raw.map((rg) => {
+    const outer = snapRing(rg.outer, grid);
+    if (!outer) return null;
+    return { outer, holes: rg.holes.map((h) => snapRing(h, grid)).filter(Boolean) };
+  }).filter(Boolean);
+}
+
+// Phantom-hole filter for a DILATION result, by the definition of the operation: the
+// complement of S ⊕ B_delta is exactly { p : d(p, S) > delta }, so every point of a REAL
+// output hole lies strictly farther than delta from the source region. A hole whose
+// boundary carries points markedly CLOSER than delta to the source — or inside it — is a
+// leftover pocket of a collapsed ring's tangle, not a hole of the dilation. The margin is
+// decisive in practice: a real hole's boundary is offset curve, at distance delta from the
+// source to within construction error (~1e-3 cubic tolerance + the snap grid), while a
+// phantom's strands pass the opposite wall of a collapsed feature by the whole collapse
+// depth (measured 0.1–0.7 mm on glyph counters). PHANTOM_TOL sits well above the former
+// and well below the latter; a genuine hole thinner than it is beneath the engine's
+// stated resolution anyway. Erosion (delta < 0) has no analogous phantom-hole identity
+// (its output holes are DILATED source holes), so the filter is dilation-only.
+const PHANTOM_TOL = 1e-2;
+function dropPhantomHoles(out, srcRings, delta) {
+  if (delta <= 0) return out;
+  const segBoxes = [];
+  for (const ring of srcRings) for (let i = 0; i < ring.length; i++)
+    segBoxes.push([ring[i], ring[(i + 1) % ring.length]]);
+  const distToSource = (p) => {
+    let best = Infinity;
+    for (const [a, b] of segBoxes) {
+      const ex = b[0] - a[0], ey = b[1] - a[1];
+      const L2 = ex * ex + ey * ey;
+      let t = L2 > 1e-18 ? ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / L2 : 0;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const dx = p[0] - (a[0] + t * ex), dy = p[1] - (a[1] + t * ey);
+      const d2 = dx * dx + dy * dy;
+      if (d2 < best) best = d2;
+    }
+    return Math.sqrt(best);
+  };
+  const phantom = (hole) =>
+    tessellateContour(hole, VALIDATE_SEGS).some((p) => distToSource(p) < delta - PHANTOM_TOL);
+  return out.map((rg) => ({ outer: rg.outer, holes: rg.holes.filter((h) => !phantom(h)) }));
+}
+
+// The fallback ladder for a raw offset whose arrangement the winding resolver cannot close
+// (contour-winding.js's CHAIN_INCOMPLETE_MESSAGE). Each rung re-runs the SAME offset with one
+// numerical nuisance perturbed, and the first rung that produces a non-empty region set wins.
+//
+// Why a ladder exists at all: the chain failure is a defect in resolving a degenerate
+// arrangement, not a statement about the shape — the material is really there. Left as a
+// throw it reads, in a parametric app that re-offsets on every slider move, as "the part
+// builds at 2.4 mm and dies at 2.5 mm", which is a harder failure than any other defect class
+// in this engine (all of which degrade to bounded inaccuracy).
+//
+// RATES, and where they come from. Run `node scripts/offset-rates.mjs` — it sweeps the
+// committed corpus (test/helpers/offset-corpus.js: 600 seeded shapes + 6 glyphs, 20 deltas,
+// 3 styles = 36 090 offsets, ~25 s) and prints these. Before the ladder / after it:
+//   round 0.291 % -> 0.133 %   chamfer 0.241 % -> 0.166 %   sharp 0.224 % -> 0.175 %
+// Two things to read off that table. The failure is NOT a round-join effect — the three
+// styles fail at within 1.3x of each other, and `sharp` fails on inputs `round` handles (the
+// 12-vertex two-notch plate at -3.25, asserted in test/offset-oracle-manifold.test.js). And
+// this ladder was tuned against a round-only corpus, so it helps `round` most and `sharp`
+// barely at all. An earlier version of this comment claimed 0.84 % -> 0.09 % for round,
+// 0.06 % -> 0 for chamfer and "sharp had none either way"; the first is corpus-specific and
+// the last is simply false.
+//
+// Rung ORDER is by fidelity of what survives, not by hit rate:
+//   1. delta perturbed by ±1e-9 relative. Escapes an exactly-degenerate arrangement (two
+//      offset walls landing on the same coordinate) with the requested corner style and the
+//      exact curve IR both intact. Wins 6 of 34 rescues on the committed corpus.
+//   2. a coarser crossing-merge radius (4x and 20x CLUSTER_TOL). Keeps corner style AND the
+//      exact IR — a trimmed arc is still an arc — at the cost of collapsing crossings up to
+//      that radius apart onto one vertex. Wins 26 of 34. Its cost is real and topological:
+//      a merge radius wide enough to escape the degeneracy is also wide enough to weld a
+//      genuine severing pinch shut, so the result can have ONE REGION FEWER than the truth
+//      (4 of the 34 rescues; in 1 of those a later rung had the count right and lost to
+//      first-non-empty-wins). Note also that 20x CLUSTER_TOL is 0.1 mm, which sits ABOVE the
+//      0.05 mm feature floor CLUSTER_TOL's own derivation says it must stay far below —
+//      known, and the reason this rung is not coarsened further.
+//   3. the raw outline re-run as polylines (64/256/1024 facets per turn). Geometrically
+//      faithful to the chord error of that tessellation, but it DEGRADES THE IR: round joins
+//      come back as chords, so A STEP EXPORT OF THE RESULT LOSES ITS TRUE CIRCLES — measured,
+//      a 10 mm "Scott" at +1 came back 0 arcs / 6 435 line segments where the raw offset
+//      carried 24 arcs. Arc preservation to STEP is this engine's headline property, so these
+//      rungs are last even though they are the most accurate by area.
+// Coverage is not monotonic in any rung's parameter (64 facets resolves cases 256 does not) —
+// these are escapes from degeneracy, not refinements, so every rung earns its place by cases
+// no other rung covers.
+//
+// Two things this deliberately does NOT do. (The numbers in this paragraph are task 7D's
+// design measurements, taken on a 59-case round-only sweep that predates the committed corpus
+// and is NOT reproducible from this repo — they are recorded as the reasoning behind two
+// rejected rungs, not as current rates. Everything above is from scripts/offset-rates.mjs.)
+// It never retries under a different JOIN: swapping
+// to chamfer resolves 58 of the 59, but at a median 5 % from the round truth (worst 4 800 %),
+// and it would hand back geometry with visibly different corners than the caller asked for —
+// silently wrong beats loudly failed only when the wrongness is bounded, and that one is not.
+// And it never perturbs delta by more than 1e-9: the failures are NOT the knife-edge
+// degeneracies they look like (the four-notch comb throws across a whole 0.02 mm band of delta,
+// not at one value), so escaping by delta alone takes ~1e-2 relative, which resolves 100 % at a
+// median 0.15 % and a worst 9 % error — well outside the band above. A bounded middle ground
+// (±1e-4 and ±1e-3 mm absolute rungs) was measured too: it bought ONE extra case out of 62 and
+// more than doubled the worst absolute error, 0.048 → 0.112 mm², so it is not here either.
+//
+// The ladder as named, LAZY rungs — one list, walked by chainFallback below and by
+// scripts/offset-rates.mjs, so a measurement of "what each rung costs" can never drift from
+// the ladder that actually ships. Every rung's whole body (including tessellating the outline
+// for the polyline rungs) runs inside its own thunk, so a rung that throws in its own SETUP
+// moves to the next rung like any other rung failure rather than escaping chainFallback with
+// an unpinned message.
+export function _ladderRungs(regions, raw, delta, corners) {
+  return [
+    ...[-1, 1].map((sign) => ({ name: `delta*(1${sign < 0 ? "-" : "+"}1e-9)`,
+      run: () => resolveOrRaw(rawOffset(regions, delta * (1 + sign * 1e-9), corners)) })),
+    // probe-corrected labels on the pristine arrangement: same exact IR and crossings,
+    // but corroborated midpoint probes override face labels on long pieces — the rescue
+    // for the systematic mis-ordering an exact inter-ring tangency produces (which no
+    // re-welding escapes, since the contact survives every scale). Ahead of the welding
+    // rungs because it keeps the exact geometry.
+    { name: "probe-labels",
+      run: () => resolveOffsetWinding(raw, { probeOverride: true, audit: false }) },
+    ...[4, 20].map((mult) => ({ name: `clusterTol*${mult}`,
+      run: () => resolveOffsetWinding(raw, { clusterTol: CLUSTER_TOL * mult, audit: false }) })),
+    ...[64, 256, 1024].map((segs) => ({ name: `polyline@${segs}`,
+      run: () => resolveOffsetWinding(raw.map((rg) => ({ outer: flattenRing(rg.outer, segs),
+                                                         holes: rg.holes.map((h) => flattenRing(h, segs)) })),
+                                      { audit: false }) })),
+    // Snap-round rungs: the raw outline quantized to a grid before resolving, then swept
+    // for phantom holes. See snapRing (why quantizing rescues arrangements whose strands
+    // sit below combinatorial resolution) and dropPhantomHoles (why a dilation result can
+    // be swept exactly). These are the collapse-regime rungs: a nearly- or fully-collapsed
+    // ring's raw offset is a hairball no crossing set describes at any merge radius, which
+    // is precisely the input class the reported text bug lives in.
+    ...[1e-3, 5e-3].map((grid) => ({ name: `snap@${grid}`,
+      run: () => {
+        const src = regions.flatMap((rg) => [tessellateContour(rg.outer, SNAP_SEGS),
+                                             ...rg.holes.map((h) => tessellateContour(h, SNAP_SEGS))]);
+        return dropPhantomHoles(
+          resolveOffsetWinding(snapRegions(raw, grid), { clusterTol: grid / 4, audit: false }),
+          src, delta);
+      } })),
+  ];
+}
+
+// Returns null when every rung fails, which is the caller's signal to rethrow the original.
+function chainFallback(regions, raw, delta, corners) {
+  for (const rung of _ladderRungs(regions, raw, delta, corners)) {
+    let out;
+    try { out = rung.run(); } catch { continue; }   // any rung may fail its own way; try the next
+    if (out.length > 0) return out;
+  }
+  return null;
+}
+
+// Region-in / region-out offset: the engine behind Shape2D.offset on BOTH backends.
+// Fast path: raw per-ring offsets that validate cleanly are returned as-is (lines/arcs
+// exact). Cleanup path: anything dirty or invalid goes through resolveOffsetWinding
+// (contour-winding.js), which computes the positive-winding region of the raw offset
+// outline directly — no boolean engine, no degenerate-shape recovery heuristics. When THAT
+// cannot close its arrangement, chainFallback above retries it a few ways before the failure
+// is allowed to reach the caller.
+export function offsetRegions(regions, delta, { corners = "round" } = {}) {
+  if (!["round", "chamfer", "sharp"].includes(corners))
+    throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
+  if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
+  if (delta === 0) return JSON.parse(JSON.stringify(regions));
+
+  const first = rawOffset(regions, delta, corners);
+  let out;
+  try {
+    out = resolveOrRaw(first);
+  } catch (err) {
+    // Only the unclosable-arrangement failure has a measured degradation behind it. Anything
+    // else out of the resolver (a clustering regression, an implicitly-closed ring) is a bug
+    // report, not a case to paper over, and goes straight up.
+    if (err?.message !== CHAIN_INCOMPLETE_MESSAGE) throw err;
+    out = chainFallback(regions, first.raw, delta, corners);
+    if (out === null) throw err;            // pinned message, unchanged, when nothing works
   }
   if (out.length === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
   return out;

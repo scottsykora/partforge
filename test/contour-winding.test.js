@@ -5,7 +5,7 @@ import { trimSegment, profileArea } from "../src/framework/geometry/contour-ops.
 import { _mergeCrossings, _splitRings, _windingAt, _coincidence, _classify, _chain, resolveOffsetWinding, CLUSTER_TOL, CHAIN_INCOMPLETE_MESSAGE } from "../src/framework/geometry/contour-winding.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
-import { _offsetContour } from "../src/framework/geometry/contour-offset.js";
+import { _offsetContour, offsetRegions } from "../src/framework/geometry/contour-offset.js";
 
 const tess = (rings) => rings.map((r) => tessellateContour(r, 64));
 
@@ -865,19 +865,35 @@ describe("duplicate crossing records at a multi-ring meeting point", () => {
 // no fallback rung could rescue it because the failure was in classification, not in
 // numerics. Face labels cannot dead-end. Truths are independent-oracle values recorded in
 // the 2026-08-15 handoff and its review ledger (Clipper2 / Minkowski / SDF agree).
-// NOTE: describe.skip until offsetRegions is wired to the face resolver (plan Task 5) —
-// flipped on in that task's commit.
-describe.skip("pinch classes the probe design could not close", () => {
+describe("pinch classes the probe design could not close", () => {
   const inset = (pts, d, corners) => offsetRegions([{ outer: ring(pts), holes: [] }], d, { corners });
 
-  // four-notch comb at the knife-edge delta (-2.4975 round): the probe design dead-ends at
-  // one pinch vertex; truth ~91.745 (Clipper2 91.74496 / Minkowski 91.744 / SDF 91.743)
+  // A three-slot comb (teeth 6/4/4/4 wide at x 0-6/10-14/18-22/26-30, slots 7 deep, web
+  // 3 thick) eroded ACROSS its own sever thresholds: the web severs at exactly |d| = 1.5
+  // and the 4-wide teeth vanish at exactly |d| = 2. The half-thousandth offsets on either
+  // side of each threshold are the knife-edge pinch arrangements that dead-ended the
+  // probe-based classifier. Truths (region count AND area) are from the independent
+  // Minkowski erode oracle (test/helpers/minkowski-oracle.js), measured at fan=512;
+  // areas agree with the engine to the oracle's own tessellation error (~3e-3).
   const comb = [[0, 0], [30, 0], [30, 10], [26, 10], [26, 3], [22, 3], [22, 10], [18, 10],
                 [18, 3], [14, 3], [14, 10], [10, 10], [10, 3], [6, 3], [6, 10], [0, 10]];
-  test("comb -2.4975 round resolves (was: chain throw)", () => {
-    const out = inset(comb, -2.4975, "round");
-    expect(profileArea(out)).toBeCloseTo(91.745, 1);
-  });
+  const COMB_TRUTH = [
+    [-1.4975, 1, 45.16277],   // web survives as a 0.005 mm sliver: still ONE region
+    [-1.5,    4, 44.89739],   // exact sever: the web is gone, four teeth remain
+    [-1.5025, 4, 44.69452],
+    [-1.9975, 4, 12.65567],   // 4-wide teeth one half-thousandth from vanishing
+    [-2.0025, 4, 12.46230],   // teeth columns gone, but a lens survives UNDER each slot
+                              // pair (e.g. around (12, 2.5): nearest complement corners
+                              // (10,3)/(14,3) are 2.06 away) — the oracle counts 4 too
+    [-2.4975, 1, 5.03856],    // only the 6-wide left tooth's core survives
+  ];
+  for (const [d, regions, area] of COMB_TRUTH) {
+    test(`comb ${d} round: ${regions} region(s), oracle area (was: probe dead-end class)`, () => {
+      const out = inset(comb, d, "round");
+      expect(out.length).toBe(regions);
+      expect(profileArea(out)).toBeCloseTo(area, 2);
+    });
+  }
 
   // 12-vertex two-notch plate at -3.25: BOTH sharp and chamfer threw on the probe design
   // and the ladder did not rescue them (ledger Ruling 18). Oracle truths: sharp 40.20778,
