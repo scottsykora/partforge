@@ -4,6 +4,8 @@ import { ringCrossings } from "../src/framework/geometry/paper-bridge.js";
 import { trimSegment, profileArea } from "../src/framework/geometry/contour-ops.js";
 import { _mergeCrossings, _splitRings, _windingAt, _classify, _chain, resolveOffsetWinding, CLUSTER_TOL, PROBE_EPS } from "../src/framework/geometry/contour-winding.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
+import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
+import { _offsetContour } from "../src/framework/geometry/contour-offset.js";
 
 const tess = (rings) => rings.map((r) => tessellateContour(r, 64));
 
@@ -394,15 +396,69 @@ describe("resolveOffsetWinding", () => {
     expect(out.length).toBe(1);
     expect(out[0].holes.length).toBe(1);
     expect(profileArea(out)).toBeCloseTo(96, 6);
+    // orient() is a named deliverable of this task — profileArea takes Math.abs of every
+    // ring, so it can't pin the storage winding invariant on its own; check signs directly.
+    expect(ringArea(tessellateContour(out[0].outer, 64))).toBeGreaterThan(0);      // outer CCW
+    expect(ringArea(tessellateContour(out[0].holes[0], 64))).toBeLessThan(0);      // hole CW
   });
-  test("a self-intersecting bowtie resolves to its positive lobes", () => {
+  test("a self-intersecting bowtie resolves to its positive lobe only (fill rule is POSITIVE winding, not non-zero)", () => {
+    // The bowtie's continuous traversal threads through its self-crossing with one lobe
+    // locally CCW (w=1, real material under the positive-winding rule) and the other
+    // locally CW (w=-1 — a genuine artifact of figure-8 topology, not orientation error,
+    // but still a NEGATIVE-winding region, which this module's fill rule treats as
+    // collapsed, same as any other w<0 area). Only the w=1 lobe survives: area 10*10/2/2.
     const out = resolveOffsetWinding([R(ring([[0, 0], [10, 10], [10, 0], [0, 10]]))]);
-    expect(Math.abs(profileArea(out))).toBeCloseTo(50, 4);
+    expect(out.length).toBe(1);
+    expect(Math.abs(profileArea(out))).toBeCloseTo(25, 4);
   });
   test("a fully inverted ring resolves to nothing", () => {
     expect(resolveOffsetWinding([R(ring([[0, 0], [0, 10], [10, 10], [10, 0]]))])).toEqual([]);
   });
   test("empty in, empty out", () => {
     expect(resolveOffsetWinding([])).toEqual([]);
+  });
+});
+
+// Regression coverage for the positive-winding fix: fed REAL _offsetContour output (not
+// hand-built rings), the pre-fix predicate (drop-on-reverse only for an uncrossed whole
+// ring — see the commit history) reversed negative-winding pieces produced by two holes
+// colliding into each other or a hole breaking out past its outer, exactly the artifact
+// classes the non-zero rule was wrong about. Both fixtures below are cross-checked against
+// offsetRegions' own existing (paper.js-boolean-based) cleanup path in
+// test/contour-offset.test.js, which already gets these right via a different mechanism —
+// these pin resolveOffsetWinding's OWN winding-based path to the same correct answer,
+// directly on _offsetContour's raw output, with no boolean cleanup involved.
+describe("resolveOffsetWinding — positive-winding regressions against real offset output", () => {
+  const plate = (w, h) => ({ start: [0, 0], segments: [{ to: [w, 0] }, { to: [w, h] }, { to: [0, h] }, { to: [0, 0] }] });
+
+  test("two holes that grow into each other merge into one hole, no filled island", () => {
+    // 30x20 plate, two 6x8 holes 3mm apart, delta -2 (holes GROW under a negative delta —
+    // see contour-offset.js's header comment): the grown holes overlap by 1mm and must
+    // merge into a single hole, not leave a filled island where they doubly overlap.
+    const holeA = ring([[5, 6], [5, 14], [11, 14], [11, 6]]);
+    const holeB = ring([[14, 6], [14, 14], [20, 14], [20, 6]]);
+    const raw = [{
+      outer: _offsetContour(plate(30, 20), -2, "round").contour,
+      holes: [holeA, holeB].map((h) => _offsetContour(h, -2, "round").contour),
+    }];
+    const out = resolveOffsetWinding(raw);
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(192.677, 2);
+  });
+
+  test("a hole that grows past its outer's edge becomes a notch, not a phantom slab", () => {
+    // 30x20 plate, a 10x10 hole 2mm from the bottom edge, delta -2: the grown hole breaks
+    // through the eroded bottom edge, so the boundary must gain a notch (0 holes) rather
+    // than leaving a separate slab of material sitting outside the outer boundary.
+    const hole = ring([[15, 2], [15, 12], [25, 12], [25, 2]]);
+    const raw = [{
+      outer: _offsetContour(plate(30, 20), -2, "round").contour,
+      holes: [_offsetContour(hole, -2, "round").contour],
+    }];
+    const out = resolveOffsetWinding(raw);
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(0);
+    expect(profileArea(out)).toBeCloseTo(249.715, 2);
   });
 });

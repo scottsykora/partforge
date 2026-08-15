@@ -1,11 +1,14 @@
-// Non-zero winding resolution for offset outlines — the cleanup path of contour-offset.js.
+// Winding resolution for offset outlines — the cleanup path of contour-offset.js.
 //
-// The correct result of an offset is the NON-ZERO WINDING REGION of the raw offset
-// outline. Self-overlap loops, collapsed holes, unmerged seams and pinched necks are all
-// the same failure: approximating that rule with booleans instead of computing it. This
-// module computes it: find crossings (paper's curve clipper), split each ring there, keep
-// a piece iff its two sides straddle the winding boundary, chain the survivors, and emit
-// the ORIGINAL curves trimmed at the crossing parameters.
+// The correct result of an offset is the POSITIVE WINDING REGION (w >= 1) of the raw
+// offset outline — the same fill rule Clipper2's ClipperOffset uses (FillRule::Positive),
+// the oracle this feature is measured against. Self-overlap loops, collapsed holes,
+// unmerged seams and pinched necks are all the same failure: approximating that rule with
+// booleans instead of computing it. This module computes it: find crossings (paper's curve
+// clipper), split each ring there, keep a piece iff its two sides straddle the w=0/w=1
+// boundary, chain the survivors, and emit the ORIGINAL curves trimmed at the crossing
+// parameters. `_classify` itself stays a general classifier (see its own comment); the
+// positive-only policy is applied by `resolveOffsetWinding`, this module's entry point.
 //
 // Pure leaf in the worker graph: DOM-free, three-free, node:-free.
 import { ringCrossings } from "./paper-bridge.js";
@@ -200,7 +203,17 @@ function projectToRing(p, ring) {
   return best;
 }
 
-// Keep a piece iff its two sides straddle the non-zero winding boundary.
+// Keep a piece iff its two sides straddle a w=0/w=±1 winding boundary — general nonzero
+// classification, NOT a fill-rule decision. This function is domain-agnostic: it reports
+// both the w=0/w=1 boundary (interior on the left, kept as-is) and the w=0/w=-1 boundary
+// (interior on the right, kept REVERSED so the emitted piece is canonically oriented
+// interior-on-left). Which of those two boundary kinds actually denotes real material is a
+// POLICY decision that belongs to the caller, not here — `resolveOffsetWinding` applies the
+// positive-winding-only policy (only wLeft===1 pieces denote offset material; a
+// wLeft===0/reverse piece bounds a NEGATIVE-winding region, which in offset output is
+// collapsed material, not filled) by dropping every `reverse: true` record after calling
+// this function. A generic nonzero-fill caller (there is none today) could instead keep
+// both kinds symmetrically, which is exactly what this function computes.
 //
 // Crossing a directed edge changes the winding number by exactly ±1, so ONE probe
 // suffices: with the interior of a CCW ring on its left, wLeft = wRight + 1 identically.
@@ -347,8 +360,8 @@ export function _chain(classified, pool) {
   });
 }
 
-// Resolve a raw offset region list into the non-zero winding region it denotes.
-// This is contour-offset.js's cleanup path.
+// Resolve a raw offset region list into the POSITIVE winding region it denotes (w >= 1;
+// see the module header). This is contour-offset.js's cleanup path.
 export function resolveOffsetWinding(rawRegions) {
   const rings = [];
   for (const rg of rawRegions) { rings.push(rg.outer); for (const h of rg.holes) rings.push(h); }
@@ -357,22 +370,24 @@ export function resolveOffsetWinding(rawRegions) {
   const merged = _mergeCrossings(ringCrossings(rings));
   const pieces = _splitRings(rings, merged);
   const tessRings = rings.map((r) => tessellateContour(r, WINDING_SEGS));
-  // _classify's reversal is a symmetric nonzero-winding rule: it treats a piece bounding a
-  // wLeft=0/wRight=-1 pair as filled-when-reversed exactly like a wLeft=1/wRight=0 pair,
-  // which is what a bowtie's locally-CW sub-lobe needs (it's a genuine self-intersection
-  // artifact, not an orientation error — see the bowtie test below). But an UNCROSSED whole
-  // ring (piece.vStart === null: _splitRings found no crossings for it at all) that would
-  // need reversing has no crossing-derived counterpart to legitimize that reversal — it is
-  // simply a ring stored backwards, with nothing else in the input to pair it against. In
-  // this engine that shape is either a lone hole with no covering outer, or a raw offset
-  // that collapsed past zero and inverted; both denote NO material, not a phantom positive
-  // region of the same size reflected into existence. Drop those rather than reverse them.
-  const classified = _classify(pieces, tessRings)
-    .map((c) => (c.piece.vStart === null && c.reverse ? { ...c, keep: false } : c));
+  // _classify is a general nonzero classifier (see its own comment): it reports BOTH the
+  // w=0/w=1 boundary (kept as-is) and the w=0/w=-1 boundary (kept reversed) as valid
+  // "straddles zero" pieces. The positive-winding-only fill rule this module implements
+  // (module header) only wants the former — a `reverse: true` piece bounds a region whose
+  // OTHER side has winding -1, i.e. NEGATIVE winding, which in offset output is always
+  // collapsed material (a lone hole with no covering outer, holes that grew into and past
+  // each other, or a raw offset that shrank past zero and inverted), never real material to
+  // reflect back into existence. Dropping every `reverse: true` record is exactly the
+  // `keep = (wLeft === 1)` positive-winding rule (Clipper2's FillRule::Positive) —
+  // equivalent to `wRight = wLeft - 1` collapsing the boundary test to one comparison.
+  const classified = _classify(pieces, tessRings).map((c) => (c.reverse ? { ...c, keep: false } : c));
   const contours = _chain(classified, merged.pool);
 
   // drop numerically empty loops, then nest by containment and restore the storage
-  // winding invariant (outer CCW, holes CW) from each contour's own area sign
+  // winding invariant (outer CCW, holes CW) from each contour's own area sign. Under the
+  // positive-winding rule above, `assembleRegions` never actually needs its own safety net
+  // (a hole with no containing outer, silently dropped there) — every surviving contour here
+  // already bounds real w=1 material — but the net stays in place as ordinary defense in depth.
   const live = contours.filter((c) => Math.abs(ringArea(tessellateContour(c, WINDING_SEGS))) > 1e-9);
   if (live.length === 0) return [];
   const tessOf = new Map(live.map((c) => [c, tessellateContour(c, WINDING_SEGS)]));
@@ -380,8 +395,10 @@ export function resolveOffsetWinding(rawRegions) {
   const byRing = new Map(live.map((c) => [tessOf.get(c), c]));
   return regions.map((rg) => {
     const outer = byRing.get(rg.outer);
-    const orient = (c, wantCCW) =>
-      closeContourGap(ringArea(tessellateContour(c, WINDING_SEGS)) >= 0 === wantCCW ? c : reverseContour(c));
+    const orient = (c, wantCCW) => {
+      const isCCW = ringArea(tessOf.get(c)) >= 0;
+      return closeContourGap(isCCW === wantCCW ? c : reverseContour(c));
+    };
     return { outer: orient(outer, true), holes: rg.holes.map((h) => orient(byRing.get(h), false)) };
   });
 }
