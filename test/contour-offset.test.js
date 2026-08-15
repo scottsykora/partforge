@@ -306,11 +306,12 @@ describe("offsetRegions — whole-ring collapse must span the whole ring, not ju
     const K1 = pt(-halfAngle, rOut), K2 = pt(halfAngle, rOut);
     const bore = { start: Q1, segments: [{ to: K2 }, { to: K1 }, { to: Q2 }, { via: viaBig, to: Q1 }] };
     const out = offsetRegions([region(plate, [bore])], 2.5, { corners: "round" });
-    // The global distance prune (Task 5B) eliminates the spurious ≈0.63-area sliver that
+    // Part 1's per-piece deletion (Task 5B) eliminates the spurious ≈0.63-area sliver that
     // cleanup used to leave alongside the main plate+bore region, so the output is now
-    // exactly the one region. Kept the .find() below (rather than out[0]) since that isn't
-    // what this assertion is pinning — the bug here was the bore vanishing outright (0
-    // holes, area jumping to the full ungrown-by-a-hole plate size).
+    // exactly the one region — a Part-1-only build already returns this; Part 2 (the
+    // distance prune) isn't involved. Kept the .find() below (rather than out[0]) since
+    // that isn't what this assertion is pinning — the bug here was the bore vanishing
+    // outright (0 holes, area jumping to the full ungrown-by-a-hole plate size).
     expect(out.length).toBe(1);
     const bored = out.find((rg) => rg.holes.length > 0);
     expect(bored).toBeDefined();
@@ -318,4 +319,100 @@ describe("offsetRegions — whole-ring collapse must span the whole ring, not ju
     expect(profileArea(out)).toBeGreaterThan(4000);
     expect(profileArea(out)).toBeLessThan(4100);
   });
+});
+
+// Pins the regression class from task 5B's round-1 review: Part 2's distance prune was
+// checking each raw hole against EVERY ring of its region (outer + siblings), not just its
+// own source hole — which made the prune indistinguishable from two features legitimately
+// merging (a case cleanup exists to resolve, not something to prune away). It also derived
+// its tolerance from every tessellated chord, including straight ones with zero
+// approximation error to actually be tolerant of, which on larger parts made the tolerance
+// balloon past |delta| and silently no-op the prune.
+describe("offsetRegions — round-1 review: distance prune must be per-hole and tolerance must be curve-only", () => {
+  // These two pin the CORE Critical-1 defect using locally-constructed fixtures (the review's
+  // own exact coordinates aren't available here): before this fix, offsetRegions([region(plate,
+  // holes)], -2, {corners:"sharp"}) on BOTH fixtures below returns area 576 — the bare plate,
+  // holes.length===0 — because the pre-fix whole-region prune checked each hole against every
+  // ring of its region and, seeing that a legitimately-merging/breaking-through hole comes
+  // within |delta| of a DIFFERENT ring, deleted it outright. Verified directly against the
+  // pre-round-1 commit (aa82380) with these exact fixtures before writing this test.
+  //
+  // The post-fix numbers below (336 / 380) are NOT independently re-derived truth values the
+  // way the wide-L-pocket and 9-gon numbers elsewhere in this file are — they're what this
+  // specific fixture currently resolves to, which is already a large, verified improvement
+  // over the 576/0-holes bug (holes now survive as real, substantially-sized geometry instead
+  // of being erased) but is short of the fully-precise merged/broken-through shape a truth
+  // computation puts at ~352.68 and ~409.72 respectively for geometry in this neighborhood.
+  // The residual gap traces to two SEPARATE, pre-existing limitations neither Critical 1 nor
+  // this task touches: validateRawOffset's hole/outer containment check tests only the hole
+  // ring's first point (not the whole ring), and ringsCross (unlike ringSelfIntersects) never
+  // checks segsOverlap, so two rings that overlap via parallel/collinear edges (as two same-
+  // height rectangles offset by the same amount do) don't register as crossing. Both let a
+  // case that should route to cleanup slip through the fast path instead. Flagged in the task
+  // report as a follow-up, not fixed here.
+  test("two holes 3mm apart survive as real geometry instead of both vanishing", () => {
+    const plate = { start: [0, 0], segments: [{ to: [40, 0] }, { to: [40, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
+    const holeA = { start: [5, 6], segments: [{ to: [5, 14] }, { to: [11, 14] }, { to: [11, 6] }, { to: [5, 6] }] };
+    const holeB = { start: [14, 6], segments: [{ to: [14, 14] }, { to: [20, 14] }, { to: [20, 6] }, { to: [14, 6] }] };
+    const out = offsetRegions([region(plate, [holeA, holeB])], -2, { corners: "sharp" });
+    expect(profileArea(out)).toBeLessThan(500);       // real hole area removed — not the bare 576 plate
+    expect(profileArea(out)).toBeGreaterThan(300);
+  });
+  test("a hole 2mm from the edge survives as real geometry instead of the plate coming back solid", () => {
+    const plate = { start: [0, 0], segments: [{ to: [40, 0] }, { to: [40, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
+    const hole = { start: [15, 2], segments: [{ to: [15, 12] }, { to: [25, 12] }, { to: [25, 2] }, { to: [15, 2] }] };
+    const out = offsetRegions([region(plate, [hole])], -2, { corners: "sharp" });
+    expect(profileArea(out)).toBeLessThan(500);       // real hole area removed — not the bare 576 plate
+    expect(profileArea(out)).toBeGreaterThan(300);
+  });
+  test("wide L-pocket at +3 fully absorbs the hole on a larger (60×40) plate too", () => {
+    // The old whole-region tolerance was ~0.736mm on the 30×20 fixture above but scales with
+    // plate size (max chord over EVERY tessellated point, including the plate's own long
+    // straight edges) — 1.473mm at 60×60, 7.363mm at 300×200 — so a delta=3 prune quietly
+    // stopped pruning anything at all once the plate was big enough. The curve-only,
+    // per-hole-scoped tolerance is ~0 for this all-line hole regardless of plate size.
+    const plate = { start: [0, 0], segments: [{ to: [60, 0] }, { to: [60, 40] }, { to: [0, 40] }, { to: [0, 0] }] };
+    const lHole = { start: [10, 5], segments: [
+      { to: [10, 15] }, { to: [15, 15] }, { to: [15, 10] }, { to: [20, 10] }, { to: [20, 5] }, { to: [10, 5] }] };
+    const out = offsetRegions([region(plate, [lHole])], 3, { corners: "round" });
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(0);
+    expect(profileArea(out)).toBeCloseTo(3028.274, 1);
+  });
+});
+
+// Pins the regression class from task 5B's round-1 review, Important 3: Part 1's per-piece
+// deletion is unrecoverable (unlike a chord/dirty join, a deleted piece can't be un-deleted
+// downstream), so a bad deletion could turn perfectly good geometry into a false "offset
+// collapses the shape" throw. The fix is the guard in _offsetContour: when deletion doesn't
+// resolve to a simple, nonzero-area ring, prefer the un-deleted ring (still dirty) instead.
+describe("offsetRegions — round-1 review: Part 1 deletion must not cause a false collapse throw", () => {
+  test("concave 9-gon at delta -2.79/chamfer no longer throws", () => {
+    const nonagon = { start: [19.49, 10], segments: [
+      { to: [12.33, 11.95] }, { to: [11.2, 16.81] }, { to: [8.87, 11.96] }, { to: [0.93, 13.3] },
+      { to: [3.45, 7.62] }, { to: [8.52, 7.44] }, { to: [10.92, 4.78] }, { to: [15.09, 5.73] }, { to: [19.49, 10] }] };
+    // The false throw (HEAD) is fixed and well-evidenced: this used to throw "offset
+    // collapses the shape (reduce |delta|)" and no longer does.
+    //
+    // Independent verification (a fine-grained grid search for the largest inscribed disk
+    // clearing |delta| everywhere — the same method used and confirmed above for the
+    // narrow-L-pocket case) puts the true eroded area at ~2.76 (max inradius ~3.375,
+    // comfortably above delta=2.79, so the shape genuinely doesn't collapse). This
+    // implementation currently returns a larger, incorrect area (~7.7, split across 2
+    // regions) for this specific input — confirmed via exhaustive search to NOT be a
+    // deletion-selection problem: every one of the 8 possible subsets of the 3 pieces Part 1
+    // flags as reversed for this ring produces a self-intersecting (invalid) candidate, not
+    // just the "delete all 3" and "delete none" ends of that search. The 7.7 figure also
+    // exactly reproduces what the pre-Part-1 baseline (commit d533de3, before task 5B
+    // existed) already computed for this same input — so the inaccuracy predates this task
+    // and isn't something Part 1's deletion or Part 2's (hole-scoped) distance prune ever
+    // touched; it's paper.js's resolveSelfRegions resolving this specific self-intersecting
+    // chamfer-offset curve into the wrong pair of sub-regions. Documented here rather than
+    // silently pinned to the wrong number — see task-5B-report.md's round-1 fix section for
+    // the full trace. Only the throw is asserted; the area is deliberately left unpinned.
+    let out;
+    expect(() => { out = offsetRegions([region(nonagon)], -2.79, { corners: "chamfer" }); }).not.toThrow();
+    expect(profileArea(out)).toBeGreaterThan(0);
+  });
+  test.todo("concave 9-gon at delta -2.79/chamfer should resolve to area ≈2.76, not ≈7.7 (pre-existing resolveSelfRegions gap, not a Part 1/Part 2 defect)");
 });
