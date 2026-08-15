@@ -192,7 +192,65 @@ git commit -m "test: promote narrow offset pinch to correctness"
 
 ---
 
-### Task 4: Re-evaluate the glyph matrix without re-baselining
+### Task 4: Drop source holes only when round erosion is provably empty
+
+**Files:**
+- Modify: `src/framework/geometry/contour-offset.js`
+- Modify: `test/contour-offset.test.js`
+- Modify: `test/offset-oracle-manifold.test.js`
+
+**Step 1: Add failing collapse-threshold tests**
+
+Pin the source-domain behavior before implementation:
+
+- Roboto `o` at +2 round retains one hole;
+- Roboto `o` at +3 round returns zero holes;
+- Roboto `e`, `a`, and `p` lose their counters only when delta exceeds their source
+  inradius;
+- `"Scott"` at +3 round returns one region and zero holes;
+- the existing small-offset curved-hole fixtures remain unchanged.
+
+Derive end-to-end topology from the existing Clipper2 oracle rather than hardcoding engine
+output. Run the focused tests and verify failures on the collapsed counters.
+
+**Step 2: Implement a conservative source-hole disk decision**
+
+Add pure helpers in `contour-offset.js` for point-to-ring signed distance and a max-heap
+branch-and-bound over a tessellated source hole. A cell centered at `(x, y)` with half-width
+`hx` and half-height `hy` has upper bound:
+
+```js
+max = signedDistance([x, y], ring) + Math.hypot(hx, hy)
+```
+
+The decision returns true as soon as an interior sample reaches `radius - tolerance`. It
+returns false only when the heap's greatest remaining upper bound is below that threshold.
+If subdivision reaches the tolerance scale while the bounds still straddle the threshold,
+return true conservatively.
+
+**Step 3: Gate only positive round hole offsets**
+
+In `rawOffset`, before calling `_offsetContour` on a source hole, omit it only when:
+
+```js
+delta > 0 && corners === "round" && !sourceHoleContainsDisk(hole, delta)
+```
+
+Do not apply the Euclidean disk rule to sharp/chamfer or negative deltas. A dropped hole is
+a clean collapse and must not dirty an otherwise exact outer.
+
+**Step 4: Run focused tests and commit**
+
+```bash
+npx vitest run test/contour-offset.test.js -t "source-hole inradius|curved holes must survive"
+npx vitest run test/offset-oracle-manifold.test.js -t "glyphs — the case class"
+git add src/framework/geometry/contour-offset.js test/contour-offset.test.js test/offset-oracle-manifold.test.js
+git commit -m "fix: drop round-eroded holes past their source inradius"
+```
+
+---
+
+### Task 5: Re-evaluate the glyph matrix without re-baselining
 
 **Files:**
 - Modify: `test/offset-oracle-manifold.test.js:530-699`
@@ -242,7 +300,7 @@ git commit -m "test: promote glyph offset topology to correctness"
 
 ---
 
-### Task 5: Verify the geometry core and committed corpus
+### Task 6: Verify the geometry core and committed corpus
 
 **Files:**
 - Modify only if a verified regression requires a focused fix.
@@ -288,7 +346,7 @@ Expected: `contour-winding.js` remains DOM-free, `three`-free, and `node:`-free.
 
 ---
 
-### Task 6: Measure performance and preserve curve fidelity
+### Task 7: Measure performance and preserve curve fidelity
 
 **Files:**
 - Modify: benchmark/test files only if needed to commit a reproducible measurement.
@@ -316,7 +374,7 @@ Skip this commit when no files change.
 
 ---
 
-### Task 7: Update documentation and release version after all gates pass
+### Task 8: Update documentation and release version after all gates pass
 
 **Files:**
 - Modify: `docs/ERROR-PATTERNS.md`

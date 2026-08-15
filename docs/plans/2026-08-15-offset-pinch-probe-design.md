@@ -105,3 +105,49 @@ The branch remains unshippable until the original `"Scott"` report, the glyph co
 parked pinch fixtures, the full test suite, the committed offset corpus, and the
 performance gate all pass. Only then may the documentation be updated and the package
 version bumped to `0.60.0`.
+
+## Amendment: source-hole inradius gate
+
+The adaptive probe fixes the diagnosed pinch dead ends and makes the resolver agree with
+the positive winding fill of its raw input. Glyph measurement after that fix exposed a
+separate upstream defect: at large round dilations, the raw offset of a fully eroded
+counter can itself retain a genuine negative-winding pocket. Clipper2 positive-filling
+the native raw outline reproduces the same residual holes (`o`: 0.291 mm², `e`: 1.992
+mm², `p`: 0.318 mm²), proving that no classifier or chaining change can remove them
+honestly.
+
+The source contour supplies the missing fact. A hole survives positive round material
+dilation by `delta` exactly when the source hole contains a disk of radius `delta`.
+Measured source inradii separate the target cases cleanly: `o` ≈ 2.109 mm, `e` ≈ 1.064
+mm, `p` ≈ 1.865 mm. Thus `o` survives at +2 and vanishes at +3, while `e` and `p` have
+already collapsed by +2.
+
+Before generating a raw offset for a source hole under `delta > 0` and round corners:
+
+1. Tessellate the source hole using the same deterministic contour sampler used elsewhere
+   in the geometry worker.
+2. Run a branch-and-bound largest-inscribed-disk decision over its bounding box. Each cell
+   stores signed distance at its center and an upper bound obtained from the distance
+   function's 1-Lipschitz property.
+3. Return "survives" immediately when a sampled interior point clears the requested radius.
+4. Return "collapsed" only when every remaining cell's upper bound proves that no point can
+   clear `delta` within the geometry tolerance.
+5. Conservatively keep the hole when the decision lies within the tolerance band.
+
+This is not the removed Part-2 distance prune. That prune judged a tangled *raw output
+boundary* and deleted 36 of 76 valid counters because a raw self-overlap can legitimately
+approach another branch of its own source. The new gate asks the source-domain erosion
+question directly and runs before raw offset construction.
+
+Initial scope is `delta > 0` with `corners: "round"`. Sharp and chamfer use different
+structuring elements, so applying a Euclidean disk criterion to them would be an unjustified
+semantic expansion. Negative offsets grow holes and cannot collapse them.
+
+Required regressions:
+
+- `o` keeps its counter at +2 and loses it at +3;
+- `e`, `a`, and `p` lose counters only after their measured inradius threshold;
+- `"Scott"` at +3 returns one region and zero holes;
+- the existing Roboto `P` +0.3, cubic-circle +0.2, and rounded-rectangle +2 counters survive;
+- a near-threshold analytic circle is kept conservatively rather than silently dropped;
+- worker layering and the committed corpus remain green.
