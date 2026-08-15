@@ -222,23 +222,52 @@ describe("offsetRegions — whole-ring collapse vs. partial trims", () => {
     expect(profileArea(out)).toBeGreaterThan(805);
     expect(profileArea(out)).toBeLessThan(815);
   });
-  test("plate with an L-shaped hole: hole vanishes, plate itself does not", () => {
-    // Restored per review: pins what actually holds today rather than deleting the
-    // signal. The plate itself is correct (1 region, area in range) but the hole does
-    // NOT fully vanish — a small residual hole survives cleanup. That's a real, known,
-    // pre-existing gap (confirmed unrelated to this task's fixes — the mechanism is a
-    // partial point-reflection, not the zero-length-piece pattern first suspected) with
-    // its own follow-up task; see the test.todo below.
+  // Task 5B note: the L-pocket test below was originally slated to assert 0 holes /
+  // area≈812.566 at +2 (the plate's own rounded-rectangle growth 600+200+4π, assuming the
+  // hole vanishes completely). That expectation is mathematically wrong for THIS geometry —
+  // verified independently below, not just asserted — so this test pins the corrected
+  // number instead of the one in the original task brief. See task-5B-report.md for the
+  // full derivation; short version:
+  //
+  // The hole is an L with both arms exactly 4 wide (10-14 in x, 6-10 in y) offset by
+  // delta=2 = exactly half that width. A round join at the hole's one reflex vertex (14,10)
+  // pivots a radius-2 arc about that vertex — standard "uncut corner" behavior for any
+  // round-tool erosion of an internal reflex corner (the same reason a round end mill
+  // always leaves material in a sharp internal pocket corner: it physically cannot reach
+  // in past its own radius). Shifting the reflex vertex to the origin, the surviving
+  // residual is exactly {(a,b) ∈ [0,2]×[0,2] : a²+b² ≥ 2²} — a 2×2 square minus the quarter
+  // disk of radius 2 nearest the vertex — with EXACT area 4−π ≈ 0.8584. Rendering that exact
+  // lens shape (start [12,8], line to [12,10], round-join arc via [12.5858,8.5858] to
+  // [14,8], line closing back to [12,8]) through this file's own `area()` helper at 256
+  // segments returns 0.858412…, matching 4−π to 5 significant figures — and is exactly the
+  // shape `offsetRegions` returns below (its raw ring visits a couple of extra collinear,
+  // zero-area waypoints along the way, an artifact of Part 1's chord-bridging that doesn't
+  // change the enclosed area). So "0 holes" was never the correct answer for +2 on this
+  // specific geometry; "1 hole, area 4−π" is. (The *wide*-arm L-pocket below, where the
+  // reflex vertex sits far enough from the two straight sides that even the corner bulge
+  // can't clear delta=3, genuinely does fully vanish — that one's brief-prescribed
+  // expectation checks out and is asserted unchanged.)
+  test("plate with a narrow L-shaped hole at +2: a small uncut-corner residual is correct, not a bug", () => {
     const plate = { start: [0, 0], segments: [{ to: [30, 0] }, { to: [30, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
     const lHole = { start: [10, 6], segments: [
       { to: [10, 14] }, { to: [14, 14] }, { to: [14, 10] }, { to: [20, 10] }, { to: [20, 6] }, { to: [10, 6] }] };
     const out = offsetRegions([region(plate, [lHole])], 2, { corners: "round" });
     expect(out.length).toBe(1);
-    // expect(out[0].holes.length).toBe(0);   // known residual — see test.todo below
-    expect(profileArea(out)).toBeGreaterThan(805);
-    expect(profileArea(out)).toBeLessThan(815);
+    expect(out[0].holes.length).toBe(1);                       // NOT 0 — see comment above
+    expect(profileArea(out)).toBeCloseTo(812.566 - (4 - Math.PI), 1);   // outer growth − exact uncut-corner residual
   });
-  test.todo("plate with L-shaped hole at +2 fully absorbs the hole");
+  test("wide L-shaped hole (5-unit arms) at +3 fully absorbs the hole", () => {
+    // Cleanup (resolveSelfRegions) already runs for this case — validateRawOffset is false
+    // — and still leaves a residual today; this pins that the global distance prune closes
+    // the gap cleanup alone cannot.
+    const plate = { start: [0, 0], segments: [{ to: [30, 0] }, { to: [30, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
+    const lHole = { start: [10, 5], segments: [
+      { to: [10, 15] }, { to: [15, 15] }, { to: [15, 10] }, { to: [20, 10] }, { to: [20, 5] }, { to: [10, 5] }] };
+    const out = offsetRegions([region(plate, [lHole])], 3, { corners: "round" });
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(0);
+    expect(profileArea(out)).toBeCloseTo(928.27, 1);
+  });
   test("chamfered rectangle insets without a false collapse throw", () => {
     const chamfered = { start: [0, 0], segments: [
       { to: [10, 0] }, { to: [10, 4] }, { to: [9, 5] }, { to: [1, 5] }, { to: [0, 4] }, { to: [0, 0] }] };
@@ -277,12 +306,12 @@ describe("offsetRegions — whole-ring collapse must span the whole ring, not ju
     const K1 = pt(-halfAngle, rOut), K2 = pt(halfAngle, rOut);
     const bore = { start: Q1, segments: [{ to: K2 }, { to: K1 }, { to: Q2 }, { via: viaBig, to: Q1 }] };
     const out = offsetRegions([region(plate, [bore])], 2.5, { corners: "round" });
-    // Found by index-searching, not out[0]: cleanup can leave a tiny separate sliver
-    // region alongside the main plate+bore region (the same known pre-existing residual
-    // class as the L-hole test above), and that's not what this test is pinning either —
-    // the bug here was the bore vanishing outright (0 holes, area jumping to the full
-    // ungrown-by-a-hole plate size). As long as exactly one hole ring survives somewhere
-    // in the output and the total area is right, the bore did not vanish.
+    // The global distance prune (Task 5B) eliminates the spurious ≈0.63-area sliver that
+    // cleanup used to leave alongside the main plate+bore region, so the output is now
+    // exactly the one region. Kept the .find() below (rather than out[0]) since that isn't
+    // what this assertion is pinning — the bug here was the bore vanishing outright (0
+    // holes, area jumping to the full ungrown-by-a-hole plate size).
+    expect(out.length).toBe(1);
     const bored = out.find((rg) => rg.holes.length > 0);
     expect(bored).toBeDefined();
     expect(bored.holes.length).toBe(1);
