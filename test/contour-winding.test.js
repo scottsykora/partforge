@@ -2,7 +2,7 @@
 import { describe, expect, test } from "vitest";
 import { ringCrossings } from "../src/framework/geometry/paper-bridge.js";
 import { trimSegment, profileArea } from "../src/framework/geometry/contour-ops.js";
-import { _mergeCrossings, _splitRings, _windingAt, _classify, _chain, resolveOffsetWinding, CLUSTER_TOL, PROBE_EPS } from "../src/framework/geometry/contour-winding.js";
+import { _mergeCrossings, _splitRings, _windingAt, _classify, _chain, _coincidence, resolveOffsetWinding, CLUSTER_TOL, PROBE_EPS } from "../src/framework/geometry/contour-winding.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
 import { _offsetContour } from "../src/framework/geometry/contour-offset.js";
@@ -460,5 +460,195 @@ describe("resolveOffsetWinding — positive-winding regressions against real off
     expect(out.length).toBe(1);
     expect(out[0].holes.length).toBe(0);
     expect(profileArea(out)).toBeCloseTo(249.715, 2);
+  });
+});
+
+// Collinear / coincident overlaps: two rings running along the SAME curve over a shared
+// span. paper DOES report those (Curve.getOverlaps puts an ordinary intersection at each end
+// of the overlapped span, on both curves), so the arrangement is complete — what used to
+// break is the wRight = wLeft - 1 derivation in _classify, which assumes exactly one directed
+// edge at the probed span. Two same-direction copies make the winding jump by 2, so the true
+// far side was misread as "material on both sides" and the doubled boundary was dropped,
+// leaving the rest unchainable. Every fixture below throws "could not chain offset boundary"
+// or comes back with the wrong region count before the fix unless noted otherwise.
+describe("coincident (collinear-overlap) pieces", () => {
+  const R = (outer, holes = []) => ({ outer, holes });
+  const sqAt = (x0, y0, w, h) => ring([[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]]);
+  // two 10x10 squares 20mm apart, each offset independently and resolved together
+  const twoSquares = (d, corners) =>
+    resolveOffsetWinding([sqAt(0, 0, 10, 10), sqAt(20, 0, 10, 10)]
+      .map((s) => R(_offsetContour(s, d, corners).contour)));
+
+  test("delta 8, corners sharp: the doubled top and bottom edges resolve to one 46x26 rectangle", () => {
+    // Both offset squares span y in [-8,18], so their top edges are both the line y=18,
+    // overlapping over x in [12,18] (likewise the bottom). Same direction on both — the
+    // rings are both CCW and both traverse the shared span the same way — so it is a
+    // DOUBLED boundary (winding 0 outside, 2 inside), not a cancelling pair.
+    const out = twoSquares(8, "sharp");
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(1196, 4);   // 46 x 26
+  });
+
+  test("sharp sweep: no throw at any delta, areas match the closed form", () => {
+    // Square A offset by d spans x in [-d, 10+d], B spans x in [20-d, 30+d]; they meet at
+    // d = 5. Below that: two disjoint squares of side 10+2d. At and above it: one rectangle
+    // (30+2d) x (10+2d). d = 5 is the exact-touch case — a full-length coincident edge.
+    for (const d of [1, 3, 5, 8, 10]) {
+      const out = twoSquares(d, "sharp");
+      const merged = d >= 5;
+      const area = merged ? (30 + 2 * d) * (10 + 2 * d) : 2 * (10 + 2 * d) ** 2;
+      expect(out.length).toBe(merged ? 1 : 2);
+      expect(profileArea(out)).toBeCloseTo(area, 4);
+    }
+  });
+
+  test("round sweep: unchanged (round joins break collinearity, which is why this class hid)", () => {
+    // Pinned to the values HEAD produced, to 9 places — this fix must not move them.
+    const want = [[1, 2, 286.284944665], [3, 2, 496.564501988], [5, 1, 757.123616632],
+                  [8, 1, 1129.986257695], [10, 1, 1405.575521723]];
+    for (const [d, regions, area] of want) {
+      const out = twoSquares(d, "round");
+      expect(profileArea(out)).toBeCloseTo(area, 6);
+      // NB delta 5 is the one region COUNT that moved (2 -> 1) and it moved to the right
+      // answer: at exactly-touching the two rounded rects share their whole flank x=15,
+      // y in [0,10] — traversed in opposite directions, so that edge cancels and the union
+      // is a single region whose interior is connected across the seam. The area is
+      // identical to 9 places either way; the pre-fix run emitted the seam twice and
+      // reported two rings hemmed together along it.
+      expect(out.length).toBe(regions);
+    }
+  });
+
+  test("partial overlap: two boxes sharing part of two edges union cleanly", () => {
+    // [0,10]x[0,5] and [6,16]x[0,5]: the y=0 edges overlap over x in [6,10] (partial at both
+    // ends — neither span contains the other), same for y=5. Union = [0,16]x[0,5] = 80.
+    const out = resolveOffsetWinding([R(sqAt(0, 0, 10, 5)), R(sqAt(6, 0, 10, 5))]);
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(0);
+    expect(profileArea(out)).toBeCloseTo(80, 6);
+  });
+
+  test("containment: a short overlapped span wholly inside a longer edge", () => {
+    // [0,20]x[0,5] and [5,15]x[-3,0] meet along y=0 over x in [5,15] — entirely inside the
+    // first's bottom edge. Opposite directions (each keeps its own interior on the left), so
+    // the span cancels. Union area = 100 + 30 = 130.
+    const out = resolveOffsetWinding([R(sqAt(0, 0, 20, 5)), R(sqAt(5, -3, 10, 3))]);
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(130, 6);
+  });
+
+  test("opposite direction cancels: a hole grown onto its outer's own edge becomes a notch", () => {
+    // 20x10 plate with a 10x5 hole whose bottom edge lies exactly on the plate's bottom edge.
+    // The hole ring is CW, so it traverses the shared span against the outer: net 0, the span
+    // is interior to the fill, and the result is a U with area 200 - 50 = 150.
+    const hole = ring([[5, 0], [5, 5], [15, 5], [15, 0]]);
+    const out = resolveOffsetWinding([R(sqAt(0, 0, 20, 10), [hole])]);
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(0);
+    expect(profileArea(out)).toBeCloseTo(150, 6);
+  });
+
+  test("arcs sharing a span of one circle are handled by the same rule, not just lines", () => {
+    // Two r=10 wedges from the origin, 0-90 deg and 45-135 deg: their arcs lie on the same
+    // circle and overlap over 45-90 deg, same direction (both CCW) — the arc twin of the
+    // sharp-corner case. Union is the 0-135 deg wedge, area = pi*r^2*(135/360) = 117.810.
+    const wedge = (a0, a1) => {
+      const P = (a) => [10 * Math.cos(a), 10 * Math.sin(a)];
+      return { start: [0, 0], segments: [{ to: P(a0) }, { via: P((a0 + a1) / 2), to: P(a1) }, { to: [0, 0] }] };
+    };
+    const out = resolveOffsetWinding([R(wedge(0, Math.PI / 2)), R(wedge(Math.PI / 4, Math.PI * 0.75))]);
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo((Math.PI * 100 * 3) / 8, 1);   // tessellated area, 64 segs
+  });
+
+  test("a doubled boundary between a w=1 and a w=-1 face is kept: POSITIVE fill, not nonzero", () => {
+    // A CCW square above the x axis and an INVERTED (CW) square below it, sharing the edge
+    // (0,0)->(10,0) in the SAME direction. Left of that edge w = 1, right w = -1, so it is
+    // interior under a nonzero rule but a real edge of the positive region {w >= 1}. This is
+    // where "classify nonzero, then drop reversed pieces" and "classify with the positive
+    // rule" part company: the former drops this edge and the boundary cannot be chained.
+    const up = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);          // CCW
+    const down = ring([[0, 0], [10, 0], [10, -10], [0, -10]]);      // CW: a collapsed/inverted offset
+    const out = resolveOffsetWinding([R(up), R(down)]);
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(100, 6);                   // only the positive square
+  });
+
+  test("more than two copies: the net count is what the winding jumps by", () => {
+    // Three CCW boxes sharing the whole y=0 edge span x in [0,10]: three coincident
+    // same-direction copies, so w goes 0 -> 3 across it and the far side is wLeft - 3.
+    // Union is the tallest box, area 80. (Pre-fix this could not be chained at all.)
+    const out = resolveOffsetWinding([sqAt(0, 0, 10, 5), sqAt(0, 0, 10, 8), sqAt(0, 0, 10, 3)].map((o) => R(o)));
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(80, 6);
+  });
+
+  test("two identical rings resolve to one copy, not to nothing", () => {
+    // Every edge is doubled, so pre-fix every piece read "material on both sides" and the
+    // whole shape silently vanished (area 0) rather than throwing.
+    const out = resolveOffsetWinding([R(sqAt(0, 0, 10, 10)), R(sqAt(0, 0, 10, 10))]);
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(100, 6);
+  });
+
+  test("_coincidence: same direction doubles, opposite cancels, a lens is neither", () => {
+    const seg = (from, to, vStart, vEnd, extra = {}) => ({ ring: 0, from, segs: [{ to, ...extra }], vStart, vEnd });
+    const same = _coincidence([seg([0, 0], [10, 0], 0, 1), seg([0, 0], [10, 0], 0, 1)]);
+    expect(same.mult).toEqual([2, 0]);
+    expect(same.duplicate).toEqual([false, true]);   // exactly one representative carries the span
+
+    const opp = _coincidence([seg([0, 0], [10, 0], 0, 1), seg([10, 0], [0, 0], 1, 0)]);
+    expect(opp.mult).toEqual([0, 0]);                // cancels: no winding jump, no boundary
+    expect(opp.duplicate).toEqual([false, false]);   // dropped by the straddle test, not as dupes
+
+    // same endpoints, different curve: a line and an arc bulging away from it
+    const lens = _coincidence([seg([0, 0], [10, 0], 0, 1), seg([0, 0], [10, 0], 0, 1, { via: [5, 3] })]);
+    expect(lens.mult).toEqual([1, 1]);
+    expect(lens.duplicate).toEqual([false, false]);
+  });
+
+  test("the probed invariant generalizes to wLeft - wRight === mult", () => {
+    const rings = [sqAt(0, 0, 10, 5), sqAt(6, 0, 10, 5)];
+    const merged = _mergeCrossings(ringCrossings(rings));
+    const pieces = _splitRings(rings, merged);
+    const { mult } = _coincidence(pieces);
+    const cls = _classify(pieces, tess(rings), { debug: true });
+    let doubled = 0;
+    cls.forEach((c, i) => {
+      if (c.wLeft === null) return;
+      expect(c.wLeft - c.wRight).toBe(mult[i]);
+      if (mult[i] === 2) doubled++;
+    });
+    expect(doubled).toBe(2);        // the shared spans of the y=0 and y=5 edges
+  });
+});
+
+// A crossing is reported once per ring PAIR (see ringCrossings), so a point where three or
+// more rings meet arrives two or more times on the SAME ring at the same (seg, t). Before
+// _splitRings collapsed those, the run between two such records read as a full wrap and the
+// entire ring came back as an extra piece: a 2x2 grid of squares offset until their corners
+// met returned 4800 mm² instead of 1600 (delta 5) and could not be chained at all (delta 8).
+describe("duplicate crossing records at a multi-ring meeting point", () => {
+  const sqAt = (x0, y0, w, h) => ring([[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]]);
+  const grid = (d) => resolveOffsetWinding(
+    [sqAt(0, 0, 10, 10), sqAt(20, 0, 10, 10), sqAt(0, 20, 10, 10), sqAt(20, 20, 10, 10)]
+      .map((s) => ({ outer: _offsetContour(s, d, "sharp").contour, holes: [] })));
+
+  test("four squares offset to exactly touching give one 40x40 square, not three of them", () => {
+    const out = grid(5);
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(1600, 4);
+  });
+  test("four squares offset past touching give one 46x46 square", () => {
+    const out = grid(8);
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(2116, 4);
+  });
+  test("a ring that visits one pooled vertex twice still splits there (bowtie, not deduped)", () => {
+    // the two visits are the same POINT but genuinely different (seg, t) — collapsing them
+    // would leave the figure-8 as a single unsplit loop and lose the positive-lobe answer
+    const out = resolveOffsetWinding([{ outer: ring([[0, 0], [10, 10], [10, 0], [0, 10]]), holes: [] }]);
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(25, 4);
   });
 });

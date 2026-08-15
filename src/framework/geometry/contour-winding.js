@@ -5,10 +5,12 @@
 // the oracle this feature is measured against. Self-overlap loops, collapsed holes,
 // unmerged seams and pinched necks are all the same failure: approximating that rule with
 // booleans instead of computing it. This module computes it: find crossings (paper's curve
-// clipper), split each ring there, keep a piece iff its two sides straddle the w=0/w=1
-// boundary, chain the survivors, and emit the ORIGINAL curves trimmed at the crossing
-// parameters. `_classify` itself stays a general classifier (see its own comment); the
-// positive-only policy is applied by `resolveOffsetWinding`, this module's entry point.
+// clipper), split each ring there, keep a piece iff its two sides straddle the fill
+// boundary (one side filled, the other not), chain the survivors, and emit the ORIGINAL
+// curves trimmed at the crossing parameters. `_classify` itself stays a general classifier
+// parameterized by a fill rule (see its own comment); the positive rule is chosen by
+// `resolveOffsetWinding`, this module's entry point. Spans that several rings run along at
+// once — collinear edges, arcs sharing a circle — are handled by `_coincidence` below.
 //
 // Pure leaf in the worker graph: DOM-free, three-free, node:-free.
 import { ringCrossings } from "./paper-bridge.js";
@@ -66,7 +68,17 @@ export function _splitRings(rings, merged) {
 
   rings.forEach((contour, r) => {
     const pts = ringPoints(contour);
-    const xs = byRing[r].slice().sort((a, b) => (a.seg - b.seg) || (a.t - b.t));
+    // Sorted along the ring, then collapsed where two records are the SAME POSITION on it.
+    // ringCrossings reports a crossing once per ring PAIR, so a point three or more rings
+    // pass through (four features offset until their corners meet — see the coincidence
+    // block below for the two-ring sibling of this) comes back twice or more on the same
+    // ring with identical (seg, t). Left in, `emit` reads the run between two such records
+    // as b.t <= a.t, i.e. "wrap all the way around", and emits the WHOLE RING as an extra
+    // piece — no error, just a grossly wrong duplicate boundary in the output. Position, not
+    // pooled vertex, is the right key: a ring that touches ITSELF visits one pooled vertex
+    // twice at genuinely different (seg, t), and both visits are needed to split the loop.
+    const xs = byRing[r].slice().sort((a, b) => (a.seg - b.seg) || (a.t - b.t))
+      .filter((x, i, all) => i === 0 || x.seg !== all[i - 1].seg || Math.abs(x.t - all[i - 1].t) > 1e-12);
     if (xs.length === 0) {
       pieces.push({ ring: r, from: [contour.start[0], contour.start[1]],
                     segs: contour.segments.map((s) => ({ ...s })), vStart: null, vEnd: null });
@@ -112,6 +124,122 @@ export function _splitRings(rings, merged) {
     for (let i = 0; i < xs.length; i++) emit(xs[i], xs[(i + 1) % xs.length]);
   });
   return pieces;
+}
+
+// --- coincident (collinear-overlap) pieces ------------------------------------------
+//
+// Two rings can run along the SAME curve over a shared span — two features offset outward
+// with `corners: "sharp"` until their straight flanks meet is the everyday case, and two
+// arcs can equally share a span of one circle. paper's getIntersections DOES report those:
+// Curve.getOverlaps returns both ends of the overlapped span as ordinary intersections on
+// both curves, so the arrangement is complete and _splitRings already cuts there, leaving
+// two (or more) pieces occupying the same span.
+//
+// What such input breaks is the wRight = wLeft - 1 derivation in _classify. That identity
+// says "crossing a directed edge changes the winding by exactly 1", which is false where k
+// directed edges lie on top of each other: the winding jumps by their NET count. Two
+// same-direction copies (the sharp-corner case) give a doubled boundary — w goes 0 -> 2
+// across it, so the true wRight is wLeft - 2 and the old derivation read wRight = 1, i.e.
+// "material on both sides", dropping a piece the offset boundary needs. Opposite-direction
+// copies CANCEL: net 0, wRight === wLeft, and the span really is interior to the fill
+// (an eroded hole that grew onto its own outer's edge does this).
+//
+// So this reports, per piece, the net multiplicity in that piece's OWN direction, plus a
+// `duplicate` flag for the copies that are not the group's representative. The winding
+// PROBE is left alone: _windingAt ray-casts every ring, which already counts a doubled edge
+// twice and so returns the true winding of the face it lands in. Only the arithmetic
+// derivation of the far side was wrong — measurement stays, bookkeeping is fixed. Keeping
+// exactly one representative (rather than excluding duplicates from the ray-cast set) is
+// what the emitted boundary needs anyway: chaining must traverse the shared span once.
+
+// Interior sample points used to decide whether two pieces are the same curve. Taken at
+// symmetric fractions of arc length, so a piece traversed the other way samples the same
+// points in reverse order and the two cases are told apart by comparing both orders.
+const COINCIDENT_SAMPLES = 5;
+
+function pieceSamples(piece) {
+  const poly = tessellateContour({ start: piece.from, segments: piece.segs }, WINDING_SEGS);
+  const cum = [0];
+  for (let i = 1; i < poly.length; i++)
+    cum.push(cum[i - 1] + Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]));
+  const total = cum[cum.length - 1];
+  const pts = [];
+  for (let k = 1; k <= COINCIDENT_SAMPLES; k++) {
+    const target = (total * k) / (COINCIDENT_SAMPLES + 1);
+    let i = 1;
+    while (i < cum.length - 1 && cum[i] < target) i++;
+    const span = cum[i] - cum[i - 1];
+    const f = span > 1e-15 ? (target - cum[i - 1]) / span : 0;
+    pts.push([poly[i - 1][0] + f * (poly[i][0] - poly[i - 1][0]),
+              poly[i - 1][1] + f * (poly[i][1] - poly[i - 1][1])]);
+  }
+  return { pts, len: total };
+}
+
+const maxDist = (a, b) => a.reduce((m, p, i) => Math.max(m, dist(p, b[i])), 0);
+
+// +1 if b traces the same curve as a in the same direction, -1 if it traces it backwards,
+// 0 if the two are different curves. Length first (cheap rejection), then the sampled points
+// in both orders. When BOTH orders match the samples are palindromic (only possible for a
+// piece that doubles back on itself); fall back to the pieces' shared pool vertices.
+function coincidenceSign(A, B, a, b, tol) {
+  if (Math.abs(A.len - B.len) > tol) return 0;
+  const fOK = maxDist(A.pts, B.pts) <= tol;
+  const rOK = maxDist(A.pts, [...B.pts].reverse()) <= tol;
+  if (fOK && rOK) return (a.vStart === b.vStart && a.vEnd === b.vEnd) ? 1 : -1;
+  return fOK ? 1 : (rOK ? -1 : 0);
+}
+
+// Per piece: `mult` (net count of coincident directed pieces along that piece's span,
+// measured in its own direction — 1 for the ordinary case of a piece nothing else lies on,
+// 0 when the group cancels) and `duplicate` (a copy the group already has a representative
+// for; dropped without probing).
+//
+// Only pieces sharing BOTH pool vertices can be coincident, which is what makes this cheap:
+// the arrangement is split at the overlap's ends on every ring involved, so the copies come
+// out with identical endpoints by construction. Coincidence is then confirmed GEOMETRICALLY
+// (sampled points), not from the vertex pair alone — two different curves between the same
+// pair of crossings (a lens) share endpoints without sharing a span. tol is CLUSTER_TOL, the
+// module's "same point" scale; a lens thinner than that has no area worth keeping.
+export function _coincidence(pieces, tol = CLUSTER_TOL) {
+  const mult = new Array(pieces.length).fill(1);
+  const duplicate = new Array(pieces.length).fill(false);
+  const buckets = new Map();
+  pieces.forEach((p, i) => {
+    if (p.vStart === null || p.vEnd === null) return;        // uncrossed whole ring: nothing to pair with
+    const key = p.vStart <= p.vEnd ? `${p.vStart}:${p.vEnd}` : `${p.vEnd}:${p.vStart}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(i);
+  });
+  const cache = new Map();
+  const S = (i) => { if (!cache.has(i)) cache.set(i, pieceSamples(pieces[i])); return cache.get(i); };
+  for (const idxs of buckets.values()) {
+    if (idxs.length < 2) continue;
+    const taken = new Set();
+    for (const a of idxs) {
+      if (taken.has(a)) continue;
+      taken.add(a);
+      const group = [{ i: a, sign: 1 }];
+      for (const b of idxs) {
+        if (taken.has(b)) continue;
+        const sign = coincidenceSign(S(a), S(b), pieces[a], pieces[b], tol);
+        if (sign !== 0) { group.push({ i: b, sign }); taken.add(b); }
+      }
+      if (group.length < 2) continue;
+      const net = group.reduce((t, g) => t + g.sign, 0);
+      if (net === 0) {
+        // The group cancels: winding is identical on both sides, so no piece here bounds a
+        // face. Left for _classify's straddle test to drop (mult 0 → wRight === wLeft)
+        // rather than flagged as a duplicate — cancellation is a winding fact, not redundancy.
+        for (const g of group) mult[g.i] = 0;
+        continue;
+      }
+      const repSign = Math.sign(net);
+      const rep = group.find((g) => g.sign === repSign).i;
+      for (const g of group) { duplicate[g.i] = g.i !== rep; mult[g.i] = g.i === rep ? Math.abs(net) : 0; }
+    }
+  }
+  return { mult, duplicate };
 }
 
 // Probe offset for the winding query. PROBE_EPS has a CEILING and no floor. The ceiling is
@@ -203,39 +331,47 @@ function projectToRing(p, ring) {
   return best;
 }
 
-// Keep a piece iff its two sides straddle a w=0/w=±1 winding boundary — general nonzero
-// classification, NOT a fill-rule decision. This function is domain-agnostic: it reports
-// both the w=0/w=1 boundary (interior on the left, kept as-is) and the w=0/w=-1 boundary
-// (interior on the right, kept REVERSED so the emitted piece is canonically oriented
-// interior-on-left). Which of those two boundary kinds actually denotes real material is a
-// POLICY decision that belongs to the caller, not here — `resolveOffsetWinding` applies the
-// positive-winding-only policy (only wLeft===1 pieces denote offset material; a
-// wLeft===0/reverse piece bounds a NEGATIVE-winding region, which in offset output is
-// collapsed material, not filled) by dropping every `reverse: true` record after calling
-// this function. A generic nonzero-fill caller (there is none today) could instead keep
-// both kinds symmetrically, which is exactly what this function computes.
+// Keep a piece iff its two sides straddle the boundary of the caller's FILL RULE — the
+// `inside` predicate, which maps a winding number to "is this face filled". The default is
+// nonzero fill (w !== 0), under which this reports both the w=0/w=1 boundary (interior on
+// the left, kept as-is) and the w=0/w=-1 boundary (interior on the right, kept REVERSED so
+// the emitted piece is canonically oriented interior-on-left). `resolveOffsetWinding` passes
+// the POSITIVE rule (w >= 1) instead — see its own comment for why offset output wants that
+// one — and under it `reverse` can never be true, since the right side's winding is always
+// the lower of the two.
 //
 // Crossing a directed edge changes the winding number by exactly ±1, so ONE probe
 // suffices: with the interior of a CCW ring on its left, wLeft = wRight + 1 identically.
 // A second probe is not merely redundant but harmful — two independent probes can
 // disagree (both reading "inside") when either lands badly, and there is no way to tell
 // which is wrong. Deriving the far side arithmetically makes the two consistent by
-// construction. "Exactly one side non-zero" then reduces to wLeft ∈ {0, 1}; wLeft === 0
-// means the interior is on the right, so the piece is emitted reversed.
+// construction. The one exception is a span several rings run along at once, where the jump
+// is the NET number of coincident directed edges rather than 1 — `_coincidence` above
+// measures that, and it is the `mult` subtracted below; every other piece has mult 1 and the
+// classic identity back. (With the default nonzero rule and mult 1 the keep test is exactly
+// the historical wLeft ∈ {0, 1}, and reverse exactly wLeft === 0.)
 //
 // The probe origin is pieceMid's point PROJECTED onto tessRings[piece.ring] (projectToRing)
 // — the same polyline _windingAt below queries — not the true curve pieceMid approximates;
 // see the comments on both for why that distinction is load-bearing.
 //
-// The ±1 invariant above (wLeft = wRight + 1) is a property of an actual probe: it holds
-// for every record that reaches the probe below. The two early-return branches never probe
-// at all — the piece is dropped for having no reliable direction to probe along — so their
-// debug record reports wLeft: null, wRight: null rather than fabricating a pair that would
-// satisfy the arithmetic without a probe behind it. Callers that assert the invariant in
-// debug mode (see test/contour-winding.test.js) must therefore do so only over records with
-// a non-null wLeft, not over every record `_classify` returns.
-export function _classify(pieces, tessRings, { debug = false } = {}) {
-  return pieces.map((piece) => {
+// The ±mult invariant above (wLeft = wRight + mult) is a property of an actual probe: it
+// holds for every record that reaches the probe below. The early-return branches never probe
+// at all — the piece is dropped for having no reliable direction to probe along, or for being
+// a redundant copy of a coincident piece already represented — so their debug record reports
+// wLeft: null, wRight: null rather than fabricating a pair that would satisfy the arithmetic
+// without a probe behind it. Callers that assert the invariant in debug mode (see
+// test/contour-winding.test.js) must therefore do so only over records with a non-null wLeft,
+// not over every record `_classify` returns.
+export function _classify(pieces, tessRings, { debug = false, inside = (w) => w !== 0 } = {}) {
+  const { mult, duplicate } = _coincidence(pieces);
+  return pieces.map((piece, i) => {
+    if (duplicate[i]) {
+      // A coincident copy whose group representative carries the span (see _coincidence):
+      // emitting it too would trace the shared span more than once.
+      const rec = { piece, keep: false, reverse: false };
+      return debug ? { ...rec, wLeft: null, wRight: null } : rec;
+    }
     if (piece.segs.length === 0) {
       // Unreachable from _splitRings (every emitted piece has >=1 seg), but _classify is
       // exported and a hand-built `segs: []` piece would otherwise throw inside pieceMid
@@ -255,9 +391,10 @@ export function _classify(pieces, tessRings, { debug = false } = {}) {
     const eps = Math.min(PROBE_EPS, Math.max(len / 4, 1e-9));
     const left = [onRing[0] - dir[1] * eps, onRing[1] + dir[0] * eps];
     const wLeft = _windingAt(left, tessRings);
-    const wRight = wLeft - 1;
-    const keep = wLeft === 0 || wLeft === 1;
-    const rec = { piece, keep, reverse: keep && wLeft === 0 };
+    const wRight = wLeft - mult[i];
+    const inL = inside(wLeft), inR = inside(wRight);
+    const keep = inL !== inR;
+    const rec = { piece, keep, reverse: keep && !inL };
     return debug ? { ...rec, wLeft, wRight } : rec;
   });
 }
@@ -370,17 +507,22 @@ export function resolveOffsetWinding(rawRegions) {
   const merged = _mergeCrossings(ringCrossings(rings));
   const pieces = _splitRings(rings, merged);
   const tessRings = rings.map((r) => tessellateContour(r, WINDING_SEGS));
-  // _classify is a general nonzero classifier (see its own comment): it reports BOTH the
-  // w=0/w=1 boundary (kept as-is) and the w=0/w=-1 boundary (kept reversed) as valid
-  // "straddles zero" pieces. The positive-winding-only fill rule this module implements
-  // (module header) only wants the former — a `reverse: true` piece bounds a region whose
-  // OTHER side has winding -1, i.e. NEGATIVE winding, which in offset output is always
-  // collapsed material (a lone hole with no covering outer, holes that grew into and past
-  // each other, or a raw offset that shrank past zero and inverted), never real material to
-  // reflect back into existence. Dropping every `reverse: true` record is exactly the
-  // `keep = (wLeft === 1)` positive-winding rule (Clipper2's FillRule::Positive) —
-  // equivalent to `wRight = wLeft - 1` collapsing the boundary test to one comparison.
-  const classified = _classify(pieces, tessRings).map((c) => (c.reverse ? { ...c, keep: false } : c));
+  // _classify is a general classifier parameterized by a fill rule (see its own comment); the
+  // rule this module implements (module header) is POSITIVE winding, w >= 1 — Clipper2's
+  // FillRule::Positive. A face with winding <= 0 is never offset material: winding 0 is
+  // plainly outside, and a NEGATIVE face is always collapsed material (a lone hole with no
+  // covering outer, holes that grew into and past each other, or a raw offset that shrank past
+  // zero and inverted), never real material to reflect back into existence.
+  //
+  // Passing the rule down is not the same as filtering `_classify`'s nonzero answer afterwards
+  // (what this did before collinear overlaps were handled). The two agree wherever exactly one
+  // directed edge lies on the probed span — there `wRight = wLeft - 1`, so "straddles zero"
+  // and "straddles one" both reduce to wLeft === 1, and a nonzero-kept reverse piece is
+  // exactly a w=0/w=-1 boundary to drop. They part company on a span several rings share,
+  // where the winding jumps by more than 1: a doubled boundary between a w=1 and a w=-1 face
+  // is interior under nonzero (both sides filled) but a genuine edge of the positive region,
+  // and filtering afterwards would have dropped it — leaving the boundary unchainable.
+  const classified = _classify(pieces, tessRings, { inside: (w) => w >= 1 });
   const contours = _chain(classified, merged.pool);
 
   // drop numerically empty loops, then nest by containment and restore the storage
