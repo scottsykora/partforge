@@ -1,8 +1,8 @@
 // Winding resolver — pure unit tests, no WASM.
 import { describe, expect, test } from "vitest";
 import { ringCrossings } from "../src/framework/geometry/paper-bridge.js";
-import { trimSegment } from "../src/framework/geometry/contour-ops.js";
-import { _mergeCrossings, _splitRings, _windingAt, _classify, _chain, CLUSTER_TOL, PROBE_EPS } from "../src/framework/geometry/contour-winding.js";
+import { trimSegment, profileArea } from "../src/framework/geometry/contour-ops.js";
+import { _mergeCrossings, _splitRings, _windingAt, _classify, _chain, resolveOffsetWinding, CLUSTER_TOL, PROBE_EPS } from "../src/framework/geometry/contour-winding.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 
 const tess = (rings) => rings.map((r) => tessellateContour(r, 64));
@@ -371,5 +371,38 @@ describe("junction ordering uses the ARC's true tangent, not the through-point c
     const outerRing = out.find((c) => c.segments.length === 3);
     expect(outerRing).toBeDefined();
     close(outerRing.segments[1].to, B.to);   // second edge is B's endpoint, not A's
+  });
+});
+
+describe("resolveOffsetWinding", () => {
+  const R = (outer, holes = []) => ({ outer, holes });
+  test("a clean region passes through unchanged in area", () => {
+    const out = resolveOffsetWinding([R(ring([[0, 0], [10, 0], [10, 10], [0, 10]]))]);
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(100, 6);
+  });
+  test("overlapping regions merge into one", () => {
+    const out = resolveOffsetWinding([
+      R(ring([[0, 0], [10, 0], [10, 10], [0, 10]])),
+      R(ring([[5, 5], [15, 5], [15, 15], [5, 15]]))]);
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(175, 4);
+  });
+  test("a hole survives as a hole and nests in its outer", () => {
+    const hole = ring([[4, 4], [4, 6], [6, 6], [6, 4]]);   // CW
+    const out = resolveOffsetWinding([R(ring([[0, 0], [10, 0], [10, 10], [0, 10]]), [hole])]);
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(96, 6);
+  });
+  test("a self-intersecting bowtie resolves to its positive lobes", () => {
+    const out = resolveOffsetWinding([R(ring([[0, 0], [10, 10], [10, 0], [0, 10]]))]);
+    expect(Math.abs(profileArea(out))).toBeCloseTo(50, 4);
+  });
+  test("a fully inverted ring resolves to nothing", () => {
+    expect(resolveOffsetWinding([R(ring([[0, 0], [0, 10], [10, 10], [10, 0]]))])).toEqual([]);
+  });
+  test("empty in, empty out", () => {
+    expect(resolveOffsetWinding([])).toEqual([]);
   });
 });

@@ -10,7 +10,8 @@
 // Pure leaf in the worker graph: DOM-free, three-free, node:-free.
 import { ringCrossings } from "./paper-bridge.js";
 import { trimSegment, segTangent } from "./contour-ops.js";
-import { tessellateContour } from "./profile.js";
+import { tessellateContour, closeContourGap, reverseContour } from "./profile.js";
+import { assembleRegions, ringArea } from "./shape2d-regions.js";
 
 // Crossings closer than this are one vertex. Derived: it must exceed OFFSET_TOL (1e-3 mm,
 // the cubic-offset approximation error) or two crossings that are genuinely the same point
@@ -343,5 +344,44 @@ export function _chain(classified, pool) {
       return { start, segments: closedSegs };
     }
     return { start, segments: [...segs, { to: [start[0], start[1]] }] };
+  });
+}
+
+// Resolve a raw offset region list into the non-zero winding region it denotes.
+// This is contour-offset.js's cleanup path.
+export function resolveOffsetWinding(rawRegions) {
+  const rings = [];
+  for (const rg of rawRegions) { rings.push(rg.outer); for (const h of rg.holes) rings.push(h); }
+  if (rings.length === 0) return [];
+
+  const merged = _mergeCrossings(ringCrossings(rings));
+  const pieces = _splitRings(rings, merged);
+  const tessRings = rings.map((r) => tessellateContour(r, WINDING_SEGS));
+  // _classify's reversal is a symmetric nonzero-winding rule: it treats a piece bounding a
+  // wLeft=0/wRight=-1 pair as filled-when-reversed exactly like a wLeft=1/wRight=0 pair,
+  // which is what a bowtie's locally-CW sub-lobe needs (it's a genuine self-intersection
+  // artifact, not an orientation error — see the bowtie test below). But an UNCROSSED whole
+  // ring (piece.vStart === null: _splitRings found no crossings for it at all) that would
+  // need reversing has no crossing-derived counterpart to legitimize that reversal — it is
+  // simply a ring stored backwards, with nothing else in the input to pair it against. In
+  // this engine that shape is either a lone hole with no covering outer, or a raw offset
+  // that collapsed past zero and inverted; both denote NO material, not a phantom positive
+  // region of the same size reflected into existence. Drop those rather than reverse them.
+  const classified = _classify(pieces, tessRings)
+    .map((c) => (c.piece.vStart === null && c.reverse ? { ...c, keep: false } : c));
+  const contours = _chain(classified, merged.pool);
+
+  // drop numerically empty loops, then nest by containment and restore the storage
+  // winding invariant (outer CCW, holes CW) from each contour's own area sign
+  const live = contours.filter((c) => Math.abs(ringArea(tessellateContour(c, WINDING_SEGS))) > 1e-9);
+  if (live.length === 0) return [];
+  const tessOf = new Map(live.map((c) => [c, tessellateContour(c, WINDING_SEGS)]));
+  const regions = assembleRegions(live.map((c) => tessOf.get(c)));
+  const byRing = new Map(live.map((c) => [tessOf.get(c), c]));
+  return regions.map((rg) => {
+    const outer = byRing.get(rg.outer);
+    const orient = (c, wantCCW) =>
+      closeContourGap(ringArea(tessellateContour(c, WINDING_SEGS)) >= 0 === wantCCW ? c : reverseContour(c));
+    return { outer: orient(outer, true), holes: rg.holes.map((h) => orient(byRing.get(h), false)) };
   });
 }
