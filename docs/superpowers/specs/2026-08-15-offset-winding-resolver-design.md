@@ -58,7 +58,10 @@ Measured and rejected during investigation:
 
 ### The insight
 
-The correct result of an offset is the **non-zero winding region of the raw offset
+*(Corrected during implementation — see the amendment note at the end of this section.
+The rule below originally read "non-zero winding"; it is **positive** winding.)*
+
+The correct result of an offset is the **positive winding region of the raw offset
 outline**. Every artifact observed — self-overlap loops, collapsed counters, unmerged
 seams, pinched necks — is a place where the pipeline approximates that rule with
 paper.js booleans instead of computing it. Applying the rule directly fixes them from
@@ -99,7 +102,7 @@ resolveOffsetWinding(rawRings) -> regions
 ```
 
 `rawRings` is the flat list of raw offset rings (outers and holes together). Holes keep
-their stored CW winding — that is precisely what makes them subtract under the non-zero
+their stored CW winding — that is precisely what makes them subtract under the winding
 rule, so no special-casing is needed for holes anywhere in the resolver.
 
 ### Pipeline
@@ -138,8 +141,28 @@ number by exactly ±1, so a second probe is unnecessary and actively harmful —
 independent probes can disagree (both reading "inside") when either lands badly. Instead:
 take one probe point offset from the piece midpoint along its normal, compute the
 **integer** winding number of the whole raw ring set there by ray casting, and derive the
-other side arithmetically as ±1 by the piece's direction. Keep the piece iff exactly one
-of the two sides is non-zero. The two sides are then consistent by construction.
+other side arithmetically as ±1 by the piece's direction. The two sides are then
+consistent by construction.
+
+**Keep the piece iff `wLeft === 1`** — the boundary between material (`w ≥ 1`) and
+everything else. Nothing is ever emitted reversed.
+
+*Amendment, made during implementation.* This originally read "keep iff exactly one side
+is non-zero", which under `wRight = wLeft − 1` admits `wLeft ∈ {0, 1}` and emits the
+`wLeft === 0` case reversed. That is the **non-zero** rule, and it is wrong for
+offsetting: it fills every `w = −1` region, which in offset output is by definition
+collapsed material. Measured against real `_offsetContour` output it produced a filled
+island inside a merged hole (2 regions / 202.490 where 1 region 1 hole / 192.677 is
+correct) and a phantom slab outside the outer boundary (2 regions / 276.000 vs 1 region /
+249.715) — regressing two cases 0.59.0 already passes. Clipper2's `ClipperOffset`, the
+oracle this feature is measured against, uses `FillRule::Positive` for the same reason.
+
+Under the positive rule every artifact class falls out of one predicate with no
+special-casing: a lone inverted ring (`w = −1`) vanishes, a collapsed counter inside an
+outer (`w = 2`) vanishes, a merged-hole overlap vanishes, and a hole breaking through its
+outer vanishes. `_classify` still reports `keep`/`reverse` as a general winding
+classifier; the positive-only policy is applied by `resolveOffsetWinding`, so the
+offset-specific semantic sits at the offset-specific entry point.
 
 Ray casting runs against a tessellation of the raw rings. Its precision does not matter
 here and carries none of the risk it would in step 1: winding is an integer, and the
