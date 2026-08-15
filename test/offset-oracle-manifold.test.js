@@ -4,9 +4,17 @@
 // BOTH backends now). This is the safety net for the native contour-offset engine:
 // it exists to FIND divergence from Clipper2, not to be green.
 //
-// Compares round + sharp only — chamfer semantics intentionally diverge at acute
-// corners now (native does a true bevel; Clipper2 approximated with 2 chords, see
-// KERNEL-CONTRACT / manifold-backend history).
+// Compares round + sharp + chamfer. Chamfer maps to Clipper2's Round join with
+// circularSegments=4 (NOT this file's SEGS=64) — the exact mapping the deleted
+// manifold-backend.js used for chamfer, since a true 45-degree bevel is a 4-segment
+// "round" arc collapsed to its chord. That mapping matches native to float precision
+// at interior angles >= 90 degrees (the deleted backend's own comment: "the two agree
+// to float precision for convex corners with interior angle >= 90deg"); at ACUTE
+// (<90deg) corners Clipper2's 2-facet approximation genuinely diverges from native's
+// true bevel (see KERNEL-CONTRACT / manifold-backend history) — but no corpus case
+// below has an acute corner (square/L-shape/circle are all >=90deg), so that
+// divergence is real but currently UNEXERCISED. A future acute-cornered corpus
+// addition must account for this before enabling chamfer on it.
 //
 // Manifold must NOT boot in the same process as OCCT (see offset-oracle-occt.test.js) —
 // this file boots only manifold-3d, and the two are separate vitest files (vitest
@@ -60,13 +68,18 @@ beforeAll(async () => {
   CrossSection = wasm.CrossSection;
 });
 
-const JOIN = { round: "Round", sharp: "Miter" };
+// [joinType, circularSegments] — chamfer rides Clipper2's Round join but with
+// circularSegments=4 instead of this file's SEGS=64, matching the deleted
+// manifold-backend.js's own chamfer mapping exactly (a 4-segment "round" arc IS a
+// 45-degree-chord bevel, not a curve).
+const JOIN = { round: ["Round", SEGS], sharp: ["Miter", SEGS], chamfer: ["Round", 4] };
 for (const { name, regions, deltas, curved } of CORPUS) {
-  for (const delta of deltas) for (const corners of ["round", "sharp"]) {
+  for (const delta of deltas) for (const corners of ["round", "sharp", "chamfer"]) {
     test(`${name} delta=${delta} ${corners} matches Clipper2 within tolerance`, () => {
       const native = rings(offsetRegions(regions, delta, { corners }));
       const cs = CrossSection.ofPolygons(rings(regions), "EvenOdd");
-      const oracle = cs.offset(delta, JOIN[corners], 2, SEGS).toPolygons();
+      const [joinType, circularSegments] = JOIN[corners];
+      const oracle = cs.offset(delta, joinType, 2, circularSegments).toPolygons();
       expect(Math.abs(totalArea(native) - totalArea(oracle)) / Math.abs(totalArea(oracle))).toBeLessThan(AREA_RTOL);
       expect(hausdorff(native, oracle)).toBeLessThan(HAUS_TOL(curved));
     });
@@ -109,11 +122,15 @@ describe("known divergences (parked)", () => {
       - rg.holes.reduce((h, hole) => h + Math.abs(ringArea(tessellateContour(hole, SEGS))), 0), 0);
     // True: holeCount === 0, area === 928.274. Native currently leaves the hole
     // ring in place (residual, unclosed pocket; measured area ~921.19) — assert the
-    // CURRENT behavior in a loose band so this doesn't silently regress further,
-    // without pretending it's correct.
+    // CURRENT (measured) behavior in a tight band around 921.19, NOT anchored on the
+    // true 928.274, so a drift toward the true value (which would mean the defect got
+    // smaller without anyone noticing/fixing it deliberately) breaks this test instead
+    // of silently passing. This case has no topological backstop (unlike cases 2-3
+    // below, which assert overlap/non-containment explicitly) — holeCount > 0 alone
+    // doesn't pin the magnitude, so this band is doing the real characterization work.
     expect(holeCount).toBeGreaterThan(0);
-    expect(area).toBeGreaterThan(900);
-    expect(area).toBeLessThan(928.274 - 0.5);
+    expect(area).toBeGreaterThan(921.19 - 0.5);
+    expect(area).toBeLessThan(921.19 + 0.5);
   });
 
   test("merge: two nearby holes overlap into an invalid double-ring, not one merged hole", () => {

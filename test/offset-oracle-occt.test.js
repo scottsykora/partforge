@@ -123,13 +123,23 @@ const oracleRings = (regions, delta, lineJoinType) => {
     .map((ring) => ring.map(([x, y]) => [x, -y]));   // toSVGPathD is y-down
 };
 
-const JOIN = { round: "round", sharp: "miter" };
+// chamfer -> "bevel": unlike Clipper2 (Manifold oracle), replicad's "bevel" join is
+// EXACTLY the semantic native chamfer implements — a true straight-chord bevel at
+// every corner, not a 2-chord approximation. The deleted production route
+// (occt-backend.js's offsetDrawing, see git history) mapped corners->lineJoinType
+// the same way: `{ round: "round", chamfer: "bevel", sharp: "miter" }`. So unlike
+// the Manifold file, there's no semantic gap to exclude here — chamfer is included.
+const JOIN = { round: "round", sharp: "miter", chamfer: "bevel" };
 for (const { name, regions, deltas, curved } of CORPUS) {
-  for (const delta of deltas) for (const corners of ["round", "sharp"]) {
+  for (const delta of deltas) for (const corners of ["round", "sharp", "chamfer"]) {
     test(`${name} delta=${delta} ${corners} matches BRepOffsetAPI within tolerance`, () => {
       const native = rings(offsetRegions(regions, delta, { corners }));
       const oracle = oracleRings(regions, delta, JOIN[corners]);
-      expect(Math.abs(Math.abs(totalArea(native)) - Math.abs(totalArea(oracle))) / Math.abs(totalArea(oracle))).toBeLessThan(AREA_RTOL);
+      // Only the oracle side needs abs() around totalArea: the y-flip in oracleRings
+      // (toSVGPathD is y-down) inverts its global winding sign, but native's sign is
+      // already correct (outer CCW positive, holes CW negative) — leaving it un-abs'd
+      // means a hypothetical native winding inversion would still be caught here.
+      expect(Math.abs(totalArea(native) - Math.abs(totalArea(oracle))) / Math.abs(totalArea(oracle))).toBeLessThan(AREA_RTOL);
       expect(hausdorff(native, oracle)).toBeLessThan(HAUS_TOL(curved));
     });
   }
