@@ -1,6 +1,6 @@
 # The partforge kernel contract
 
-**Contract version: 1** (introduced in partforge 0.9) — mirrored by `CONTRACT_VERSION`
+**Contract version: 2** (introduced in partforge 0.58) — mirrored by `CONTRACT_VERSION`
 in `src/framework/geometry/kernel.js` and asserted by `test/kernel-contract.test.js`;
 see [Versioning](#versioning) for what may change under which version bump.
 
@@ -116,13 +116,15 @@ is options (one plain object).
 
 Options form is canonical — the form this document, `AUTHORING-PARTS.md`, and every
 in-repo part teach and use. Legacy positional forms remain accepted (silently — no
-runtime warning) until contract v2 removes them; a conforming implementation must
-accept both, and this repo's `finishKernel()`/`addSugar()` provide the normalization
-for free.
+runtime warning) until a future breaking contract version removes them; a conforming
+implementation must accept both, and this repo's `finishKernel()`/`addSugar()`
+provide the normalization for free. (Contract v2, partforge 0.58, did **not** remove
+them — that bump was for `offset` semantics, see [Versioning](#versioning); legacy
+positional removal is still pending a version of its own.)
 
 ### Kernel factory ops (options-canonical; legacy positional accepted)
 
-| Op | Canonical options form | Legacy positional (until v2) |
+| Op | Canonical options form | Legacy positional (pending removal) |
 |---|---|---|
 | `cylinder` | `{r\|d, h, center?}` straight · `{r1, r2, h, center?}` or `{d1, d2, h, center?}` cone | `(rBottom, rTop, h, {center?})` |
 | `sphere` | `{r\|d}` — `sphere(5)` stays valid, undeprecated | `(r)` |
@@ -352,6 +354,8 @@ against that IR, and both backends instantiate it. Booleans run through **paper.
 `fillet`/`chamfer`/`simplify`, and `area`/`boundingBox`/`corners`/`contains` are
 **backend-identical**, not merely parity-tolerant. `area()` and `boundingBox()` are
 curve-exact (they integrate the real curves; they do not measure a tessellation).
+`offset` runs on this same shared engine (`geometry/contour-offset.js`) — see below —
+so it is backend-identical too, like everything else in this list.
 
 **Lazy materialization.** Backend geometry is built only where it is unavoidable.
 Three readbacks tessellate to point rings at the backend's own LOD (Manifold 116
@@ -365,16 +369,28 @@ contours — arcs and cubics become true B-rep edges). A `Shape2D` may be passed
 directly as the `profile` to `extrude`/`revolve`, holes included. `toContours()` is
 the one readback that tessellates nothing.
 
-**Offset is the carve-out.** `offset` is the one op that cannot run on the contour
-IR, so it routes into the backend's own 2-D engine (Clipper2 via `CrossSection` on
-Manifold, replicad's `Drawing.offset` on OCCT) and its result is lifted back into the
-IR. Manifold's returns line contours at mesh LOD; OCCT's stays curve-native. See the
-cross-backend note below.
+**Offset runs on the contour IR too.** `Shape2D.offset(delta, { corners })` runs
+backend-independently on the contour IR — no backend `CrossSection` or `Drawing` is
+ever involved. Lines and arcs offset exactly (arcs stay arcs); cubics are
+approximated to ≤ 1e-3 mm deviation. `corners: "round"` inserts exact arc joins,
+`"chamfer"` a true 45°-bisecting bevel chord at every corner angle, `"sharp"` miters
+with limit 2 (falling back to the bevel chord past the limit). Self-intersecting raw
+results are resolved through the shared planar boolean engine (paper.js), which may
+return arcs as cubic approximations — identical to boolean-op output. `segs` is
+accepted and ignored (there is no backend LOD to tune). Both backends produce
+identical offset geometry by construction, like every other Shape2D op.
+
+A region with holes offsets **material-wise**: the outer boundary moves by `delta`,
+each hole by `-delta`, so a positive `delta` always adds material (the outer grows,
+holes shrink) and a negative one always removes it (the outer shrinks, holes grow) —
+never the reverse for either. This one shared implementation is what guarantees it;
+a route that offsets a single fused `outer.cut(hole)` drawing with one call gets it
+backwards for the holes (see the migration note below).
 
 | Op | Contract |
 |---|---|
 | `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). Curve-exact and backend-identical (paper.js). |
-| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. The one backend-specific op: curve-preserving on OCCT, faceted at mesh LOD on Manifold. Throws if the offset collapses the shape. |
+| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Runs backend-independently on the contour IR — lines/arcs offset exactly, cubics approximate to ≤ 1e-3 mm; `chamfer` is a true 45°-bisecting bevel at every corner angle, `sharp` miters with limit 2. Backend-identical by construction, like every other Shape2D op. Holes offset material-wise (`-delta` where the outer gets `delta`). `segs` is accepted and ignored. Throws if the offset collapses the shape. |
 | `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². Curve-exact. |
 | `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds, curve-exact (no `center`/`size`, unlike `Solid.boundingBox`). |
 | `toRegions()` | Materialize into `{outer, holes}[]` point-ring region arrays (`assembleRegions`), tessellating curves at the backend's LOD; a boolean result may be several disjoint regions. |
@@ -390,15 +406,59 @@ cross-backend note below.
 | `revolve({degrees?})` | Sugar for `k.revolve({profile: this, …})` → `Solid`. |
 | `clone()` | Independent copy. Every op returns a NEW `Shape2D`; no operand is ever mutated. |
 
-On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **for convex corners with interior angle ≥ 90°** (the common case: rectangles, hexagons, rounded-rects, pentagons, …). `chamfer` is a true 45° bevel — a straight chord across the corner — matching OCCT to float precision there (a 10×10 square offset +1 gives 142.0 on both; a pentagon 298.920 on both). Manifold has no native bevel join, so it renders `chamfer` as a Round join forced to a single chord per corner (`circularSegments=4`). **At acute (<90° interior) convex corners** — triangles, star points, V-notches — Clipper2 emits 2 chords rather than 1, so Manifold's chamfer bulges ~0.4% beyond OCCT's single-chord bevel (e.g. an equilateral triangle: Manifold 235.46 vs OCCT 234.50). `round` and `sharp` are exact across backends at every angle; prefer them, or accept the small acute-corner difference on `chamfer`.
+On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **at every corner angle, convex or reflex** — a 10×10 square offset +1 gives 142.0 on both, a pentagon 298.920 on both, and an equilateral triangle's chamfer agrees to float precision on both, with no acute-corner carve-out. This follows from `offset` being one native implementation rather than a call into either backend's own 2-D engine — there is no Clipper2-vs-OCCT split left to diverge.
 
-`offset` is therefore **parity-relevant**: on OCCT the result carries exact arcs, on Manifold it is faceted at mesh LOD, and measure-parity holds within the tessellation tolerance as LOD converges (not a parity waiver). The three tessellating readbacks — `toRegions()`, `simple()`, `regions()` — are LOD-dependent for the same reason: they hand back point rings sampled at the backend's own segment count, so the two backends' output differs in vertex count and by the chord error, converging as LOD rises. Those four ops are the whole LOD-dependent surface; everything else is backend-identical.
+The three tessellating readbacks — `toRegions()`, `simple()`, `regions()` — remain LOD-dependent: they hand back point rings sampled at the backend's own segment count, so the two backends' output differs in vertex count and by chord error, converging as LOD rises. Those three ops are the whole LOD-dependent surface; everything else, including `offset`, is backend-identical.
+
+**Known limitations.** The native offset engine has verified defects on specific
+input shapes; see [Offset: known limitations](#offset-known-limitations) below.
 
 **Fillet after a boolean reaches STEP as real arcs.** Because booleans preserve curves
 and `fillet` inserts true arc segments, `shape2d(a).union(b).fillet(2).extrude({h})`
 exports a filleted profile as `CIRCLE` B-rep entities on OCCT — the corner op does not
 have to run before the boolean, and no facet fan is baked in along the way. (Manifold
 facets at mesh LOD, as always, since its meshes have no curve representation.)
+
+### Offset: known limitations
+
+The native offset engine (`geometry/contour-offset.js`) is correct on the honest-agreement
+corpus (`test/contour-offset.test.js`, `test/offset-oracle-manifold.test.js`,
+`test/offset-oracle-occt.test.js`), but four cases are verified defects, pinned as
+characterization tests in the "known divergences (parked)" block of
+`test/offset-oracle-manifold.test.js` rather than silently tolerated:
+
+- **A pocket that should fully close doesn't.** An outward offset large enough that a
+  hole's max inscribed circle is smaller than `delta` should erase the hole entirely; the
+  engine instead leaves a residual ring. Verified: a 30×20 plate with a 5-wide-arm L-shaped
+  pocket, offset +3, should reach 0 holes / area 928.274 — actual leaves a residual hole at
+  ~921.19. Root cause: a raw offset ring can be locally valid (correctly wound, no
+  self-intersections) while still lying inside the region it should have been swept away
+  by — only a *global* containment check catches this, and none currently runs.
+- **Two eroding holes can overlap instead of merging.** An inward offset that should merge
+  two nearby holes into one can instead leave two separate hole rings that overlap each
+  other — topologically invalid. Verified: a 40×20 plate with two 6×8 holes 3 mm apart,
+  delta −2 sharp; true merged area 348, native returns overlapping rings instead. Root
+  cause: the raw-offset validator's ring-crossing check (`ringsCross`) only catches
+  transversal crossings, not collinear-overlap crossings between two different rings.
+- **A hole near an edge can escape its eroded outer.** An inward offset that should clip a
+  hole against the shrunk outer boundary can leave the hole ring un-clipped, poking through
+  where the outer used to be. Verified: a 40×20 plate with a 10×10 hole 2 mm from the
+  bottom edge, delta −2 sharp; true area 408, native leaves the hole unclipped. Root cause:
+  the validator's hole-containment check tests only one point of the hole ring against the
+  outer, which stays satisfied even when most of the ring has escaped.
+- **Clustered reflex corners degrade accuracy.** A chamfer offset over several reflex
+  corners sitting close together can resolve to several times too much surviving area.
+  Verified: a 9-gon with clustered reflex corners, chamfer offset delta −2.79; true area
+  2.76 (a thin sliver), native resolves ~7.71. Root cause: `resolveSelfRegions`
+  (`paper-bridge.js`) doesn't fully untangle the self-intersections this corner geometry
+  produces.
+
+None of these are silent in the sense of going unnoticed by tests — each has a pinned
+characterization test that fails loudly if the defect gets worse, and is meant to be
+deleted and promoted to the main corpus the day it's fixed. They matter to a part author
+today: don't rely on `offset` to fully close a pocket, merge nearby holes, clip a
+near-edge hole, or hold tight tolerance through a reflex-corner cluster — verify the
+result (`holes`/`area`) rather than assuming it.
 
 ## The 2-D helper library
 
@@ -547,6 +607,21 @@ in `kernel.js` define the current surface; only breaking changes bump the versio
   the OpenSCAD/Manifold/CadQuery consensus (`union`, `translate`, `rotate`, `mirror`;
   `cut` per CadQuery/replicad rather than OpenSCAD's `difference`), so LLM priors
   transfer. Renames are breaking changes with no offsetting benefit — don't.
+
+**v1 → v2** (partforge 0.58): `Shape2D.offset` moved off the two per-backend 2-D
+engines (Clipper2 via `CrossSection` on Manifold, replicad's `Drawing.offset` on
+OCCT) onto the single native contour-offset engine described above. Semantics
+changed, not just implementation: `offset` is now backend-identical by construction
+at every corner angle (the old acute-corner `chamfer` divergence and the LOD-faceted
+Manifold result are both gone), and `segs` is now accepted-but-ignored rather than
+tuning Manifold's tessellation. Holes offset material-wise (`-delta` where the outer
+gets `delta`) on both backends — the deleted OCCT production route got this backwards
+by fusing `outer.cut(hole)` into one `Drawing` and offsetting it with a single call,
+so holes grew under a positive `delta` instead of shrinking; no test caught it because
+there was no holed-offset test before this contract version. Parts that called
+`offset` only for its old geometric result on simple (holeless) shapes are unaffected
+beyond the corner-angle precision improving; parts that relied on the old holed-offset
+direction (if any existed) need the sign of their workaround removed.
 
 ## Why not an existing CAD language
 

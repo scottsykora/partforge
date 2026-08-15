@@ -51,6 +51,8 @@ const BASELINE_IDS = [
   "fillet-chamfer-corners-overlap",
   "profile-query-needs-single-contour",
   "validate-profile-regions-overlap-or-nest",
+  "shape2d-offset-partial-reflection-residual",
+  "shape2d-offset-kissing-ring-passes-validation",
 ];
 
 const entries = parsePatterns(doc);

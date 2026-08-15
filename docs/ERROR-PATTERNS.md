@@ -306,6 +306,42 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
   inset. Realistic clearances (fractions of a mm) and wall insets up to the
   narrowest feature never trip this.
 
+## shape2d-offset-partial-reflection-residual
+
+- **Symptom:** An outward `Shape2D.offset` on a region with a hole leaves a leftover
+  hole ring behind (`.holes.length` stays > 0, `.area()` under-reports) even though
+  the hole's narrowest span is smaller than `delta` and the pocket should have
+  closed completely.
+- **Cause:** A raw offset ring can be locally valid — correctly wound (CW for a
+  hole), no self-intersections — while still lying inside the region it should have
+  been swept away by. That's a *global* defect only a whole-shape containment check
+  can see, and `offset`'s validator (`contour-offset.js`'s `validateRawOffset`)
+  only checks local validity. Known limitation — see
+  [KERNEL-CONTRACT.md "Offset: known limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
+- **Fix:** No general fix yet. Verify `.holes.length` after an offset meant to
+  close a pocket rather than assuming it did; work around by offsetting in stages
+  or padding the pocket before offsetting.
+
+## shape2d-offset-kissing-ring-passes-validation
+
+- **Symptom:** Two rings produced by the same `Shape2D.offset` call (two eroding
+  holes, or a hole and the outer) end up exactly touching or collinearly
+  overlapping along an edge, but the offset does not throw and does not merge
+  them — the result comes back with the rings still separate and overlapping.
+- **Cause:** The offset validator's strict-crossing test (`segsCross` in
+  `contour-offset.js`) is deliberately transversal-only — it ignores collinear
+  touches (a duplicate/overlapping edge, no true crossing point) — because that
+  shape also occurs legitimately, as the zero-width slit left by a neck pinched
+  shut by the offset. The validator can't tell "duplicate edge that's actually
+  fine" from "duplicate edge that means two rings should have merged"; only the
+  specific pinched-neck case is recovered (`splitAtDuplicateEdges`), not the
+  general kissing-ring case between two different rings. Known limitation — see
+  [KERNEL-CONTRACT.md "Offset: known limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
+- **Fix:** No general fix yet. After an inward offset expected to merge nearby
+  features, check the result's ring count and containment explicitly rather than
+  trusting `offset` merged them; work around by unioning the source features (or
+  their pre-offset pockets) before offsetting.
+
 ## fillet-chamfer-radius-does-not-fit
 
 - **Symptom:** `filletProfile: corner <i> at (<x>, <y>): r=<r> does not fit; max ≈ <m>` (or `chamferProfile: … dist=<d> does not fit; max ≈ <m>`) thrown from `Shape2D.fillet`/`.chamfer` or the free `filletProfile`/`chamferProfile` functions.
