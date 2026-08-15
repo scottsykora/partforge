@@ -115,7 +115,14 @@ function joinSegs(corner, aEnd, bStart, inTan, outTan, delta, corners) {
   // round: exact arc about the corner, via on the displacement bisector
   const d1 = sub(aEnd, corner), d2 = sub(bStart, corner);
   let m = add(d1, d2);
-  if (len(m) < 1e-9) m = delta > 0 ? rightOf(norm(d1)) : scl(rightOf(norm(d1)), -1); // 180° turn
+  // 180° turn: the two displacement normals cancel exactly, but their sum's LIMIT as the
+  // turn approaches 180° is the incoming tangent direction (for either delta sign) — the
+  // cap bulges forward past the tip. The old rightOf(d1) fallback put `via` on the
+  // diametrically wrong side, sweeping the cap arc back through the interior where the
+  // winding rule cancelled it and the whole tip cap silently vanished (review finding,
+  // execution-confirmed: a zero-width spike dilated +1 round lost its end caps — area
+  // 20.000 where the stadium truth is 20+π, maxX 10 where the cap reaches 11).
+  if (len(m) < 1e-9) m = inTan;
   return [{ via: add(corner, scl(norm(m), Math.abs(delta))), to: bStart }];
 }
 
@@ -128,6 +135,13 @@ export function _offsetContour(contour, delta, corners) {
   const froms = [];
   { let p = contour.start; for (const s of contour.segments) { froms.push(p); p = s.to; } }
   const fromsKept = froms.filter((_, i) => keep[i]);
+  // A ring whose every segment dropped as zero-length has no direction to offset along —
+  // treat it as collapsed (contour:null) rather than letting assembleRing dereference an
+  // empty piece list (review finding, execution-confirmed: a sub-1e-9-extent sliver ring
+  // from an upstream boolean reaches here through the public surface — checkPointRing
+  // demands three points, not nonzero extent — and crashed the whole offset with a raw
+  // TypeError instead of the pinned collapse message).
+  if (segs.length === 0) return { contour: null, dirty: true };
   // NB: feed jointTangents the KEPT chain's start — if the first segment was dropped
   // as zero-length, contour.start no longer heads the filtered ring.
   const joints = jointTangents({ start: fromsKept[0] ?? contour.start, segments: segs });
@@ -167,7 +181,12 @@ export function _offsetContour(contour, delta, corners) {
     const turn = cross(inTan, outTan);
     const turnDeg = (Math.atan2(Math.abs(turn), Math.max(-1, Math.min(1, inTan[0] * outTan[0] + inTan[1] * outTan[1]))) * 180) / Math.PI;
     if (dist(aEnd, bStart) <= JOIN_EPS || turnDeg < SMOOTH_JOINT_DEG) continue;   // smooth
-    if (turn * delta > 0) { joins[i] = joinSegs(point, aEnd, bStart, inTan, outTan, delta, corners); continue; }
+    // Gap side gets a join. An EXACT 180° reversal (turn === 0 with a large turnDeg — the
+    // tip of a zero-width spike) is ambiguous under the sign test alone and used to fall
+    // through to the overlap branch, flat-capping a requested round end; treat it as gap
+    // side so the cap is honored (an inward spike's join makes an inverted loop the
+    // winding rule cancels, so the choice is safe for either delta sign).
+    if (turn * delta > 0 || turn === 0) { joins[i] = joinSegs(point, aEnd, bStart, inTan, outTan, delta, corners); continue; }
     // Overlap side: the two offset pieces run into each other instead of leaving a gap.
     // When both neighbors are plain lines and the two offset LINES cross WITHIN both
     // segments' own extents, that crossing is the true corner of the offset outline: trim
@@ -756,7 +775,17 @@ export function _ladderRungs(regions, raw, delta, corners) {
 function chainFallback(regions, raw, delta, corners) {
   for (const rung of _ladderRungs(regions, raw, delta, corners)) {
     let out;
-    try { out = rung.run(); } catch { continue; }   // any rung may fail its own way; try the next
+    try {
+      out = rung.run();
+    } catch (err) {
+      // A rung may fail with the SAME unresolvable-arrangement signal the ladder exists
+      // for — move to the next rung. Anything else (the _splitRings clustering tripwire,
+      // a TypeError) is a bug report, exactly as offsetRegions' own policy says below;
+      // swallowing it here would defeat those tripwires' stated fail-at-the-source purpose
+      // (review finding).
+      if (err?.message === CHAIN_INCOMPLETE_MESSAGE) continue;
+      throw err;
+    }
     if (out.length > 0) return out;
   }
   return null;
