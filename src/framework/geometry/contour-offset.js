@@ -180,9 +180,9 @@ export function _offsetContour(contour, delta, corners) {
   // can't see anything locally wrong with them. Delete them (not un-trim — un-trimming was
   // rejected in an earlier round for other over-inclusive regressions) and re-link the
   // surviving neighbors with a direct chord, marking the ring dirty so resolveSelfRegions
-  // (and, ahead of it, the offsetRegions distance prune) gets a chance to untangle whatever
-  // that chord leaves behind. Every non-line piece always survives this pass; the whole-ring
-  // gate above already guarantees at least one piece survives here too.
+  // gets a chance to untangle whatever that chord leaves behind. Every non-line piece
+  // always survives this pass; the whole-ring gate above already guarantees at least one
+  // piece survives here too.
   const allIdx = pieces.map((_, i) => i);
   const dropped = pieceDot.map((d) => d !== null && d <= 0);
   if (!dropped.some(Boolean)) return { contour: assembleRing(pieces, joins, allIdx, n), dirty };
@@ -356,8 +356,8 @@ function splitAtDuplicateEdges(contour) {
 // the wide-arm-L-pocket case it exists to fix is a genuine defect (max inscribed circle in a
 // 5-wide-arm L has radius 2.5 < delta 3, so the hole DOES fully vanish; a truth value is
 // derivable and the pre-fix engine got it wrong) — but even with exact-geometry distances, an
-// 84-combination sweep of real glyph counters (uppercase/lowercase/digit counters on 10mm text
-// at delta 0.1–0.5mm) still lost 36 of them entirely, all silent total-hole-loss, none
+// sweep of real glyph counters (uppercase/lowercase/digit counters on 10mm text at delta
+// 0.1–0.5mm) still lost 36 of 76 entirely, all silent total-hole-loss, none
 // recoverable by further tolerance tuning: the wide-L-pocket's own raw hole ring is ALREADY
 // `dirty` from Part 1 before any distance check runs, and so are the failing glyph counters —
 // there is no scoping condition (dirty vs not, tolerance size, source curve type) that

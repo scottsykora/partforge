@@ -111,11 +111,19 @@ test("corner styles differ at convex right angles (sharp > round > chamfer)", ()
   expect(cham).toBeCloseTo(142, 4);       // exact 45° bevel — matches OCCT
 });
 
-test("acute (<90°) corners: chamfer stays a valid bevel (2-facet approximation)", () => {
-  // At a 60° interior corner Clipper2 emits 2 chords (ceil(120°turn/90°)), so Manifold's
-  // chamfer bulges ~0.4% beyond OCCT's single-chord bevel (Manifold ≈235.46 vs OCCT ≈234.50).
-  // It's still a bevel — smaller than round, larger than nothing — just not float-exact to OCCT.
-  const tri = [[-10, -5.7735], [10, -5.7735], [0, 11.547]];   // ~equilateral, side 20
+test("acute (<90°) corners: chamfer is a true single-chord bevel", () => {
+  // The native engine's chamfer is a true bevel (a single straight chord across the
+  // corner) at every corner angle, not just interior ≥ 90° — no separate "acute" case
+  // to approximate. So this isoceles triangle (apex 40°, base corners 70°) is chosen
+  // only to keep every corner comfortably clear of the sharp-corner miter limit (2×delta,
+  // i.e. interior angle 60° exactly) in BOTH directions: the 40° apex reliably falls back
+  // to a bevel and the 70° base corners reliably hold a true miter, so sharp > round is a
+  // stable inequality rather than a coin flip. (An exactly-equilateral 60° triangle sits
+  // exactly ON that boundary — the miter-limit distance check is `<= 2·delta` there for
+  // every corner at once — so which corners fall back is decided by sub-ULP floating-point
+  // noise from the triangle's literal coordinates, not by geometry; that's what the old
+  // triangle here did, and it's why this one replaces it.)
+  const tri = [[-10, 0], [10, 0], [0, 27.4748]];   // isoceles, apex 40°, base angles 70°
   const cham = k.shape2d(tri).offset(1, { corners: "chamfer" }).area();
   const round = k.shape2d(tri).offset(1, { corners: "round" }).area();
   const sharp = k.shape2d(tri).offset(1, { corners: "sharp" }).area();
