@@ -5,7 +5,7 @@ import { trimSegment, profileArea } from "../src/framework/geometry/contour-ops.
 import { _mergeCrossings, _splitRings, _windingAt, _classify, _chain, _coincidence, resolveOffsetWinding, CLUSTER_TOL, PROBE_EPS } from "../src/framework/geometry/contour-winding.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
-import { _offsetContour } from "../src/framework/geometry/contour-offset.js";
+import { _offsetContour, _rawOffset } from "../src/framework/geometry/contour-offset.js";
 
 const tess = (rings) => rings.map((r) => tessellateContour(r, 64));
 
@@ -277,6 +277,34 @@ describe("piece classification", () => {
   });
   test("PROBE_EPS is derived from CLUSTER_TOL as a ceiling, with no floor relationship", () => {
     expect(PROBE_EPS).toBe(CLUSTER_TOL * 2);
+  });
+
+  test("balances the positive boundary at the narrow comb pinch", () => {
+    const comb = [{ outer: ring([[0, 0], [38, 0], [38, 10], [15, 10], [15, 5], [12, 5], [12, 10],
+      [9, 10], [9, 4.5], [7, 4.5], [7, 10], [5, 10], [5, 5], [4, 5], [4, 10], [0, 10]]), holes: [] }];
+    const raw = _rawOffset(comb, -2.4975, "round").raw;
+    const rings = raw.flatMap((rg) => [rg.outer, ...rg.holes]);
+    const merged = _mergeCrossings(ringCrossings(rings));
+    const pieces = _splitRings(rings, merged);
+    const classified = _classify(pieces, tess(rings), { debug: true, inside: (w) => w >= 1 });
+
+    const degree = new Map();
+    const at = (v) => {
+      if (!degree.has(v)) degree.set(v, { vertex: v, incoming: 0, outgoing: 0 });
+      return degree.get(v);
+    };
+    for (const c of classified) {
+      if (!c.keep || c.piece.vStart === null) continue;
+      at(c.piece.vStart).outgoing++;
+      at(c.piece.vEnd).incoming++;
+    }
+    const imbalanced = [...degree.values()].filter((v) => v.incoming !== v.outgoing)
+      .map((v) => ({ ...v, records: classified.filter((c) =>
+        c.piece.vStart === v.vertex || c.piece.vEnd === v.vertex)
+        .map((c) => ({ keep: c.keep, start: c.piece.vStart, end: c.piece.vEnd,
+                       wLeft: c.wLeft, wRight: c.wRight })) }));
+
+    expect(imbalanced, JSON.stringify(imbalanced, null, 2)).toEqual([]);
   });
 });
 
