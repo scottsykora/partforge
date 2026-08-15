@@ -68,9 +68,18 @@ one mechanism instead of four special cases.
 
 1. **Replace the cleanup path entirely.** Winding resolution becomes the way tangled
    offsets are resolved. The exact fast path is untouched.
-2. **Tessellate for topology, emit original curves.** Flatten for robust
-   segment/segment intersection and winding classification, but carry provenance and
-   emit surviving pieces as the original arcs/cubics trimmed via `trimSegment`.
+2. **Curve-native topology, curve-native output.** Find crossings with paper's existing
+   fat-line Bézier clipper — recursive subdivision, exact `(curve, t)` on the original
+   curves — and emit surviving pieces as the original arcs/cubics trimmed via
+   `trimSegment`. Tessellation survives only as the ray-cast target for integer winding
+   queries, where its precision is irrelevant.
+
+   *(Amended after the initial design. The first version intersected a dense
+   tessellation and carried provenance through the samples. Borrowing paper's clipper is
+   strictly better: exact parameters, no density tolerance in the topology path, no
+   snapping samples back onto curves, and no intersector to write. Paper's fragility in
+   this engine was never in finding intersections — it is in the tracing and branch
+   selection that follow, which is precisely what this resolver replaces.)*
 3. **Ships as 0.60.0** — offset output changes materially; not a patch.
 
 ## Non-goals
@@ -95,32 +104,53 @@ rule, so no special-casing is needed for holes anywhere in the resolver.
 
 ### Pipeline
 
-**1. Flatten with provenance.** Tessellate every ring; each sample carries
-`(ringIndex, segmentIndex, t)`. Density is chosen so the chord error is an order of
-magnitude below `OFFSET_TOL` (1e-3 mm) — derive it from segment curvature rather than a
-fixed count, and document the derivation.
+**1. Find intersections with paper's curve clipper.** Build each raw ring as a paper
+path via the existing `toPaperPath(scope, contour, segMap)` and call `getIntersections()`
+(self-intersections) and `getIntersections(other)` (between rings). Paper implements
+fat-line Bézier clipping (Sederberg–Nishita) with convex-hull rejection — recursive
+subdivision, capped at 40 levels / 4096 calls — which is the robust form of a bisection
+search for crossings, and it returns exact `(curve index, t)` on the original curves.
 
-**2. Intersect.** Segment/segment intersection, both between rings and within each ring,
-through a uniform-grid spatial index. Robust and simple — this is why Clipper2 is
-reliable. Intersection points are **snapped** to a tolerance tied to tessellation
-density, and snapped points get shared vertex identity (an index into a point pool),
-never coordinate comparison — that is what makes chaining in step 5 exact.
+This is deliberately *borrowing the half of paper.js that works*. Paper's weakness in
+this engine has always been the tracing and branch-selection that follows intersection
+finding, which is exactly what steps 3–6 replace. Verified on the pathological case (the
+tangled `"o"` counter at delta 3): 56 self-intersections found, and `segMap` mapped every
+one of the 137 paper curves back to its IR segment.
 
-**3. Split.** Cut every ring at its intersection parameters into elementary pieces. A
-piece runs between two consecutive intersection points and carries its provenance range.
+Two consequences, both simplifications over an intersect-by-tessellation approach:
+there is **no tessellation-density tolerance** anywhere in the topology path, and the
+`t` values feed `trimSegment` directly, so no sampled point ever has to be snapped back
+onto a curve.
 
-**4. Classify per piece.** For each piece take its midpoint, step ±ε along the normal,
-and compute the winding number of the **entire** raw path set at both sample points.
-Keep the piece iff exactly one side is non-zero — it is then a real boundary between
-inside and outside. This is an edge-based rule, which avoids needing a second union
-pass to reassemble kept loops.
+**2. Merge intersection clusters.** Near-tangency produces several intersections within
+a few microns of each other — the same case measured at (0.9223, −0.9347),
+(0.9224, −0.9337), (0.9222, −0.9343). Merge intersections closer than a clustering
+tolerance into a **single shared vertex**, stored as an index into a point pool.
+Chaining in step 5 then joins by vertex identity, never by coordinate comparison. This is
+where the near-tangency risk now lives; the tolerance must be derived and documented, not
+guessed.
 
-`ε` must be large enough to clear the snapping tolerance (or the two probes land on the
-same side of a nearby boundary) and small enough not to jump a genuinely thin feature.
-Derive it from the snapping tolerance — a small multiple of it — never as a bare
-constant, and document the derivation next to the code. Where a piece is shorter than
-`2ε`, probe from its midpoint perpendicular at a distance scaled to the piece length
-instead, so short pieces near a pinch are still classified.
+**3. Split.** Cut every ring at its merged intersection parameters into elementary
+pieces, each carrying its source segment and `[tStart, tEnd]` range.
+
+**4. Classify per piece, with one probe.** Crossing a directed edge changes the winding
+number by exactly ±1, so a second probe is unnecessary and actively harmful — two
+independent probes can disagree (both reading "inside") when either lands badly. Instead:
+take one probe point offset from the piece midpoint along its normal, compute the
+**integer** winding number of the whole raw ring set there by ray casting, and derive the
+other side arithmetically as ±1 by the piece's direction. Keep the piece iff exactly one
+of the two sides is non-zero. The two sides are then consistent by construction.
+
+Ray casting runs against a tessellation of the raw rings. Its precision does not matter
+here and carries none of the risk it would in step 1: winding is an integer, and the
+probe sits deliberately off the boundary, so a chord error orders of magnitude smaller
+than the probe offset cannot change the count.
+
+`ε`, the probe offset, must clear the clustering tolerance of step 2 and stay below the
+thinnest feature worth keeping. Derive it from the clustering tolerance — a small
+multiple — never as a bare constant, and document the derivation next to the code. For a
+piece shorter than `2ε`, scale the probe distance to the piece length so short pieces at
+a pinch are still classified.
 
 **5. Chain.** Join kept pieces end-to-end at their shared intersection vertices into
 closed rings. Junctions with more than two kept pieces (a pinch point) are resolved by
@@ -142,7 +172,11 @@ than today, where paper.js degrades arcs to cubics.
   necks natively; this is also expected to fix the late-found round/chamfer dumbbell
   defect that the duplicate-edge recovery never covered.
 - `resolveSelfRegions` in `paper-bridge.js` — loses its only caller. Verify with a
-  repo-wide grep and delete if genuinely orphaned; `booleanRegions` stays (the ordinary
+  repo-wide grep and delete if genuinely orphaned. Note this does **not** remove paper.js
+  from the offset path: `paper-bridge.js` instead gains a small intersection helper
+  wrapping `toPaperPath` + `getIntersections`, returning `(segmentIndex, t)` pairs in IR
+  terms via `segMap`. Paper keeps the job it does well and loses the one it does badly.
+  `booleanRegions` stays (the ordinary
   Shape2D booleans still use it).
 
 `offsetRegions`'s fast path, validation, and collapse throw are unchanged.
@@ -178,9 +212,11 @@ Anything still unfixed stays documented, rewritten to name its real cause.
 
 ## Testing
 
-- **Unit tests** for the resolver itself: intersection snapping, piece classification on
-  a hand-checkable figure-eight, chaining at a pinch junction, provenance round-trip
-  (a trimmed arc stays an arc with the right endpoints).
+- **Unit tests** for the resolver itself: intersection-cluster merging, piece
+  classification on a hand-checkable figure-eight, chaining at a pinch junction, and a
+  provenance round-trip (a trimmed arc comes back as an arc with the right endpoints,
+  not a cubic). Also pin the one-probe rule directly: a piece's two sides must always
+  differ by exactly 1, which is a cheap invariant to assert across the whole corpus.
 - **Oracle corpus gains glyph cases** — their absence is the specific reason this bug
   shipped. Add single glyphs with counters (`o`, `e`, `a`, `p`) and a multi-glyph string,
   across deltas that bracket counter collapse.
@@ -197,17 +233,34 @@ The resolver runs in the geometry worker on every parameter change, on the clean
 only. Current reference: 24-glyph text at +0.3 takes ~85 ms end to end; 200 disjoint
 squares takes ~2 ms (post-AABB-prefilter).
 
-The spatial index is required, not optional — naive pairwise intersection is O(n²) in
-flattened sample count, which for text is tens of thousands of segments. Budget: cleanup
-of the 24-glyph text case must stay within ~1.5× of today's timing. Measure before and
-after and report; a regression beyond that is a finding, not a footnote.
+Borrowing paper's clipper removes the need to write a spatial index for intersection
+finding — its hull rejection already prunes non-crossing pairs, and pairing rings is
+O(rings²) on a small count, not O(samples²). Two costs remain to watch:
+
+- **Winding queries.** One ray cast per piece against the tessellated raw rings is
+  O(pieces × segments), and the tangled `"o"` case alone yields 56 intersections on a
+  137-segment ring. If measurement shows this dominating, index the ray-cast target by
+  y-bucket; do not add the index speculatively.
+- **Intersection count on text.** Many glyphs each self-intersecting is the realistic
+  worst case, so the 24-glyph string is the benchmark, not a single letter.
+
+Budget: cleanup of the 24-glyph text case must stay within ~1.5× of today's timing.
+Measure before and after and report; a regression beyond that is a finding, not a
+footnote.
 
 ## Risks
 
 - **Near-tangent intersections** — two offset boundaries grazing rather than crossing.
-  The classic hard case. Mitigation: snapping tolerance derived from tessellation
-  density, and treating a near-tangency as a shared vertex rather than two distinct
-  crossings.
+  Still the classic hard case, but the risk has *moved*: it is no longer about
+  tessellation density (there is none in the topology path now) but about the step-2
+  clustering tolerance that merges near-coincident crossings into one vertex. Too tight
+  and chaining sees degenerate slivers; too loose and genuinely distinct crossings get
+  welded. Derive it, measure it against the glyph corpus, and state the derivation.
+- **Paper's recursion caps.** `addCurveIntersections` bails at 40 levels of recursion or
+  4096 calls and returns what it has. On pathological input that means *silently
+  incomplete* intersection sets, which would corrupt the arrangement. Detect it — an
+  unpaired or unconsumed piece during chaining is the signal — and throw rather than
+  emit a wrong ring.
 - **Chaining failures** — if pieces do not meet exactly, rings do not close. Mitigation:
   shared vertex identity through a point pool (never float comparison), plus an explicit
   assertion that every kept piece is consumed exactly once and every emitted ring closes.
