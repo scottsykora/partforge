@@ -112,15 +112,21 @@ test("offset grows/insets and extrudes to the expected volume", () => {
   expect(grown.volume()).toBeCloseTo(144 * 4, -1);       // 12x12x4 (sharp corners = exact square)
 });
 
-test("offset of a curved Shape2D stays exact → STEP has a B_SPLINE", async () => {
-  const KAPPA = 0.5522847498307936, R = 5, k4 = R * KAPPA;
-  const circle = pathProfile([R, 0])
-    .cubicTo([0, R], [R, k4], [k4, R]).cubicTo([-R, 0], [-k4, R], [-R, k4])
-    .cubicTo([0, -R], [-R, -k4], [-k4, -R]).cubicTo([R, 0], [k4, -R], [R, -k4]).close();
+test("offset of a curved Shape2D stays exact → STEP has a CIRCLE", async () => {
+  // A true arc-native circle (arcTo, not a cubic Bézier approximation): the shared
+  // offset engine's offsetArc keeps an offset circle an exact arc (see
+  // contour-offset.js), so it reads back with `via` segments, not `c1`/`c2` cubics —
+  // and the extruded STEP carries real CIRCLE B-rep edges, not a faceted polyline
+  // and not a B_SPLINE.
+  const R = 5;
+  const circle = pathProfile([R, 0]).arcTo([-R, 0], [0, R]).arcTo([R, 0], [0, -R]).close();
   const step = await stepText(k.extrude({ profile: k.shape2d(circle).offset(1), h: 3 }));
-  expect(step).toMatch(/B_SPLINE/);
+  expect(step).toMatch(/CIRCLE/);
 });
 
+// Collapse detection is shared and kernel-free (contour-offset.js), not a replicad
+// internal — this pins the message on the OCCT backend as a cross-backend sibling
+// of the Manifold "collapse throws immediately" test.
 test("collapse throws immediately (OCCT)", () => {
   expect(() => k.shape2d(SQ(0, 0, 10)).offset(-6)).toThrow("Shape2D.offset: offset collapses the shape");
 });

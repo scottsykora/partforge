@@ -146,9 +146,9 @@ test("offset validates delta and corners", () => {
     .toThrow('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
 });
 
-// Offset is the one op that still runs backend geometry (Clipper2), but its RESULT
-// is a contour-IR shape like any other — so the repeat payoff is again downstream:
-// the same offset shape extrudes off a cached CrossSection + solid.
+// Offset now runs the shared native engine in pure JS like every other Shape2D
+// op, and its RESULT is a contour-IR shape like any other — so the repeat payoff
+// is downstream: the same offset shape extrudes off a cached CrossSection + solid.
 test("an offset result is content-hashed: repeat rebuild hits the solid cache", () => {
   k.beginSubPart("off"); k.resetCacheStats();
   const one = () => k.extrude({ profile: k.shape2d(SQ(0, 0, 10)).offset(1), h: 2 }).volume();

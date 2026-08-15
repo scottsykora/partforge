@@ -355,7 +355,7 @@ function splitAtDuplicateEdges(contour) {
 // holes to discretization noise). Round 2 confirmed the prune's own justification was sound —
 // the wide-arm-L-pocket case it exists to fix is a genuine defect (max inscribed circle in a
 // 5-wide-arm L has radius 2.5 < delta 3, so the hole DOES fully vanish; a truth value is
-// derivable and the pre-fix engine got it wrong) — but even with exact-geometry distances, an
+// derivable and the pre-fix engine got it wrong) — but even with exact-geometry distances, a
 // sweep of real glyph counters (uppercase/lowercase/digit counters on 10mm text at delta
 // 0.1–0.5mm) still lost 36 of 76 entirely, all silent total-hole-loss, none
 // recoverable by further tolerance tuning: the wide-L-pocket's own raw hole ring is ALREADY
