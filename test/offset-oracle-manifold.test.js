@@ -574,8 +574,8 @@ describe("glyphs — the case class whose absence let the text bug ship", () => 
   // The brief for this task named four targets derived from Clipper2. All four are asserted
   // here against the SAME derived truth, so the numbers below are sanity checks on the oracle
   // rather than a second source: "Scott" +3 = 522.349, "o" +3 = 139.537, "t" +3 = 121.842,
-  // and "e"/"a"/"p" past collapse have no counter left. Three of the four are cases the
-  // engine cannot currently produce at all — which is the finding, not a footnote.
+  // and "e"/"a"/"p" past collapse have no counter left. These values now guard the
+  // corrected engine behavior rather than a measured limitation.
   test("the derived truths for the brief's four targets", () => {
     expect(truthOf("Scott", 3)).toEqual({ regions: 1, holes: 0, area: expect.closeTo(522.349, 2) });
     expect(truthOf("o", 3)).toEqual({ regions: 1, holes: 0, area: expect.closeTo(139.537, 2) });

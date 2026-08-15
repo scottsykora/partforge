@@ -308,19 +308,19 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 
 ## shape2d-offset-partial-reflection-residual
 
-- **Symptom:** A pocket that should close doesn't — an outward `Shape2D.offset` on a
-  region with a hole leaves a leftover hole ring behind (`.holes.length` stays > 0,
-  `.area()` under-reports) even though the hole's narrowest span is smaller than
-  `delta` and the pocket should have closed completely.
-- **Cause:** A raw offset ring can be locally valid — correctly wound (CW for a
-  hole), no self-intersections — while still lying inside the region it should have
-  been swept away by. That's a *global* defect only a whole-shape containment check
-  can see, and `offset`'s validator (`contour-offset.js`'s `validateRawOffset`)
-  only checks local validity. Known limitation — see
-  [KERNEL-CONTRACT.md "Offset: known limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
-- **Fix:** No general fix yet. Verify `.holes.length` after an offset meant to
-  close a pocket rather than assuming it did; work around by offsetting in stages
-  or padding the pocket before offsetting.
+- **Symptom:** *(Fixed for positive round offsets in `0.60.0`; the ID remains
+  permanent.)* An outward `Shape2D.offset` on a region with a hole could leave a
+  residual hole ring after the source counter should have closed.
+- **Cause:** A fully eroded source counter could survive the raw offset as a
+  locally valid negative loop. Positive-winding cleanup then correctly preserved
+  that loop because the defect was introduced before winding classification.
+- **Fix:** The round resolver now computes a conservative largest-inscribed-disk
+  bound from the source hole and removes a residual counter only when the requested
+  dilation has certainly passed its source inradius. Upgrade to
+  `partforge >= 0.60.0`. Sharp and chamfer offsets use different structuring
+  elements and are not covered by this round-specific gate; continue to verify
+  those styles at the production offset and use explicit boolean stages when their
+  closing topology is critical.
 
 Searchable phrasings of the same misbehavior: hole doesn't disappear after offset;
 pocket not closed by offset; residual hole ring; `.holes.length` still 1 after
@@ -328,21 +328,16 @@ growing a shape past the hole's own width.
 
 ## shape2d-offset-reflex-cluster-too-much-material
 
-- **Symptom:** An inward `Shape2D.offset` (`corners: "chamfer"` or `"sharp"`) on a
-  shape with several reflex/concave corners close together leaves several times too
-  much material — `.area()` comes back far larger than the eroded shape should be,
-  often split across more regions than expected. No error is thrown.
-- **Cause:** When the offset's raw rings self-intersect, `offset` hands them to
-  paper.js (`paper-bridge.js`'s `resolveSelfRegions`) to untangle. Clustered reflex
-  corners produce several overlapping self-intersection loops at once, and paper.js
-  resolves that tangle into the wrong set of sub-regions — keeping loops that should
-  have cancelled. Verified: a 9-gon with clustered reflex corners at `delta` −2.79
-  chamfer resolves to ~7.71 where the true eroded area is ~2.76. Known limitation —
-  see [KERNEL-CONTRACT.md "Offset: known limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
-- **Fix:** No general fix yet. Check `.area()` against the expected eroded area
-  rather than trusting a large inward offset over a spiky outline; work around by
-  using `corners: "round"` (which does not produce the same chord tangle), by
-  simplifying the outline before offsetting, or by offsetting in smaller stages.
+- **Symptom:** *(Fixed in `0.60.0`; the ID remains permanent.)* An inward
+  `Shape2D.offset` with clustered reflex corners could retain material outside the
+  true eroded shape.
+- **Cause:** The old overlap-side trim could extend offset lines to an intersection
+  outside the finite extent of one or both segments. The deleted Paper.js
+  `resolveSelfRegions` path is not part of the current resolver.
+- **Fix:** Overlap-side trimming now requires the intersection to lie within both
+  segment extents, and the resulting arrangement is resolved by positive winding.
+  Upgrade to `partforge >= 0.60.0`. The regression oracle pins the clustered-reflex
+  9-gon chamfer area at approximately `3.553831 mm²`.
 
 ## shape2d-offset-waist-not-severed-round-join
 

@@ -236,7 +236,7 @@ export function _offsetContour(contour, delta, corners) {
   // the partial-reflection residual: those pieces survive into the ring and validateRawOffset
   // can't see anything locally wrong with them. Delete them (not un-trim — un-trimming was
   // rejected in an earlier round for other over-inclusive regressions) and re-link the
-  // surviving neighbors with a direct chord, marking the ring dirty so resolveSelfRegions
+  // surviving neighbors with a direct chord, marking the ring dirty so resolveOffsetWinding
   // gets a chance to untangle whatever that chord leaves behind. Every non-line piece
   // always survives this pass; the whole-ring gate above already guarantees at least one
   // piece survives here too.
@@ -248,14 +248,14 @@ export function _offsetContour(contour, delta, corners) {
   if (keptIdx.length === 0) return { contour: null, dirty: true };
 
   // Guard (review round 1, Important 3): deletion is unrecoverable — unlike a chord/dirty
-  // join, which resolveSelfRegions can still untangle downstream, a deleted piece is gone for
+  // join, which resolveOffsetWinding can still untangle downstream, a deleted piece is gone for
   // good, so a bad deletion can turn perfectly good geometry into a false "offset collapses
   // the shape" throw (measured: 18 new throws per 3000 random polygons; repro: a 9-gon at
   // delta -2.79/chamfer with true eroded area 2.76). A raw *piece count* floor doesn't work as
   // the discriminator — an arc-dominated ring can be legitimately reduced to a single
   // surviving piece (this file's own storage convention stores a full circle as just two arcs;
   // the keyed-bore regression test below reduces to one surviving arc + closing chord and that
-  // IS the correct answer). Routing through resolveSelfRegions doesn't work either — it was
+  // IS the correct answer). Routing through resolveOffsetWinding doesn't work either — it was
   // tried first, and rejected: it assumes the CCW/positive-area "outer" convention (an
   // uninverted self-union is real material, an inverted one that flips positive is a
   // discarded artifact), but _offsetContour has no idea here whether it's assembling an outer
