@@ -391,44 +391,34 @@ growing a shape past the hole's own width.
 ## shape2d-offset-winding-chain-incomplete
 
 - **Symptom:** `contour-winding: could not chain offset boundary (incomplete intersection
-  set)` thrown from `Shape2D.offset` (or `offsetPolygon`) — most often an inward offset on
-  a shape with several narrow webs or notches, and also an *outward* offset of text at a
-  delta large enough to merge glyphs. All three corner styles produce it.
+  set)` thrown from `Shape2D.offset` (or `offsetPolygon`).
 - **Cause:** When a raw offset ring is tangled, the winding resolver
-  (`geometry/contour-winding.js`) splits every ring at its crossings and re-chains the
-  positive-winding pieces. This is its own detector for a boundary it cannot close — a
-  kept piece with nowhere to continue. The **root cause is open**; what is known is that
-  the arrangement is degenerate where the shape severs (or, on text, where two glyph
-  outlines meet). **It is not a `round`-join effect and no corner style is immune** — the
-  rate is nearly flat across the three. Measured on the committed corpus
+  (`geometry/contour-winding.js`) labels the faces of the crossing arrangement by
+  combinatorial winding propagation and keeps the boundary of the positive region. This
+  message is its own consistency detector firing: a label conflict during propagation, a
+  probe audit disagreeing with the face labels on a well-conditioned piece, or a kept
+  piece with nowhere to chain — all of which mean the crossing set does not describe a
+  planar arrangement (paper.js's intersection search bailed, or the input's features sit
+  below the resolver's combinatorial resolution). It is deliberately loud: every one of
+  these used to be a *silently wrong* result under the pre-0.60 boolean cleanup.
+- **Fix:** Almost none of these reach you: `offsetRegions` retries a failed arrangement
+  through a fallback ladder (probe-corrected labels on the exact arrangement, the delta
+  nudged by 1e-9, the outline as a polyline, the outline snap-rounded to a 1e-3 then
+  5e-3 mm grid) and takes the first rung that resolves. Measured on the committed corpus
   (`test/helpers/offset-corpus.js`, 606 seeded shapes × 20 deltas × 3 styles = 36 090
-  offsets), before the fallback below: **0.291 % under `round`, 0.241 % under `chamfer`,
-  0.224 % under `sharp`**. Reproduce with `node scripts/offset-rates.mjs`. Known limitation
-  — see [KERNEL-CONTRACT.md "Offset: known
-  limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
-- **Fix:** Many of these no longer reach you: `offsetRegions` retries a failed arrangement
-  several ways before letting the throw out — the delta nudged by 1e-9, the crossing-merge
-  radius coarsened 4× and 20×, and the outline re-run as a polyline at three densities —
-  taking the first that resolves. On the corpus above that takes the rates to **0.133 %
-  (`round`), 0.166 % (`chamfer`), 0.175 % (`sharp`)**, at a median 0.023 % and a worst
-  3.4 % (0.61 mm²) from the independently-derived truth. If you still see the throw:
-  - **Nudge `|delta|` by ~1 %** so the webs are not severed at exactly that width. This is
-    the first thing to try; the failures sit in narrow bands of delta.
-  - **Try the other corner styles**, but do not expect a specific one to be the escape.
-    Measured over the 28 residual (shape, delta) pairs on that corpus: another style builds
-    in 16, and 12 fail under all three. The style that is alone in failing is `chamfer` in
-    5 of them, `sharp` in 5, and `round` in 1 — so if anything `round` is the *safest*
-    here. (Earlier versions of this entry advised retrying with `corners: "sharp"` on the
-    grounds that it "has never produced this throw". That was never measured and is false:
-    a 12-vertex two-notch plate at −3.25 throws under `sharp` and `chamfer` and builds under
-    `round`. It is asserted in `test/offset-oracle-manifold.test.js`.)
-  - **On text**, reduce the offset or emboss the glyphs separately and union the results —
-    dilating 10 mm text by ≥ 2 mm throws on 26 of 90 measured glyph/delta/style combinations
-    regardless of style (`test/offset-oracle-manifold.test.js` § glyphs).
-  - Or offset the pieces separately and union them.
+  offsets; reproduce with `npm run offset-rates`): the resolver alone fails **0.188 %** of
+  attempts (round 0.183 % / chamfer 0.183 % / sharp 0.200 %); after the ladder **one case
+  in all 36 090 still throws** (0.003 % — a multi-region erosion at −4 under `sharp` only;
+  seed 323). Rescued answers sit at a median 0.025 % and a worst 2.9 % from the
+  independently-derived truth, and never lose a region against it. If you are the one case:
+  - **Nudge `|delta|` by ~1 %** so the shape is not severed at exactly that width, or
+  - **try another corner style** — in the one residual case both other styles build, or
+  - offset the pieces separately and union the results.
 
   The throw stays loud and never silent, so a part that builds is not affected by *this*
-  defect — but see the same test file for offset defects on text that are silent.
+  defect. Note the ladder's polyline and snap rungs cost the result its arcs — see
+  [KERNEL-CONTRACT.md "Offset: known
+  limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
 
 ## fillet-chamfer-radius-does-not-fit
 

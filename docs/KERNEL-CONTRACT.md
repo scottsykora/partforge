@@ -424,8 +424,12 @@ On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **at
 
 The three tessellating readbacks — `toRegions()`, `simple()`, `regions()` — remain LOD-dependent: they hand back point rings sampled at the backend's own segment count, so the two backends' output differs in vertex count and by chord error, converging as LOD rises. Those three ops are the whole LOD-dependent surface; everything else, including `offset`, is backend-identical.
 
-**Known limitations.** The native offset engine has verified defects on specific
-input shapes; see [Offset: known limitations](#offset-known-limitations) below.
+**Known limitations.** The native offset engine has one verified parked divergence (a
+`round`-only over-inclusion when several grown holes reach the eroded outline) and two
+bounded behaviors (a fallback-rescued offset loses its arcs; sub-1e-3 mm² sliver rings can
+accompany a result); see [Offset: known limitations](#offset-known-limitations) below for
+the measured values, the committed corpus and script that produce every rate quoted there,
+and the independent construction the truths come from.
 
 **Fillet after a boolean reaches STEP as real arcs.** Because booleans preserve curves
 and `fillet` inserts true arc segments, `shape2d(a).union(b).fillet(2).extrude({h})`
@@ -437,32 +441,121 @@ facets at mesh LOD, as always, since its meshes have no curve representation.)
 
 The native offset engine (`geometry/contour-offset.js`) is correct on the honest-agreement
 corpus (`test/contour-offset.test.js`, `test/offset-oracle-manifold.test.js`,
-`test/offset-oracle-occt.test.js`), but two cases are verified defects, pinned as
-characterization tests in the "known divergences (parked)" block of
-`test/offset-oracle-manifold.test.js` rather than silently tolerated:
+`test/offset-oracle-occt.test.js`), and **one class of divergence is currently parked** as a
+characterization test pinned to the engine's current measured value, in the "known
+divergences (parked) — Task 7C" block of `test/offset-oracle-manifold.test.js`. The
+convention holds for the next one found: park it there, never widen the agreement corpus's
+tolerance around it.
 
-- **A pocket that should fully close doesn't.** An outward offset large enough that a
-  hole's max inscribed circle is smaller than `delta` should erase the hole entirely; the
-  engine instead leaves a residual ring. Verified: a 30×20 plate with a 5-wide-arm L-shaped
-  pocket, offset +3, should reach 0 holes / area 928.274 — actual leaves a residual hole at
-  ~921.21. Root cause: a raw offset ring can be locally valid (correctly wound, no
-  self-intersections) while still lying inside the region it should have been swept away
-  by — only a *global* containment check catches this, and none currently runs.
-- **Clustered reflex corners degrade accuracy.** A chamfer offset over several reflex
-  corners sitting close together can resolve to several times too much surviving area.
-  Verified: a 9-gon with clustered reflex corners, chamfer offset delta −2.79; true area
-  2.76 (a thin sliver), native resolves ~7.71. Root cause: `resolveSelfRegions`
-  (`paper-bridge.js`) doesn't fully untangle the self-intersections this corner geometry
-  produces.
+**Every rate in this section is reproducible by running committed code.** The corpus is
+`test/helpers/offset-corpus.js` — 600 seeded shapes (notched plates, pocket plates, radial
+polygons, multi-region inputs; a pure function of an integer seed, never `Math.random`) plus
+six glyph cases — and the instrument is `node scripts/offset-rates.mjs`, which sweeps them at
+20 deltas × 3 corner styles (36 090 offsets, ~25 s) and prints the tables quoted below. Rates
+that were quoted here before that script existed came from scratch files and several of them
+were wrong; nothing in this section should be believed that the script does not print.
 
-Neither is silent in the sense of going unnoticed by tests — each has a pinned
-characterization test that fails loudly if the defect gets worse, and is meant to be
-deleted and promoted to the main corpus the day it's fixed. They matter to a part author
-today: don't rely on `offset` to fully close a pocket, or to hold tight tolerance through a
-reflex-corner cluster — verify the result (`holes`/`area`) rather than assuming it.
+Truths come from an independent **Minkowski-union construction**
+(`test/helpers/minkowski-oracle.js`: dilate = the shape ∪ its outward edge slabs ∪ its convex
+vertex caps; erode = `Box \ dilate(Box \ S)`), which uses Clipper2 purely as a polygon-set
+assembler under the Positive fill rule and never calls anyone's offsetter — the point being
+that Clipper2's own `offset()` is not an independent check on an offset engine, and its
+`Round @ circularSegments = 4` chamfer mapping is provably not this engine's chamfer at acute
+corners. That helper is validated against thirteen closed-form answers in
+`test/minkowski-oracle.test.js` before it is trusted anywhere.
 
-Two further cases were on this list and are now **fixed**, asserted as correctness in the
-same block: two eroding holes that grow into each other merge into one hole (40×20 plate,
+**How the resolver classifies, and why the failure mode is loud.** The winding resolver
+(`geometry/contour-winding.js`) splits the raw outline at its crossings and labels the FACES
+of the resulting planar arrangement by combinatorial winding propagation — one anchored ray
+cast per connected component, everything else derived from the arrangement itself — then
+keeps the boundary of the positive region. Labels are consistent by construction, so a
+boundary can never dead-end; when the crossing set does not describe a planar arrangement
+at all (paper.js's documented intersection-search bail, or input features below the
+resolver's combinatorial resolution), a propagation conflict or a failed probe audit throws
+the pinned chain-incomplete message and a fallback ladder retries — see the rung-by-rung
+account at `_ladderRungs` in `contour-offset.js` and [ERROR-PATTERNS.md
+§shape2d-offset-winding-chain-incomplete](ERROR-PATTERNS.md#shape2d-offset-winding-chain-incomplete).
+
+The parked class:
+
+- **`round` keeps too much material when several grown holes reach the eroded outline.**
+  A 30×20 plate with three rectangular holes at −2 gives 324.75 against a true 258.18 (~26 %
+  over). Under `chamfer` and `sharp` the grown holes correctly become notches in the outline
+  and the answer is exact. Root cause open.
+
+Two bounded behaviors worth knowing about, measured by the same script:
+
+- **The chain-incomplete throw still exists, at one case in the whole corpus.** The
+  resolver alone refuses 0.188 % of attempts (round 0.183 % / chamfer 0.183 % / sharp
+  0.200 % — an arrangement its consistency checks cannot vouch for); the fallback ladder
+  resolves all but **one of 36 090** (0.003 % — a multi-region erosion at −4 under `sharp`
+  only, seed 323; the other two styles build it). Rescued answers land a median 0.025 % and
+  a worst 2.9 % from the independently-derived truth, and **never with fewer regions than
+  the truth** — the probe-era rung that welded regions away is gone. Two costs remain and
+  are deliberate: the polyline and snap rungs cost the result its arcs, so **a STEP export
+  of a rescued result has no true circles** (measured on the probe-era corpus: a 10 mm
+  "Scott" at +1 came back 0 arcs / 6 435 line segments; 13 of the 67 current rescues lose
+  every arc the raw offset carried — `npm run offset-rates` lists them), and a
+  collapse-regime offset that walks the ladder takes 0.15–0.35 s against ~10 ms for a
+  clean one.
+- **Degenerate sliver rings.** The resolver can emit extra rings under 1e-3 mm² beside the
+  real ones (5 of 2 700 fuzz comparisons, pinned by seed in `test/offset-fuzz.test.js`).
+  They cancel under the even-odd assembly `extrude` uses, so area and solids are
+  unaffected, but a raw `regions().length` read off the result counts them.
+
+Scale, measured, and reproducible: `npx vitest run test/offset-fuzz.test.js` sweeps 150 seeded
+shapes × 6 deltas × 3 styles against the Minkowski oracle in ~1.5 s and currently finds **zero**
+region-count, hole-count or area disagreements outside the pinned characterizations — and the
+full 6-glyph × 5-delta text matrix (`test/offset-oracle-manifold.test.js` § glyphs, truth
+derived from Clipper2 in-file) agrees on **30 of 30 with zero throws**, so the class above is
+the divergence surface, not a sample of it.
+
+One more defect was **fixed in Task 7C** and never appeared on this list at all, which is
+the interesting part: nothing detected it. The fast-path validator's crossing test demanded
+strictly transversal crossings, so a ring that ran through one of its *own vertices* was
+reported simple and taken down the exact fast path. That is the generic case for offset
+output, not a degenerate one — offset pieces are built by translating shared vertices. A
+20×10 block with an 8-deep slot, inset by 2, kept 32 mm² of a true 48 mm² erosion with no
+error and no warning. It is now asserted across slot widths 2/4/6 and all three corner
+styles in `test/contour-offset.test.js`, against the closed form 72 − 6·w.
+
+The face-labeled resolver retired the largest classes that used to be parked here, each now
+asserted as correctness where it used to be characterized:
+
+- **Text.** The 6-glyph × 5-delta matrix used to read 15 agree / 9 throw / 6 diverge, and
+  the divergences were the reported production bug (open counters dropped, closed counters
+  kept, spurious regions from a connected glyph's dilation). All 30 now match the derived
+  truth on region count, hole count and area, with zero throws under any corner style;
+  the reported "Scott" case itself is pinned per-delta in `test/offset-text.test.js`.
+- **The severing pinch classes.** The four-notch comb's throw band (−2.4955…−2.4995, round
+  AND chamfer) and the two-notch plate that threw under sharp AND chamfer at −3.25 all
+  build, with sharp/chamfer float-exact against the oracle at the very deltas that threw.
+- **A hole narrower than 2·delta vanishes** instead of leaving a ~2 mm² remnant, by the
+  dilation-definition sweep (`dropPhantomHoles` in `contour-offset.js`): the complement of
+  `S ⊕ B_delta` is exactly `{d > delta}`, so a candidate hole carrying points markedly
+  closer than delta to the source is a phantom by definition.
+
+Four earlier cases were on this list and are also **fixed**, asserted as correctness in the
+"formerly-parked divergences, now correct" block:
+
+- **A pocket that should fully close now does.** A 30×20 plate with a 5-wide-arm L-shaped
+  pocket at +3 (max inscribed circle 2.5 < delta) used to leave a residual hole at ~921.21;
+  it now reaches 0 holes and matches Clipper2. Fixed by `resolveOffsetWinding`
+  (`geometry/contour-winding.js`), which computes the raw offset outline's positive-winding
+  region directly — a fully-eroded pocket is negative-winding everywhere and drops out with
+  no per-ring containment heuristic at all.
+- **Clustered reflex corners no longer degrade accuracy.** A 9-gon with three clustered
+  reflex corners at chamfer delta −2.79 read 7.70938 under the old paper.js self-union and
+  4.621926 under the resolver alone; it is now exactly 3.553831, the value Clipper2's
+  chamfer mapping and an independent Minkowski-union construction both give. (2.76 is this
+  shape's *round* truth, not its chamfer truth — a chord bevel on an erosion always retains
+  more material than the arc, never less.) Fixed by gating `_offsetContour`'s overlap-side
+  trim on the two offset lines actually crossing **within both offset segments' extents**:
+  past a corner's own feature size they cross outside both, and trimming to that point
+  extends the segments to material the raw offset never covered, on a ring simple and
+  correctly wound enough that the fast-path validator sees nothing wrong.
+
+…plus two eroding holes that grow into each other merge into one hole (40×20 plate,
 two 6×8 holes 3 mm apart, delta −2 sharp → area 348), and a hole that erodes through its
 outer boundary is clipped by it (40×20 plate, 10×10 hole 2 mm from the edge, delta −2 sharp
 → area 408, hole absorbed into the outline). Both used to produce topologically invalid
