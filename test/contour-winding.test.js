@@ -2,6 +2,7 @@
 import { describe, expect, test } from "vitest";
 import { ringCrossings } from "../src/framework/geometry/paper-bridge.js";
 import { trimSegment } from "../src/framework/geometry/contour-ops.js";
+import { _mergeCrossings, CLUSTER_TOL } from "../src/framework/geometry/contour-winding.js";
 
 const ring = (pts) => ({ start: pts[0], segments: [...pts.slice(1), pts[0]].map((p) => ({ to: p })) });
 const close = (a, b, tol = 1e-6) => expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThanOrEqual(tol);
@@ -53,5 +54,37 @@ describe("ringCrossings", () => {
       expect(x.t).toBeGreaterThanOrEqual(0);
       expect(x.t).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe("crossing cluster merge", () => {
+  test("near-coincident crossings collapse to one shared vertex", () => {
+    // the real measured cluster from a glyph offset: three crossings within ~2e-3
+    const xs = [
+      { ring: 0, seg: 6, t: 0.15, point: [0.9223, -0.9347] },
+      { ring: 0, seg: 6, t: 0.27, point: [0.9224, -0.9337] },
+      { ring: 0, seg: 6, t: 0.45, point: [0.9222, -0.9343] },
+      { ring: 0, seg: 20, t: 0.5, point: [5.0, 5.0] },
+    ];
+    const { crossings, pool } = _mergeCrossings(xs, 5e-3);
+    expect(pool.length).toBe(2);                                  // cluster + the far one
+    expect(crossings[0].vertex).toBe(crossings[1].vertex);
+    expect(crossings[1].vertex).toBe(crossings[2].vertex);
+    expect(crossings[3].vertex).not.toBe(crossings[0].vertex);
+  });
+  test("distinct crossings keep distinct vertices", () => {
+    const xs = [{ ring: 0, seg: 0, t: 0.5, point: [0, 0] }, { ring: 0, seg: 2, t: 0.5, point: [10, 10] }];
+    const { pool } = _mergeCrossings(xs, 5e-3);
+    expect(pool.length).toBe(2);
+  });
+  test("the pooled vertex position is the cluster centroid", () => {
+    const xs = [{ ring: 0, seg: 0, t: 0.1, point: [0, 0] }, { ring: 0, seg: 1, t: 0.1, point: [0.002, 0] }];
+    const { pool } = _mergeCrossings(xs, 5e-3);
+    expect(pool.length).toBe(1);
+    expect(pool[0][0]).toBeCloseTo(0.001, 9);
+  });
+  test("CLUSTER_TOL is derived, not a bare magic number, and sits above OFFSET_TOL", () => {
+    expect(CLUSTER_TOL).toBeGreaterThan(1e-3);   // must exceed the cubic-offset tolerance
+    expect(CLUSTER_TOL).toBeLessThan(0.05);      // must stay well under any real feature
   });
 });
