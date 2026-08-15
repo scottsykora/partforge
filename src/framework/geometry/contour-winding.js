@@ -449,6 +449,14 @@ const dirIn = (p) => {
   return Math.atan2(y, x);
 };
 
+// The literal message every unclosable-arrangement site in _chain throws, and the string
+// ERROR-PATTERNS.md § shape2d-offset-winding-chain-incomplete documents. Exported so
+// contour-offset.js's fallback ladder can recognise THIS failure — the one it has a
+// documented, measured degradation for — without pattern-matching on message text at a
+// distance, and without swallowing an unrelated throw from the same call.
+export const CHAIN_INCOMPLETE_MESSAGE =
+  "contour-winding: could not chain offset boundary (incomplete intersection set)";
+
 // Join kept pieces end-to-end by SHARED POOL VERTEX identity — never coordinate
 // comparison, which is what makes this exact. A junction with several outgoing pieces
 // (a pinch point) takes the LEFTMOST turn: the smallest positive rotation from the
@@ -458,14 +466,6 @@ const dirIn = (p) => {
 // exactly 0, the minimum possible, so it is the FIRST-preferred candidate, not a last
 // resort — it is only actually taken when it's the sole outgoing option (a degree-1
 // vertex), which is the standard DCEL `next = twin` behavior.
-// The literal message every unclosable-arrangement site in _chain throws, and the string
-// ERROR-PATTERNS.md § shape2d-offset-winding-chain-incomplete documents. Exported so
-// contour-offset.js's fallback ladder can recognise THIS failure — the one it has a
-// documented, measured degradation for — without pattern-matching on message text at a
-// distance, and without swallowing an unrelated throw from the same call.
-export const CHAIN_INCOMPLETE_MESSAGE =
-  "contour-winding: could not chain offset boundary (incomplete intersection set)";
-
 export function _chain(classified, pool) {
   const kept = classified.filter((c) => c.keep)
     .map((c) => (c.reverse ? reversePieceSegs(c.piece) : { from: c.piece.from, segs: c.piece.segs,

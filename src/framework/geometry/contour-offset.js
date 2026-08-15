@@ -513,8 +513,21 @@ function rawOffset(regions, delta, corners) {
   return { raw, dirty };
 }
 
-const resolveOrRaw = ({ raw, dirty }, opts) =>
-  (!dirty && validateRawOffset(raw)) ? raw : resolveOffsetWinding(raw, opts);
+const resolveOrRaw = ({ raw, dirty }) =>
+  (!dirty && validateRawOffset(raw)) ? raw : resolveOffsetWinding(raw);
+
+// Three underscore hooks, none of them part of the public surface, all three existing for
+// ONE reason: `scripts/offset-rates.mjs` is the committed instrument behind every offset rate
+// quoted in docs/ERROR-PATTERNS.md and docs/KERNEL-CONTRACT.md, and it has to measure the
+// SHIPPED ladder rather than a copy of it. Those rates previously came from scratch scripts
+// that were never committed, and several of them turned out to be wrong.
+//   _rawOffset          — the raw per-ring offset, the ladder's input.
+//   _offsetNoFallback   — the offset as it behaved BEFORE the ladder existed (the "before"
+//                         column of the rate table).
+//   _ladderRungs        — the ladder itself, as named lazy thunks.
+export const _rawOffset = rawOffset;
+export const _offsetNoFallback = (regions, delta, corners) =>
+  resolveOrRaw(rawOffset(regions, delta, corners));
 
 // A ring rebuilt as straight chords at `segs` facets per full turn — arcs and cubics
 // replaced by their own tessellation, lines unchanged (tessellateContour emits a line's
@@ -537,31 +550,48 @@ const flattenRing = (contour, segs) => {
 // arrangement, not a statement about the shape — the material is really there. Left as a
 // throw it reads, in a parametric app that re-offsets on every slider move, as "the part
 // builds at 2.4 mm and dies at 2.5 mm", which is a harder failure than any other defect class
-// in this engine (all of which degrade to bounded inaccuracy). Measured on 6 400 randomized
-// notched-plate cases per corner style: `round` had 54 chain failures (0.84 %) and now has 6
-// (0.09 %); `chamfer` had 4 (0.06 %) and now has none; `sharp` had none either way. Against the
-// Minkowski oracle (test/helpers/minkowski-oracle.js) the resolved answers land a median
-// 0.012 % / worst 0.048 mm² from truth — the same accuracy band the engine already has on cases
-// that never failed at all (median 0.004 %, worst 0.43 % relative), and three orders of
-// magnitude inside the divergences KERNEL-CONTRACT.md already parks. See task-7D-report.md.
+// in this engine (all of which degrade to bounded inaccuracy).
+//
+// RATES, and where they come from. Run `node scripts/offset-rates.mjs` — it sweeps the
+// committed corpus (test/helpers/offset-corpus.js: 600 seeded shapes + 6 glyphs, 20 deltas,
+// 3 styles = 36 090 offsets, ~25 s) and prints these. Before the ladder / after it:
+//   round 0.291 % -> 0.133 %   chamfer 0.241 % -> 0.166 %   sharp 0.224 % -> 0.175 %
+// Two things to read off that table. The failure is NOT a round-join effect — the three
+// styles fail at within 1.3x of each other, and `sharp` fails on inputs `round` handles (the
+// 12-vertex two-notch plate at -3.25, asserted in test/offset-oracle-manifold.test.js). And
+// this ladder was tuned against a round-only corpus, so it helps `round` most and `sharp`
+// barely at all. An earlier version of this comment claimed 0.84 % -> 0.09 % for round,
+// 0.06 % -> 0 for chamfer and "sharp had none either way"; the first is corpus-specific and
+// the last is simply false.
 //
 // Rung ORDER is by fidelity of what survives, not by hit rate:
 //   1. delta perturbed by ±1e-9 relative. Escapes an exactly-degenerate arrangement (two
 //      offset walls landing on the same coordinate) with the requested corner style and the
-//      exact curve IR both intact. Resolves 26 of the 59 measured failures on its own.
-//   2. a coarser crossing-merge radius (4x and 20x CLUSTER_TOL). Also keeps corner style AND
-//      the exact IR — a trimmed arc is still an arc — at the cost of collapsing crossings up
-//      to that radius apart onto one vertex, which moves the emitted boundary by at most the
-//      radius. Resolves 38 of the 59 on its own at 20x.
+//      exact curve IR both intact. Wins 6 of 34 rescues on the committed corpus.
+//   2. a coarser crossing-merge radius (4x and 20x CLUSTER_TOL). Keeps corner style AND the
+//      exact IR — a trimmed arc is still an arc — at the cost of collapsing crossings up to
+//      that radius apart onto one vertex. Wins 26 of 34. Its cost is real and topological:
+//      a merge radius wide enough to escape the degeneracy is also wide enough to weld a
+//      genuine severing pinch shut, so the result can have ONE REGION FEWER than the truth
+//      (4 of the 34 rescues; in 1 of those a later rung had the count right and lost to
+//      first-non-empty-wins). Note also that 20x CLUSTER_TOL is 0.1 mm, which sits ABOVE the
+//      0.05 mm feature floor CLUSTER_TOL's own derivation says it must stay far below —
+//      known, and the reason this rung is not coarsened further.
 //   3. the raw outline re-run as polylines (64/256/1024 facets per turn). Geometrically
 //      faithful to the chord error of that tessellation, but it DEGRADES THE IR: round joins
-//      come back as chords rather than arcs, so a STEP export of the result loses its true
-//      circles. Last for that reason, even though it is the most accurate rung by area.
+//      come back as chords, so A STEP EXPORT OF THE RESULT LOSES ITS TRUE CIRCLES — measured,
+//      a 10 mm "Scott" at +1 came back 0 arcs / 6 435 line segments where the raw offset
+//      carried 24 arcs. Arc preservation to STEP is this engine's headline property, so these
+//      rungs are last even though they are the most accurate by area.
 // Coverage is not monotonic in any rung's parameter (64 facets resolves cases 256 does not) —
 // these are escapes from degeneracy, not refinements, so every rung earns its place by cases
 // no other rung covers.
 //
-// Two things this deliberately does NOT do. It never retries under a different JOIN: swapping
+// Two things this deliberately does NOT do. (The numbers in this paragraph are task 7D's
+// design measurements, taken on a 59-case round-only sweep that predates the committed corpus
+// and is NOT reproducible from this repo — they are recorded as the reasoning behind two
+// rejected rungs, not as current rates. Everything above is from scripts/offset-rates.mjs.)
+// It never retries under a different JOIN: swapping
 // to chamfer resolves 58 of the 59, but at a median 5 % from the round truth (worst 4 800 %),
 // and it would hand back geometry with visibly different corners than the caller asked for —
 // silently wrong beats loudly failed only when the wrongness is bounded, and that one is not.
@@ -572,29 +602,30 @@ const flattenRing = (contour, segs) => {
 // (±1e-4 and ±1e-3 mm absolute rungs) was measured too: it bought ONE extra case out of 62 and
 // more than doubled the worst absolute error, 0.048 → 0.112 mm², so it is not here either.
 //
+// The ladder as named, LAZY rungs — one list, walked by chainFallback below and by
+// scripts/offset-rates.mjs, so a measurement of "what each rung costs" can never drift from
+// the ladder that actually ships. Every rung's whole body (including tessellating the outline
+// for the polyline rungs) runs inside its own thunk, so a rung that throws in its own SETUP
+// moves to the next rung like any other rung failure rather than escaping chainFallback with
+// an unpinned message.
+export function _ladderRungs(regions, raw, delta, corners) {
+  return [
+    ...[-1, 1].map((sign) => ({ name: `delta*(1${sign < 0 ? "-" : "+"}1e-9)`,
+      run: () => resolveOrRaw(rawOffset(regions, delta * (1 + sign * 1e-9), corners)) })),
+    ...[4, 20].map((mult) => ({ name: `clusterTol*${mult}`,
+      run: () => resolveOffsetWinding(raw, { clusterTol: CLUSTER_TOL * mult }) })),
+    ...[64, 256, 1024].map((segs) => ({ name: `polyline@${segs}`,
+      run: () => resolveOffsetWinding(raw.map((rg) => ({ outer: flattenRing(rg.outer, segs),
+                                                         holes: rg.holes.map((h) => flattenRing(h, segs)) }))) })),
+  ];
+}
+
 // Returns null when every rung fails, which is the caller's signal to rethrow the original.
 function chainFallback(regions, raw, delta, corners) {
-  const attempt = (fn) => {
-    try {
-      const out = fn();
-      return out.length > 0 ? out : null;
-    } catch {
-      return null;                          // any rung may fail its own way; try the next
-    }
-  };
-  for (const sign of [-1, 1]) {
-    const out = attempt(() => resolveOrRaw(rawOffset(regions, delta * (1 + sign * 1e-9), corners)));
-    if (out) return out;
-  }
-  for (const mult of [4, 20]) {
-    const out = attempt(() => resolveOffsetWinding(raw, { clusterTol: CLUSTER_TOL * mult }));
-    if (out) return out;
-  }
-  for (const segs of [64, 256, 1024]) {
-    const flat = raw.map((rg) => ({ outer: flattenRing(rg.outer, segs),
-                                    holes: rg.holes.map((h) => flattenRing(h, segs)) }));
-    const out = attempt(() => resolveOffsetWinding(flat));
-    if (out) return out;
+  for (const rung of _ladderRungs(regions, raw, delta, corners)) {
+    let out;
+    try { out = rung.run(); } catch { continue; }   // any rung may fail its own way; try the next
+    if (out.length > 0) return out;
   }
   return null;
 }

@@ -425,9 +425,11 @@ On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **at
 The three tessellating readbacks — `toRegions()`, `simple()`, `regions()` — remain LOD-dependent: they hand back point rings sampled at the backend's own segment count, so the two backends' output differs in vertex count and by chord error, converging as LOD rises. Those three ops are the whole LOD-dependent surface; everything else, including `offset`, is backend-identical.
 
 **Known limitations.** The native offset engine has verified defects on specific input
-shapes — predominantly, but not exclusively, on inward offsets that sever a shape under the
-`round` join; see [Offset: known limitations](#offset-known-limitations) below for the three
-parked cases, their measured values, and the independent construction the truths come from.
+shapes — on inward offsets that sever a shape, and on outward offsets of text — under **all
+three corner styles at nearly the same rate**; see [Offset: known
+limitations](#offset-known-limitations) below for the parked cases, their measured values,
+the committed corpus and script that produce every rate quoted there, and the independent
+construction the truths come from.
 
 **Fillet after a boolean reaches STEP as real arcs.** Because booleans preserve curves
 and `fillet` inserts true arc segments, `shape2d(a).union(b).fillet(2).extrude({h})`
@@ -439,12 +441,21 @@ facets at mesh LOD, as always, since its meshes have no curve representation.)
 
 The native offset engine (`geometry/contour-offset.js`) is correct on the honest-agreement
 corpus (`test/contour-offset.test.js`, `test/offset-oracle-manifold.test.js`,
-`test/offset-oracle-occt.test.js`), and **three divergences are currently parked** in the
-"known divergences (parked) — Task 7C" block of `test/offset-oracle-manifold.test.js`, each
-a characterization test pinned to the engine's current measured value. The convention holds
-for the next one found: park it there, never widen the agreement corpus's tolerance around it.
+`test/offset-oracle-occt.test.js`), and **four classes of divergence are currently parked** as
+characterization tests pinned to the engine's current measured value — three in the "known
+divergences (parked) — Task 7C" block of `test/offset-oracle-manifold.test.js` and one in that
+file's glyph block. The convention holds for the next one found: park it there, never widen the
+agreement corpus's tolerance around it.
 
-The three are below. Their truths come from an independent **Minkowski-union construction**
+**Every rate in this section is reproducible by running committed code.** The corpus is
+`test/helpers/offset-corpus.js` — 600 seeded shapes (notched plates, pocket plates, radial
+polygons, multi-region inputs; a pure function of an integer seed, never `Math.random`) plus
+six glyph cases — and the instrument is `node scripts/offset-rates.mjs`, which sweeps them at
+20 deltas × 3 corner styles (36 090 offsets, ~25 s) and prints the tables quoted below. Rates
+that were quoted here before that script existed came from scratch files and several of them
+were wrong; nothing in this section should be believed that the script does not print.
+
+Truths come from an independent **Minkowski-union construction**
 (`test/helpers/minkowski-oracle.js`: dilate = the shape ∪ its outward edge slabs ∪ its convex
 vertex caps; erode = `Box \ dilate(Box \ S)`), which uses Clipper2 purely as a polygon-set
 assembler under the Positive fill rule and never calls anyone's offsetter — the point being
@@ -453,16 +464,13 @@ that Clipper2's own `offset()` is not an independent check on an offset engine, 
 corners. That helper is validated against thirteen closed-form answers in
 `test/minkowski-oracle.test.js` before it is trusted anywhere.
 
-What the three have in common is only that **`sharp` is exact on every one of them**, and
-`chamfer` on two of the three. That is evidence the divergence is a real engine defect rather
-than oracle error; it is **not** a cause, and the three do not share one. In particular they
-are **not** all "the `round` join": the remaining defect surface is *predominantly, but not
-exclusively,* round. The hole-remnant case below is join-independent and an *outward* offset;
-the chain failure has been reproduced under `chamfer` on rectilinear shapes whose chamfered
-offset contains no arcs at all, which disproves the "arcs reaching the chaining pass"
-mechanism this section used to assert. Measured rather than argued: on a 300-shape hole-plate
-sweep the join-independent class is 85/2400 against round-only 2/2400. **The root cause of
-each is open.**
+**No corner style is a safe harbour, and `round` is not the problem.** Both of those were
+asserted here before they were measured, and both are false. The chain-incomplete rate across
+the committed corpus is nearly flat — `round` 0.291 %, `chamfer` 0.241 %, `sharp` 0.224 %
+before the retry ladder — and of the 28 residual (shape, delta) pairs that still fail after
+it, the style that is *alone* in failing is `chamfer` in 5, `sharp` in 5 and `round` in 1.
+`sharp` is exact on the first and third classes below but **not** on the second, where it
+silently drops a region (see that bullet). **The root cause of each class is open.**
 
 - **`round` keeps too much material when several grown holes reach the eroded outline.**
   A 30×20 plate with three rectangular holes at −2 gives 324.75 against a true 258.18 (~26 %
@@ -470,26 +478,71 @@ each is open.**
   and the answer is exact.
 - **The winding resolver can fail to close a boundary at all**, throwing
   `contour-winding: could not chain offset boundary (incomplete intersection set)` where real
-  material survives. `offsetRegions` now retries a failed arrangement several ways before
-  letting the throw out (delta nudged by 1e-9, crossing-merge radius coarsened 4× and 20×,
-  outline re-run as a polyline at three densities), which turns most of these into bounded
-  inaccuracy instead of a build failure: on 6 400 randomized notched plates the `round` rate
-  falls from 0.84 % to 0.09 % and the `chamfer` rate from 0.06 % to 0, and the recovered
-  answers land a worst 0.048 mm² from the oracle. The 38×10 four-notch comb at −2.5 that used
-  to throw now returns 91.750 against a true 91.744 and has moved up into the corpus. What is
-  parked is the residual: a ~0.0045 mm wide band of delta (−2.4955 … −2.4995 on that comb)
-  where every retry still fails, under `round` *and* `chamfer`. There the arrangement is not
-  merely degenerate but misclassified — the piece leaving one pinch vertex probes as winding
-  0 and is dropped, so the boundary has a real dead end — which is a fix in the classifier,
-  not in the retry ladder. Loud, never silent — see [ERROR-PATTERNS.md
+  material survives. `offsetRegions` retries a failed arrangement several ways before letting
+  the throw out (delta nudged by 1e-9, crossing-merge radius coarsened 4× and 20×, outline
+  re-run as a polyline at three densities), which turns many of these into bounded inaccuracy
+  instead of a build failure: on the committed corpus the rates fall from 0.291 / 0.241 /
+  0.224 % (`round` / `chamfer` / `sharp`) to **0.133 / 0.166 / 0.175 %**, and the recovered
+  answers land a median 0.023 % and a worst 3.4 % (0.61 mm²) from the oracle. Note what those
+  numbers say about the ladder: it was tuned on a `round`-only corpus and it helps `round`
+  most; it barely moves `sharp`.
+
+  Three costs of the ladder, each measured by the same script:
+  - **A `clusterTol` rung can hand back one region fewer than the truth.** Coarsening the
+    crossing-merge radius merges a genuine severing pinch away: 4 of 34 rescues on the corpus
+    come back a region short (in 1, a *later* rung had the count right and lost to
+    first-non-empty-wins). The `clusterTol × 20` rung is a **0.1 mm** merge radius, which sits
+    *above* the 0.05 mm feature floor `CLUSTER_TOL`'s own derivation
+    (`contour-winding.js`, top of file) says it must stay far below. That is a known
+    inconsistency, not an oversight in the derivation.
+  - **A polyline rung costs the result its arcs.** The last three rungs re-run the outline as
+    chords, so round joins come back as line segments and **a STEP export of that result has
+    no true circles** — the property this engine exists to preserve. Measured: a 10 mm "Scott"
+    dilated by 1 mm came back with **0 arcs and 6 435 line segments** where the raw offset
+    carried 24 arcs. The rungs are ordered last for exactly this reason, but when they win,
+    they win silently.
+  - **A failed offset is slow.** All seven rungs run before the throw: 2.3 s for a five-glyph
+    string, against ~10 ms for the same offset succeeding.
+
+  What is parked as a hard failure is the residual: on the 38×10 four-notch comb a ~0.0045 mm
+  wide band of delta (−2.4955 … −2.4995) where every retry still fails under `round` *and*
+  `chamfer` — and where `sharp` builds but **drops a region** (at −2.4975 the oracle has two
+  pieces, 90.145025 and 0.010025 mm²; the engine returns one of 90.114391). There the
+  arrangement is not merely degenerate but misclassified — a piece leaving a pinch vertex
+  probes as winding 0 and is dropped, so the boundary has a real dead end — which is a fix in
+  the classifier, not in the retry ladder. The same comb at −2.5 is rescued but returns
+  **three** regions where the oracle counts **four** (the 0.007 mm² fourth is merged away by
+  the `clusterTol × 20` rung), which is the region-loss cost above, in the case the corpus
+  documents best. Loud, never silent — see [ERROR-PATTERNS.md
   §shape2d-offset-winding-chain-incomplete](ERROR-PATTERNS.md#shape2d-offset-winding-chain-incomplete).
 - **A hole narrower than 2·delta leaves a remnant instead of vanishing.** A 1×1 hole in a
   plate at +2 should close completely; a ~2 mm² hole ring survives instead. Join-independent
   — all three styles are short by the same 2 mm².
+- **Text is the worst input class, and its failures are partly silent.** Offsetting real glyph
+  outlines is where this engine is least correct, and until this corpus existed there was no
+  glyph case in it at all. Over the full 6-glyph × 5-delta matrix under `round`
+  (`test/offset-oracle-manifold.test.js` § glyphs, truth derived from Clipper2 in-file), the
+  engine agrees on 15 of 30, **throws** chain-incomplete on 9, and **diverges** on 6. The
+  divergences are topological and area-invisible, which is the whole reason this section now
+  asserts region and hole counts everywhere:
+  - a 10 mm `"o"` at +2 **drops a counter that is still open** (1 hole in truth, 0 returned) —
+    the silent hole-loss failure text parts actually hit;
+  - the same `"o"` at +3 **keeps a counter that has closed** (0 holes in truth, 1 returned),
+    at 0.20 % from the true area, so no area tolerance catches either;
+  - `"a"` at +0.5, `"p"` at +1 and `"t"` at +1 come back as **two regions** where a dilation
+    cannot have more components than its input;
+  - and the resolver emits **degenerate sliver rings** beside the real ones — `"o"` at +3
+    returns 25 regions of which 24 are under 1e-3 mm². They cancel under the even-odd assembly
+    `extrude` uses, so area is unaffected, but `regions()` and any hole count read off the
+    result are wrong. Rare on rectilinear input (3 of 2 629 fuzz cases), common on curves.
 
-Scale, measured: over ~13 800 rectilinear cases (plates with disjoint rectangular holes,
-multi-notch combs, ±0.5 … ±3, all three styles) 103 diverge from the oracle by more than
-0.2 %, and the three classes above account for all of them.
+  Throws on text are style-independent: of the 9, eight throw under all three corner styles
+  and the ninth under `round` and `sharp`.
+
+Scale, measured, and reproducible: `npx vitest run test/offset-fuzz.test.js` sweeps 150 seeded
+shapes × 6 deltas × 3 styles against the Minkowski oracle in ~1.5 s and currently finds **zero**
+region-count, hole-count or area disagreements outside the pinned characterizations — so the
+classes above are the divergence surface, not a sample of it.
 
 One more defect was **fixed in Task 7C** and never appeared on this list at all, which is
 the interesting part: nothing detected it. The fast-path validator's crossing test demanded

@@ -391,31 +391,44 @@ growing a shape past the hole's own width.
 ## shape2d-offset-winding-chain-incomplete
 
 - **Symptom:** `contour-winding: could not chain offset boundary (incomplete intersection
-  set)` thrown from `Shape2D.offset` (or `offsetPolygon`) — an inward offset on a shape
-  with several narrow webs or notches, most often with the default `corners: "round"`.
+  set)` thrown from `Shape2D.offset` (or `offsetPolygon`) — most often an inward offset on
+  a shape with several narrow webs or notches, and also an *outward* offset of text at a
+  delta large enough to merge glyphs. All three corner styles produce it.
 - **Cause:** When a raw offset ring is tangled, the winding resolver
   (`geometry/contour-winding.js`) splits every ring at its crossings and re-chains the
   positive-winding pieces. This is its own detector for a boundary it cannot close — a
   kept piece with nowhere to continue. The **root cause is open**; what is known is that
-  it needs an inward offset that severs the shape at one or more narrow webs, and that the
-  arrangement there is degenerate. It is *predominantly, but not exclusively,* the default
-  `round` join: `chamfer` fails too, and on rectilinear shapes whose chamfered offset
-  contains no arcs at all, which rules out the "a round join's arcs land at a severed web"
-  mechanism this entry used to assert. Measured on 6 400 randomized notched plates, before
-  the fallback below: 54 failures under `round` (0.84 %), 4 under `chamfer` (0.06 %), 0
-  under `sharp`. Known limitation — see [KERNEL-CONTRACT.md "Offset: known
+  the arrangement is degenerate where the shape severs (or, on text, where two glyph
+  outlines meet). **It is not a `round`-join effect and no corner style is immune** — the
+  rate is nearly flat across the three. Measured on the committed corpus
+  (`test/helpers/offset-corpus.js`, 606 seeded shapes × 20 deltas × 3 styles = 36 090
+  offsets), before the fallback below: **0.291 % under `round`, 0.241 % under `chamfer`,
+  0.224 % under `sharp`**. Reproduce with `node scripts/offset-rates.mjs`. Known limitation
+  — see [KERNEL-CONTRACT.md "Offset: known
   limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
-- **Fix:** Most of these no longer reach you: `offsetRegions` retries a failed
-  arrangement several ways before letting the throw out — the delta nudged by
-  1e-9, the crossing-merge radius coarsened 4× and 20×, and the outline re-run as a
-  polyline at three densities — taking the first that resolves. That drops the same corpus
-  to 6 failures under `round` (0.09 %) and 0 under `chamfer`, at a measured worst 0.048 mm²
-  from the independently-derived truth. If you still see the throw: retry with
-  `corners: "sharp"`, which has never produced it on any measured corpus (this remains the
-  quickest way to tell a resolver failure from a genuinely collapsing shape, even though
-  the round-join *explanation* for it was wrong); failing that, nudge `|delta|` by ~1 % so
-  the webs are not severed at exactly that width, or offset the pieces separately and union
-  them. The throw stays loud and never silent, so a part that builds is not affected.
+- **Fix:** Many of these no longer reach you: `offsetRegions` retries a failed arrangement
+  several ways before letting the throw out — the delta nudged by 1e-9, the crossing-merge
+  radius coarsened 4× and 20×, and the outline re-run as a polyline at three densities —
+  taking the first that resolves. On the corpus above that takes the rates to **0.133 %
+  (`round`), 0.166 % (`chamfer`), 0.175 % (`sharp`)**, at a median 0.023 % and a worst
+  3.4 % (0.61 mm²) from the independently-derived truth. If you still see the throw:
+  - **Nudge `|delta|` by ~1 %** so the webs are not severed at exactly that width. This is
+    the first thing to try; the failures sit in narrow bands of delta.
+  - **Try the other corner styles**, but do not expect a specific one to be the escape.
+    Measured over the 28 residual (shape, delta) pairs on that corpus: another style builds
+    in 16, and 12 fail under all three. The style that is alone in failing is `chamfer` in
+    5 of them, `sharp` in 5, and `round` in 1 — so if anything `round` is the *safest*
+    here. (Earlier versions of this entry advised retrying with `corners: "sharp"` on the
+    grounds that it "has never produced this throw". That was never measured and is false:
+    a 12-vertex two-notch plate at −3.25 throws under `sharp` and `chamfer` and builds under
+    `round`. It is asserted in `test/offset-oracle-manifold.test.js`.)
+  - **On text**, reduce the offset or emboss the glyphs separately and union the results —
+    dilating 10 mm text by ≥ 2 mm throws on 26 of 90 measured glyph/delta/style combinations
+    regardless of style (`test/offset-oracle-manifold.test.js` § glyphs).
+  - Or offset the pieces separately and union them.
+
+  The throw stays loud and never silent, so a part that builds is not affected by *this*
+  defect — but see the same test file for offset defects on text that are silent.
 
 ## fillet-chamfer-radius-does-not-fit
 

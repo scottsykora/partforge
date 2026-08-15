@@ -1,6 +1,7 @@
 // Pure unit tests for the native contour offset engine — no WASM, no kernel boot.
 import { describe, expect, test } from "vitest";
-import { _offsetSegment } from "../src/framework/geometry/contour-offset.js";
+import { _offsetSegment, _rawOffset, _ladderRungs } from "../src/framework/geometry/contour-offset.js";
+import { caseFor } from "./helpers/offset-corpus.js";
 
 const close = (a, b, tol = 1e-9) => expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThanOrEqual(tol);
 
@@ -673,11 +674,17 @@ describe("offsetRegions — the chain-incomplete fallback", () => {
       .toThrow(CHAIN_INCOMPLETE_MESSAGE);
   });
 
-  test("−2.5/round returns geometry instead of throwing", () => {
+  test("−2.5/round returns geometry instead of throwing, in the measured three pieces", () => {
     expect(() => areaAt(-2.5)).not.toThrow();
-    // Three regions, not one: the two 5-deep notches erode through their webs at exactly this
-    // delta, so the comb really does fall into three pieces. That it SEVERS is the point — the
-    // resolver's job is to report the three, not to give up on the arrangement.
+    // More than one region: the two 5-deep notches erode through their webs at exactly this
+    // delta, so the comb really does sever. That it SEVERS is the point — the resolver's job
+    // is to report the pieces, not to give up on the arrangement.
+    //
+    // THREE is the engine's MEASURED value, not the truth. The Minkowski oracle counts FOUR
+    // pieces here — 91.341263, 0.239060, 0.156621 and 0.007056 mm² — and the winning rung
+    // (clusterTol x20, i.e. a 0.1 mm crossing-merge radius) merges the 0.007 mm² one out of
+    // existence. See test/offset-oracle-manifold.test.js's Task 7D block, which pins the same
+    // 3-against-4 with the oracle's own count derived in-file.
     expect(offsetRegions([region(comb)], -2.5, { corners: "round" })).toHaveLength(3);
   });
 
@@ -705,6 +712,50 @@ describe("offsetRegions — the chain-incomplete fallback", () => {
       expect(a).toBeLessThan(prev);
       prev = a;
     }
+  });
+
+  // What the ladder COSTS when it fires. Both of these are properties of the shipped rung
+  // list, walked directly via `_ladderRungs` so the test sees each rung's answer rather than
+  // only the winner — the same view `scripts/offset-rates.mjs` measures the whole corpus with.
+  // Seeds are from the committed corpus (test/helpers/offset-corpus.js), so both cases
+  // reproduce with `node scripts/offset-rates.mjs --seed <n>`.
+  describe("what the fallback ladder costs", () => {
+    const arcs = (rs) => rs.reduce((a, r) =>
+      a + [r.outer, ...r.holes].reduce((n, c) => n + c.segments.filter((s) => s.via).length, 0), 0);
+    const segs = (rs) => rs.reduce((a, r) =>
+      a + [r.outer, ...r.holes].reduce((n, c) => n + c.segments.length, 0), 0);
+
+    test("a polyline rung strips the result's arcs — a STEP export loses its true circles", () => {
+      // Seed 330 at −3.75/round: the delta and clusterTol rungs all fail, so a POLYLINE rung
+      // wins, and the arcs the raw offset carried do not survive it. Arc preservation to STEP
+      // is this engine's headline property, so this is a real cost and not a rounding detail —
+      // it is documented in KERNEL-CONTRACT.md § Offset: known limitations, not only here.
+      const c = caseFor(330);
+      const { raw } = _rawOffset(c.regions, -3.75, "round");
+      expect(arcs(raw)).toBe(3);                                   // the raw offset HAS arcs
+      const rungs = _ladderRungs(c.regions, raw, -3.75, "round");
+      const won = rungs.map((r) => { try { return { name: r.name, out: r.run() }; } catch { return null; } })
+        .find(Boolean);
+      expect(won.name).toBe("polyline@64");
+      expect(arcs(won.out)).toBe(0);                               // ...and the winner has none
+      expect(segs(won.out)).toBe(6);
+      expect(arcs(offsetRegions(c.regions, -3.75, { corners: "round" }))).toBe(0);
+    });
+
+    test("a clusterTol rung can lose a region a later rung would have kept", () => {
+      // Seed 397 at −3.25/round: clusterTol x20 (a 0.1 mm crossing-merge radius) welds a
+      // genuine severing pinch shut and returns ONE region; polyline@1024 returns the two the
+      // Minkowski oracle counts. first-non-empty-wins means the coarser answer is the one that
+      // ships. Measured across the corpus: 4 of 34 rescues come back a region short, and this
+      // is the one where a later rung had it right.
+      const c = caseFor(397);
+      const { raw } = _rawOffset(c.regions, -3.25, "round");
+      const out = Object.fromEntries(_ladderRungs(c.regions, raw, -3.25, "round")
+        .map((r) => { try { return [r.name, r.run().length]; } catch { return [r.name, null]; } }));
+      expect(out["clusterTol*20"]).toBe(1);
+      expect(out["polyline@1024"]).toBe(2);
+      expect(offsetRegions(c.regions, -3.25, { corners: "round" })).toHaveLength(1);   // PARKED
+    });
   });
 
   test("a genuinely unresolvable arrangement still throws the pinned message", () => {

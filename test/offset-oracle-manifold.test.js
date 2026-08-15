@@ -124,13 +124,50 @@ const clipperRings = (regions, delta, corners) => {
 };
 const clipperArea = (regions, delta, corners) => Math.abs(totalArea(clipperRings(regions, delta, corners)));
 
+// ── topology ────────────────────────────────────────────────────────────────────────────
+// Area agreement is the WEAKER half of this file. The text bug this branch exists to fix sat
+// within 0.1–0.3 % on area while being badly wrong topologically — a dilated "o" whose
+// counter had closed came back as 25 regions and 11 holes, 0.21 % from the true area — so an
+// area-only corpus passes it. Every comparison below therefore asserts region count and hole
+// count too, both DERIVED from the oracle in-file rather than hardcoded.
+//
+// A ring under SLIVER is not a feature; it is a resolver artifact (see the glyph block for
+// what is known about them). Applied to BOTH sides before any count, so the filter can never
+// hide a disagreement it does not also hide on the oracle.
+const SLIVER = 1e-3;                                     // mm²
+// Clipper2 under any fill rule hands outers back CCW (positive area) and holes CW, so the
+// signed area of each returned ring is its own classifier.
+function ringTopology(pointRingList) {
+  let regions = 0, holes = 0;
+  for (const r of pointRingList) {
+    const a = ringArea(r);
+    if (Math.abs(a) < SLIVER) continue;
+    if (a > 0) regions++; else holes++;
+  }
+  return { regions, holes };
+}
+// The native side keeps its region/hole nesting, so count it structurally rather than by sign
+// — a native hole ring's stored winding is the engine's claim, and reading the claim back as
+// the classifier would make the check circular.
+function nativeTopology(out) {
+  let regions = 0, holes = 0;
+  for (const rg of out) {
+    if (Math.abs(ringArea(tessellateContour(rg.outer, SEGS))) < SLIVER) continue;
+    regions++;
+    for (const h of rg.holes) if (Math.abs(ringArea(tessellateContour(h, SEGS))) >= SLIVER) holes++;
+  }
+  return { regions, holes };
+}
+
 for (const { name, regions, deltas, curved, corners: styles = ["round", "sharp", "chamfer"] } of CORPUS) {
   for (const delta of deltas) for (const corners of styles) {
     test(`${name} delta=${delta} ${corners} matches Clipper2 within tolerance`, () => {
-      const native = rings(offsetRegions(regions, delta, { corners }));
+      const out = offsetRegions(regions, delta, { corners });
+      const native = rings(out);
       const oracle = clipperRings(regions, delta, corners);
       expect(Math.abs(totalArea(native) - totalArea(oracle)) / Math.abs(totalArea(oracle))).toBeLessThan(AREA_RTOL);
       expect(hausdorff(native, oracle)).toBeLessThan(HAUS_TOL(curved));
+      expect(nativeTopology(out)).toEqual(ringTopology(oracle));
     });
   }
 }
@@ -331,13 +368,16 @@ describe("known divergences (parked) — Task 7C", () => {
   const engineArea = (src, delta, corners) => totalArea(rings(offsetRegions(src, delta, { corners })));
 
   // The "this style is exact" companion assertions below are held to 1e-4 mm² absolute, not to
-  // toBeCloseTo's 6 digits. 6 digits is ~5e-9 relative on a ~96 mm² area, and BOTH sides of the
-  // comparison are float sums over Clipper2-assembled polygon geometry (the oracle unions its
-  // slabs and caps through CrossSection). That is correct today by luck of the summation order,
-  // and a Clipper2 bump could move it without anything being wrong. 1e-4 mm² is still four
-  // orders below the divergences this block parks, so nothing this file exists to catch can
-  // hide under it. THIS IS THE ONE PLACE IN THIS FILE WHERE A LOOSER BOUND IS THE RIGHT ONE —
-  // it is not a licence to loosen an assertion that is actually failing.
+  // toBeCloseTo's 6 digits. 6 digits is ~5e-9 relative on a ~96 mm² area, and the two sides are
+  // computed by completely different means: the ORACLE side is a float sum over
+  // Clipper2-assembled polygon geometry (it unions its slabs and caps through CrossSection),
+  // while the ENGINE side is a pure-JS shoelace over this file's own tessellation of the
+  // engine's contour IR. Holding two independent summations of ~96 mm² to 5e-9 relative is
+  // asserting a coincidence of rounding order, and a Clipper2 bump — or a change to SEGS —
+  // could move it with nothing being wrong. 1e-4 mm² is still four orders below the
+  // divergences this block parks, so nothing this file exists to catch can hide under it.
+  // THIS IS THE ONE PLACE IN THIS FILE WHERE A LOOSER BOUND IS THE RIGHT ONE — it is not a
+  // licence to loosen an assertion that is actually failing.
   const EXACT_TOL = 1e-4;
   const expectExact = (got, truth) => expect(Math.abs(got - truth)).toBeLessThan(EXACT_TOL);
 
@@ -386,15 +426,24 @@ describe("known divergences (parked) — Task 7C", () => {
   //    This case is also the counter-example to the "chain failures are a ROUND-join problem"
   //    reading that classes 1 and 3 used to be written up under: CHAMFER fails across exactly
   //    the same band of delta, on a rectilinear shape whose chamfered offset contains no arcs
-  //    at all. Only sharp survives it.
+  //    at all. Sharp survives THIS one — but not the two-notch plate below it, which is the
+  //    case that retired the "sharp has never produced this throw" workaround for good.
   test("four-notch comb at −2.4975: a residual band of delta still fails, under round AND chamfer", () => {
     const comb = [{ outer: ring([[0, 0], [38, 0], [38, 10], [15, 10], [15, 5], [12, 5], [12, 10],
       [9, 10], [9, 4.5], [7, 4.5], [7, 10], [5, 10], [5, 5], [4, 5], [4, 10], [0, 10]]), holes: [] }];
-    // sharp builds here and lands 0.041 mm² from the oracle — not the float-exact agreement the
-    // classes above show, because at this delta the notch webs are 0.005 mm slivers and a miter
-    // resolves their ends differently than the oracle's. Bounded, and far from the failure below.
+    // sharp builds here and lands 0.041 mm² from the oracle. That is NOT a miter-policy
+    // disagreement, which is what this comment used to say: a join-policy difference would
+    // show at every delta, and sharp is float-exact (to 1e-6) at −2.49, −2.495, −2.5005 and
+    // −2.505 either side of the band. Inside the band it DROPS A REGION — at −2.4975 the
+    // oracle has two pieces, 90.145025 and 0.010025, and the engine returns ONE of 90.114391,
+    // so 0.010 of the 0.041 is the lost piece and the other 0.031 is the surviving piece
+    // coming back short. Same failure family as the round/chamfer throws beside it (a piece
+    // misclassified at a pinch vertex), one step less severe: dropped rather than unchainable.
+    // Bounded, asserted as a band, and the region count is asserted below so the drop cannot
+    // go quiet.
     expect(() => offsetRegions(comb, -2.4975, { corners: "sharp" })).not.toThrow();
     expect(Math.abs(engineArea(comb, -2.4975, "sharp") - truthOf(comb, -2.4975, "sharp"))).toBeLessThan(0.05);
+    expect(offsetRegions(comb, -2.4975, { corners: "sharp" })).toHaveLength(1);   // PARKED: truth is 2
     const truth = truthOf(comb, -2.4975, "round");
     expect(truth).toBeGreaterThan(91.8); expect(truth).toBeLessThan(92.0);
     for (const corners of ["round", "chamfer"]) {
@@ -405,6 +454,37 @@ describe("known divergences (parked) — Task 7C", () => {
     // back out would fail here rather than quietly restoring the old cliff.
     expect(() => offsetRegions(comb, -2.4905, { corners: "round" })).not.toThrow();
     expect(() => offsetRegions(comb, -2.5045, { corners: "round" })).not.toThrow();
+  });
+
+  // 4. `sharp` throws too. This 12-vertex two-notch plate is the case that falsified the
+  //    "retry with corners: 'sharp', which has never produced it on any measured corpus"
+  //    workaround that shipped in ERROR-PATTERNS.md — and it is the reason that entry no
+  //    longer offers a corner style as the escape. At −3.25 BOTH sharp and chamfer throw and
+  //    the ladder rescues neither; ROUND is the style that survives here, which is the exact
+  //    reverse of the old advice. The plate is unremarkable: the same notched-plate family as
+  //    the comb above, at non-grid coordinates, and 0.05 either side of −3.25 all three styles
+  //    build.
+  //
+  //    It is also asserted in the seeded corpus rather than only here: `seed 27` in
+  //    test/offset-fuzz.test.js is an independent sharp chain failure, and
+  //    scripts/offset-rates.mjs measures the per-style rate over the whole corpus.
+  test("two-notch plate at −3.25: sharp AND chamfer throw where round builds", () => {
+    const plate = [{ outer: ring([[0, 0], [32, 0], [32, 9],
+      [9.428889, 9], [9.428889, 6.506983], [8.403683, 6.506983], [8.403683, 9],
+      [5.132466, 9], [5.132466, 1.541126], [1.86893, 1.541126], [1.86893, 9], [0, 9]]), holes: [] }];
+    for (const corners of ["sharp", "chamfer"]) {
+      expect(() => offsetRegions(plate, -3.25, { corners })).toThrow(/could not chain offset boundary/);
+      // Truth derived in-file: real material survives, so this is a defect and not a collapse.
+      expect(truthOf(plate, -3.25, corners)).toBeGreaterThan(40);
+      // ...and the neighbours build and are exact, so it is the arrangement at this delta and
+      // not the shape. (Both are float-exact against the oracle, which is what makes the
+      // failure between them a resolver defect rather than an accuracy story.)
+      for (const d of [-3.2, -3.3]) {
+        expect(() => offsetRegions(plate, d, { corners })).not.toThrow();
+        expectExact(engineArea(plate, d, corners), truthOf(plate, d, corners));
+      }
+    }
+    expect(() => offsetRegions(plate, -3.25, { corners: "round" })).not.toThrow();
   });
 });
 
@@ -433,6 +513,187 @@ describe("chain-incomplete fallback — four-notch comb at −2.5 (Task 7D)", ()
     // engine's ordinary round-join disagreement with this oracle on cases that never failed runs
     // to 4.3e-3 relative. So this bound is TIGHTER than the engine's everyday noise, not looser.
     expect(Math.abs(got - truth)).toBeLessThan(0.01);
-    expect(offsetRegions(comb, -2.5, { corners: "round" })).toHaveLength(3);   // the comb severs in three
+    // The comb severs — but into FOUR pieces, not the three the engine reports. The oracle's
+    // own ring areas at this delta are 91.341263, 0.239060, 0.156621 and 0.007056 mm²; the
+    // rung that rescues this case (clusterTol x20 = a 0.1 mm crossing-merge radius) merges the
+    // 0.007 mm² piece away. So `3` below is the ENGINE'S MEASURED VALUE pinned as a
+    // characterization, and 4 is the derived truth — it is not "the comb severs in three",
+    // which is what this line used to claim. The area bound above still passes because the
+    // dropped piece is 7.7e-5 of the total.
+    const oracleRings = O.offset(comb.map((rg) => ({ outer: pointRing(rg.outer), holes: [] })),
+      -2.5, { corners: "round", fan: 4096 }).toPolygons();
+    expect(oracleRings.filter((r) => ringArea(r) > 0)).toHaveLength(4);        // derived truth
+    expect(offsetRegions(comb, -2.5, { corners: "round" })).toHaveLength(3);   // PARKED: engine
+  });
+});
+
+// ── Glyphs (Task 8) ─────────────────────────────────────────────────────────────────────
+//
+// The case class whose ABSENCE is why the reported text bug shipped. Every case above is a
+// hand-built polygon or a circle; a real glyph is a closed cubic outline with a counter,
+// dozens of near-tangent joins, and acute corners at every terminal — and the engine behaves
+// materially differently on one.
+//
+// The whole 6-glyph x 5-delta matrix is enumerated below under `round`, with truth DERIVED
+// from Clipper2 in-file as everywhere else in this file, and the engine's CURRENT measured
+// answer pinned per case. It is not a happy table: of 30 cases the engine AGREES on 15,
+// THROWS chain-incomplete on 9, and DIVERGES on 6. That is the honest state, and enumerating
+// it is the point — the previous corpus contained no glyph at all, so all 15 of those
+// divergences and throws were invisible.
+//
+// Two things this matrix establishes that the docs on this branch got wrong:
+//   1. `sharp` is NOT a workaround here. Of the 9 chain-incomplete throws, 8 throw under all
+//      three corner styles and the ninth ("t" at +3) throws under `round` AND `sharp` and
+//      builds only under `chamfer`. Per style over these 30 cases: round 9, sharp 9,
+//      chamfer 8. See "the throws are not a round-join effect" below, which asserts it.
+//   2. Area is not a topology check. "o" at +3 lands 0.20 % from the true area while keeping
+//      a counter that has closed, and at +2 it DROPS a counter that is still open — the exact
+//      silent-hole-loss failure the reported bug was.
+describe("glyphs — the case class whose absence let the text bug ship", () => {
+  const GLYPHS = ["o", "e", "a", "p", "t", "Scott"];
+  const GLYPH_DELTAS = [0.2, 0.5, 1, 2, 3];         // deliberately brackets counter collapse
+  let glyph;                                         // ch -> regions
+  // Every offset in this block is computed ONCE, here: the 30 cases x 3 styles that follow
+  // include 27 that fail all seven fallback rungs before throwing, and running those three
+  // times over (once per assertion below) took the file from 0.3 s to 20 s.
+  let RUN;                                           // "ch@delta|corners" -> result | null
+  beforeAll(async () => {
+    const opentype = (await import("opentype.js")).default;
+    const { textGlyphs } = await import("../src/framework/geometry/text2d.js");
+    const { DEFAULT_FONT_BYTES: b } = await import("../src/framework/geometry/fonts/default-font.js");
+    const font = opentype.parse(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+    glyph = Object.fromEntries(GLYPHS.map((ch) => [ch, textGlyphs(font, ch, { size: 10 })]));
+    RUN = {};
+    // Every glyph under `round`; the single glyphs additionally under chamfer and sharp, for
+    // the corner-style disproof below. "Scott" is round-only on purpose: a failing offset of a
+    // five-glyph string costs 2.3 s to walk the whole ladder before throwing, so sweeping it
+    // three ways would add 5 s to the suite for evidence the five single glyphs already give.
+    // (scripts/offset-rates.mjs does sweep "Scott" all three ways, and it throws on all three.)
+    for (const ch of GLYPHS) for (const d of GLYPH_DELTAS)
+      for (const corners of ch === "Scott" ? ["round"] : ["round", "chamfer", "sharp"]) {
+        try { RUN[`${ch}@${d}|${corners}`] = engineOf(offsetRegions(glyph[ch], d, { corners })); }
+        catch (e) { RUN[`${ch}@${d}|${corners}`] = { error: e.message }; }
+      }
+  }, 30000);
+
+  // The engine's measured answer per case: [regions, holes, net area, RAW region count] with
+  // slivers filtered out of the first three, or "throw". The raw count is carried because the
+  // gap between it and the filtered count IS the sliver defect: "o" at +3 hands back 25
+  // regions of which 24 are degenerate rings under 1e-3 mm².
+  const MEASURED = {
+    "o@0.2": [1, 1, 30.568, 1], "o@0.5": [1, 1, 42.223, 1], "o@1": [1, 1, 61.628, 1],
+    "o@2": [1, 0, 100.772, 20], "o@3": [1, 1, 139.263, 25],
+    "e@0.2": [1, 1, 32.523, 2], "e@0.5": [1, 1, 45.152, 2], "e@1": [1, 2, 64.960, 2],
+    "e@2": "throw", "e@3": "throw",
+    "a@0.2": [1, 1, 33.536, 1], "a@0.5": [2, 1, 46.522, 2], "a@1": [1, 2, 66.314, 2],
+    "a@2": "throw", "a@3": "throw",
+    "p@0.2": [1, 1, 38.253, 1], "p@0.5": [1, 1, 52.715, 1], "p@1": [2, 1, 75.381, 2],
+    "p@2": [1, 0, 120.371, 28], "p@3": "throw",
+    "t@0.2": [1, 0, 21.449, 1], "t@0.5": [1, 0, 30.498, 1], "t@1": [2, 0, 46.488, 2],
+    "t@2": "throw", "t@3": "throw",
+    "Scott@0.2": [5, 1, 140.006, 5], "Scott@0.5": [4, 1, 196.736, 4], "Scott@1": [1, 3, 288.627, 3],
+    "Scott@2": "throw", "Scott@3": "throw",
+  };
+
+  // Where the engine disagrees with the derived truth. Pinned as the exact list, so a fix
+  // breaks this test as loudly as a regression does and neither can pass quietly. Read the
+  // right-hand side of each line as the correct answer.
+  const DIVERGENT = [
+    // A counter that is still open at +2 (true 1 hole) is DROPPED. The reported bug's own
+    // failure mode, on the most ordinary glyph there is.
+    "o@2: 1r/0h 100.772 vs truth 1r/1h 100.537",
+    // ...and one delta later, a counter that HAS closed (true 0 holes) is KEPT. So the two
+    // are not one off-by-one threshold: the hole survives exactly where it should not.
+    "o@3: 1r/1h 139.263 vs truth 1r/0h 139.537",
+    // A spurious second region: the dilation of a connected glyph cannot gain a component
+    // (S is a subset of S+B, and dilation preserves connectedness), so any count above the
+    // input's own region count is wrong by construction, whatever the areas say.
+    "a@0.5: 2r/1h 46.522 vs truth 1r/1h 46.540",
+    "p@1: 2r/1h 75.381 vs truth 1r/1h 75.383",
+    "t@1: 2r/0h 46.488 vs truth 1r/0h 46.473",
+    // Topologically right, 0.85 % over on area — the only case here that an area-only corpus
+    // would have caught, and the smallest of the six.
+    "p@0.5: 1r/1h 52.715 vs truth 1r/1h 52.273",
+  ];
+
+  const truthOf = (ch, d) => {
+    const oracle = clipperRings(glyph[ch], d, "round");
+    return { ...ringTopology(oracle), area: Math.abs(totalArea(oracle)) };
+  };
+  const engineOf = (out) => {
+    const t = nativeTopology(out);
+    let area = 0;
+    for (const rg of out) {
+      const a = Math.abs(ringArea(tessellateContour(rg.outer, SEGS)));
+      if (a < SLIVER) continue;
+      area += a;
+      for (const h of rg.holes) {
+        const ha = Math.abs(ringArea(tessellateContour(h, SEGS)));
+        if (ha >= SLIVER) area -= ha;
+      }
+    }
+    return { ...t, area, raw: out.length };
+  };
+
+  for (const ch of GLYPHS) for (const d of GLYPH_DELTAS) {
+    const key = `${ch}@${d}`;
+    const want = MEASURED[key];
+    test(`"${ch}" +${d} round: ${want === "throw" ? "chain-incomplete (parked)" : "pinned"}`, () => {
+      const got = RUN[`${key}|round`];
+      if (want === "throw") {
+        expect(got.error).toMatch(/could not chain offset boundary/);
+        return;
+      }
+      const [regions, holes, area, raw] = want;
+      expect(got.error).toBeUndefined();
+      expect({ regions: got.regions, holes: got.holes }).toEqual({ regions, holes });
+      expect(got.area).toBeCloseTo(area, 2);
+      expect(got.raw).toBe(raw);
+    });
+  }
+
+  test("the engine's disagreements with the derived truth are exactly the known six", () => {
+    const found = [];
+    for (const ch of GLYPHS) for (const d of GLYPH_DELTAS) {
+      if (MEASURED[`${ch}@${d}`] === "throw") continue;
+      const truth = truthOf(ch, d);
+      const got = RUN[`${ch}@${d}|round`];
+      const badTopo = got.regions !== truth.regions || got.holes !== truth.holes;
+      const badArea = Math.abs(got.area - truth.area) / truth.area > AREA_RTOL;
+      if (badTopo || badArea)
+        found.push(`${ch}@${d}: ${got.regions}r/${got.holes}h ${got.area.toFixed(3)}` +
+          ` vs truth ${truth.regions}r/${truth.holes}h ${truth.area.toFixed(3)}`);
+    }
+    // Sorted so the pinned list reads by failure kind rather than by iteration order.
+    expect(found.sort()).toEqual([...DIVERGENT].sort());
+  });
+
+  // The brief for this task named four targets derived from Clipper2. All four are asserted
+  // here against the SAME derived truth, so the numbers below are sanity checks on the oracle
+  // rather than a second source: "Scott" +3 = 522.349, "o" +3 = 139.537, "t" +3 = 121.842,
+  // and "e"/"a"/"p" past collapse have no counter left. Three of the four are cases the
+  // engine cannot currently produce at all — which is the finding, not a footnote.
+  test("the derived truths for the brief's four targets", () => {
+    expect(truthOf("Scott", 3)).toEqual({ regions: 1, holes: 0, area: expect.closeTo(522.349, 2) });
+    expect(truthOf("o", 3)).toEqual({ regions: 1, holes: 0, area: expect.closeTo(139.537, 2) });
+    expect(truthOf("t", 3).area).toBeCloseTo(121.842, 2);
+    for (const ch of ["e", "a", "p"]) expect(truthOf(ch, 3).holes).toBe(0);   // counters gone
+  });
+
+  // The disproof, executable. If `sharp` were the workaround ERROR-PATTERNS.md advertised, a
+  // caller hitting the throw on text could switch to it; on this corpus that helps in exactly
+  // one case out of nine, and the case it helps is the one where CHAMFER is the escape.
+  test("the throws are not a round-join effect: sharp throws on the same cases round does", () => {
+    const per = { round: [], chamfer: [], sharp: [] };
+    for (const ch of GLYPHS.filter((g) => g !== "Scott")) for (const d of GLYPH_DELTAS)
+      for (const corners of ["round", "chamfer", "sharp"])
+        if (RUN[`${ch}@${d}|${corners}`].error) per[corners].push(`${ch}@${d}`);
+    // 25 single-glyph cases: round 7, sharp 7, chamfer 6. Sharp escapes NOTHING that round
+    // fails on; chamfer escapes exactly one. ("Scott" adds two more to each style, measured by
+    // scripts/offset-rates.mjs, taking the full matrix to round 9 / sharp 9 / chamfer 8.)
+    expect(per.round.length).toBe(7);
+    expect(per.sharp).toEqual(per.round);
+    expect(per.chamfer.length).toBe(6);
+    expect(per.round.filter((k) => !per.chamfer.includes(k))).toEqual(["t@3"]);
   });
 });
