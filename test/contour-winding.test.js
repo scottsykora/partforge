@@ -2,7 +2,7 @@
 import { describe, expect, test } from "vitest";
 import { ringCrossings } from "../src/framework/geometry/paper-bridge.js";
 import { trimSegment } from "../src/framework/geometry/contour-ops.js";
-import { _mergeCrossings, CLUSTER_TOL } from "../src/framework/geometry/contour-winding.js";
+import { _mergeCrossings, _splitRings, CLUSTER_TOL } from "../src/framework/geometry/contour-winding.js";
 
 const ring = (pts) => ({ start: pts[0], segments: [...pts.slice(1), pts[0]].map((p) => ({ to: p })) });
 const close = (a, b, tol = 1e-6) => expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThanOrEqual(tol);
@@ -86,5 +86,48 @@ describe("crossing cluster merge", () => {
   test("CLUSTER_TOL is derived, not a bare magic number, and sits above OFFSET_TOL", () => {
     expect(CLUSTER_TOL).toBeGreaterThan(1e-3);   // must exceed the cubic-offset tolerance
     expect(CLUSTER_TOL).toBeLessThan(0.05);      // must stay well under any real feature
+  });
+});
+
+describe("splitting rings at crossings", () => {
+  const sq = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+  test("a ring with no crossings yields one closed piece", () => {
+    const pieces = _splitRings([sq], { crossings: [], pool: [] });
+    expect(pieces.length).toBe(1);
+    expect(pieces[0].vStart).toBeNull();
+    expect(pieces[0].segs.length).toBe(4);
+  });
+  test("two crossings split a ring into two pieces that together cover it", () => {
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.5, point: [5, 0] },
+      { ring: 0, seg: 2, t: 0.5, point: [5, 10] },
+    ]);
+    const pieces = _splitRings([sq], merged);
+    expect(pieces.length).toBe(2);
+    // endpoints chain: piece0 ends where piece1 starts and vice versa
+    expect(pieces[0].vEnd).toBe(pieces[1].vStart);
+    expect(pieces[1].vEnd).toBe(pieces[0].vStart);
+    // total emitted length equals the ring perimeter (40)
+    const len = (p) => { let L = 0, cur = p.from;
+      for (const s of p.segs) { L += Math.hypot(s.to[0] - cur[0], s.to[1] - cur[1]); cur = s.to; } return L; };
+    expect(len(pieces[0]) + len(pieces[1])).toBeCloseTo(40, 6);
+  });
+  test("a piece starting mid-segment is trimmed, not snapped to the vertex", () => {
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.5, point: [5, 0] },
+      { ring: 0, seg: 0, t: 0.8, point: [8, 0] },
+    ]);
+    const pieces = _splitRings([sq], merged);
+    const short = pieces.find((p) => p.segs.length === 1 && Math.abs(p.from[0] - 5) < 1e-9);
+    expect(short).toBeDefined();
+    expect(short.segs[0].to[0]).toBeCloseTo(8, 9);
+  });
+  test("provenance round-trip: an arc ring splits into arc pieces", () => {
+    const circ = { start: [5, 0], segments: [{ via: [0, 5], to: [-5, 0] }, { via: [0, -5], to: [5, 0] }] };
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.5, point: [0, 5] },
+      { ring: 0, seg: 1, t: 0.5, point: [0, -5] },
+    ]);
+    for (const p of _splitRings([circ], merged)) for (const s of p.segs) expect(s.via).toBeDefined();
   });
 });
