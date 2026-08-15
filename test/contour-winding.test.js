@@ -2,7 +2,7 @@
 import { describe, expect, test } from "vitest";
 import { ringCrossings } from "../src/framework/geometry/paper-bridge.js";
 import { trimSegment } from "../src/framework/geometry/contour-ops.js";
-import { _mergeCrossings, _splitRings, _windingAt, _coincidence, CLUSTER_TOL } from "../src/framework/geometry/contour-winding.js";
+import { _mergeCrossings, _splitRings, _windingAt, _coincidence, _classify, CLUSTER_TOL, CHAIN_INCOMPLETE_MESSAGE } from "../src/framework/geometry/contour-winding.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 
 const tess = (rings) => rings.map((r) => tessellateContour(r, 64));
@@ -267,6 +267,147 @@ describe("integer winding", () => {
     const hole = ring([[4, 4], [4, 6], [6, 6], [6, 4]]);
     expect(_windingAt([5, 5], tess([ccw, hole]))).toBe(0);
     expect(_windingAt([1, 1], tess([ccw, hole]))).toBe(1);
+  });
+});
+
+describe("piece classification", () => {
+  test("every piece of a simple CCW square is kept, unreversed", () => {
+    const sq = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.5, point: [5, 0] }, { ring: 0, seg: 2, t: 0.5, point: [5, 10] }]);
+    const pieces = _splitRings([sq], merged);
+    const cls = _classify(pieces, tess([sq]));
+    expect(cls.every((c) => c.keep)).toBe(true);
+    expect(cls.every((c) => !c.reverse)).toBe(true);
+  });
+  test("the interior overlap of two stacked squares is dropped", () => {
+    // where two CCW squares overlap, winding is 2 on the inner side → not a boundary
+    const a = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const b = ring([[5, 5], [15, 5], [15, 15], [5, 15]]);
+    const merged = _mergeCrossings(ringCrossings([a, b]));
+    const cls = _classify(_splitRings([a, b], merged), tess([a, b]));
+    expect(cls.some((c) => !c.keep)).toBe(true);          // the buried arms are dropped
+    expect(cls.some((c) => c.keep)).toBe(true);
+  });
+  test("the ±1 invariant holds for every labeled piece", () => {
+    const a = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const b = ring([[5, 5], [15, 5], [15, 15], [5, 15]]);
+    const merged = _mergeCrossings(ringCrossings([a, b]));
+    for (const c of _classify(_splitRings([a, b], merged), tess([a, b]), { debug: true })) {
+      if (c.wLeft === null) continue;    // excluded records (duplicates, degenerates) — see _classify's doc comment
+      expect(c.wLeft - c.wRight).toBe(1);                 // by construction of the face labels
+    }
+  });
+});
+
+describe("face labels are radius-independent (the probe design misclassified past r≈8.3)", () => {
+  // A plain CCW circle as two semicircular arcs, split near the wrap seam: one long piece
+  // covering most of the circle, one short piece straddling (r, 0). Neither is a real
+  // feature — every piece of a plain convex ring must be kept, unreversed, at ANY radius.
+  const circleRing = (r) => ({ start: [r, 0], segments: [{ via: [0, r], to: [-r, 0] }, { via: [0, -r], to: [r, 0] }] });
+  const onCircle = (r, seg, t) => {
+    const angle = seg === 0 ? t * Math.PI : Math.PI + t * Math.PI;
+    return [r * Math.cos(angle), r * Math.sin(angle)];
+  };
+  const splitCircle = (r) => {
+    const c = circleRing(r);
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.02, point: onCircle(r, 0, 0.02) },
+      { ring: 0, seg: 1, t: 0.97, point: onCircle(r, 1, 0.97) },
+    ]);
+    return { pieces: _splitRings([c], merged), tessRings: tess([c]) };
+  };
+  for (const r of [25, 50, 500]) {
+    test(`r=${r}: every piece of a plain circle is kept, unreversed`, () => {
+      const { pieces, tessRings } = splitCircle(r);
+      const cls = _classify(pieces, tessRings);
+      expect(cls.length).toBeGreaterThan(0);
+      for (const c of cls) { expect(c.keep).toBe(true); expect(c.reverse).toBe(false); }
+    });
+  }
+  test("a degenerate (zero-length) piece is dropped, not kept with an arbitrary orientation", () => {
+    const sq = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const degenerate = { ring: 0, from: [10, 5], segs: [{ to: [10, 5] }], vStart: 0, vEnd: 1 };
+    const [c] = _classify([degenerate], tess([sq]));
+    expect(c.keep).toBe(false);
+  });
+  test("a piece with zero segments is dropped, not thrown (hand-built input, unreachable from _splitRings)", () => {
+    const sq = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const empty = { ring: 0, from: [0, 0], segs: [], vStart: 0, vEnd: 0 };
+    const [c] = _classify([empty], tess([sq]));
+    expect(c.keep).toBe(false);
+  });
+});
+
+describe("face labeling", () => {
+  const classify = (rings, inside) => {
+    const merged = _mergeCrossings(ringCrossings(rings));
+    const pieces = _splitRings(rings, merged);
+    return _classify(pieces, tess(rings), { debug: true, ...(inside ? { inside } : {}) });
+  };
+  const positive = (w) => w >= 1;
+
+  test("bowtie: only the positive lobe's boundary survives w>=1, labels differ by exactly 1", () => {
+    // one crossing → two self-loop pieces, one per lobe: the CCW lobe (w=+1 inside) is
+    // kept as boundary between 1 and 0, the CW lobe (w=−1 inside) is dropped entirely
+    const cls = classify([ring([[0, 0], [10, 10], [10, 0], [0, 10]])], positive);
+    const kept = cls.filter((c) => c.keep);
+    expect(kept.length).toBe(1);
+    expect([kept[0].wLeft, kept[0].wRight]).toEqual([1, 0]);
+    for (const c of cls) if (c.wLeft !== null) expect(c.wLeft - c.wRight).toBe(1);
+  });
+
+  test("nested but disjoint rings: ambient winding crosses components", () => {
+    // small CCW square strictly inside a big CCW square — no crossings, two components.
+    const big = ring([[0, 0], [20, 0], [20, 20], [0, 20]]);
+    const small = ring([[8, 8], [12, 8], [12, 12], [8, 12]]);
+    const cls = classify([big, small], positive);
+    // big: wLeft 1 / wRight 0 → kept. small: ambient 1 → wLeft 2 / wRight 1 → both
+    // filled → dropped (a doubly-covered island contributes no boundary).
+    const bigRec = cls.find((c) => c.piece.ring === 0), smallRec = cls.find((c) => c.piece.ring === 1);
+    expect(bigRec.keep).toBe(true);
+    expect([bigRec.wLeft, bigRec.wRight]).toEqual([1, 0]);
+    expect(smallRec.keep).toBe(false);
+    expect([smallRec.wLeft, smallRec.wRight]).toEqual([2, 1]);
+  });
+
+  test("a CW hole nested in a disjoint CCW outer is kept, unreversed under w>=1", () => {
+    const outer = ring([[0, 0], [20, 0], [20, 20], [0, 20]]);
+    const hole = ring([[8, 8], [8, 12], [12, 12], [12, 8]]);      // CW
+    const cls = classify([outer, hole], positive);
+    const h = cls.find((c) => c.piece.ring === 1);
+    expect(h.keep).toBe(true);
+    expect([h.wLeft, h.wRight]).toEqual([1, 0]);
+    expect(h.reverse).toBe(false);
+  });
+
+  test("a CW ring alone under the DEFAULT nonzero rule is kept REVERSED (w -1 interior)", () => {
+    const cw = ring([[0, 0], [0, 10], [10, 10], [10, 0]]);
+    const [c] = classify([cw]);
+    expect(c.keep).toBe(true);
+    expect(c.reverse).toBe(true);
+    expect([c.wLeft, c.wRight]).toEqual([0, -1]);
+  });
+
+  test("pinch vertex: squares meeting at one corner classify to even kept-degree everywhere", () => {
+    // The dead-end class that sank the probe design: at a pinch every kept edge's head
+    // must still have a kept departure. Even kept-degree at every vertex is the
+    // structural form of that guarantee.
+    const a = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const b = ring([[10, 10], [20, 10], [20, 20], [10, 20]]);
+    const cls = classify([a, b], positive);
+    const deg = new Map();
+    for (const c of cls) {
+      if (!c.keep || c.piece.vStart === null) continue;
+      for (const v of [c.piece.vStart, c.piece.vEnd]) deg.set(v, (deg.get(v) ?? 0) + 1);
+    }
+    for (const [, d] of deg) expect(d % 2).toBe(0);
+    // and everything that IS kept must be boundary between filled and unfilled
+    for (const c of cls) if (c.keep) expect(c.wLeft >= 1 !== c.wRight >= 1).toBe(true);
+  });
+
+  test("the pinned incomplete-arrangement message is exported byte-exact", () => {
+    expect(CHAIN_INCOMPLETE_MESSAGE).toBe("contour-winding: could not chain offset boundary (incomplete intersection set)");
   });
 });
 

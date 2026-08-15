@@ -183,11 +183,22 @@ export function _splitRings(rings, merged) {
       // deliberately come from the UNSNAPPED source curve at the crossing parameter — the
       // direction the boundary really leaves the junction in, unpolluted by the snap.
       segs[segs.length - 1].to = [merged.pool[b.vertex][0], merged.pool[b.vertex][1]];  // snap to the shared vertex
+      // A crossing sitting exactly ON a source vertex (t within emit's own 1e-12 skip
+      // threshold of 0 or 1) belongs to TWO source segments, and the tangents must come
+      // from the right one: the piece DEPARTS along the next segment when a.t≈1 (the
+      // a.seg sliver above was skipped), and ARRIVES along the previous segment when
+      // b.t≈0. Evaluating both on the recorded segment gave a whole-loop piece identical
+      // departure and arrival tangents — garbage rotational order at the pinch vertex.
+      const nSegs = contour.segments.length;
+      const depSeg = a.t >= 1 - 1e-12 ? (a.seg + 1) % nSegs : a.seg;
+      const depT = a.t >= 1 - 1e-12 ? 0 : a.t;
+      const arrSeg = b.t <= 1e-12 ? (b.seg - 1 + nSegs) % nSegs : b.seg;
+      const arrT = b.t <= 1e-12 ? 1 : b.t;
       pieces.push({ ring: r, from: [from[0], from[1]], segs, vStart: a.vertex, vEnd: b.vertex,
-        tanA: srcTangentAt(pts[a.seg], contour.segments[a.seg], a.t),
-        kA: srcCurvatureAt(pts[a.seg], contour.segments[a.seg], a.t),
-        tanB: srcTangentAt(pts[b.seg], contour.segments[b.seg], b.t),
-        kB: srcCurvatureAt(pts[b.seg], contour.segments[b.seg], b.t) });
+        tanA: srcTangentAt(pts[depSeg], contour.segments[depSeg], depT),
+        kA: srcCurvatureAt(pts[depSeg], contour.segments[depSeg], depT),
+        tanB: srcTangentAt(pts[arrSeg], contour.segments[arrSeg], arrT),
+        kB: srcCurvatureAt(pts[arrSeg], contour.segments[arrSeg], arrT) });
     };
     for (let i = 0; i < xs.length; i++) emit(xs[i], xs[(i + 1) % xs.length]);
   });
@@ -321,4 +332,267 @@ export function _windingAt(p, tessRings) {
     }
   }
   return w;
+}
+
+// The literal message every unresolvable-arrangement site in this module throws — the BFS
+// label conflict below and _chain's dangling-vertex guards — and the string
+// ERROR-PATTERNS.md documents. Exported so contour-offset.js's fallback ladder can
+// recognise THIS failure (the one with a documented, measured degradation) without
+// pattern-matching on message text at a distance.
+export const CHAIN_INCOMPLETE_MESSAGE =
+  "contour-winding: could not chain offset boundary (incomplete intersection set)";
+
+// Below this tessellated length a piece carries no usable geometry: it is the endpoint
+// snap collapsing a short trimmed run between two near-identical pool vertices (distinct
+// vertices, so the segs.length===0 guard in _splitRings cannot fire). Such an edge
+// separates nothing — its two sides are the same region — so it is excluded from the
+// arrangement (kept:false), while its endpoints are still unioned into one component so
+// the vertices it connected stay connected.
+const MIN_PIECE_LEN = 1e-9;
+
+// Fallback tangents for hand-built pieces (tests build pieces without tanA/tanB);
+// _splitRings output always carries the exact source-curve values.
+const pieceTanA = (p) => p.tanA ?? segTangent(p.from, p.segs[0], true);
+const pieceTanB = (p) => {
+  if (p.tanB) return p.tanB;
+  const pts = [p.from, ...p.segs.map((s) => s.to)];
+  return segTangent(pts[pts.length - 2], p.segs[p.segs.length - 1], false);
+};
+
+// Bottom-most tessellation sample over a set of polylines → { e, k, x, y } with globally
+// minimal (y, then x). e indexes into `polys`. Anchors a component's local exterior face.
+function bottomSample(polys) {
+  let best = null;
+  polys.forEach((poly, e) => {
+    for (let k = 0; k < poly.length; k++) {
+      const [x, y] = poly[k];
+      if (!best || y < best.y || (y === best.y && x < best.x)) best = { e, k, x, y };
+    }
+  });
+  return best;
+}
+
+const polyLen = (poly) => {
+  let L = 0;
+  for (let i = 1; i < poly.length; i++) L += Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]);
+  return L;
+};
+
+// Classify pieces by FACE LABELS of the planar arrangement, never by per-piece probes.
+//
+// Half-edges: every non-duplicate crossed piece of usable length is one arrangement edge
+// (forward = the piece's own direction, backward = its twin). At each pool vertex the
+// departures are sorted CCW by the exact source-curve tangent angle (tanA/tanB from
+// _splitRings), ties broken by signed curvature — an edge curving harder left is
+// infinitesimally more CCW. next(h) = the rotational predecessor of twin(h) in that CCW
+// order: the standard DCEL rule, identical in effect to _chain's verified "smallest
+// positive rotation from the reversed inbound direction" with the literal U-turn ranked
+// last. Orbits of next() are face boundary cycles with the face on the LEFT.
+//
+// Winding: one face per graph-connected component is anchored. The face just below the
+// component's bottom-most tessellated point is its LOCAL EXTERIOR, whose own-component
+// winding is 0 by TOPOLOGY (nothing of the component lies below that point), not by
+// measurement. Rings outside this component never cross it (a crossing would join the
+// components), so their winding contribution is a single constant over this component's
+// entire connected curve network — continuity along a connected set that crosses nothing —
+// measured ONCE by ray cast at the bottom point against the other rings only (`ambient`)
+// and folded into every label. Rings whose every piece is a coincidence duplicate of this
+// component's edges count as THIS component's rings (their contribution is already in
+// `mult`), never as ambient geometry. BFS then propagates across edges: crossing a
+// directed edge from its left face to its right subtracts its net multiplicity (`mult`).
+// A label conflict means paper returned an incomplete/inconsistent intersection set
+// (documented 40-level/4096-call bail) — throw the pinned message rather than emit a
+// wrong ring. With consistent labels, a kept-set dead-end is impossible: kept edges are
+// complete boundaries of face unions, so _chain always closes.
+//
+// The record shape matches the historical classifier: { piece, keep, reverse } plus
+// wLeft/wRight in debug mode. wLeft - wRight === mult holds by construction for every
+// arrangement edge; excluded records (duplicates, degenerate pieces) report null.
+export function _classify(pieces, tessRings, { debug = false, inside = (w) => w !== 0 } = {}) {
+  const { mult, duplicate } = _coincidence(pieces);
+  const recs = pieces.map((piece) => ({ piece, keep: false, reverse: false, wLeft: null, wRight: null }));
+
+  // crossed pieces enter the union-find (component structure) even when excluded from the
+  // face graph (duplicates, degenerate lengths) — their rings and vertices belong to the
+  // component their vertices sit in.
+  const crossed = [];
+  pieces.forEach((p, i) => { if (p.vStart !== null && p.segs.length > 0) crossed.push(i); });
+
+  const parent = new Map();
+  const find = (v) => {
+    let r = v;
+    while (parent.get(r) !== r) r = parent.get(r);
+    let c = v;
+    while (parent.get(c) !== c) { const n = parent.get(c); parent.set(c, r); c = n; }
+    return r;
+  };
+  for (const i of crossed) for (const v of [pieces[i].vStart, pieces[i].vEnd])
+    if (!parent.has(v)) parent.set(v, v);
+  for (const i of crossed) {
+    const a = find(pieces[i].vStart), b = find(pieces[i].vEnd);
+    if (a !== b) parent.set(a, b);
+  }
+
+  // face-graph edges: non-duplicate crossed pieces of usable length
+  const eIdx = [];
+  const polyOf = new Map();                 // piece index → tessellated polyline
+  for (const i of crossed) {
+    if (duplicate[i]) continue;
+    const poly = tessellateContour({ start: pieces[i].from, segments: pieces[i].segs }, WINDING_SEGS);
+    if (polyLen(poly) < MIN_PIECE_LEN) continue;          // degenerate: separates nothing
+    polyOf.set(i, poly);
+    eIdx.push(i);
+  }
+  const E = eIdx.length;
+
+  if (E > 0) {
+    const P = (h) => pieces[eIdx[h >> 1]];
+    const tailOf = (h) => ((h & 1) ? P(h).vEnd : P(h).vStart);
+    const headOf = (h) => ((h & 1) ? P(h).vStart : P(h).vEnd);
+    const outVec = (h) => {
+      const p = P(h);
+      if (h & 1) { const t = pieceTanB(p); return [-t[0], -t[1]]; }
+      return pieceTanA(p);
+    };
+    const outK = (h) => { const p = P(h); return (h & 1) ? -(p.kB ?? 0) : (p.kA ?? 0); };
+
+    // departures per vertex, sorted CCW by (tangent angle, then curvature)
+    const dep = new Map();
+    for (let h = 0; h < 2 * E; h++) {
+      const v = tailOf(h);
+      if (!dep.has(v)) dep.set(v, []);
+      dep.get(v).push(h);
+    }
+    const pos = new Map();
+    for (const list of dep.values()) {
+      list.sort((a, b) => {
+        const [ax, ay] = outVec(a), [bx, by] = outVec(b);
+        const ta = Math.atan2(ay, ax), tb = Math.atan2(by, bx);
+        if (ta !== tb) return ta - tb;
+        return outK(a) - outK(b);
+      });
+      list.forEach((h, i) => pos.set(h, i));
+    }
+    // next(h): the rotational predecessor of twin(h) in CCW departure order at head(h) —
+    // i.e. the first departure clockwise from the reversed arrival direction. A bijection
+    // by construction, so orbits are simple cycles.
+    const next = (h) => {
+      const list = dep.get(headOf(h));
+      const m = list.length;
+      return list[(pos.get(h ^ 1) - 1 + m) % m];
+    };
+
+    // face orbits (face on the LEFT of each half-edge)
+    const faceOf = new Int32Array(2 * E).fill(-1);
+    let F = 0;
+    for (let h0 = 0; h0 < 2 * E; h0++) {
+      if (faceOf[h0] !== -1) continue;
+      let h = h0;
+      while (faceOf[h] === -1) { faceOf[h] = F; h = next(h); }
+      if (faceOf[h] !== F) throw new Error(CHAIN_INCOMPLETE_MESSAGE);   // non-bijective walk: corrupt input
+      F++;
+    }
+
+    // group edges (and every crossed piece's ring) by component
+    const comps = new Map();                // root → { edges: [edge ids], rings: Set }
+    const compAt = (v) => {
+      const c = find(v);
+      if (!comps.has(c)) comps.set(c, { edges: [], rings: new Set() });
+      return comps.get(c);
+    };
+    for (let e = 0; e < E; e++) compAt(pieces[eIdx[e]].vStart).edges.push(e);
+    for (const i of crossed) compAt(pieces[i].vStart).rings.add(pieces[i].ring);
+
+    const wFace = new Map();
+    for (const { edges, rings: compRings } of comps.values()) {
+      if (edges.length === 0) continue;     // only degenerate/duplicate pieces here: nothing to label
+      // ── anchor: the face below the component's bottom-most tessellated point ──
+      const compPolys = edges.map((e) => polyOf.get(eIdx[e]));
+      const bs = bottomSample(compPolys);
+      const e0 = edges[bs.e], poly = compPolys[bs.e];
+      let anchor;
+      if (bs.k > 0 && bs.k < poly.length - 1) {
+        // interior sample: the travel direction there is horizontal (an interior global
+        // minimum), so its x-component says which side faces down. Travel in −x ⇒ the
+        // forward half-edge's LEFT faces down ⇒ its face is the exterior.
+        let dx = poly[bs.k + 1][0] - poly[bs.k - 1][0];
+        if (Math.abs(dx) < 1e-12) dx = poly[bs.k + 1][0] - poly[bs.k][0];
+        if (Math.abs(dx) < 1e-12) dx = poly[bs.k][0] - poly[bs.k - 1][0];
+        anchor = dx < 0 ? 2 * e0 : 2 * e0 + 1;
+      } else {
+        // the bottom is a pool vertex: every departure leaves upward (angles in [0, π] up
+        // to noise), and the region below the vertex is the LEFT face of the departure
+        // with the LARGEST such angle (the up-left-most edge of the wedge fan).
+        const v = bs.k === 0 ? pieces[eIdx[e0]].vStart : pieces[eIdx[e0]].vEnd;
+        let bestH = null, bestA = -Infinity;
+        for (const h of dep.get(v)) {
+          const [x, y] = outVec(h);
+          let a = Math.atan2(y, x);
+          if (a < -1e-9) a += 2 * Math.PI;              // numeric noise just below horizontal
+          if (a > bestA) { bestA = a; bestH = h; }
+        }
+        anchor = bestH;
+      }
+      const others = tessRings.filter((_, r) => !compRings.has(r));
+      const ambient = _windingAt([bs.x, bs.y], others);
+
+      // ── BFS winding propagation from the anchored exterior face ──
+      const faceEdges = new Map();          // face id → edge ids bordering it
+      for (const e of edges) for (const f of [faceOf[2 * e], faceOf[2 * e + 1]]) {
+        if (!faceEdges.has(f)) faceEdges.set(f, []);
+        faceEdges.get(f).push(e);
+      }
+      const setW = (f, w) => {
+        if (wFace.has(f)) {
+          if (wFace.get(f) !== w) throw new Error(CHAIN_INCOMPLETE_MESSAGE);
+          return false;
+        }
+        wFace.set(f, w);
+        return true;
+      };
+      setW(faceOf[anchor], ambient);
+      const queue = [faceOf[anchor]];
+      while (queue.length) {
+        const f = queue.shift();
+        const wf = wFace.get(f);
+        for (const e of faceEdges.get(f)) {
+          const m = mult[eIdx[e]];
+          const fL = faceOf[2 * e], fR = faceOf[2 * e + 1];
+          // crossing the edge from its left face to its right subtracts the multiplicity
+          if (fL === f) { if (setW(fR, wf - m)) queue.push(fR); }
+          if (fR === f) { if (setW(fL, wf + m)) queue.push(fL); }
+        }
+      }
+      for (const e of edges) for (const f of [faceOf[2 * e], faceOf[2 * e + 1]])
+        if (!wFace.has(f)) throw new Error(CHAIN_INCOMPLETE_MESSAGE);   // unreachable face: disconnected labels
+
+      // ── classify this component's edges from their two face labels ──
+      for (const e of edges) {
+        const i = eIdx[e];
+        const wL = wFace.get(faceOf[2 * e]), wR = wFace.get(faceOf[2 * e + 1]);
+        const keep = inside(wL) !== inside(wR);
+        recs[i] = { piece: pieces[i], keep, reverse: keep && !inside(wL), wLeft: wL, wRight: wR };
+      }
+    }
+  }
+
+  // ── uncrossed whole rings: interior = ambient ± 1 directly ──
+  // Crossing any directed ring left→right of travel subtracts 1, so wLeft = ambient + 1
+  // for a CCW ring (interior on the left) and wLeft = ambient for a CW one — one rule, no
+  // per-orientation casing. Ambient is cast at the ring's own bottom point against every
+  // OTHER ring (its winding is constant along a curve that crosses nothing — same
+  // continuity argument as the component ambient above).
+  pieces.forEach((p, i) => {
+    if (p.vStart !== null || duplicate[i] || p.segs.length === 0) return;
+    const own = tessRings[p.ring];
+    const ccw = ringArea(own) >= 0;
+    const bs = bottomSample([own]);
+    const ambient = _windingAt([bs.x, bs.y], tessRings.filter((_, r) => r !== p.ring));
+    const wL = ambient + (ccw ? 1 : 0);
+    const wR = wL - 1;
+    const keep = inside(wL) !== inside(wR);
+    recs[i] = { piece: p, keep, reverse: keep && !inside(wL), wLeft: wL, wRight: wR };
+  });
+
+  return debug ? recs : recs.map(({ piece, keep, reverse }) => ({ piece, keep, reverse }));
 }
