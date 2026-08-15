@@ -255,8 +255,9 @@ export function _offsetContour(contour, delta, corners) {
   // the discriminator — an arc-dominated ring can be legitimately reduced to a single
   // surviving piece (this file's own storage convention stores a full circle as just two arcs;
   // the keyed-bore regression test below reduces to one surviving arc + closing chord and that
-  // IS the correct answer). Routing through resolveOffsetWinding doesn't work either — it was
-  // tried first, and rejected: it assumes the CCW/positive-area "outer" convention (an
+  // IS the correct answer). Routing through the former Paper.js self-union cleanup did not
+  // work either — it was tried first and rejected because it assumed the CCW/positive-area
+  // "outer" convention (an
   // uninverted self-union is real material, an inverted one that flips positive is a
   // discarded artifact), but _offsetContour has no idea here whether it's assembling an outer
   // or a hole, and a perfectly valid CW/negative-area hole ring (like the keyed bore's) reads
