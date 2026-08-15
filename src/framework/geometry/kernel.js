@@ -7,7 +7,7 @@
 // exact valid-key lists live in op-options.js, wired in at kernel-front.js
 // (finishKernel) and solid-sugar.js (addSugar); legacy positional forms stay
 // silently accepted until a future breaking contract version removes them —
-// contract v2 (partforge 0.58) did NOT remove them, it only changed `offset`
+// contract v2 (partforge 0.59) did NOT remove them, it only changed `offset`
 // semantics; see KERNEL-CONTRACT.md's Versioning section). The prose half of the contract —
 // conventions, value semantics, conformance classes, versioning policy — is
 // docs/KERNEL-CONTRACT.md; change either side and you must update the other.

@@ -3,7 +3,7 @@
 // equivalence with positional form, the detection rule, cache-entry sharing,
 // error surfacing, and OCCT routing. This file is ALSO the deliberate legacy
 // suite — the positional spellings here pin the compat shim until a future
-// breaking contract version removes it (contract v2, partforge 0.58, did not —
+// breaking contract version removes it (contract v2, partforge 0.59, did not —
 // that bump only changed `offset` semantics).
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";

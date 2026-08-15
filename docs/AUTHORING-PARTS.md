@@ -294,7 +294,7 @@ transposition mistake (swap two same-typed numbers, get a valid *wrong* solid).
 Single-argument chaining ops (`translate`, `rotate*`, `cut`, `mirror`, `scale`, …)
 already take one argument and are unaffected. Legacy positional calls (e.g.
 `k.cylinder(rBottom, rTop, h)`) still work — they're accepted silently until a
-future breaking contract version removes them (contract v2, partforge 0.58, did
+future breaking contract version removes them (contract v2, partforge 0.59, did
 not — it only changed `offset` semantics) — but are not shown here; see
 `docs/KERNEL-CONTRACT.md` "Calling convention" for the full canonical/legacy table
 and the detection rule.

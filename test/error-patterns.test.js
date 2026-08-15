@@ -53,6 +53,8 @@ const BASELINE_IDS = [
   "validate-profile-regions-overlap-or-nest",
   "shape2d-offset-partial-reflection-residual",
   "shape2d-offset-kissing-ring-passes-validation",
+  "shape2d-offset-reflex-cluster-too-much-material",
+  "shape2d-offset-waist-not-severed-round-join",
 ];
 
 const entries = parsePatterns(doc);

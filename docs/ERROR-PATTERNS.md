@@ -308,10 +308,10 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
 
 ## shape2d-offset-partial-reflection-residual
 
-- **Symptom:** An outward `Shape2D.offset` on a region with a hole leaves a leftover
-  hole ring behind (`.holes.length` stays > 0, `.area()` under-reports) even though
-  the hole's narrowest span is smaller than `delta` and the pocket should have
-  closed completely.
+- **Symptom:** A pocket that should close doesn't — an outward `Shape2D.offset` on a
+  region with a hole leaves a leftover hole ring behind (`.holes.length` stays > 0,
+  `.area()` under-reports) even though the hole's narrowest span is smaller than
+  `delta` and the pocket should have closed completely.
 - **Cause:** A raw offset ring can be locally valid — correctly wound (CW for a
   hole), no self-intersections — while still lying inside the region it should have
   been swept away by. That's a *global* defect only a whole-shape containment check
@@ -322,25 +322,65 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
   close a pocket rather than assuming it did; work around by offsetting in stages
   or padding the pocket before offsetting.
 
+Searchable phrasings of the same misbehavior: hole doesn't disappear after offset;
+pocket not closed by offset; residual hole ring; `.holes.length` still 1 after
+growing a shape past the hole's own width.
+
+## shape2d-offset-reflex-cluster-too-much-material
+
+- **Symptom:** An inward `Shape2D.offset` (`corners: "chamfer"` or `"sharp"`) on a
+  shape with several reflex/concave corners close together leaves several times too
+  much material — `.area()` comes back far larger than the eroded shape should be,
+  often split across more regions than expected. No error is thrown.
+- **Cause:** When the offset's raw rings self-intersect, `offset` hands them to
+  paper.js (`paper-bridge.js`'s `resolveSelfRegions`) to untangle. Clustered reflex
+  corners produce several overlapping self-intersection loops at once, and paper.js
+  resolves that tangle into the wrong set of sub-regions — keeping loops that should
+  have cancelled. Verified: a 9-gon with clustered reflex corners at `delta` −2.79
+  chamfer resolves to ~7.71 where the true eroded area is ~2.76. Known limitation —
+  see [KERNEL-CONTRACT.md "Offset: known limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
+- **Fix:** No general fix yet. Check `.area()` against the expected eroded area
+  rather than trusting a large inward offset over a spiky outline; work around by
+  using `corners: "round"` (which does not produce the same chord tangle), by
+  simplifying the outline before offsetting, or by offsetting in smaller stages.
+
+## shape2d-offset-waist-not-severed-round-join
+
+- **Symptom:** An inward `Shape2D.offset` past the width of a narrow waist does not
+  split the shape in two — the result stays connected (or comes back with a spurious
+  extra blob where the waist was) and `.area()` over-reports — but the *same* offset
+  with `corners: "sharp"` splits correctly. Verified: a 30×10 dumbbell with a 2-wide
+  waist at `delta` −2 gives 72.000 in two regions under `sharp` and 97.258 in three
+  regions under `round` (74.000 vs 96.000 under `chamfer`).
+- **Cause:** The recovery that severs a waist pinched shut by an offset
+  (`splitAtDuplicateEdges` in `contour-offset.js`) works by finding the pair of
+  duplicate, exactly-collinear edges the two sides of the pinch land on — so it only
+  handles rings made entirely of straight lines. A round or chamfer join inserts an
+  arc or a bevel chord at the waist, so there is no duplicate straight edge left to
+  cut and the pinched ring survives as one over-solid blob.
+- **Fix:** Use `corners: "sharp"` for an inward offset that is meant to split a
+  shape; or offset the pieces separately and union them. Check the result's region
+  count (`.toRegions().length`) rather than assuming the split happened.
+
 ## shape2d-offset-kissing-ring-passes-validation
 
-- **Symptom:** Two rings produced by the same `Shape2D.offset` call (two eroding
-  holes, or a hole and the outer) end up exactly touching or collinearly
-  overlapping along an edge, but the offset does not throw and does not merge
-  them — the result comes back with the rings still separate and overlapping.
-- **Cause:** The offset validator's strict-crossing test (`segsCross` in
-  `contour-offset.js`) is deliberately transversal-only — it ignores collinear
-  touches (a duplicate/overlapping edge, no true crossing point) — because that
-  shape also occurs legitimately, as the zero-width slit left by a neck pinched
-  shut by the offset. The validator can't tell "duplicate edge that's actually
-  fine" from "duplicate edge that means two rings should have merged"; only the
-  specific pinched-neck case is recovered (`splitAtDuplicateEdges`), not the
-  general kissing-ring case between two different rings. Known limitation — see
-  [KERNEL-CONTRACT.md "Offset: known limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
-- **Fix:** No general fix yet. After an inward offset expected to merge nearby
-  features, check the result's ring count and containment explicitly rather than
-  trusting `offset` merged them; work around by unioning the source features (or
-  their pre-offset pockets) before offsetting.
+- **Symptom:** *(Fixed in partforge 0.59 — kept because IDs are permanent.)* Two
+  rings produced by the same `Shape2D.offset` call — two eroding holes that grew into
+  each other, or a hole that eroded out through its own outer — used to come back
+  still separate and overlapping, and extruded to *solid* material inside the pocket
+  or a tab of material hanging off the outline.
+- **Cause:** The offset validator's ring-crossing test only looked for transversal
+  crossings, so two rings that interfere along a shared collinear edge (which is what
+  a sharp join produces) registered as fine; and its hole-containment test sampled a
+  single point of the hole ring, which stays inside even when most of the ring has
+  escaped. The cleanup stage then self-united everything under one even-odd compound,
+  where a doubly-covered region cancels back to solid instead of merging.
+- **Fix:** Upgrade to partforge ≥ 0.59, where `ringsCross` also tests collinear
+  overlap, hole containment tests the whole ring, and cleanup unites the outers and
+  *subtracts* the united hole rings. Nearby holes now merge into one hole and a
+  near-edge hole is clipped by its eroded outer. If a ring count still looks wrong
+  after an inward offset, see
+  [shape2d-offset-waist-not-severed-round-join](#shape2d-offset-waist-not-severed-round-join).
 
 ## fillet-chamfer-radius-does-not-fit
 

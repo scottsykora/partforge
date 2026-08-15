@@ -1,6 +1,6 @@
 # The partforge kernel contract
 
-**Contract version: 2** (introduced in partforge 0.58) — mirrored by `CONTRACT_VERSION`
+**Contract version: 2** (introduced in partforge 0.59) — mirrored by `CONTRACT_VERSION`
 in `src/framework/geometry/kernel.js` and asserted by `test/kernel-contract.test.js`;
 see [Versioning](#versioning) for what may change under which version bump.
 
@@ -118,7 +118,7 @@ Options form is canonical — the form this document, `AUTHORING-PARTS.md`, and 
 in-repo part teach and use. Legacy positional forms remain accepted (silently — no
 runtime warning) until a future breaking contract version removes them; a conforming
 implementation must accept both, and this repo's `finishKernel()`/`addSugar()`
-provide the normalization for free. (Contract v2, partforge 0.58, did **not** remove
+provide the normalization for free. (Contract v2, partforge 0.59, did **not** remove
 them — that bump was for `offset` semantics, see [Versioning](#versioning); legacy
 positional removal is still pending a version of its own.)
 
@@ -423,7 +423,7 @@ facets at mesh LOD, as always, since its meshes have no curve representation.)
 
 The native offset engine (`geometry/contour-offset.js`) is correct on the honest-agreement
 corpus (`test/contour-offset.test.js`, `test/offset-oracle-manifold.test.js`,
-`test/offset-oracle-occt.test.js`), but four cases are verified defects, pinned as
+`test/offset-oracle-occt.test.js`), but two cases are verified defects, pinned as
 characterization tests in the "known divergences (parked)" block of
 `test/offset-oracle-manifold.test.js` rather than silently tolerated:
 
@@ -431,21 +431,9 @@ characterization tests in the "known divergences (parked)" block of
   hole's max inscribed circle is smaller than `delta` should erase the hole entirely; the
   engine instead leaves a residual ring. Verified: a 30×20 plate with a 5-wide-arm L-shaped
   pocket, offset +3, should reach 0 holes / area 928.274 — actual leaves a residual hole at
-  ~921.19. Root cause: a raw offset ring can be locally valid (correctly wound, no
+  ~921.21. Root cause: a raw offset ring can be locally valid (correctly wound, no
   self-intersections) while still lying inside the region it should have been swept away
   by — only a *global* containment check catches this, and none currently runs.
-- **Two eroding holes can overlap instead of merging.** An inward offset that should merge
-  two nearby holes into one can instead leave two separate hole rings that overlap each
-  other — topologically invalid. Verified: a 40×20 plate with two 6×8 holes 3 mm apart,
-  delta −2 sharp; true merged area 348, native returns overlapping rings instead. Root
-  cause: the raw-offset validator's ring-crossing check (`ringsCross`) only catches
-  transversal crossings, not collinear-overlap crossings between two different rings.
-- **A hole near an edge can escape its eroded outer.** An inward offset that should clip a
-  hole against the shrunk outer boundary can leave the hole ring un-clipped, poking through
-  where the outer used to be. Verified: a 40×20 plate with a 10×10 hole 2 mm from the
-  bottom edge, delta −2 sharp; true area 408, native leaves the hole unclipped. Root cause:
-  the validator's hole-containment check tests only one point of the hole ring against the
-  outer, which stays satisfied even when most of the ring has escaped.
 - **Clustered reflex corners degrade accuracy.** A chamfer offset over several reflex
   corners sitting close together can resolve to several times too much surviving area.
   Verified: a 9-gon with clustered reflex corners, chamfer offset delta −2.79; true area
@@ -453,12 +441,23 @@ characterization tests in the "known divergences (parked)" block of
   (`paper-bridge.js`) doesn't fully untangle the self-intersections this corner geometry
   produces.
 
-None of these are silent in the sense of going unnoticed by tests — each has a pinned
+Neither is silent in the sense of going unnoticed by tests — each has a pinned
 characterization test that fails loudly if the defect gets worse, and is meant to be
 deleted and promoted to the main corpus the day it's fixed. They matter to a part author
-today: don't rely on `offset` to fully close a pocket, merge nearby holes, clip a
-near-edge hole, or hold tight tolerance through a reflex-corner cluster — verify the
-result (`holes`/`area`) rather than assuming it.
+today: don't rely on `offset` to fully close a pocket, or to hold tight tolerance through a
+reflex-corner cluster — verify the result (`holes`/`area`) rather than assuming it.
+
+Two further cases were on this list and are now **fixed**, asserted as correctness in the
+same block: two eroding holes that grow into each other merge into one hole (40×20 plate,
+two 6×8 holes 3 mm apart, delta −2 sharp → area 348), and a hole that erodes through its
+outer boundary is clipped by it (40×20 plate, 10×10 hole 2 mm from the edge, delta −2 sharp
+→ area 408, hole absorbed into the outline). Both used to produce topologically invalid
+output — overlapping rings, or a hole ring outside its own outer — which even-odd fill then
+turned back into *solid* material on extrude (360 and 436 respectively). The fix was two
+missing checks in the fast-path validator (ring-crossing now also detects collinear overlap;
+hole containment now tests the whole hole ring, not one point of it) plus a cleanup stage
+that unites the outer rings and *subtracts* the united hole rings instead of self-uniting
+everything under one even-odd compound.
 
 ## The 2-D helper library
 
@@ -608,7 +607,7 @@ in `kernel.js` define the current surface; only breaking changes bump the versio
   `cut` per CadQuery/replicad rather than OpenSCAD's `difference`), so LLM priors
   transfer. Renames are breaking changes with no offsetting benefit — don't.
 
-**v1 → v2** (partforge 0.58): `Shape2D.offset` moved off the two per-backend 2-D
+**v1 → v2** (partforge 0.59): `Shape2D.offset` moved off the two per-backend 2-D
 engines (Clipper2 via `CrossSection` on Manifold, replicad's `Drawing.offset` on
 OCCT) onto the single native contour-offset engine described above. Semantics
 changed, not just implementation: `offset` is now backend-identical by construction
@@ -618,10 +617,37 @@ tuning Manifold's tessellation. Holes offset material-wise (`-delta` where the o
 gets `delta`) on both backends — the deleted OCCT production route got this backwards
 by fusing `outer.cut(hole)` into one `Drawing` and offsetting it with a single call,
 so holes grew under a positive `delta` instead of shrinking; no test caught it because
-there was no holed-offset test before this contract version. Parts that called
-`offset` only for its old geometric result on simple (holeless) shapes are unaffected
-beyond the corner-angle precision improving; parts that relied on the old holed-offset
-direction (if any existed) need the sign of their workaround removed.
+there was no holed-offset test before this contract version. Parts that relied on the
+old holed-offset direction (if any existed) need the sign of their workaround removed.
+
+**`sharp` and `chamfer` change shape on acute corners — check these when migrating.** This
+is a real geometric change, not a precision polish, and it is the one thing v1 parts should
+be re-measured for. Once a convex corner gets tighter than 90° the two old backends did not
+agree with each other, and neither agreed with this repo's own `offsetPolygon`; v1's claim
+that "`round` and `sharp` are exact across backends at every angle" was simply false.
+Measured on an 11-point star (alternating radii 10 and 4) at `delta` +2:
+
+| corners | native (v2) | Clipper2 (v1 Manifold) | OCCT (v1 B-rep) | `offsetPolygon` |
+| --- | --- | --- | --- | --- |
+| `round` | 295.933 | 295.933 | 295.933 | 295.933 |
+| `sharp` | 282.158 | 300.671 | 326.534 | 282.158 |
+| `chamfer` | 278.389 | 288.138 | 278.389 | 278.389 |
+
+The spread is **miter-limit policy**, not accuracy: OCCT miters unbounded, so an acute spike
+shoots arbitrarily far past the corner; Clipper2 squares the corner off past its own limit
+rather than bevelling it. Native applies miter limit 2 and falls back to a plain bevel — the
+same rule `offsetPolygon` (`geometry/polygon.js`) has always used, so `offset` and
+`offsetPolygon` now agree to the digit where previously *neither* backend matched the pure-JS
+helper sitting next to it. `chamfer` additionally lands exactly on OCCT's `bevel` join; only
+Clipper2 differed there, because it had no bevel join and approximated one with two chords.
+
+Practical rule: divergence from v1 is confined to `sharp` and `chamfer` on **outward**
+offsets of shapes with sub-90° convex corners (star points, V-notches, triangles, spiky text
+serifs), and native is always the *smaller*, never the over-solid, result — a clearance
+offset that fit in v1 still fits. `round` is unchanged at every angle, inward offsets are
+unchanged, and shapes whose corners are all ≥90° (rectangles, hexagons, rounded-rects, slots)
+are unchanged. A random-polygon sweep put the >1%-divergent share at 1.6% overall, every one
+of them `sharp` or `chamfer` at positive delta.
 
 ## Why not an existing CAD language
 
