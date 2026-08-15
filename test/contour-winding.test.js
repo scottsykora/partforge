@@ -306,6 +306,26 @@ describe("piece classification", () => {
 
     expect(imbalanced, JSON.stringify(imbalanced, null, 2)).toEqual([]);
   });
+
+  test("classifies a crowded boundary from a clear interior sample", () => {
+    const classifyAt = (dx, dy) => {
+      const P = ([x, y]) => [x + dx, y + dy];
+      // The material above the long bottom edge narrows to 0.004 mm at its midpoint but
+      // opens to 0.1 mm away from that pinch. A fixed 0.01 mm midpoint probe jumps through
+      // the narrow cell and reads exterior; other interior points on the SAME piece have
+      // ample clearance and establish that this is a real positive-winding boundary.
+      const shape = ring([[0, 0], [12, 0], [12, 0.1], [8, 0.1], [6, 0.004], [4, 0.1], [0, 0.1]].map(P));
+      const piece = { ring: 0, from: P([0, 0]), segs: [{ to: P([12, 0]) }], vStart: 0, vEnd: 1 };
+      return _classify([piece], tess([shape]), { debug: true, inside: (w) => w >= 1 })[0];
+    };
+
+    for (const [dx, dy] of [[0, 0], [1000, -750]]) {
+      const classified = classifyAt(dx, dy);
+      expect(classified.keep).toBe(true);
+      expect(classified.reverse).toBe(false);
+      expect([classified.wLeft, classified.wRight]).toEqual([1, 0]);
+    }
+  });
 });
 
 describe("probe anchoring against the QUERIED polyline, not the true curve (fix round 1)", () => {

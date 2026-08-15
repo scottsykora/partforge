@@ -25,8 +25,8 @@ import { assembleRegions, ringArea } from "./shape2d-regions.js";
 export const CLUSTER_TOL = 5e-3;
 
 // Tessellation density for the winding-probe geometry: the raw offset outline sampled
-// for _windingAt, and the single piece sampled by pieceMid to find a point on-curve.
-// Declared here (not near _classify) because pieceMid needs it in this file.
+// for _windingAt, and each piece sampled by pieceSamples to find interior locators.
+// Declared here (not near _classify) because pieceSamples needs it earlier in this file.
 export const WINDING_SEGS = 64;
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -166,24 +166,31 @@ export function _splitRings(rings, merged) {
 // exactly one representative (rather than excluding duplicates from the ray-cast set) is
 // what the emitted boundary needs anyway: chaining must traverse the shared span once.
 
-// Interior sample points used to decide whether two pieces are the same curve. Taken at
-// symmetric fractions of arc length, so a piece traversed the other way samples the same
-// points in reverse order and the two cases are told apart by comparing both orders.
-const COINCIDENT_SAMPLES = 5;
+// Interior sample points shared by coincidence matching and adaptive winding probes. Taken
+// at symmetric fractions of arc length, so a piece traversed the other way samples the same
+// points in reverse order and coincidence can compare both orders. Probe callers additionally
+// move a sample off an exact contour vertex, where the incident tangent would be ambiguous.
+const INTERIOR_SAMPLES = 5;
 
-function pieceSamples(piece) {
+function pieceSamples(piece, { avoidVertices = false } = {}) {
   const poly = tessellateContour({ start: piece.from, segments: piece.segs }, WINDING_SEGS);
   const cum = [0];
   for (let i = 1; i < poly.length; i++)
     cum.push(cum[i - 1] + Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]));
   const total = cum[cum.length - 1];
   const pts = [];
-  for (let k = 1; k <= COINCIDENT_SAMPLES; k++) {
-    const target = (total * k) / (COINCIDENT_SAMPLES + 1);
+  for (let k = 1; k <= INTERIOR_SAMPLES; k++) {
+    const target = (total * k) / (INTERIOR_SAMPLES + 1);
     let i = 1;
     while (i < cum.length - 1 && cum[i] < target) i++;
     const span = cum[i] - cum[i - 1];
-    const f = span > 1e-15 ? (target - cum[i - 1]) / span : 0;
+    let f = span > 1e-15 ? (target - cum[i - 1]) / span : 0;
+    // A probe locator exactly on a contour vertex has two valid incident tangents. Which
+    // edge projectToRing wins is then an iteration-order accident, and offsetting along that
+    // edge's normal can leave the polygon immediately (a square's 50%-of-perimeter point is
+    // the simplest reproduction). Move only probe locators to the containing edge's interior.
+    // Coincidence matching keeps the exact symmetric fractions it historically used.
+    if (avoidVertices && (f <= 1e-9 || f >= 1 - 1e-9)) f = 0.5;
     pts.push([poly[i - 1][0] + f * (poly[i][0] - poly[i - 1][0]),
               poly[i - 1][1] + f * (poly[i][1] - poly[i - 1][1])]);
   }
@@ -274,50 +281,56 @@ export const PROBE_EPS = CLUSTER_TOL * 2;
 // Dropped rather than kept with an arbitrary, unverifiable orientation.
 const MIN_PIECE_LEN = 1e-9;
 
-// Signed crossing count of a +x ray from p against tessellated rings. Standard
-// half-open rule (a[1] <= p[1] < b[1]) so a vertex is counted exactly once.
-export function _windingAt(p, tessRings) {
+const pointEdgeDistance = (p, a, b) => {
+  const ex = b[0] - a[0], ey = b[1] - a[1];
+  const L2 = ex * ex + ey * ey;
+  let t = L2 > 1e-18 ? ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / L2 : 0;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  return Math.hypot(p[0] - (a[0] + t * ex), p[1] - (a[1] + t * ey));
+};
+
+// One arrangement scan can answer the winding query at `p` and, when `near` is supplied,
+// measure how much room the probe's boundary anchor has before it reaches any other edge.
+// The projected source edge and its immediate neighbours are incident geometry, not an
+// obstruction. Everything else participates, including another ring: glyph dilation brings
+// formerly-disjoint contours together, so inter-ring crowding is one of the production cases
+// this measurement exists to detect.
+function scanArrangement(p, tessRings, near = null) {
   let w = 0;
-  for (const ring of tessRings) {
+  let clearance = Infinity;
+  for (let r = 0; r < tessRings.length; r++) {
+    const ring = tessRings[r];
     for (let i = 0; i < ring.length; i++) {
       const a = ring[i], b = ring[(i + 1) % ring.length];
       const side = (b[0] - a[0]) * (p[1] - a[1]) - (p[0] - a[0]) * (b[1] - a[1]);
       if (a[1] <= p[1]) { if (b[1] > p[1] && side > 0) w++; }
       else if (b[1] <= p[1] && side < 0) w--;
+
+      if (near) {
+        const n = ring.length;
+        const delta = r === near.ring ? (i - near.edge + n) % n : -1;
+        const incident = r === near.ring && (delta === 0 || delta === 1 || delta === n - 1);
+        if (!incident) clearance = Math.min(clearance, pointEdgeDistance(near.point, a, b));
+      }
     }
   }
-  return w;
+  return { w, clearance };
 }
 
-// A point roughly on the piece (from the piece's OWN tessellation), plus its total length.
-//
-// This is only a LOCATOR, not the probe origin — it approximates the true curve to within
-// this tessellation's own chord error, same as any sampled polyline. It must NOT be probed
-// directly: `tessRings[piece.ring]`, the polyline `_windingAt` actually intersects, is a
-// DIFFERENT, generally coarser tessellation of the same curve — the whole ring is sampled
-// once at a fixed ANGULAR step (sampleArc), so a short trimmed piece here is sampled
-// finely while the long ring segment it came from is a coarse chord. That gap is the
-// ring's sagitta, ~1.2e-3*r at WINDING_SEGS=64, which GROWS WITH RADIUS while PROBE_EPS is
-// fixed — it exceeds PROBE_EPS for any arc past r≈8.3mm, which silently flips large plain
-// circles' pieces to keep:true,reverse:true. The caller (_classify) closes that gap by
-// projecting this point onto tessRings[piece.ring] before offsetting — see projectToRing.
-function pieceMid(piece) {
-  const poly = tessellateContour({ start: piece.from, segments: piece.segs }, WINDING_SEGS);
-  const i = Math.floor((poly.length - 1) / 2);      // segs.length >= 1 always, so poly.length >= 2
-  const a = poly[i], b = poly[i + 1];
-  // `len` is the whole piece's length, which is what the short-piece probe scaling needs
-  let total = 0;
-  for (let k = 0; k < poly.length - 1; k++) total += Math.hypot(poly[k + 1][0] - poly[k][0], poly[k + 1][1] - poly[k][1]);
-  return { mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], len: total };
-}
+// Signed crossing count of a +x ray from p against tessellated rings. Standard
+// half-open rule (a[1] <= p[1] < b[1]) so a vertex is counted exactly once.
+export function _windingAt(p, tessRings) { return scanArrangement(p, tessRings).w; }
 
 // Project p onto the nearest edge of `ring` — a tessellated point ring — and return that
 // point together with the edge's unit direction. This is what anchors a winding probe
 // exactly on the polyline `_windingAt` queries, by construction, at any radius: the
 // projected point IS a point on that polyline (up to floating-point rounding), so offsetting
 // it by PROBE_EPS along the edge normal cannot straddle the wrong side of a tessellation gap
-// the way offsetting an independently-sampled point (pieceMid's) can. Also gives the
+// the way offsetting an independently-sampled locator (pieceSamples') can. Also gives the
 // left/right sense from the SAME edge the origin came from, so origin and normal agree.
+// This is load-bearing on arcs: a short trimmed piece is tessellated more finely than the
+// source ring segment it came from, and the ring chord's sagitta (~1.2e-3*r here) already
+// exceeds PROBE_EPS above r≈8.3 mm.
 //
 // KNOWN, BOUNDED imprecision: this scans the WHOLE ring for the nearest edge, so on a thin
 // crescent (two ring branches running close and antiparallel) it can legitimately latch onto
@@ -339,7 +352,7 @@ function projectToRing(p, ring) {
     const d2 = dx * dx + dy * dy;
     if (best === null || d2 < best.d2) {
       const L = Math.sqrt(L2) || 1;
-      best = { point, dir: [ex / L, ey / L], d2 };
+      best = { point, dir: [ex / L, ey / L], edge: i, d2 };
     }
   }
   return best;
@@ -365,9 +378,9 @@ function projectToRing(p, ring) {
 // classic identity back. (With the default nonzero rule and mult 1 the keep test is exactly
 // the historical wLeft ∈ {0, 1}, and reverse exactly wLeft === 0.)
 //
-// The probe origin is pieceMid's point PROJECTED onto tessRings[piece.ring] (projectToRing)
-// — the same polyline _windingAt below queries — not the true curve pieceMid approximates;
-// see the comments on both for why that distinction is load-bearing.
+// Every candidate probe origin is a pieceSamples point PROJECTED onto
+// tessRings[piece.ring] (projectToRing) — the same polyline _windingAt below queries — not
+// the true curve the locator approximates; see projectToRing for why that is load-bearing.
 //
 // The ±mult invariant above (wLeft = wRight + mult) is a property of an actual probe: it
 // holds for every record that reaches the probe below. The early-return branches never probe
@@ -388,23 +401,47 @@ export function _classify(pieces, tessRings, { debug = false, inside = (w) => w 
     }
     if (piece.segs.length === 0) {
       // Unreachable from _splitRings (every emitted piece has >=1 seg), but _classify is
-      // exported and a hand-built `segs: []` piece would otherwise throw inside pieceMid
+      // exported and a hand-built `segs: []` piece would otherwise throw inside pieceSamples
       // (poly.length < 2) before MIN_PIECE_LEN gets a chance to reject it. Same outcome as
       // the zero-length case below: drop it, don't guess an orientation.
       const rec = { piece, keep: false, reverse: false };
       return debug ? { ...rec, wLeft: null, wRight: null } : rec;
     }
-    const { mid, len } = pieceMid(piece);
+    const { pts, len } = pieceSamples(piece, { avoidVertices: true });
     if (len < MIN_PIECE_LEN) {
       const rec = { piece, keep: false, reverse: false };
       return debug ? { ...rec, wLeft: null, wRight: null } : rec;
     }
-    const { point: onRing, dir } = projectToRing(mid, tessRings[piece.ring]);
-    // a piece shorter than 2·PROBE_EPS gets a proportionally shorter probe so pinch-point
-    // slivers are still classified rather than probed into a neighbouring region
-    const eps = Math.min(PROBE_EPS, Math.max(len / 4, 1e-9));
-    const left = [onRing[0] - dir[1] * eps, onRing[1] + dir[0] * eps];
-    const wLeft = _windingAt(left, tessRings);
+    // Start at the midpoint, preserving the old clean path. Its arrangement scan measures
+    // winding and local clearance together; if the full probe fits with a 4x safety margin,
+    // no other sample can improve the classification and the historical one-scan cost stays.
+    // At a contested midpoint, examine the other fixed arc-length samples and choose the one
+    // with greatest clearance. Selection is geometry-only — never based on keep, chainability,
+    // or an oracle answer — so a buried/interior edge cannot shop around for a winding it likes.
+    const maxEps = Math.min(PROBE_EPS, Math.max(len / 4, 1e-9));
+    const candidate = (point) => {
+      const projected = projectToRing(point, tessRings[piece.ring]);
+      const left = [projected.point[0] - projected.dir[1] * maxEps,
+                    projected.point[1] + projected.dir[0] * maxEps];
+      const scan = scanArrangement(left, tessRings,
+        { point: projected.point, ring: piece.ring, edge: projected.edge });
+      return { ...projected, wLeft: scan.w, clearance: scan.clearance };
+    };
+    const mid = Math.floor(pts.length / 2);
+    let probe = candidate(pts[mid]);
+    if (probe.clearance < maxEps * 4) {
+      for (let j = 0; j < pts.length; j++) {
+        if (j === mid) continue;
+        const next = candidate(pts[j]);
+        if (next.clearance > probe.clearance) probe = next;
+      }
+    }
+    const eps = Math.min(maxEps, Math.max(probe.clearance / 4, 1e-9));
+    let wLeft = probe.wLeft;
+    if (eps !== maxEps) {
+      const left = [probe.point[0] - probe.dir[1] * eps, probe.point[1] + probe.dir[0] * eps];
+      wLeft = _windingAt(left, tessRings);
+    }
     const wRight = wLeft - mult[i];
     const inL = inside(wLeft), inR = inside(wRight);
     const keep = inL !== inR;
