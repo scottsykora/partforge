@@ -96,8 +96,12 @@ export function _splitRings(rings, merged) {
       // coordinates shared bit-for-bit by both pieces meeting at a vertex, which is what
       // makes chaining reliable. It is NOT true of the curve shape near that joint — c1/c2
       // (cubics) and via (arcs) are carried through trimSegment unchanged, not re-derived
-      // from the snapped endpoint, so a trimmed curve can kink by up to CLUSTER_TOL at the
-      // seam. That's fine for winding classification and re-chaining, just not bit-for-bit.
+      // from the snapped endpoint, so a trimmed curve can deviate from the snapped position
+      // by up to 2*CLUSTER_TOL (the cluster-diameter bound documented above _mergeCrossings'
+      // loop). For an arc this deviation is not confined to the seam either: overwriting
+      // `to` while leaving `via`/`from` untouched defines a slightly different circle, so
+      // the error is distributed along the whole trimmed arc, not just at the joint. Fine
+      // for winding classification and re-chaining, just not bit-for-bit.
       segs[segs.length - 1].to = [merged.pool[b.vertex][0], merged.pool[b.vertex][1]];  // snap to the shared vertex
       pieces.push({ ring: r, from: [from[0], from[1]], segs, vStart: a.vertex, vEnd: b.vertex });
     };
@@ -106,10 +110,23 @@ export function _splitRings(rings, merged) {
   return pieces;
 }
 
-// Probe offset for the winding query. Must clear CLUSTER_TOL — a probe closer to the
-// boundary than the distance two merged crossings can sit apart may land on the wrong
-// side of a neighbouring piece — while staying far below any feature worth keeping.
+// Probe offset for the winding query. The FLOOR is set by the piece's OWN geometry: the
+// endpoint snap in _splitRings can displace a piece's boundary from its unsnapped curve by
+// up to 2*CLUSTER_TOL (see the comment on that snap above), so the probe must clear that or
+// it can land back on the wrong side of the SAME piece's own boundary. The CEILING is set
+// by NEIGHBOURING geometry: too large a probe risks crossing into an unrelated nearby piece
+// or feature. (A smaller probe is never the risk — a smaller probe only gets closer to the
+// boundary it's already straddling correctly.) CLUSTER_TOL*2 clears the floor with headroom
+// to spare below any feature worth keeping.
 export const PROBE_EPS = CLUSTER_TOL * 2;
+
+// Below this length a piece carries no reliable direction to probe along — the endpoint
+// snap in _splitRings can collapse a short trimmed run to (near-)zero length without
+// tripping the `segs.length === 0` guard there (distinct vertices, near-identical pool
+// positions). Probing it would place the origin ON the boundary itself, and the result
+// would be whichever side the half-open ray rule happens to pick — not a measurement.
+// Dropped rather than kept with an arbitrary, unverifiable orientation.
+const MIN_PIECE_LEN = 1e-9;
 
 // Signed crossing count of a +x ray from p against tessellated rings. Standard
 // half-open rule (a[1] <= p[1] < b[1]) so a vertex is counted exactly once.
@@ -126,23 +143,52 @@ export function _windingAt(p, tessRings) {
   return w;
 }
 
-// A point ON the piece, with the local direction there.
+// A point roughly on the piece (from the piece's OWN tessellation), plus its total length.
 //
-// NB the probe point must lie on the actual curve, not on a chord: for an arc or cubic
-// the chord midpoint sits off to one side, and probing PROBE_EPS from a point that is
-// already displaced from the boundary is how a classification silently flips. So sample
-// the piece's own tessellation and take the midpoint of its middle polyline edge — that
-// point is within the tessellation chord error of the true curve, orders below PROBE_EPS.
+// This is only a LOCATOR, not the probe origin — it approximates the true curve to within
+// this tessellation's own chord error, same as any sampled polyline. It must NOT be probed
+// directly: `tessRings[piece.ring]`, the polyline `_windingAt` actually intersects, is a
+// DIFFERENT, generally coarser tessellation of the same curve — the whole ring is sampled
+// once at a fixed ANGULAR step (sampleArc), so a short trimmed piece here is sampled
+// finely while the long ring segment it came from is a coarse chord. That gap is the
+// ring's sagitta, ~1.2e-3*r at WINDING_SEGS=64, which GROWS WITH RADIUS while PROBE_EPS is
+// fixed — it exceeds PROBE_EPS for any arc past r≈8.3mm, which silently flips large plain
+// circles' pieces to keep:true,reverse:true. The caller (_classify) closes that gap by
+// projecting this point onto tessRings[piece.ring] before offsetting — see projectToRing.
 function pieceMid(piece) {
   const poly = tessellateContour({ start: piece.from, segments: piece.segs }, WINDING_SEGS);
-  const i = Math.max(0, Math.floor((poly.length - 1) / 2));
-  const a = poly[i], b = poly[i + 1] ?? poly[poly.length - 1];
-  const d = [b[0] - a[0], b[1] - a[1]];
-  const L = Math.hypot(d[0], d[1]) || 1;
+  const i = Math.floor((poly.length - 1) / 2);      // segs.length >= 1 always, so poly.length >= 2
+  const a = poly[i], b = poly[i + 1];
   // `len` is the whole piece's length, which is what the short-piece probe scaling needs
   let total = 0;
   for (let k = 0; k < poly.length - 1; k++) total += Math.hypot(poly[k + 1][0] - poly[k][0], poly[k + 1][1] - poly[k][1]);
-  return { mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], dir: [d[0] / L, d[1] / L], len: total };
+  return { mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], len: total };
+}
+
+// Project p onto the nearest edge of `ring` — a tessellated point ring — and return that
+// point together with the edge's unit direction. This is what anchors a winding probe
+// exactly on the polyline `_windingAt` queries, by construction, at any radius: the
+// projected point IS a point on that polyline (up to floating-point rounding), so offsetting
+// it by PROBE_EPS along the edge normal cannot straddle the wrong side of a tessellation gap
+// the way offsetting an independently-sampled point (pieceMid's) can. Also gives the
+// left/right sense from the SAME edge the origin came from, so origin and normal agree.
+function projectToRing(p, ring) {
+  let best = null;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const ex = b[0] - a[0], ey = b[1] - a[1];
+    const L2 = ex * ex + ey * ey;
+    let t = L2 > 1e-18 ? ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / L2 : 0;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const point = [a[0] + t * ex, a[1] + t * ey];
+    const dx = p[0] - point[0], dy = p[1] - point[1];
+    const d2 = dx * dx + dy * dy;
+    if (best === null || d2 < best.d2) {
+      const L = Math.sqrt(L2) || 1;
+      best = { point, dir: [ex / L, ey / L], d2 };
+    }
+  }
+  return best;
 }
 
 // Keep a piece iff its two sides straddle the non-zero winding boundary.
@@ -154,13 +200,22 @@ function pieceMid(piece) {
 // which is wrong. Deriving the far side arithmetically makes the two consistent by
 // construction. "Exactly one side non-zero" then reduces to wLeft ∈ {0, 1}; wLeft === 0
 // means the interior is on the right, so the piece is emitted reversed.
+//
+// The probe origin is pieceMid's point PROJECTED onto tessRings[piece.ring] (projectToRing)
+// — the same polyline _windingAt below queries — not the true curve pieceMid approximates;
+// see the comments on both for why that distinction is load-bearing.
 export function _classify(pieces, tessRings, { debug = false } = {}) {
   return pieces.map((piece) => {
-    const { mid, dir, len } = pieceMid(piece);
+    const { mid, len } = pieceMid(piece);
+    if (len < MIN_PIECE_LEN) {
+      const rec = { piece, keep: false, reverse: false };
+      return debug ? { ...rec, wLeft: null, wRight: null } : rec;
+    }
+    const { point: onRing, dir } = projectToRing(mid, tessRings[piece.ring]);
     // a piece shorter than 2·PROBE_EPS gets a proportionally shorter probe so pinch-point
     // slivers are still classified rather than probed into a neighbouring region
     const eps = Math.min(PROBE_EPS, Math.max(len / 4, 1e-9));
-    const left = [mid[0] - dir[1] * eps, mid[1] + dir[0] * eps];
+    const left = [onRing[0] - dir[1] * eps, onRing[1] + dir[0] * eps];
     const wLeft = _windingAt(left, tessRings);
     const wRight = wLeft - 1;
     const keep = wLeft === 0 || wLeft === 1;

@@ -188,3 +188,44 @@ describe("piece classification", () => {
     expect(PROBE_EPS).toBeGreaterThan(CLUSTER_TOL);
   });
 });
+
+describe("probe anchoring against the QUERIED polyline, not the true curve (fix round 1)", () => {
+  // A plain CCW circle as two semicircular arcs. seg 0 sweeps angle 0 -> pi (via pi/2),
+  // seg 1 sweeps pi -> 2pi (via 3pi/2); t is linear in angle (contour-ops.js trimSegment),
+  // matching sampleArc's own linear-in-angle sweep, so this is an exact point on the arc —
+  // not an approximation — and merging it back in doesn't introduce its own snap error.
+  const circleRing = (r) => ({ start: [r, 0], segments: [{ via: [0, r], to: [-r, 0] }, { via: [0, -r], to: [r, 0] }] });
+  const onCircle = (r, seg, t) => {
+    const angle = seg === 0 ? t * Math.PI : Math.PI + t * Math.PI;
+    return [r * Math.cos(angle), r * Math.sin(angle)];
+  };
+  // Split near the seam of seg1->seg0 (t=0.97 on seg1, t=0.02 on seg0): one long piece
+  // covering most of the circle, one short piece straddling the wrap point (r, 0). Neither
+  // is a real feature — every piece of a plain convex ring must be kept, unreversed.
+  const splitCircle = (r) => {
+    const c = circleRing(r);
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.02, point: onCircle(r, 0, 0.02) },
+      { ring: 0, seg: 1, t: 0.97, point: onCircle(r, 1, 0.97) },
+    ]);
+    return { pieces: _splitRings([c], merged), tessRings: tess([c]) };
+  };
+  test("r=25: every piece of a plain circle is kept, unreversed (was reversed by the sagitta gap on HEAD)", () => {
+    const { pieces, tessRings } = splitCircle(25);
+    const cls = _classify(pieces, tessRings);
+    expect(cls.length).toBeGreaterThan(0);
+    for (const c of cls) { expect(c.keep).toBe(true); expect(c.reverse).toBe(false); }
+  });
+  test("r=50: same — this is the case with the ~1.6% misclassification rate on HEAD", () => {
+    const { pieces, tessRings } = splitCircle(50);
+    const cls = _classify(pieces, tessRings);
+    expect(cls.length).toBeGreaterThan(0);
+    for (const c of cls) { expect(c.keep).toBe(true); expect(c.reverse).toBe(false); }
+  });
+  test("a degenerate (zero-length) piece is dropped, not kept with an arbitrary orientation", () => {
+    const sq = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const degenerate = { ring: 0, from: [10, 5], segs: [{ to: [10, 5] }], vStart: 0, vEnd: 1 };
+    const [c] = _classify([degenerate], tess([sq]));
+    expect(c.keep).toBe(false);
+  });
+});
