@@ -2,7 +2,10 @@
 import { describe, expect, test } from "vitest";
 import { ringCrossings } from "../src/framework/geometry/paper-bridge.js";
 import { trimSegment } from "../src/framework/geometry/contour-ops.js";
-import { _mergeCrossings, _splitRings, CLUSTER_TOL } from "../src/framework/geometry/contour-winding.js";
+import { _mergeCrossings, _splitRings, _windingAt, _classify, CLUSTER_TOL, PROBE_EPS } from "../src/framework/geometry/contour-winding.js";
+import { tessellateContour } from "../src/framework/geometry/profile.js";
+
+const tess = (rings) => rings.map((r) => tessellateContour(r, 64));
 
 const ring = (pts) => ({ start: pts[0], segments: [...pts.slice(1), pts[0]].map((p) => ({ to: p })) });
 const close = (a, b, tol = 1e-6) => expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThanOrEqual(tol);
@@ -129,5 +132,59 @@ describe("splitting rings at crossings", () => {
       { ring: 0, seg: 1, t: 0.5, point: [0, -5] },
     ]);
     for (const p of _splitRings([circ], merged)) for (const s of p.segs) expect(s.via).toBeDefined();
+  });
+});
+
+describe("integer winding", () => {
+  const ccw = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+  const cw = ring([[0, 0], [0, 10], [10, 10], [10, 0]]);
+  test("inside a CCW ring is +1, outside is 0", () => {
+    expect(_windingAt([5, 5], tess([ccw]))).toBe(1);
+    expect(_windingAt([50, 5], tess([ccw]))).toBe(0);
+  });
+  test("inside a CW ring is -1", () => {
+    expect(_windingAt([5, 5], tess([cw]))).toBe(-1);
+  });
+  test("two stacked CCW rings give +2 where they overlap", () => {
+    const b = ring([[5, 5], [15, 5], [15, 15], [5, 15]]);
+    expect(_windingAt([7, 7], tess([ccw, b]))).toBe(2);
+    expect(_windingAt([2, 2], tess([ccw, b]))).toBe(1);
+  });
+  test("a CCW outer with a CW hole is 0 inside the hole", () => {
+    const hole = ring([[4, 4], [4, 6], [6, 6], [6, 4]]);
+    expect(_windingAt([5, 5], tess([ccw, hole]))).toBe(0);
+    expect(_windingAt([1, 1], tess([ccw, hole]))).toBe(1);
+  });
+});
+
+describe("piece classification", () => {
+  test("every piece of a simple CCW square is kept, unreversed", () => {
+    const sq = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.5, point: [5, 0] }, { ring: 0, seg: 2, t: 0.5, point: [5, 10] }]);
+    const pieces = _splitRings([sq], merged);
+    const cls = _classify(pieces, tess([sq]));
+    expect(cls.every((c) => c.keep)).toBe(true);
+    expect(cls.every((c) => !c.reverse)).toBe(true);
+  });
+  test("the interior overlap of two stacked squares is dropped", () => {
+    // where two CCW squares overlap, winding is 2 on the inner side → not a boundary
+    const a = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const b = ring([[5, 5], [15, 5], [15, 15], [5, 15]]);
+    const merged = _mergeCrossings(ringCrossings([a, b]));
+    const cls = _classify(_splitRings([a, b], merged), tess([a, b]));
+    expect(cls.some((c) => !c.keep)).toBe(true);          // the buried arms are dropped
+    expect(cls.some((c) => c.keep)).toBe(true);
+  });
+  test("the ±1 invariant holds for every piece", () => {
+    const a = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const b = ring([[5, 5], [15, 5], [15, 15], [5, 15]]);
+    const merged = _mergeCrossings(ringCrossings([a, b]));
+    for (const c of _classify(_splitRings([a, b], merged), tess([a, b]), { debug: true })) {
+      expect(c.wLeft - c.wRight).toBe(1);                 // structural, never probed twice
+    }
+  });
+  test("PROBE_EPS clears the clustering tolerance", () => {
+    expect(PROBE_EPS).toBeGreaterThan(CLUSTER_TOL);
   });
 });
