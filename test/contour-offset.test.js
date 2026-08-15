@@ -310,24 +310,32 @@ describe("offsetRegions — whole-ring collapse vs. partial trims", () => {
     expect(out[0].holes.length).toBe(1);                       // NOT 0 — see comment above
     expect(profileArea(out)).toBeCloseTo(812.566 - (4 - Math.PI), 1);   // outer growth − exact uncut-corner residual
   });
-  // Task 5B, round 2: the wide-arm L-pocket case genuinely doesn't fully absorb its hole
-  // with cleanup alone — this stayed true across both review rounds (0 holes / area≈928.27 is
-  // the verified-correct truth: max inscribed circle in a 5-wide-arm L has radius 2.5 < the
-  // delta=3 offset, confirmed by the same grid-search method validated on the narrow-L-pocket
-  // case above). A global distance-from-source prune (Part 2) closed this gap across two
-  // review rounds of tightening, but its round-2 form — even with EXACT line/arc distance and
-  // an adaptively-flattened cubic distance, eliminating discretization error rather than just
-  // bounding it — still silently deleted 36 of 84 real glyph-counter holes at delta as small
-  // as 0.1mm on 10mm text (every failure total hole loss, none recoverable by further
-  // tolerance tuning: the wide-L-pocket's own raw hole is already `dirty` from Part 1 before
-  // any distance check runs, and so are the failing glyph counters — there is no scoping
-  // condition available on the raw, pre-cleanup ring that tells the two cases apart). Per the
-  // standing instruction that this collateral is strictly worse than the single defect it
-  // fixes, Part 2 was removed entirely rather than shipped delicately tuned. Parked here
-  // pending a proper oracle (Clipper2 or the OCCT backend) rather than more per-ring
-  // heuristics in this engine — see task-5B-report.md's round-2 section for the full 76-combo
-  // sweep and the two curved-hole/false-throw repros that motivated the removal.
-  test.todo("wide L-shaped hole (5-unit arms) at +3 fully absorbs the hole (needs a Clipper2/OCCT oracle, not a per-ring heuristic)");
+  // Task 5B, round 2: the wide-arm L-pocket case genuinely didn't fully absorb its hole
+  // through the old paper.js cleanup path — this stayed true across both review rounds
+  // (0 holes / area≈928.27 is the verified-correct truth: max inscribed circle in a
+  // 5-wide-arm L has radius 2.5 < the delta=3 offset, confirmed by the same grid-search
+  // method validated on the narrow-L-pocket case above). A global distance-from-source
+  // prune (Part 2) closed this gap across two review rounds of tightening, but its round-2
+  // form — even with EXACT line/arc distance and an adaptively-flattened cubic distance,
+  // eliminating discretization error rather than just bounding it — still silently deleted
+  // 36 of 84 real glyph-counter holes at delta as small as 0.1mm on 10mm text (every failure
+  // total hole loss, none recoverable by further tolerance tuning), so Part 2 was removed
+  // entirely rather than shipped delicately tuned, and this case was parked pending a proper
+  // oracle (see task-5B-report.md's round-2 section for the full 76-combo sweep).
+  //
+  // Task 7 (winding resolver wiring): resolveOffsetWinding's positive-winding rule (w >= 1)
+  // resolves this correctly with no per-ring heuristic — a fully-eroded hole ring is simply
+  // negative-winding everywhere and drops out on its own. Cross-checked against Clipper2 in
+  // test/offset-oracle-manifold.test.js's "formerly-parked divergences, now correct" set.
+  test("wide L-shaped hole (5-unit arms) at +3 fully absorbs the hole", () => {
+    const plate = { start: [0, 0], segments: [{ to: [30, 0] }, { to: [30, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
+    const wideLHole = { start: [10, 6], segments: [
+      { to: [10, 15] }, { to: [15, 15] }, { to: [15, 11] }, { to: [21, 11] }, { to: [21, 6] }, { to: [10, 6] }] };
+    const out = offsetRegions([region(plate, [wideLHole])], 3, { corners: "round" });
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(0);
+    expect(profileArea(out)).toBeCloseTo(928.274, 1);
+  });
   test("chamfered rectangle insets without a false collapse throw", () => {
     const chamfered = { start: [0, 0], segments: [
       { to: [10, 0] }, { to: [10, 4] }, { to: [9, 5] }, { to: [1, 5] }, { to: [0, 4] }, { to: [0, 0] }] };
@@ -510,28 +518,41 @@ describe("offsetRegions — round-1 review: Part 1 deletion must not cause a fal
     const nonagon = { start: [19.49, 10], segments: [
       { to: [12.33, 11.95] }, { to: [11.2, 16.81] }, { to: [8.87, 11.96] }, { to: [0.93, 13.3] },
       { to: [3.45, 7.62] }, { to: [8.52, 7.44] }, { to: [10.92, 4.78] }, { to: [15.09, 5.73] }, { to: [19.49, 10] }] };
-    // The false throw (HEAD) is fixed and well-evidenced: this used to throw "offset
-    // collapses the shape (reduce |delta|)" and no longer does.
-    //
-    // Independent verification (a fine-grained grid search for the largest inscribed disk
-    // clearing |delta| everywhere — the same method used and confirmed above for the
-    // narrow-L-pocket case) puts the true eroded area at ~2.76 (max inradius ~3.375,
-    // comfortably above delta=2.79, so the shape genuinely doesn't collapse). This
-    // implementation currently returns a larger, incorrect area (~7.7, split across 2
-    // regions) for this specific input — confirmed via exhaustive search to NOT be a
-    // deletion-selection problem: every one of the 8 possible subsets of the 3 pieces Part 1
-    // flags as reversed for this ring produces a self-intersecting (invalid) candidate, not
-    // just the "delete all 3" and "delete none" ends of that search. The 7.7 figure also
-    // exactly reproduces what the pre-Part-1 baseline (commit d533de3, before task 5B
-    // existed) already computed for this same input — so the inaccuracy predates this task
-    // and isn't something Part 1's deletion or Part 2's (hole-scoped) distance prune ever
-    // touched; it's paper.js's resolveSelfRegions resolving this specific self-intersecting
-    // chamfer-offset curve into the wrong pair of sub-regions. Documented here rather than
-    // silently pinned to the wrong number — see task-5B-report.md's round-1 fix section for
-    // the full trace. Only the throw is asserted; the area is deliberately left unpinned.
+    // The false throw (HEAD, pre-task-5B) is fixed and well-evidenced: this used to throw
+    // "offset collapses the shape (reduce |delta|)" and no longer does — see the fixed area
+    // value below for the current (winding-resolver) accuracy of this specific input.
     let out;
     expect(() => { out = offsetRegions([region(nonagon)], -2.79, { corners: "chamfer" }); }).not.toThrow();
     expect(profileArea(out)).toBeGreaterThan(0);
   });
-  test.todo("concave 9-gon at delta -2.79/chamfer should resolve to area ≈2.76, not ≈7.7 (pre-existing resolveSelfRegions gap, not a Part 1/Part 2 defect)");
+  // Task 7 (winding resolver wiring): this used to go through paper.js's resolveSelfRegions
+  // (a self-union), which returned ~7.7094 split across 2 regions — provably wrong, since
+  // feeding this exact raw offset polygon straight into Clipper2 with FillRule::NonZero
+  // reproduces 7.7094 to the digit (the self-union path is a nonzero-style resolution).
+  // resolveOffsetWinding instead computes the raw curve's POSITIVE-winding region (w >= 1),
+  // which for this input is 4.621926 — also cross-checked directly: feeding the SAME raw
+  // polygon into Clipper2 with FillRule::Positive reproduces 4.621926 to the digit, so
+  // resolveOffsetWinding is resolving _offsetContour's raw output correctly.
+  //
+  // That raw output is itself still not the true chamfer-offset polygon, though: three
+  // reflex corners sit close enough together (the "9-gon with several clustered reflex
+  // corners" this shape is built to exercise) that _offsetContour's per-vertex chamfer join
+  // — built locally at each vertex, with no awareness of other vertices' joins — produces a
+  // piece that overlaps itself, and the positive-winding rule correctly counts that overlap
+  // as material rather than as an artifact to cancel. Independent oracles for a true
+  // single-chord bevel agree the correct area is ~2.6-2.8 (Clipper2's own Square join:
+  // 2.7018; Round: 2.7652; Miter: 2.5934; matching the ~2.76 grid-search estimate from the
+  // narrow-L-pocket-style methods used elsewhere in this file) — so 4.621926 is a genuine
+  // improvement over 7.7094 but not yet the correct answer. The remaining gap is in
+  // _offsetContour's local join construction for closely-clustered reflex corners (the same
+  // class of defect as the wide-L-pocket "uncut corner" residual elsewhere in this codebase),
+  // not in the winding resolver, and is out of this task's scope — see task-7-report.md.
+  test("concave 9-gon at delta -2.79/chamfer: winding resolution is correct, the raw offset still is not (4.621926, was 7.7094)", () => {
+    const nonagon = { start: [19.49, 10], segments: [
+      { to: [12.33, 11.95] }, { to: [11.2, 16.81] }, { to: [8.87, 11.96] }, { to: [0.93, 13.3] },
+      { to: [3.45, 7.62] }, { to: [8.52, 7.44] }, { to: [10.92, 4.78] }, { to: [15.09, 5.73] }, { to: [19.49, 10] }] };
+    const out = offsetRegions([region(nonagon)], -2.79, { corners: "chamfer" });
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(4.621926, 5);
+  });
 });

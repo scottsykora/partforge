@@ -75,12 +75,14 @@ const CORPUS = [
   { name: "L-shape", regions: [Lsh], deltas: [1, -1.5], curved: false },
   { name: "square+hole", regions: [{ ...sq(10), holes: [{ start: [4, 4], segments: [{ to: [4, 6] }, { to: [6, 6] }, { to: [6, 4] }, { to: [4, 4] }] }] }], deltas: [0.5, -0.5], curved: false },
   { name: "dumbbell", regions: [dumb(0)], deltas: [1], curved: false },
-  // The pinch itself: sharp only. At delta −2 with a ROUND or CHAMFER join this engine is
-  // known to diverge badly from Clipper2 (97.258 and 96.000 against 72.354 and 74.000) —
-  // splitAtDuplicateEdges is lines-only, so a join that introduces an arc or a bevel chord at
-  // the waist leaves nothing for it to cut. That is a real, pre-existing defect, parked as a
-  // characterization test below rather than smuggled past this corpus with a wide tolerance.
-  { name: "dumbbell (pinched waist)", regions: [dumb(0)], deltas: [-2], corners: ["sharp"], curved: false },
+  // The pinch itself, all three corner styles. Used to diverge badly from Clipper2 with a
+  // ROUND or CHAMFER join (97.258 and 96.000 against 72.354 and 74.000) — the deleted
+  // splitAtDuplicateEdges recovery was lines-only, so a join that introduced an arc or a
+  // bevel chord at the waist left nothing for it to cut. resolveOffsetWinding has no such
+  // gap (it works from crossings and winding, not duplicate-edge detection), so all three
+  // styles now agree with Clipper2 — see the "formerly-parked divergences" describe block
+  // below for the exact, no-longer-parked numbers.
+  { name: "dumbbell (pinched waist)", regions: [dumb(0)], deltas: [-2], curved: false },
   // Two disjoint regions in ONE offset call — the multi-region path, which the corpus
   // otherwise never exercised (every case above is a single region).
   { name: "two disjoint squares", regions: [sq(10), { outer: { start: [20, 0], segments: [{ to: [34, 0] }, { to: [34, 10] }, { to: [20, 10] }, { to: [20, 0] }] }, holes: [] }], deltas: [1, -1], curved: false },
@@ -186,22 +188,22 @@ describe("formerly-parked divergences, now correct", () => {
     expect(out[0].holes.length).toBe(0);
     expect(netArea(out)).toBeCloseTo(truth, 6);
   });
-});
 
-describe("known divergences (parked)", () => {
-  test("wide L-pocket: delta closes a 5-wide-arm pocket but native leaves a residual", () => {
+  // Task 7 (winding resolver wiring): the two cases below used to live in "known
+  // divergences (parked)" — the deleted paper.js cleanup path (resolveSelfRegions /
+  // splitAtDuplicateEdges) had no global validity check for a raw offset ring that is
+  // locally valid (simple, correctly wound) but should have vanished or split entirely.
+  // resolveOffsetWinding computes the raw curve's positive-winding region directly, which
+  // has no such gap: a fully-eroded pocket is negative-winding everywhere and drops out on
+  // its own, and a pinched waist's two lobes are two separate positive-winding faces
+  // regardless of whether the join at the pinch is a line, an arc, or a bevel chord.
+  test("wide L-pocket: delta closes a 5-wide-arm pocket, matching Clipper2 exactly", () => {
     // 30x20 plate with a wide L-shaped pocket (5-unit arms, the same shape family as
     // test/contour-offset.test.js's narrow-arm (4-unit) L-pocket fixture, scaled up)
     // cut out, offset +3. Max inscribed circle in the pocket has radius 2.5 < delta 3,
-    // so the pocket (hole) should fully close (0 holes remain, true area = 928.274 —
-    // pure (w+2d)(h+2d) - (4-pi)d^2 rounded-rect growth of the 30x20 plate, since no
-    // hole survives to subtract). Root cause: no global validity check on a raw offset
-    // ring that is locally valid (simple, correctly wound) but should have vanished
-    // entirely — see contour-offset.js's own comment above the (removed) Part 2 prune
-    // for the history of this exact case (task-5B-report.md's round-2 section measured
-    // this same shape's residual at delta+3/round as area 921.2116882454313; measured
-    // here at 921.19 — the ~0.02 difference is this file's own SEGS=64 tessellation vs
-    // that report's own sampling, not a behavior change).
+    // so the pocket (hole) fully closes (0 holes, true area = 928.274 — pure
+    // (w+2d)(h+2d) - (4-pi)d^2 rounded-rect growth of the 30x20 plate, since no hole
+    // survives to subtract).
     const plate = { start: [0, 0], segments: [{ to: [30, 0] }, { to: [30, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
     // L-pocket, both arms 5 wide: vertical arm x:[10,15] y:[6,15]; horizontal arm
     // y:[6,11] x:[10,21]; reflex vertex at (15,11). CW (hole) winding.
@@ -209,71 +211,69 @@ describe("known divergences (parked)", () => {
       { to: [10, 15] }, { to: [15, 15] }, { to: [15, 11] }, { to: [21, 11] }, { to: [21, 6] }, { to: [10, 6] }] };
     const src = [{ outer: plate, holes: [pocket] }];
     // Truth, DERIVED from Clipper2 in-file rather than hardcoded: 928.229 at this file's
-    // SEGS=64 faceting, converging on the closed-form 928.274 as segments rise. Clipper2 loses
-    // the pocket entirely (0 holes), which is the correct answer.
+    // SEGS=64 faceting, converging on the closed-form 928.274 as segments rise.
     const truth = clipperArea(src, 3, "round");
     expect(truth).toBeCloseTo(928.23, 1);
     const out = offsetRegions(src, 3, { corners: "round" });
-    const holeCount = out.reduce((n, rg) => n + rg.holes.length, 0);
-    const area = out.reduce((a, rg) => a + Math.abs(ringArea(tessellateContour(rg.outer, SEGS)))
-      - rg.holes.reduce((h, hole) => h + Math.abs(ringArea(tessellateContour(hole, SEGS))), 0), 0);
-    // Native currently leaves the hole ring in place (residual, unclosed pocket; measured area
-    // 921.212) — assert the CURRENT (measured) behavior in a tight band, NOT anchored on the
-    // truth above, so a drift toward the true value (which would mean the defect got smaller
-    // without anyone noticing/fixing it deliberately) breaks this test instead of silently
-    // passing. holeCount > 0 alone doesn't pin the magnitude, so the band does the real work.
-    expect(holeCount).toBeGreaterThan(0);
-    expect(area).toBeGreaterThan(921.1911 - 0.001);
-    expect(area).toBeLessThan(921.1911 + 0.001);
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(0);
+    expect(netArea(out)).toBeCloseTo(truth, 1);
   });
 
-  test("pinched waist with a round join: the split never happens, leaving 34% too much", () => {
-    // The same 30x10 dumbbell the honest corpus offsets at -2 SHARP (where it splits into two
-    // 6x6 squares and matches Clipper2 exactly), offset at -2 ROUND instead. The recovery that
-    // severs a waist pinched shut by the offset (splitAtDuplicateEdges) only handles rings made
-    // entirely of straight lines — a round or chamfer join inserts an arc or a bevel chord at
-    // the waist, so there is no pair of duplicate collinear edges left to cut and the ring
-    // survives as one connected, over-solid blob. Pre-existing (measured identical on the
-    // pre-fix commit b7dd0a7), and a different root cause from the blockers fixed above, so
-    // it is characterized here rather than chased.
+  test("pinched waist: round and chamfer joins now split the dumbbell correctly, matching Clipper2", () => {
+    // The same 30x10 dumbbell the corpus above offsets at -2 SHARP (splits into two 6x6
+    // squares, matches Clipper2 exactly). ROUND and CHAMFER used to leave one connected,
+    // over-solid blob (97.258 and 96.000, ~34% and ~30% too much) because the deleted
+    // splitAtDuplicateEdges recovery only handled rings made entirely of straight lines —
+    // a round or chamfer join inserts an arc or a bevel chord at the waist, leaving no
+    // pair of duplicate collinear edges to cut. resolveOffsetWinding doesn't need that
+    // recovery: the two lobes are separated by winding number directly.
     const src = [dumb(0)];
-    const truth = clipperArea(src, -2, "round");
-    expect(truth).toBeCloseTo(72.3537, 3);                  // derived, not hardcoded
-    const out = offsetRegions(src, -2, { corners: "round" });
-    const areas = out.map((rg) => Math.abs(ringArea(tessellateContour(rg.outer, SEGS))));
-    const area = areas.reduce((a, b) => a + b, 0);
-    // Truth is two lobes of ~36.18 each. Native returns THREE regions: the two lobes plus a
-    // spurious ~24.91 blob where the waist should have been cut away.
-    expect(out.length).toBe(3);
-    expect(areas.filter((a) => a > 30).length).toBe(2);      // the two real lobes
-    // Tight band on the MEASURED value (97.25812), not on truth: drift in either direction
-    // breaks this, including an accidental partial improvement nobody noticed.
-    expect(area).toBeGreaterThan(97.25812 - 0.001);
-    expect(area).toBeLessThan(97.25812 + 0.001);
+    for (const [corners, want] of [["round", 72.3537], ["chamfer", 74]]) {
+      const truth = clipperArea(src, -2, corners);
+      expect(truth).toBeCloseTo(want, 3);                   // sanity on the derived oracle value
+      const out = offsetRegions(src, -2, { corners });
+      const areas = out.map((rg) => Math.abs(ringArea(tessellateContour(rg.outer, SEGS))));
+      expect(out.length).toBe(2);                           // the two lobes, no spurious blob
+      expect(areas.every((a) => a > 30)).toBe(true);         // both are real lobes, not a sliver
+      expect(areas.reduce((a, b) => a + b, 0)).toBeCloseTo(truth, 1);
+    }
   });
+});
 
+describe("known divergences (parked)", () => {
   test("clustered reflex corners: chamfer offset over-resolves a 9-gon", () => {
-    // 9-gon with several clustered reflex corners, chamfer offset delta -2.79. Native resolves
-    // to roughly 7.71 — several times too much surviving area. Root cause: resolveSelfRegions
-    // (paper-bridge.js) doesn't correctly untangle the self-intersections a chamfer offset
-    // produces when several reflex corners sit close together — see contour-offset.js's
-    // Part-1-deletion-guard comment for the same 9-gon used as the deletion-guard's own
-    // regression repro.
+    // 9-gon with several clustered reflex corners, chamfer offset delta -2.79.
+    //
+    // Task 7 (winding resolver wiring): this moved from 7.70938 (paper.js's resolveSelfRegions,
+    // a self-union — provably a NonZero-style resolution: feeding the exact raw offset polygon
+    // straight into Clipper2 with FillRule::NonZero reproduces 7.7094 to the digit) to 4.621926
+    // (resolveOffsetWinding's positive-winding rule — likewise cross-checked: feeding the SAME
+    // raw polygon into Clipper2 with FillRule::Positive reproduces 4.621926 to the digit). The
+    // resolver is provably resolving _offsetContour's raw output correctly; the raw output
+    // itself is still wrong. Root cause has moved with it: three reflex corners sit close
+    // enough together that _offsetContour's per-vertex chamfer join — built locally at each
+    // vertex, with no awareness of any other vertex's join — produces a piece that overlaps
+    // itself, and the positive-winding rule correctly keeps that overlap as material rather
+    // than cancelling it. That is a real, pre-existing defect in the RAW OFFSET, not in the
+    // resolver, and is out of this task's scope — see task-7-report.md.
     const pts = [[19.49, 10], [12.33, 11.95], [11.2, 16.81], [8.87, 11.96], [0.93, 13.3], [3.45, 7.62], [8.52, 7.44], [10.92, 4.78], [15.09, 5.73]];
     const nonagon = { start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] };
     const src = [{ outer: nonagon, holes: [] }];
     // Truth, derived rather than hardcoded: 3.5538 under Clipper2's own chamfer mapping
-    // (its round join at circularSegments=4). Clipper2's ROUND join puts it at 2.7652, which
-    // is what the independent grid search reported as ~2.76 — either way native's 7.71 is
-    // roughly 2-3x too much surviving area.
+    // (its round join at circularSegments=4). Clipper2's own true single-chord bevel join
+    // (JoinType::Square) puts it at 2.7018, its ROUND join at 2.7652 — both close to the
+    // independent grid-search estimate of ~2.76 used elsewhere in this codebase for this
+    // shape family. Either way, native's 4.621926 is roughly 1.7x too much surviving area
+    // (an improvement on the pre-resolver 7.70938's ~2.8x, but not a fix).
     const truth = clipperArea(src, -2.79, "chamfer");
     expect(truth).toBeCloseTo(3.5538, 3);
     const out = offsetRegions(src, -2.79, { corners: "chamfer" });
     const area = out.reduce((a, rg) => a + Math.abs(ringArea(tessellateContour(rg.outer, SEGS))), 0);
-    // Anchored on the MEASURED value (7.70938) within a tight epsilon, NOT on a loose
+    // Anchored on the MEASURED value (4.621926) within a tight epsilon, NOT on a loose
     // (truth, 9) band that a large silent drift could slide around inside. A change in
     // either direction — including a partial fix — breaks this and gets looked at.
-    expect(area).toBeGreaterThan(7.70938 - 0.01);
-    expect(area).toBeLessThan(7.70938 + 0.01);
+    expect(area).toBeGreaterThan(4.621926 - 0.001);
+    expect(area).toBeLessThan(4.621926 + 0.001);
   });
 });

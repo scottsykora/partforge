@@ -364,6 +364,28 @@ describe("chaining", () => {
     expect(() => _chain(orphan, [[0, 0], [1, 0]]))
       .toThrow("contour-winding: could not chain offset boundary (incomplete intersection set)");
   });
+  test("a CW ring under the DEFAULT (nonzero) rule is kept reversed — exercises reversePieceSegs", () => {
+    // resolveOffsetWinding always passes the POSITIVE rule (inside: w >= 1), under which
+    // `reverse` can never be true (see _classify's own comment) — so reversePieceSegs is
+    // unreachable from production and untested by every other fixture in this file, all of
+    // which go through resolveOffsetWinding. _classify's DEFAULT rule (nonzero) is the one
+    // path that can still produce reverse:true, exercised directly here. A lone CW ring (no
+    // crossings) has its interior on the RIGHT of travel, so the probe's LEFT side reads
+    // w=0 (outside) and the right w=-1 (inside) — nonzero keeps it, reversed, so the emitted
+    // piece is canonically interior-on-left.
+    const cw = ring([[0, 0], [0, 10], [10, 10], [10, 0]]);   // CW: shoelace area -100
+    const merged = _mergeCrossings([]);
+    const pieces = _splitRings([cw], merged);
+    const classified = _classify(pieces, tess([cw]));        // default rule: nonzero
+    expect(classified[0].keep).toBe(true);
+    expect(classified[0].reverse).toBe(true);
+    const out = _chain(classified, merged.pool);
+    expect(out.length).toBe(1);
+    // reversePieceSegs flips the ring's traversal to CCW: the chained result's area is now
+    // POSITIVE with the same magnitude — if its per-segment reversal were wrong the ring
+    // would either fail to close or come back with the wrong area.
+    expect(ringArea(tessellateContour(out[0], 64))).toBeCloseTo(100, 6);
+  });
 });
 
 describe("junction ordering uses the curve TANGENT at the vertex, not the chord (fix round 1, I1)", () => {
@@ -591,12 +613,13 @@ describe("coincident (collinear-overlap) pieces", () => {
   });
 
   test("round sweep: unchanged (round joins break collinearity, which is why this class hid)", () => {
-    // Pinned to 9 places. Deltas 1/3/5 are HEAD's values unchanged — no crossing lands on a
-    // join arc there. Deltas 8 and 10 moved by 7.8e-6 and 1.2e-4 mm² when ringCrossings began
-    // reporting the IR parameter instead of paper's curve time: the trimmed join arcs' `via`
-    // now sits at the correct fraction of the trimmed span. Both moved TOWARDS the truth — the
-    // analytic union areas are 1129.927574 and 1405.480666 (1-D quadrature over the exact
-    // Minkowski profile), and each new value is closer to its own by exactly the shift. The
+    // Pinned to 6 decimal places (toBeCloseTo(area, 6)). Deltas 1/3/5 are HEAD's values
+    // unchanged — no crossing lands on a join arc there. Deltas 8 and 10 moved by 7.8e-6 and
+    // 1.2e-4 mm² when ringCrossings began reporting the IR parameter instead of paper's curve
+    // time: the trimmed join arcs' `via` now sits at the correct fraction of the trimmed span.
+    // Both moved TOWARDS the truth — the analytic union areas are 1129.928746 and 1405.481561
+    // (three independent methods agree to 9 sig figs), and each new value is closer to its own
+    // by exactly the shift. The
     // residual ~0.06/0.09 mm² is the cubic approximation of the arcs, which profileArea itself
     // measures through (paper has no arc primitive), not an error in the resolver.
     const want = [[1, 2, 286.284944665], [3, 2, 496.564501988], [5, 1, 757.123616632],

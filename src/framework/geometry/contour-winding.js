@@ -63,7 +63,21 @@ const ringPoints = (contour) => [contour.start, ...contour.segments.map((s) => s
 // has to be carried further — a trimmed arc is still an arc.
 export function _splitRings(rings, merged) {
   const byRing = rings.map(() => []);
-  for (const x of merged.crossings) byRing[x.ring].push(x);
+  for (const x of merged.crossings) {
+    // A crossing with seg === contour.segments.length is on the closing curve toPaperPath's
+    // closePath() synthesizes for a ring that never explicitly returns to its own start (see
+    // its own comment, and irTime's matching seg===n branch in paper-bridge.js). Every ring
+    // this module receives from contour-offset.js is explicitly closed (assembleRing /
+    // closeContourGap both guarantee a real closing segment back to `start`), so that branch
+    // is unreachable in practice — but `resolveOffsetWinding` is reachable from a PUBLIC entry
+    // point (offsetRegions), so a future caller feeding an implicitly-closed ring must fail
+    // loudly here rather than silently wrapping `k % n` back onto segment 0 below (a wrong
+    // segment for that crossing, not merely an imprecise one).
+    if (x.seg >= rings[x.ring].segments.length) {
+      throw new Error("_splitRings: crossing lands on an implicit ring closure — every ring must be explicitly closed before resolveOffsetWinding");
+    }
+    byRing[x.ring].push(x);
+  }
   const pieces = [];
 
   rings.forEach((contour, r) => {
