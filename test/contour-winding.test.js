@@ -2,7 +2,7 @@
 import { describe, expect, test } from "vitest";
 import { ringCrossings } from "../src/framework/geometry/paper-bridge.js";
 import { trimSegment } from "../src/framework/geometry/contour-ops.js";
-import { _mergeCrossings, _splitRings, _windingAt, _classify, CLUSTER_TOL, PROBE_EPS } from "../src/framework/geometry/contour-winding.js";
+import { _mergeCrossings, _splitRings, _windingAt, _classify, _chain, CLUSTER_TOL, PROBE_EPS } from "../src/framework/geometry/contour-winding.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 
 const tess = (rings) => rings.map((r) => tessellateContour(r, 64));
@@ -227,5 +227,44 @@ describe("probe anchoring against the QUERIED polyline, not the true curve (fix 
     const degenerate = { ring: 0, from: [10, 5], segs: [{ to: [10, 5] }], vStart: 0, vEnd: 1 };
     const [c] = _classify([degenerate], tess([sq]));
     expect(c.keep).toBe(false);
+  });
+});
+
+describe("chaining", () => {
+  test("an uncrossed ring passes through as one closed contour", () => {
+    const sq = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const merged = _mergeCrossings([]);
+    const out = _chain(_classify(_splitRings([sq], merged), tess([sq])), merged.pool);
+    expect(out.length).toBe(1);
+    expect(out[0].segments.length).toBe(4);
+  });
+  test("two overlapping squares chain into one closed ring of the union boundary", () => {
+    const a = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const b = ring([[5, 5], [15, 5], [15, 15], [5, 15]]);
+    const merged = _mergeCrossings(ringCrossings([a, b]));
+    const out = _chain(_classify(_splitRings([a, b], merged), tess([a, b])), merged.pool);
+    expect(out.length).toBe(1);
+    // union of two 10x10 squares overlapping in a 5x5 corner = 175
+    const areaOf = (c) => { const p = tessellateContour(c, 64); let s = 0;
+      for (let i = 0; i < p.length; i++) { const [x1,y1]=p[i],[x2,y2]=p[(i+1)%p.length]; s += x1*y2-x2*y1; }
+      return s/2; };
+    expect(Math.abs(areaOf(out[0]))).toBeCloseTo(175, 4);
+  });
+  test("every emitted ring is explicitly closed", () => {
+    const a = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const b = ring([[5, 5], [15, 5], [15, 15], [5, 15]]);
+    const merged = _mergeCrossings(ringCrossings([a, b]));
+    for (const c of _chain(_classify(_splitRings([a, b], merged), tess([a, b])), merged.pool)) {
+      const last = c.segments[c.segments.length - 1].to;
+      expect(Math.hypot(last[0] - c.start[0], last[1] - c.start[1])).toBeLessThan(1e-9);
+    }
+  });
+  test("an unchainable piece set throws rather than emitting a broken ring", () => {
+    // a kept piece whose end vertex has no outgoing piece — the shape of paper's
+    // truncated-recursion failure
+    const orphan = [{ keep: true, reverse: false,
+      piece: { ring: 0, from: [0, 0], segs: [{ to: [1, 0] }], vStart: 0, vEnd: 1 } }];
+    expect(() => _chain(orphan, [[0, 0], [1, 0]]))
+      .toThrow("contour-winding: could not chain offset boundary (incomplete intersection set)");
   });
 });

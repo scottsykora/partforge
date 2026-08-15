@@ -110,14 +110,14 @@ export function _splitRings(rings, merged) {
   return pieces;
 }
 
-// Probe offset for the winding query. The FLOOR is set by the piece's OWN geometry: the
-// endpoint snap in _splitRings can displace a piece's boundary from its unsnapped curve by
-// up to 2*CLUSTER_TOL (see the comment on that snap above), so the probe must clear that or
-// it can land back on the wrong side of the SAME piece's own boundary. The CEILING is set
-// by NEIGHBOURING geometry: too large a probe risks crossing into an unrelated nearby piece
-// or feature. (A smaller probe is never the risk — a smaller probe only gets closer to the
-// boundary it's already straddling correctly.) CLUSTER_TOL*2 clears the floor with headroom
-// to spare below any feature worth keeping.
+// Probe offset for the winding query. PROBE_EPS has a CEILING and no floor. The ceiling is
+// set by NEIGHBOURING geometry: too large a probe risks crossing into an unrelated nearby
+// piece or feature. A smaller probe is never the risk: the probe origin is anchored on
+// tessRings[piece.ring] itself (via projectToRing), the same UNSNAPPED polyline _windingAt
+// queries below, so the endpoint snap in _splitRings cannot misplace it — `eps` legitimately
+// shrinks to as little as 1e-9 for a short piece (see the length-proportional scaling in
+// _classify) and still classifies correctly. CLUSTER_TOL*2 sits comfortably below any
+// feature worth keeping.
 export const PROBE_EPS = CLUSTER_TOL * 2;
 
 // Below this length a piece carries no reliable direction to probe along — the endpoint
@@ -172,6 +172,14 @@ function pieceMid(piece) {
 // it by PROBE_EPS along the edge normal cannot straddle the wrong side of a tessellation gap
 // the way offsetting an independently-sampled point (pieceMid's) can. Also gives the
 // left/right sense from the SAME edge the origin came from, so origin and normal agree.
+//
+// KNOWN, BOUNDED imprecision: this scans the WHOLE ring for the nearest edge, so on a thin
+// crescent (two ring branches running close and antiparallel) it can legitimately latch onto
+// the wrong branch — measured 176/840 pieces on a thin-crescent fixture. It causes zero
+// misclassifications there because origin and normal are read off the SAME (wrong) edge:
+// picking the antiparallel branch flips the edge direction, which flips `dir`, which flips
+// which side of the probed point counts as "left" — the two flips cancel and `_classify`'s
+// wLeft/wRight bookkeeping comes out the same as if the correct branch had been picked.
 function projectToRing(p, ring) {
   let best = null;
   for (let i = 0; i < ring.length; i++) {
@@ -204,8 +212,24 @@ function projectToRing(p, ring) {
 // The probe origin is pieceMid's point PROJECTED onto tessRings[piece.ring] (projectToRing)
 // — the same polyline _windingAt below queries — not the true curve pieceMid approximates;
 // see the comments on both for why that distinction is load-bearing.
+//
+// The ±1 invariant above (wLeft = wRight + 1) is a property of an actual probe: it holds
+// for every record that reaches the probe below. The two early-return branches never probe
+// at all — the piece is dropped for having no reliable direction to probe along — so their
+// debug record reports wLeft: null, wRight: null rather than fabricating a pair that would
+// satisfy the arithmetic without a probe behind it. Callers that assert the invariant in
+// debug mode (see test/contour-winding.test.js) must therefore do so only over records with
+// a non-null wLeft, not over every record `_classify` returns.
 export function _classify(pieces, tessRings, { debug = false } = {}) {
   return pieces.map((piece) => {
+    if (piece.segs.length === 0) {
+      // Unreachable from _splitRings (every emitted piece has >=1 seg), but _classify is
+      // exported and a hand-built `segs: []` piece would otherwise throw inside pieceMid
+      // (poly.length < 2) before MIN_PIECE_LEN gets a chance to reject it. Same outcome as
+      // the zero-length case below: drop it, don't guess an orientation.
+      const rec = { piece, keep: false, reverse: false };
+      return debug ? { ...rec, wLeft: null, wRight: null } : rec;
+    }
     const { mid, len } = pieceMid(piece);
     if (len < MIN_PIECE_LEN) {
       const rec = { piece, keep: false, reverse: false };
@@ -221,5 +245,74 @@ export function _classify(pieces, tessRings, { debug = false } = {}) {
     const keep = wLeft === 0 || wLeft === 1;
     const rec = { piece, keep, reverse: keep && wLeft === 0 };
     return debug ? { ...rec, wLeft, wRight } : rec;
+  });
+}
+
+const reversePieceSegs = (piece) => {
+  // reverse a piece's segment run, mirroring reverseContour's per-kind handling
+  const pts = [piece.from, ...piece.segs.map((s) => s.to)];
+  const segs = [];
+  for (let i = piece.segs.length - 1; i >= 0; i--) {
+    const s = piece.segs[i];
+    const m = { to: [pts[i][0], pts[i][1]] };
+    if (s.via) m.via = [s.via[0], s.via[1]];
+    if (s.c1) { m.c1 = [s.c2[0], s.c2[1]]; m.c2 = [s.c1[0], s.c1[1]]; }
+    segs.push(m);
+  }
+  return { from: pts[pts.length - 1], segs, vStart: piece.vEnd, vEnd: piece.vStart };
+};
+
+// Join kept pieces end-to-end by SHARED POOL VERTEX identity — never coordinate
+// comparison, which is what makes this exact. A junction with several outgoing pieces
+// (a pinch point) takes the most clockwise turn relative to the arriving direction,
+// the standard planar-arrangement rule for tracing an outer boundary consistently.
+export function _chain(classified, pool) {
+  const kept = classified.filter((c) => c.keep)
+    .map((c) => (c.reverse ? reversePieceSegs(c.piece) : { from: c.piece.from, segs: c.piece.segs,
+                                                           vStart: c.piece.vStart, vEnd: c.piece.vEnd }));
+  const closed = kept.filter((p) => p.vStart === null);      // uncrossed whole rings
+  const open = kept.filter((p) => p.vStart !== null);
+  const out = closed.map((p) => ({ start: [p.from[0], p.from[1]], segs: p.segs }));
+
+  const outgoing = new Map();
+  open.forEach((p, i) => { if (!outgoing.has(p.vStart)) outgoing.set(p.vStart, []); outgoing.get(p.vStart).push(i); });
+  const used = new Array(open.length).fill(false);
+
+  const dirOut = (p) => { const a = p.from, b = p.segs[0].to; return Math.atan2(b[1] - a[1], b[0] - a[0]); };
+  const dirIn = (p) => { const pts = [p.from, ...p.segs.map((s) => s.to)];
+    const a = pts[pts.length - 2], b = pts[pts.length - 1]; return Math.atan2(b[1] - a[1], b[0] - a[0]); };
+
+  for (let s = 0; s < open.length; s++) {
+    if (used[s]) continue;
+    const startV = open[s].vStart;
+    let cur = s, guard = 0;
+    const chainSegs = [];
+    const startPt = [open[s].from[0], open[s].from[1]];
+    for (;;) {
+      if (guard++ > open.length + 1) throw new Error("contour-winding: could not chain offset boundary (incomplete intersection set)");
+      used[cur] = true;
+      chainSegs.push(...open[cur].segs);
+      const at = open[cur].vEnd;
+      if (at === startV) break;
+      const cands = (outgoing.get(at) ?? []).filter((i) => !used[i]);
+      if (cands.length === 0) throw new Error("contour-winding: could not chain offset boundary (incomplete intersection set)");
+      const inDir = dirIn(open[cur]);
+      // most clockwise turn: smallest positive rotation from the reversed inbound direction
+      cur = cands.reduce((best, i) => {
+        const turn = (x) => { let a = inDir + Math.PI - dirOut(open[x]); a %= 2 * Math.PI; return a < 0 ? a + 2 * Math.PI : a; };
+        return turn(i) < turn(best) ? i : best;
+      }, cands[0]);
+    }
+    out.push({ start: startPt, segs: chainSegs });
+  }
+
+  if (used.some((u) => !u)) throw new Error("contour-winding: could not chain offset boundary (incomplete intersection set)");
+  return out.map(({ start, segs }) => {
+    const last = segs[segs.length - 1].to;
+    if (Math.hypot(last[0] - start[0], last[1] - start[1]) <= 1e-9) {
+      segs[segs.length - 1].to = [start[0], start[1]];      // snap the closure exact
+      return { start, segments: segs };
+    }
+    return { start, segments: [...segs, { to: [start[0], start[1]] }] };
   });
 }
