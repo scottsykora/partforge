@@ -622,82 +622,65 @@ function dropPhantomHoles(out, srcRings, delta) {
 // RATES, and where they come from. Run `node scripts/offset-rates.mjs` — it sweeps the
 // committed corpus (test/helpers/offset-corpus.js: 600 seeded shapes + 6 glyphs, 20 deltas,
 // 3 styles = 36 090 offsets, ~25 s) and prints these. Before the ladder / after it:
-//   round 0.291 % -> 0.133 %   chamfer 0.241 % -> 0.166 %   sharp 0.224 % -> 0.175 %
-// Two things to read off that table. The failure is NOT a round-join effect — the three
-// styles fail at within 1.3x of each other, and `sharp` fails on inputs `round` handles (the
-// 12-vertex two-notch plate at -3.25, asserted in test/offset-oracle-manifold.test.js). And
-// this ladder was tuned against a round-only corpus, so it helps `round` most and `sharp`
-// barely at all. An earlier version of this comment claimed 0.84 % -> 0.09 % for round,
-// 0.06 % -> 0 for chamfer and "sharp had none either way"; the first is corpus-specific and
-// the last is simply false.
+//   round 0.183 % -> 0.000 %   chamfer 0.183 % -> 0.000 %   sharp 0.200 % -> 0.008 %
+// (One residual across all 36 090: seed 323 multi-region at −4 under sharp only; the other
+// two styles build it.) Rescue quality across the 67 rescues, oracle-checked: median area
+// error 0.025 %, worst 2.87 %, and ZERO rescues with fewer regions than the truth — the
+// probe-era ladder's region-welding cost class is gone with the rung that caused it.
 //
-// Rung ORDER is by fidelity of what survives, not by hit rate:
-//   1. delta perturbed by ±1e-9 relative. Escapes an exactly-degenerate arrangement (two
-//      offset walls landing on the same coordinate) with the requested corner style and the
-//      exact curve IR both intact. Wins 6 of 34 rescues on the committed corpus.
-//   2. a coarser crossing-merge radius (4x and 20x CLUSTER_TOL). Keeps corner style AND the
-//      exact IR — a trimmed arc is still an arc — at the cost of collapsing crossings up to
-//      that radius apart onto one vertex. Wins 26 of 34. Its cost is real and topological:
-//      a merge radius wide enough to escape the degeneracy is also wide enough to weld a
-//      genuine severing pinch shut, so the result can have ONE REGION FEWER than the truth
-//      (4 of the 34 rescues; in 1 of those a later rung had the count right and lost to
-//      first-non-empty-wins). Note also that 20x CLUSTER_TOL is 0.1 mm, which sits ABOVE the
-//      0.05 mm feature floor CLUSTER_TOL's own derivation says it must stay far below —
-//      known, and the reason this rung is not coarsened further.
-//   3. the raw outline re-run as polylines (64/256/1024 facets per turn). Geometrically
-//      faithful to the chord error of that tessellation, but it DEGRADES THE IR: round joins
-//      come back as chords, so A STEP EXPORT OF THE RESULT LOSES ITS TRUE CIRCLES — measured,
-//      a 10 mm "Scott" at +1 came back 0 arcs / 6 435 line segments where the raw offset
-//      carried 24 arcs. Arc preservation to STEP is this engine's headline property, so these
-//      rungs are last even though they are the most accurate by area.
-// Coverage is not monotonic in any rung's parameter (64 facets resolves cases 256 does not) —
-// these are escapes from degeneracy, not refinements, so every rung earns its place by cases
-// no other rung covers.
+// Rung ORDER is by cost-to-fail first, then fidelity of what survives; every rung earns its
+// place by rescues no other rung covers (winning-rung counts from the same sweep):
+//   1. probe-labels (26 wins) — the pristine arrangement, exact IR and crossings, but
+//      corroborated midpoint probes override face labels on long pieces. This is the rescue
+//      for the one class face labels get systematically wrong: an exact inter-ring tangency
+//      mis-orders the rotational order at the contact at EVERY weld scale, so no re-welding
+//      escapes it, while a mid-piece probe never looks at the contact. Everything survives:
+//      corner style, arcs, positions — and it FAILS fast (a BFS label conflict throws before
+//      any probing), which is why it runs before the full re-runs below.
+//   2. delta ±1e-9 relative — full pipeline re-runs. Zero wins on the seeded corpus (its
+//      continuous coordinates never produce exact degeneracy) but the FULL-FIDELITY escape
+//      for grid-coordinate input whose offset walls land on the same coordinate exactly —
+//      the four-notch comb at −2.4975 in test/offset-oracle-manifold.test.js is float-exact
+//      through this rung and 0.018 mm² off through any later one.
+//   3. polyline@64 (6 wins) — the raw outline re-run as chords. Geometrically faithful to
+//      that tessellation's sagitta but it DEGRADES THE IR: round joins come back as chords,
+//      so a STEP export of the result loses its true circles (measured on the probe-era
+//      corpus: a 10 mm "Scott" at +1 came back 0 arcs / 6 435 line segments). Documented in
+//      KERNEL-CONTRACT.md § Offset.
+//   4. snap@1e-3 (35 wins) then snap@5e-3 (last resort) — the raw outline quantized to a
+//      grid before resolving. See snapRing: a nearly- or fully-collapsed ring's raw offset
+//      is a hairball of near-parallel strands below combinatorial resolution that no
+//      crossing set describes at ANY merge radius; quantized, near-coincidence becomes
+//      exact coincidence, which the resolver's multiplicity handling is built for. This is
+//      the collapse-regime rung — the input class the reported text bug lives in. Same IR
+//      cost as the polyline rung, plus positions move by up to grid/2.
 //
-// Two things this deliberately does NOT do. (The numbers in this paragraph are task 7D's
-// design measurements, taken on a 59-case round-only sweep that predates the committed corpus
-// and is NOT reproducible from this repo — they are recorded as the reasoning behind two
-// rejected rungs, not as current rates. Everything above is from scripts/offset-rates.mjs.)
-// It never retries under a different JOIN: swapping
-// to chamfer resolves 58 of the 59, but at a median 5 % from the round truth (worst 4 800 %),
-// and it would hand back geometry with visibly different corners than the caller asked for —
-// silently wrong beats loudly failed only when the wrongness is bounded, and that one is not.
-// And it never perturbs delta by more than 1e-9: the failures are NOT the knife-edge
-// degeneracies they look like (the four-notch comb throws across a whole 0.02 mm band of delta,
-// not at one value), so escaping by delta alone takes ~1e-2 relative, which resolves 100 % at a
-// median 0.15 % and a worst 9 % error — well outside the band above. A bounded middle ground
-// (±1e-4 and ±1e-3 mm absolute rungs) was measured too: it bought ONE extra case out of 62 and
-// more than doubled the worst absolute error, 0.048 → 0.112 mm², so it is not here either.
+// Rungs the probe-era ladder carried that are gone, by measurement, not taste: the
+// clusterTol ×4/×20 re-welds won ZERO of the 67 rescues under face-labeled classification
+// (their caseload was probe misclassification, which no longer exists) and owned the
+// one-region-fewer defect class; polyline@256/1024 covered nothing polyline@64 or the snap
+// rungs miss while dominating the ladder's latency (~1.9 s per collapse-regime "Scott"
+// slider tick with them, ~0.15–0.35 s without). The rejected-rung reasoning from the probe
+// era still holds where it wasn't rung-specific: never retry under a different JOIN
+// (unbounded error, and visibly different corners than the caller asked for), and never
+// perturb delta beyond noise scale.
 //
 // The ladder as named, LAZY rungs — one list, walked by chainFallback below and by
 // scripts/offset-rates.mjs, so a measurement of "what each rung costs" can never drift from
 // the ladder that actually ships. Every rung's whole body (including tessellating the outline
-// for the polyline rungs) runs inside its own thunk, so a rung that throws in its own SETUP
+// for the polyline rung) runs inside its own thunk, so a rung that throws in its own SETUP
 // moves to the next rung like any other rung failure rather than escaping chainFallback with
 // an unpinned message.
 export function _ladderRungs(regions, raw, delta, corners) {
   return [
-    ...[-1, 1].map((sign) => ({ name: `delta*(1${sign < 0 ? "-" : "+"}1e-9)`,
-      run: () => resolveOrRaw(rawOffset(regions, delta * (1 + sign * 1e-9), corners)) })),
-    // probe-corrected labels on the pristine arrangement: same exact IR and crossings,
-    // but corroborated midpoint probes override face labels on long pieces — the rescue
-    // for the systematic mis-ordering an exact inter-ring tangency produces (which no
-    // re-welding escapes, since the contact survives every scale). Ahead of the welding
-    // rungs because it keeps the exact geometry.
     { name: "probe-labels",
       run: () => resolveOffsetWinding(raw, { probeOverride: true, audit: false }) },
-    ...[4, 20].map((mult) => ({ name: `clusterTol*${mult}`,
-      run: () => resolveOffsetWinding(raw, { clusterTol: CLUSTER_TOL * mult, audit: false }) })),
-    ...[64, 256, 1024].map((segs) => ({ name: `polyline@${segs}`,
-      run: () => resolveOffsetWinding(raw.map((rg) => ({ outer: flattenRing(rg.outer, segs),
-                                                         holes: rg.holes.map((h) => flattenRing(h, segs)) })),
-                                      { audit: false }) })),
-    // Snap-round rungs: the raw outline quantized to a grid before resolving, then swept
-    // for phantom holes. See snapRing (why quantizing rescues arrangements whose strands
-    // sit below combinatorial resolution) and dropPhantomHoles (why a dilation result can
-    // be swept exactly). These are the collapse-regime rungs: a nearly- or fully-collapsed
-    // ring's raw offset is a hairball no crossing set describes at any merge radius, which
-    // is precisely the input class the reported text bug lives in.
+    ...[-1, 1].map((sign) => ({ name: `delta*(1${sign < 0 ? "-" : "+"}1e-9)`,
+      run: () => resolveOrRaw(rawOffset(regions, delta * (1 + sign * 1e-9), corners)) })),
+    { name: "polyline@64",
+      run: () => resolveOffsetWinding(raw.map((rg) => ({ outer: flattenRing(rg.outer, 64),
+                                                         holes: rg.holes.map((h) => flattenRing(h, 64)) })),
+                                      { audit: false }) },
     ...[1e-3, 5e-3].map((grid) => ({ name: `snap@${grid}`,
       run: () => resolveOffsetWinding(snapRegions(raw, grid), { clusterTol: grid / 4, audit: false }) })),
   ];
