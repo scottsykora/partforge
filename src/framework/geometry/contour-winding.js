@@ -456,7 +456,16 @@ export function _classify(pieces, tessRings, { debug = false, inside = (w) => w 
     };
     const outK = (h) => { const p = P(h); return (h & 1) ? -(p.kB ?? 0) : (p.kA ?? 0); };
 
-    // departures per vertex, sorted CCW by (tangent angle, then curvature)
+    // Departures per vertex, sorted CCW by tangent angle with a CURVATURE tie-break:
+    // tangential contact is the NORMAL case at an offset pinch (a round join meets the
+    // edge it is tangent to), so two departures routinely differ only by float noise in
+    // angle while differing decisively in curvature — the harder-left-curving edge is
+    // infinitesimally more CCW. Noise-scale angle differences must not decide the order,
+    // so near-equal angles are grouped into runs and each run is ordered by curvature.
+    // The angular origin is first rotated into the vertex's largest empty gap so no run
+    // straddles the list seam (a pair at ±π is circularly adjacent, but a plain sort
+    // would strand its members at opposite ends).
+    const ANGLE_EPS = 1e-7;
     const dep = new Map();
     for (let h = 0; h < 2 * E; h++) {
       const v = tailOf(h);
@@ -465,13 +474,28 @@ export function _classify(pieces, tessRings, { debug = false, inside = (w) => w 
     }
     const pos = new Map();
     for (const list of dep.values()) {
-      list.sort((a, b) => {
-        const [ax, ay] = outVec(a), [bx, by] = outVec(b);
-        const ta = Math.atan2(ay, ax), tb = Math.atan2(by, bx);
-        if (ta !== tb) return ta - tb;
-        return outK(a) - outK(b);
-      });
-      list.forEach((h, i) => pos.set(h, i));
+      const items = list.map((h) => { const [x, y] = outVec(h); return { h, th: Math.atan2(y, x), k: outK(h) }; });
+      items.sort((a, b) => a.th - b.th);
+      let gapAt = 0, gapSize = -1;
+      for (let i = 0; i < items.length; i++) {
+        const a = items[i].th;
+        const b = i + 1 < items.length ? items[i + 1].th : items[0].th + 2 * Math.PI;
+        if (b - a > gapSize) { gapSize = b - a; gapAt = i; }
+      }
+      const phi = items[gapAt].th + gapSize / 2;
+      const key = (th) => { let d = (th - phi) % (2 * Math.PI); if (d < 0) d += 2 * Math.PI; return d; };
+      items.sort((a, b) => key(a.th) - key(b.th));
+      for (let i = 0; i < items.length; ) {
+        let j = i + 1;
+        while (j < items.length && key(items[j].th) - key(items[j - 1].th) < ANGLE_EPS) j++;
+        if (j - i > 1) {
+          const run = items.slice(i, j).sort((a, b) => a.k - b.k);
+          for (let t = i; t < j; t++) items[t] = run[t - i];
+        }
+        i = j;
+      }
+      list.length = 0;
+      items.forEach(({ h }, i) => { list.push(h); pos.set(h, i); });
     }
     // next(h): the rotational predecessor of twin(h) in CCW departure order at head(h) —
     // i.e. the first departure clockwise from the reversed arrival direction. A bijection
@@ -595,4 +619,140 @@ export function _classify(pieces, tessRings, { debug = false, inside = (w) => w 
   });
 
   return debug ? recs : recs.map(({ piece, keep, reverse }) => ({ piece, keep, reverse }));
+}
+
+const reversePieceSegs = (piece) => {
+  // reverse a piece's segment run, mirroring reverseContour's per-kind handling; the
+  // stored endpoint tangents/curvatures swap ends and flip sign (reversed traversal keeps
+  // the geometric circle but exchanges left and right)
+  const pts = [piece.from, ...piece.segs.map((s) => s.to)];
+  const segs = [];
+  for (let i = piece.segs.length - 1; i >= 0; i--) {
+    const s = piece.segs[i];
+    const m = { to: [pts[i][0], pts[i][1]] };
+    if (s.via) m.via = [s.via[0], s.via[1]];
+    if (s.c1) { m.c1 = [s.c2[0], s.c2[1]]; m.c2 = [s.c1[0], s.c1[1]]; }
+    segs.push(m);
+  }
+  return { from: pts[pts.length - 1], segs, vStart: piece.vEnd, vEnd: piece.vStart,
+    tanA: piece.tanB ? [-piece.tanB[0], -piece.tanB[1]] : null, kA: -(piece.kB ?? 0),
+    tanB: piece.tanA ? [-piece.tanA[0], -piece.tanA[1]] : null, kB: -(piece.kA ?? 0) };
+};
+
+// Direction a piece LEAVES its start vertex / ARRIVES at its end vertex: the exact
+// source-curve tangents _splitRings stored (see its comment — well-conditioned at any
+// piece length), falling back to segTangent on the trimmed run for hand-built pieces.
+const dirOut = (p) => { const [x, y] = pieceTanA(p); return Math.atan2(y, x); };
+const dirIn = (p) => { const [x, y] = pieceTanB(p); return Math.atan2(y, x); };
+
+// Join kept pieces end-to-end by SHARED POOL VERTEX identity — never coordinate
+// comparison, which is what makes this exact. A junction with several outgoing pieces
+// (a pinch point) takes the LEFTMOST turn: the smallest positive rotation from the
+// reversed inbound direction, i.e. the most counter-clockwise turn relative to the
+// direction of travel — the standard planar-arrangement rule for tracing an outer
+// boundary consistently, and the same rule _classify's face orbits use. With a
+// face-consistent keep-set a dead-end vertex is impossible (kept edges are complete
+// boundaries of face unions), so the throws below are defense in depth against corrupt
+// hand-built input, not a live failure mode. A literal U-turn (straight back the way we
+// arrived) rotates by exactly 0, the minimum possible, so it is the FIRST-preferred
+// candidate — only actually taken when it's the sole outgoing option (a degree-1
+// vertex), the standard DCEL `next = twin` behavior.
+export function _chain(classified, pool) {
+  const kept = classified.filter((c) => c.keep)
+    .map((c) => (c.reverse ? reversePieceSegs(c.piece)
+                           : { from: c.piece.from, segs: c.piece.segs, vStart: c.piece.vStart,
+                               vEnd: c.piece.vEnd, tanA: c.piece.tanA, kA: c.piece.kA,
+                               tanB: c.piece.tanB, kB: c.piece.kB }));
+  const closed = kept.filter((p) => p.vStart === null);      // uncrossed whole rings
+  const open = kept.filter((p) => p.vStart !== null);
+  const out = closed.map((p) => ({ start: [p.from[0], p.from[1]], segs: p.segs }));
+
+  const outgoing = new Map();
+  open.forEach((p, i) => { if (!outgoing.has(p.vStart)) outgoing.set(p.vStart, []); outgoing.get(p.vStart).push(i); });
+  const used = new Array(open.length).fill(false);
+
+  for (let s = 0; s < open.length; s++) {
+    if (used[s]) continue;
+    const startV = open[s].vStart;
+    let cur = s, guard = 0;
+    const chainSegs = [];
+    // The pool vertex, not the piece's own `from` — identical by the _splitRings snap
+    // invariant, but this is the canonical identity, and it's what a hand-built fixture
+    // (as in the test suite) is on the hook to keep consistent, not this function.
+    const startPt = [pool[startV][0], pool[startV][1]];
+    for (;;) {
+      if (guard++ > open.length + 1) throw new Error(CHAIN_INCOMPLETE_MESSAGE);
+      used[cur] = true;
+      chainSegs.push(...open[cur].segs);
+      const at = open[cur].vEnd;
+      if (at === startV) break;
+      const cands = (outgoing.get(at) ?? []).filter((i) => !used[i]);
+      if (cands.length === 0) throw new Error(CHAIN_INCOMPLETE_MESSAGE);
+      const inDir = dirIn(open[cur]);
+      // leftmost turn: smallest positive rotation from the reversed inbound direction
+      cur = cands.reduce((best, i) => {
+        const turn = (x) => { let a = inDir + Math.PI - dirOut(open[x]); a %= 2 * Math.PI; return a < 0 ? a + 2 * Math.PI : a; };
+        return turn(i) < turn(best) ? i : best;
+      }, cands[0]);
+    }
+    out.push({ start: startPt, segs: chainSegs });
+  }
+
+  if (used.some((u) => !u)) throw new Error(CHAIN_INCOMPLETE_MESSAGE);
+  return out.map(({ start, segs }) => {
+    const last = segs[segs.length - 1].to;
+    if (Math.hypot(last[0] - start[0], last[1] - start[1]) <= 1e-9) {
+      // copy before mutating: `segs` here can be a kept piece's OWN segs array (the
+      // uncrossed-whole-ring path above assigns `segs: p.segs` with no copy), so writing
+      // into segs[last] in place would mutate the caller's input piece.
+      const closedSegs = segs.slice(0, -1).concat([{ ...segs[segs.length - 1], to: [start[0], start[1]] }]);
+      return { start, segments: closedSegs };
+    }
+    return { start, segments: [...segs, { to: [start[0], start[1]] }] };
+  });
+}
+
+// Resolve a raw offset region list into the POSITIVE winding region it denotes (w >= 1;
+// see the module header). This is contour-offset.js's cleanup path.
+//
+// `clusterTol` is _mergeCrossings' "these crossings are one vertex" radius, CLUSTER_TOL by
+// default. It is an option only so the caller's fallback ladder can RETRY a failed
+// arrangement more coarsely (see contour-offset.js); nothing should raise it as a matter of
+// course, because every crossing it merges moves the emitted boundary by up to that radius.
+export function resolveOffsetWinding(rawRegions, { clusterTol = CLUSTER_TOL } = {}) {
+  const rings = [];
+  for (const rg of rawRegions) { rings.push(rg.outer); for (const h of rg.holes) rings.push(h); }
+  if (rings.length === 0) return [];
+
+  const merged = _mergeCrossings(ringCrossings(rings), clusterTol);
+  const pieces = _splitRings(rings, merged);
+  const tessRings = rings.map((r) => tessellateContour(r, WINDING_SEGS));
+  // The rule this module implements (module header) is POSITIVE winding, w >= 1 —
+  // Clipper2's FillRule::Positive. A face with winding <= 0 is never offset material:
+  // winding 0 is plainly outside, and a NEGATIVE face is always collapsed material (a
+  // lone hole with no covering outer, holes that grew into and past each other, or a raw
+  // offset that shrank past zero and inverted), never real material to reflect back into
+  // existence. _classify stays a general classifier parameterized by the fill rule; under
+  // this one `reverse` is provably unreachable (mult >= 0, so wRight <= wLeft always).
+  const classified = _classify(pieces, tessRings, { inside: (w) => w >= 1 });
+  const contours = _chain(classified, merged.pool);
+
+  // drop numerically empty loops, then nest by containment and restore the storage
+  // winding invariant (outer CCW, holes CW) from each contour's own area sign. Under the
+  // positive-winding rule above, `assembleRegions` never actually needs its own safety net
+  // (a hole with no containing outer, silently dropped there) — every surviving contour here
+  // already bounds real w=1 material — but the net stays in place as ordinary defense in depth.
+  const live = contours.filter((c) => Math.abs(ringArea(tessellateContour(c, WINDING_SEGS))) > 1e-9);
+  if (live.length === 0) return [];
+  const tessOf = new Map(live.map((c) => [c, tessellateContour(c, WINDING_SEGS)]));
+  const regions = assembleRegions(live.map((c) => tessOf.get(c)));
+  const byRing = new Map(live.map((c) => [tessOf.get(c), c]));
+  return regions.map((rg) => {
+    const outer = byRing.get(rg.outer);
+    const orient = (c, wantCCW) => {
+      const isCCW = ringArea(tessOf.get(c)) >= 0;
+      return closeContourGap(isCCW === wantCCW ? c : reverseContour(c));
+    };
+    return { outer: orient(outer, true), holes: rg.holes.map((h) => orient(byRing.get(h), false)) };
+  });
 }
