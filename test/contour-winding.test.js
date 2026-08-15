@@ -62,6 +62,94 @@ describe("ringCrossings", () => {
   });
 });
 
+// A crossing's `t` must be the IR segment's own parameter — the one trimSegment inverts —
+// not paper's time on whichever paper curve was hit. They differ for two of the three segment
+// kinds: an arc over 90 degrees is several cubics sharing one segMap entry (so paper's time is
+// the time within ONE of them), and a line is a zero-handle cubic (so paper's time solves
+// 3t^2-2t^3 = the linear fraction). Task 1 pinned segMap's curve -> segment mapping; this pins
+// the parameter alongside it.
+describe("ringCrossings reports the IR parameter, not paper's curve time", () => {
+  const P = (r, deg) => [r * Math.cos((deg * Math.PI) / 180), r * Math.sin((deg * Math.PI) / 180)];
+  // one arc of `sweep` degrees starting at angle 0, closed by a straight chord
+  const arcRing = (sweep, r = 10) =>
+    ({ start: P(r, 0), segments: [{ via: P(r, sweep / 2), to: P(r, sweep) }, { to: P(r, 0) }] });
+  // a cutter whose first edge runs radially out from the origin at `deg`, so it meets the arc
+  // at exactly that angle — the crossing's true IR t is then deg/sweep in closed form, because
+  // trimSegment parameterizes an arc linearly in ANGLE (aS = a0 + dA*tStart)
+  const radialCutter = (deg) => ({ start: [0, 0], segments: [{ to: P(40, deg) }, { to: P(40, deg + 12) }, { to: [0, 0] }] });
+  const arcHit = (sweep, deg) => ringCrossings([arcRing(sweep), radialCutter(deg)])
+    .find((x) => x.ring === 0 && x.seg === 0);
+
+  test("180 degree arc (two cubics, k=2): the reported t is the analytic angular fraction", () => {
+    // measured on HEAD: 0.5 — the time within the SECOND cubic, reported as if it were the
+    // time along the whole arc
+    expect(arcHit(180, 135).t).toBeCloseTo(135 / 180, 9);
+  });
+  test("300 degree arc (four cubics, k=4)", () => {
+    expect(arcHit(300, 250).t).toBeCloseTo(250 / 300, 9);
+  });
+  test("90 degree arc (k=1): still wrong on HEAD, because a Bezier time is not an angle", () => {
+    // k=1 is exactly where a piece-index correction would have no effect at all; the error is
+    // small (~4.5e-3) but it is the commonest arc this engine emits — a round join of 90 or less
+    expect(arcHit(90, 67.5).t).toBeCloseTo(67.5 / 90, 9);
+  });
+  test("a line reports the linear fraction, not the zero-handle cubic's time", () => {
+    // HEAD reported 0.560292 for the point 59% along; harmless downstream only because
+    // _splitRings overwrites a line piece's endpoints with pooled vertices
+    const box = ring([[0, 0], [10, 0], [10, 5], [0, 5]]);
+    const bar = ring([[5.9, -1], [6.1, -1], [6.1, 1], [5.9, 1]]);
+    const ts = ringCrossings([box, bar]).filter((x) => x.ring === 0 && x.seg === 0).map((x) => x.t).sort();
+    expect(ts[0]).toBeCloseTo(0.59, 9);
+    expect(ts[1]).toBeCloseTo(0.61, 9);
+  });
+
+  test("round trip: trimSegment at the reported t lands on the reported point, every kind", () => {
+    // the contract _splitRings actually depends on, stated directly. Lines and cubics are exact;
+    // an arc is good to the cubic approximation's own radial error (~2.7e-4*r), since the point
+    // paper reports lies on that approximation rather than on the true circle.
+    const check = (contour, cutter, tol) => {
+      const xs = ringCrossings([contour, cutter]).filter((x) => x.ring === 0);
+      expect(xs.length).toBeGreaterThan(0);
+      for (const x of xs) {
+        const pts = [contour.start, ...contour.segments.map((s) => s.to)];
+        const landed = trimSegment(pts[x.seg], contour.segments[x.seg], 0, x.t).seg.to;
+        close(landed, x.point, tol);
+      }
+    };
+    for (const sweep of [60, 90, 180, 300]) check(arcRing(sweep), radialCutter(sweep / 2), 3e-3);
+    check(ring([[0, 0], [10, 0], [10, 5], [0, 5]]), ring([[5.9, -1], [6.1, -1], [6.1, 1], [5.9, 1]]), 1e-9);
+    // a cubic segment: one paper curve, so its time IS the IR parameter and must pass through
+    const cubic = { start: [0, 0], segments: [{ c1: [3, 8], c2: [7, 8], to: [10, 0] }, { to: [0, 0] }] };
+    check(cubic, ring([[4.9, 2], [5.1, 2], [5.1, 8], [4.9, 8]]), 1e-9);
+  });
+
+  test("downstream: a piece trimmed out of a 180 degree arc keeps the original circle", () => {
+    // Two crossings 0.1mm apart near 127 degrees. On HEAD the short piece between them came back
+    // 62.63mm long instead of 0.10mm — the wrong t put the trimmed arc's `via` outside the span,
+    // so arcCenterAndSweep recovered the COMPLEMENTARY sweep — and its points wandered 3.4e-2
+    // off the circle (0.73 for the long piece).
+    const r = 10, hit = 126.85;
+    const n = P(1, hit), tg = P(1, hit + 90);
+    const at = (rad, off) => [n[0] * rad + tg[0] * off, n[1] * rad + tg[1] * off];
+    const bar = ring([at(8, -0.05), at(12, -0.05), at(12, 0.05), at(8, 0.05)]);
+    const arc = arcRing(180);
+    const merged = _mergeCrossings(ringCrossings([arc, bar]).filter((x) => x.ring === 0));
+    const pieces = _splitRings([arc], merged);
+    const measure = (p) => {
+      const poly = tessellateContour({ start: p.from, segments: p.segs }, 256);
+      let len = 0, off = 0;
+      for (let i = 0; i < poly.length; i++) {
+        off = Math.max(off, Math.abs(Math.hypot(poly[i][0], poly[i][1]) - r));
+        if (i) len += Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]);
+      }
+      return { len, off };
+    };
+    const short = pieces.map(measure).sort((a, b) => a.len - b.len)[0];
+    expect(short.len).toBeCloseTo(0.1, 3);          // the bar is 0.1mm wide
+    for (const p of pieces) expect(measure(p).off).toBeLessThan(1e-3);
+  });
+});
+
 describe("crossing cluster merge", () => {
   test("near-coincident crossings collapse to one shared vertex", () => {
     // the real measured cluster from a glyph offset: three crossings within ~2e-3
@@ -503,9 +591,16 @@ describe("coincident (collinear-overlap) pieces", () => {
   });
 
   test("round sweep: unchanged (round joins break collinearity, which is why this class hid)", () => {
-    // Pinned to the values HEAD produced, to 9 places — this fix must not move them.
+    // Pinned to 9 places. Deltas 1/3/5 are HEAD's values unchanged — no crossing lands on a
+    // join arc there. Deltas 8 and 10 moved by 7.8e-6 and 1.2e-4 mm² when ringCrossings began
+    // reporting the IR parameter instead of paper's curve time: the trimmed join arcs' `via`
+    // now sits at the correct fraction of the trimmed span. Both moved TOWARDS the truth — the
+    // analytic union areas are 1129.927574 and 1405.480666 (1-D quadrature over the exact
+    // Minkowski profile), and each new value is closer to its own by exactly the shift. The
+    // residual ~0.06/0.09 mm² is the cubic approximation of the arcs, which profileArea itself
+    // measures through (paper has no arc primitive), not an error in the resolver.
     const want = [[1, 2, 286.284944665], [3, 2, 496.564501988], [5, 1, 757.123616632],
-                  [8, 1, 1129.986257695], [10, 1, 1405.575521723]];
+                  [8, 1, 1129.986249849], [10, 1, 1405.575400557]];
     for (const [d, regions, area] of want) {
       const out = twoSquares(d, "round");
       expect(profileArea(out)).toBeCloseTo(area, 6);

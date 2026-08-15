@@ -252,6 +252,65 @@ export function resolveSelfRegions(regions) {
 
 export { paperScope, toContour, toOpenContour, groupPaperPaths };
 
+// paper reports an intersection as a time on the PAPER CURVE it hit, and that is NOT this
+// engine's IR parameter for the segment the curve came from. segMap fixes WHICH segment; this
+// fixes WHERE ON IT. Three separate mismatches, only one of them benign:
+//
+//   * an ARC ({to,via}) is expanded by arcToCubicSegments into up to four ≤90° cubics that all
+//     share ONE segMap entry, so `loc.time` is the time within whichever piece was hit —
+//     measured 0.404 for a point 70.3% along a 180° arc. That is the damaging one: it is not a
+//     small error but a different number entirely, so _splitRings trims the arc at a wildly
+//     wrong sweep, and two crossings on one arc can even sort backwards.
+//   * a LINE is a zero-handle cubic in paper, whose time satisfies 3t²−2t³ = the linear
+//     fraction: measured 0.560 where the IR parameter is 0.590. Benign so far only by luck —
+//     _splitRings overwrites a line piece's endpoints with the pooled vertices, and the map is
+//     monotonic so ordering survives.
+//   * a CUBIC ({to,c1,c2}) is the only kind that round-trips: one paper curve, the same
+//     parameterization trimSegment's splitCubic uses.
+//
+// The parameter is recovered from the intersection POINT rather than by undoing each of those.
+// That inverts exactly what trimSegment does — linear in position along a line, linear in
+// ANGLE about the arc's centre (trimSegment: aS = a0 + dA·tStart, off the same
+// arcCenterAndSweep) — and it is exact to floating point, where reconstructing the arc case
+// from the piece index as (j + tp)/k is not: (j + tp)/k is right about the PIECE (the sweep is
+// split into equal angular pieces, `t0 = a0 + dA·(i/pieces)` above) but still reads a Bézier
+// time as an angular fraction WITHIN that piece, leaving up to 4.5e-3 of parameter error — and
+// none of it corrected on a ≤90° arc, where k is 1 and the formula degenerates to `tp`. A ≤90°
+// round join is the commonest arc this engine emits.
+//
+// Recovering from the point is also the more robust reading for an arc: the cubic
+// approximation's error is essentially RADIAL, so the point's ANGLE is right even where the
+// point itself sits a fraction off the true circle.
+function irTime(contour, segIdx, point, paperTime) {
+  const n = contour.segments.length;
+  // segIdx === n is the closing curve closePath() synthesizes for a contour that never returns
+  // to its own start (see toPaperPath's segMap note) — a straight edge back to `start`.
+  const seg = segIdx < n ? contour.segments[segIdx] : { to: contour.start };
+  const from = segIdx === 0 ? contour.start : contour.segments[(segIdx - 1) % n].to;
+  if (seg.c1) return paperTime;
+  if (seg.via) {
+    const c = arcCenterAndSweep(from, seg.via, seg.to);
+    if (c) {                                            // null = collinear triple: a line, below
+      const a0 = Math.atan2(from[1] - c.center[1], from[0] - c.center[0]);
+      const aP = Math.atan2(point[1] - c.center[1], point[0] - c.center[0]);
+      const span = Math.abs(c.dA);
+      const twoPi = 2 * Math.PI;
+      let d = (c.dA >= 0 ? aP - a0 : a0 - aP) % twoPi;  // angle travelled from the arc's start
+      if (d < 0) d += twoPi;
+      const t = d / span;
+      // A point a rounding step BEFORE the start normalizes to nearly a whole turn rather than
+      // to ~0, and one past the end simply exceeds 1. Snap to the nearer end either way instead
+      // of handing _splitRings a parameter outside [0,1].
+      return t <= 1 ? t : (t - 1 <= twoPi / span - t ? 1 : 0);
+    }
+  }
+  const dx = seg.to[0] - from[0], dy = seg.to[1] - from[1];
+  const L2 = dx * dx + dy * dy;
+  if (L2 < 1e-18) return paperTime;                     // degenerate segment: nothing to project on
+  const t = ((point[0] - from[0]) * dx + (point[1] - from[1]) * dy) / L2;
+  return t < 0 ? 0 : (t > 1 ? 1 : t);
+}
+
 // Every crossing among a set of contour-IR rings — self-intersections of each ring plus
 // pairwise intersections — expressed back in IR terms as { ring, seg, t, point }.
 //
@@ -275,7 +334,8 @@ export function ringCrossings(rings) {
     const push = (ringIdx, loc) => {
       const seg = maps[ringIdx][loc.curve.index];
       if (!Number.isInteger(seg)) return;               // defensive: unmapped curve
-      out.push({ ring: ringIdx, seg, t: loc.time, point: [loc.point.x, loc.point.y] });
+      const point = [loc.point.x, loc.point.y];
+      out.push({ ring: ringIdx, seg, t: irTime(rings[ringIdx], seg, point, loc.time), point });
     };
     for (let i = 0; i < paths.length; i++) {
       for (const loc of paths[i].getIntersections()) {                 // self
