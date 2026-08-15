@@ -1,14 +1,49 @@
 # Handoff: text offset artifacts and the winding-resolver branch
 
-**Status:** branch `claude/offset-winding-resolver` is **not shippable**. It fixes a
-substantial class of real defects but **regresses the case it was written to fix**.
-Do not bump the version or merge as-is.
+**Status (resolved 2026-08-15):** branch `claude/offset-winding-resolver` is now
+**release-ready**. The warning and measurements below are retained as the historical handoff
+state; the follow-up work fixed the reported case, passed the release gates, and bumped the
+package to `0.60.0`.
 
 **Date:** 2026-08-15
-**Branch:** `claude/offset-winding-resolver`, 43 commits ahead of `origin/main`, version
-still `0.59.0` (unbumped), full suite green (2506 tests).
+**Branch:** `claude/offset-winding-resolver`; based on published `partforge@0.59.0`.
 **Base:** `origin/main` = `f3ce357` = published `partforge@0.59.0`.
 (Note: a local `main` may be stale at 0.58.1 — compare against `origin/main`.)
+
+---
+
+## Resolution
+
+The handoff diagnosis was correct but covered only the first failure layer. The completed fix
+has three parts:
+
+1. `_classify` no longer trusts one fixed midpoint probe. It samples deterministic interior
+   positions, selects by clearance to non-incident arrangement edges, and caps probe distance
+   by that clearance. This repairs the comb pinch and the glyph chaining failures.
+2. Positive round dilation decides whether a source hole survives from its largest-inscribed-
+   disk condition. This removes the residual `o`/`e`/`p` counters whose *raw* eroded outlines
+   still contained negative pockets after the classifier was fixed.
+3. Positive-dilation output components must contain source material. Source-less resolver
+   islands are removed without an area threshold, and any real negative rings nested through
+   such an island are re-homed to the surviving outer.
+
+Verified results:
+
+- the 6-glyph × 7-delta round matrix matches Clipper2 topology and bounded area, including
+  `"Scott"` at +0.8, +1.5, +2, and +3;
+- `"Scott"` retains native arcs and cubic curves at every tested delta;
+- the 36,090-offset committed corpus has 7 pre-ladder chain failures and zero post-ladder
+  failures across round/chamfer/sharp;
+- 231 test files / 2,637 tests pass when run in terminating chunks (the monolithic Vitest
+  process still exhibits the pre-existing lingering-handle/non-exit behavior);
+- the 24-glyph +0.3 benchmark is 19.0–19.3 ms versus 12.4–12.8 ms at this handoff commit,
+  approximately the planned 1.5× boundary and well below the original ~85 ms reference.
+
+Remaining parked limitations are documented in `docs/KERNEL-CONTRACT.md`: one round erosion
+case where grown holes meet the eroded outer, sharp/chamfer fully-eroded-hole remnants, and
+five sub-0.001 mm² erosion rings that cannot safely be deleted by the positive-dilation rule.
+
+Everything below this point describes the state that prompted the handoff.
 
 ---
 

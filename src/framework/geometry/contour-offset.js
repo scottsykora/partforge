@@ -691,37 +691,29 @@ const flattenRing = (contour, segs) => {
 // builds at 2.4 mm and dies at 2.5 mm", which is a harder failure than any other defect class
 // in this engine (all of which degrade to bounded inaccuracy).
 //
-// RATES, and where they come from. Run `node scripts/offset-rates.mjs` — it sweeps the
-// committed corpus (test/helpers/offset-corpus.js: 600 seeded shapes + 6 glyphs, 20 deltas,
-// 3 styles = 36 090 offsets, ~25 s) and prints these. Before the ladder / after it:
-//   round 0.291 % -> 0.133 %   chamfer 0.241 % -> 0.166 %   sharp 0.224 % -> 0.175 %
-// Two things to read off that table. The failure is NOT a round-join effect — the three
-// styles fail at within 1.3x of each other, and `sharp` fails on inputs `round` handles (the
-// 12-vertex two-notch plate at -3.25, asserted in test/offset-oracle-manifold.test.js). And
-// this ladder was tuned against a round-only corpus, so it helps `round` most and `sharp`
-// barely at all. An earlier version of this comment claimed 0.84 % -> 0.09 % for round,
-// 0.06 % -> 0 for chamfer and "sharp had none either way"; the first is corpus-specific and
-// the last is simply false.
+// RATES, and where they come from. `node scripts/offset-rates.mjs` sweeps the committed
+// corpus (600 seeded shapes + 6 glyphs, 20 deltas, 3 styles = 36 090 offsets). After the
+// adaptive pinch classifier, failures before the ladder / after it are:
+//   round 1 -> 0   chamfer 2 -> 0   sharp 4 -> 0
+// All seven rescues are oracle-checked: median area error 0.0972 %, worst 1.663 %, with zero
+// region-count losses and zero complete arc losses. The ladder stays because those seven raw
+// arrangements remain numerically unclosable, not because the formerly parked comb/text
+// failures still exist.
 //
 // Rung ORDER is by fidelity of what survives, not by hit rate:
 //   1. delta perturbed by ±1e-9 relative. Escapes an exactly-degenerate arrangement (two
 //      offset walls landing on the same coordinate) with the requested corner style and the
-//      exact curve IR both intact. Wins 6 of 34 rescues on the committed corpus.
+//      exact curve IR both intact.
 //   2. a coarser crossing-merge radius (4x and 20x CLUSTER_TOL). Keeps corner style AND the
 //      exact IR — a trimmed arc is still an arc — at the cost of collapsing crossings up to
-//      that radius apart onto one vertex. Wins 26 of 34. Its cost is real and topological:
-//      a merge radius wide enough to escape the degeneracy is also wide enough to weld a
-//      genuine severing pinch shut, so the result can have ONE REGION FEWER than the truth
-//      (4 of the 34 rescues; in 1 of those a later rung had the count right and lost to
-//      first-non-empty-wins). Note also that 20x CLUSTER_TOL is 0.1 mm, which sits ABOVE the
-//      0.05 mm feature floor CLUSTER_TOL's own derivation says it must stay far below —
-//      known, and the reason this rung is not coarsened further.
+//      that radius apart onto one vertex. This can merge a genuine severing pinch, so the
+//      20x rung is not widened further even though the current seven rescues preserve the
+//      oracle's region count.
 //   3. the raw outline re-run as polylines (64/256/1024 facets per turn). Geometrically
 //      faithful to the chord error of that tessellation, but it DEGRADES THE IR: round joins
-//      come back as chords, so A STEP EXPORT OF THE RESULT LOSES ITS TRUE CIRCLES — measured,
-//      a 10 mm "Scott" at +1 came back 0 arcs / 6 435 line segments where the raw offset
-//      carried 24 arcs. Arc preservation to STEP is this engine's headline property, so these
-//      rungs are last even though they are the most accurate by area.
+//      come back as chords, so A STEP EXPORT OF A POLYLINE-RUNG RESULT LOSES ITS TRUE CIRCLES.
+//      No current corpus rescue loses every arc, but these rungs remain last because that
+//      fidelity cost is structural.
 // Coverage is not monotonic in any rung's parameter (64 facets resolves cases 256 does not) —
 // these are escapes from degeneracy, not refinements, so every rung earns its place by cases
 // no other rung covers.
