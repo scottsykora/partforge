@@ -166,3 +166,15 @@ test("Shape2D.regions() splits disjoint regions into separate live Shape2Ds", ()
   for (const r of regions) { expect(r._shape2d).toBe(true); expect(r.area()).toBeCloseTo(100, 1); }
   expect(regions[0].union(regions[1]).area()).toBeCloseTo(200, 1);   // re-composable
 });
+
+// Twin of the empty-shape test in shape2d-manifold.test.js — the throw comes from
+// the shared op-spec check, so both backends fail identically before any B-rep
+// Drawing is materialized (previously: extrude threw a backend-specific message
+// and offset crashed with a raw TypeError on the null Drawing).
+test("empty shape: extrude/revolve throw, offset stays empty", () => {
+  const empty = k.shape2d(SQ(0, 0, 10)).intersect(SQ(20, 20, 10));
+  expect(empty.isEmpty()).toBe(true);
+  expect(() => k.extrude({ profile: empty, h: 5 })).toThrow("extrude: the profile Shape2D is empty");
+  expect(() => empty.revolve()).toThrow("revolve: the profile Shape2D is empty");
+  expect(empty.offset(1).isEmpty()).toBe(true);
+});

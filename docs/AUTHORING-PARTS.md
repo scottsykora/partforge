@@ -1197,7 +1197,7 @@ plate = plate.fillet(p.cornerR, { corners: "convex" });
 | `simplifyProfile(input, tolerance)` | corner-preserving: splits at corners, refits each smooth run within `tolerance` mm, rejoins — corners survive exactly, arcs entering it return as cubics |
 | `validateProfile(input)` | `{ok, issues: [{type, contourIndex, segmentIndex?, point?, message}]}`; never throws — `type` is `self-intersection`, `winding`, `nesting`, or `degenerate` |
 
-Two rules worth internalizing before reaching for any of this:
+Three rules worth internalizing before reaching for any of this:
 
 - **Fillet after booleans if STEP `CIRCLE` fidelity matters.** Booleans run through
   paper.js, which is cubic-only — an arc entering a boolean returns as a cubic
@@ -1208,6 +1208,13 @@ Two rules worth internalizing before reaching for any of this:
   on a narrow profile can produce arcs that cross the far side). `validateProfile`
   never throws, so it's cheap to call after any edit and inspect `issues` before
   committing to the result.
+- **Guard vanishing features with `isEmpty()`.** A boolean chain can legitimately
+  produce an *empty* shape (an `intersect` of shapes a parameter drove apart, a `cut`
+  that removed everything). The empty shape is a fine 2-D value — further booleans,
+  transforms and `offset` all work — but `extrude`/`revolve` throw on it, identically
+  on both backends. If a parameter can drive a feature to nothing, write the guard
+  explicitly: `if (!pocket.isEmpty()) body = body.cut(pocket.extrude({ h }))`.
+  (Symptom-keyed: `ERROR-PATTERNS.md#extrude-empty-shape2d`.)
 
 A practical trap with the broad selectors: `"all"`/`"convex"`/`"concave"` match **every**
 matching corner, including ones you didn't mean to touch. Union a curve-native outline
@@ -1226,7 +1233,8 @@ New, all delegating to the pure functions above over the shape's stored contours
 `translate([dx,dy])`, `rotate(deg, center?)`, `scale(s | [sx,sy], center?)`,
 `mirror(axis)`, `toContours()` (the stored contour IR, deep-copied — the one readback
 that tessellates nothing, unlike `toRegions()`), `fillet(r, opts?)`, `chamfer(dist,
-opts?)`, `simplify(tolerance)`, `corners()`, `contains([x,y])`.
+opts?)`, `simplify(tolerance)`, `corners()`, `contains([x,y])`, `isEmpty()` (no
+regions left — see the vanishing-features rule above).
 
 ## Convex hull
 

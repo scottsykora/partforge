@@ -408,6 +408,12 @@ Variant literal for a curve-adjacent corner (note the semicolon form, not parent
 - **Cause:** Two regions in the profile occupy overlapping area without one being declared a hole of the other.
 - **Fix:** Union the two regions into one shape, or restructure the overlapping region as a `holes` entry of its container. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Editing profiles" — run `validateProfile` after mutations.
 
+## extrude-empty-shape2d
+
+- **Symptom:** `extrude: the profile Shape2D is empty — nothing to build (a cut/intersect may have removed everything; guard with .isEmpty())` (or the `revolve:` twin), often only at certain parameter values.
+- **Cause:** A 2-D boolean chain legitimately produced an empty shape — an `intersect` of disjoint shapes, or a `cut` that removed everything — and the part handed it to `extrude`/`revolve`. Both backends reject this identically; a silently empty solid would just move the mystery downstream (missing geometry, failing `verify` volume gates).
+- **Fix:** If the emptiness is a surprise, check the boolean operands' placement (`boundingBox()` on each side). If it's a legitimate vanishing feature (a parameter can drive it to nothing), guard the materialization: `if (!pocket.isEmpty()) body = body.cut(pocket.extrude({ h }))`. See [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md) § "Empty shapes".
+
 ## curve-fill-resolved-hole-uncontained
 
 - **Symptom:** `curve-fill: resolved hole has no containing outer`

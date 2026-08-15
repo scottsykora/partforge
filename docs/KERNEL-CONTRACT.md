@@ -390,7 +390,7 @@ backwards for the holes (see the migration note below).
 | Op | Contract |
 |---|---|
 | `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). Curve-exact and backend-identical (paper.js). |
-| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Runs backend-independently on the contour IR — lines/arcs offset exactly, cubics approximate to ≤ 1e-3 mm; `chamfer` is a true 45°-bisecting bevel at every corner angle, `sharp` miters with limit 2. Backend-identical by construction, like every other Shape2D op. Holes offset material-wise (`-delta` where the outer gets `delta`). `segs` is accepted and ignored. Throws if the offset collapses the shape. |
+| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Runs backend-independently on the contour IR — lines/arcs offset exactly, cubics approximate to ≤ 1e-3 mm; `chamfer` is a true 45°-bisecting bevel at every corner angle, `sharp` miters with limit 2. Backend-identical by construction, like every other Shape2D op. Holes offset material-wise (`-delta` where the outer gets `delta`). `segs` is accepted and ignored. Empty in → empty out (short-circuits before the engine). Throws if the offset collapses the shape. |
 | `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². Curve-exact. |
 | `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds, curve-exact (no `center`/`size`, unlike `Solid.boundingBox`). |
 | `toRegions()` | Materialize into `{outer, holes}[]` point-ring region arrays (`assembleRegions`), tessellating curves at the backend's LOD; a boolean result may be several disjoint regions. |
@@ -402,9 +402,23 @@ backwards for the holes (see the migration note below).
 | `simplify(tolerance)` | Corner-preserving decimation/refit within `tolerance` mm — dense point rings become fewer segments (and refit arcs/cubics) without moving corners. |
 | `corners()` | The corner list — `{index, point, interiorAngleDeg, convex, segTypes}[]`. This positional order is what `fillet`/`chamfer`'s `{indices}` selects into. |
 | `contains([x,y])` | Point-in-shape test (inside an outer, not inside a hole). |
-| `extrude({h, twist?, scaleTop?})` | Sugar for `k.extrude({profile: this, …})` → `Solid`. |
-| `revolve({degrees?})` | Sugar for `k.revolve({profile: this, …})` → `Solid`. |
+| `isEmpty()` | `true` when the shape has no regions at all — a `cut`/`intersect` legitimately removed everything. Pure JS on the stored IR, backend-identical. See "Empty shapes" below. |
+| `extrude({h, twist?, scaleTop?})` | Sugar for `k.extrude({profile: this, …})` → `Solid`. Throws on an empty shape (see "Empty shapes"). |
+| `revolve({degrees?})` | Sugar for `k.revolve({profile: this, …})` → `Solid`. Throws on an empty shape (see "Empty shapes"). |
 | `clone()` | Independent copy. Every op returns a NEW `Shape2D`; no operand is ever mutated. |
+
+**Empty shapes.** An empty `Shape2D` is a legal 2-D value, and every 2-D op is total
+on it: booleans treat it as the identity/absorbing element, transforms and `offset`
+return it unchanged, `area()` is 0, `toRegions()` is `[]`. What it cannot do is become
+3-D: `extrude` and `revolve` (either calling form, on both backends) throw
+`"<op>: the profile Shape2D is empty — nothing to build (a cut/intersect may have
+removed everything; guard with .isEmpty())"`. The check runs in the shared op-spec
+layer before any backend materialization, so the two backends agree by construction.
+A part whose parameters can drive a feature to nothing guards explicitly:
+`if (!pocket.isEmpty()) body = body.cut(pocket.extrude({ h }))`. (Before this was
+pinned, Manifold silently built an empty solid where OCCT threw — behavior no part
+could rely on portably, so defining it follows the reference backend and is not a
+contract break.)
 
 On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **at every corner angle, convex or reflex** — a 10×10 square offset +1 gives 142.0 on both, a pentagon 298.920 on both, and an equilateral triangle's chamfer agrees to float precision on both, with no acute-corner carve-out. This follows from `offset` being one native implementation rather than a call into either backend's own 2-D engine — there is no Clipper2-vs-OCCT split left to diverge.
 

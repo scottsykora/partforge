@@ -60,3 +60,19 @@ test("simple() error message is preserved verbatim", () => {
   const two = shape2d(sq).union(shape2d([[30, 0], [40, 0], [40, 10], [30, 10]]));
   expect(() => two.simple()).toThrow("Shape2D.simple: result has 2 regions, not 1 (use toRegions())");
 });
+
+test("isEmpty: false for a real shape, true after an intersect removes everything", () => {
+  const s = shape2d(sq);
+  expect(s.isEmpty()).toBe(false);
+  expect(s.intersect([[20, 20], [30, 20], [30, 30], [20, 30]]).isEmpty()).toBe(true);
+});
+
+// The short-circuit matters more now than when offset was a backend hook: the native
+// engine reads an empty result as a collapse and throws, so without it an empty shape
+// would raise instead of staying empty. (The old "hook never called" spy assertion went
+// away with the hook itself — offset has no backend dep to observe.)
+test("offset of an empty shape short-circuits: empty out, no throw", () => {
+  const empty = shape2d(sq).intersect([[20, 20], [30, 20], [30, 30], [20, 30]]);
+  expect(empty.offset(2).isEmpty()).toBe(true);
+  expect(empty.offset(-2).isEmpty()).toBe(true);
+});
