@@ -769,6 +769,39 @@ function chainFallback(regions, raw, delta, corners) {
   return null;
 }
 
+// Dilation is extensive: S ⊆ S+B. A resolver artifact that contains no point from any
+// source outer therefore cannot be a real output component. Unlike an area cutoff this keeps
+// arbitrarily small source components, and it is valid for every positive join style. Source
+// boundary samples lie strictly inside their dilation once delta clears the numerical band.
+function sourceBackedPositiveRegions(source, out, delta) {
+  if (delta <= SOURCE_DISK_TOL) return out;
+  const witnesses = source.flatMap((rg) => sampleRing(closeContourGap(rg.outer), VALIDATE_SEGS));
+  const entries = out.map((rg) => {
+    const outer = sampleRing(rg.outer, VALIDATE_SEGS);
+    const box = ringBox(outer);
+    const holeRings = rg.holes.map((h) => sampleRing(h, VALIDATE_SEGS));
+    const backed = witnesses.some((p) => p[0] >= box[0] && p[0] <= box[2]
+      && p[1] >= box[1] && p[1] <= box[3] && pointInRing(p, outer)
+      && !holeRings.some((h) => pointInRing(p, h)));
+    return { rg, outer, box, backed };
+  });
+  const kept = entries.filter((e) => e.backed);
+  // If numerical sampling cannot witness even one component, preserve the resolver result.
+  // The filter is allowed to remove proved source-less artifacts, never all caller geometry.
+  if (!kept.length || kept.length === entries.length) return out;
+
+  const result = kept.map((e) => ({ ...e.rg, holes: [...e.rg.holes] }));
+  for (const entry of entries.filter((e) => !e.backed)) for (const hole of entry.rg.holes) {
+    const p = hole.start;
+    const homes = kept.map((e, i) => ({ e, i })).filter(({ e }) =>
+      p[0] >= e.box[0] && p[0] <= e.box[2] && p[1] >= e.box[1] && p[1] <= e.box[3]
+      && pointInRing(p, e.outer));
+    homes.sort((a, b) => Math.abs(ringArea(a.e.outer)) - Math.abs(ringArea(b.e.outer)));
+    if (homes.length) result[homes[0].i].holes.push(hole);
+  }
+  return result;
+}
+
 // Region-in / region-out offset: the engine behind Shape2D.offset on BOTH backends.
 // Fast path: raw per-ring offsets that validate cleanly are returned as-is (lines/arcs
 // exact). Cleanup path: anything dirty or invalid goes through resolveOffsetWinding
@@ -794,6 +827,7 @@ export function offsetRegions(regions, delta, { corners = "round" } = {}) {
     out = chainFallback(regions, first.raw, delta, corners);
     if (out === null) throw err;            // pinned message, unchanged, when nothing works
   }
+  out = sourceBackedPositiveRegions(regions, out, delta);
   if (out.length === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
   return out;
 }

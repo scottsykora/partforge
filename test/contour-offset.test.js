@@ -559,6 +559,31 @@ describe("offsetRegions — source-hole inradius collapse", () => {
   });
 });
 
+describe("offsetRegions — positive dilation keeps only source-backed components", () => {
+  test("Roboto 'a' and 'p' do not gain detached sliver islands at +0.5", async () => {
+    const opentype = (await import("opentype.js")).default;
+    const { textGlyphs } = await import("../src/framework/geometry/text2d.js");
+    const { DEFAULT_FONT_BYTES } = await import("../src/framework/geometry/fonts/default-font.js");
+    const bytes = DEFAULT_FONT_BYTES;
+    const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+
+    for (const text of ["a", "p"]) {
+      const out = offsetRegions(textGlyphs(font, text, { size: 10 }), 0.5, { corners: "round" });
+      expect(out.filter((rg) => Math.abs(area(rg.outer)) > 1e-3)).toHaveLength(1);
+      expect(out.flatMap((rg) => rg.holes).filter((h) => Math.abs(area(h)) > 1e-3)).toHaveLength(1);
+    }
+  });
+
+  test("an arbitrarily small real source component is retained", () => {
+    const box = (x, y, w, h) => ({ start: [x, y], segments: [
+      { to: [x + w, y] }, { to: [x + w, y + h] }, { to: [x, y + h] }, { to: [x, y] },
+    ] });
+    const source = [region(box(0, 0, 10, 10)), region(box(20, 0, 0.01, 0.01))];
+    for (const corners of ["round", "chamfer", "sharp"])
+      expect(offsetRegions(source, 0.5, { corners })).toHaveLength(2);
+  });
+});
+
 // Pins the regression class from task 5B's round-1 review, Important 3: Part 1's per-piece
 // deletion is unrecoverable (unlike a chord/dirty join, a deleted piece can't be un-deleted
 // downstream), so a bad deletion could turn perfectly good geometry into a false "offset
@@ -693,17 +718,11 @@ describe("offsetRegions — a ring that crosses itself AT a vertex is not simple
   });
 });
 
-// ── the chain-incomplete fallback (Task 7D) ──────────────────────────────────────────────
+// ── former chain-incomplete cases (Task 7D) ──────────────────────────────────────────────
 //
-// When the winding resolver cannot close its arrangement it throws CHAIN_INCOMPLETE_MESSAGE.
-// That throw used to reach the caller, which in a parametric app reads as "the part builds at
-// 2.4 mm and dies at 2.5 mm" — a hard failure where every other defect class in this engine
-// degrades to bounded inaccuracy. offsetRegions now retries the same offset a few ways
-// (perturbed delta, coarser crossing-merge radius, polyline outline) before letting it out.
-//
-// The truth here is NOT hardcoded: it is bracketed by the SAME shape at neighbouring deltas,
-// which never failed and which the Minkowski oracle confirms exactly (see
-// test/offset-oracle-manifold.test.js, where the same comb is checked against the oracle).
+// These fixtures originally exercised the fallback ladder. The adaptive winding classifier
+// now resolves them directly; the assertions below pin that higher-fidelity behavior while
+// retaining explicit coverage of what later ladder rungs would cost if reached.
 describe("offsetRegions — the chain-incomplete fallback", () => {
   const shape = (pts) => ({ start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] });
   // 38×10 plate with four notches of differing depth cut into its top edge. Eroded by 2.5 the
@@ -712,27 +731,20 @@ describe("offsetRegions — the chain-incomplete fallback", () => {
     [9, 10], [9, 4.5], [7, 4.5], [7, 10], [5, 10], [5, 5], [4, 5], [4, 10], [0, 10]]);
   const areaAt = (d) => profileArea(offsetRegions([region(comb)], d, { corners: "round" }));
 
-  test("the raw arrangement at −2.5/round genuinely cannot be chained", () => {
-    // Belt and braces on the ROUTING: without the fallback this input still throws, so the
-    // assertions below cannot go quiet by the resolver quietly starting to cope. If the
-    // resolver is ever fixed at the root this test fails, which is the signal to retire it.
+  test("the raw arrangement at −2.5/round chains directly into all four pieces", () => {
     const o = _offsetContour(comb, -2.5, "round");
-    expect(() => resolveOffsetWinding([{ outer: o.contour, holes: [] }]))
-      .toThrow(CHAIN_INCOMPLETE_MESSAGE);
+    let out;
+    expect(() => { out = resolveOffsetWinding([{ outer: o.contour, holes: [] }]); }).not.toThrow();
+    expect(out).toHaveLength(4);
   });
 
-  test("−2.5/round returns geometry instead of throwing, in the measured three pieces", () => {
+  test("−2.5/round returns the oracle's four pieces", () => {
     expect(() => areaAt(-2.5)).not.toThrow();
     // More than one region: the two 5-deep notches erode through their webs at exactly this
     // delta, so the comb really does sever. That it SEVERS is the point — the resolver's job
     // is to report the pieces, not to give up on the arrangement.
     //
-    // THREE is the engine's MEASURED value, not the truth. The Minkowski oracle counts FOUR
-    // pieces here — 91.341263, 0.239060, 0.156621 and 0.007056 mm² — and the winning rung
-    // (clusterTol x20, i.e. a 0.1 mm crossing-merge radius) merges the 0.007 mm² one out of
-    // existence. See test/offset-oracle-manifold.test.js's Task 7D block, which pins the same
-    // 3-against-4 with the oracle's own count derived in-file.
-    expect(offsetRegions([region(comb)], -2.5, { corners: "round" })).toHaveLength(3);
+    expect(offsetRegions([region(comb)], -2.5, { corners: "round" })).toHaveLength(4);
   });
 
   test("the recovered area is bracketed by the same shape at deltas that never failed", () => {
@@ -749,9 +761,8 @@ describe("offsetRegions — the chain-incomplete fallback", () => {
   test("the recovered stretch of the old failing band is monotone, with no holes", () => {
     // The failure was a BAND, not a knife edge — that was the premise the measurement killed:
     // −2.4950 through −2.5150 all threw, and a slider dragged through it died the whole way.
-    // −2.500 downwards is now continuous; walk it at 0.001 and require every step to build and
-    // to keep decreasing. (−2.4955 … −2.4995 is NOT yet covered — see the parked case in
-    // test/offset-oracle-manifold.test.js — which is why this walk starts at −2.500.)
+    // −2.500 downwards is continuous; walk it at 0.001 and require every step to build and
+    // to keep decreasing.
     let prev = Infinity;
     for (let i = 0; i <= 20; i++) {
       const a = areaAt(-2.5 - i * 0.001);
@@ -772,36 +783,28 @@ describe("offsetRegions — the chain-incomplete fallback", () => {
     const segs = (rs) => rs.reduce((a, r) =>
       a + [r.outer, ...r.holes].reduce((n, c) => n + c.segments.length, 0), 0);
 
-    test("a polyline rung strips the result's arcs — a STEP export loses its true circles", () => {
-      // Seed 330 at −3.75/round: the delta and clusterTol rungs all fail, so a POLYLINE rung
-      // wins, and the arcs the raw offset carried do not survive it. Arc preservation to STEP
-      // is this engine's headline property, so this is a real cost and not a rounding detail —
-      // it is documented in KERNEL-CONTRACT.md § Offset: known limitations, not only here.
+    test("the first high-fidelity rung now wins before a polyline can strip arcs", () => {
       const c = caseFor(330);
       const { raw } = _rawOffset(c.regions, -3.75, "round");
-      expect(arcs(raw)).toBe(3);                                   // the raw offset HAS arcs
+      expect(arcs(raw)).toBe(3);
       const rungs = _ladderRungs(c.regions, raw, -3.75, "round");
       const won = rungs.map((r) => { try { return { name: r.name, out: r.run() }; } catch { return null; } })
         .find(Boolean);
-      expect(won.name).toBe("polyline@64");
-      expect(arcs(won.out)).toBe(0);                               // ...and the winner has none
-      expect(segs(won.out)).toBe(6);
-      expect(arcs(offsetRegions(c.regions, -3.75, { corners: "round" }))).toBe(0);
+      expect(won.name).toBe("delta*(1-1e-9)");
+      expect(arcs(won.out)).toBe(3);
+      expect(segs(won.out)).toBe(5);
+      expect(arcs(offsetRegions(c.regions, -3.75, { corners: "round" }))).toBe(3);
     });
 
-    test("a clusterTol rung can lose a region a later rung would have kept", () => {
-      // Seed 397 at −3.25/round: clusterTol x20 (a 0.1 mm crossing-merge radius) welds a
-      // genuine severing pinch shut and returns ONE region; polyline@1024 returns the two the
-      // Minkowski oracle counts. first-non-empty-wins means the coarser answer is the one that
-      // ships. Measured across the corpus: 4 of 34 rescues come back a region short, and this
-      // is the one where a later rung had it right.
+    test("the first high-fidelity rung keeps a region a coarse rung would lose", () => {
       const c = caseFor(397);
       const { raw } = _rawOffset(c.regions, -3.25, "round");
       const out = Object.fromEntries(_ladderRungs(c.regions, raw, -3.25, "round")
         .map((r) => { try { return [r.name, r.run().length]; } catch { return [r.name, null]; } }));
+      expect(out["delta*(1-1e-9)"]).toBe(2);
       expect(out["clusterTol*20"]).toBe(1);
       expect(out["polyline@1024"]).toBe(2);
-      expect(offsetRegions(c.regions, -3.25, { corners: "round" })).toHaveLength(1);   // PARKED
+      expect(offsetRegions(c.regions, -3.25, { corners: "round" })).toHaveLength(2);
     });
   });
 

@@ -395,22 +395,24 @@ describe("known divergences (parked) — Task 7C", () => {
     expect(got).toBeGreaterThan(320); expect(got).toBeLessThan(330);                      // PARKED
   });
 
-  // 2. A hole narrower than 2·delta must vanish under dilation; instead a ~2 mm² remnant
-  //    survives. Join-independent — all three styles are short by exactly the same 2 mm².
-  //    (`out1holeCount` is declared BEFORE the test that calls it: as a `const` arrow it is in
-  //    the TDZ until the describe body reaches it, and a describe body runs top-to-bottom before
-  //    any test does, so declaring it after the test only worked by that ordering accident.)
+  // 2. A hole narrower than 2·delta vanishes under round dilation via the source-inradius
+  //    gate. Sharp and chamfer use different structuring elements, so extending that proof to
+  //    them remains parked rather than applying the Euclidean-disk rule incorrectly.
   const out1holeCount = (src, corners) =>
     offsetRegions(src, 2, { corners }).reduce((a, rg) => a + rg.holes.length, 0);
-  test("1×1 hole at +2 should vanish; a 2 mm² remnant survives instead", () => {
+  test("1×1 hole at +2 vanishes for round; sharp/chamfer remain parked", () => {
     const src = [{ outer: ring([[0, 0], [30, 0], [30, 20], [0, 20]]), holes: [holeRect(23, 2, 24, 3)] }];
-    for (const corners of ["chamfer", "sharp", "round"]) {
+    for (const corners of ["chamfer", "sharp"]) {
       const truth = truthOf(src, 2, corners);
       const got = engineArea(src, 2, corners);
-      expect(out1holeCount(src, corners)).toBe(1);                                        // PARKED: should be 0
-      expect(truth - got).toBeGreaterThan(1.9);                                           // PARKED
+      expect(out1holeCount(src, corners)).toBe(1);                                  // PARKED
+      expect(truth - got).toBeGreaterThan(1.9);
       expect(truth - got).toBeLessThan(2.1);
     }
+    const roundTruth = truthOf(src, 2, "round");
+    const roundGot = engineArea(src, 2, "round");
+    expect(out1holeCount(src, "round")).toBe(0);
+    expect(Math.abs(roundGot - roundTruth) / roundTruth).toBeLessThan(AREA_RTOL);
   });
 
   // 3. The residual of what used to be a wider chain-incomplete failure. The fixed-distance
@@ -499,28 +501,16 @@ describe("four-notch comb at −2.5", () => {
 // dozens of near-tangent joins, and acute corners at every terminal — and the engine behaves
 // materially differently on one.
 //
-// The whole 6-glyph x 5-delta matrix is enumerated below under `round`, with truth DERIVED
-// from Clipper2 in-file as everywhere else in this file, and the engine's CURRENT measured
-// answer pinned per case. It is not a happy table: of 30 cases the engine AGREES on 15,
-// THROWS chain-incomplete on 9, and DIVERGES on 6. That is the honest state, and enumerating
-// it is the point — the previous corpus contained no glyph at all, so all 15 of those
-// divergences and throws were invisible.
-//
-// Two things this matrix establishes that the docs on this branch got wrong:
-//   1. `sharp` is NOT a workaround here. Of the 9 chain-incomplete throws, 8 throw under all
-//      three corner styles and the ninth ("t" at +3) throws under `round` AND `sharp` and
-//      builds only under `chamfer`. Per style over these 30 cases: round 9, sharp 9,
-//      chamfer 8. See "the throws are not a round-join effect" below, which asserts it.
-//   2. Area is not a topology check. "o" at +3 lands 0.20 % from the true area while keeping
-//      a counter that has closed, and at +2 it DROPS a counter that is still open — the exact
-//      silent-hole-loss failure the reported bug was.
+// The whole 6-glyph x 7-delta matrix is enumerated below under `round`, with truth DERIVED
+// from Clipper2 in-file as everywhere else in this file. These are correctness assertions,
+// not measured baselines: topology must match exactly, area must stay within the corpus
+// tolerance, and the unfiltered result must contain no detached resolver slivers. The two
+// intermediate deltas exercise the original "Scott" report between the older 0.5/1/2 pins.
 describe("glyphs — the case class whose absence let the text bug ship", () => {
   const GLYPHS = ["o", "e", "a", "p", "t", "Scott"];
-  const GLYPH_DELTAS = [0.2, 0.5, 1, 2, 3];         // deliberately brackets counter collapse
+  const GLYPH_DELTAS = [0.2, 0.5, 0.8, 1, 1.5, 2, 3]; // brackets pinch recovery and counter collapse
   let glyph;                                         // ch -> regions
-  // Every offset in this block is computed ONCE, here: the 30 cases x 3 styles that follow
-  // include 27 that fail all seven fallback rungs before throwing, and running those three
-  // times over (once per assertion below) took the file from 0.3 s to 20 s.
+  // Every offset in this block is computed once here; Clipper2 truth is derived separately.
   let RUN;                                           // "ch@delta|corners" -> result | null
   beforeAll(async () => {
     const opentype = (await import("opentype.js")).default;
@@ -529,10 +519,7 @@ describe("glyphs — the case class whose absence let the text bug ship", () => 
     const font = opentype.parse(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
     glyph = Object.fromEntries(GLYPHS.map((ch) => [ch, textGlyphs(font, ch, { size: 10 })]));
     RUN = {};
-    // Every glyph under `round`; the single glyphs additionally under chamfer and sharp, for
-    // the corner-style disproof below. "Scott" is round-only on purpose: a failing offset of a
-    // five-glyph string costs 2.3 s to walk the whole ladder before throwing, so sweeping it
-    // three ways would add 5 s to the suite for evidence the five single glyphs already give.
+    // Every glyph under `round`; single glyphs additionally exercise chamfer and sharp.
     // (scripts/offset-rates.mjs does sweep "Scott" all three ways, and it throws on all three.)
     for (const ch of GLYPHS) for (const d of GLYPH_DELTAS)
       for (const corners of ch === "Scott" ? ["round"] : ["round", "chamfer", "sharp"]) {
@@ -540,46 +527,6 @@ describe("glyphs — the case class whose absence let the text bug ship", () => 
         catch (e) { RUN[`${ch}@${d}|${corners}`] = { error: e.message }; }
       }
   }, 30000);
-
-  // The engine's measured answer per case: [regions, holes, net area, RAW region count] with
-  // slivers filtered out of the first three, or "throw". The raw count is carried because the
-  // gap between it and the filtered count IS the sliver defect: "o" at +3 hands back 25
-  // regions of which 24 are degenerate rings under 1e-3 mm².
-  const MEASURED = {
-    "o@0.2": [1, 1, 30.568, 1], "o@0.5": [1, 1, 42.223, 1], "o@1": [1, 1, 61.628, 1],
-    "o@2": [1, 0, 100.772, 20], "o@3": [1, 1, 139.263, 25],
-    "e@0.2": [1, 1, 32.523, 2], "e@0.5": [1, 1, 45.152, 2], "e@1": [1, 2, 64.960, 2],
-    "e@2": "throw", "e@3": "throw",
-    "a@0.2": [1, 1, 33.536, 1], "a@0.5": [2, 1, 46.522, 2], "a@1": [1, 2, 66.314, 2],
-    "a@2": "throw", "a@3": "throw",
-    "p@0.2": [1, 1, 38.253, 1], "p@0.5": [1, 1, 52.715, 1], "p@1": [2, 1, 75.381, 2],
-    "p@2": [1, 0, 120.371, 28], "p@3": "throw",
-    "t@0.2": [1, 0, 21.449, 1], "t@0.5": [1, 0, 30.498, 1], "t@1": [2, 0, 46.488, 2],
-    "t@2": "throw", "t@3": "throw",
-    "Scott@0.2": [5, 1, 140.006, 5], "Scott@0.5": [4, 1, 196.736, 4], "Scott@1": [1, 3, 288.627, 3],
-    "Scott@2": "throw", "Scott@3": "throw",
-  };
-
-  // Where the engine disagrees with the derived truth. Pinned as the exact list, so a fix
-  // breaks this test as loudly as a regression does and neither can pass quietly. Read the
-  // right-hand side of each line as the correct answer.
-  const DIVERGENT = [
-    // A counter that is still open at +2 (true 1 hole) is DROPPED. The reported bug's own
-    // failure mode, on the most ordinary glyph there is.
-    "o@2: 1r/0h 100.772 vs truth 1r/1h 100.537",
-    // ...and one delta later, a counter that HAS closed (true 0 holes) is KEPT. So the two
-    // are not one off-by-one threshold: the hole survives exactly where it should not.
-    "o@3: 1r/1h 139.263 vs truth 1r/0h 139.537",
-    // A spurious second region: the dilation of a connected glyph cannot gain a component
-    // (S is a subset of S+B, and dilation preserves connectedness), so any count above the
-    // input's own region count is wrong by construction, whatever the areas say.
-    "a@0.5: 2r/1h 46.522 vs truth 1r/1h 46.540",
-    "p@1: 2r/1h 75.381 vs truth 1r/1h 75.383",
-    "t@1: 2r/0h 46.488 vs truth 1r/0h 46.473",
-    // Topologically right, 0.85 % over on area — the only case here that an area-only corpus
-    // would have caught, and the smallest of the six.
-    "p@0.5: 1r/1h 52.715 vs truth 1r/1h 52.273",
-  ];
 
   const truthOf = (ch, d) => {
     const oracle = clipperRings(glyph[ch], d, "round");
@@ -602,35 +549,26 @@ describe("glyphs — the case class whose absence let the text bug ship", () => 
 
   for (const ch of GLYPHS) for (const d of GLYPH_DELTAS) {
     const key = `${ch}@${d}`;
-    const want = MEASURED[key];
-    test(`"${ch}" +${d} round: ${want === "throw" ? "chain-incomplete (parked)" : "pinned"}`, () => {
+    test(`"${ch}" +${d} round matches Clipper2 topology and area`, () => {
       const got = RUN[`${key}|round`];
-      if (want === "throw") {
-        expect(got.error).toMatch(/could not chain offset boundary/);
-        return;
-      }
-      const [regions, holes, area, raw] = want;
       expect(got.error).toBeUndefined();
-      expect({ regions: got.regions, holes: got.holes }).toEqual({ regions, holes });
-      expect(got.area).toBeCloseTo(area, 2);
-      expect(got.raw).toBe(raw);
+      const truth = truthOf(ch, d);
+      expect({ regions: got.regions, holes: got.holes })
+        .toEqual({ regions: truth.regions, holes: truth.holes });
+      expect(Math.abs(got.area - truth.area) / truth.area).toBeLessThanOrEqual(AREA_RTOL);
+      expect(got.raw).toBe(got.regions); // no source-less resolver slivers
     });
   }
 
-  test("the engine's disagreements with the derived truth are exactly the known six", () => {
-    const found = [];
+  test("the whole round matrix has no parked throws or oracle divergences", () => {
     for (const ch of GLYPHS) for (const d of GLYPH_DELTAS) {
-      if (MEASURED[`${ch}@${d}`] === "throw") continue;
       const truth = truthOf(ch, d);
       const got = RUN[`${ch}@${d}|round`];
-      const badTopo = got.regions !== truth.regions || got.holes !== truth.holes;
-      const badArea = Math.abs(got.area - truth.area) / truth.area > AREA_RTOL;
-      if (badTopo || badArea)
-        found.push(`${ch}@${d}: ${got.regions}r/${got.holes}h ${got.area.toFixed(3)}` +
-          ` vs truth ${truth.regions}r/${truth.holes}h ${truth.area.toFixed(3)}`);
+      expect(got.error, `${ch}@${d}`).toBeUndefined();
+      expect([got.regions, got.holes], `${ch}@${d} topology`).toEqual([truth.regions, truth.holes]);
+      expect(Math.abs(got.area - truth.area) / truth.area, `${ch}@${d} area`)
+        .toBeLessThanOrEqual(AREA_RTOL);
     }
-    // Sorted so the pinned list reads by failure kind rather than by iteration order.
-    expect(found.sort()).toEqual([...DIVERGENT].sort());
   });
 
   // The brief for this task named four targets derived from Clipper2. All four are asserted
@@ -645,20 +583,9 @@ describe("glyphs — the case class whose absence let the text bug ship", () => 
     for (const ch of ["e", "a", "p"]) expect(truthOf(ch, 3).holes).toBe(0);   // counters gone
   });
 
-  // The disproof, executable. If `sharp` were the workaround ERROR-PATTERNS.md advertised, a
-  // caller hitting the throw on text could switch to it; on this corpus that helps in exactly
-  // one case out of nine, and the case it helps is the one where CHAMFER is the escape.
-  test("the throws are not a round-join effect: sharp throws on the same cases round does", () => {
-    const per = { round: [], chamfer: [], sharp: [] };
+  test("all three corner styles complete across the single-glyph matrix", () => {
     for (const ch of GLYPHS.filter((g) => g !== "Scott")) for (const d of GLYPH_DELTAS)
       for (const corners of ["round", "chamfer", "sharp"])
-        if (RUN[`${ch}@${d}|${corners}`].error) per[corners].push(`${ch}@${d}`);
-    // 25 single-glyph cases: round 7, sharp 7, chamfer 6. Sharp escapes NOTHING that round
-    // fails on; chamfer escapes exactly one. ("Scott" adds two more to each style, measured by
-    // scripts/offset-rates.mjs, taking the full matrix to round 9 / sharp 9 / chamfer 8.)
-    expect(per.round.length).toBe(7);
-    expect(per.sharp).toEqual(per.round);
-    expect(per.chamfer.length).toBe(6);
-    expect(per.round.filter((k) => !per.chamfer.includes(k))).toEqual(["t@3"]);
+        expect(RUN[`${ch}@${d}|${corners}`].error, `${ch}@${d}/${corners}`).toBeUndefined();
   });
 });
