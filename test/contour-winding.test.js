@@ -312,3 +312,64 @@ describe("junction ordering uses the curve TANGENT at the vertex, not the chord 
     close(outerRing.segments[1].to, [2, 1]);   // second edge is A's endpoint, not B's
   });
 });
+
+describe("junction ordering uses the ARC's true tangent, not the through-point chord (fix round 2, I1)", () => {
+  const deg = (d) => (d * Math.PI) / 180;
+  // A CCW arc from J=[0,0], radius 1, with a given start tangent and sweep (both degrees).
+  // `via` is the through point at mid-sweep — exactly what round 1 (from -> via) still read
+  // as an approximate direction, biased by sweep/4 off the true tangent.
+  const arcFromTangent = (tauDeg, sweepDeg) => {
+    const thetaR = deg(tauDeg - 90);                    // radius direction at the start point
+    const C = [-Math.cos(thetaR), -Math.sin(thetaR)];   // center, since the start point is [0,0]
+    const a0 = thetaR;                                  // angle of the start point around C
+    const at = (a) => [C[0] + Math.cos(a), C[1] + Math.sin(a)];
+    return { via: at(a0 + deg(sweepDeg) / 2), to: at(a0 + deg(sweepDeg)) };
+  };
+
+  test("arc (180 deg sweep) vs cubic: the true-tangent successor is chosen, not the through-point-biased one", () => {
+    // Arc A: 180 deg sweep, true start tangent 60 deg — from->via (round 1) reads ~105 deg
+    // (60 + sweep/4 = 60 + 45, the systematic through-point bias). Cubic B: tangent 80 deg,
+    // exact even pre-fix. True ordering picks B (turn 100 vs A's true 120); the biased
+    // reading instead picks A (turn 75 vs B's 100).
+    const A = arcFromTangent(60, 180);
+    const c1B = [Math.cos(deg(80)), Math.sin(deg(80))];
+
+    const pIn = { ring: 0, from: [-1, 0], segs: [{ to: [0, 0] }], vStart: 0, vEnd: 1 };
+    const pB = { ring: 0, from: [0, 0], segs: [{ c1: c1B, c2: [1.5, 2.6], to: [2, 3] }], vStart: 1, vEnd: 2 };
+    const pA = { ring: 0, from: [0, 0], segs: [{ via: A.via, to: A.to }], vStart: 1, vEnd: 3 };
+    const pBCloser = { ring: 0, from: [2, 3], segs: [{ to: [-1, 0] }], vStart: 2, vEnd: 0 };
+    const pACloser = { ring: 0, from: A.to, segs: [{ to: [0, 0] }], vStart: 3, vEnd: 1 };
+
+    const classified = [pIn, pB, pA, pBCloser, pACloser].map((piece) => ({ piece, keep: true, reverse: false }));
+    const pool = [[-1, 0], [0, 0], [2, 3], A.to];
+
+    const out = _chain(classified, pool);
+    expect(out.length).toBe(2);
+    const outerRing = out.find((c) => c.segments.length === 3);
+    expect(outerRing).toBeDefined();
+    close(outerRing.segments[1].to, [2, 3]);   // second edge is B's endpoint, not A's
+  });
+
+  test("arc (170 deg sweep) vs arc (20 deg sweep): same failure mode with both candidates curved", () => {
+    // A: 170 deg sweep, true tangent 50 deg (through-point bias reads ~92.5 deg). B: 20 deg
+    // sweep, true tangent 70 deg (bias reads ~75 deg). True ordering picks B (turn 110 vs
+    // A's true 130); the biased reading instead picks A (87.5 vs B's 105).
+    const A = arcFromTangent(50, 170);
+    const B = arcFromTangent(70, 20);
+
+    const pIn = { ring: 0, from: [-1, 0], segs: [{ to: [0, 0] }], vStart: 0, vEnd: 1 };
+    const pB = { ring: 0, from: [0, 0], segs: [{ via: B.via, to: B.to }], vStart: 1, vEnd: 2 };
+    const pA = { ring: 0, from: [0, 0], segs: [{ via: A.via, to: A.to }], vStart: 1, vEnd: 3 };
+    const pBCloser = { ring: 0, from: B.to, segs: [{ to: [-1, 0] }], vStart: 2, vEnd: 0 };
+    const pACloser = { ring: 0, from: A.to, segs: [{ to: [0, 0] }], vStart: 3, vEnd: 1 };
+
+    const classified = [pIn, pB, pA, pBCloser, pACloser].map((piece) => ({ piece, keep: true, reverse: false }));
+    const pool = [[-1, 0], [0, 0], B.to, A.to];
+
+    const out = _chain(classified, pool);
+    expect(out.length).toBe(2);
+    const outerRing = out.find((c) => c.segments.length === 3);
+    expect(outerRing).toBeDefined();
+    close(outerRing.segments[1].to, B.to);   // second edge is B's endpoint, not A's
+  });
+});

@@ -9,7 +9,7 @@
 //
 // Pure leaf in the worker graph: DOM-free, three-free, node:-free.
 import { ringCrossings } from "./paper-bridge.js";
-import { trimSegment } from "./contour-ops.js";
+import { trimSegment, segTangent } from "./contour-ops.js";
 import { tessellateContour } from "./profile.js";
 
 // Crossings closer than this are one vertex. Derived: it must exceed OFFSET_TOL (1e-3 mm,
@@ -262,44 +262,37 @@ const reversePieceSegs = (piece) => {
   return { from: pts[pts.length - 1], segs, vStart: piece.vEnd, vEnd: piece.vStart };
 };
 
-// A point is a degenerate control point (coincides with the endpoint it's paired with) when
-// it carries zero tangent information — a cubic can legitimately have c1 === from.
-const isDegenerateControl = (p, q) => Math.abs(p[0] - q[0]) < 1e-9 && Math.abs(p[1] - q[1]) < 1e-9;
+// Direction a piece LEAVES its start vertex: the EXACT tangent at that end, via
+// contour-ops.js's segTangent — not a hand-rolled approximation. Round 1 used the raw
+// chord; a from->c1/from->via shortcut is exact for cubics (modulo the c1===from
+// degenerate case) but still biased for arcs — `via` is a THROUGH point near mid-sweep,
+// not a control point, so from->via is systematically off by about sweep/4 (worse the
+// larger the sweep, and this engine's round joins emit sweeps up to ~180deg at a spike;
+// see contour-offset.js). segTangent recovers the arc's true center and returns the
+// tangent perpendicular to the radius, exact at both ends, and also resolves the
+// degenerate cubic correctly (c1===from → tangent comes from c2, not the chord).
+const dirOut = (p) => { const [x, y] = segTangent(p.from, p.segs[0], true); return Math.atan2(y, x); };
 
-// Direction a piece LEAVES its start vertex: the tangent (from -> c1, or from -> via),
-// falling back to the chord (from -> segs[0].to) when there's no control point or it's
-// degenerate. Using the chord unconditionally is what round 1 shipped with, and it is wrong
-// for a curved piece — the endpoint tangent can differ from the chord by most of the sweep,
-// which reorders candidates at a curved junction and mis-groups pieces into the wrong rings
-// (see the "junction ordering" test fixture for a worked example of the flip).
-const dirOut = (p) => {
-  const from = p.from, s0 = p.segs[0];
-  let to = s0.to;
-  if (s0.c1 && !isDegenerateControl(s0.c1, from)) to = s0.c1;
-  else if (s0.via && !isDegenerateControl(s0.via, from)) to = s0.via;
-  return Math.atan2(to[1] - from[1], to[0] - from[0]);
-};
-
-// Direction a piece ARRIVES at its end vertex: the tangent at that endpoint (c2 -> to, or
-// via -> to, on the LAST segment), falling back to the chord (previous endpoint -> to) when
-// there's no control point or it's degenerate. Mirrors dirOut's reasoning at the other end.
+// Direction a piece ARRIVES at its end vertex: the exact tangent on the LAST segment,
+// computed from where that segment itself begins (segTangent needs a segment's own
+// `from` to recover an arc's center — not some earlier point in the piece). Mirrors
+// dirOut's reasoning at the other end.
 const dirIn = (p) => {
   const pts = [p.from, ...p.segs.map((s) => s.to)];
-  const to = pts[pts.length - 1];
-  const last = p.segs[p.segs.length - 1];
-  let from = pts[pts.length - 2];
-  if (last.c2 && !isDegenerateControl(last.c2, to)) from = last.c2;
-  else if (last.via && !isDegenerateControl(last.via, to)) from = last.via;
-  return Math.atan2(to[1] - from[1], to[0] - from[0]);
+  const lastFrom = pts[pts.length - 2];
+  const [x, y] = segTangent(lastFrom, p.segs[p.segs.length - 1], false);
+  return Math.atan2(y, x);
 };
 
 // Join kept pieces end-to-end by SHARED POOL VERTEX identity — never coordinate
 // comparison, which is what makes this exact. A junction with several outgoing pieces
 // (a pinch point) takes the LEFTMOST turn: the smallest positive rotation from the
 // reversed inbound direction, i.e. the most counter-clockwise turn relative to the
-// direction of travel — a literal U-turn back the way we came is the excepted, least-
-// preferred candidate — the standard planar-arrangement rule for tracing an outer
-// boundary consistently.
+// direction of travel — the standard planar-arrangement rule for tracing an outer
+// boundary consistently. A literal U-turn (straight back the way we arrived) rotates by
+// exactly 0, the minimum possible, so it is the FIRST-preferred candidate, not a last
+// resort — it is only actually taken when it's the sole outgoing option (a degree-1
+// vertex), which is the standard DCEL `next = twin` behavior.
 export function _chain(classified, pool) {
   const kept = classified.filter((c) => c.keep)
     .map((c) => (c.reverse ? reversePieceSegs(c.piece) : { from: c.piece.from, segs: c.piece.segs,
