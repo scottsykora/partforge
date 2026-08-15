@@ -281,7 +281,7 @@ function curveEvaluator(from, seg) {
 // of its own parameterization, returning {from, seg} for the kept portion.
 // Cubic: two exact de Casteljau splits. Arc: angle interpolation, `via`
 // recomputed at the kept sweep's angular midpoint. Line: trivial endpoints.
-function trimSegment(from, seg, tStart, tEnd) {
+export function trimSegment(from, seg, tStart, tEnd) {
   if (seg.c1) {
     let cur = { p0: from, c1: seg.c1, c2: seg.c2, p1: seg.to };
     if (tStart > 1e-12) { cur = splitCubic(cur.p0, cur.c1, cur.c2, cur.p1, tStart)[1]; }

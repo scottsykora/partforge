@@ -251,3 +251,46 @@ export function resolveSelfRegions(regions) {
 }
 
 export { paperScope, toContour, toOpenContour, groupPaperPaths };
+
+// Every crossing among a set of contour-IR rings — self-intersections of each ring plus
+// pairwise intersections — expressed back in IR terms as { ring, seg, t, point }.
+//
+// This deliberately borrows the half of paper.js that works. Paper implements fat-line
+// Bézier clipping (Sederberg–Nishita) with convex-hull rejection: recursive subdivision
+// that returns exact (curve, t) on the original curves. Paper's weakness in this engine
+// was never finding intersections — it is the tracing and branch selection afterwards,
+// which contour-winding.js replaces. segMap (filled by toPaperPath) maps paper's curve
+// index back to our IR segment index.
+//
+// NB paper's addCurveIntersections bails at 40 recursion levels / 4096 calls and returns
+// a PARTIAL set on pathological input. Callers must detect that downstream (an unconsumed
+// piece during chaining) rather than trusting completeness here.
+export function ringCrossings(rings) {
+  if (rings.length === 0) return [];
+  const scope = paperScope();
+  try {
+    const maps = rings.map(() => []);
+    const paths = rings.map((c, i) => toPaperPath(scope, c, maps[i]));
+    const out = [];
+    const push = (ringIdx, loc) => {
+      const seg = maps[ringIdx][loc.curve.index];
+      if (!Number.isInteger(seg)) return;               // defensive: unmapped curve
+      out.push({ ring: ringIdx, seg, t: loc.time, point: [loc.point.x, loc.point.y] });
+    };
+    for (let i = 0; i < paths.length; i++) {
+      for (const loc of paths[i].getIntersections()) {                 // self
+        push(i, loc);
+        if (loc.intersection) push(i, loc.intersection);
+      }
+      for (let j = i + 1; j < paths.length; j++) {
+        for (const loc of paths[i].getIntersections(paths[j])) {        // pairwise
+          push(i, loc);
+          push(j, loc.intersection);
+        }
+      }
+    }
+    return out;
+  } finally {
+    scope.project.clear();
+  }
+}
