@@ -437,32 +437,32 @@ facets at mesh LOD, as always, since its meshes have no curve representation.)
 
 The native offset engine (`geometry/contour-offset.js`) is correct on the honest-agreement
 corpus (`test/contour-offset.test.js`, `test/offset-oracle-manifold.test.js`,
-`test/offset-oracle-occt.test.js`), but two cases are verified defects, pinned as
-characterization tests in the "known divergences (parked)" block of
-`test/offset-oracle-manifold.test.js` rather than silently tolerated:
+`test/offset-oracle-occt.test.js`), and **nothing is currently parked** — the "known
+divergences (parked)" block of `test/offset-oracle-manifold.test.js` is empty. The
+convention stands for the next divergence found: park it there as a characterization test
+pinned to the measured value, never widen the agreement corpus's tolerance around it.
 
-- **A pocket that should fully close doesn't.** An outward offset large enough that a
-  hole's max inscribed circle is smaller than `delta` should erase the hole entirely; the
-  engine instead leaves a residual ring. Verified: a 30×20 plate with a 5-wide-arm L-shaped
-  pocket, offset +3, should reach 0 holes / area 928.274 — actual leaves a residual hole at
-  ~921.21. Root cause: a raw offset ring can be locally valid (correctly wound, no
-  self-intersections) while still lying inside the region it should have been swept away
-  by — only a *global* containment check catches this, and none currently runs.
-- **Clustered reflex corners degrade accuracy.** A chamfer offset over several reflex
-  corners sitting close together can resolve to several times too much surviving area.
-  Verified: a 9-gon with clustered reflex corners, chamfer offset delta −2.79; true area
-  2.76 (a thin sliver), native resolves ~7.71. Root cause: `resolveSelfRegions`
-  (`paper-bridge.js`) doesn't fully untangle the self-intersections this corner geometry
-  produces.
+Four cases were on this list and are now **fixed**, asserted as correctness in the
+"formerly-parked divergences, now correct" block:
 
-Neither is silent in the sense of going unnoticed by tests — each has a pinned
-characterization test that fails loudly if the defect gets worse, and is meant to be
-deleted and promoted to the main corpus the day it's fixed. They matter to a part author
-today: don't rely on `offset` to fully close a pocket, or to hold tight tolerance through a
-reflex-corner cluster — verify the result (`holes`/`area`) rather than assuming it.
+- **A pocket that should fully close now does.** A 30×20 plate with a 5-wide-arm L-shaped
+  pocket at +3 (max inscribed circle 2.5 < delta) used to leave a residual hole at ~921.21;
+  it now reaches 0 holes and matches Clipper2. Fixed by `resolveOffsetWinding`
+  (`geometry/contour-winding.js`), which computes the raw offset outline's positive-winding
+  region directly — a fully-eroded pocket is negative-winding everywhere and drops out with
+  no per-ring containment heuristic at all.
+- **Clustered reflex corners no longer degrade accuracy.** A 9-gon with three clustered
+  reflex corners at chamfer delta −2.79 read 7.70938 under the old paper.js self-union and
+  4.621926 under the resolver alone; it is now exactly 3.553831, the value Clipper2's
+  chamfer mapping and an independent Minkowski-union construction both give. (2.76 is this
+  shape's *round* truth, not its chamfer truth — a chord bevel on an erosion always retains
+  more material than the arc, never less.) Fixed by gating `_offsetContour`'s overlap-side
+  trim on the two offset lines actually crossing **within both offset segments' extents**:
+  past a corner's own feature size they cross outside both, and trimming to that point
+  extends the segments to material the raw offset never covered, on a ring simple and
+  correctly wound enough that the fast-path validator sees nothing wrong.
 
-Two further cases were on this list and are now **fixed**, asserted as correctness in the
-same block: two eroding holes that grow into each other merge into one hole (40×20 plate,
+…plus two eroding holes that grow into each other merge into one hole (40×20 plate,
 two 6×8 holes 3 mm apart, delta −2 sharp → area 348), and a hole that erodes through its
 outer boundary is clipped by it (40×20 plate, 10×10 hole 2 mm from the edge, delta −2 sharp
 → area 408, hole absorbed into the outline). Both used to produce topologically invalid

@@ -446,7 +446,8 @@ describe("offsetRegions — merging/breaking-through holes must survive", () => 
 // recover it." Per the standing instruction that silently deleting real geometry is strictly
 // worse than the single defect (the wide-L-pocket) the prune existed to fix, Part 2 is REMOVED
 // entirely as of this round rather than shipped delicately tuned — see the wide-L-pocket
-// test.todo above and task-5B-report.md's round-2 section for the full derivation and the
+// test above (a real, passing test since task 7 — it was a test.todo when this note was
+// written) and task-5B-report.md's round-2 section for the full derivation and the
 // 76-combo sweep. These three are kept as permanent regression coverage against reintroducing
 // that failure class (a future distance-based prune, or any other mechanism that can delete a
 // whole hole based on a raw pre-cleanup sample, should be checked against these first).
@@ -534,25 +535,62 @@ describe("offsetRegions — round-1 review: Part 1 deletion must not cause a fal
   // polygon into Clipper2 with FillRule::Positive reproduces 4.621926 to the digit, so
   // resolveOffsetWinding is resolving _offsetContour's raw output correctly.
   //
-  // That raw output is itself still not the true chamfer-offset polygon, though: three
-  // reflex corners sit close enough together (the "9-gon with several clustered reflex
-  // corners" this shape is built to exercise) that _offsetContour's per-vertex chamfer join
-  // — built locally at each vertex, with no awareness of other vertices' joins — produces a
-  // piece that overlaps itself, and the positive-winding rule correctly counts that overlap
-  // as material rather than as an artifact to cancel. Independent oracles for a true
-  // single-chord bevel agree the correct area is ~2.6-2.8 (Clipper2's own Square join:
-  // 2.7018; Round: 2.7652; Miter: 2.5934; matching the ~2.76 grid-search estimate from the
-  // narrow-L-pocket-style methods used elsewhere in this file) — so 4.621926 is a genuine
-  // improvement over 7.7094 but not yet the correct answer. The remaining gap is in
-  // _offsetContour's local join construction for closely-clustered reflex corners (the same
-  // class of defect as the wide-L-pocket "uncut corner" residual elsewhere in this codebase),
-  // not in the winding resolver, and is out of this task's scope — see task-7-report.md.
-  test("concave 9-gon at delta -2.79/chamfer: winding resolution is correct, the raw offset still is not (4.621926, was 7.7094)", () => {
+  // Task 7B closed the remaining 4.621926 → 3.553831 gap, and it was NOT in the join policy.
+  // Ablating _offsetContour piece by piece localised it to the overlap-side TRIM: at a corner
+  // whose offset lines cross outside both offset segments' own extents, "trimming" to that
+  // crossing EXTENDS both segments to a point neither reaches, inventing material the raw
+  // offset never covered — and leaves a ring simple and correctly wound enough that
+  // validateRawOffset, and every other downstream check, sees nothing wrong. Gating the trim
+  // on the crossing landing within both extents (contour-offset.js) makes this exact, and the
+  // untrimmed corner beveled + resolved by winding is what Clipper2 does anyway.
+  //
+  // 3.553831 is the CHAMFER truth, agreed to six digits by Clipper2's chamfer mapping and by
+  // an independent Minkowski-union construction. The "~2.76" that used to be quoted here as
+  // the chamfer truth is the ROUND truth for this shape (Clipper2 round: 2.765184; Minkowski:
+  // 2.761295); Clipper2's JoinType::Square (2.701770) is a different join policy again and is
+  // not this engine's chamfer — it returns less area than its own round join, which no chord
+  // bevel on an erosion can do.
+  test("concave 9-gon at delta -2.79/chamfer: exactly the true chamfer offset (3.553831, was 4.621926, was 7.7094)", () => {
     const nonagon = { start: [19.49, 10], segments: [
       { to: [12.33, 11.95] }, { to: [11.2, 16.81] }, { to: [8.87, 11.96] }, { to: [0.93, 13.3] },
       { to: [3.45, 7.62] }, { to: [8.52, 7.44] }, { to: [10.92, 4.78] }, { to: [15.09, 5.73] }, { to: [19.49, 10] }] };
     const out = offsetRegions([region(nonagon)], -2.79, { corners: "chamfer" });
     expect(out.length).toBe(1);
-    expect(profileArea(out)).toBeCloseTo(4.621926, 5);
+    expect(profileArea(out)).toBeCloseTo(3.553831, 5);
+  });
+});
+
+// Task 7B regression coverage for the overlap-side trim gate, on three shapes whose offsets
+// have exact CLOSED-FORM areas — no oracle, no tolerance judgement. Each was wrong before the
+// gate by 15-30 %, in the silent direction: a simple, correctly-wound ring that validated
+// clean and took the fast path while carrying material the raw offset never produced.
+describe("offsetRegions — the overlap-side trim only fires when the offset lines really cross", () => {
+  const shape = (pts) => ({ start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] });
+
+  test("plus sign (10×10, 4-wide arms) at +3/sharp is the union of its two dilated bars (220)", () => {
+    // Dilating each bar by 3 with square (miter, 90°) corners is exact: the horizontal bar
+    // [0,10]×[3,7] → [-3,13]×[0,10] and the vertical [3,7]×[0,10] → [0,10]×[-3,13], so the
+    // union is 16·10 + 10·16 − 10·10 = 220. Pre-gate this returned 184 — the four reflex
+    // corners were each trimmed to a crossing well outside both offset segments.
+    const plus = shape([[3, 0], [7, 0], [7, 3], [10, 3], [10, 7], [7, 7], [7, 10], [3, 10], [3, 7], [0, 7], [0, 3], [3, 3]]);
+    expect(profileArea(offsetRegions([region(plus)], 3, { corners: "sharp" }))).toBeCloseTo(220, 6);
+  });
+
+  test("dumbbell at +4/sharp is the union of its three dilated rectangles (668)", () => {
+    // Lobes [0,10]² and [20,30]×[0,10] and waist [10,20]×[4,6], each dilated by 4 with square
+    // corners: 18·18 + 18·18 + 18·10 − 8·10 − 8·10 = 668. Pre-gate: 636.
+    const dumb = shape([[0, 0], [10, 0], [10, 4], [20, 4], [20, 0], [30, 0], [30, 10], [20, 10], [20, 6], [10, 6], [10, 10], [0, 10]]);
+    expect(profileArea(offsetRegions([region(dumb)], 4, { corners: "sharp" }))).toBeCloseTo(668, 6);
+  });
+
+  test("a plain convex inset still takes the exact fast path (square, -1)", () => {
+    // The gate must NOT cost the everyday case its trim: every corner of a convex inset
+    // crosses within both segments, so the ring stays simple and validateRawOffset passes it
+    // through untouched — 4 segments in, 4 out, no resolver, no extra vertices.
+    const square = shape([[0, 0], [20, 0], [20, 20], [0, 20]]);
+    const out = offsetRegions([region(square)], -1, { corners: "sharp" });
+    expect(out.length).toBe(1);
+    expect(out[0].outer.segments.length).toBe(4);
+    expect(profileArea(out)).toBeCloseTo(324, 9);
   });
 });

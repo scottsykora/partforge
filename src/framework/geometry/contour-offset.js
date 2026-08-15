@@ -88,6 +88,14 @@ export function _offsetSegment(from, seg, delta) {
 
 const MITER_LIMIT = 2;
 
+// Where X falls along the directed segment P0→P1, as a fraction of its length (null for a
+// degenerate segment). This is the overlap-side trim's validity test — see the trim itself.
+function paramOn(P0, P1, X) {
+  const d = sub(P1, P0), L2 = dot(d, d);
+  if (L2 < 1e-18) return null;
+  return dot(sub(X, P0), d) / L2;
+}
+
 // Intersection of the line through P (direction u) with the line through Q (direction v).
 function lineIntersect(P, u, Q, v) {
   const d = cross(u, v);
@@ -127,6 +135,20 @@ export function _offsetContour(contour, delta, corners) {
   let dirty = pieces.some((p) => p.dirty);
   const n = segs.length;
   const joins = new Array(n).fill(null);   // joins[i] bridges piece[i-1] → piece[i] at vertex i
+  // Each piece's ORIGINAL (pre-trim) first- and last-segment extents, captured before the
+  // join loop starts mutating them. The trim gate below is a question about the raw offset
+  // geometry, so it must be asked of the raw extents: reading the live, partly-trimmed ones
+  // makes the answer depend on which corner the loop happens to have reached, and a ring
+  // whose corners are then trimmed inconsistently (some yes, some no) is worse than either
+  // all-trimmed or none-trimmed — measured: a 6.99×7.78 rectangular hole at delta +3.5 (it
+  // over-collapses in x by 0.008 mm and should vanish) leaves a 12.26 mm² spurious face
+  // under a live-extent gate and 0.007 mm² under this one.
+  const ext = pieces.map((p) => ({
+    aFrom: (p.segments.length > 1 ? p.segments.at(-2).to : p.start).slice(),
+    aEnd: p.segments.at(-1).to.slice(),
+    bStart: p.start.slice(),
+    bEnd: p.segments[0].to.slice(),
+  }));
 
   for (let i = 0; i < n; i++) {
     const prev = pieces[(i - 1 + n) % n], next = pieces[i];
@@ -136,11 +158,32 @@ export function _offsetContour(contour, delta, corners) {
     const turnDeg = (Math.atan2(Math.abs(turn), Math.max(-1, Math.min(1, inTan[0] * outTan[0] + inTan[1] * outTan[1]))) * 180) / Math.PI;
     if (dist(aEnd, bStart) <= JOIN_EPS || turnDeg < SMOOTH_JOINT_DEG) continue;   // smooth
     if (turn * delta > 0) { joins[i] = joinSegs(point, aEnd, bStart, inTan, outTan, delta, corners); continue; }
-    // overlap side: trim when both neighbors are plain lines, else chord + dirty
+    // Overlap side: the two offset pieces run into each other instead of leaving a gap.
+    // When both neighbors are plain lines and the two offset LINES cross WITHIN both
+    // segments' own extents, that crossing is the true corner of the offset outline: trim
+    // both to it and the ring stays simple, so validateRawOffset's exact fast path still
+    // applies (this is the everyday polygon inset, and keeping it on the fast path matters —
+    // 100 disjoint squares at delta −1 measure 0.22 ms trimmed against 10.3 ms untrimmed).
+    //
+    // The in-extent test is the whole point and is NOT a formality. Past a corner's own
+    // feature size the two offset lines still cross, but OUTSIDE both segments — the "trim"
+    // then EXTENDS the segments to a point neither of them reaches, fabricating material the
+    // raw offset never covered, and because the result is still a simple, correctly-wound
+    // ring nothing downstream can tell. That was the whole residual gap after the winding
+    // resolver landed: on the clustered-reflex 9-gon at delta −2.79 it produced 4.621926
+    // against a true 3.553831 (Clipper2 and an independent Minkowski-union construction
+    // agree on that value), ~30 % too much surviving area. Untrimmed, the crossing offset
+    // segments are simply emitted and the positive-winding rule cancels the reversed loop,
+    // which is what every standard offset algorithm (Clipper2 included) does — so decline
+    // the trim, bevel across, and let resolveOffsetWinding do it properly.
     const aSeg = prev.segments.at(-1), bSeg = next.segments[0];
     if (!aSeg.via && !aSeg.c1 && !bSeg.via && !bSeg.c1) {
       const X = lineIntersect(aEnd, inTan, bStart, outTan);
-      if (X) { aSeg.to = X; next.start = X; continue; }    // exact trim, stays clean
+      const eA = ext[(i - 1 + n) % n], eB = ext[i];
+      const ta = X && paramOn(eA.aFrom, eA.aEnd, X), tb = X && paramOn(eB.bStart, eB.bEnd, X);
+      if (X && ta !== null && tb !== null && ta > 0 && ta <= 1 && tb >= 0 && tb < 1) {
+        aSeg.to = X; next.start = X; continue;             // exact trim, stays clean
+      }
     }
     joins[i] = [{ to: bStart }]; dirty = true;
   }

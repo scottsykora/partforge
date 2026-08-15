@@ -143,7 +143,12 @@ for (const { name, regions, deltas, curved, corners: styles = ["round", "sharp",
 // cause recorded in a comment, so a regression that makes the defect WORSE breaks
 // the band, and a fix that makes it correct is expected to break the band too —
 // at which point the case should be deleted from here and promoted to the main
-// corpus above.
+// corpus above. As of task 7B there are NO parked divergences left — every case that
+// was ever parked here now agrees with Clipper2 and lives in the block below. Keep
+// the convention: a newly-found divergence goes back into a "known divergences
+// (parked)" describe of its own rather than into the agreement corpus with a widened
+// tolerance.
+//
 // Formerly parked as divergences, now FIXED and asserted as correctness. Both used to be
 // topologically invalid output — two hole rings overlapping each other, and a hole ring
 // escaping its own outer — which is not merely an accuracy gap: pushed through toRegions()
@@ -239,41 +244,52 @@ describe("formerly-parked divergences, now correct", () => {
       expect(areas.reduce((a, b) => a + b, 0)).toBeCloseTo(truth, 1);
     }
   });
-});
 
-describe("known divergences (parked)", () => {
-  test("clustered reflex corners: chamfer offset over-resolves a 9-gon", () => {
-    // 9-gon with several clustered reflex corners, chamfer offset delta -2.79.
-    //
-    // Task 7 (winding resolver wiring): this moved from 7.70938 (paper.js's resolveSelfRegions,
-    // a self-union — provably a NonZero-style resolution: feeding the exact raw offset polygon
-    // straight into Clipper2 with FillRule::NonZero reproduces 7.7094 to the digit) to 4.621926
-    // (resolveOffsetWinding's positive-winding rule — likewise cross-checked: feeding the SAME
-    // raw polygon into Clipper2 with FillRule::Positive reproduces 4.621926 to the digit). The
-    // resolver is provably resolving _offsetContour's raw output correctly; the raw output
-    // itself is still wrong. Root cause has moved with it: three reflex corners sit close
-    // enough together that _offsetContour's per-vertex chamfer join — built locally at each
-    // vertex, with no awareness of any other vertex's join — produces a piece that overlaps
-    // itself, and the positive-winding rule correctly keeps that overlap as material rather
-    // than cancelling it. That is a real, pre-existing defect in the RAW OFFSET, not in the
-    // resolver, and is out of this task's scope — see task-7-report.md.
+  // Task 7B: the last parked divergence, now also correct. A 9-gon with three clustered
+  // reflex corners at delta -2.79 read 7.70938 under the old paper.js self-union, 4.621926
+  // once resolveOffsetWinding landed, and 3.553831 — the true value — once the overlap-side
+  // TRIM in _offsetContour was gated on the offset lines actually crossing within both
+  // segments' extents. The residual was never in the join policy or the resolver: it was the
+  // trim silently EXTENDING two offset segments to a crossing point outside both of them,
+  // fabricating material the raw offset never covered, on a ring simple and well-wound enough
+  // that nothing downstream could object. See contour-offset.js's trim comment and
+  // task-7B-report.md.
+  test("clustered reflex corners: 9-gon chamfer offset matches Clipper2 exactly", () => {
     const pts = [[19.49, 10], [12.33, 11.95], [11.2, 16.81], [8.87, 11.96], [0.93, 13.3], [3.45, 7.62], [8.52, 7.44], [10.92, 4.78], [15.09, 5.73]];
     const nonagon = { start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] };
     const src = [{ outer: nonagon, holes: [] }];
-    // Truth, derived rather than hardcoded: 3.5538 under Clipper2's own chamfer mapping
-    // (its round join at circularSegments=4). Clipper2's own true single-chord bevel join
-    // (JoinType::Square) puts it at 2.7018, its ROUND join at 2.7652 — both close to the
-    // independent grid-search estimate of ~2.76 used elsewhere in this codebase for this
-    // shape family. Either way, native's 4.621926 is roughly 1.7x too much surviving area
-    // (an improvement on the pre-resolver 7.70938's ~2.8x, but not a fix).
+    // Truth, DERIVED from Clipper2 in-file rather than hardcoded: 3.553831 under this file's
+    // chamfer mapping (Clipper2's round join at circularSegments=4, which at these sweeps IS
+    // a single-chord bevel). Confirmed independently by an explicit Minkowski-union
+    // construction — erode(S, r) = Box \ dilate(Box \ S, r), dilate built as the union of the
+    // edge slabs and the triangular bevel caps, with Clipper2 used only as a boolean engine
+    // and never as an offsetter — which agrees to all six digits. NB for anyone re-deriving
+    // this: Clipper2's JoinType::Square (2.701770) is NOT this engine's chamfer semantic and
+    // must not be cited as one — it returns LESS area than its own Round join (2.765184),
+    // which is impossible for a chord bevel on an erosion, since the chord cuts closer to the
+    // reflex vertex than the arc does and must therefore retain MORE material. 2.76 is the
+    // ROUND truth for this shape, not the chamfer truth.
     const truth = clipperArea(src, -2.79, "chamfer");
-    expect(truth).toBeCloseTo(3.5538, 3);
+    expect(truth).toBeCloseTo(3.553831, 5);
     const out = offsetRegions(src, -2.79, { corners: "chamfer" });
     const area = out.reduce((a, rg) => a + Math.abs(ringArea(tessellateContour(rg.outer, SEGS))), 0);
-    // Anchored on the MEASURED value (4.621926) within a tight epsilon, NOT on a loose
-    // (truth, 9) band that a large silent drift could slide around inside. A change in
-    // either direction — including a partial fix — breaks this and gets looked at.
-    expect(area).toBeGreaterThan(4.621926 - 0.001);
-    expect(area).toBeLessThan(4.621926 + 0.001);
+    expect(area).toBeCloseTo(truth, 5);
+  });
+
+  test("clustered reflex corners: the same 9-gon under round and sharp joins", () => {
+    const pts = [[19.49, 10], [12.33, 11.95], [11.2, 16.81], [8.87, 11.96], [0.93, 13.3], [3.45, 7.62], [8.52, 7.44], [10.92, 4.78], [15.09, 5.73]];
+    const nonagon = { start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] };
+    const src = [{ outer: nonagon, holes: [] }];
+    // Round is where the "~2.76" figure quoted around this shape actually belongs: Clipper2's
+    // round join gives 2.765184 here and the Minkowski construction 2.761295, converging as
+    // the fan resolution rises. Sharp (miter, limit 2) is the tightest of the three at
+    // 2.593411. Native agreed with none of the three before the trim gate (3.577195 / 4.621926
+    // / 2.722960) and agrees with all three after.
+    for (const corners of ["round", "sharp"]) {
+      const truth = clipperArea(src, -2.79, corners);
+      const out = offsetRegions(src, -2.79, { corners });
+      const area = out.reduce((a, rg) => a + Math.abs(ringArea(tessellateContour(rg.outer, SEGS))), 0);
+      expect(Math.abs(area - truth) / truth).toBeLessThan(AREA_RTOL);
+    }
   });
 });
