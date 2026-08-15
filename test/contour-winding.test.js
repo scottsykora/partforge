@@ -2,6 +2,10 @@
 import { describe, expect, test } from "vitest";
 import { ringCrossings } from "../src/framework/geometry/paper-bridge.js";
 import { trimSegment } from "../src/framework/geometry/contour-ops.js";
+import { _mergeCrossings, _splitRings, _windingAt, _coincidence, CLUSTER_TOL } from "../src/framework/geometry/contour-winding.js";
+import { tessellateContour } from "../src/framework/geometry/profile.js";
+
+const tess = (rings) => rings.map((r) => tessellateContour(r, 64));
 
 const ring = (pts) => ({ start: pts[0], segments: [...pts.slice(1), pts[0]].map((p) => ({ to: p })) });
 const close = (a, b, tol = 1e-6) => expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThanOrEqual(tol);
@@ -113,5 +117,173 @@ describe("ringCrossings reports the IR parameter, not paper's curve time", () =>
     // a cubic segment: one paper curve, so its time IS the IR parameter and must pass through
     const cubic = { start: [0, 0], segments: [{ c1: [3, 8], c2: [7, 8], to: [10, 0] }, { to: [0, 0] }] };
     check(cubic, ring([[4.9, 2], [5.1, 2], [5.1, 8], [4.9, 8]]), 1e-9);
+  });
+});
+
+describe("crossing cluster merge", () => {
+  test("near-coincident crossings collapse to one shared vertex", () => {
+    // the real measured cluster from a glyph offset: three crossings within ~2e-3
+    const xs = [
+      { ring: 0, seg: 6, t: 0.15, point: [0.9223, -0.9347] },
+      { ring: 0, seg: 6, t: 0.27, point: [0.9224, -0.9337] },
+      { ring: 0, seg: 6, t: 0.45, point: [0.9222, -0.9343] },
+      { ring: 0, seg: 20, t: 0.5, point: [5.0, 5.0] },
+    ];
+    const { crossings, pool } = _mergeCrossings(xs, 5e-3);
+    expect(pool.length).toBe(2);                                  // cluster + the far one
+    expect(crossings[0].vertex).toBe(crossings[1].vertex);
+    expect(crossings[1].vertex).toBe(crossings[2].vertex);
+    expect(crossings[3].vertex).not.toBe(crossings[0].vertex);
+  });
+  test("distinct crossings keep distinct vertices", () => {
+    const xs = [{ ring: 0, seg: 0, t: 0.5, point: [0, 0] }, { ring: 0, seg: 2, t: 0.5, point: [10, 10] }];
+    const { pool } = _mergeCrossings(xs, 5e-3);
+    expect(pool.length).toBe(2);
+  });
+  test("the pooled vertex position is the cluster centroid", () => {
+    const xs = [{ ring: 0, seg: 0, t: 0.1, point: [0, 0] }, { ring: 0, seg: 1, t: 0.1, point: [0.002, 0] }];
+    const { pool } = _mergeCrossings(xs, 5e-3);
+    expect(pool.length).toBe(1);
+    expect(pool[0][0]).toBeCloseTo(0.001, 9);
+  });
+  test("CLUSTER_TOL is derived, not a bare magic number, and sits above OFFSET_TOL", () => {
+    expect(CLUSTER_TOL).toBeGreaterThan(1e-3);   // must exceed the cubic-offset tolerance
+    expect(CLUSTER_TOL).toBeLessThan(0.05);      // must stay well under any real feature
+  });
+});
+
+describe("splitting rings at crossings", () => {
+  const sq = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+  test("a ring with no crossings yields one closed piece", () => {
+    const pieces = _splitRings([sq], { crossings: [], pool: [] });
+    expect(pieces.length).toBe(1);
+    expect(pieces[0].vStart).toBeNull();
+    expect(pieces[0].segs.length).toBe(4);
+  });
+  test("two crossings split a ring into two pieces that together cover it", () => {
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.5, point: [5, 0] },
+      { ring: 0, seg: 2, t: 0.5, point: [5, 10] },
+    ]);
+    const pieces = _splitRings([sq], merged);
+    expect(pieces.length).toBe(2);
+    // endpoints chain: piece0 ends where piece1 starts and vice versa
+    expect(pieces[0].vEnd).toBe(pieces[1].vStart);
+    expect(pieces[1].vEnd).toBe(pieces[0].vStart);
+    // total emitted length equals the ring perimeter (40)
+    const len = (p) => { let L = 0, cur = p.from;
+      for (const s of p.segs) { L += Math.hypot(s.to[0] - cur[0], s.to[1] - cur[1]); cur = s.to; } return L; };
+    expect(len(pieces[0]) + len(pieces[1])).toBeCloseTo(40, 6);
+  });
+  test("a piece starting mid-segment is trimmed, not snapped to the vertex", () => {
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.5, point: [5, 0] },
+      { ring: 0, seg: 0, t: 0.8, point: [8, 0] },
+    ]);
+    const pieces = _splitRings([sq], merged);
+    const short = pieces.find((p) => p.segs.length === 1 && Math.abs(p.from[0] - 5) < 1e-9);
+    expect(short).toBeDefined();
+    expect(short.segs[0].to[0]).toBeCloseTo(8, 9);
+  });
+  test("provenance round-trip: an arc ring splits into arc pieces", () => {
+    const circ = { start: [5, 0], segments: [{ via: [0, 5], to: [-5, 0] }, { via: [0, -5], to: [5, 0] }] };
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.5, point: [0, 5] },
+      { ring: 0, seg: 1, t: 0.5, point: [0, -5] },
+    ]);
+    for (const p of _splitRings([circ], merged)) for (const s of p.segs) expect(s.via).toBeDefined();
+  });
+  test("pieces carry the exact source-curve tangent and curvature at both crossing ends", () => {
+    // circle r=5 split at (0,5) and (0,-5): tangents are the circle tangents at those
+    // angles (CCW: perpendicular-left of the radius), curvature +1/5 everywhere
+    const circ = { start: [5, 0], segments: [{ via: [0, 5], to: [-5, 0] }, { via: [0, -5], to: [5, 0] }] };
+    const merged = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.5, point: [0, 5] },
+      { ring: 0, seg: 1, t: 0.5, point: [0, -5] },
+    ]);
+    for (const p of _splitRings([circ], merged)) {
+      expect(Math.hypot(p.tanA[0], p.tanA[1])).toBeCloseTo(1, 12);
+      expect(Math.hypot(p.tanB[0], p.tanB[1])).toBeCloseTo(1, 12);
+      expect(p.kA).toBeCloseTo(1 / 5, 12);
+      expect(p.kB).toBeCloseTo(1 / 5, 12);
+    }
+    // the piece departing (0,5) travels CCW: tangent there is (-1, 0)
+    const top = _splitRings([circ], merged).find((p) => Math.abs(p.from[1] - 5) < 1e-9);
+    close(top.tanA, [-1, 0], 1e-9);
+    // a line ring's pieces carry zero curvature and the edge direction
+    const sqm = _mergeCrossings([
+      { ring: 0, seg: 0, t: 0.5, point: [5, 0] },
+      { ring: 0, seg: 2, t: 0.5, point: [5, 10] },
+    ]);
+    for (const p of _splitRings([sq], sqm)) { expect(p.kA).toBe(0); expect(p.kB).toBe(0); }
+  });
+
+  test("downstream: a piece trimmed out of a 180 degree arc keeps the original circle", () => {
+    // Two crossings 0.1mm apart near 127 degrees. With paper's raw curve time the short
+    // piece between them came back 62.63mm long instead of 0.10mm — the wrong t put the
+    // trimmed arc's `via` outside the span, so arcCenterAndSweep recovered the
+    // COMPLEMENTARY sweep — and its points wandered 3.4e-2 off the circle.
+    const P = (r, deg) => [r * Math.cos((deg * Math.PI) / 180), r * Math.sin((deg * Math.PI) / 180)];
+    const arcRing = (sweep, r = 10) =>
+      ({ start: P(r, 0), segments: [{ via: P(r, sweep / 2), to: P(r, sweep) }, { to: P(r, 0) }] });
+    const r = 10, hit = 126.85;
+    const n = P(1, hit), tg = P(1, hit + 90);
+    const at = (rad, off) => [n[0] * rad + tg[0] * off, n[1] * rad + tg[1] * off];
+    const bar = ring([at(8, -0.05), at(12, -0.05), at(12, 0.05), at(8, 0.05)]);
+    const arc = arcRing(180);
+    const merged = _mergeCrossings(ringCrossings([arc, bar]).filter((x) => x.ring === 0));
+    const pieces = _splitRings([arc], merged);
+    const measure = (p) => {
+      const poly = tessellateContour({ start: p.from, segments: p.segs }, 256);
+      let len = 0, off = 0;
+      for (let i = 0; i < poly.length; i++) {
+        off = Math.max(off, Math.abs(Math.hypot(poly[i][0], poly[i][1]) - r));
+        if (i) len += Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]);
+      }
+      return { len, off };
+    };
+    const short = pieces.map(measure).sort((a, b) => a.len - b.len)[0];
+    expect(short.len).toBeCloseTo(0.1, 3);          // the bar is 0.1mm wide
+    for (const p of pieces) expect(measure(p).off).toBeLessThan(1e-3);
+  });
+});
+
+describe("integer winding", () => {
+  const ccw = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+  const cw = ring([[0, 0], [0, 10], [10, 10], [10, 0]]);
+  test("inside a CCW ring is +1, outside is 0", () => {
+    expect(_windingAt([5, 5], tess([ccw]))).toBe(1);
+    expect(_windingAt([50, 5], tess([ccw]))).toBe(0);
+  });
+  test("inside a CW ring is -1", () => {
+    expect(_windingAt([5, 5], tess([cw]))).toBe(-1);
+  });
+  test("two stacked CCW rings give +2 where they overlap", () => {
+    const b = ring([[5, 5], [15, 5], [15, 15], [5, 15]]);
+    expect(_windingAt([7, 7], tess([ccw, b]))).toBe(2);
+    expect(_windingAt([2, 2], tess([ccw, b]))).toBe(1);
+  });
+  test("a CCW outer with a CW hole is 0 inside the hole", () => {
+    const hole = ring([[4, 4], [4, 6], [6, 6], [6, 4]]);
+    expect(_windingAt([5, 5], tess([ccw, hole]))).toBe(0);
+    expect(_windingAt([1, 1], tess([ccw, hole]))).toBe(1);
+  });
+});
+
+describe("coincident piece bookkeeping", () => {
+  test("_coincidence: same direction doubles, opposite cancels, a lens is neither", () => {
+    const seg = (from, to, vStart, vEnd, extra = {}) => ({ ring: 0, from, segs: [{ to, ...extra }], vStart, vEnd });
+    const same = _coincidence([seg([0, 0], [10, 0], 0, 1), seg([0, 0], [10, 0], 0, 1)]);
+    expect(same.mult).toEqual([2, 0]);
+    expect(same.duplicate).toEqual([false, true]);   // exactly one representative carries the span
+
+    const opp = _coincidence([seg([0, 0], [10, 0], 0, 1), seg([10, 0], [0, 0], 1, 0)]);
+    expect(opp.mult).toEqual([0, 0]);                // cancels: no winding jump, no boundary
+    expect(opp.duplicate).toEqual([false, true]);    // one weight-0 representative stays in the arrangement
+
+    // same endpoints, different curve: a line and an arc bulging away from it
+    const lens = _coincidence([seg([0, 0], [10, 0], 0, 1), seg([0, 0], [10, 0], 0, 1, { via: [5, 3] })]);
+    expect(lens.mult).toEqual([1, 1]);
+    expect(lens.duplicate).toEqual([false, false]);
   });
 });
