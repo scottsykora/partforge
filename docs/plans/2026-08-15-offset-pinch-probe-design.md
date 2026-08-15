@@ -151,3 +151,23 @@ Required regressions:
 - the existing Roboto `P` +0.3, cubic-circle +0.2, and rounded-rectangle +2 counters survive;
 - a near-threshold analytic circle is kept conservatively rather than silently dropped;
 - worker layering and the committed corpus remain green.
+
+## Amendment: positive-dilation source witnesses
+
+After the inradius gate, the glyph matrix agrees with Clipper2 except for two detached
+resolver slivers: `a` and `p` at +0.5 each return a second outer of roughly 0.003–0.004 mm².
+An area threshold would hide those examples while remaining scale-dependent and capable of
+deleting a genuinely small source component.
+
+Positive dilation supplies a topological invariant instead. For source material `S` and
+structuring element `B`, `S` is a subset of `S + B`. Every connected component of the output
+must therefore contain material from at least one source component; dilation may merge source
+components but cannot create a source-less one. Both observed slivers contain zero sampled
+points from every source outer, while the real glyph component contains hundreds.
+
+After resolving a positive offset, discard an output outer only when it contains no point
+from any tessellated source outer after accounting for its output holes. Apply the rule to all
+positive corner styles, because set inclusion does not depend on the structuring element's join
+shape. Do not apply it to erosion (`delta < 0`), where surviving material need not contain a
+source-boundary sample, or within the numerical tolerance band around zero. This is a
+source-membership proof, not an area or bounding-box heuristic.

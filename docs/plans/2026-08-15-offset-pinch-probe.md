@@ -253,7 +253,16 @@ git commit -m "fix: drop round-eroded holes past their source inradius"
 ### Task 5: Re-evaluate the glyph matrix without re-baselining
 
 **Files:**
+- Modify: `src/framework/geometry/contour-offset.js`
 - Modify: `test/offset-oracle-manifold.test.js:530-699`
+
+**Step 0: Remove source-less positive-dilation components**
+
+Add focused regressions for the detached `a` and `p` +0.5 slivers. After any positive offset
+larger than the numerical tolerance band, retain an output region only when its material
+contains a tessellated point from at least one source outer. This follows directly from
+`S ⊆ S + B`, applies to round/chamfer/sharp, and must not be replaced with an area cutoff.
+Verify that deliberately tiny but real source components survive.
 
 **Step 1: Add the missing reported deltas**
 
