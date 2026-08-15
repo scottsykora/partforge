@@ -3,12 +3,11 @@ import { makeShape2dFactory } from "../src/framework/geometry/shape2d.js";
 
 const deps = {
   segs: 64,
-  offsetRegions: (regions, delta) => { calls.push(["offset", delta]); return regions; },
   extrude: (o) => ({ fake: "solid", ...o }),
   revolve: (o) => ({ fake: "solid", ...o }),
 };
-let calls; let shape2d;
-beforeEach(() => { calls = []; shape2d = makeShape2dFactory(deps); });
+let shape2d;
+beforeEach(() => { shape2d = makeShape2dFactory(deps); });
 
 const sq = [[0, 0], [10, 0], [10, 10], [0, 10]];
 
@@ -49,10 +48,11 @@ test("transforms, fillet, simplify, corners, contains delegate and return new Sh
   expect(s.contains([5, 5])).toBe(true);
 });
 
-test("offset delegates to the backend hook; extrude/revolve route through sugar deps", () => {
+test("offset runs the shared native engine directly; extrude/revolve route through sugar deps", () => {
   const s = shape2d(sq);
-  s.offset(1, { corners: "round" });
-  expect(calls).toContainEqual(["offset", 1]);
+  // sharp corners on a square offset by a uniform delta grow it to an exact 12x12
+  // square (no backend hook involved — offset is pure curve math like every other op).
+  expect(s.offset(1, { corners: "sharp" }).area()).toBeCloseTo(144, 6);
   expect(s.extrude({ h: 5 }).fake).toBe("solid");
 });
 
@@ -67,8 +67,12 @@ test("isEmpty: false for a real shape, true after an intersect removes everythin
   expect(s.intersect([[20, 20], [30, 20], [30, 30], [20, 30]]).isEmpty()).toBe(true);
 });
 
-test("offset of an empty shape short-circuits: empty out, backend hook never called", () => {
+// The short-circuit matters more now than when offset was a backend hook: the native
+// engine reads an empty result as a collapse and throws, so without it an empty shape
+// would raise instead of staying empty. (The old "hook never called" spy assertion went
+// away with the hook itself — offset has no backend dep to observe.)
+test("offset of an empty shape short-circuits: empty out, no throw", () => {
   const empty = shape2d(sq).intersect([[20, 20], [30, 20], [30, 30], [20, 30]]);
   expect(empty.offset(2).isEmpty()).toBe(true);
-  expect(calls).toEqual([]);
+  expect(empty.offset(-2).isEmpty()).toBe(true);
 });

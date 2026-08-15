@@ -239,7 +239,7 @@ const normalize2 = ([x, y]) => { const L = Math.hypot(x, y) || 1; return [x / L,
 const rot90 = ([x, y]) => [-y, x];
 const addScaled = (p, v, s) => [p[0] + v[0] * s, p[1] + v[1] * s];
 
-function cubicAt(p0, c1, c2, p1, t) {
+export function cubicAt(p0, c1, c2, p1, t) {
   const u = 1 - t;
   return [0, 1].map((k) => u * u * u * p0[k] + 3 * u * u * t * c1[k] + 3 * u * t * t * c2[k] + t * t * t * p1[k]);
 }
@@ -248,7 +248,7 @@ function cubicDeriv(p0, c1, c2, p1, t) {
   return [0, 1].map((k) => 3 * u * u * (c1[k] - p0[k]) + 6 * u * t * (c2[k] - c1[k]) + 3 * t * t * (p1[k] - c2[k]));
 }
 // Exact de Casteljau split of cubic (p0,c1,c2,p1) at t → two exact cubic pieces.
-function splitCubic(p0, c1, c2, p1, t) {
+export function splitCubic(p0, c1, c2, p1, t) {
   const lerp = (a, b) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
   const p01 = lerp(p0, c1), p12 = lerp(c1, c2), p23 = lerp(c2, p1);
   const p012 = lerp(p01, p12), p123 = lerp(p12, p23);

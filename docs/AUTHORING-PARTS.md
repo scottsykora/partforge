@@ -294,8 +294,10 @@ transposition mistake (swap two same-typed numbers, get a valid *wrong* solid).
 Single-argument chaining ops (`translate`, `rotate*`, `cut`, `mirror`, `scale`, …)
 already take one argument and are unaffected. Legacy positional calls (e.g.
 `k.cylinder(rBottom, rTop, h)`) still work — they're accepted silently until a
-future contract v2 — but are not shown here; see `docs/KERNEL-CONTRACT.md`
-"Calling convention" for the full canonical/legacy table and the detection rule.
+future breaking contract version removes them (contract v2, partforge 0.59, did
+not — it only changed `offset` semantics) — but are not shown here; see
+`docs/KERNEL-CONTRACT.md` "Calling convention" for the full canonical/legacy table
+and the detection rule.
 
 **Kernel — make solids:**
 
@@ -1119,7 +1121,7 @@ const wall  = k.shape2d(outer).offset(-2, { corners: "sharp" });  // inset, mite
 
 (This achieves the same geometry as building the profiles separately and using `k.extrude({ profile: { outer, holes }, h })`, but the Shape2D path is more idiomatic for complex 2-D operations.)
 
-`Shape2D.offset(delta, {corners})` grows (`delta>0`) or insets (`delta<0`) a shape with round/chamfer/sharp corners — curve-preserving on OCCT, faceted at mesh LOD on Manifold; it throws if the offset collapses the shape. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.)
+`Shape2D.offset(delta, { corners: "round" | "chamfer" | "sharp" })` grows (`delta>0`) or insets (`delta<0`) a shape. It runs backend-independently on the shared contour engine — lines and arcs offset exactly (arcs stay arcs), so results are backend-identical by construction, like every other `Shape2D` op; it throws if the offset collapses the shape. A region with holes offsets material-wise: the outer grows/shrinks by `delta`, holes by `-delta`, so a positive `delta` always adds material. (For `derive()`/main-thread clearance math on plain point lists, use the pure `offsetPolygon` helper instead.)
 
 ## Editing profiles
 

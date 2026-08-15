@@ -2,12 +2,12 @@ import { helixTube } from "./helix-tube.js";
 import { loftMesh } from "./loft.js";
 import { sweepMesh } from "./sweep.js";
 import { roundedBoxRings } from "./rounded-solids.js";
-import { tessellateContour, tessellateProfile, pointsToContour } from "./profile.js";
+import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { createSolidCache } from "./solid-cache.js";
 import { addSugar } from "./solid-sugar.js";
 import { makeShape2dFactory } from "./shape2d.js";
-import { assembleRegions } from "./shape2d-regions.js";
+import { offsetRegions } from "./contour-offset.js";
 import { finishKernel } from "./kernel-front.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
@@ -53,58 +53,17 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return { value: wrap(m, hash), pin: m, dispose: () => m.delete?.() };
   });
 
-  // 2-D offset logic. This is the ONE op the shared Shape2D cannot do on the
-  // contour IR itself, so it is the backend's hook into the factory below (and
-  // is also published as k._offsetRegions). resolveOffsetJoin validates corners/delta and picks
-  // Clipper2's join type + segment count:
-  // chamfer is a true 45° bevel — Clipper2 has no bevel join, but a Round join
-  // forced to a single chord per corner (circularSegments=4 → 1 segment per corner
-  // whose turn ≤ 90°, i.e. interior angle ≥ 90°) IS the bevel: round's tangent points
-  // are exactly the bevel's endpoints. Matches OCCT's `bevel` to float precision for
-  // interior angle ≥ 90° (square 142.0000, pentagon 298.920). At acute (<90°) convex
-  // corners Clipper2 emits 2 chords (ceil(turn/90°)), so Manifold bulges ~0.4% beyond
-  // OCCT's single-chord bevel there. round = arc at mesh LOD; sharp = miter.
-  const resolveOffsetJoin = (delta, corners, nSeg) => {
-    if (!["round", "chamfer", "sharp"].includes(corners))
-      throw new Error('Shape2D.offset: corners must be "round" | "chamfer" | "sharp"');
-    if (!Number.isFinite(delta)) throw new Error("Shape2D.offset: delta must be a finite number");
-    return corners === "sharp" ? ["Miter", nSeg]
-      : corners === "chamfer" ? ["Round", 4]
-      : ["Round", nSeg];
-  };
-  // Run the offset op on a T-tracked CrossSection; throws the pinned collapse message.
-  const offsetCS = (cs, delta, joinType, cseg) => {
-    const out = T(cs.offset(delta, joinType, 2, cseg));       // miterLimit 2 (Clipper2 default)
-    if (out.numContour() === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
-    return out;
-  };
-
   // Contour-IR region list -> flat point rings at `nSeg` (outer + holes, even/odd
   // fill sorts them out). The one place the IR meets CrossSection.ofPolygons.
   const regionPolys = (regions, nSeg) => regions.flatMap((rg) =>
     [tessellateContour(rg.outer, nSeg), ...rg.holes.map((hl) => tessellateContour(hl, nSeg))]);
 
-  // Region-in / region-out offset: tessellate the contour IR at `nSeg`, build a
-  // CrossSection, run the shared offset logic above, then lift the resulting point
-  // rings back into line contours via pointsToContour. This is Shape2D.offset's
-  // engine (wired into the factory below) and is also published as k._offsetRegions.
-  const offsetRegions = (regions, delta, { corners = "round", segs: nSeg = segs } = {}) => {
-    const [joinType, cseg] = resolveOffsetJoin(delta, corners, nSeg);
-    const cs = T(CrossSection.ofPolygons(regionPolys(regions, nSeg), "EvenOdd"));
-    const out = offsetCS(cs, delta, joinType, cseg);
-    return assembleRegions(out.toPolygons()).map((rg) => ({
-      outer: pointsToContour(rg.outer),
-      holes: rg.holes.map(pointsToContour),
-    }));
-  };
-
   // 2-D boolean value: the SHARED Shape2D (shape2d.js). Storage is the curve-native
-  // contour IR and every op but `offset` runs on it in pure JS — no CrossSection is
-  // built until a shape is handed to a kernel op. `extrude`/`revolve` are thunks
-  // because `kernel` below is defined after this.
+  // contour IR and every op — including `offset`, now the shared native engine — runs
+  // on it in pure JS; no CrossSection is built until a shape is handed to a kernel op.
+  // `extrude`/`revolve` are thunks because `kernel` below is defined after this.
   const shape2d = makeShape2dFactory({
     segs,
-    offsetRegions,
     extrude: (o) => kernel.extrude(o),
     revolve: (o) => kernel.revolve(o),
   });
@@ -326,8 +285,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       ? solids[0]
       : cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
     shape2d,
-    // Backend-internal region adapter: the same function Shape2D.offset runs on
-    // (defined above). `_`-prefixed — not part of the public kernel surface.
+    // Backend-internal region adapter: the shared native engine (contour-offset.js)
+    // that Shape2D.offset itself runs on — published here for callers that want the
+    // region-in/region-out form directly. `_`-prefixed — not part of the public kernel
+    // surface.
     _offsetRegions: offsetRegions,
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),

@@ -6,7 +6,9 @@
 // options-object form first (the canonical calling convention — normalizers and
 // exact valid-key lists live in op-options.js, wired in at kernel-front.js
 // (finishKernel) and solid-sugar.js (addSugar); legacy positional forms stay
-// silently accepted until contract v2). The prose half of the contract —
+// silently accepted until a future breaking contract version removes them —
+// contract v2 (partforge 0.59) did NOT remove them, it only changed `offset`
+// semantics; see KERNEL-CONTRACT.md's Versioning section). The prose half of the contract —
 // conventions, value semantics, conformance classes, versioning policy — is
 // docs/KERNEL-CONTRACT.md; change either side and you must update the other.
 // (2-D polygon helpers live in ./polygon.js.)
@@ -14,7 +16,7 @@
 // The prose half's version: docs/KERNEL-CONTRACT.md's "Contract version" header
 // must match this number (asserted in kernel-contract.test.js). Bump only on a
 // breaking contract change — see the doc's Versioning section.
-export const CONTRACT_VERSION = 1;
+export const CONTRACT_VERSION = 2;
 
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
@@ -45,8 +47,9 @@ export const SOLID_OPTIONAL_OPS = ["genus", "isEmpty"];
 
 // Public methods every Shape2D exposes (2-D boolean value; contract-linted).
 // One shared implementation backs both backends (geometry/shape2d.js) — storage is
-// the curve-native contour IR, so booleans/transforms/queries are backend-identical
-// and only `offset` routes into the backend's own 2-D engine.
+// the curve-native contour IR, so every op including `offset` is backend-identical
+// by construction (offset runs the native contour-offset engine, not a backend's
+// own 2-D engine).
 export const SHAPE2D_OPS = [
   "union", "cut", "cutAll", "intersect", "offset", "area", "boundingBox", "toRegions", "simple", "regions", "clone",
   "extrude", "revolve",
@@ -84,18 +87,18 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  *           `normals`/`edges` are authoritative shading intent from both backends — see docs/KERNEL-CONTRACT.md "Shading intent"; quality is advisory — the Manifold kernel bakes it at creation
  * @property {(opts?: {quality?: "preview"|"print"}) => Promise<ArrayBuffer>} toSTL
  * @property {() => {positions:Float32Array, indices:Uint32Array}} toIndexedMesh   indexed mesh, for 3MF
- * @property {(r:number|{r:number,edges?:object}) => Solid} fillet    round edges (OCCT only); fillet(3) or fillet({r,edges}); legacy (r,selector) accepted until v2
- * @property {(d:number|{d:number,edges?:object}) => Solid} chamfer  bevel edges (OCCT only); chamfer(1) or chamfer({d,edges}); legacy (d,selector) accepted until v2
- * @property {(o:{t:number,open:object}) => Solid} shell   hollow inward (OCCT only); legacy (thickness,openFaces) accepted until v2
+ * @property {(r:number|{r:number,edges?:object}) => Solid} fillet    round edges (OCCT only); fillet(3) or fillet({r,edges}); legacy (r,selector) accepted for now (see file header)
+ * @property {(d:number|{d:number,edges?:object}) => Solid} chamfer  bevel edges (OCCT only); chamfer(1) or chamfer({d,edges}); legacy (d,selector) accepted for now (see file header)
+ * @property {(o:{t:number,open:object}) => Solid} shell   hollow inward (OCCT only); legacy (thickness,openFaces) accepted for now (see file header)
  * @property {() => number} [genus]     through-hole count (Manifold only)
  * @property {() => boolean} [isEmpty]  no geometry at all (Manifold only)
  *
- * @typedef {Object} Shape2D  A 2-D boolean value. ONE shared implementation on both backends: storage is the curve-native contour IR (arcs/cubics survive every op), so results are backend-identical except `offset`. `_`-prefixed keys are internals.
+ * @typedef {Object} Shape2D  A 2-D boolean value. ONE shared implementation on both backends: storage is the curve-native contour IR (arcs/cubics survive every op), so results are backend-identical by construction, `offset` included. `_`-prefixed keys are internals.
  * @property {(other: Shape2D|number[][]) => Shape2D} union
  * @property {(other: Shape2D|number[][]) => Shape2D} cut
  * @property {(others: (Shape2D|number[][])[]) => Shape2D} cutAll   batch subtract
  * @property {(other: Shape2D|number[][]) => Shape2D} intersect
- * @property {(delta:number, opts?:{corners?:"round"|"chamfer"|"sharp",segs?:number}) => Shape2D} offset   grow (+) / shrink (−) by delta; the one backend-specific op (Clipper2 vs OCCT) — throws when the shape collapses; empty in → empty out
+ * @property {(delta:number, opts?:{corners?:"round"|"chamfer"|"sharp",segs?:number}) => Shape2D} offset   grow (+) / shrink (−) by delta; backend-identical by construction like every other Shape2D op (native contour-offset engine, not a backend 2-D engine); `segs` accepted and ignored — throws when the shape collapses; empty in → empty out
  * @property {() => boolean} isEmpty   true when the shape has no regions (a cut/intersect removed everything); guard before extrude/revolve, which throw on an empty profile
  * @property {() => number} area   net area (outers minus holes), mm² — curve-exact, not tessellated
  * @property {() => {min:number[],max:number[]}} boundingBox   axis-aligned 2-D bounds (curve-exact)
@@ -117,18 +120,18 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(o?:{degrees?:number}) => Solid} revolve   sugar for k.revolve({profile:this,…})
  *
  * @typedef {Object} GeometryKernel
- * @property {(o:{r?:number,d?:number,r1?:number,r2?:number,d1?:number,d2?:number,h:number,center?:boolean}) => Solid} cylinder   canonical: {r|d,h} straight, {r1,r2,h}|{d1,d2,h} cone; legacy (rBottom,rTop,h,opts) accepted until contract v2
+ * @property {(o:{r?:number,d?:number,r1?:number,r2?:number,d1?:number,d2?:number,h:number,center?:boolean}) => Solid} cylinder   canonical: {r|d,h} straight, {r1,r2,h}|{d1,d2,h} cone; legacy (rBottom,rTop,h,opts) accepted for now (see file header)
  * @property {(o:{od:number,h:number,bore:number}) => Solid} boredCylinder   compound: bored-through cylinder (one cache node)
  * @property {(o:{r?:number,d?:number}) => Solid} sphere   sphere centred at the origin; {r|d}; bare sphere(r) stays valid
  * @property {(o:{r?:number,d?:number,h:number,center?:boolean,round:number|{top?:number,bottom?:number}}) => Solid} roundedCylinder   rim round-overs via one lathe revolve; options-only; round ≤ r, top+bottom ≤ h
  * @property {(o:{rMajor:number,rMinor:number}) => Solid} torus   centered at origin, tube centerline in the z=0 plane; 0 < rMinor < rMajor; options-only
  * @property {(o:{size:number[],center?:boolean,round:number|{side?:number,top?:number,bottom?:number}}) => Solid} roundedBox   selective edge rounding (side = vertical edges, top/bottom = rims); 0 < side < rim clamps rims down to side with a console.warn; options-only
- * @property {(o:{size?:number[],center?:boolean,min?:number[],max?:number[]}) => Solid} box   {size} = centered X/Y, base z=0 ({center:true} centers Z too) or {min,max}; legacy (min,max) accepted until v2
- * @property {(o:{points:number[][],h:number,twist?:number,scaleTop?:number}) => Solid} prism   extrude polygon from z=0; legacy (points,h,opts) accepted until v2
- * @property {(o:{profile:number[][]|{outer:number[][],holes?:number[][][]},h:number,twist?:number,scaleTop?:number,bevel?:number|{bottom?:number,top?:number}}) => Solid} extrude   polygon-with-holes region from z=0; bevel = 45° rim bevel (any profile form incl. Shape2D, materialized to point rings; no twist/scaleTop); legacy (profile,h,opts) accepted until v2
- * @property {(o:{rings:{polygon?:number[][],sides?:number,radius?:number,z:number,rotate?:number,scale?:number|number[]}[],ruled?:boolean,closed?:boolean,shading?:"smooth"|"faceted"}) => Solid} loft   stack polygon cross-sections; shading overrides facet-vs-smooth shading inference; legacy (rings,opts) accepted until v2
- * @property {(o:{profile:number[][],path:number[][],closed?:boolean,cornerRadius?:number,ruled?:boolean,smooth?:boolean}) => Solid} sweep   sweep a 2-D profile along a 3-D polyline; legacy (profile,path,opts) accepted until v2
- * @property {(o:{profile:number[][],degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z; legacy (points,opts) accepted until v2
+ * @property {(o:{size?:number[],center?:boolean,min?:number[],max?:number[]}) => Solid} box   {size} = centered X/Y, base z=0 ({center:true} centers Z too) or {min,max}; legacy (min,max) accepted for now (see file header)
+ * @property {(o:{points:number[][],h:number,twist?:number,scaleTop?:number}) => Solid} prism   extrude polygon from z=0; legacy (points,h,opts) accepted for now (see file header)
+ * @property {(o:{profile:number[][]|{outer:number[][],holes?:number[][][]},h:number,twist?:number,scaleTop?:number,bevel?:number|{bottom?:number,top?:number}}) => Solid} extrude   polygon-with-holes region from z=0; bevel = 45° rim bevel (any profile form incl. Shape2D, materialized to point rings; no twist/scaleTop); legacy (profile,h,opts) accepted for now (see file header)
+ * @property {(o:{rings:{polygon?:number[][],sides?:number,radius?:number,z:number,rotate?:number,scale?:number|number[]}[],ruled?:boolean,closed?:boolean,shading?:"smooth"|"faceted"}) => Solid} loft   stack polygon cross-sections; shading overrides facet-vs-smooth shading inference; legacy (rings,opts) accepted for now (see file header)
+ * @property {(o:{profile:number[][],path:number[][],closed?:boolean,cornerRadius?:number,ruled?:boolean,smooth?:boolean}) => Solid} sweep   sweep a 2-D profile along a 3-D polyline; legacy (profile,path,opts) accepted for now (see file header)
+ * @property {(o:{profile:number[][],degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z; legacy (points,opts) accepted for now (see file header)
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(o:{profile:number[][],pitch:number,turns:number,lefthand?:boolean}) => Solid} screwSweep   screw-motion sweep of an axial [[r,z]] profile — threads; options-only
  * @property {(solids:Solid[]) => Solid} union
