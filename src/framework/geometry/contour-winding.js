@@ -262,10 +262,44 @@ const reversePieceSegs = (piece) => {
   return { from: pts[pts.length - 1], segs, vStart: piece.vEnd, vEnd: piece.vStart };
 };
 
+// A point is a degenerate control point (coincides with the endpoint it's paired with) when
+// it carries zero tangent information — a cubic can legitimately have c1 === from.
+const isDegenerateControl = (p, q) => Math.abs(p[0] - q[0]) < 1e-9 && Math.abs(p[1] - q[1]) < 1e-9;
+
+// Direction a piece LEAVES its start vertex: the tangent (from -> c1, or from -> via),
+// falling back to the chord (from -> segs[0].to) when there's no control point or it's
+// degenerate. Using the chord unconditionally is what round 1 shipped with, and it is wrong
+// for a curved piece — the endpoint tangent can differ from the chord by most of the sweep,
+// which reorders candidates at a curved junction and mis-groups pieces into the wrong rings
+// (see the "junction ordering" test fixture for a worked example of the flip).
+const dirOut = (p) => {
+  const from = p.from, s0 = p.segs[0];
+  let to = s0.to;
+  if (s0.c1 && !isDegenerateControl(s0.c1, from)) to = s0.c1;
+  else if (s0.via && !isDegenerateControl(s0.via, from)) to = s0.via;
+  return Math.atan2(to[1] - from[1], to[0] - from[0]);
+};
+
+// Direction a piece ARRIVES at its end vertex: the tangent at that endpoint (c2 -> to, or
+// via -> to, on the LAST segment), falling back to the chord (previous endpoint -> to) when
+// there's no control point or it's degenerate. Mirrors dirOut's reasoning at the other end.
+const dirIn = (p) => {
+  const pts = [p.from, ...p.segs.map((s) => s.to)];
+  const to = pts[pts.length - 1];
+  const last = p.segs[p.segs.length - 1];
+  let from = pts[pts.length - 2];
+  if (last.c2 && !isDegenerateControl(last.c2, to)) from = last.c2;
+  else if (last.via && !isDegenerateControl(last.via, to)) from = last.via;
+  return Math.atan2(to[1] - from[1], to[0] - from[0]);
+};
+
 // Join kept pieces end-to-end by SHARED POOL VERTEX identity — never coordinate
 // comparison, which is what makes this exact. A junction with several outgoing pieces
-// (a pinch point) takes the most clockwise turn relative to the arriving direction,
-// the standard planar-arrangement rule for tracing an outer boundary consistently.
+// (a pinch point) takes the LEFTMOST turn: the smallest positive rotation from the
+// reversed inbound direction, i.e. the most counter-clockwise turn relative to the
+// direction of travel — a literal U-turn back the way we came is the excepted, least-
+// preferred candidate — the standard planar-arrangement rule for tracing an outer
+// boundary consistently.
 export function _chain(classified, pool) {
   const kept = classified.filter((c) => c.keep)
     .map((c) => (c.reverse ? reversePieceSegs(c.piece) : { from: c.piece.from, segs: c.piece.segs,
@@ -278,16 +312,15 @@ export function _chain(classified, pool) {
   open.forEach((p, i) => { if (!outgoing.has(p.vStart)) outgoing.set(p.vStart, []); outgoing.get(p.vStart).push(i); });
   const used = new Array(open.length).fill(false);
 
-  const dirOut = (p) => { const a = p.from, b = p.segs[0].to; return Math.atan2(b[1] - a[1], b[0] - a[0]); };
-  const dirIn = (p) => { const pts = [p.from, ...p.segs.map((s) => s.to)];
-    const a = pts[pts.length - 2], b = pts[pts.length - 1]; return Math.atan2(b[1] - a[1], b[0] - a[0]); };
-
   for (let s = 0; s < open.length; s++) {
     if (used[s]) continue;
     const startV = open[s].vStart;
     let cur = s, guard = 0;
     const chainSegs = [];
-    const startPt = [open[s].from[0], open[s].from[1]];
+    // The pool vertex, not the piece's own `from` — identical by the _splitRings snap
+    // invariant, but this is the canonical identity, and it's what a hand-built fixture
+    // (as in the test suite) is on the hook to keep consistent, not this function.
+    const startPt = [pool[startV][0], pool[startV][1]];
     for (;;) {
       if (guard++ > open.length + 1) throw new Error("contour-winding: could not chain offset boundary (incomplete intersection set)");
       used[cur] = true;
@@ -297,7 +330,7 @@ export function _chain(classified, pool) {
       const cands = (outgoing.get(at) ?? []).filter((i) => !used[i]);
       if (cands.length === 0) throw new Error("contour-winding: could not chain offset boundary (incomplete intersection set)");
       const inDir = dirIn(open[cur]);
-      // most clockwise turn: smallest positive rotation from the reversed inbound direction
+      // leftmost turn: smallest positive rotation from the reversed inbound direction
       cur = cands.reduce((best, i) => {
         const turn = (x) => { let a = inDir + Math.PI - dirOut(open[x]); a %= 2 * Math.PI; return a < 0 ? a + 2 * Math.PI : a; };
         return turn(i) < turn(best) ? i : best;
@@ -310,8 +343,11 @@ export function _chain(classified, pool) {
   return out.map(({ start, segs }) => {
     const last = segs[segs.length - 1].to;
     if (Math.hypot(last[0] - start[0], last[1] - start[1]) <= 1e-9) {
-      segs[segs.length - 1].to = [start[0], start[1]];      // snap the closure exact
-      return { start, segments: segs };
+      // copy before mutating: `segs` here can be a kept piece's OWN segs array (the
+      // uncrossed-whole-ring path above assigns `segs: p.segs` with no copy), so writing
+      // into segs[last] in place would mutate the caller's input piece.
+      const closedSegs = segs.slice(0, -1).concat([{ ...segs[segs.length - 1], to: [start[0], start[1]] }]);
+      return { start, segments: closedSegs };
     }
     return { start, segments: [...segs, { to: [start[0], start[1]] }] };
   });

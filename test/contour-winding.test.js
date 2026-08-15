@@ -176,16 +176,17 @@ describe("piece classification", () => {
     expect(cls.some((c) => !c.keep)).toBe(true);          // the buried arms are dropped
     expect(cls.some((c) => c.keep)).toBe(true);
   });
-  test("the ±1 invariant holds for every piece", () => {
+  test("the ±1 invariant holds for every probed piece", () => {
     const a = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
     const b = ring([[5, 5], [15, 5], [15, 15], [5, 15]]);
     const merged = _mergeCrossings(ringCrossings([a, b]));
     for (const c of _classify(_splitRings([a, b], merged), tess([a, b]), { debug: true })) {
+      if (c.wLeft === null) continue;    // dropped-without-probing records — see _classify's doc comment
       expect(c.wLeft - c.wRight).toBe(1);                 // structural, never probed twice
     }
   });
-  test("PROBE_EPS clears the clustering tolerance", () => {
-    expect(PROBE_EPS).toBeGreaterThan(CLUSTER_TOL);
+  test("PROBE_EPS is derived from CLUSTER_TOL as a ceiling, with no floor relationship", () => {
+    expect(PROBE_EPS).toBe(CLUSTER_TOL * 2);
   });
 });
 
@@ -228,6 +229,12 @@ describe("probe anchoring against the QUERIED polyline, not the true curve (fix 
     const [c] = _classify([degenerate], tess([sq]));
     expect(c.keep).toBe(false);
   });
+  test("a piece with zero segments is dropped, not thrown (hand-built input, unreachable from _splitRings)", () => {
+    const sq = ring([[0, 0], [10, 0], [10, 10], [0, 10]]);
+    const empty = { ring: 0, from: [0, 0], segs: [], vStart: 0, vEnd: 0 };
+    const [c] = _classify([empty], tess([sq]));
+    expect(c.keep).toBe(false);
+  });
 });
 
 describe("chaining", () => {
@@ -266,5 +273,42 @@ describe("chaining", () => {
       piece: { ring: 0, from: [0, 0], segs: [{ to: [1, 0] }], vStart: 0, vEnd: 1 } }];
     expect(() => _chain(orphan, [[0, 0], [1, 0]]))
       .toThrow("contour-winding: could not chain offset boundary (incomplete intersection set)");
+  });
+});
+
+describe("junction ordering uses the curve TANGENT at the vertex, not the chord (fix round 1, I1)", () => {
+  test("at a curved pinch point, the tangent-correct successor is chosen over the chord-nearer one", () => {
+    // Incoming straight piece arrives at the junction (0,0) heading due +x (inDir = 0 rad).
+    // Two outgoing cubics leave the same junction:
+    //   A: chord to (2, 1) (~26.6 deg) but TANGENT (from -> c1) at ~80.2 deg
+    //   B: chord to (1, 1.4) (~54.5 deg) but TANGENT (from -> c1) at ~11.3 deg
+    // Ordered by tangent, A is the leftmost turn (turn ~99.8 deg vs B's ~168.7 deg) — A
+    // should be chosen. Ordered by chord (the pre-fix code), B looks leftmost instead
+    // (turn ~125.5 deg vs A's ~153.4 deg) and gets chosen wrongly.
+    const deg = (d) => (d * Math.PI) / 180;
+    const c1A = [Math.cos(deg(80.2)), Math.sin(deg(80.2))];
+    const c1B = [Math.cos(deg(11.3)), Math.sin(deg(11.3))];
+
+    const pIn = { ring: 0, from: [-1, 0], segs: [{ to: [0, 0] }], vStart: 0, vEnd: 1 };
+    const pA = { ring: 0, from: [0, 0], segs: [{ c1: c1A, c2: [1.5, 1.2], to: [2, 1] }], vStart: 1, vEnd: 2 };
+    const pB = { ring: 0, from: [0, 0], segs: [{ c1: c1B, c2: [0.7, 1.3], to: [1, 1.4] }], vStart: 1, vEnd: 3 };
+    // A's own closer returns straight to the junction's ring-start vertex (0); B's own
+    // closer returns to the junction itself (1) — so a wrong pick at the fork doesn't throw,
+    // it silently threads both branches into ONE wrongly-lobed ring instead of two simple
+    // ones. That's the failure mode this test is guarding against, not a crash.
+    const pACloser = { ring: 0, from: [2, 1], segs: [{ to: [-1, 0] }], vStart: 2, vEnd: 0 };
+    const pBCloser = { ring: 0, from: [1, 1.4], segs: [{ to: [0, 0] }], vStart: 3, vEnd: 1 };
+
+    const classified = [pIn, pA, pB, pACloser, pBCloser].map((piece) => ({ piece, keep: true, reverse: false }));
+    const pool = [[-1, 0], [0, 0], [2, 1], [1, 1.4]];
+
+    const out = _chain(classified, pool);
+    // Correct (tangent-based): pIn -> pA -> pACloser closes a 3-edge ring; pB -> pBCloser
+    // closes its own separate 2-edge loop. Wrong (chord-based): everything threads into a
+    // single 5-edge ring and no 3-edge ring exists.
+    expect(out.length).toBe(2);
+    const outerRing = out.find((c) => c.segments.length === 3);
+    expect(outerRing).toBeDefined();
+    close(outerRing.segments[1].to, [2, 1]);   // second edge is A's endpoint, not B's
   });
 });
