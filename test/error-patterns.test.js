@@ -47,6 +47,7 @@ const BASELINE_IDS = [
   "when-condition-never-true",
   "readout-shows-em-dash",
   "select-default-unreachable",
+  "shape2d-offset-winding-chain-incomplete",
   "fillet-chamfer-radius-does-not-fit",
   "fillet-chamfer-corners-overlap",
   "profile-query-needs-single-contour",

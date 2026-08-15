@@ -1,6 +1,8 @@
 // Pure unit tests for the native contour offset engine — no WASM, no kernel boot.
 import { describe, expect, test } from "vitest";
-import { _offsetSegment } from "../src/framework/geometry/contour-offset.js";
+import { _offsetSegment, _rawOffset, _ladderRungs, _sourceHoleContainsDisk }
+  from "../src/framework/geometry/contour-offset.js";
+import { caseFor } from "./helpers/offset-corpus.js";
 
 const close = (a, b, tol = 1e-9) => expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThanOrEqual(tol);
 
@@ -129,6 +131,8 @@ describe("validateRawOffset", () => {
 
 import { offsetRegions } from "../src/framework/geometry/contour-offset.js";
 import { profileArea } from "../src/framework/geometry/contour-ops.js";
+import { resolveOffsetWinding, _chain, CHAIN_INCOMPLETE_MESSAGE }
+  from "../src/framework/geometry/contour-winding.js";
 
 const region = (outer, holes = []) => ({ outer, holes });
 const sqRegion = (s) => region(sq(s));
@@ -310,24 +314,32 @@ describe("offsetRegions — whole-ring collapse vs. partial trims", () => {
     expect(out[0].holes.length).toBe(1);                       // NOT 0 — see comment above
     expect(profileArea(out)).toBeCloseTo(812.566 - (4 - Math.PI), 1);   // outer growth − exact uncut-corner residual
   });
-  // Task 5B, round 2: the wide-arm L-pocket case genuinely doesn't fully absorb its hole
-  // with cleanup alone — this stayed true across both review rounds (0 holes / area≈928.27 is
-  // the verified-correct truth: max inscribed circle in a 5-wide-arm L has radius 2.5 < the
-  // delta=3 offset, confirmed by the same grid-search method validated on the narrow-L-pocket
-  // case above). A global distance-from-source prune (Part 2) closed this gap across two
-  // review rounds of tightening, but its round-2 form — even with EXACT line/arc distance and
-  // an adaptively-flattened cubic distance, eliminating discretization error rather than just
-  // bounding it — still silently deleted 36 of 84 real glyph-counter holes at delta as small
-  // as 0.1mm on 10mm text (every failure total hole loss, none recoverable by further
-  // tolerance tuning: the wide-L-pocket's own raw hole is already `dirty` from Part 1 before
-  // any distance check runs, and so are the failing glyph counters — there is no scoping
-  // condition available on the raw, pre-cleanup ring that tells the two cases apart). Per the
-  // standing instruction that this collateral is strictly worse than the single defect it
-  // fixes, Part 2 was removed entirely rather than shipped delicately tuned. Parked here
-  // pending a proper oracle (Clipper2 or the OCCT backend) rather than more per-ring
-  // heuristics in this engine — see task-5B-report.md's round-2 section for the full 76-combo
-  // sweep and the two curved-hole/false-throw repros that motivated the removal.
-  test.todo("wide L-shaped hole (5-unit arms) at +3 fully absorbs the hole (needs a Clipper2/OCCT oracle, not a per-ring heuristic)");
+  // Task 5B, round 2: the wide-arm L-pocket case genuinely didn't fully absorb its hole
+  // through the old paper.js cleanup path — this stayed true across both review rounds
+  // (0 holes / area≈928.27 is the verified-correct truth: max inscribed circle in a
+  // 5-wide-arm L has radius 2.5 < the delta=3 offset, confirmed by the same grid-search
+  // method validated on the narrow-L-pocket case above). A global distance-from-source
+  // prune (Part 2) closed this gap across two review rounds of tightening, but its round-2
+  // form — even with EXACT line/arc distance and an adaptively-flattened cubic distance,
+  // eliminating discretization error rather than just bounding it — still silently deleted
+  // 36 of 84 real glyph-counter holes at delta as small as 0.1mm on 10mm text (every failure
+  // total hole loss, none recoverable by further tolerance tuning), so Part 2 was removed
+  // entirely rather than shipped delicately tuned, and this case was parked pending a proper
+  // oracle (see task-5B-report.md's round-2 section for the full 76-combo sweep).
+  //
+  // Task 7 (winding resolver wiring): resolveOffsetWinding's positive-winding rule (w >= 1)
+  // resolves this correctly with no per-ring heuristic — a fully-eroded hole ring is simply
+  // negative-winding everywhere and drops out on its own. Cross-checked against Clipper2 in
+  // test/offset-oracle-manifold.test.js's "formerly-parked divergences, now correct" set.
+  test("wide L-shaped hole (5-unit arms) at +3 fully absorbs the hole", () => {
+    const plate = { start: [0, 0], segments: [{ to: [30, 0] }, { to: [30, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
+    const wideLHole = { start: [10, 6], segments: [
+      { to: [10, 15] }, { to: [15, 15] }, { to: [15, 11] }, { to: [21, 11] }, { to: [21, 6] }, { to: [10, 6] }] };
+    const out = offsetRegions([region(plate, [wideLHole])], 3, { corners: "round" });
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(0);
+    expect(profileArea(out)).toBeCloseTo(928.274, 1);
+  });
   test("chamfered rectangle insets without a false collapse throw", () => {
     const chamfered = { start: [0, 0], segments: [
       { to: [10, 0] }, { to: [10, 4] }, { to: [9, 5] }, { to: [1, 5] }, { to: [0, 4] }, { to: [0, 0] }] };
@@ -438,7 +450,8 @@ describe("offsetRegions — merging/breaking-through holes must survive", () => 
 // recover it." Per the standing instruction that silently deleting real geometry is strictly
 // worse than the single defect (the wide-L-pocket) the prune existed to fix, Part 2 is REMOVED
 // entirely as of this round rather than shipped delicately tuned — see the wide-L-pocket
-// test.todo above and task-5B-report.md's round-2 section for the full derivation and the
+// test above (a real, passing test since task 7 — it was a test.todo when this note was
+// written) and task-5B-report.md's round-2 section for the full derivation and the
 // 76-combo sweep. These three are kept as permanent regression coverage against reintroducing
 // that failure class (a future distance-based prune, or any other mechanism that can delete a
 // whole hole based on a raw pre-cleanup sample, should be checked against these first).
@@ -500,6 +513,77 @@ describe("offsetRegions — curved holes must survive outward offsets (Part 2 re
   });
 });
 
+describe("offsetRegions — source-hole inradius collapse", () => {
+  test("Roboto 'o' keeps its counter at +2 and loses it at +3", async () => {
+    const opentype = (await import("opentype.js")).default;
+    const { textGlyphs } = await import("../src/framework/geometry/text2d.js");
+    const { DEFAULT_FONT_BYTES } = await import("../src/framework/geometry/fonts/default-font.js");
+    const bytes = DEFAULT_FONT_BYTES;
+    const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    const regions = textGlyphs(font, "o", { size: 10 });
+
+    const holesAt = (delta) => offsetRegions(regions, delta, { corners: "round" })
+      .flatMap((rg) => rg.holes)
+      .filter((hole) => Math.abs(area(hole)) > 1e-3)
+      .length;
+    expect(holesAt(2)).toBe(1);
+    expect(holesAt(3)).toBe(0);
+  });
+
+  test("large round dilation removes collapsed glyph counters, including 'Scott'", async () => {
+    const opentype = (await import("opentype.js")).default;
+    const { textGlyphs } = await import("../src/framework/geometry/text2d.js");
+    const { DEFAULT_FONT_BYTES } = await import("../src/framework/geometry/fonts/default-font.js");
+    const bytes = DEFAULT_FONT_BYTES;
+    const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    const significant = (contour) => Math.abs(area(contour)) > 1e-3;
+
+    for (const text of ["e", "a", "p", "Scott"]) {
+      const out = offsetRegions(textGlyphs(font, text, { size: 10 }), 3, { corners: "round" });
+      expect(out.filter((rg) => significant(rg.outer))).toHaveLength(1);
+      expect(out.flatMap((rg) => rg.holes).filter(significant)).toHaveLength(0);
+    }
+  });
+
+  test("a near-threshold circle is kept conservatively", () => {
+    const hole = {
+      start: [5, 0],
+      segments: [
+        { via: [0, -5], to: [-5, 0] },
+        { via: [0, 5], to: [5, 0] },
+      ],
+    };
+    expect(_sourceHoleContainsDisk(hole, 4.99)).toBe(true);
+    expect(_sourceHoleContainsDisk(hole, 5.004)).toBe(true);
+    expect(_sourceHoleContainsDisk(hole, 5.02)).toBe(false);
+  });
+});
+
+describe("offsetRegions — positive dilation keeps only source-backed components", () => {
+  test("Roboto 'a' and 'p' do not gain detached sliver islands at +0.5", async () => {
+    const opentype = (await import("opentype.js")).default;
+    const { textGlyphs } = await import("../src/framework/geometry/text2d.js");
+    const { DEFAULT_FONT_BYTES } = await import("../src/framework/geometry/fonts/default-font.js");
+    const bytes = DEFAULT_FONT_BYTES;
+    const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+
+    for (const text of ["a", "p"]) {
+      const out = offsetRegions(textGlyphs(font, text, { size: 10 }), 0.5, { corners: "round" });
+      expect(out.filter((rg) => Math.abs(area(rg.outer)) > 1e-3)).toHaveLength(1);
+      expect(out.flatMap((rg) => rg.holes).filter((h) => Math.abs(area(h)) > 1e-3)).toHaveLength(1);
+    }
+  });
+
+  test("an arbitrarily small real source component is retained", () => {
+    const box = (x, y, w, h) => ({ start: [x, y], segments: [
+      { to: [x + w, y] }, { to: [x + w, y + h] }, { to: [x, y + h] }, { to: [x, y] },
+    ] });
+    const source = [region(box(0, 0, 10, 10)), region(box(20, 0, 0.01, 0.01))];
+    for (const corners of ["round", "chamfer", "sharp"])
+      expect(offsetRegions(source, 0.5, { corners })).toHaveLength(2);
+  });
+});
+
 // Pins the regression class from task 5B's round-1 review, Important 3: Part 1's per-piece
 // deletion is unrecoverable (unlike a chord/dirty join, a deleted piece can't be un-deleted
 // downstream), so a bad deletion could turn perfectly good geometry into a false "offset
@@ -510,28 +594,229 @@ describe("offsetRegions — round-1 review: Part 1 deletion must not cause a fal
     const nonagon = { start: [19.49, 10], segments: [
       { to: [12.33, 11.95] }, { to: [11.2, 16.81] }, { to: [8.87, 11.96] }, { to: [0.93, 13.3] },
       { to: [3.45, 7.62] }, { to: [8.52, 7.44] }, { to: [10.92, 4.78] }, { to: [15.09, 5.73] }, { to: [19.49, 10] }] };
-    // The false throw (HEAD) is fixed and well-evidenced: this used to throw "offset
-    // collapses the shape (reduce |delta|)" and no longer does.
-    //
-    // Independent verification (a fine-grained grid search for the largest inscribed disk
-    // clearing |delta| everywhere — the same method used and confirmed above for the
-    // narrow-L-pocket case) puts the true eroded area at ~2.76 (max inradius ~3.375,
-    // comfortably above delta=2.79, so the shape genuinely doesn't collapse). This
-    // implementation currently returns a larger, incorrect area (~7.7, split across 2
-    // regions) for this specific input — confirmed via exhaustive search to NOT be a
-    // deletion-selection problem: every one of the 8 possible subsets of the 3 pieces Part 1
-    // flags as reversed for this ring produces a self-intersecting (invalid) candidate, not
-    // just the "delete all 3" and "delete none" ends of that search. The 7.7 figure also
-    // exactly reproduces what the pre-Part-1 baseline (commit d533de3, before task 5B
-    // existed) already computed for this same input — so the inaccuracy predates this task
-    // and isn't something Part 1's deletion or Part 2's (hole-scoped) distance prune ever
-    // touched; it's paper.js's resolveSelfRegions resolving this specific self-intersecting
-    // chamfer-offset curve into the wrong pair of sub-regions. Documented here rather than
-    // silently pinned to the wrong number — see task-5B-report.md's round-1 fix section for
-    // the full trace. Only the throw is asserted; the area is deliberately left unpinned.
+    // The false throw (HEAD, pre-task-5B) is fixed and well-evidenced: this used to throw
+    // "offset collapses the shape (reduce |delta|)" and no longer does — see the fixed area
+    // value below for the current (winding-resolver) accuracy of this specific input.
     let out;
     expect(() => { out = offsetRegions([region(nonagon)], -2.79, { corners: "chamfer" }); }).not.toThrow();
     expect(profileArea(out)).toBeGreaterThan(0);
   });
-  test.todo("concave 9-gon at delta -2.79/chamfer should resolve to area ≈2.76, not ≈7.7 (pre-existing resolveSelfRegions gap, not a Part 1/Part 2 defect)");
+  // Task 7 (winding resolver wiring): this used to go through paper.js's resolveSelfRegions
+  // (a self-union), which returned ~7.7094 split across 2 regions — provably wrong, since
+  // feeding this exact raw offset polygon straight into Clipper2 with FillRule::NonZero
+  // reproduces 7.7094 to the digit (the self-union path is a nonzero-style resolution).
+  // resolveOffsetWinding instead computes the raw curve's POSITIVE-winding region (w >= 1),
+  // which for this input is 4.621926 — also cross-checked directly: feeding the SAME raw
+  // polygon into Clipper2 with FillRule::Positive reproduces 4.621926 to the digit, so
+  // resolveOffsetWinding is resolving _offsetContour's raw output correctly.
+  //
+  // Task 7B closed the remaining 4.621926 → 3.553831 gap, and it was NOT in the join policy.
+  // Ablating _offsetContour piece by piece localised it to the overlap-side TRIM: at a corner
+  // whose offset lines cross outside both offset segments' own extents, "trimming" to that
+  // crossing EXTENDS both segments to a point neither reaches, inventing material the raw
+  // offset never covered — and leaves a ring simple and correctly wound enough that
+  // validateRawOffset, and every other downstream check, sees nothing wrong. Gating the trim
+  // on the crossing landing within both extents (contour-offset.js) makes this exact, and the
+  // untrimmed corner beveled + resolved by winding is what Clipper2 does anyway.
+  //
+  // 3.553831 is the CHAMFER truth, agreed to six digits by Clipper2's chamfer mapping and by
+  // an independent Minkowski-union construction. The "~2.76" that used to be quoted here as
+  // the chamfer truth is the ROUND truth for this shape (Clipper2 round: 2.765184; Minkowski:
+  // 2.761295); Clipper2's JoinType::Square (2.701770) is a different join policy again and is
+  // not this engine's chamfer — it returns less area than its own round join, which no chord
+  // bevel on an erosion can do.
+  test("concave 9-gon at delta -2.79/chamfer: exactly the true chamfer offset (3.553831, was 4.621926, was 7.7094)", () => {
+    const nonagon = { start: [19.49, 10], segments: [
+      { to: [12.33, 11.95] }, { to: [11.2, 16.81] }, { to: [8.87, 11.96] }, { to: [0.93, 13.3] },
+      { to: [3.45, 7.62] }, { to: [8.52, 7.44] }, { to: [10.92, 4.78] }, { to: [15.09, 5.73] }, { to: [19.49, 10] }] };
+    const out = offsetRegions([region(nonagon)], -2.79, { corners: "chamfer" });
+    expect(out.length).toBe(1);
+    expect(profileArea(out)).toBeCloseTo(3.553831, 5);
+  });
+});
+
+// Task 7B regression coverage for the overlap-side trim gate, on three shapes whose offsets
+// have exact CLOSED-FORM areas — no oracle, no tolerance judgement. Each was wrong before the
+// gate by 15-30 %, in the silent direction: a simple, correctly-wound ring that validated
+// clean and took the fast path while carrying material the raw offset never produced.
+describe("offsetRegions — the overlap-side trim only fires when the offset lines really cross", () => {
+  const shape = (pts) => ({ start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] });
+
+  test("plus sign (10×10, 4-wide arms) at +3/sharp is the union of its two dilated bars (220)", () => {
+    // Dilating each bar by 3 with square (miter, 90°) corners is exact: the horizontal bar
+    // [0,10]×[3,7] → [-3,13]×[0,10] and the vertical [3,7]×[0,10] → [0,10]×[-3,13], so the
+    // union is 16·10 + 10·16 − 10·10 = 220. Pre-gate this returned 184 — the four reflex
+    // corners were each trimmed to a crossing well outside both offset segments.
+    const plus = shape([[3, 0], [7, 0], [7, 3], [10, 3], [10, 7], [7, 7], [7, 10], [3, 10], [3, 7], [0, 7], [0, 3], [3, 3]]);
+    expect(profileArea(offsetRegions([region(plus)], 3, { corners: "sharp" }))).toBeCloseTo(220, 6);
+  });
+
+  test("dumbbell at +4/sharp is the union of its three dilated rectangles (668)", () => {
+    // Lobes [0,10]² and [20,30]×[0,10] and waist [10,20]×[4,6], each dilated by 4 with square
+    // corners: 18·18 + 18·18 + 18·10 − 8·10 − 8·10 = 668. Pre-gate: 636.
+    const dumb = shape([[0, 0], [10, 0], [10, 4], [20, 4], [20, 0], [30, 0], [30, 10], [20, 10], [20, 6], [10, 6], [10, 10], [0, 10]]);
+    expect(profileArea(offsetRegions([region(dumb)], 4, { corners: "sharp" }))).toBeCloseTo(668, 6);
+  });
+
+  test("a plain convex inset still takes the exact fast path (square, -1)", () => {
+    // The gate must NOT cost the everyday case its trim: every corner of a convex inset
+    // crosses within both segments, so the ring stays simple and validateRawOffset passes it
+    // through untouched — 4 segments in, 4 out, no resolver, no extra vertices.
+    const square = shape([[0, 0], [20, 0], [20, 20], [0, 20]]);
+    const out = offsetRegions([region(square)], -1, { corners: "sharp" });
+    expect(out.length).toBe(1);
+    expect(out[0].outer.segments.length).toBe(4);
+    expect(profileArea(out)).toBeCloseTo(324, 9);
+  });
+});
+
+// Task 7C. The fast-path validator's crossing test used to demand all four orientations be
+// nonzero — "strict crossings only" — which is exactly the wrong exclusion for offset output,
+// because offset pieces are built by translating SHARED vertices and so meet each other AT
+// vertices as the generic case, not the degenerate one. A ring that ran through one of its own
+// vertices was therefore reported simple, `validateRawOffset` returned true, and the tangled
+// ring went straight down the exact fast path — silently, no throw, never reaching
+// resolveOffsetWinding, which cancels the reversed loop correctly.
+//
+// The truths below are closed-form, and independently reproduced by the Minkowski-union oracle
+// (test/minkowski-oracle.test.js runs the same three shapes through
+// test/helpers/minkowski-oracle.js, which never calls anybody's offsetter).
+describe("offsetRegions — a ring that crosses itself AT a vertex is not simple", () => {
+  const shape = (pts) => ({ start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] });
+  // 20×10 block, slot of width w cut from the top down to y = 2, eroded by 2. The 2 mm floor
+  // under the slot is exactly the erosion depth, so it vanishes and the block SPLITS into
+  // [2, 8−w/2]×[2,8] and [12+w/2, 18]×[2,8]: area 72 − 6w, and identical for all three corner
+  // styles because every join the erosion introduces sits at y < 2, below the surviving
+  // material. The raw offset ring instead dips to y = 0 and re-crosses its own eroded bottom
+  // edge at y = 2 — at the two vertices where the slot walls land.
+  const slotted = (w) => shape([[0, 0], [20, 0], [20, 10],
+    [10 + w / 2, 10], [10 + w / 2, 2], [10 - w / 2, 2], [10 - w / 2, 10], [0, 10]]);
+  for (const w of [2, 4, 6]) {
+    for (const corners of ["round", "chamfer", "sharp"]) {
+      test(`slotted block, ${w}-wide slot at −2/${corners} erodes to ${72 - 6 * w}`, () => {
+        expect(profileArea(offsetRegions([region(slotted(w))], -2, { corners }))).toBeCloseTo(72 - 6 * w, 6);
+      });
+    }
+  }
+  test("the raw ring is rejected by validateRawOffset rather than merely fixed downstream", () => {
+    // Belt and braces on the ROUTING, not just the number: the raw offset here is not dirty
+    // (no arc inverted, no piece deleted), so the only thing standing between it and the fast
+    // path is this validator. If it ever says true again the area assertions above go quiet.
+    const o = _offsetContour(slotted(4), -2, "round");
+    expect(o.dirty).toBe(false);
+    expect(validateRawOffset([{ outer: o.contour, holes: [] }])).toBe(false);
+  });
+  test("clean shapes are NOT pushed to the resolver by the widened test", () => {
+    // The counter-risk: every ring shares a vertex between adjacent segments by construction,
+    // and tessellateContour also emits the closing point, so a naive endpoint-inclusive test
+    // reports a self-touch on literally every ring. Two ordinary insets that must stay exact.
+    const square = shape([[0, 0], [20, 0], [20, 20], [0, 20]]);
+    const L = shape([[0, 0], [10, 0], [10, 10], [5, 10], [5, 5], [0, 5]]);
+    expect(validateRawOffset([{ outer: _offsetContour(square, -1, "sharp").contour, holes: [] }])).toBe(true);
+    expect(validateRawOffset([{ outer: _offsetContour(L, -1, "round").contour, holes: [] }])).toBe(true);
+    expect(profileArea(offsetRegions([region(square)], -1, { corners: "sharp" }))).toBeCloseTo(324, 9);
+  });
+});
+
+// ── former chain-incomplete cases (Task 7D) ──────────────────────────────────────────────
+//
+// These fixtures originally exercised the fallback ladder. The adaptive winding classifier
+// now resolves them directly; the assertions below pin that higher-fidelity behavior while
+// retaining explicit coverage of what later ladder rungs would cost if reached.
+describe("offsetRegions — the chain-incomplete fallback", () => {
+  const shape = (pts) => ({ start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] });
+  // 38×10 plate with four notches of differing depth cut into its top edge. Eroded by 2.5 the
+  // two 5-deep notch floors reach the eroded bottom edge exactly, severing two webs.
+  const comb = shape([[0, 0], [38, 0], [38, 10], [15, 10], [15, 5], [12, 5], [12, 10],
+    [9, 10], [9, 4.5], [7, 4.5], [7, 10], [5, 10], [5, 5], [4, 5], [4, 10], [0, 10]]);
+  const areaAt = (d) => profileArea(offsetRegions([region(comb)], d, { corners: "round" }));
+
+  test("the raw arrangement at −2.5/round chains directly into all four pieces", () => {
+    const o = _offsetContour(comb, -2.5, "round");
+    let out;
+    expect(() => { out = resolveOffsetWinding([{ outer: o.contour, holes: [] }]); }).not.toThrow();
+    expect(out).toHaveLength(4);
+  });
+
+  test("−2.5/round returns the oracle's four pieces", () => {
+    expect(() => areaAt(-2.5)).not.toThrow();
+    // More than one region: the two 5-deep notches erode through their webs at exactly this
+    // delta, so the comb really does sever. That it SEVERS is the point — the resolver's job
+    // is to report the pieces, not to give up on the arrangement.
+    //
+    expect(offsetRegions([region(comb)], -2.5, { corners: "round" })).toHaveLength(4);
+  });
+
+  test("the recovered area is bracketed by the same shape at deltas that never failed", () => {
+    // Area is strictly decreasing in |delta| here, so the two nearest deltas OUTSIDE the old
+    // failing band bound the answer on both sides. Both bounds come from the engine's own
+    // never-failing output, not a pinned constant. (The tight check — within 0.006 % of the
+    // Minkowski oracle's 91.744 — lives in test/offset-oracle-manifold.test.js, where truth is
+    // derived rather than asserted. A midpoint/linearity bound would be wrong here: |delta| =
+    // 2.5 is exactly where the webs sever, so the area curve has a genuine kink at it.)
+    expect(areaAt(-2.5)).toBeLessThan(areaAt(-2.49));
+    expect(areaAt(-2.5)).toBeGreaterThan(areaAt(-2.52));
+  });
+
+  test("the recovered stretch of the old failing band is monotone, with no holes", () => {
+    // The failure was a BAND, not a knife edge — that was the premise the measurement killed:
+    // −2.4950 through −2.5150 all threw, and a slider dragged through it died the whole way.
+    // −2.500 downwards is continuous; walk it at 0.001 and require every step to build and
+    // to keep decreasing.
+    let prev = Infinity;
+    for (let i = 0; i <= 20; i++) {
+      const a = areaAt(-2.5 - i * 0.001);
+      expect(a).toBeGreaterThan(80);
+      expect(a).toBeLessThan(prev);
+      prev = a;
+    }
+  });
+
+  // What the ladder COSTS when it fires. Both of these are properties of the shipped rung
+  // list, walked directly via `_ladderRungs` so the test sees each rung's answer rather than
+  // only the winner — the same view `scripts/offset-rates.mjs` measures the whole corpus with.
+  // Seeds are from the committed corpus (test/helpers/offset-corpus.js), so both cases
+  // reproduce with `node scripts/offset-rates.mjs --seed <n>`.
+  describe("what the fallback ladder costs", () => {
+    const arcs = (rs) => rs.reduce((a, r) =>
+      a + [r.outer, ...r.holes].reduce((n, c) => n + c.segments.filter((s) => s.via).length, 0), 0);
+    const segs = (rs) => rs.reduce((a, r) =>
+      a + [r.outer, ...r.holes].reduce((n, c) => n + c.segments.length, 0), 0);
+
+    test("the first high-fidelity rung now wins before a polyline can strip arcs", () => {
+      const c = caseFor(330);
+      const { raw } = _rawOffset(c.regions, -3.75, "round");
+      expect(arcs(raw)).toBe(3);
+      const rungs = _ladderRungs(c.regions, raw, -3.75, "round");
+      const won = rungs.map((r) => { try { return { name: r.name, out: r.run() }; } catch { return null; } })
+        .find(Boolean);
+      expect(won.name).toBe("delta*(1-1e-9)");
+      expect(arcs(won.out)).toBe(3);
+      expect(segs(won.out)).toBe(5);
+      expect(arcs(offsetRegions(c.regions, -3.75, { corners: "round" }))).toBe(3);
+    });
+
+    test("the first high-fidelity rung keeps a region a coarse rung would lose", () => {
+      const c = caseFor(397);
+      const { raw } = _rawOffset(c.regions, -3.25, "round");
+      const out = Object.fromEntries(_ladderRungs(c.regions, raw, -3.25, "round")
+        .map((r) => { try { return [r.name, r.run().length]; } catch { return [r.name, null]; } }));
+      expect(out["delta*(1-1e-9)"]).toBe(2);
+      expect(out["clusterTol*20"]).toBe(1);
+      expect(out["polyline@1024"]).toBe(2);
+      expect(offsetRegions(c.regions, -3.25, { corners: "round" })).toHaveLength(2);
+    });
+  });
+
+  test("a genuinely unresolvable arrangement still throws the pinned message", () => {
+    // _chain is the throw's own home; feeding it a piece whose end vertex has no outgoing
+    // continuation is the failure the fallback exists for, and no ladder rung applies below
+    // offsetRegions. The literal text is pinned because ERROR-PATTERNS.md quotes it.
+    expect(CHAIN_INCOMPLETE_MESSAGE)
+      .toBe("contour-winding: could not chain offset boundary (incomplete intersection set)");
+    const pool = [[0, 0], [1, 0]];
+    const dangling = [{ keep: true, reverse: false,
+      piece: { from: [0, 0], segs: [{ to: [1, 0] }], vStart: 0, vEnd: 1 } }];
+    expect(() => _chain(dangling, pool)).toThrow(CHAIN_INCOMPLETE_MESSAGE);
+  });
 });
