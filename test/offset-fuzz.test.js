@@ -145,33 +145,30 @@ test("area matches the oracle within 1 % on every fuzz case", () => {
   expect(R.areaBad.join("\n")).toBe("");
 });
 
-// ── the two characterizations ──────────────────────────────────────────────────────────
-// Both are pinned as the EXACT list of affected seeds rather than a count, so a fix shows up
-// as loudly as a regression and neither can drift silently. Both are known open defects; see
-// the report in the test bodies for what is actually known.
+// ── exact characterizations ────────────────────────────────────────────────────────────
+// Pinned as exact affected-seed lists rather than counts, so a fix shows up as loudly as a
+// regression and neither can drift silently.
 
-// chain-incomplete: docs/ERROR-PATTERNS.md § shape2d-offset-winding-chain-incomplete. Note
-// that one of the two is SHARP — this corpus independently reproduces the falsification of
-// the "sharp has never produced this throw" claim that shipped in that entry, alongside the
-// two-notch plate asserted in test/offset-oracle-manifold.test.js.
-const CHAIN_FAILURES = [
-  "seed 27 (multi-region) delta=-2 sharp",
-  "seed 96 (notched-plate) delta=-2.5 round",
-];
-test("the chain-incomplete failures are exactly the known ones", () => {
-  expect(R.chain.join("\n")).toBe(CHAIN_FAILURES.join("\n"));
+// The adaptive classifier resolves both formerly pinned failures (seed 27 sharp and seed 96
+// round). Keep this assertion rather than deleting the category: any future escaped chain
+// failure names its exact seed here.
+test("no chain-incomplete failure remains in the fuzz slice", () => {
+  expect(R.chain.join("\n")).toBe("");
 });
 
 // Degenerate sliver rings: the resolver can emit extra rings of ~1e-9 … 1e-3 mm² beside the
 // real ones. They contribute nothing to area (an even-odd assembly, which is what extrude
 // does, gives the same answer with or without them) but they DO corrupt `regions().length`
 // and hole counts, which is why every count in this file filters them first. Rare on
-// rectilinear input — 3 of 2 629 here — and common on curved input: see the glyph block of
-// test/offset-oracle-manifold.test.js, where a dilated "o" comes back in 25 pieces. Root
-// cause open.
+// rectilinear input — 5 cases here. Two became observable when arrangements that formerly
+// threw began returning geometry. Positive dilation has a source-membership proof for
+// removing false islands; erosion does not, because a real surviving crumb need not contain
+// a sampled source boundary point. These remain visible rather than area-pruned.
 const SLIVER_CASES = [
   "seed 23 (multi-region) delta=-2.5 round: 1 ring(s) under 0.001 mm²",
   "seed 52 (notched-plate) delta=-2 chamfer: 1 ring(s) under 0.001 mm²",
+  "seed 60 (notched-plate) delta=-2 round: 1 ring(s) under 0.001 mm²",
+  "seed 96 (notched-plate) delta=-2.5 round: 1 ring(s) under 0.001 mm²",
   "seed 118 (radial-polygon) delta=-2 round: 1 ring(s) under 0.001 mm²",
 ];
 test("the results carrying degenerate sliver rings are exactly the known ones", () => {
