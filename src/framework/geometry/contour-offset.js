@@ -10,7 +10,7 @@
 // adapted from paper.js Segments to the partforge contour IR.
 import { arcCenterAndSweep } from "./paper-bridge.js";
 import { cubicAt, splitCubic, jointTangents, SMOOTH_JOINT_DEG } from "./contour-ops.js";
-import { tessellateContour, closeContourGap, reverseContour } from "./profile.js";
+import { tessellateContour, closeContourGap } from "./profile.js";
 import { ringArea, pointInRing } from "./shape2d-regions.js";
 import { resolveOffsetWinding, CLUSTER_TOL, CHAIN_INCOMPLETE_MESSAGE } from "./contour-winding.js";
 
