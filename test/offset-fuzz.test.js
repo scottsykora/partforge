@@ -147,31 +147,30 @@ test("area matches the oracle within 1 % on every fuzz case", () => {
 
 // ── the two characterizations ──────────────────────────────────────────────────────────
 // Both are pinned as the EXACT list of affected seeds rather than a count, so a fix shows up
-// as loudly as a regression and neither can drift silently. Both are known open defects; see
-// the report in the test bodies for what is actually known.
+// as loudly as a regression and neither can drift silently.
 
-// chain-incomplete: docs/ERROR-PATTERNS.md § shape2d-offset-winding-chain-incomplete. Note
-// that one of the two is SHARP — this corpus independently reproduces the falsification of
-// the "sharp has never produced this throw" claim that shipped in that entry, alongside the
-// two-notch plate asserted in test/offset-oracle-manifold.test.js.
-const CHAIN_FAILURES = [
-  "seed 27 (multi-region) delta=-2 sharp",
-  "seed 96 (notched-plate) delta=-2.5 round",
-];
-test("the chain-incomplete failures are exactly the known ones", () => {
+// chain-incomplete: docs/ERROR-PATTERNS.md § shape2d-offset-winding-chain-incomplete. The
+// probe-era resolver failed two of these 2 700 comparisons (one of them SHARP — the case
+// that falsified the "sharp never throws" workaround); the face-labeled resolver with its
+// snap-round rungs fails NONE. Pinned empty so any new throw names its seed loudly.
+const CHAIN_FAILURES = [];
+test("the chain-incomplete failures are exactly the known ones (none)", () => {
   expect(R.chain.join("\n")).toBe(CHAIN_FAILURES.join("\n"));
 });
 
 // Degenerate sliver rings: the resolver can emit extra rings of ~1e-9 … 1e-3 mm² beside the
 // real ones. They contribute nothing to area (an even-odd assembly, which is what extrude
 // does, gives the same answer with or without them) but they DO corrupt `regions().length`
-// and hole counts, which is why every count in this file filters them first. Rare on
-// rectilinear input — 3 of 2 629 here — and common on curved input: see the glyph block of
-// test/offset-oracle-manifold.test.js, where a dilated "o" comes back in 25 pieces. Root
-// cause open.
+// and hole counts, which is why every count in this file filters them first. 5 of 2 700
+// here — two more than the probe-era list, and one of the two (seed 96, −2.5 round) is a
+// case that used to hard-THROW and now resolves carrying one sub-0.001 mm² ring: a strict
+// improvement wearing a sliver. Root cause (knife-edge pieces surviving the area filter at
+// the pinch weld) open and bounded.
 const SLIVER_CASES = [
   "seed 23 (multi-region) delta=-2.5 round: 1 ring(s) under 0.001 mm²",
   "seed 52 (notched-plate) delta=-2 chamfer: 1 ring(s) under 0.001 mm²",
+  "seed 60 (notched-plate) delta=-2 round: 1 ring(s) under 0.001 mm²",
+  "seed 96 (notched-plate) delta=-2.5 round: 1 ring(s) under 0.001 mm²",
   "seed 118 (radial-polygon) delta=-2 round: 1 ring(s) under 0.001 mm²",
 ];
 test("the results carrying degenerate sliver rings are exactly the known ones", () => {

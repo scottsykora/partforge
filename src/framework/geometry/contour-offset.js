@@ -699,13 +699,7 @@ export function _ladderRungs(regions, raw, delta, corners) {
     // ring's raw offset is a hairball no crossing set describes at any merge radius, which
     // is precisely the input class the reported text bug lives in.
     ...[1e-3, 5e-3].map((grid) => ({ name: `snap@${grid}`,
-      run: () => {
-        const src = regions.flatMap((rg) => [tessellateContour(rg.outer, SNAP_SEGS),
-                                             ...rg.holes.map((h) => tessellateContour(h, SNAP_SEGS))]);
-        return dropPhantomHoles(
-          resolveOffsetWinding(snapRegions(raw, grid), { clusterTol: grid / 4, audit: false }),
-          src, delta);
-      } })),
+      run: () => resolveOffsetWinding(snapRegions(raw, grid), { clusterTol: grid / 4, audit: false }) })),
   ];
 }
 
@@ -733,16 +727,29 @@ export function offsetRegions(regions, delta, { corners = "round" } = {}) {
   if (delta === 0) return JSON.parse(JSON.stringify(regions));
 
   const first = rawOffset(regions, delta, corners);
-  let out;
-  try {
-    out = resolveOrRaw(first);
-  } catch (err) {
-    // Only the unclosable-arrangement failure has a measured degradation behind it. Anything
-    // else out of the resolver (a clustering regression, an implicitly-closed ring) is a bug
-    // report, not a case to paper over, and goes straight up.
-    if (err?.message !== CHAIN_INCOMPLETE_MESSAGE) throw err;
-    out = chainFallback(regions, first.raw, delta, corners);
-    if (out === null) throw err;            // pinned message, unchanged, when nothing works
+  let out, cleaned = true;
+  if (!first.dirty && validateRawOffset(first.raw)) {
+    out = first.raw;
+    cleaned = false;                        // exact fast path: holes are real by construction
+  } else {
+    try {
+      out = resolveOffsetWinding(first.raw);
+    } catch (err) {
+      // Only the unclosable-arrangement failure has a measured degradation behind it. Anything
+      // else out of the resolver (a clustering regression, an implicitly-closed ring) is a bug
+      // report, not a case to paper over, and goes straight up.
+      if (err?.message !== CHAIN_INCOMPLETE_MESSAGE) throw err;
+      out = chainFallback(regions, first.raw, delta, corners);
+      if (out === null) throw err;          // pinned message, unchanged, when nothing works
+    }
+  }
+  // Every cleanup-path DILATION result is swept for phantom holes (see dropPhantomHoles):
+  // the sweep is the operation's own definition, it covers the ladder's outputs and the
+  // direct resolve alike, and it never runs on the exact fast path.
+  if (cleaned && delta > 0) {
+    const src = regions.flatMap((rg) => [tessellateContour(rg.outer, SNAP_SEGS),
+                                         ...rg.holes.map((h) => tessellateContour(h, SNAP_SEGS))]);
+    out = dropPhantomHoles(out, src, delta);
   }
   if (out.length === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
   return out;
