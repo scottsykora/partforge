@@ -583,6 +583,15 @@ describe("glyphs — the case class whose absence let the text bug ship", () => 
     for (const ch of ["e", "a", "p"]) expect(truthOf(ch, 3).holes).toBe(0);   // counters gone
   });
 
+  test('"Scott" keeps native curves across the full round-offset range', () => {
+    for (const d of GLYPH_DELTAS) {
+      const out = offsetRegions(glyph.Scott, d, { corners: "round" });
+      const segments = out.flatMap((rg) => [rg.outer, ...rg.holes]).flatMap((c) => c.segments);
+      expect(segments.some((s) => s.via), `Scott@${d} should retain circular arcs`).toBe(true);
+      expect(segments.some((s) => s.c1), `Scott@${d} should retain cubic curves`).toBe(true);
+    }
+  });
+
   test("all three corner styles complete across the single-glyph matrix", () => {
     for (const ch of GLYPHS.filter((g) => g !== "Scott")) for (const d of GLYPH_DELTAS)
       for (const corners of ["round", "chamfer", "sharp"])
