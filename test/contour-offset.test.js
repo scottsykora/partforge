@@ -594,3 +594,51 @@ describe("offsetRegions — the overlap-side trim only fires when the offset lin
     expect(profileArea(out)).toBeCloseTo(324, 9);
   });
 });
+
+// Task 7C. The fast-path validator's crossing test used to demand all four orientations be
+// nonzero — "strict crossings only" — which is exactly the wrong exclusion for offset output,
+// because offset pieces are built by translating SHARED vertices and so meet each other AT
+// vertices as the generic case, not the degenerate one. A ring that ran through one of its own
+// vertices was therefore reported simple, `validateRawOffset` returned true, and the tangled
+// ring went straight down the exact fast path — silently, no throw, never reaching
+// resolveOffsetWinding, which cancels the reversed loop correctly.
+//
+// The truths below are closed-form, and independently reproduced by the Minkowski-union oracle
+// (test/minkowski-oracle.test.js runs the same three shapes through
+// test/helpers/minkowski-oracle.js, which never calls anybody's offsetter).
+describe("offsetRegions — a ring that crosses itself AT a vertex is not simple", () => {
+  const shape = (pts) => ({ start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] });
+  // 20×10 block, slot of width w cut from the top down to y = 2, eroded by 2. The 2 mm floor
+  // under the slot is exactly the erosion depth, so it vanishes and the block SPLITS into
+  // [2, 8−w/2]×[2,8] and [12+w/2, 18]×[2,8]: area 72 − 6w, and identical for all three corner
+  // styles because every join the erosion introduces sits at y < 2, below the surviving
+  // material. The raw offset ring instead dips to y = 0 and re-crosses its own eroded bottom
+  // edge at y = 2 — at the two vertices where the slot walls land.
+  const slotted = (w) => shape([[0, 0], [20, 0], [20, 10],
+    [10 + w / 2, 10], [10 + w / 2, 2], [10 - w / 2, 2], [10 - w / 2, 10], [0, 10]]);
+  for (const w of [2, 4, 6]) {
+    for (const corners of ["round", "chamfer", "sharp"]) {
+      test(`slotted block, ${w}-wide slot at −2/${corners} erodes to ${72 - 6 * w}`, () => {
+        expect(profileArea(offsetRegions([region(slotted(w))], -2, { corners }))).toBeCloseTo(72 - 6 * w, 6);
+      });
+    }
+  }
+  test("the raw ring is rejected by validateRawOffset rather than merely fixed downstream", () => {
+    // Belt and braces on the ROUTING, not just the number: the raw offset here is not dirty
+    // (no arc inverted, no piece deleted), so the only thing standing between it and the fast
+    // path is this validator. If it ever says true again the area assertions above go quiet.
+    const o = _offsetContour(slotted(4), -2, "round");
+    expect(o.dirty).toBe(false);
+    expect(validateRawOffset([{ outer: o.contour, holes: [] }])).toBe(false);
+  });
+  test("clean shapes are NOT pushed to the resolver by the widened test", () => {
+    // The counter-risk: every ring shares a vertex between adjacent segments by construction,
+    // and tessellateContour also emits the closing point, so a naive endpoint-inclusive test
+    // reports a self-touch on literally every ring. Two ordinary insets that must stay exact.
+    const square = shape([[0, 0], [20, 0], [20, 20], [0, 20]]);
+    const L = shape([[0, 0], [10, 0], [10, 10], [5, 10], [5, 5], [0, 5]]);
+    expect(validateRawOffset([{ outer: _offsetContour(square, -1, "sharp").contour, holes: [] }])).toBe(true);
+    expect(validateRawOffset([{ outer: _offsetContour(L, -1, "round").contour, holes: [] }])).toBe(true);
+    expect(profileArea(offsetRegions([region(square)], -1, { corners: "sharp" }))).toBeCloseTo(324, 9);
+  });
+});

@@ -424,8 +424,10 @@ On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **at
 
 The three tessellating readbacks — `toRegions()`, `simple()`, `regions()` — remain LOD-dependent: they hand back point rings sampled at the backend's own segment count, so the two backends' output differs in vertex count and by chord error, converging as LOD rises. Those three ops are the whole LOD-dependent surface; everything else, including `offset`, is backend-identical.
 
-**Known limitations.** The native offset engine has verified defects on specific
-input shapes; see [Offset: known limitations](#offset-known-limitations) below.
+**Known limitations.** The native offset engine has verified defects on specific input
+shapes, concentrated in the `round` join on inward offsets that sever a shape; see
+[Offset: known limitations](#offset-known-limitations) below for the three parked cases,
+their measured values, and the independent construction the truths come from.
 
 **Fillet after a boolean reaches STEP as real arcs.** Because booleans preserve curves
 and `fillet` inserts true arc segments, `shape2d(a).union(b).fillet(2).extrude({h})`
@@ -437,10 +439,48 @@ facets at mesh LOD, as always, since its meshes have no curve representation.)
 
 The native offset engine (`geometry/contour-offset.js`) is correct on the honest-agreement
 corpus (`test/contour-offset.test.js`, `test/offset-oracle-manifold.test.js`,
-`test/offset-oracle-occt.test.js`), and **nothing is currently parked** — the "known
-divergences (parked)" block of `test/offset-oracle-manifold.test.js` is empty. The
-convention stands for the next divergence found: park it there as a characterization test
-pinned to the measured value, never widen the agreement corpus's tolerance around it.
+`test/offset-oracle-occt.test.js`), and **three divergences are currently parked** in the
+"known divergences (parked) — Task 7C" block of `test/offset-oracle-manifold.test.js`, each
+a characterization test pinned to the engine's current measured value. The convention holds
+for the next one found: park it there, never widen the agreement corpus's tolerance around it.
+
+The three are below. Their truths come from an independent **Minkowski-union construction**
+(`test/helpers/minkowski-oracle.js`: dilate = the shape ∪ its outward edge slabs ∪ its convex
+vertex caps; erode = `Box \ dilate(Box \ S)`), which uses Clipper2 purely as a polygon-set
+assembler under the Positive fill rule and never calls anyone's offsetter — the point being
+that Clipper2's own `offset()` is not an independent check on an offset engine, and its
+`Round @ circularSegments = 4` chamfer mapping is provably not this engine's chamfer at acute
+corners. That helper is validated against thirteen closed-form answers in
+`test/minkowski-oracle.test.js` before it is trusted anywhere.
+
+What the three have in common is the **`round` join**: two of them are round-only, and
+`chamfer` and `sharp` agree with the oracle *exactly* on the same inputs.
+
+- **`round` keeps too much material when several grown holes reach the eroded outline.**
+  A 30×20 plate with three rectangular holes at −2 gives 324.75 against a true 258.18 (~26 %
+  over). Under `chamfer` and `sharp` the grown holes correctly become notches in the outline
+  and the answer is exact.
+- **`round` can fail to chain at all.** A 38×10 four-notch comb at −2.5 throws
+  `contour-winding: could not chain offset boundary (incomplete intersection set)` where
+  91.744 mm² survives; `sharp` and `chamfer` return the exact 90.000 and 96.375. Loud, never
+  silent — see [ERROR-PATTERNS.md
+  §shape2d-offset-winding-chain-incomplete](ERROR-PATTERNS.md#shape2d-offset-winding-chain-incomplete).
+- **A hole narrower than 2·delta leaves a remnant instead of vanishing.** A 1×1 hole in a
+  plate at +2 should close completely; a ~2 mm² hole ring survives instead. Join-independent
+  — all three styles are short by the same 2 mm².
+
+Scale, measured: over ~13 800 rectilinear cases (plates with disjoint rectangular holes,
+multi-notch combs, ±0.5 … ±3, all three styles) 103 diverge from the oracle by more than
+0.2 %, and the three classes above account for all of them.
+
+One more defect was **fixed in Task 7C** and never appeared on this list at all, which is
+the interesting part: nothing detected it. The fast-path validator's crossing test demanded
+strictly transversal crossings, so a ring that ran through one of its *own vertices* was
+reported simple and taken down the exact fast path. That is the generic case for offset
+output, not a degenerate one — offset pieces are built by translating shared vertices. A
+20×10 block with an 8-deep slot, inset by 2, kept 32 mm² of a true 48 mm² erosion with no
+error and no warning. It is now asserted across slot widths 2/4/6 and all three corner
+styles in `test/contour-offset.test.js`, against the closed form 72 − 6·w.
 
 Four cases were on this list and are now **fixed**, asserted as correctness in the
 "formerly-parked divergences, now correct" block:

@@ -143,6 +143,16 @@ export function _offsetContour(contour, delta, corners) {
   // all-trimmed or none-trimmed — measured: a 6.99×7.78 rectangular hole at delta +3.5 (it
   // over-collapses in x by 0.008 mm and should vanish) leaves a 12.26 mm² spurious face
   // under a live-extent gate and 0.007 mm² under this one.
+  //
+  // Built eagerly for every piece, deliberately. Deferring it to the first overlap-side corner
+  // looks like free savings — four .slice() allocations per piece, read only by the trim gate —
+  // and it is not: an INWARD offset (the case the trim exists for, and the one benchmarked
+  // below) puts every convex corner on the overlap side, so every piece's extents get demanded
+  // anyway and laziness buys one closure call per corner. Measured, 300 runs, 100 disjoint
+  // squares: eager 0.328-0.334 ms against lazy 0.336-0.344 at delta -1, and eager 0.842 against
+  // lazy 0.827 at +1 — a wash in both directions. Not worth the ordering invariant it would add
+  // (corner i mutates piece i-1's last `.to` and piece i's `.start`, so a lazy read would have
+  // to be proven to happen before those, forever).
   const ext = pieces.map((p) => ({
     aFrom: (p.segments.length > 1 ? p.segments.at(-2).to : p.start).slice(),
     aEnd: p.segments.at(-1).to.slice(),
@@ -163,7 +173,10 @@ export function _offsetContour(contour, delta, corners) {
     // segments' own extents, that crossing is the true corner of the offset outline: trim
     // both to it and the ring stays simple, so validateRawOffset's exact fast path still
     // applies (this is the everyday polygon inset, and keeping it on the fast path matters —
-    // 100 disjoint squares at delta −1 measure 0.22 ms trimmed against 10.3 ms untrimmed).
+    // 100 disjoint squares at delta −1 measure 0.33 ms against 9.1 ms with the trim ablated,
+    // both as shipped, i.e. with the in-extent gate below in force. An earlier revision of
+    // this comment quoted 0.22 ms, which was the UNGATED trim; the gate costs the difference
+    // and the number to plan against is the one the code actually runs).
     //
     // The in-extent test is the whole point and is NOT a formality. Past a corner's own
     // feature size the two offset lines still cross, but OUTSIDE both segments — the "trim"
@@ -256,7 +269,7 @@ export function _offsetContour(contour, delta, corners) {
   // when deletion isn't simple: cleanup gets a chance to untangle whatever the un-deleted
   // piece leaves behind, which is strictly more recoverable than deletion's dead end.
   const deleted = assembleRing(pieces, joins, keptIdx, n);
-  const deletedRing = tessellateContour(deleted, VALIDATE_SEGS);
+  const deletedRing = sampleRing(deleted, VALIDATE_SEGS);
   const deletedArea = Math.abs(ringArea(deletedRing));
   if (deletedArea <= AREA_EPS || ringSelfIntersects(deletedRing))
     return { contour: assembleRing(pieces, joins, allIdx, n), dirty: true };
@@ -289,18 +302,35 @@ function assembleRing(pieces, joins, idx, n) {
   return { start, segments: out };
 }
 
-function segsCross(a1, a2, b1, b2) {
+// Do two segments meet anywhere — including AT an endpoint of either one? The orientation
+// test `o1 !== o2 && o3 !== o4` already answers that (a vertex-incident crossing shows up as
+// one orientation being 0 and the other two straddling), so the endpoint-incident case costs
+// nothing extra; what it costs is the right to be sloppy about adjacency, which is why every
+// caller must hand this a ring with no duplicate and no zero-length vertices (see dedupeRing).
+//
+// This used to demand all four orientations be nonzero — "strict crossings only" — and that
+// discarded exactly the case an inward offset produces most often: a ring that runs into
+// ITSELF at one of its own vertices. A 20×10 block with an 8-deep slot, inset by 2, offsets
+// the slot floor DOWN past the block's own eroded bottom edge, so the ring dips below y=2 and
+// re-crosses it AT the vertices where the slot walls land — every crossing endpoint-incident,
+// every orientation product zero, `validateRawOffset` satisfied, and the tangled ring taken
+// straight down the exact fast path. It silently kept 32 mm² of a true 48 mm² erosion (the
+// walls' offsets cancel under positive winding, which is what resolveOffsetWinding would have
+// done had the ring ever reached it). Endpoint-incidence is not a degenerate curiosity here;
+// it is the generic case, because offset pieces are BUILT by translating shared vertices.
+function segsIntersect(a1, a2, b1, b2) {
   const o = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
   const o1 = o(a1, a2, b1), o2 = o(a1, a2, b2), o3 = o(b1, b2, a1), o4 = o(b1, b2, a2);
-  return o1 !== o2 && o3 !== o4 && o1 !== 0 && o2 !== 0 && o3 !== 0 && o4 !== 0; // strict crossings only
+  return o1 !== o2 && o3 !== o4;
 }
 
 // True when two (non-adjacent) segments are collinear and overlap along more than a point.
-// segsCross's strict-crossing test deliberately ignores collinear touches, but an offset
-// ring can retrace the same line twice (a neck/hole pinched shut by delta past its own
-// width flips the offset pieces from either side onto each other) — that produces exact
-// duplicate or overlapping collinear edges with no transversal crossing anywhere, which
-// segsCross alone can't see.
+// segsIntersect is an orientation test, and a fully collinear pair makes all four
+// orientations 0, so `o1 !== o2` is false and it reports nothing — yet an offset ring can
+// retrace the same line twice (a neck/hole pinched shut by delta past its own width flips
+// the offset pieces from either side onto each other), producing exact duplicate or
+// overlapping collinear edges with no transversal crossing anywhere. That is this test's
+// job and it stays: widening segsIntersect to endpoint-incidence does not subsume it.
 function segsOverlap(a1, a2, b1, b2) {
   const d = sub(a2, a1);
   const L = len(d);
@@ -338,6 +368,28 @@ const boxesApart = (a, b) =>
   a[2] < b[0] - BOX_EPS || b[2] < a[0] - BOX_EPS || a[3] < b[1] - BOX_EPS || b[3] < a[1] - BOX_EPS;
 const segBox = (p, q) => [Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.max(p[0], q[0]), Math.max(p[1], q[1])];
 
+// Every ring below is read as IMPLICITLY closed — segment i runs ring[i] → ring[(i+1)%m] —
+// and the pairwise loops decide "these two may legitimately touch" purely from index
+// adjacency. `tessellateContour` does not produce such a ring: it emits the closing point,
+// so ring[m-1] === ring[0]. That duplicate is not harmless bookkeeping once segsIntersect
+// counts endpoint contact. It creates a zero-length segment m-1 sitting on ring[0], and it
+// pushes the real closing edge back to index m-2 — which then shares the vertex ring[0] with
+// segment 0 while being two apart in the index, i.e. NON-adjacent by the loop's reckoning.
+// Result: every ring in the repo would report a self-touch at its own start point, and every
+// offset would take the resolver. Coincident interior vertices (a join that lands exactly on
+// its neighbour, a piece trimmed to zero length) do the same thing one index further in.
+// So: normalize first, and let "non-adjacent" mean what it says.
+const RING_EPS = 1e-9;
+function dedupeRing(ring) {
+  const out = [];
+  for (const p of ring) if (!out.length || dist(out.at(-1), p) > RING_EPS) out.push(p);
+  while (out.length > 1 && dist(out[0], out.at(-1)) <= RING_EPS) out.pop();
+  return out;
+}
+// Tessellate a contour into the deduplicated, implicitly-closed ring the tests below expect.
+// (ringArea / ringBox / pointInRing all wrap modularly too, so they read it unchanged.)
+const sampleRing = (contour, segs) => dedupeRing(tessellateContour(contour, segs));
+
 function ringSelfIntersects(ring) {
   const m = ring.length;
   const boxes = [];
@@ -346,19 +398,20 @@ function ringSelfIntersects(ring) {
     if (i === 0 && j === m - 1) continue;                  // adjacent via wraparound
     if (boxesApart(boxes[i], boxes[j])) continue;
     const a1 = ring[i], a2 = ring[(i + 1) % m], b1 = ring[j], b2 = ring[(j + 1) % m];
-    if (segsCross(a1, a2, b1, b2) || segsOverlap(a1, a2, b1, b2)) return true;
+    if (segsIntersect(a1, a2, b1, b2) || segsOverlap(a1, a2, b1, b2)) return true;
   }
   return false;
 }
 
 // Two DIFFERENT rings interfering. Like ringSelfIntersects this checks segsOverlap as well
-// as segsCross: two rings can interfere without any transversal crossing at all when their
-// boundaries run along the same line — exactly what two eroding holes that grew into each
-// other produce under a sharp join, where every actual crossing lands on a shared vertex
-// (o === 0, which segsCross deliberately ignores) and the only usable signal is the pair of
-// collinear, partially-overlapping edges. Missing that let an invalid double-ring result
-// pass the fast path and reach extrude, where even-odd fill turned the doubly-covered lens
-// back into SOLID material inside the merged pocket.
+// as segsIntersect: two rings can interfere without any transversal crossing at all when
+// their boundaries run along the same line — exactly what two eroding holes that grew into
+// each other produce under a sharp join, where the crossings land on shared vertices and the
+// rest of the signal is a pair of collinear, partially-overlapping edges. Missing that let an
+// invalid double-ring result pass the fast path and reach extrude, where even-odd fill turned
+// the doubly-covered lens back into SOLID material inside the merged pocket. (The shared-
+// vertex half of that is now caught directly — segsIntersect counts endpoint contact — but
+// the collinear half still is not, so both tests stay.)
 function ringsCross(a, b, boxA = ringBox(a), boxB = ringBox(b)) {
   if (boxesApart(boxA, boxB)) return false;
   for (let i = 0; i < a.length; i++) {
@@ -368,7 +421,7 @@ function ringsCross(a, b, boxA = ringBox(a), boxB = ringBox(b)) {
     for (let j = 0; j < b.length; j++) {
       const b1 = b[j], b2 = b[(j + 1) % b.length];
       if (boxesApart(bx, segBox(b1, b2))) continue;
-      if (segsCross(a1, a2, b1, b2) || segsOverlap(a1, a2, b1, b2)) return true;
+      if (segsIntersect(a1, a2, b1, b2) || segsOverlap(a1, a2, b1, b2)) return true;
     }
   }
   return false;
@@ -391,8 +444,8 @@ function ringInsideRing(inner, outer, outerBox) {
 // True when a raw offset result is already valid (fast path). Sampled at VALIDATE_SEGS.
 export function validateRawOffset(regions) {
   const sampled = regions.map((rg) => ({
-    outer: tessellateContour(rg.outer, VALIDATE_SEGS),
-    holes: rg.holes.map((h) => tessellateContour(h, VALIDATE_SEGS)),
+    outer: sampleRing(rg.outer, VALIDATE_SEGS),
+    holes: rg.holes.map((h) => sampleRing(h, VALIDATE_SEGS)),
   }));
   const allRings = [];
   for (const rg of sampled) {

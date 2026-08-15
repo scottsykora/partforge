@@ -24,6 +24,7 @@ import Module from "manifold-3d";
 import { offsetRegions } from "../src/framework/geometry/contour-offset.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 import { ringArea, pointInRing } from "../src/framework/geometry/shape2d-regions.js";
+import { minkowskiOracle } from "./helpers/minkowski-oracle.js";
 
 const SEGS = 64;
 const rings = (regions) => regions.flatMap((rg) =>
@@ -291,5 +292,80 @@ describe("formerly-parked divergences, now correct", () => {
       const area = out.reduce((a, rg) => a + Math.abs(ringArea(tessellateContour(rg.outer, SEGS))), 0);
       expect(Math.abs(area - truth) / truth).toBeLessThan(AREA_RTOL);
     }
+  });
+});
+
+// ── Known divergences (parked), re-opened by Task 7C ────────────────────────────────────
+//
+// Task 7B emptied this list; Task 7C's Minkowski-union oracle (test/helpers/minkowski-oracle.js)
+// refilled it. Fixing the vertex-incident self-crossing miss made the engine agree with that
+// oracle on every case the fix touched, but sweeping ~13 800 rectilinear cases against the
+// oracle surfaced three classes it does NOT touch, all pre-existing. They are parked here per
+// this file's convention: the truth is DERIVED in-file (never hardcoded), the engine's current
+// defective value is pinned in a loose band, and the root cause is recorded. A fix is expected
+// to break these tests, at which point the case moves up into the corpus.
+//
+// The oracle used here is the Minkowski construction, not `clipperArea` — Task 7B established
+// that Clipper2's Round@circularSegments=4 is not this engine's chamfer at acute corners, so
+// for newly-found divergences the construction that never calls an offsetter is the arbiter.
+// Note what every case below has in common: CHAMFER and SHARP agree with the oracle exactly,
+// so the remaining gap is concentrated in the ROUND join (classes 1 and 3) — arcs reaching
+// resolveOffsetWinding — plus one join-independent case (class 2).
+describe("known divergences (parked) — Task 7C", () => {
+  const ring = (pts) => ({ start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] });
+  const holeRect = (x0, y0, x1, y1) => ring([[x0, y0], [x0, y1], [x1, y1], [x1, y0]]);   // CW
+  const pointRing = (c) => tessellateContour(c, SEGS);
+  let O;
+  beforeAll(() => { O = minkowskiOracle(CrossSection); });
+  // The oracle takes point rings; feed it the same tessellation this file measures with.
+  const truthOf = (src, delta, corners) =>
+    O.area(src.map((rg) => ({ outer: pointRing(rg.outer), holes: rg.holes.map(pointRing) })),
+      delta, { corners, fan: 4096 });
+  const engineArea = (src, delta, corners) => totalArea(rings(offsetRegions(src, delta, { corners })));
+
+  // 1. ROUND-only over-inclusion when several grown holes reach the eroded outer boundary.
+  //    Chamfer and sharp resolve it exactly (the grown holes become notches in the outline,
+  //    0 holes out); round keeps ~26 % too much material.
+  test("plate with three holes at −2: round keeps 324.75 against a true 258.18", () => {
+    const src = [{ outer: ring([[0, 0], [30, 0], [30, 20], [0, 20]]),
+      holes: [holeRect(2, 1, 4, 6), holeRect(8, 10, 14, 13), holeRect(18, 13, 24, 17)] }];
+    expect(engineArea(src, -2, "chamfer")).toBeCloseTo(truthOf(src, -2, "chamfer"), 6);   // correct
+    expect(engineArea(src, -2, "sharp")).toBeCloseTo(truthOf(src, -2, "sharp"), 6);       // correct
+    const truth = truthOf(src, -2, "round");
+    expect(truth).toBeGreaterThan(258); expect(truth).toBeLessThan(258.5);
+    const got = engineArea(src, -2, "round");
+    expect(got).toBeGreaterThan(320); expect(got).toBeLessThan(330);                      // PARKED
+  });
+
+  // 2. A hole narrower than 2·delta must vanish under dilation; instead a ~2 mm² remnant
+  //    survives. Join-independent — all three styles are short by exactly the same 2 mm².
+  test("1×1 hole at +2 should vanish; a 2 mm² remnant survives instead", () => {
+    const src = [{ outer: ring([[0, 0], [30, 0], [30, 20], [0, 20]]), holes: [holeRect(23, 2, 24, 3)] }];
+    for (const corners of ["chamfer", "sharp", "round"]) {
+      const truth = truthOf(src, 2, corners);
+      const got = engineArea(src, 2, corners);
+      expect(out1holeCount(src, corners)).toBe(1);                                        // PARKED: should be 0
+      expect(truth - got).toBeGreaterThan(1.9);                                           // PARKED
+      expect(truth - got).toBeLessThan(2.1);
+    }
+  });
+  const out1holeCount = (src, corners) =>
+    offsetRegions(src, 2, { corners }).reduce((a, rg) => a + rg.holes.length, 0);
+
+  // 3. ROUND-only hard failure: a four-notch comb eroded past two of its webs makes the
+  //    winding resolver throw its "incomplete intersection set" detector, although 91.74 mm²
+  //    of the part survives. Chamfer and sharp are exact on the same input, so the shape is
+  //    not genuinely collapsing — the arcs a round join inserts at the severed webs are what
+  //    the crossing/chaining pass cannot close. See ERROR-PATTERNS.md
+  //    § shape2d-offset-winding-chain-incomplete.
+  test("four-notch comb at −2.5: round fails to chain where 91.74 survives", () => {
+    const comb = [{ outer: ring([[0, 0], [38, 0], [38, 10], [15, 10], [15, 5], [12, 5], [12, 10],
+      [9, 10], [9, 4.5], [7, 4.5], [7, 10], [5, 10], [5, 5], [4, 5], [4, 10], [0, 10]]), holes: [] }];
+    expect(engineArea(comb, -2.5, "chamfer")).toBeCloseTo(truthOf(comb, -2.5, "chamfer"), 6);   // correct
+    expect(engineArea(comb, -2.5, "sharp")).toBeCloseTo(truthOf(comb, -2.5, "sharp"), 6);       // correct
+    const truth = truthOf(comb, -2.5, "round");
+    expect(truth).toBeGreaterThan(91.7); expect(truth).toBeLessThan(91.8);
+    expect(() => offsetRegions(comb, -2.5, { corners: "round" }))
+      .toThrow(/could not chain offset boundary/);                                             // PARKED
   });
 });

@@ -382,6 +382,26 @@ growing a shape past the hole's own width.
   after an inward offset, see
   [shape2d-offset-waist-not-severed-round-join](#shape2d-offset-waist-not-severed-round-join).
 
+## shape2d-offset-winding-chain-incomplete
+
+- **Symptom:** `contour-winding: could not chain offset boundary (incomplete intersection
+  set)` thrown from `Shape2D.offset` (or `offsetPolygon`) — an inward offset on a shape
+  with several narrow webs or notches, most often with the default `corners: "round"`.
+- **Cause:** When a raw offset ring is tangled, the winding resolver
+  (`geometry/contour-winding.js`) splits every ring at its crossings and re-chains the
+  positive-winding pieces. This is its own detector for a crossing set it cannot close —
+  a kept piece with nowhere to continue. In practice it fires when a ROUND join's arcs land
+  at a severed web: the same shape under `corners: "sharp"` or `"chamfer"` resolves
+  correctly, which is the quickest way to confirm you have hit this rather than a genuinely
+  collapsing shape. Verified: a 38×10 four-notch comb at `delta` −2.5 throws under `round`
+  while `sharp` and `chamfer` return the exact 90.000 and 96.375, and the true round answer
+  is 91.744. Known limitation — see [KERNEL-CONTRACT.md "Offset: known
+  limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
+- **Fix:** No general fix yet. Retry the same offset with `corners: "sharp"` or
+  `"chamfer"`; failing that, reduce `|delta|` so the webs are not severed, or offset the
+  pieces separately and union them. The throw is loud and never silent, so a part that
+  builds is not affected by this.
+
 ## fillet-chamfer-radius-does-not-fit
 
 - **Symptom:** `filletProfile: corner <i> at (<x>, <y>): r=<r> does not fit; max ≈ <m>` (or `chamferProfile: … dist=<d> does not fit; max ≈ <m>`) thrown from `Shape2D.fillet`/`.chamfer` or the free `filletProfile`/`chamferProfile` functions.
