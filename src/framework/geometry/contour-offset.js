@@ -487,6 +487,140 @@ export function validateRawOffset(regions) {
 // since a fully-eroded hole ring is simply negative-winding everywhere and drops out on its
 // own; see test/contour-offset.test.js's "wide L-shaped hole (5-unit arms) at +3" test.)
 
+// A positive round offset erodes each source hole by a Euclidean disk. The hole survives
+// exactly when its source domain contains a disk of radius `delta`; asking that question
+// before constructing the raw offset avoids the inverted pockets that fully-eroded curved
+// counters can otherwise leave behind. This deliberately examines the SOURCE contour, not
+// the self-tangled raw output — see the removed-prune history above.
+const SOURCE_DISK_TOL = 5 * OFFSET_TOL;
+const SOURCE_DISK_FLAT_TOL = OFFSET_TOL / 2;
+const SOURCE_DISK_POINT_CAP = 16384;
+
+function pointSegmentDistance(p, a, b) {
+  const ab = sub(b, a);
+  const d2 = dot(ab, ab);
+  if (d2 <= 1e-18) return dist(p, a);
+  const t = Math.max(0, Math.min(1, dot(sub(p, a), ab) / d2));
+  return dist(p, add(a, scl(ab, t)));
+}
+
+// Flatten specifically for the disk proof with a distance-bound, rather than the display
+// sampler's angle-bound. Arc sagitta and the cubic control hull both give conservative
+// Hausdorff bounds. If a pathological curve exceeds the work cap, return null so its hole is
+// kept — resource exhaustion must not turn into silent topology loss.
+function sourceDiskRing(contour) {
+  if (Array.isArray(contour)) return dedupeRing(contour);
+  const ring = [[...contour.start]];
+  let capped = false;
+  const push = (p) => {
+    if (ring.length >= SOURCE_DISK_POINT_CAP) { capped = true; return; }
+    ring.push([p[0], p[1]]);
+  };
+  const cubic = (p0, c1, c2, p1, depth = 0) => {
+    if (capped) return;
+    const flatness = Math.max(pointSegmentDistance(c1, p0, p1), pointSegmentDistance(c2, p0, p1));
+    if (flatness <= SOURCE_DISK_FLAT_TOL) { push(p1); return; }
+    if (depth >= 18) { capped = true; return; }
+    const [left, right] = splitCubic(p0, c1, c2, p1, 0.5);
+    cubic(left.p0, left.c1, left.c2, left.p1, depth + 1);
+    cubic(right.p0, right.c1, right.c2, right.p1, depth + 1);
+  };
+
+  let from = contour.start;
+  for (const seg of contour.segments) {
+    if (seg.c1) cubic(from, seg.c1, seg.c2, seg.to);
+    else if (seg.via) {
+      const arc = arcCenterAndSweep(from, seg.via, seg.to);
+      if (!arc) push(seg.to);
+      else {
+        const maxStep = 2 * Math.acos(Math.max(-1, 1 - SOURCE_DISK_FLAT_TOL / arc.r));
+        const steps = Math.max(2, Math.ceil(Math.abs(arc.dA) / maxStep));
+        const a0 = Math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
+        if (!Number.isFinite(steps) || ring.length + steps > SOURCE_DISK_POINT_CAP) capped = true;
+        else for (let i = 1; i <= steps; i++) {
+          const a = a0 + arc.dA * (i / steps);
+          push([arc.center[0] + arc.r * Math.cos(a), arc.center[1] + arc.r * Math.sin(a)]);
+        }
+      }
+    } else push(seg.to);
+    if (capped) return null;
+    from = seg.to;
+  }
+  return dedupeRing(ring);
+}
+
+function signedRingDistance(p, ring) {
+  let d = Infinity;
+  for (let i = 0; i < ring.length; i++)
+    d = Math.min(d, pointSegmentDistance(p, ring[i], ring[(i + 1) % ring.length]));
+  return pointInRing(p, ring) ? d : -d;
+}
+
+const diskCell = (x, y, hx, hy, ring) => {
+  const d = signedRingDistance([x, y], ring);
+  return { x, y, hx, hy, d, max: d + Math.hypot(hx, hy) };
+};
+
+function heapPush(heap, cell) {
+  let i = heap.length;
+  heap.push(cell);
+  while (i > 0) {
+    const parent = (i - 1) >> 1;
+    if (heap[parent].max >= cell.max) break;
+    heap[i] = heap[parent];
+    i = parent;
+  }
+  heap[i] = cell;
+}
+
+function heapPop(heap) {
+  const top = heap[0];
+  const last = heap.pop();
+  if (!heap.length) return top;
+  let i = 0;
+  while (true) {
+    const left = i * 2 + 1;
+    if (left >= heap.length) break;
+    const right = left + 1;
+    const child = right < heap.length && heap[right].max > heap[left].max ? right : left;
+    if (heap[child].max <= last.max) break;
+    heap[i] = heap[child];
+    i = child;
+  }
+  heap[i] = last;
+  return top;
+}
+
+export function _sourceHoleContainsDisk(contour, radius, tolerance = SOURCE_DISK_TOL) {
+  if (radius <= 0) return true;
+  const ring = sourceDiskRing(closeContourGap(contour));
+  if (!ring) return true;
+  if (ring.length < 3) return false;
+  const [x0, y0, x1, y1] = ringBox(ring);
+  const width = x1 - x0, height = y1 - y0;
+  if (width <= 0 || height <= 0) return false;
+
+  // Keep a near-threshold hole rather than silently erase real material because of curve
+  // tessellation or floating-point error. A false positive merely leaves cleanup its former
+  // input; a false negative permanently deletes the counter.
+  const threshold = Math.max(0, radius - tolerance);
+  if (Math.min(width, height) / 2 < threshold) return false;
+
+  const heap = [];
+  heapPush(heap, diskCell((x0 + x1) / 2, (y0 + y1) / 2, width / 2, height / 2, ring));
+  while (heap.length) {
+    const cell = heapPop(heap); // greatest remaining upper bound
+    if (cell.d >= threshold) return true;
+    if (cell.max < threshold) return false;
+    if (Math.hypot(cell.hx, cell.hy) <= tolerance) return true;
+
+    const hx = cell.hx / 2, hy = cell.hy / 2;
+    for (const dx of [-hx, hx]) for (const dy of [-hy, hy])
+      heapPush(heap, diskCell(cell.x + dx, cell.y + dy, hx, hy, ring));
+  }
+  return false;
+}
+
 // Raw per-ring offset of a whole region list, plus whether any surviving ring came back
 // approximated. Split out of offsetRegions so the fallback ladder below can re-run it at a
 // perturbed delta without recursing through the public entry point.
@@ -500,7 +634,12 @@ function rawOffset(regions, delta, corners) {
     const o = _offsetContour(closeContourGap(rg.outer), delta, corners);
     dirty = dirty || o.dirty;
     if (!o.contour) continue;
-    const hs = rg.holes.map((h) => _offsetContour(closeContourGap(h), delta, corners));
+    const hs = rg.holes.map((h) => {
+      const hole = closeContourGap(h);
+      if (delta > 0 && corners === "round" && !_sourceHoleContainsDisk(hole, delta))
+        return { contour: null, dirty: false };
+      return _offsetContour(hole, delta, corners);
+    });
     // Only a SURVIVING hole's dirtiness can dirty the result. A hole that collapsed
     // (contour === null) always reports dirty — that is how _offsetContour signals the drop —
     // but the drop itself is a clean operation: the hole is simply gone and nothing else about

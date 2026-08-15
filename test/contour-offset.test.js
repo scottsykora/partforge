@@ -1,6 +1,7 @@
 // Pure unit tests for the native contour offset engine — no WASM, no kernel boot.
 import { describe, expect, test } from "vitest";
-import { _offsetSegment, _rawOffset, _ladderRungs } from "../src/framework/geometry/contour-offset.js";
+import { _offsetSegment, _rawOffset, _ladderRungs, _sourceHoleContainsDisk }
+  from "../src/framework/geometry/contour-offset.js";
 import { caseFor } from "./helpers/offset-corpus.js";
 
 const close = (a, b, tol = 1e-9) => expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThanOrEqual(tol);
@@ -509,6 +510,52 @@ describe("offsetRegions — curved holes must survive outward offsets (Part 2 re
     const out = offsetRegions(regions, 0.3, { corners: "round" });
     expect(out.reduce((a, r) => a + r.holes.length, 0)).toBeGreaterThan(0);
     expect(profileArea(out)).toBeCloseTo(42.843, 1);
+  });
+});
+
+describe("offsetRegions — source-hole inradius collapse", () => {
+  test("Roboto 'o' keeps its counter at +2 and loses it at +3", async () => {
+    const opentype = (await import("opentype.js")).default;
+    const { textGlyphs } = await import("../src/framework/geometry/text2d.js");
+    const { DEFAULT_FONT_BYTES } = await import("../src/framework/geometry/fonts/default-font.js");
+    const bytes = DEFAULT_FONT_BYTES;
+    const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    const regions = textGlyphs(font, "o", { size: 10 });
+
+    const holesAt = (delta) => offsetRegions(regions, delta, { corners: "round" })
+      .flatMap((rg) => rg.holes)
+      .filter((hole) => Math.abs(area(hole)) > 1e-3)
+      .length;
+    expect(holesAt(2)).toBe(1);
+    expect(holesAt(3)).toBe(0);
+  });
+
+  test("large round dilation removes collapsed glyph counters, including 'Scott'", async () => {
+    const opentype = (await import("opentype.js")).default;
+    const { textGlyphs } = await import("../src/framework/geometry/text2d.js");
+    const { DEFAULT_FONT_BYTES } = await import("../src/framework/geometry/fonts/default-font.js");
+    const bytes = DEFAULT_FONT_BYTES;
+    const font = opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    const significant = (contour) => Math.abs(area(contour)) > 1e-3;
+
+    for (const text of ["e", "a", "p", "Scott"]) {
+      const out = offsetRegions(textGlyphs(font, text, { size: 10 }), 3, { corners: "round" });
+      expect(out.filter((rg) => significant(rg.outer))).toHaveLength(1);
+      expect(out.flatMap((rg) => rg.holes).filter(significant)).toHaveLength(0);
+    }
+  });
+
+  test("a near-threshold circle is kept conservatively", () => {
+    const hole = {
+      start: [5, 0],
+      segments: [
+        { via: [0, -5], to: [-5, 0] },
+        { via: [0, 5], to: [5, 0] },
+      ],
+    };
+    expect(_sourceHoleContainsDisk(hole, 4.99)).toBe(true);
+    expect(_sourceHoleContainsDisk(hole, 5.004)).toBe(true);
+    expect(_sourceHoleContainsDisk(hole, 5.02)).toBe(false);
   });
 });
 
