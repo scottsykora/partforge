@@ -48,15 +48,54 @@ function boundaryDist(a, b) {
 }
 const hausdorff = (a, b) => Math.max(boundaryDist(a, b), boundaryDist(b, a));
 
-// Corpus: name, regions (contour IR), deltas to test. Polygonal + curved cases.
+// Corpus: name, regions (contour IR), deltas to test, and optionally which corner styles
+// (default: all three — see the acute entries below for why some cases restrict it).
+// Polygonal + curved cases.
 const sq = (s) => ({ outer: { start: [0, 0], segments: [{ to: [s, 0] }, { to: [s, s] }, { to: [0, s] }, { to: [0, 0] }] }, holes: [] });
 const circ = (r) => ({ outer: { start: [r, 0], segments: [{ via: [0, r], to: [-r, 0] }, { via: [0, -r], to: [r, 0] }] }, holes: [] });
 const Lsh = { outer: { start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 10] }, { to: [5, 10] }, { to: [5, 5] }, { to: [0, 5] }, { to: [0, 0] }] }, holes: [] };
+// 30×10 dumbbell — two 10×10 lobes joined by a 2-wide waist. At delta −2 the waist pinches
+// shut and the shape must SPLIT into two 6×6 squares (72). Every failure mode this branch's
+// review found lives in that split, so it belongs in the honest-agreement corpus rather than
+// only in the pure unit tests.
+const dumb = (dx) => ({ outer: { start: [dx, 0], segments: [
+  { to: [dx + 10, 0] }, { to: [dx + 10, 4] }, { to: [dx + 20, 4] }, { to: [dx + 20, 0] }, { to: [dx + 30, 0] },
+  { to: [dx + 30, 10] }, { to: [dx + 20, 10] }, { to: [dx + 20, 6] }, { to: [dx + 10, 6] }, { to: [dx + 10, 10] },
+  { to: [dx, 10] }, { to: [dx, 0] }] }, holes: [] });
+// Acute corners: an 11-point star (alternating radii 10/4) whose points are ~33° interior.
+const acuteStar = (() => {
+  const pts = [];
+  for (let i = 0; i < 11; i++) { const r = i % 2 === 0 ? 10 : 4, a = (2 * Math.PI * i) / 11; pts.push([r * Math.cos(a), r * Math.sin(a)]); }
+  if (ringArea(pts) < 0) pts.reverse();
+  return { outer: { start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] }, holes: [] };
+})();
 const CORPUS = [
   { name: "square", regions: [sq(10)], deltas: [1, -1, 2.5], curved: false },
   { name: "circle", regions: [circ(5)], deltas: [1, -2], curved: true },
   { name: "L-shape", regions: [Lsh], deltas: [1, -1.5], curved: false },
   { name: "square+hole", regions: [{ ...sq(10), holes: [{ start: [4, 4], segments: [{ to: [4, 6] }, { to: [6, 6] }, { to: [6, 4] }, { to: [4, 4] }] }] }], deltas: [0.5, -0.5], curved: false },
+  { name: "dumbbell", regions: [dumb(0)], deltas: [1], curved: false },
+  // The pinch itself: sharp only. At delta −2 with a ROUND or CHAMFER join this engine is
+  // known to diverge badly from Clipper2 (97.258 and 96.000 against 72.354 and 74.000) —
+  // splitAtDuplicateEdges is lines-only, so a join that introduces an arc or a bevel chord at
+  // the waist leaves nothing for it to cut. That is a real, pre-existing defect, parked as a
+  // characterization test below rather than smuggled past this corpus with a wide tolerance.
+  { name: "dumbbell (pinched waist)", regions: [dumb(0)], deltas: [-2], corners: ["sharp"], curved: false },
+  // Two disjoint regions in ONE offset call — the multi-region path, which the corpus
+  // otherwise never exercised (every case above is a single region).
+  { name: "two disjoint squares", regions: [sq(10), { outer: { start: [20, 0], segments: [{ to: [34, 0] }, { to: [34, 10] }, { to: [20, 10] }, { to: [20, 0] }] }, holes: [] }], deltas: [1, -1], curved: false },
+  // Acute corners on the TRIM side (inward): all three styles agree with Clipper2 exactly,
+  // because an inward offset of a convex corner trims rather than joining, so no join policy
+  // is involved and there is nothing for the miter limit to bite on.
+  { name: "acute 11-point star (inward)", regions: [acuteStar], deltas: [-1], curved: false },
+  // Acute corners on the JOIN side (outward): ROUND only. This is where the v2 migration note
+  // (docs/KERNEL-CONTRACT.md § Versioning) applies — at +2 native gives sharp 282.158 and
+  // chamfer 278.389 where Clipper2 gives 300.671 and 288.138, and that divergence is CORRECT
+  // and deliberate: native applies miter limit 2 with a bevel fallback (matching this repo's
+  // own offsetPolygon to the digit, and OCCT's `bevel` join for chamfer), where Clipper2
+  // squares off past its limit and approximates a bevel with two chords. Asserting agreement
+  // for sharp/chamfer here would be asserting Clipper2's join policy, not offset correctness.
+  { name: "acute 11-point star (outward)", regions: [acuteStar], deltas: [2], corners: ["round"], curved: false },
 ];
 const AREA_RTOL = 0.005;                       // 0.5 %
 const HAUS_TOL = (curved) => (curved ? 2e-2 : 5e-3);  // curved: absorb the oracle's own faceting
@@ -73,13 +112,20 @@ beforeAll(async () => {
 // manifold-backend.js's own chamfer mapping exactly (a 4-segment "round" arc IS a
 // 45-degree-chord bevel, not a curve).
 const JOIN = { round: ["Round", SEGS], sharp: ["Miter", SEGS], chamfer: ["Round", 4] };
-for (const { name, regions, deltas, curved } of CORPUS) {
-  for (const delta of deltas) for (const corners of ["round", "sharp", "chamfer"]) {
+// The oracle itself, callable from the parked block below so the "true" values there are
+// DERIVED from Clipper2 in-file rather than hardcoded — this file already boots the WASM that
+// knows them, so a hardcoded 348/408/928.274 is a copy that can silently go stale.
+const clipperRings = (regions, delta, corners) => {
+  const [joinType, circularSegments] = JOIN[corners];
+  return CrossSection.ofPolygons(rings(regions), "EvenOdd").offset(delta, joinType, 2, circularSegments).toPolygons();
+};
+const clipperArea = (regions, delta, corners) => Math.abs(totalArea(clipperRings(regions, delta, corners)));
+
+for (const { name, regions, deltas, curved, corners: styles = ["round", "sharp", "chamfer"] } of CORPUS) {
+  for (const delta of deltas) for (const corners of styles) {
     test(`${name} delta=${delta} ${corners} matches Clipper2 within tolerance`, () => {
       const native = rings(offsetRegions(regions, delta, { corners }));
-      const cs = CrossSection.ofPolygons(rings(regions), "EvenOdd");
-      const [joinType, circularSegments] = JOIN[corners];
-      const oracle = cs.offset(delta, joinType, 2, circularSegments).toPolygons();
+      const oracle = clipperRings(regions, delta, corners);
       expect(Math.abs(totalArea(native) - totalArea(oracle)) / Math.abs(totalArea(oracle))).toBeLessThan(AREA_RTOL);
       expect(hausdorff(native, oracle)).toBeLessThan(HAUS_TOL(curved));
     });
@@ -96,6 +142,52 @@ for (const { name, regions, deltas, curved } of CORPUS) {
 // the band, and a fix that makes it correct is expected to break the band too —
 // at which point the case should be deleted from here and promoted to the main
 // corpus above.
+// Formerly parked as divergences, now FIXED and asserted as correctness. Both used to be
+// topologically invalid output — two hole rings overlapping each other, and a hole ring
+// escaping its own outer — which is not merely an accuracy gap: pushed through toRegions()
+// and CrossSection.ofPolygons(…, "EvenOdd"), which is exactly what extrude does, the
+// doubly-covered lens came back as SOLID material (merge extruded to 360 mm² against a truth
+// of 348, breakthrough to 436 against 408). Both were regressions against 0.57 on Manifold,
+// where Clipper2 returned 348.000 and 408.000 exactly. The fix is in contour-offset.js:
+// ringsCross now also tests segsOverlap, hole containment tests the whole hole ring rather
+// than one point of it, and the cleanup stage unites the outers and SUBTRACTS the united hole
+// rings instead of self-uniting everything under one even-odd compound.
+describe("formerly-parked divergences, now correct", () => {
+  const plate40 = { start: [0, 0], segments: [{ to: [40, 0] }, { to: [40, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
+  const netArea = (out) => out.reduce((a, rg) => a + Math.abs(ringArea(tessellateContour(rg.outer, SEGS)))
+    - rg.holes.reduce((h, hole) => h + Math.abs(ringArea(tessellateContour(hole, SEGS))), 0), 0);
+
+  test("merge: two nearby holes fuse into one hole, matching Clipper2 exactly", () => {
+    // Two 6×8 holes (CW) 3 mm apart horizontally in a 40×20 plate, delta −2 sharp.
+    const holeA = { start: [10, 6], segments: [{ to: [10, 14] }, { to: [16, 14] }, { to: [16, 6] }, { to: [10, 6] }] };
+    const holeB = { start: [19, 6], segments: [{ to: [19, 14] }, { to: [25, 14] }, { to: [25, 6] }, { to: [19, 6] }] };
+    const src = [{ outer: plate40, holes: [holeA, holeB] }];
+    const truth = clipperArea(src, -2, "sharp");
+    expect(truth).toBeCloseTo(348, 6);                      // sanity on the derived oracle value
+    const out = offsetRegions(src, -2, { corners: "sharp" });
+    expect(out.length).toBe(1);
+    expect(out[0].holes.length).toBe(1);                    // ONE merged hole, not two overlapping rings
+    expect(netArea(out)).toBeCloseTo(truth, 6);
+    // and the result is topologically clean: the hole is fully inside its outer
+    const outerRing = tessellateContour(out[0].outer, SEGS);
+    expect(tessellateContour(out[0].holes[0], SEGS).every((p) => pointInRing(p, outerRing))).toBe(true);
+  });
+
+  test("breakthrough: a hole near the edge is clipped by the eroded outer, matching Clipper2 exactly", () => {
+    // 10×10 hole (CW) 2 mm above the plate's bottom edge, delta −2 sharp.
+    const hole = { start: [15, 2], segments: [{ to: [15, 12] }, { to: [25, 12] }, { to: [25, 2] }, { to: [15, 2] }] };
+    const src = [{ outer: plate40, holes: [hole] }];
+    const truth = clipperArea(src, -2, "sharp");
+    expect(truth).toBeCloseTo(408, 6);                      // sanity on the derived oracle value
+    const out = offsetRegions(src, -2, { corners: "sharp" });
+    expect(out.length).toBe(1);
+    // the grown hole reaches past the eroded bottom edge, so it becomes a notch in the
+    // outline rather than a hole — no hole ring survives, and none escapes its outer
+    expect(out[0].holes.length).toBe(0);
+    expect(netArea(out)).toBeCloseTo(truth, 6);
+  });
+});
+
 describe("known divergences (parked)", () => {
   test("wide L-pocket: delta closes a 5-wide-arm pocket but native leaves a residual", () => {
     // 30x20 plate with a wide L-shaped pocket (5-unit arms, the same shape family as
@@ -115,94 +207,73 @@ describe("known divergences (parked)", () => {
     // y:[6,11] x:[10,21]; reflex vertex at (15,11). CW (hole) winding.
     const pocket = { start: [10, 6], segments: [
       { to: [10, 15] }, { to: [15, 15] }, { to: [15, 11] }, { to: [21, 11] }, { to: [21, 6] }, { to: [10, 6] }] };
-    const region = { outer: plate, holes: [pocket] };
-    const out = offsetRegions([region], 3, { corners: "round" });
+    const src = [{ outer: plate, holes: [pocket] }];
+    // Truth, DERIVED from Clipper2 in-file rather than hardcoded: 928.229 at this file's
+    // SEGS=64 faceting, converging on the closed-form 928.274 as segments rise. Clipper2 loses
+    // the pocket entirely (0 holes), which is the correct answer.
+    const truth = clipperArea(src, 3, "round");
+    expect(truth).toBeCloseTo(928.23, 1);
+    const out = offsetRegions(src, 3, { corners: "round" });
     const holeCount = out.reduce((n, rg) => n + rg.holes.length, 0);
     const area = out.reduce((a, rg) => a + Math.abs(ringArea(tessellateContour(rg.outer, SEGS)))
       - rg.holes.reduce((h, hole) => h + Math.abs(ringArea(tessellateContour(hole, SEGS))), 0), 0);
-    // True: holeCount === 0, area === 928.274. Native currently leaves the hole
-    // ring in place (residual, unclosed pocket; measured area ~921.19) — assert the
-    // CURRENT (measured) behavior in a tight band around 921.19, NOT anchored on the
-    // true 928.274, so a drift toward the true value (which would mean the defect got
-    // smaller without anyone noticing/fixing it deliberately) breaks this test instead
-    // of silently passing. This case has no topological backstop (unlike cases 2-3
-    // below, which assert overlap/non-containment explicitly) — holeCount > 0 alone
-    // doesn't pin the magnitude, so this band is doing the real characterization work.
+    // Native currently leaves the hole ring in place (residual, unclosed pocket; measured area
+    // 921.212) — assert the CURRENT (measured) behavior in a tight band, NOT anchored on the
+    // truth above, so a drift toward the true value (which would mean the defect got smaller
+    // without anyone noticing/fixing it deliberately) breaks this test instead of silently
+    // passing. holeCount > 0 alone doesn't pin the magnitude, so the band does the real work.
     expect(holeCount).toBeGreaterThan(0);
-    expect(area).toBeGreaterThan(921.19 - 0.5);
-    expect(area).toBeLessThan(921.19 + 0.5);
+    expect(area).toBeGreaterThan(921.1911 - 0.001);
+    expect(area).toBeLessThan(921.1911 + 0.001);
   });
 
-  test("merge: two nearby holes overlap into an invalid double-ring, not one merged hole", () => {
-    // 40x20 plate with two 6x8 holes 3mm apart, delta -2 sharp. True merged area
-    // is 348 (round-corner truth 352.68) once the two holes fuse into one. Native
-    // instead returns TWO separate, OVERLAPPING hole rings — a topologically
-    // invalid result (rings intersect, not merged). Root cause: ringsCross (used
-    // by validateRawOffset) never calls segsOverlap, so a raw pair of holes whose
-    // boundaries cross via collinear overlap (not a transversal crossing) passes
-    // validation uncaught — see contour-offset.js ~283-287.
-    const plate = { start: [0, 0], segments: [{ to: [40, 0] }, { to: [40, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
-    // Two 6x8 holes (CW), 3mm apart horizontally: first x in [10,16], second x in [19,25], both y in [6,14].
-    const holeA = { start: [10, 6], segments: [{ to: [10, 14] }, { to: [16, 14] }, { to: [16, 6] }, { to: [10, 6] }] };
-    const holeB = { start: [19, 6], segments: [{ to: [19, 14] }, { to: [25, 14] }, { to: [25, 6] }, { to: [19, 6] }] };
-    const region = { outer: plate, holes: [holeA, holeB] };
-    const out = offsetRegions([region], -2, { corners: "sharp" });
-    const rg = out[0];
-    // Pin the defect as a defect: the two grown holes overlap rather than having
-    // merged into one simple ring.
-    expect(rg.holes.length).toBe(2);
-    const ringsOf = rg.holes.map((h) => tessellateContour(h, SEGS));
-    const overlaps = (a, b) => a.some((p) => pointInRing(p, b)) || b.some((p) => pointInRing(p, a));
-    expect(overlaps(ringsOf[0], ringsOf[1])).toBe(true);
-    // Loose characterization band on the (topologically-invalid, so not directly
-    // comparable to the true merged value) net area native currently reports.
-    const area = Math.abs(ringArea(tessellateContour(rg.outer, SEGS)))
-      - rg.holes.reduce((h, hole) => h + Math.abs(ringArea(tessellateContour(hole, SEGS))), 0);
-    expect(area).toBeGreaterThan(300);
-    expect(area).toBeLessThan(348 - 0.5);
-  });
-
-  test("breakthrough: a hole near the edge stays unclipped by the eroded outer", () => {
-    // 40x20 plate with a 10x10 hole 2mm from the bottom edge, delta -2 sharp.
-    // True area (hole breaks through the eroded outer's bottom edge) is 408
-    // (round-corner truth 409.72). Native keeps the full grown hole, unclipped by
-    // the eroded outer boundary — a topologically invalid result (hole ring not
-    // contained in its outer). Root cause: validateRawOffset's hole-containment
-    // check only tests ONE point (h[0]) of the hole ring against the outer — see
-    // contour-offset.js ~300 (pointInRing(h[0], rg.outer)) — which is satisfied
-    // even when most of the hole ring has escaped outside the eroded outer.
-    const plate = { start: [0, 0], segments: [{ to: [40, 0] }, { to: [40, 20] }, { to: [0, 20] }, { to: [0, 0] }] };
-    // 10x10 hole (CW), bottom edge 2mm above the plate's bottom edge (y in [2,12]).
-    const hole = { start: [15, 2], segments: [{ to: [15, 12] }, { to: [25, 12] }, { to: [25, 2] }, { to: [15, 2] }] };
-    const region = { outer: plate, holes: [hole] };
-    const out = offsetRegions([region], -2, { corners: "sharp" });
-    const rg = out[0];
-    const outerRing = tessellateContour(rg.outer, SEGS);
-    expect(rg.holes.length).toBe(1);
-    const holeRing = tessellateContour(rg.holes[0], SEGS);
-    // Pin the defect: the hole ring is NOT fully contained in the outer (it
-    // breaks through what should be the eroded bottom edge).
-    expect(holeRing.every((p) => pointInRing(p, outerRing))).toBe(false);
-    const area = Math.abs(ringArea(outerRing)) - Math.abs(ringArea(holeRing));
-    expect(area).toBeGreaterThan(300);
-    expect(area).toBeLessThan(408 - 0.5);
+  test("pinched waist with a round join: the split never happens, leaving 34% too much", () => {
+    // The same 30x10 dumbbell the honest corpus offsets at -2 SHARP (where it splits into two
+    // 6x6 squares and matches Clipper2 exactly), offset at -2 ROUND instead. The recovery that
+    // severs a waist pinched shut by the offset (splitAtDuplicateEdges) only handles rings made
+    // entirely of straight lines — a round or chamfer join inserts an arc or a bevel chord at
+    // the waist, so there is no pair of duplicate collinear edges left to cut and the ring
+    // survives as one connected, over-solid blob. Pre-existing (measured identical on the
+    // pre-fix commit b7dd0a7), and a different root cause from the blockers fixed above, so
+    // it is characterized here rather than chased.
+    const src = [dumb(0)];
+    const truth = clipperArea(src, -2, "round");
+    expect(truth).toBeCloseTo(72.3537, 3);                  // derived, not hardcoded
+    const out = offsetRegions(src, -2, { corners: "round" });
+    const areas = out.map((rg) => Math.abs(ringArea(tessellateContour(rg.outer, SEGS))));
+    const area = areas.reduce((a, b) => a + b, 0);
+    // Truth is two lobes of ~36.18 each. Native returns THREE regions: the two lobes plus a
+    // spurious ~24.91 blob where the waist should have been cut away.
+    expect(out.length).toBe(3);
+    expect(areas.filter((a) => a > 30).length).toBe(2);      // the two real lobes
+    // Tight band on the MEASURED value (97.25812), not on truth: drift in either direction
+    // breaks this, including an accidental partial improvement nobody noticed.
+    expect(area).toBeGreaterThan(97.25812 - 0.001);
+    expect(area).toBeLessThan(97.25812 + 0.001);
   });
 
   test("clustered reflex corners: chamfer offset over-resolves a 9-gon", () => {
-    // 9-gon with several clustered reflex corners, chamfer offset delta -2.79.
-    // True eroded area is 2.76 (a thin sliver); native resolves to roughly 7.71 —
-    // several times too much surviving area. Root cause: resolveSelfRegions
-    // (paper-bridge.js) doesn't correctly untangle the self-intersections a
-    // chamfer offset produces when several reflex corners sit close together —
-    // see contour-offset.js's Part-1-deletion-guard comment (~193-213) for the
-    // same 9-gon used as the deletion-guard's own regression repro.
+    // 9-gon with several clustered reflex corners, chamfer offset delta -2.79. Native resolves
+    // to roughly 7.71 — several times too much surviving area. Root cause: resolveSelfRegions
+    // (paper-bridge.js) doesn't correctly untangle the self-intersections a chamfer offset
+    // produces when several reflex corners sit close together — see contour-offset.js's
+    // Part-1-deletion-guard comment for the same 9-gon used as the deletion-guard's own
+    // regression repro.
     const pts = [[19.49, 10], [12.33, 11.95], [11.2, 16.81], [8.87, 11.96], [0.93, 13.3], [3.45, 7.62], [8.52, 7.44], [10.92, 4.78], [15.09, 5.73]];
     const nonagon = { start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] };
-    const out = offsetRegions([{ outer: nonagon, holes: [] }], -2.79, { corners: "chamfer" });
+    const src = [{ outer: nonagon, holes: [] }];
+    // Truth, derived rather than hardcoded: 3.5538 under Clipper2's own chamfer mapping
+    // (its round join at circularSegments=4). Clipper2's ROUND join puts it at 2.7652, which
+    // is what the independent grid search reported as ~2.76 — either way native's 7.71 is
+    // roughly 2-3x too much surviving area.
+    const truth = clipperArea(src, -2.79, "chamfer");
+    expect(truth).toBeCloseTo(3.5538, 3);
+    const out = offsetRegions(src, -2.79, { corners: "chamfer" });
     const area = out.reduce((a, rg) => a + Math.abs(ringArea(tessellateContour(rg.outer, SEGS))), 0);
-    // True: 2.76. Native currently resolves to ~7.71 — characterize the current
-    // (over-inclusive) behavior in a loose band around that measured value.
-    expect(area).toBeGreaterThan(2.76 + 0.5);
-    expect(area).toBeLessThan(9);
+    // Anchored on the MEASURED value (7.70938) within a tight epsilon, NOT on a loose
+    // (truth, 9) band that a large silent drift could slide around inside. A change in
+    // either direction — including a partial fix — breaks this and gets looked at.
+    expect(area).toBeGreaterThan(7.70938 - 0.01);
+    expect(area).toBeLessThan(7.70938 + 0.01);
   });
 });

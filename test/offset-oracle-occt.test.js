@@ -39,17 +39,55 @@ function boundaryDist(a, b) {
 }
 const hausdorff = (a, b) => Math.max(boundaryDist(a, b), boundaryDist(b, a));
 
-// Corpus: name, regions (contour IR), deltas to test. Polygonal + curved cases.
-// (Identical to offset-oracle-manifold.test.js's corpus — duplicated per Task 8's
-// brief, since the two oracle files must not share a module that boots anything.)
+// Corpus: name, regions (contour IR), deltas to test, and optionally which corner styles
+// (default: all three). Polygonal + curved cases. (Mirrors offset-oracle-manifold.test.js's
+// corpus — duplicated per Task 8's brief, since the two oracle files must not share a module
+// that boots anything. The corner-style restrictions differ between the two files, though:
+// see the acute entries below.)
 const sq = (s) => ({ outer: { start: [0, 0], segments: [{ to: [s, 0] }, { to: [s, s] }, { to: [0, s] }, { to: [0, 0] }] }, holes: [] });
 const circ = (r) => ({ outer: { start: [r, 0], segments: [{ via: [0, r], to: [-r, 0] }, { via: [0, -r], to: [r, 0] }] }, holes: [] });
 const Lsh = { outer: { start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 10] }, { to: [5, 10] }, { to: [5, 5] }, { to: [0, 5] }, { to: [0, 0] }] }, holes: [] };
+// 30x10 dumbbell — two 10x10 lobes joined by a 2-wide waist. At delta -2 the waist pinches
+// shut and the shape must SPLIT into two 6x6 squares (72), the failure mode this branch's
+// review found most defects in.
+const dumb = { outer: { start: [0, 0], segments: [
+  { to: [10, 0] }, { to: [10, 4] }, { to: [20, 4] }, { to: [20, 0] }, { to: [30, 0] },
+  { to: [30, 10] }, { to: [20, 10] }, { to: [20, 6] }, { to: [10, 6] }, { to: [10, 10] },
+  { to: [0, 10] }, { to: [0, 0] }] }, holes: [] };
+// Acute corners: an 11-point star (alternating radii 10/4), points ~33deg interior.
+const acuteStar = (() => {
+  const pts = [];
+  for (let i = 0; i < 11; i++) { const r = i % 2 === 0 ? 10 : 4, a = (2 * Math.PI * i) / 11; pts.push([r * Math.cos(a), r * Math.sin(a)]); }
+  if (ringArea(pts) < 0) pts.reverse();
+  return { outer: { start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] }, holes: [] };
+})();
 const CORPUS = [
   { name: "square", regions: [sq(10)], deltas: [1, -1, 2.5], curved: false },
   { name: "circle", regions: [circ(5)], deltas: [1, -2], curved: true },
   { name: "L-shape", regions: [Lsh], deltas: [1, -1.5], curved: false },
   { name: "square+hole", regions: [{ ...sq(10), holes: [{ start: [4, 4], segments: [{ to: [4, 6] }, { to: [6, 6] }, { to: [6, 4] }, { to: [4, 4] }] }] }], deltas: [0.5, -0.5], curved: false },
+  { name: "dumbbell", regions: [dumb], deltas: [1], curved: false },
+  // NOT included here: the dumbbell at delta -2, where the waist pinches shut and the shape
+  // must split in two. This oracle cannot answer it — replicad's Drawing.offset returns an
+  // empty result (no innerShape) for the split, i.e. the deleted OCCT production route would
+  // have thrown "offset collapses the shape" on a shape that does not collapse. Native gets it
+  // exactly right (72.000, two regions), cross-checked against Clipper2 in
+  // offset-oracle-manifold.test.js, which is the right oracle for this case.
+  // Two disjoint regions in ONE offset call — the multi-region path.
+  { name: "two disjoint squares", regions: [sq(10), { outer: { start: [20, 0], segments: [{ to: [34, 0] }, { to: [34, 10] }, { to: [20, 10] }, { to: [20, 0] }] }, holes: [] }], deltas: [1, -1], curved: false },
+  // Acute corners inward: all three agree (an inward offset of a convex corner trims rather
+  // than joining, so no join policy — and no miter limit — is involved).
+  { name: "acute 11-point star (inward)", regions: [acuteStar], deltas: [-1], curved: false },
+  // Acute corners outward: round + CHAMFER, but NOT sharp. Note this is the mirror image of
+  // the Manifold file's restriction, and the reason is the join policy each oracle implements:
+  // replicad's "bevel" IS native's chamfer semantics exactly (both 278.389 on this star at +2),
+  // whereas Clipper2 approximates a bevel with two chords and lands on 288.138. OCCT's miter,
+  // by contrast, is UNBOUNDED — it lets an acute spike shoot arbitrarily far past the corner
+  // (326.534 here) where native applies miter limit 2 and falls back to a bevel (282.158,
+  // matching this repo's own offsetPolygon to the digit). That divergence is deliberate and
+  // documented in docs/KERNEL-CONTRACT.md's v1 -> v2 migration note; asserting agreement on
+  // sharp here would be asserting OCCT's limit policy, not offset correctness.
+  { name: "acute 11-point star (outward)", regions: [acuteStar], deltas: [2], corners: ["round", "chamfer"], curved: false },
 ];
 const AREA_RTOL = 0.005;                       // 0.5 %
 const HAUS_TOL = (curved) => (curved ? 2e-2 : 5e-3);  // curved: absorb the oracle's own faceting
@@ -130,8 +168,8 @@ const oracleRings = (regions, delta, lineJoinType) => {
 // the same way: `{ round: "round", chamfer: "bevel", sharp: "miter" }`. So unlike
 // the Manifold file, there's no semantic gap to exclude here — chamfer is included.
 const JOIN = { round: "round", sharp: "miter", chamfer: "bevel" };
-for (const { name, regions, deltas, curved } of CORPUS) {
-  for (const delta of deltas) for (const corners of ["round", "sharp", "chamfer"]) {
+for (const { name, regions, deltas, curved, corners: styles = ["round", "sharp", "chamfer"] } of CORPUS) {
+  for (const delta of deltas) for (const corners of styles) {
     test(`${name} delta=${delta} ${corners} matches BRepOffsetAPI within tolerance`, () => {
       const native = rings(offsetRegions(regions, delta, { corners }));
       const oracle = oracleRings(regions, delta, JOIN[corners]);
