@@ -413,90 +413,61 @@ describe("known divergences (parked) — Task 7C", () => {
     }
   });
 
-  // 3. The residual of what used to be a much wider hard failure. Task 7C parked the four-notch
-  //    comb at −2.5/round as a throw; Task 7D's fallback ladder in offsetRegions resolves it (it
-  //    has moved up into the corpus — see "four-notch comb at −2.5" below this block). What the
-  //    ladder does NOT reach is a ~0.0045 mm wide residual band of delta, −2.4955 … −2.4995,
-  //    where every rung fails: the raw arrangement there is not merely degenerate but
-  //    MISCLASSIFIED — the piece leaving the left-hand pinch vertex probes as winding 0 and is
-  //    dropped, so the boundary has a genuine dead end rather than a missing crossing, and
-  //    perturbing delta, the merge radius or the curve representation all leave it dead. That is
-  //    a root-cause fix in _classify, not a fallback, and is deliberately out of 7D's scope.
-  //
-  //    This case is also the counter-example to the "chain failures are a ROUND-join problem"
-  //    reading that classes 1 and 3 used to be written up under: CHAMFER fails across exactly
-  //    the same band of delta, on a rectilinear shape whose chamfered offset contains no arcs
-  //    at all. Sharp survives THIS one — but not the two-notch plate below it, which is the
-  //    case that retired the "sharp has never produced this throw" workaround for good.
-  test("four-notch comb at −2.4975: a residual band of delta still fails, under round AND chamfer", () => {
+  // 3. The residual of what used to be a wider chain-incomplete failure. The fixed-distance
+  //    classifier probe crossed the narrow cell beside the left pinch, read wLeft=0/wRight=-1,
+  //    and dropped a real boundary piece. Round and chamfer then dead-ended in _chain; sharp
+  //    happened to close after silently dropping a genuine ~0.01 mm² second component. The
+  //    adaptive probe chooses a less-contested point on the same piece and all three styles now
+  //    agree with independently-derived topology and area.
+  test("four-notch comb at −2.4975: all corner styles retain the oracle topology at the pinch", () => {
     const comb = [{ outer: ring([[0, 0], [38, 0], [38, 10], [15, 10], [15, 5], [12, 5], [12, 10],
       [9, 10], [9, 4.5], [7, 4.5], [7, 10], [5, 10], [5, 5], [4, 5], [4, 10], [0, 10]]), holes: [] }];
-    // sharp builds here and lands 0.041 mm² from the oracle. That is NOT a miter-policy
-    // disagreement, which is what this comment used to say: a join-policy difference would
-    // show at every delta, and sharp is float-exact (to 1e-6) at −2.49, −2.495, −2.5005 and
-    // −2.505 either side of the band. Inside the band it DROPS A REGION — at −2.4975 the
-    // oracle has two pieces, 90.145025 and 0.010025, and the engine returns ONE of 90.114391,
-    // so 0.010 of the 0.041 is the lost piece and the other 0.031 is the surviving piece
-    // coming back short. Same failure family as the round/chamfer throws beside it (a piece
-    // misclassified at a pinch vertex), one step less severe: dropped rather than unchainable.
-    // Bounded, asserted as a band, and the region count is asserted below so the drop cannot
-    // go quiet.
-    expect(() => offsetRegions(comb, -2.4975, { corners: "sharp" })).not.toThrow();
-    expect(Math.abs(engineArea(comb, -2.4975, "sharp") - truthOf(comb, -2.4975, "sharp"))).toBeLessThan(0.05);
-    expect(offsetRegions(comb, -2.4975, { corners: "sharp" })).toHaveLength(1);   // PARKED: truth is 2
-    const truth = truthOf(comb, -2.4975, "round");
-    expect(truth).toBeGreaterThan(91.8); expect(truth).toBeLessThan(92.0);
-    for (const corners of ["round", "chamfer"]) {
-      expect(() => offsetRegions(comb, -2.4975, { corners }))
-        .toThrow(/could not chain offset boundary/);                                       // PARKED
+    for (const corners of ["round", "chamfer", "sharp"]) {
+      const out = offsetRegions(comb, -2.4975, { corners });
+      const oracle = clipperRings(comb, -2.4975, corners);
+      expect(nativeTopology(out)).toEqual(ringTopology(oracle));
+      const truth = truthOf(comb, -2.4975, corners);
+      expect(Math.abs(totalArea(rings(out)) - truth) / truth).toBeLessThan(AREA_RTOL);
     }
-    // The band really is narrow — 0.005 either side of it builds. A regression that widened it
-    // back out would fail here rather than quietly restoring the old cliff.
+    // Neighbours stay covered so a future change cannot merely move the cliff sideways.
     expect(() => offsetRegions(comb, -2.4905, { corners: "round" })).not.toThrow();
     expect(() => offsetRegions(comb, -2.5045, { corners: "round" })).not.toThrow();
   });
 
-  // 4. `sharp` throws too. This 12-vertex two-notch plate is the case that falsified the
-  //    "retry with corners: 'sharp', which has never produced it on any measured corpus"
-  //    workaround that shipped in ERROR-PATTERNS.md — and it is the reason that entry no
-  //    longer offers a corner style as the escape. At −3.25 BOTH sharp and chamfer throw and
-  //    the ladder rescues neither; ROUND is the style that survives here, which is the exact
-  //    reverse of the old advice. The plate is unremarkable: the same notched-plate family as
-  //    the comb above, at non-grid coordinates, and 0.05 either side of −3.25 all three styles
-  //    build.
-  //
-  //    It is also asserted in the seeded corpus rather than only here: `seed 27` in
-  //    test/offset-fuzz.test.js is an independent sharp chain failure, and
-  //    scripts/offset-rates.mjs measures the per-style rate over the whole corpus.
-  test("two-notch plate at −3.25: sharp AND chamfer throw where round builds", () => {
+  // 4. This 12-vertex two-notch plate was the counterexample that proved chain-incomplete was
+  //    not a round-join effect: sharp and chamfer both threw at −3.25 while round built. It was
+  //    the same contested-probe mechanism as the comb above, and all three styles now agree
+  //    with independently-derived topology and area at the formerly-failing delta.
+  test("two-notch plate at −3.25: all corner styles match the oracle", () => {
     const plate = [{ outer: ring([[0, 0], [32, 0], [32, 9],
       [9.428889, 9], [9.428889, 6.506983], [8.403683, 6.506983], [8.403683, 9],
       [5.132466, 9], [5.132466, 1.541126], [1.86893, 1.541126], [1.86893, 9], [0, 9]]), holes: [] }];
-    for (const corners of ["sharp", "chamfer"]) {
-      expect(() => offsetRegions(plate, -3.25, { corners })).toThrow(/could not chain offset boundary/);
-      // Truth derived in-file: real material survives, so this is a defect and not a collapse.
-      expect(truthOf(plate, -3.25, corners)).toBeGreaterThan(40);
-      // ...and the neighbours build and are exact, so it is the arrangement at this delta and
-      // not the shape. (Both are float-exact against the oracle, which is what makes the
-      // failure between them a resolver defect rather than an accuracy story.)
+    for (const corners of ["round", "sharp", "chamfer"]) {
+      const out = offsetRegions(plate, -3.25, { corners });
+      expect(nativeTopology(out)).toEqual(ringTopology(clipperRings(plate, -3.25, corners)));
+      const truth = truthOf(plate, -3.25, corners);
+      expect(truth).toBeGreaterThan(40);
+      expect(Math.abs(totalArea(rings(out)) - truth) / truth).toBeLessThan(AREA_RTOL);
+      // Neighbours remain within their style's established policy, so the fix closes the
+      // narrow failure band rather than moving it. Sharp/chamfer were float-exact here;
+      // round carries the independent oracle's ordinary arc-faceting difference.
       for (const d of [-3.2, -3.3]) {
-        expect(() => offsetRegions(plate, d, { corners })).not.toThrow();
-        expectExact(engineArea(plate, d, corners), truthOf(plate, d, corners));
+        const neighbourTruth = truthOf(plate, d, corners);
+        const neighbourGot = engineArea(plate, d, corners);
+        if (corners === "round")
+          expect(Math.abs(neighbourGot - neighbourTruth) / neighbourTruth).toBeLessThan(AREA_RTOL);
+        else expectExact(neighbourGot, neighbourTruth);
       }
     }
-    expect(() => offsetRegions(plate, -3.25, { corners: "round" })).not.toThrow();
   });
 });
 
-// ── Task 7D: the four-notch comb at −2.5/round, promoted out of the parked block ────────────
+// ── Four-notch comb at −2.5/round ─────────────────────────────────────────────────────────
 //
 // This was parked class 3 above: a hard throw where 91.744 mm² of the part survives. It is not
-// a throw any more — offsetRegions retries an unclosable arrangement (perturbed delta, coarser
-// crossing-merge radius, polyline outline) before letting the failure out, and here the coarser
-// merge radius resolves it. The truth is the oracle's, derived in-file as everywhere else in
-// this file; the tolerance is stated rather than "close enough", because the whole point of the
-// fallback is that it degrades to BOUNDED inaccuracy instead of failing.
-describe("chain-incomplete fallback — four-notch comb at −2.5 (Task 7D)", () => {
+// only builds now; the adaptive classifier keeps all four real components directly. The truth
+// is the oracle's, derived in-file as everywhere else in this file.
+describe("four-notch comb at −2.5", () => {
   const ring = (pts) => ({ start: pts[0], segments: [...pts.slice(1).map((p) => ({ to: p })), { to: pts[0] }] });
   const pointRing = (c) => tessellateContour(c, SEGS);
   let O;
@@ -504,26 +475,20 @@ describe("chain-incomplete fallback — four-notch comb at −2.5 (Task 7D)", ()
   const comb = [{ outer: ring([[0, 0], [38, 0], [38, 10], [15, 10], [15, 5], [12, 5], [12, 10],
     [9, 10], [9, 4.5], [7, 4.5], [7, 10], [5, 10], [5, 5], [4, 5], [4, 10], [0, 10]]), holes: [] }];
 
-  test("it builds, and lands within 0.01 mm² of the oracle's 91.744", () => {
+  test("the direct resolver retains all four oracle components", () => {
     const truth = O.area(comb.map((rg) => ({ outer: pointRing(rg.outer), holes: rg.holes.map(pointRing) })),
       -2.5, { corners: "round", fan: 4096 });
     expect(truth).toBeGreaterThan(91.74); expect(truth).toBeLessThan(91.75);   // the oracle's own answer
-    const got = totalArea(rings(offsetRegions(comb, -2.5, { corners: "round" })));
-    // 0.01 mm² is 1.1e-4 relative — the measured error is 0.0057 mm² (6.2e-5 relative), and the
-    // engine's ordinary round-join disagreement with this oracle on cases that never failed runs
-    // to 4.3e-3 relative. So this bound is TIGHTER than the engine's everyday noise, not looser.
-    expect(Math.abs(got - truth)).toBeLessThan(0.01);
-    // The comb severs — but into FOUR pieces, not the three the engine reports. The oracle's
-    // own ring areas at this delta are 91.341263, 0.239060, 0.156621 and 0.007056 mm²; the
-    // rung that rescues this case (clusterTol x20 = a 0.1 mm crossing-merge radius) merges the
-    // 0.007 mm² piece away. So `3` below is the ENGINE'S MEASURED VALUE pinned as a
-    // characterization, and 4 is the derived truth — it is not "the comb severs in three",
-    // which is what this line used to claim. The area bound above still passes because the
-    // dropped piece is 7.7e-5 of the total.
+    const out = offsetRegions(comb, -2.5, { corners: "round" });
+    const got = totalArea(rings(out));
+    // 2e-4 relative is tighter than the engine's ordinary round-join disagreement with the
+    // independent Minkowski construction (up to 4.3e-3) while allowing the two methods'
+    // different arc faceting. Measured here: 1.47e-4 relative.
+    expect(Math.abs(got - truth) / truth).toBeLessThan(2e-4);
     const oracleRings = O.offset(comb.map((rg) => ({ outer: pointRing(rg.outer), holes: [] })),
       -2.5, { corners: "round", fan: 4096 }).toPolygons();
     expect(oracleRings.filter((r) => ringArea(r) > 0)).toHaveLength(4);        // derived truth
-    expect(offsetRegions(comb, -2.5, { corners: "round" })).toHaveLength(3);   // PARKED: engine
+    expect(out).toHaveLength(4);
   });
 });
 
