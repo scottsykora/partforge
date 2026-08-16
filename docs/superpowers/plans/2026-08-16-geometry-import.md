@@ -4,7 +4,7 @@
 
 **Goal:** Parts can declare `imports: { name: source }` (STEP/STL/3MF files) and use `k.import(name)` in build as an ordinary `Solid` — for ghost references the oracle measures and deviation-gates, and for real bodies in booleans/transforms/exports.
 
-**Architecture:** Fonts-style async asset resolution before the synchronous build; per-backend native parsing (STEP→B-rep on OCCT, STL/3MF→mesh on Manifold) registered into a kernel side-channel; a lazy `needs-import-mesh` → `tessellate-imports` → `prime-imports` crossover for STEP used on the Manifold backend (worker_threads in Node); deviation facts in measure() gated by three new `ref*` verify metrics.
+**Architecture:** Fonts-style async asset resolution before the synchronous build; per-backend native parsing (STEP→B-rep on OCCT, STL/3MF→mesh on Manifold) registered into a kernel side-channel — registration is total and unusable formats become lazy error entries thrown at `k.import()` call time (spec: "Registration is total; errors are lazy"); a lazy `needs-import-mesh` → `tessellate-imports` → `prime-imports` crossover for STEP used on the Manifold backend (worker_threads in Node); deviation facts in measure() gated by three new `ref*` verify metrics.
 
 **Tech Stack:** plain ESM, vitest, manifold-3d (`Manifold.ofMesh`), replicad (`importSTEP`), fflate (3MF zip), `node:worker_threads` (Node crossover only, in `src/testing/`).
 
@@ -439,9 +439,9 @@ Verify the transform element-order against the 3MF core spec while implementing 
 **Interfaces:**
 - Produces (both backends must expose, contract-pinned):
   - `kernel.import(name) → Solid` — throws `import: unknown import "<name>" — declare it in the part's \`imports\` field` on a miss.
-  - `kernel._registerImport({ name, digest, positions?, indices?, step? }) → void|Promise<void>` — side-channel (underscore = off-contract, probe-invisible). Manifold accepts `{positions, indices}` and throws `code: "NEEDS_IMPORT_MESH"` for `{step}`; OCCT (Task 7) is the mirror image.
-  - `kernel._importDigest(name) → string|undefined` — registration memo check.
-  - `kernel._acceptsStep` — `true` only on OCCT.
+  - `kernel._registerImport({ name, digest, positions?, indices?, step?, error? }) → void|Promise<void>` — side-channel (underscore = off-contract, probe-invisible). Manifold accepts `{positions, indices}`; an `{error}` entry is stored verbatim and thrown by `k.import(name)` at call time — **registration itself never throws for an unusable format** (the lazy-error policy lives in `ensureImports`, Task 8; see the spec's "Registration is total; errors are lazy"). OCCT (Task 7) is the mirror image.
+  - `kernel._importDigest(name) → string|undefined` — registration memo check. Answers only for **usable** entries: an error entry returns `undefined`, so a later registration with the same digest can upgrade it (the post-crossover retry depends on this).
+  - `kernel._acceptsStep` — `true` only on OCCT. `kernel._acceptsMesh` — `true` only on Manifold.
 - Consumes: `manifoldFromMesh` (mesh-build.js), `ensureOutward`/`openEdgeCount` (Task 5), `h` (solid-hash.js).
 
 - [ ] **Step 1: Write failing tests**
@@ -475,10 +475,19 @@ describe("manifold import op", () => {
     const holed = { positions: soup.positions, indices: soup.indices.slice(0, soup.indices.length - 6) };
     expect(() => k._registerImport({ name: "bad", digest: "d3", ...holed })).toThrow(/not a solid.*open edge/i);
   });
-  it("throws NEEDS_IMPORT_MESH for step bytes", () => {
+  it("stores an error entry and throws it lazily at k.import", () => {
+    const lazy = new Error(`import "s": STEP needs tessellation for the Manifold backend`);
+    lazy.code = "NEEDS_IMPORT_MESH";
+    k._registerImport({ name: "s", digest: "d4", error: lazy }); // registration never throws
+    expect(k._importDigest("s")).toBeUndefined(); // error entries don't satisfy the memo — upgradable
     let err;
-    try { k._registerImport({ name: "s", digest: "d4", step: new ArrayBuffer(8) }); } catch (e) { err = e; }
+    try { k.import("s"); } catch (e) { err = e; }
     expect(err?.code).toBe("NEEDS_IMPORT_MESH");
+  });
+  it("an error entry upgrades to a real registration under the same digest", () => {
+    k._registerImport({ name: "s", digest: "d4", ...cubeSoup(10) });
+    expect(k.import("s").volume()).toBeCloseTo(1000, 0);
+    expect(k._importDigest("s")).toBe("d4");
   });
   it("unknown name names the imports field", () => {
     expect(() => k.import("nope")).toThrow(/unknown import "nope"/);
@@ -504,12 +513,13 @@ and in the kernel object:
 import: (name) => {
   const e = imports.get(name);
   if (!e) throw new Error(`import: unknown import "${name}" — declare it in the part's \`imports\` field`);
+  if (e.error) throw e.error; // lazy: unusable-format entries fail at use, not at registration
   return wrap(e.m, e.hash); // master is untracked: survives cleanup(); wrap is free
 },
-_registerImport: ({ name, digest, positions, indices, step }) => {
-  if (step) { const e = new Error(`import "${name}": STEP needs tessellation for the Manifold backend`); e.code = "NEEDS_IMPORT_MESH"; throw e; }
+_registerImport: ({ name, digest, positions, indices, error }) => {
   const prev = imports.get(name);
-  if (prev?.digest === digest) return;
+  if (!prev?.error && prev?.digest === digest) return; // error entries are always upgradable
+  if (error) { imports.set(name, { error, digest }); return; }
   ensureOutward(positions, indices);
   let m;
   try { m = manifoldFromMesh(wasm, positions, indices); if (m.isEmpty()) throw new Error("empty result"); }
@@ -517,10 +527,11 @@ _registerImport: ({ name, digest, positions, indices, step }) => {
     const open = openEdgeCount(positions, indices);
     throw new Error(`import "${name}": mesh is not a solid after repair (${open} open edges) — repair it in a mesh tool or re-export watertight (${err?.message || err})`);
   }
-  prev?.m.delete?.();
+  prev?.m?.delete?.(); // prev may be an error entry with no manifold
   imports.set(name, { m, digest, hash: h("import", name, digest) });
 },
-_importDigest: (name) => imports.get(name)?.digest,
+_importDigest: (name) => { const e = imports.get(name); return e?.error ? undefined : e?.digest; },
+_acceptsMesh: true,
 ```
 
 (`wasm` is in scope as the factory argument; `manifoldFromMesh` returns an **untracked** manifold, which is exactly what kernel-lifetime masters need. Note the un-`T()`-tracked master is intentional — mirror the comment style of the `tracked`/`T` block.) Also create `test/helpers/cube-soup.js`. Add `"import"` to `KERNEL_OPS` and update `test/kernel-contract.test.js`'s pinning (read the file; it asserts each backend exposes exactly the listed ops — OCCT side lands in Task 7, so if the contract test runs both backends from one list, do kernel.js + both-backend stubs in whichever order keeps the suite green at each commit; it is acceptable to land kernel.js's list change in Task 7's commit instead).
@@ -537,7 +548,7 @@ _importDigest: (name) => imports.get(name)?.digest,
 - Test: `test/import-occt.test.js` (**own file** — OCCT process isolation)
 
 **Interfaces:**
-- Produces: OCCT `kernel.import(name)` (fresh `wrap(shape.clone(), [], hash)` per call — replicad consumes operands); async `kernel._registerImport({name, digest, step})` via replicad `importSTEP(new Blob([step]))`; `{positions,indices}` payloads throw the mesh-on-OCCT error; `kernel._acceptsStep = true`.
+- Produces: OCCT `kernel.import(name)` (fresh `wrap(shape.clone(), [], hash)` per call — replicad consumes operands); async `kernel._registerImport({name, digest, step, error?})` via replicad `importSTEP(new Blob([step]))`; `{error}` entries are stored verbatim and thrown by `k.import` at call time (the mesh-on-OCCT error arrives this way from `ensureImports` — registration never throws for it, so a mixed-format part can't kill the `tessellate-imports` service job); `kernel._acceptsStep = true` (`_acceptsMesh` absent).
 - Consumes: replicad's `importSTEP` (destructure it in `createOcctKernel` next to `exportSTEP`); `h`; the existing `wrap`.
 
 - [ ] **Step 1: Write failing tests**
@@ -561,9 +572,10 @@ describe("occt import op", () => {
     s.translate([5, 0, 0]);
     expect(k.import("ref").volume()).toBeCloseTo(1000, 0);
   });
-  it("rejects mesh payloads with the backend error", async () => {
-    await expect(async () => k._registerImport({ name: "m", digest: "d2", positions: new Float32Array(9), indices: new Uint32Array(3) }))
-      .rejects.toThrow(/Manifold backend/);
+  it("stores a mesh-on-OCCT error entry and throws it at k.import", async () => {
+    await k._registerImport({ name: "m", digest: "d2", error: new Error(`import "m": STL/3MF imports need the Manifold backend`) });
+    expect(k._importDigest("m")).toBeUndefined(); // error entries don't satisfy the memo
+    expect(() => k.import("m")).toThrow(/Manifold backend/);
   });
   it("advertises STEP support", () => {
     expect(k._acceptsStep).toBe(true);
@@ -580,14 +592,16 @@ const imports = new Map(); // name → { shape, digest }
 import: (name) => {
   const e = imports.get(name);
   if (!e) throw new Error(`import: unknown import "${name}" — declare it in the part's \`imports\` field`);
+  if (e.error) throw e.error; // lazy: mesh-on-OCCT fails at use, not at registration
   return wrap(e.shape.clone(), [], h("import", name, e.digest)); // clone per call: replicad consumes operands
 },
-_registerImport: async ({ name, digest, step }) => {
-  if (!step) throw new Error(`import "${name}": STL/3MF imports need the Manifold backend — this part routes to OCCT (fillet/chamfer/shell or meta.backend); use the mesh import in a Manifold-routed part`);
-  if (imports.get(name)?.digest === digest) return;
+_registerImport: async ({ name, digest, step, error }) => {
+  const prev = imports.get(name);
+  if (!prev?.error && prev?.digest === digest) return; // error entries are always upgradable
+  if (error) { imports.set(name, { error, digest }); return; }
   imports.set(name, { shape: await importSTEP(new Blob([step])), digest });
 },
-_importDigest: (name) => imports.get(name)?.digest,
+_importDigest: (name) => { const e = imports.get(name); return e?.error ? undefined : e?.digest; },
 _acceptsStep: true,
 ```
 
@@ -664,6 +678,17 @@ describe("jobs import wiring", () => {
     const posts = await run(part, { type: "generate", subparts: ["body"], view: "main", params: {} }, { importMeshes: primed });
     expect(posts.some((p) => p.type === "meshes")).toBe(true);
   });
+  it("a generate that never calls the STEP import triggers no crossover", async () => {
+    // Lazy errors: the unusable/unprimed entry registers inertly; only a build
+    // that actually calls k.import on it throws. body only imports "cube".
+    const part = {
+      ...importingPart,
+      imports: { cube: () => stlBytes(), scan: () => new TextEncoder().encode("ISO-10303-21;\nHEADER;\nENDSEC;") },
+    };
+    const posts = await run(part, { type: "generate", subparts: ["body"], view: "main", params: {} });
+    expect(posts.some((p) => p.type === "needs-import-mesh")).toBe(false);
+    expect(posts.some((p) => p.type === "meshes")).toBe(true);
+  });
 });
 ```
 
@@ -678,27 +703,40 @@ import { parse3MF } from "./geometry/threemf-parse.js";
 
 // Register a part's imports on a booted kernel (idempotent per digest). The
 // framework calls this in the async phase before every job's synchronous
-// build — worker (jobs.js) and Node boots (src/testing/) alike. STEP on a
-// mesh backend needs pre-tessellated triangles in `importMeshes`; absent,
-// this throws code NEEDS_IMPORT_MESH and the host arranges tessellation
+// build — worker (jobs.js) and Node boots (src/testing/) alike.
+//
+// Registration is total; errors are lazy (see the spec section of that name):
+// every declared import registers on whichever kernel runs the job, and a
+// format this kernel cannot use registers as an {error} entry that k.import
+// throws at call time. That is what keeps a mixed-format declaration from
+// poisoning unrelated jobs — the OCCT worker's tessellate-imports service
+// job, or a per-backend generate group that never touches the unusable
+// import. STEP on a mesh backend needs pre-tessellated triangles in
+// `importMeshes`; absent, the entry carries code NEEDS_IMPORT_MESH and the
+// first build to call k.import on it makes the host arrange tessellation
 // (mount's needs-import-mesh flow in the browser, worker_threads in Node).
 export async function ensureImports(kernel, importsDecl, importMeshes = null) {
   if (!importsDecl || typeof kernel._registerImport !== "function") return;
   const resolved = await resolveImports(importsDecl);
   for (const [name, a] of resolved) {
-    if (kernel._importDigest?.(name) === a.digest) continue;
+    if (kernel._importDigest?.(name) === a.digest) continue; // error entries answer undefined → always retried
     if (a.format === "step") {
       if (kernel._acceptsStep) { await kernel._registerImport({ name, digest: a.digest, step: a.bytes }); continue; }
       const m = importMeshes?.get?.(name);
-      if (!m || m.digest !== a.digest) {
+      if (m && m.digest === a.digest) {
+        await kernel._registerImport({ name, digest: a.digest, positions: m.positions, indices: m.indices });
+      } else {
         const e = new Error(`import "${name}": STEP needs tessellation for the Manifold backend`);
         e.code = "NEEDS_IMPORT_MESH";
-        throw e;
+        await kernel._registerImport({ name, digest: a.digest, error: e });
       }
-      await kernel._registerImport({ name, digest: a.digest, positions: m.positions, indices: m.indices });
-    } else {
+    } else if (kernel._acceptsMesh) {
       const { positions, indices } = a.format === "3mf" ? parse3MF(a.bytes) : parseStl(a.bytes);
       await kernel._registerImport({ name, digest: a.digest, positions, indices });
+    } else {
+      // No parse for a kernel that can't take the mesh — error entry directly.
+      await kernel._registerImport({ name, digest: a.digest, error: new Error(
+        `import "${name}": STL/3MF imports need the Manifold backend — this build routes to OCCT (fillet/chamfer/shell or meta.backend); use the mesh import from a Manifold-routed build`) });
     }
   }
 }
@@ -728,7 +766,7 @@ New job branch (after `export-3mf`):
 }
 ```
 
-(`resolveImports` needs importing in jobs.js; the `ensureImports` call above the branch has already registered the STEP masters on this OCCT kernel.) Error branch, next to `NEEDS_OCCT`:
+(`resolveImports` needs importing in jobs.js; the `ensureImports` call above the branch has already registered the STEP masters on this OCCT kernel — and any mesh imports in the same part registered as inert error entries rather than killing this service job, which is exactly what the lazy-error policy is for.) Error branch, next to `NEEDS_OCCT`:
 
 ```js
 if (err?.code === "NEEDS_IMPORT_MESH") post({ type: "needs-import-mesh", jobId: msg.jobId, subparts: msg.subparts });
@@ -1132,7 +1170,7 @@ refBboxDelta: { kind: "gate", extract: (s) => s.deviation?.bboxDelta ?? null,
 **Interfaces:**
 - Produces rules (follow `finding.js`'s `err`/`warn` helpers and existing rule file shape — read `rules-verify.js` first):
   - `import-unknown-name` (error): a probe-recorded kernel-scope `import` call whose first arg (probe records it as a JSON string, e.g. `"scan"` → `'"scan"'`) is not a key of `part.imports ?? {}`.
-  - `import-mesh-on-occt` (error): a declared import whose format (extension-detectable sources only — `URL`/string; bytes/thunks are skipped) is `stl`/`3mf` while `detectBackend(part) === "occt"` — the message names the routing cause (`meta.backend` or a CAD op).
+  - `import-mesh-on-occt` (error): a declared import whose format (extension-detectable sources only — `URL`/string; bytes/thunks are skipped) is `stl`/`3mf` while `detectBackend(part) === "occt"` — the message names the routing cause (`meta.backend` or a CAD op). This is a static early-catch; the runtime authority is the lazy `k.import` error entry, so a case lint can't see (bytes/thunk sources, per-sub-part routing splits) still fails correctly at build time.
   - `reference-unknown` (error): `parts[x].reference` names no declared import.
   - `ref-metric-without-reference` (warning): `verify.expect[sub]` uses a `ref*` metric but `parts[sub]` declares no `reference`.
 - Consumes: the probe `calls` already in lint's ctx (see how `rules-build.js` reads them), `detectFormat` (Task 2 — extension path only, pure), `detectBackend` (backend-select.js — probe-based, kernel-free, lint-purity-safe; **verify with `npx vitest run test/lint-purity.test.js`**, and if it trips, inline a local extension-only format map instead of importing `imports.js`).

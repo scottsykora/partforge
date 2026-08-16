@@ -26,7 +26,7 @@ required but secondary; end-user upload UI is out of scope.
 | --- | --- |
 | API shape | New kernel op `k.import(name)` returning an ordinary `Solid`. |
 | Asset reference | `PartDefinition.imports: { name: source }`, fonts-style; source = `URL` \| URL string \| bytes \| thunk. No author-declared digest; the framework content-hashes the bytes itself. |
-| Backend mismatch | Native on the home backend (STEP→B-rep on OCCT; STL/3MF→mesh on Manifold). STEP used on the Manifold backend is tessellated transparently (exactness lost on that path). Mesh→B-rep is never attempted: STL/3MF on the OCCT backend is an error. |
+| Backend mismatch | Native on the home backend (STEP→B-rep on OCCT; STL/3MF→mesh on Manifold). STEP used on the Manifold backend is tessellated transparently (exactness lost on that path). Mesh→B-rep is never attempted: STL/3MF on the OCCT backend is an error — thrown when `k.import()` is called, never at registration (see "Registration is total; errors are lazy"). |
 | Dirty meshes | Basic repair (vertex merge + winding/orientation fix), then fail loud with an ERROR-PATTERNS entry. No hole-filling / remeshing in v1. |
 | Oracle role | (a) measure the reference with existing machinery, (b) a new `deviation` verify assertion (built vs reference). Ghost display falls out of existing `exportable: false` + `display: {opacity}`. |
 | Cloud | Framework first. Sources accept plain URL strings so cloud can later substitute signed Storage URLs without framework changes. |
@@ -82,7 +82,9 @@ side-channel, off the contract, invisible to the probe).
 ### Parsing, per backend
 
 - **OCCT worker:** STEP bytes → replicad `importSTEP` → master B-rep shape
-  held in `_imports`. STL/3MF on OCCT → **error** (ERROR-PATTERNS entry).
+  held in `_imports`. STL/3MF on OCCT → a **lazy error entry**; the error
+  (ERROR-PATTERNS entry) throws when `k.import()` is called during a build,
+  never at registration.
 - **Manifold worker:** STL/3MF bytes → our own parsers (STL reader beside the
   writer in `geometry/mesh-stl.js`; 3MF reader using the same `fflate` dep as
   the writer in `geometry/threemf.js`) → repair (vertex merge à la
@@ -92,8 +94,12 @@ side-channel, off the contract, invisible to the probe).
 - **STEP on the Manifold backend (crossover):** lazy, mirroring the proven
   `needs-occt` reroute backstop *(amended during planning — the original
   draft had the main thread pre-detecting the crossover)*. The Manifold
-  worker's import registration throws a typed error
-  (`code: "NEEDS_IMPORT_MESH"`); jobs.js posts `{type:"needs-import-mesh"}`;
+  worker registers an unprimed STEP import as a lazy error entry
+  (`code: "NEEDS_IMPORT_MESH"`); the first build that actually calls
+  `k.import()` on it throws *(amended during review — registration itself
+  originally threw; lazy-at-use means a build that never touches the STEP
+  import triggers no crossover at all)*; jobs.js posts
+  `{type:"needs-import-mesh"}`;
   mount reacts by sending the **OCCT worker** a `tessellate-imports` job (it
   resolves the part's own import bytes, runs `importSTEP`, answers
   `{type:"import-meshes"}` with transferable triangle arrays), then primes
@@ -106,6 +112,33 @@ side-channel, off the contract, invisible to the probe).
     separate WASM world, so the invariant holds by construction. The
     coexistence test doubles as the spike; the fallback if worker_threads
     still crash is `child_process.fork`.
+
+### Registration is total; errors are lazy
+
+*(Added during review — registration originally threw on formats the kernel
+cannot use, which broke mixed-format declarations: the OCCT worker's
+`tessellate-imports` service job for a Manifold part declaring both a STEP
+and an STL import would die registering the STL, and per-sub-part backend
+routing would hit the same wall building an OCCT group of a part whose
+Manifold sub-parts use a mesh import.)*
+
+`ensureImports` registers **every** declared import on whichever kernel runs
+the job and never throws for a format that kernel cannot use. Unusable
+combinations register as **error entries**: the entry stores the constructed
+error (mesh-on-OCCT, or the recoverable `NEEDS_IMPORT_MESH` for unprimed
+STEP-on-Manifold) and `k.import(name)` throws it at call time, surfacing
+through the existing build-error path with the sub-part name attached. The
+policy lives in `imports.js`, steered by the capability flags `_acceptsStep`
+(OCCT) / `_acceptsMesh` (Manifold); the backends stay dumb stores.
+
+Two consequences the implementation must honor:
+
+- `_importDigest(name)` answers only for **usable** entries (an error entry
+  returns `undefined`), so the post-crossover retry can upgrade an error
+  entry to a real mesh registration under the same digest — otherwise the
+  idempotence memo would skip the upgrade and the crossover would loop.
+- Mesh bytes are never parsed for a kernel that can't take them
+  (`_acceptsMesh` false → error entry directly, no wasted parse).
 
 ### Units
 
@@ -123,6 +156,8 @@ OCCT importer; 3MF `unit` attribute converted; STL assumed mm (documented).
 - `_hash = h("import", name, digest)` — see caching.
 - Undeclared name → error naming the declared imports (mirrors the
   `text2d: unknown font` behavior).
+- An error entry throws here — at the `k.import` call, inside the build —
+  not at registration (see "Registration is total; errors are lazy").
 - Under the probe, `k.import` returns the chainable dummy Solid like any op.
 
 ## 2. Kernel contract, probe/lint, caching
