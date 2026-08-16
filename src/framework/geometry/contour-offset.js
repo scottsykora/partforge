@@ -824,6 +824,35 @@ function sourceBackedPositiveRegions(source, out, delta) {
   return result;
 }
 
+// Crossing clustering can snap both ends of a tiny curve run onto the same pool vertex.
+// The run then survives as a closed loop attached at one point (or as a whole one-segment
+// contour). It encloses only geometry inside the resolver's own 2*CLUSTER_TOL cluster-
+// diameter uncertainty, but a downstream cap triangulator may bridge that loop across the
+// face and expose the bridge as a bogus feature edge. Positive dilation may discard these
+// sub-resolution counter loops: they are collapsed negative boundaries, never new material.
+// Keep erosion unchanged; its tiny surviving islands have no equivalent source-domain proof.
+function dropSubresolutionPositiveLoops(out, delta) {
+  if (delta <= 0) return out;
+  const radius = 2 * CLUSTER_TOL;
+  const clean = (contour) => {
+    const segments = [];
+    let from = contour.start;
+    for (const seg of contour.segments) {
+      const controls = [seg.via, seg.c1, seg.c2].filter(Boolean);
+      const clusteredLoop = dist(from, seg.to) <= 1e-12
+        && controls.every((p) => dist(from, p) <= radius);
+      if (!clusteredLoop) segments.push(seg);
+      from = seg.to;
+    }
+    return segments.length ? { start: contour.start, segments } : null;
+  };
+
+  return out.flatMap((rg) => {
+    const outer = clean(rg.outer);
+    return outer ? [{ outer, holes: rg.holes.map(clean).filter(Boolean) }] : [];
+  });
+}
+
 // Region-in / region-out offset: the engine behind Shape2D.offset on BOTH backends.
 // Fast path: raw per-ring offsets that validate cleanly are returned as-is (lines/arcs
 // exact). Cleanup path: anything dirty or invalid goes through resolveOffsetWinding
@@ -850,6 +879,7 @@ export function offsetRegions(regions, delta, { corners = "round" } = {}) {
     if (out === null) throw err;            // pinned message, unchanged, when nothing works
   }
   out = sourceBackedPositiveRegions(regions, out, delta);
+  out = dropSubresolutionPositiveLoops(out, delta);
   if (out.length === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
   return out;
 }

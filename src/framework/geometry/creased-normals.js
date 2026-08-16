@@ -95,10 +95,14 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
       if (prev === undefined) { seenEdge.set(key, t); continue; }
       seenEdge.delete(key);
       const dot = fn[prev * 3] * fn[t * 3] + fn[prev * 3 + 1] * fn[t * 3 + 1] + fn[prev * 3 + 2] * fn[t * 3 + 2];
-      // policy-gated same-surface lines; seam rule unchanged
-      const hard = triOID[prev] === triOID[t]
+      // A multi-hole cap triangulation can contain an opposite-wound bridge:
+      // its two normals disagree by 180 degrees even though both triangles lie
+      // in the same plane. Gate on the unoriented supporting-plane angle first
+      // so that triangulation seam never becomes a feature line.
+      const bends = Math.abs(dot) < COPLANAR_COS;
+      const hard = bends && (triOID[prev] === triOID[t]
         ? polFor(triOID[t]).sameSurfaceLines && dot < cosFor(triOID[t])
-        : dot < COPLANAR_COS;
+        : true);
       if (hard) {
         const ai = i * np, bj = j * np;
         const dx = vp[ai] - vp[bj], dy = vp[ai + 1] - vp[bj + 1], dz = vp[ai + 2] - vp[bj + 2];
