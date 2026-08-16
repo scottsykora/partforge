@@ -275,3 +275,34 @@ test("captureView() resolves null when the build channel reports a worker failur
 
   runtime.dispose();
 });
+
+// Fix round (task-9 review): a needs-import-mesh reply tagged with the capture
+// job's own jobId must be claimed by capture-build.js and never reach mount's
+// live-loop crossover case. Proven two ways: (1) no tessellate-imports request
+// ever goes to the OCCT worker for this off-loop capture failure, and (2) the
+// live crossover's importMeshState latch is left untouched — a SUBSEQUENT
+// live-generate needs-import-mesh (no jobId, exactly like the mount.test.js
+// coverage) still requests tessellation for the first time, which it could not
+// do if the capture reply had already flipped the latch to "requested".
+test("captureView()'s needs-import-mesh reply never touches the live crossover state", async () => {
+  const { runtime, workers } = await mountFixture();
+
+  const promise = runtime.captureView();
+  const calls = workers.manifold.postMessage.mock.calls.map(([m]) => m).filter((m) => m.type === "capture-generate");
+  const job = calls.at(-1);
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: job.jobId, subparts: ["body"] } });
+
+  await expect(promise).resolves.toBeNull();
+  expect(fakeViewers[0].renderMeshPayloads).not.toHaveBeenCalled();
+  // No stray tessellation request from the off-loop capture failure.
+  expect(workers.occt.postMessage).not.toHaveBeenCalled();
+
+  // A genuine LIVE needs-import-mesh (no jobId) still triggers a fresh
+  // tessellate-imports request — proof the capture reply above left
+  // importMeshState alone rather than pre-latching it to "requested".
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", subparts: ["body"] } });
+  expect(workers.occt.postMessage).toHaveBeenCalledTimes(1);
+  expect(workers.occt.postMessage.mock.calls[0][0]).toMatchObject({ type: "tessellate-imports" });
+
+  runtime.dispose();
+});

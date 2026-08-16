@@ -37,6 +37,11 @@ const NOOP_TOOLTIP_BINDING = { sync: () => {}, hide: () => {}, detach: () => {} 
 // Same no-op-default stance as attachTooltips/setHostPane below, for a
 // makeHandle caller (or a direct test) that doesn't wire measure mode.
 const NOOP_MEASURE = { isEnabled: () => false, setEnabled: () => {}, clearPins: () => {}, pinCount: () => 0 };
+// The STEP-on-Manifold import crossover's broken-state message (a second
+// needs-import-mesh after the mesh is already primed — see the "needs-import-mesh"
+// case below). One shared string so the status line, onBuild, and the ready
+// rejection can never drift apart.
+const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy the import — see console";
 
 export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure }) {
   return {
@@ -603,9 +608,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             // rather than re-requesting tessellation forever.
             ui.hideBusy();
             refreshView();
-            ui.setStatus("failed: STEP import tessellation failed to satisfy the import — see console", true);
-            onBuild?.({ status: "error", error: "STEP import tessellation failed to satisfy the import — see console" });
-            if (!readySettled) { readySettled = true; rejectReady(new Error("STEP import tessellation failed to satisfy the import — see console")); }
+            ui.setStatus(`failed: ${IMPORT_MESH_BROKEN_MESSAGE}`, true);
+            onBuild?.({ status: "error", error: IMPORT_MESH_BROKEN_MESSAGE });
+            if (!readySettled) { readySettled = true; rejectReady(new Error(IMPORT_MESH_BROKEN_MESSAGE)); }
           } else if (importMeshState !== "requested") {
             importMeshState = "requested";
             service.send({ type: "tessellate-imports" }, "occt");

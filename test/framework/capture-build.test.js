@@ -47,6 +47,23 @@ test("a needs-occt reply for a pending capture job resolves request() to null", 
   await expect(p).resolves.toBeNull();
 });
 
+// Fix round (task-9 review): needs-import-mesh MUST be claimed here for the
+// capture job's own jobId, not left to fall through to mount's live-loop
+// crossover case — this capture job never went through the regen loop, so a
+// live-crossover reading of this reply would call loop.buildDone() for a
+// build the live loop never dispatched.
+test("a needs-import-mesh reply for a pending capture job resolves request() to null", async () => {
+  const sent = [];
+  const cb = createCaptureBuild({ send: (msg) => sent.push(msg) });
+
+  const p = cb.request({ subparts: ["a"], view: "assembly", params: {}, backend: "manifold" });
+  const { jobId } = sent[0];
+
+  const consumed = cb.handleMessage({ type: "needs-import-mesh", jobId, subparts: ["a"] });
+  expect(consumed).toBe(true);
+  await expect(p).resolves.toBeNull();
+});
+
 test("capture jobIds are namespaced strings, so they can't collide with export-controller's numeric jobIds", () => {
   const sent = [];
   const cb = createCaptureBuild({ send: (msg) => sent.push(msg) });
