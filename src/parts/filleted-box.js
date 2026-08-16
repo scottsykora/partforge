@@ -1,5 +1,6 @@
-// Example part exercising native CAD ops — it auto-routes to the OCCT backend
-// because it uses fillet (and chamfer when enabled). Vertical edges are rounded
+// Example part exercising the CAD dress-up ops. Since contract v3 fillet and
+// chamfer build natively on the fast Manifold backend (mesh-fillet.js); STEP
+// export still uses OCCT's exact B-rep blends. Vertical edges are rounded
 // and an optional bore drilled; the base chamfer is off by default (turn it up to
 // try chamfering, kept off in defaults so the gating build uses only the fillet).
 export default {

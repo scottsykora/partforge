@@ -121,6 +121,6 @@ test("createProbeKernel still records op names for backend detection", () => {
 });
 
 test("detectBackend still routes an OCCT-only op to occt", () => {
-  expect(detectBackend(partWith((k) => k.box({ size: [1, 1, 1] }).fillet({ r: 1 })))).toBe("occt");
+  expect(detectBackend(partWith((k) => k.box({ size: [1, 1, 1] }).shell({ t: 0.5, open: { dir: "Z" } })))).toBe("occt");
   expect(detectBackend(partWith((k) => k.box({ size: [1, 1, 1] })))).toBe("manifold");
 });

@@ -89,13 +89,17 @@ test("options-only compound ops get key validation too", () => {
   expect(k.boredCylinder({ od: 8, h: 10, bore: 3 }).volume()).toBeGreaterThan(0); // valid call unaffected
 });
 
-test("options-form fillet still throws the OCCT routing error on Manifold", () => {
-  expect(() => k.box({ size: [1, 1, 1] }).fillet({ r: 0.2 })).toThrow(KernelCapabilityError);
+test("options-form fillet builds natively on Manifold (mesh-fillet.js)", () => {
+  const out = k.box({ size: [1, 1, 1] }).fillet({ r: 0.2 });
+  expect(out.volume()).toBeGreaterThan(0);
+  expect(out.volume()).toBeLessThan(1); // material actually removed
 });
 
-test("probe routes an options-form fillet build to occt", () => {
-  const part = { defaults: {}, parts: { p: { build: (kk) => kk.box({ size: [1, 1, 1] }).fillet({ r: 0.1 }) } } };
-  expect(detectBackend(part)).toBe("occt");
+test("probe routes an options-form shell build to occt (fillet no longer routes)", () => {
+  const shelled = { defaults: {}, parts: { p: { build: (kk) => kk.box({ size: [1, 1, 1] }).shell({ t: 0.1, open: { dir: "Z" } }) } } };
+  expect(detectBackend(shelled)).toBe("occt");
+  const filleted = { defaults: {}, parts: { p: { build: (kk) => kk.box({ size: [1, 1, 1] }).fillet({ r: 0.1 }) } } };
+  expect(detectBackend(filleted)).toBe("manifold");
 });
 
 test("screwSweep is options-only and validates required keys", () => {

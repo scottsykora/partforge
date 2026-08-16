@@ -86,7 +86,8 @@ geometry equivalence) and build time:
   separate workers.
 - **Preview ≠ export**: Manifold preview is a mesh approximation; the OCCT STEP
   is exact. Usually invisible, occasionally not.
-- Anything OCCT-only (fillets, exact sweeps) can't live in the shared interface.
+- Anything OCCT-only (shell, exact-only operations) needs an explicit shared-interface
+  contract or a capability fallback.
 
 ## Phased plan
 

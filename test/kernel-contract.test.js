@@ -44,6 +44,18 @@ test("Shape2D exposes exactly the documented method surface", () => {
 // machine-checked half: its version header mirrors CONTRACT_VERSION, and every op and
 // 2-D helper the code exports must at least be named in the doc.
 const doc = readFileSync(new URL("../docs/KERNEL-CONTRACT.md", import.meta.url), "utf8");
+const publicSurfaceDocs = [
+  "../README.md",
+  "../docs/AUTHORING-PARTS.md",
+  "../docs/ERROR-PATTERNS.md",
+  "../docs/geometry-backend-strategy.md",
+  "../src/framework/backend-select.js",
+  "../src/framework/lint/rules-build.js",
+  "../src/framework/mount.js",
+  "../src/framework/geometry/kernel.js",
+  "../src/framework/geometry/probe.js",
+  "../types/kernel.d.ts",
+].map((path) => [path, readFileSync(new URL(path, import.meta.url), "utf8")]);
 
 test("KERNEL-CONTRACT.md's version header matches CONTRACT_VERSION", () => {
   expect(doc.match(/^\*\*Contract version: (\d+)\*\*/m)?.[1]).toBe(String(CONTRACT_VERSION));
@@ -56,4 +68,24 @@ test("KERNEL-CONTRACT.md names every contract op", () => {
 
 test("KERNEL-CONTRACT.md names every partforge/geometry helper", () => {
   expect(Object.keys(polygon).filter((name) => !doc.includes(`\`${name}\``))).toEqual([]);
+});
+
+test("public docs describe mesh-native Solid fillet and chamfer routing", () => {
+  const staleClaims = [
+    /Solid-handle fillet\/chamfer\/shell/,
+    /Solid[^\n]*fillet[^\n]*chamfer[^\n]*shell[^\n]*routes?[^\n]*OCCT/i,
+    /Round edges [—-]+ OCCT only/i,
+    /Bevel edges [—-]+ OCCT only/i,
+    /(?:round|bevel) edges \(OCCT only\)/i,
+    /Stays on Manifold \(unlike `Solid\.fillet`\)/,
+    /OCCT-only fillet\/chamfer\/shell ops/,
+    /Solid-handle fillet\/chamfer\/shell calls/,
+    /native fillet \/ chamfer/,
+    /only the filleted ones wait on OCCT/,
+    /Solid\.fillet[^\n]*must[^\n]*route a part to OCCT/,
+    /Anything OCCT-only \(fillets,/,
+  ];
+  const failures = publicSurfaceDocs.flatMap(([path, text]) =>
+    staleClaims.filter((claim) => claim.test(text)).map((claim) => `${path}: ${claim}`));
+  expect(failures).toEqual([]);
 });

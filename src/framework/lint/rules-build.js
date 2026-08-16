@@ -2,10 +2,12 @@
 // the validating probe with no geometry kernel. Every error in this group already
 // throws at runtime; the value is reaching it in microseconds, before a WASM boot.
 import { err, warn } from "./finding.js";
-import { OCCT_ONLY_OPS } from "../geometry/kernel.js";
+import { ROUTED_CAD_OPS } from "../geometry/kernel.js";
 import { MAX_PROBE_OPS } from "../geometry/probe.js";
 
-const OCCT_ONLY = new Set(OCCT_ONLY_OPS);
+// fillet/chamfer are implemented on the mesh backend now (mesh-fillet.js), so a
+// pinned-Manifold part may use them; only the still-unimplemented ops error here.
+const OCCT_ONLY = new Set(ROUTED_CAD_OPS);
 const unique = (xs) => [...new Set(xs)];
 
 export const BUILD_RULES = [
@@ -52,9 +54,8 @@ export const BUILD_RULES = [
     id: "manifold-backend-uses-occt-op",
     run: ({ part, probe }) => {
       if (part?.meta?.backend !== "manifold") return [];
-      // solidUsed, not used: `Shape2D.fillet`/`.chamfer` are backend-identical pure
-      // JS and are fine under a pinned Manifold backend; only Solid-handle uses of
-      // these names are CAD-only.
+      // solidUsed, not used: a Shape2D method with the same name as a routed Solid
+      // op is still backend-identical pure JS and is fine under pinned Manifold.
       return [...probe().solidUsed].filter((op) => OCCT_ONLY.has(op))
         .map((op) => err("manifold-backend-uses-occt-op",
           `\`meta.backend\` pins Manifold, but the build calls \`${op}\`, which only OCCT implements`,

@@ -42,9 +42,10 @@ preset, or be hidden, so the interface stays simple while the part stays deeply 
 Two geometry backends run in Web Workers, and partforge routes each part to whichever it
 needs:
 
-- **[Manifold](https://github.com/elalish/manifold)** — fast preview meshes and STL / 3MF.
-- **[Replicad](https://replicad.xyz)** (OpenCASCADE-in-WebAssembly) — exact B-rep for STEP
-  export and native fillet / chamfer.
+- **[Manifold](https://github.com/elalish/manifold)** — fast preview meshes and STL / 3MF,
+  including mesh-native fillet and chamfer for straight and circular edges.
+- **[Replicad](https://replicad.xyz)** (OpenCASCADE-in-WebAssembly) — exact B-rep for STEP,
+  shell, and automatic fallback for blend geometry Manifold cannot handle.
 
 The viewer is [three.js](https://threejs.org).
 

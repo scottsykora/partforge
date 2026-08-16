@@ -26,11 +26,9 @@ export function detectBackends(part, params = {}) {
     if (forced) { backends[name] = forced; continue; }
     const { kernel, cadCalls } = createProbeKernel();
     try { part.parts[name].build(kernel, p, d); } catch { /* probe miss → capability backstop covers it */ }
-    // cadCalls holds only Solid-handle fillet/chamfer/shell — `Shape2D.fillet`/
-    // `.chamfer` are the shared pure-JS implementation (backend-identical) and must
-    // not drag a sub-part onto OCCT. A provably zero magnitude is the identity (see
-    // KERNEL-CONTRACT.md) and doesn't route either, so a fillet param dialed to 0
-    // drops the sub-part back onto Manifold with no `if (r > 0)` guard in the build.
+    // cadCalls currently holds only Solid.shell calls. Solid fillet/chamfer start
+    // on Manifold and use the runtime capability backstop below only when the mesh
+    // backend cannot blend the selected edge class; Shape2D variants are shared JS.
     backends[name] = cadCalls.some(({ op, args }) => !isZeroMagnitudeCadOp(op, args))
       ? "occt"
       : "manifold";
@@ -51,7 +49,7 @@ export function detectBackend(part, params = {}) {
 // (a CAD-only call it can't reach — e.g. gated on a real geometry query the
 // probe answers with dummies) the Manifold build throws NEEDS_OCCT and the
 // worker asks for a reroute. That must not pin OCCT for the rest of the session,
-// or turning the OCCT-only feature off never reverts to Manifold. Instead the
+// or turning the unsupported feature off never reverts to Manifold. Instead the
 // reroute is latched per (sub-part, params snapshot): the exact combination that
 // failed skips the doomed Manifold retry, and ANY param change re-consults the
 // probe. A part the probe chronically under-detects costs one cheap failed
