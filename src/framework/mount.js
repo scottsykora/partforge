@@ -42,6 +42,12 @@ const NOOP_MEASURE = { isEnabled: () => false, setEnabled: () => {}, clearPins: 
 // case below). One shared string so the status line, onBuild, and the ready
 // rejection can never drift apart.
 const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy the import — see console";
+// The crossover's OTHER failure mode: the tessellate-imports request itself
+// throws (malformed STEP, etc.) rather than delivering a mesh to prime. Distinct
+// from IMPORT_MESH_BROKEN_MESSAGE above (that one names a digest mismatch AFTER
+// a successful tessellation) — this one names the tessellation failure and
+// carries the worker's own error text. See the correlated "error" case below.
+const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
 export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure }) {
   return {
@@ -272,6 +278,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // exactly one part for its whole lifetime — there is no rebind point to reset
     // this at — so declaring it here beside backendPolicy is its only reset.
     let importMeshState = null;
+    // jobId of the outstanding tessellate-imports request (mount-generated —
+    // jobs.js's tessellate-imports branch echoes it back on both its
+    // "import-meshes" reply and, via the shared catch, on a thrown "error").
+    // Lets the "error" case below tell a correlated tessellation failure apart
+    // from an unrelated build error sharing the same message type, so it can
+    // reset the latch instead of stranding it at "requested" forever.
+    let importTessellateJobId = null;
+    let importTessellateJobSeq = 0;
 
     // ?debug shows the cache debug overlay; ?debug&nocache starts with caching off.
     const qs = new URLSearchParams(location.search);
@@ -613,7 +627,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             if (!readySettled) { readySettled = true; rejectReady(new Error(IMPORT_MESH_BROKEN_MESSAGE)); }
           } else if (importMeshState !== "requested") {
             importMeshState = "requested";
-            service.send({ type: "tessellate-imports" }, "occt");
+            importTessellateJobId = ++importTessellateJobSeq;
+            service.send({ type: "tessellate-imports", jobId: importTessellateJobId }, "occt");
           }
           break;
         case "import-meshes":
@@ -624,11 +639,32 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           // other half of the same buildDone()/kick() pairing needs-occt does in
           // one step, split across the two crossover replies here.
           importMeshState = "primed";
+          importTessellateJobId = null; // the request this jobId correlated is answered — nothing to match against it anymore
           service.send({ type: "prime-imports", meshes: data.meshes }, "manifold",
             Object.values(data.meshes).flatMap((m) => [m.positions.buffer, m.indices.buffer]));
           loop.kick();
           break;
-        case "error":
+        case "error": {
+          // A correlated tessellate-imports failure (malformed STEP, etc.) must
+          // not fall through the generic handling below: that request was
+          // dispatched directly via service.send (see needs-import-mesh above),
+          // never through loop.send, so loop.buildDone() has no matching pending
+          // count to release for it — calling it here would mis-credit an
+          // unrelated in-flight generate job. Reset the latch instead of leaving
+          // it stuck at "requested" forever (which would silently swallow every
+          // later needs-import-mesh via the `!== "requested"` guard above) — the
+          // next kick (param/view change) retries tessellation fresh.
+          if (data.jobId != null && data.jobId === importTessellateJobId) {
+            importMeshState = null;
+            importTessellateJobId = null;
+            ui.hideBusy();
+            refreshView();
+            const tessellateMessage = importTessellateFailedMessage(data.message);
+            ui.setStatus(`failed: ${tessellateMessage}`, true);
+            onBuild?.({ status: "error", error: tessellateMessage });
+            if (!readySettled) { readySettled = true; rejectReady(new Error(tessellateMessage)); }
+            break;
+          }
           loop.buildDone();
           ui.hideBusy();
           // refreshView FIRST: its all-current branch clears the status line,
@@ -638,6 +674,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           onBuild?.({ status: "error", error: data.message });
           if (!readySettled) { readySettled = true; rejectReady(new Error(data.message)); }
           break;
+        }
       }
     }
 

@@ -594,6 +594,57 @@ test("a needs-import-mesh after priming surfaces a build error instead of loopin
   return expect(runtime.ready).rejects.toThrow(/STEP import tessellation failed/);
 });
 
+// A failed tessellate-imports request (malformed STEP, etc.) is a DIFFERENT
+// failure from the digest-mismatch case above: the OCCT job throws before
+// delivering any mesh, so jobs.js's shared catch posts a plain `{type:"error"}`
+// carrying the jobId mount attached to the request. Without correlating that
+// jobId, the crossover latch (importMeshState) would strand at "requested"
+// forever — every later regen would hit needs-import-mesh, see "requested",
+// settle silently, and never re-request, i.e. an endless busy spinner.
+test("a tessellate-imports error clears the crossover latch and surfaces the failure, without looping", async () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  expect(workers.occt.postMessage).toHaveBeenCalledTimes(1);
+  const tessellateMsg = workers.occt.postMessage.mock.calls[0][0];
+  expect(tessellateMsg.type).toBe("tessellate-imports");
+  expect(tessellateMsg.jobId).not.toBeUndefined(); // mount must attach a correlatable jobId
+
+  // The OCCT worker's job throws — jobs.js's shared catch echoes msg.jobId.
+  workers.occt.onmessage({ data: { type: "error", jobId: tessellateMsg.jobId, message: "malformed STEP" } });
+  expect(els.status.status.textContent).toBe("failed: STEP import tessellation failed — malformed STEP");
+  expect(els.status.status.classList.contains("err")).toBe(true);
+  await expect(runtime.ready).rejects.toThrow(/STEP import tessellation failed — malformed STEP/);
+
+  // The latch must be reset, not stranded — a later needs-import-mesh (e.g. a
+  // fresh build after a param change) retries tessellation instead of
+  // settling silently forever.
+  workers.occt.postMessage.mockClear();
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 2, subparts: ["body"] } });
+  expect(workers.occt.postMessage).toHaveBeenCalledTimes(1);
+  expect(workers.occt.postMessage.mock.calls[0][0]).toMatchObject({ type: "tessellate-imports" });
+});
+
+test("an unrelated build error does not disturb an outstanding tessellate-imports request", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  workers.occt.postMessage.mockClear();
+  // A plain build error (no jobId, as a "generate" job's does) arrives while
+  // tessellation is still outstanding — it must not be mistaken for the
+  // correlated tessellate-imports failure and must not clear the latch.
+  workers.manifold.onmessage({ data: { type: "error", message: "unrelated failure" } });
+  expect(els.status.status.textContent).toBe("failed: unrelated failure");
+  // the tessellate-imports request is still outstanding — a second
+  // needs-import-mesh must not fire a duplicate request
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  expect(workers.occt.postMessage).not.toHaveBeenCalled();
+});
+
 test("dispose() tears everything down and is idempotent", () => {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();
