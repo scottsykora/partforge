@@ -9,6 +9,24 @@ const QUAD = { // unit square, two triangles
   indices: Uint32Array.from([0, 1, 2, 0, 2, 3]),
 };
 
+const CONTENT_TYPES = strToU8(
+  '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>'
+);
+const RELS = strToU8(
+  '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'
+);
+
+// Build a valid, readable-as-a-zip .3mf archive around a caller-supplied model
+// XML string (or omit the model part entirely, for the "no .model" case).
+function buildZip(modelXml) {
+  const files = { "[Content_Types].xml": CONTENT_TYPES, "_rels/.rels": RELS };
+  if (modelXml !== null) files["3D/3dmodel.model"] = strToU8(modelXml);
+  return zipSync(files);
+}
+
 describe("parse3MF", () => {
   it("round-trips the writer", () => {
     const { positions, indices } = parse3MF(meshTo3MF([QUAD]));
@@ -48,28 +66,69 @@ describe("parse3MF", () => {
       "</triangles></mesh></object></resources>" +
       '<build><item objectid="1" transform="2 0 0 0 2 0 0 0 2 10 20 30"/></build>' +
       "</model>";
-    const files = {
-      "[Content_Types].xml": strToU8(
-        '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
-          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
-          '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>'
-      ),
-      "_rels/.rels": strToU8(
-        '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
-          '<Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'
-      ),
-      "3D/3dmodel.model": strToU8(xml),
-    };
-    const zip = zipSync(files);
 
-    const { positions } = parse3MF(zip);
+    const { positions } = parse3MF(buildZip(xml));
     // vertex (1,2,3) * diag(2,2,2) + (10,20,30) = (12, 24, 36)
     expect(positions[0]).toBeCloseTo(12);
     expect(positions[1]).toBeCloseTo(24);
     expect(positions[2]).toBeCloseTo(36);
   });
 
-  it("throws when no 3D model part exists", () => {
+  it("scales a build-item translation by the model unit, combined with mm-scaled geometry", () => {
+    // unit="centimeter": vertex (1,2,3) cm is stored pre-scaled to (10,20,30) mm
+    // by the vertex loop; the transform's translation (5,0,0) is *model* units
+    // (cm) per the 3MF spec, so it must also be scaled (x10) before adding —
+    // exercising the `t[9]*scale` path, which the other transform test (unit
+    // "millimeter", scale 1) can't distinguish from an unscaled `t[9]`.
+    // Expected (hand-verified): (1,2,3)cm -> (10,20,30)mm, + (5,0,0)cm -> (50,0,0)mm
+    // = (60, 20, 30) mm.
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<model unit="centimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">' +
+      '<resources><object id="1" type="model" name="p"><mesh><vertices>' +
+      '<vertex x="1" y="2" z="3"/><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/>' +
+      "</vertices><triangles>" +
+      '<triangle v1="0" v2="1" v3="2"/>' +
+      "</triangles></mesh></object></resources>" +
+      '<build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 5 0 0"/></build>' +
+      "</model>";
+
+    const { positions } = parse3MF(buildZip(xml));
+    expect(positions[0]).toBeCloseTo(60);
+    expect(positions[1]).toBeCloseTo(20);
+    expect(positions[2]).toBeCloseTo(30);
+  });
+
+  it("throws on an unrecognized unit", () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<model unit="furlong" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">' +
+      '<resources><object id="1" type="model" name="p"><mesh><vertices>' +
+      '<vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/>' +
+      "</vertices><triangles>" +
+      '<triangle v1="0" v2="1" v3="2"/>' +
+      "</triangles></mesh></object></resources><build><item objectid=\"1\"/></build></model>";
+    expect(() => parse3MF(buildZip(xml))).toThrow(/unit/i);
+  });
+
+  it("throws when the archive is a valid zip with no 3D model part", () => {
+    const zip = buildZip(null); // [Content_Types].xml + _rels/.rels only, no *.model entry
+    expect(() => parse3MF(zip)).toThrow(/3mf/i);
+    expect(() => parse3MF(zip)).toThrow(/model/i);
+  });
+
+  it("throws when the .model part has no mesh geometry", () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">' +
+      "<resources></resources><build></build></model>";
+    expect(() => parse3MF(buildZip(xml))).toThrow(/mesh|geometry/i);
+  });
+
+  it("throws when the bytes are not a readable zip archive at all", () => {
+    // "PK\x03\x04" is the local-file-header signature, so unzipSync recognizes
+    // this as zip-shaped and attempts to parse it, but the payload is garbage —
+    // it never gets far enough to look for a .model part.
     expect(() => parse3MF(new TextEncoder().encode("PK\x03\x04garbage"))).toThrow(/3mf/i);
   });
 });
