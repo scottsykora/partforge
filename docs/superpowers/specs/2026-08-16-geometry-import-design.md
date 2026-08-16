@@ -89,17 +89,23 @@ side-channel, off the contract, invisible to the probe).
   `mesh.merge()` + winding/orientation fix) → `Manifold.ofMesh` (via the
   existing `mesh-build.js` path). Still non-manifold after repair → loud
   error carrying defect detail (e.g. open-edge count).
-- **STEP on the Manifold backend (crossover):** the main thread sees a STEP
-  import on a manifold-routed part and asks the **OCCT worker** to run a new
-  `tessellate-import` job — bytes in, transferable triangle arrays out — then
-  ships the triangles to the manifold worker inside the generate message.
-  This is the first *inbound* transferable payload; nothing prevents it
-  (worker→main already transfers everywhere).
+- **STEP on the Manifold backend (crossover):** lazy, mirroring the proven
+  `needs-occt` reroute backstop *(amended during planning — the original
+  draft had the main thread pre-detecting the crossover)*. The Manifold
+  worker's import registration throws a typed error
+  (`code: "NEEDS_IMPORT_MESH"`); jobs.js posts `{type:"needs-import-mesh"}`;
+  mount reacts by sending the **OCCT worker** a `tessellate-imports` job (it
+  resolves the part's own import bytes, runs `importSTEP`, answers
+  `{type:"import-meshes"}` with transferable triangle arrays), then primes
+  the Manifold worker with a `{type:"prime-imports"}` message (the first
+  *inbound* transferable payload; nothing prevents it) and retries the
+  failed generate. No wasted work when no crossover exists; self-healing
+  across rebinds.
   - **Node:** the kernels-must-not-share-a-process invariant means the CLI
-    does the same hop via a `worker_thread`. **Spike first:** replicad's own
-    `setManifold` integration suggests coexistence may actually work
-    in-process; if the spike passes, the Node path simplifies to sequential
-    in-process boots and the worker_thread is dropped.
+    does the same hop via `node:worker_threads` — a separate isolate is a
+    separate WASM world, so the invariant holds by construction. The
+    coexistence test doubles as the spike; the fallback if worker_threads
+    still crash is `child_process.fork`.
 
 ### Units
 
@@ -147,11 +153,13 @@ contract test forces to move together.
    `h("import", name, digest)`; every downstream op key incorporates the file
    digest automatically. Changed file → changed digest → all dependent keys
    change. No poisoning, no thrashing.
-2. **Main-thread display-mesh cache:** today `relevanceHash` sees only params,
-   so a changed file with unchanged params would serve a stale mesh silently.
-   Fix: the recording proxy that discovers param reads also records which
-   import names a sub-part touches; those imports' digests are appended to
-   that sub-part's relevance hash.
+2. **Main-thread display-mesh cache:** no change needed *(amended during
+   planning — the original draft added import digests to the relevance
+   hash)*. Import bytes are memoized per session by source identity (the
+   fonts rule), so a digest cannot change under an unchanged mount, and a
+   rebind/remount resets the cache stamps. The rule — **import sources are
+   content-stable for a session**, same as fonts — is documented in
+   AUTHORING-PARTS.md instead.
 3. **Parse memoization:** parsed masters are memoized per kernel by digest, so
    slider drags / view switches never re-parse a multi-MB file.
 
@@ -162,22 +170,42 @@ Determinism holds: bytes resolve outside build, the digest pins identity, and
 
 ### Deviation gate
 
-New verify assertion (grammar in `oracle/assert-dsl.js`, evaluation in
-`oracle/verify.js`):
+*(Amended during planning: the original draft sketched a
+`["deviation", …]` tuple form, but the repo's verify grammar is
+`expect: { subPart: { metric: "expr" } }` over a metric registry —
+the gate now fits that grammar.)*
+
+A sub-part binds itself to a reference with a new declaration field, and
+measure() computes deviation facts against it:
 
 ```js
-verify: [["deviation", "body", {
-  ref: "scan",            // an import name (or another sub-part)
-  maxVolumeDeltaPct: 2,   // cheap sanity gate
-  maxBboxDelta: 0.5,      // mm, per-axis max
-  maxXorVolume: 50,       // mm³ of symmetric difference — the real match check
-}]]
+parts: {
+  body: {
+    reference: "scan",   // an import name — measure() computes s.deviation vs it
+    build: (k, p) => …,
+  },
+},
+verify: {
+  expect: {
+    body: {
+      refVolumeDeltaPct: "<=2",         // cheap sanity gate, % of reference volume
+      refBboxDelta: "<=[0.5,0.5,0.5]",  // mm, per-axis max of |min|/|max| corner deltas
+      refXorVolume: "<=50mm3",          // symmetric-difference volume — the real match check
+    },
+  },
+},
 ```
 
-All metrics compose from existing oracle machinery (booleans + volume + bbox
-on the mesh representation). Runs wherever verify runs: `partforge measure`
-(non-zero exit on failure) and the browser `inspect` job. Thresholds are all
-optional; at least one must be present.
+The facts (`s.deviation = { ref, xorVolume, volumeDeltaPct, bboxDelta }`) are
+computed in `oracle/measure.js` only for sub-parts declaring `reference`
+(XOR volume = vol(A) + vol(B) − 2·vol(A∩B), one boolean); the three
+`ref*` metrics live in the `SUBPART_METRICS` registry
+(`src/framework/verify-metrics.js`) and evaluate through the existing
+assertion DSL. Deviation is measured in build coordinates on the posed
+display solid — aligning the rebuild to the reference is the part author's
+job (the ghost overlay shows misalignment). Runs wherever verify runs:
+`partforge measure` (non-zero exit on failure) and the browser `inspect`
+job.
 
 Measuring the reference itself needs nothing new: an imported ghost sub-part
 already appears in `measure` output (bbox / volume / watertightness), which is
@@ -248,7 +276,17 @@ in its own brainstorm/spec against that codebase:
 
 ## Open items carried into planning
 
-- **Spike:** can OCCT and Manifold boot in one Node process? Decides
-  worker_thread vs sequential boots for the CLI crossover path.
+- **Base branch prerequisite:** the implementation must be based on top of
+  the per-sub-part backend routing work (`claude/per-subpart-routing`,
+  `detectBackends` / per-backend generate grouping) — the crossover flow and
+  the lint routing check reference it. Rebase this branch onto main after
+  that work merges, before executing the plan.
+- **Spike (folded into a test):** the Node crossover's worker_thread
+  coexistence test doubles as the spike; fallback is `child_process.fork`.
+- **Browser caveat to watch:** replicad's `importSTEP` takes a `Blob`;
+  constructing one from bytes inside the worker is fine everywhere we know
+  of, but the Safari-sandbox-worker Blob-reading quirk (see
+  `geometry/mesh-stl.js`'s header) should be re-checked in partforge-cloud's
+  sandbox during the cloud follow-up.
 - Repair scope is deliberately v1-minimal; an aggressive-repair pipeline is a
   possible future feature, not designed here.
