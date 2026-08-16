@@ -68,14 +68,20 @@ test("a throwing build is an error naming the sub-part", () => {
 });
 
 test("an OCCT-only op with meta.backend manifold is an error", () => {
-  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }).fillet({ r: 1 }),
+  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }).shell({ t: 0.5, open: { dir: "Z" } }),
     { meta: { title: "T", backend: "manifold" } }));
   expect(ids(r.errors)).toContain("manifold-backend-uses-occt-op");
-  expect(find(r, "manifold-backend-uses-occt-op").message).toContain("fillet");
+  expect(find(r, "manifold-backend-uses-occt-op").message).toContain("shell");
 });
 
 test("an OCCT-only op without a pinned backend is fine — routing handles it", () => {
-  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }).fillet({ r: 1 })));
+  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }).shell({ t: 0.5, open: { dir: "Z" } })));
+  expect(ids(r.errors)).not.toContain("manifold-backend-uses-occt-op");
+});
+
+test("Solid.fillet with meta.backend manifold is fine now — the mesh backend implements it", () => {
+  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }).fillet({ r: 1 }),
+    { meta: { title: "T", backend: "manifold" } }));
   expect(ids(r.errors)).not.toContain("manifold-backend-uses-occt-op");
 });
 

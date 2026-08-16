@@ -38,15 +38,20 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
   for (let r = 0; r < roid.length; r++)
     for (let t = ri[r] / 3; t < ri[r + 1] / 3; t++) triOID[t] = roid[r];
 
-  // per-triangle face normals
+  // per-triangle face normals, plus each triangle's minimum height (2·area /
+  // longest edge) — the "thinness" the feature-edge pass gates on below
   const fn = new Float32Array(nTri * 3);
+  const thin = new Float32Array(nTri);
   for (let t = 0; t < nTri; t++) {
     const a = tris[t * 3] * np, b = tris[t * 3 + 1] * np, c = tris[t * 3 + 2] * np;
     const ux = vp[b] - vp[a], uy = vp[b + 1] - vp[a + 1], uz = vp[b + 2] - vp[a + 2];
     const vx = vp[c] - vp[a], vy = vp[c + 1] - vp[a + 1], vz = vp[c + 2] - vp[a + 2];
+    const wx = vp[c] - vp[b], wy = vp[c + 1] - vp[b + 1], wz = vp[c + 2] - vp[b + 2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     const L = Math.hypot(nx, ny, nz) || 1;
     fn[t * 3] = nx / L; fn[t * 3 + 1] = ny / L; fn[t * 3 + 2] = nz / L;
+    const longest = Math.max(ux * ux + uy * uy + uz * uz, vx * vx + vy * vy + vz * vz, wx * wx + wy * wy + wz * wz);
+    thin[t] = longest > 0 ? L / Math.sqrt(longest) : 0; // |cross| / maxEdge = min height
   }
 
   // canonical vertex → incident triangles
@@ -94,6 +99,13 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
       const prev = seenEdge.get(key);
       if (prev === undefined) { seenEdge.set(key, t); continue; }
       seenEdge.delete(key);
+      // Sub-visible slivers never emit feature lines: a CSG junction between two
+      // independently tessellated tangent surfaces (e.g. a corner sphere meeting
+      // its edge-fillet cylinders) can leave micron-wide wall strips whose FACES
+      // are invisible but whose long boundary edges would otherwise draw at full
+      // line weight. A triangle thinner than MIN_EDGE cannot be seen, so its
+      // edges are noise by definition — same threshold the segment filter uses.
+      if (thin[prev] < MIN_EDGE || thin[t] < MIN_EDGE) continue;
       const dot = fn[prev * 3] * fn[t * 3] + fn[prev * 3 + 1] * fn[t * 3 + 1] + fn[prev * 3 + 2] * fn[t * 3 + 2];
       // A multi-hole cap triangulation can contain an opposite-wound bridge:
       // its two normals disagree by 180 degrees even though both triangles lie

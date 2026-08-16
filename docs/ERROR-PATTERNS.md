@@ -539,6 +539,18 @@ exposure is a `build()` that queries a twisted solid's box itself, which is the
 normal idiom for placing something relative to a solid and now silently disagrees
 between the Manifold preview and the OCCT STEP export.
 
+## mesh-fillet-unsupported-edge
+
+- **Symptom:** `fillet: ` or `chamfer: ` followed by an edge-class reason — e.g. `edge curve is not circular`, `flank angle varies along the arc`, `selector matched no sharp edges`, `~180° knife edge` — thrown as a `KernelCapabilityError`, or a preview sub-part silently rebuilding on the slow OCCT worker.
+- **Cause:** The mesh backend's native fillet/chamfer (`mesh-fillet.js`) covers straight and circular-arc sharp-edge chains; the selected edges fall outside that (helical edge, varying dihedral, non-circular curve, or nothing sharp matched), so the op signals `NEEDS_OCCT` and the framework reroutes that sub-part (the CLI re-execs once with `PARTFORGE_BACKEND=occt`).
+- **Fix:** Usually nothing — the reroute is the designed degrade and the OCCT result is correct, just slower. To stay on Manifold, restructure so the blend lands on a supported edge class (design the rounding into the profile, or fillet before the boolean that curves the edge). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Fillet, chamfer & shell".
+
+## mesh-fillet-oversized-radius
+
+- **Symptom:** A Manifold-built fillet/chamfer produces a mangled or over-cut shape (no error), where the same part on OCCT would skip the feature with a `fillet(…) failed` warning.
+- **Cause:** The mesh fillet does not validate radius feasibility — a magnitude larger than the local geometry self-intersects its cutter solids and the booleans happily apply them.
+- **Fix:** Clamp the magnitude against local dimensions in the part (`Math.min(p.fillet, halfWidth - 0.5, …)` — see `src/parts/filleted-box.js`), which is required practice on the mesh class per [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md) § "Mesh degrade policy".
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

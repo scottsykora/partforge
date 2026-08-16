@@ -2,10 +2,12 @@
 // the validating probe with no geometry kernel. Every error in this group already
 // throws at runtime; the value is reaching it in microseconds, before a WASM boot.
 import { err, warn } from "./finding.js";
-import { OCCT_ONLY_OPS } from "../geometry/kernel.js";
+import { ROUTED_CAD_OPS } from "../geometry/kernel.js";
 import { MAX_PROBE_OPS } from "../geometry/probe.js";
 
-const OCCT_ONLY = new Set(OCCT_ONLY_OPS);
+// fillet/chamfer are implemented on the mesh backend now (mesh-fillet.js), so a
+// pinned-Manifold part may use them; only the still-unimplemented ops error here.
+const OCCT_ONLY = new Set(ROUTED_CAD_OPS);
 const unique = (xs) => [...new Set(xs)];
 
 export const BUILD_RULES = [

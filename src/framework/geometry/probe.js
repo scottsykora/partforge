@@ -15,7 +15,7 @@
 // lists, which test/kernel-contract.test.js pins to both backend implementations.
 import {
   KERNEL_OPS, KERNEL_OPTIONAL_OPS,
-  SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS, OCCT_ONLY_OPS,
+  SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS, ROUTED_CAD_OPS,
 } from "./kernel.js";
 import { KERNEL_OP_SPECS, SOLID_OP_SPECS, isPlainOptions } from "./op-options.js";
 
@@ -92,7 +92,7 @@ function makeProbe(onCall) {
   return { kernel, proxy, shape2d };
 }
 
-const CAD_OPS = new Set(OCCT_ONLY_OPS);
+const CAD_OPS = new Set(ROUTED_CAD_OPS);
 
 export function createProbeKernel() {
   const used = new Set();       // every op name, any handle kind

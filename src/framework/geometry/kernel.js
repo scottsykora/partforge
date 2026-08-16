@@ -16,7 +16,7 @@
 // The prose half's version: docs/KERNEL-CONTRACT.md's "Contract version" header
 // must match this number (asserted in kernel-contract.test.js). Bump only on a
 // breaking contract change — see the doc's Versioning section.
-export const CONTRACT_VERSION = 2;
+export const CONTRACT_VERSION = 3;
 
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
@@ -57,11 +57,18 @@ export const SHAPE2D_OPS = [
   "isEmpty",
 ];
 
-// Solid ops only OCCT implements natively. Single source of truth: probe.js routes
-// a part to OCCT when its build uses one of these, and the Manifold backend
-// generates its KernelCapabilityError stubs from the same list — adding an op here
-// wires up both automatically.
+// Solid ops a core (mesh) kernel MAY lack. solid-sugar generates KernelCapability-
+// Error stubs for whichever of these a backend leaves undefined. The in-repo
+// Manifold backend now implements fillet and chamfer natively (mesh-fillet.js —
+// straight and circular-arc edge chains), so only `shell` is stubbed there.
 export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
+
+// The subset the geometry-free probe still routes to a B-rep kernel up front.
+// fillet/chamfer are NOT probe-routed anymore: the mesh backend attempts them
+// and throws KernelCapabilityError (code NEEDS_OCCT) only for edge classes it
+// cannot blend, which the framework's runtime reroute latch converts into a
+// per-sub-part OCCT fallback (backend-select.js).
+export const ROUTED_CAD_OPS = ["shell"];
 
 /**
  * @typedef {Object} Solid  An opaque handle to a backend solid. `_`-prefixed keys are backend internals.

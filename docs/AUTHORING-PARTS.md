@@ -310,7 +310,7 @@ and the detection rule.
 | `k.loft({ rings, ruled?, closed?, shading? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls. `shading?: "smooth" \| "faceted"` overrides facet/smooth shading inference (default: <32-side rings shade as flat facets, drawing no same-surface lines at all — not even their own cap rims — though cut seams against other solids still draw; ≥32 sides shade smooth) |
 | `k.sweep({ profile, path, cornerRadius?, closed?, ruled?, smooth? })` | sweep a fixed 2-D profile along a 3-D polyline path — sharp mitered corners (or `cornerRadius` fillets), capped ends (both backends). `closed:true` capless loops and `smooth:true` (OCCT-native swept B-rep, STEP-exact / preview-faceted) are backend-specific, like loft's `closed`/`ruled:false`. `closed:true` loops must be **planar** — RMF frame-transport holonomy can seam-twist a non-planar closed loop where the last station rejoins the first, so only planar closed loops are supported/tested |
 | `k.sphere({ r\|d })` | sphere centred at the origin; bare `k.sphere(r)` also stays valid |
-| `k.roundedBox({ size, center?, round })` | box with rounded edges — `round` = number (all edges) or `{ side?, top?, bottom? }` (vertical edges / rims); stays on Manifold (no OCCT routing, unlike `fillet`); `side` must be 0 or ≥ the rim radii (between clamps with a warning); with `side > 0`, `top + bottom` must be strictly `< h` |
+| `k.roundedBox({ size, center?, round })` | box with rounded edges — `round` = number (all edges) or `{ side?, top?, bottom? }` (vertical edges / rims); built as one hand-meshed ring stack (no booleans at all, cheaper than `fillet`'s cutters); `side` must be 0 or ≥ the rim radii (between clamps with a warning); with `side > 0`, `top + bottom` must be strictly `< h` |
 | `k.roundedCylinder({ r\|d, h, center?, round })` | cylinder with rounded rims — `round` = number (both) or `{ top?, bottom? }`; `round: r` with `top+bottom = h` gives a sphere (capsule when `h > 2r`); one lathe revolve, curve-exact in STEP |
 | `k.torus({ rMajor, rMinor })` | torus centered at the origin (tube centerline in z=0); `0 < rMinor < rMajor` |
 | `k.revolve({ profile, degrees? })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
@@ -2013,12 +2013,16 @@ the requirement that exposed the failure.
 
 ---
 
-## Fillet & chamfer (automatic OCCT backend)
+## Fillet, chamfer & shell
 
 Two backends build your part: **Manifold** (fast meshes — preview, STL, 3MF) and
-**OCCT/replicad** (exact B-rep — STEP). Most parts run on Manifold. But Manifold has no
-fillet, so if your `build` calls a **CAD-only op** the framework automatically routes the
-whole part to OCCT — no declaration needed:
+**OCCT/replicad** (exact B-rep — STEP). Most parts run on Manifold — and since
+contract v3 that **includes fillet and chamfer**: the mesh backend blends straight
+edges and circular-arc edges (bore rims, cylinder rims, the arcs where fillets meet a
+face) natively, at exact radius to within tessellation. Only `shell` still routes a
+sub-part to OCCT up front; a fillet/chamfer on an edge class the mesh backend can't
+blend (helical edges, varying dihedral) reroutes that sub-part to OCCT automatically
+at runtime — no declaration needed either way:
 
 | Op | Meaning |
 |---|---|
@@ -2032,8 +2036,9 @@ whole part to OCCT — no declaration needed:
 - `{ inPlane: "XY"｜"XZ"｜"YZ", at }` — edges lying in a plane (e.g. base edges: `{inPlane:"XY", at:0}`)
 - `{ near: [x,y,z] }` — edges passing through a point
 - a raw `(edgeFinder) => edgeFinder` replicad finder, for anything fancier — **OCCT-only
-  escape hatch**: fine for a part that's happy to stay in this repo, but non-portable
-  (parts meant to travel must use the object forms — see `KERNEL-CONTRACT.md`)
+  escape hatch**: it forces the sub-part onto OCCT (the mesh backend reroutes on
+  sight of it) and is non-portable — parts meant to travel must use the object forms
+  (see `KERNEL-CONTRACT.md`)
 
 ```js
 let s = k.box({ min: [0, 0, 0], max: [40, 30, 16] });
@@ -2044,29 +2049,38 @@ s = s.chamfer({ d: 1, edges: { inPlane: "XY", at: 0 } }); // bevel the base
 See `src/parts/filleted-box.js` for the worked example.
 
 **Automatic backend selection.** Before building, the framework runs a geometry-free *probe*
-of your `build` to see whether it uses a CAD-only op **on a Solid**, and routes accordingly —
-Manifold for everything else (so sweep-heavy parts, e.g. helical grooves, stay fast). The
-probe tracks which handle kind each op ran on, so `Shape2D.fillet`/`.chamfer` (the shared,
-backend-identical 2-D implementations — see "Editing profiles") do *not* route a part to
-OCCT: rounding a profile before extruding keeps you on fast Manifold. Force the backend with
-`meta.backend: "occt" | "manifold"` if you ever need to. Because an OCCT part is built
-entirely on OCCT, its fillets are exact in the STEP **and** present in the printed STL.
+of your `build`; a `shell` call **on a Solid** routes that sub-part to OCCT up front, and
+everything else — fillet and chamfer included — stays on fast Manifold. The probe tracks
+which handle kind each op ran on, so `Shape2D.fillet`/`.chamfer` (the shared,
+backend-identical 2-D implementations — see "Editing profiles") never look like Solid
+ops. Force the backend with `meta.backend: "occt" | "manifold"` if you ever need to.
+STEP export always builds on OCCT, so a filleted part gets exact B-rep blends in its
+STEP even though it previews (and STL/3MF-exports) from the mesh blend — the two agree
+to within tessellation on the supported edge classes, with one visible exception:
+orthogonal box-style corners where three filleted edges meet get a true sphere-octant
+cap, but other blend junctions are mitred on the mesh where OCCT builds a vertex
+blend.
 
-The probe re-runs with the **live parameters on every regen**, and routing works in both
-directions: turn a fillet on and the part moves to OCCT; dial it back to 0 (or take the
-branch that skips it) and the part drops back to Manifold automatically. A zero magnitude
-— `fillet(0)`, `chamfer({ d: 0 })` — is the **identity** on both backends (see
-KERNEL-CONTRACT.md), so an unguarded `s.fillet(p.r)` needs no `if (p.r > 0)` wrapper to
-get the fast preview back when the slider hits 0. (`shell` is the exception: `t: 0` is
-degenerate, not identity, so a shell call always routes to OCCT.)
+If the mesh backend hits an edge class it can't blend, it signals `NEEDS_OCCT` and the
+framework reroutes **just that sub-part** to OCCT for those exact parameters —
+dialing the parameter away re-tries Manifold automatically. A zero magnitude —
+`fillet(0)`, `chamfer({ d: 0 })` — is the **identity** on both backends (see
+KERNEL-CONTRACT.md), so an unguarded `s.fillet(p.r)` needs no `if (p.r > 0)` wrapper.
+(`shell` is the exception: `t: 0` is degenerate, not identity, so a shell call always
+routes to OCCT.)
+
+**Clamp your radii.** The mesh fillet does **not** validate feasibility — an oversized
+radius self-intersects its cutters and yields a wrong shape rather than a skipped
+feature (OCCT skips instead). Clamp magnitudes against local geometry the way
+`filleted-box.js` does: `Math.min(p.fillet, halfWidth - 0.5, p.h - 0.5)`.
 
 **Preview routing is per sub-part.** Each sub-part is probed and routed independently, and
-a mixed part's regen fans out to both workers in parallel — a filleted body pays for OCCT
-while a plain lid rebuilds at Manifold speed beside it. This makes it worth isolating a
-CAD-op solid in its own sub-part rather than folding it into a bigger build. Two scopes
+a mixed part's regen fans out to both workers in parallel — a shelled body pays for OCCT
+while a plain lid rebuilds at Manifold speed beside it. Two scopes
 still route whole-part (the max over the sub-parts): **exports** (one STL/STEP/3MF job
 builds everything in one worker) and the **CLI** (a single Node process boots exactly one
-kernel). Within one sub-part's build there is no per-op backend mixing.
+kernel; on a mesh-side `NEEDS_OCCT` it re-runs itself once with the backend pinned to
+OCCT). Within one sub-part's build there is no per-op backend mixing.
 
 **Shading intent.** The kernel decides what shades smooth and where edge lines
 draw — spheres, cylinders and fillets are smooth by construction; boolean cut
@@ -2075,16 +2089,15 @@ rings have fewer than 32 sides (`shading: "smooth"|"faceted"` on `k.loft`
 overrides the inference either way). If your part previews smooth but would
 print faceted — or the reverse — set the hint rather than changing facet counts.
 
-> Trade-off: OCCT is much slower on heavy swept geometry (helical grooves), so don't reach for
-> `fillet`/`chamfer` on a sweep-heavy part — design those edges in, or keep the part on Manifold.
+> `partforge measure` reports `watertight`/`holes` as `n/a` for OCCT-run parts
+> (Manifold-only topology); `render` works on both. Filleted parts now measure on
+> Manifold with full topology.
 
-> `partforge measure` reports `watertight`/`holes` as `n/a` for OCCT parts (Manifold-only
-> topology); `render` works on both.
+### Cost on the OCCT path: fillet/chamfer scale with edge count — and order matters
 
-### Cost: fillet/chamfer scale with edge count — and order matters
-
-OCCT fillet/chamfer cost is **per selected edge**, on top of the OCCT boolean tax the
-routing already imposes on the rest of the part. Two habits keep it tolerable:
+These costs apply when a sub-part **does** run on OCCT (a shell, an unsupported edge
+class, a pinned backend, or STEP export). OCCT fillet/chamfer cost is **per selected
+edge**, on top of the OCCT boolean tax. Two habits keep it tolerable:
 
 - **Fillet/chamfer as early as possible, on the simplest solid.** A fillet on a bare
   primitive is ~15× cheaper than the same fillet after a dozen boolean cuts have
