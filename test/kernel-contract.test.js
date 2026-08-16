@@ -24,13 +24,6 @@ test("Manifold kernel exposes no op the contract doesn't document", () => {
   expect(publicKeys(k).filter((key) => !documented.has(key))).toEqual([]);
 });
 
-// `import` isn't in KERNEL_OPS yet (only KERNEL_OPTIONAL_OPS) — OCCT's twin lands in
-// a later commit (geometry-import plan Task 7), which promotes it to a required op.
-// Pin the Manifold side now so this commit can't silently drop it.
-test("Manifold kernel exposes import (required-op parity finalizes once OCCT lands its twin)", () => {
-  expect(publicKeys(k)).toContain("import");
-});
-
 test("Manifold solid implements every required op", () => {
   const keys = publicKeys(k.box({ min: [0, 0, 0], max: [1, 1, 1] }));
   for (const op of SOLID_OPS) expect(keys, `solid is missing ${op}`).toContain(op);

@@ -468,21 +468,16 @@ export interface GeometryKernel {
   hullChain(inputs: HullInput[]): Shape2D;
   /** STEP bytes — OCCT only (Manifold throws `KernelCapabilityError`). */
   toSTEP(named: Array<{ name: string; solid: Solid }>): Promise<ArrayBuffer>;
-
-  // Backend-optional: the sub-part cache brackets and WASM lifetime hooks. Every
-  // framework caller reaches these through `?.`, so a third-party backend may
-  // omit them entirely.
-  //
-  // `import` is declared optional here TEMPORARILY: the Manifold backend
-  // implements it now, OCCT's twin lands in a later commit (geometry-import
-  // plan Task 7), which then promotes it to a required member above.
-
   /**
    * Imported geometry declared in the part's `imports` field, registered
    * pre-build by the framework via the underscore-prefixed `_registerImport`
    * side-channel (not a part author's calling surface).
    */
-  import?(name: string): Solid;
+  import(name: string): Solid;
+
+  // Backend-optional: the sub-part cache brackets and WASM lifetime hooks. Every
+  // framework caller reaches these through `?.`, so a third-party backend may
+  // omit them entirely.
 
   /** Open a per-sub-part solid-cache round. */
   beginSubPart?(name: string): void;

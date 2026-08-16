@@ -55,13 +55,14 @@ them loses sub-part caching and mesh-topology gates (`holes`, emptiness), nothin
 a part (never inside a `beginSubPart`/`endSubPart` bracket), it drops cache partitions that
 have gone unbuilt for three consecutive rebinds.
 
-**`import` (in transition).** `kernel.import(name) → Solid` returns previously-registered
-imported geometry (STL/STEP/3MF geometry declared in a part's `imports` field);
-`_registerImport`/`_importDigest`/`_acceptsStep`/`_acceptsMesh` are the underscore-prefixed
-side-channel the framework uses to feed it — not a part author's calling surface. `import`
-sits in `KERNEL_OPTIONAL_OPS` only because the Manifold backend implements it ahead of the
-OCCT backend (geometry-import plan Tasks 6/7, landed across two commits to keep the suite
-green at each); once both backends implement it, it moves to `KERNEL_OPS` as a required op.
+**`import`.** `kernel.import(name) → Solid` returns previously-registered imported geometry
+(STL/STEP/3MF geometry declared in a part's `imports` field); `_registerImport`/
+`_importDigest`/`_acceptsStep`/`_acceptsMesh` are the underscore-prefixed side-channel the
+framework uses to feed it — not a part author's calling surface. It is a required op
+(`KERNEL_OPS`) on both in-repo backends: the Manifold backend accepts mesh formats
+(`_acceptsMesh: true`) and the OCCT backend accepts STEP (`_acceptsStep: true`); a format
+neither backend accepts for the routed kernel registers as an `{error}` entry that
+`import(name)` throws lazily at call time, not at registration.
 
 `KernelCapabilityError` is a *routing signal*, not a failure: partforge's geometry-free
 probe (`probe.js`) runs `build` against a fake kernel, and any use of an `OCCT_ONLY_OPS`

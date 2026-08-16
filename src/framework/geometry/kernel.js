@@ -22,21 +22,15 @@ export const CONTRACT_VERSION = 2;
 export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
   "loft", "sweep", "helixSweptTube", "screwSweep", "union", "shape2d", "text2d", "hull", "hullChain", "toSTEP",
-  "roundedCylinder", "torus", "roundedBox",
+  "roundedCylinder", "torus", "roundedBox", "import",
 ];
 
 // Backend-optional kernel ops: the sub-part cache brackets + WASM lifetime hooks.
 // Both in-repo backends implement the brackets (only `cleanup` is Manifold-specific —
 // OCCT's replicad shapes need no dispose bookkeeping). jobs.js calls all of these via
 // `?.`, so a third-party backend may simply omit them.
-//
-// `import` lives here TEMPORARILY: it is really a required op (both backends must
-// expose it, contract-pinned — see the GeometryKernel typedef above), but OCCT's
-// twin lands in a later commit (geometry-import plan Task 7), and the plan
-// explicitly permits landing contract pinning in two steps to keep the suite green
-// at each commit. Once OCCT implements `import`, move it to KERNEL_OPS.
 export const KERNEL_OPTIONAL_OPS = [
-  "beginSubPart", "endSubPart", "sweepCache", "cacheStats", "resetCacheStats", "cleanup", "import",
+  "beginSubPart", "endSubPart", "sweepCache", "cacheStats", "resetCacheStats", "cleanup",
 ];
 
 // Ops every Solid must implement (including the sugar addSugar() attaches).
@@ -145,7 +139,7 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hull   convex hull of all inputs → a convex Shape2D (faceted; pure-JS monotone chain)
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hullChain   swept hull over an ordered sequence (≥2): union of hull([inᵢ,inᵢ₊₁])
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)
- * @property {(name: string) => Solid} import   imported geometry declared in the part's imports field (registered pre-build by the framework). NOT yet in KERNEL_OPS — Manifold implements it as of this commit, OCCT lands its twin in Task 7, which then promotes it from optional to required (see KERNEL_OPTIONAL_OPS below).
+ * @property {(name: string) => Solid} import   imported geometry declared in the part's imports field (registered pre-build by the framework via the underscore-prefixed `_registerImport`/`_importDigest`/`_acceptsStep`/`_acceptsMesh` side-channel, not a part author's calling surface)
  * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (both backends)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)
  * @property {() => void} [sweepCache]   drop cache partitions idle for 3 rebinds; call once per setPart, never mid-bracket
