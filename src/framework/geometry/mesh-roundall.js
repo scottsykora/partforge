@@ -29,24 +29,37 @@ export function roundAllSegs(r, quality) {
 export function meshRoundAll(wasm, m, r, quality) {
   if (!Number.isFinite(r) || r <= 0) throw new Error("roundAll: r must be a finite number > 0 (r = 0 is handled as the identity by the caller)");
   const segs = roundAllSegs(r, quality);
+  const segs2 = roundAllSegs(2 * r, quality);
   const tol = Math.max(r / 100, 0.01);
   const step = (input, sphere, op) => {
     const raw = op === "sum" ? input.minkowskiSum(sphere) : input.minkowskiDifference(sphere);
-    const orig = raw.asOriginal();
-    raw.delete?.();
-    const out = orig.simplify(tol);
-    orig.delete?.();
-    return out;
+    let orig;
+    try {
+      orig = raw.asOriginal();
+    } finally {
+      raw.delete?.();
+    }
+    try {
+      return orig.simplify(tol);
+    } finally {
+      orig.delete?.();
+    }
   };
   const sphR = wasm.Manifold.sphere(r, segs);
-  const sph2R = wasm.Manifold.sphere(2 * r, segs);
+  const sph2R = wasm.Manifold.sphere(2 * r, segs2);
   try {
     const a = step(m, sphR, "sum");          // dilate: rounds convex, seals holes < 2r
-    const b = step(a, sph2R, "diff");        // erode 2r: melts walls < 2r
-    a.delete?.();
-    const c = step(b, sphR, "sum");          // dilate back: final radius ≈ r everywhere
-    b.delete?.();
-    return c;                                 // caller owns; input m untouched
+    let b;
+    try {
+      b = step(a, sph2R, "diff");        // erode 2r: melts walls < 2r
+    } finally {
+      a.delete?.();
+    }
+    try {
+      return step(b, sphR, "sum");          // dilate back: final radius ≈ r everywhere
+    } finally {
+      b.delete?.();
+    }
   } finally {
     sphR.delete?.();
     sph2R.delete?.();
