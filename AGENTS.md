@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`scottsykora/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twelve: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has thirteen: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
