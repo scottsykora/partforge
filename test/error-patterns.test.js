@@ -56,6 +56,7 @@ const BASELINE_IDS = [
   "shape2d-offset-kissing-ring-passes-validation",
   "shape2d-offset-reflex-cluster-too-much-material",
   "shape2d-offset-waist-not-severed-round-join",
+  "roundall-skipped",
 ];
 
 const entries = parsePatterns(doc);

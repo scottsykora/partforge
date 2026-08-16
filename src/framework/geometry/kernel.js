@@ -16,7 +16,7 @@
 // The prose half's version: docs/KERNEL-CONTRACT.md's "Contract version" header
 // must match this number (asserted in kernel-contract.test.js). Bump only on a
 // breaking contract change — see the doc's Versioning section.
-export const CONTRACT_VERSION = 3;
+export const CONTRACT_VERSION = 4;
 
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
@@ -38,7 +38,7 @@ export const SOLID_OPS = [
   "cut", "cutAll", "intersect", "union", "clone", "label", "boundingBox", "volume",
   "translate", "rotate", "rotateX", "rotateY", "rotateZ", "rotateAbout", "along", "at",
   "mirror", "scale", "toMesh", "toSTL", "toIndexedMesh",
-  "fillet", "chamfer", "shell",
+  "fillet", "chamfer", "shell", "roundAll",
 ];
 
 // Backend-optional Solid queries: Manifold mesh-topology numbers (measure.js

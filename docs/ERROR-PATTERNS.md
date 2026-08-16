@@ -101,6 +101,12 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 - **Cause:** OCCT's native fillet cannot build the rim round-over at a degenerate boundary (e.g. a rim radius exactly equal to `round.side` on a stadium profile, `2·side == min(w, d)`) and would otherwise return invalid-but-nonempty geometry; the monotonicity/validity gate in `occt-repair.js`'s `safeOp` catches it and skips the feature rather than exporting invalid STEP.
 - **Fix:** shrink the affected rim radius slightly below `round.side` (or below the degenerate boundary), or accept the sharp rim at that exact radius.
 
+## roundall-skipped
+
+- **Symptom:** console warning `partforge: roundall-skipped: offset step … produced no valid solid — r=… is likely at/above the smallest feature size; returning the un-rounded solid`, and the OCCT build (STEP export, CLI measure with the OCCT backend) shows sharp edges where `roundAll` was expected.
+- **Cause:** the B-rep backend implements `roundAll` as a triple OCCT offset, which cannot change topology: a radius at or above the smallest local feature (thin wall < 2r, hole < 2r) has no valid B-rep offset result, so the op skips whole rather than emit garbage (KERNEL-CONTRACT.md, `roundAll` row). The mesh backend meanwhile performs true consumption — so preview and STEP legitimately differ in this regime.
+- **Fix:** reduce `r` below half the smallest wall/hole radius if STEP fidelity matters; or accept the divergence (preview/STL are correct) and gate the part with a `verify` volume assertion so the behavior is intentional.
+
 ## boolean-not-watertight
 
 - **Symptom:** `NOT watertight ✗` from `partforge measure` (non-zero exit) after adding a boolean cut or union.
