@@ -22,6 +22,10 @@ test("a part using chamfer stays on manifold", () => {
   const c = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box({ min: [0, 0, 0], max: [1, 1, 1] }).chamfer({ d: 0.2 }) } } };
   expect(detectBackend(c)).toBe("manifold");
 });
+test("a part using roundAll stays on manifold", () => {
+  const p = { defaults: {}, views: view, parts: { a: { views: ["v"], build: (k) => k.box({ min: [0, 0, 0], max: [1, 1, 1] }).roundAll(0.1) } } };
+  expect(detectBackend(p)).toBe("manifold");
+});
 test("a plain part routes to manifold", () => { expect(detectBackend(plain)).toBe("manifold"); });
 test("meta.backend overrides detection", () => { expect(detectBackend({ ...plain, meta: { backend: "occt" } })).toBe("occt"); });
 

@@ -1,6 +1,6 @@
 # The partforge kernel contract
 
-**Contract version: 3** (introduced in partforge 0.62) — mirrored by `CONTRACT_VERSION`
+**Contract version: 4** (introduced in partforge 0.63) — mirrored by `CONTRACT_VERSION`
 in `src/framework/geometry/kernel.js` and asserted by `test/kernel-contract.test.js`;
 see [Versioning](#versioning) for what may change under which version bump.
 
@@ -304,6 +304,7 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 | `toSTL({quality?})` | `Promise<ArrayBuffer>`, binary STL, outward CCW winding. Stored facet normals may be zero — slicers recompute them (the mesh backend happens to write them). |
 | `toIndexedMesh({quality?})` | `{positions, indices}` indexed mesh (3MF path); defaults to `"print"` like `toSTL`. Coincident vertices need NOT be welded — the 3MF writer welds, because that format reads topology from the indices rather than re-stitching soup by position the way an STL consumer does. |
 | `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | `fillet`/`chamfer`: implemented on BOTH in-repo classes since v3 — exactly on B-rep, tolerance-band on the mesh class for straight and circular-arc edge chains (see [Conformance classes](#conformance-classes)); an edge class the mesh kernel cannot blend throws `KernelCapabilityError` and reroutes. Zero magnitude — `fillet(0)` / `chamfer({d: 0})` — is the identity on every class (returns the solid unchanged, never throws; `shell` excluded, `t: 0` is degenerate). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` remains B-rep-only (core throws), hollows inward keeping outer dimensions; `open` (face selector) is required. |
+| `roundAll(r)` · `roundAll({r})` | Morphological close-then-open with a ball of radius `r`: rounds EVERY edge (convex and concave) at radius ≈ `r`; faces stay in place; features smaller than the ball are consumed (walls < 2r melt, holes < 2r seal). Implemented natively on BOTH classes — never routes, never throws `KernelCapabilityError`. Parity-tolerant only while `r` is below the smallest feature size; at consuming radii the mesh class performs true consumption and a B-rep class MAY skip the whole op unchanged with a `roundall-skipped` warning (skip is the only permitted degrade). `roundAll(0)` is the identity on every class. |
 
 `quality` (`"preview"` | `"print"`) is **advisory**: it trades tessellation density for
 speed and a backend may bake it at kernel creation (Manifold does). A part must never

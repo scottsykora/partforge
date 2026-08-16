@@ -289,6 +289,8 @@ export const SOLID_OP_SPECS = {
     return [req("chamfer", o, "d"), ...(o.edges !== undefined ? [o.edges] : [])]; } },
   shell:   { toArgs: (o) => { checkKeys("shell", o, ["t", "open"]);
     return [req("shell", o, "t"), req("shell", o, "open")]; } },
+  roundAll: { toArgs: (o) => { checkKeys("roundAll", o, ["r"]);
+    return [req("roundAll", o, "r")]; } },
 };
 
 // A zero-magnitude fillet/chamfer is the identity on every conformance class

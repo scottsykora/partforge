@@ -266,6 +266,12 @@ export interface Solid {
    * Closed (no open face) hollows are not supported.
    */
   shell(o: { t: number; open: FaceSelector }): Solid;
+  /**
+   * Morphological close-then-open with a ball of radius `r`: rounds EVERY edge
+   * (convex and concave). Implemented natively on both backends — never routes,
+   * never throws `KernelCapabilityError`. `roundAll(0)` is the identity.
+   */
+  roundAll(r: number | { r: number }): Solid;
   /** Through-hole count (Manifold only). */
   genus?(): number;
   /** No geometry at all (Manifold only). */

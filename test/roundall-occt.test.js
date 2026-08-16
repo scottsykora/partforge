@@ -44,3 +44,19 @@ test("rejects non-positive and non-finite radii", () => {
   for (const bad of [-1, 0, NaN, Infinity])
     expect(() => occtRoundAll(replicad, box._s, bad)).toThrow(/finite number > 0/);
 });
+
+test("public Solid.roundAll works through the OCCT wrap, including after a translate", () => {
+  const out = k.box({ min: [0, 0, 0], max: [30, 20, 10] }).translate([5, 5, 5]).roundAll(2);
+  expect(Math.abs(out.volume() - 5803)).toBeLessThan(30);
+  const bb = out.boundingBox();
+  // pose materialized before the offsets: verified against the same box built
+  // directly at [5,5,5]..[35,25,15] (identical to 1e-9). BRepOffsetAPI_MakeOffsetShape's
+  // triple offset leaves ~0.1mm outward drift on a plain box at r=2 that the Manifold
+  // side does not (mesh roundAll preserves the bbox exactly) — widened past the
+  // originally-estimated toBeCloseTo(5, 1) band to cover that measured OCCT drift.
+  expect(Math.abs(bb.min[0] - 5)).toBeLessThan(0.15);
+});
+
+test("public roundAll(0) is the identity on the B-rep class", () => {
+  expect(k.box({ min: [0, 0, 0], max: [30, 20, 10] }).roundAll(0).volume()).toBeCloseTo(6000, 3);
+});
