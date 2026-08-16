@@ -76,6 +76,9 @@ async function loadPart(partPath, usage) {
   return part;
 }
 
+// Pass the part's declared fonts through, mirroring the worker path (jobs.js) —
+// otherwise a part using a named font builds in the browser but dies headlessly
+// with `text2d: unknown font …`.
 const bootKernel = (part) => {
   const opts = { fonts: part.fonts, imports: part.imports };
   const backend = process.env.PARTFORGE_BACKEND || detectBackend(part); // env: crash()'s NEEDS_OCCT retry
