@@ -1,6 +1,6 @@
 # The partforge kernel contract
 
-**Contract version: 1** (introduced in partforge 0.9) — mirrored by `CONTRACT_VERSION`
+**Contract version: 2** (introduced in partforge 0.59) — mirrored by `CONTRACT_VERSION`
 in `src/framework/geometry/kernel.js` and asserted by `test/kernel-contract.test.js`;
 see [Versioning](#versioning) for what may change under which version bump.
 
@@ -122,13 +122,15 @@ is options (one plain object).
 
 Options form is canonical — the form this document, `AUTHORING-PARTS.md`, and every
 in-repo part teach and use. Legacy positional forms remain accepted (silently — no
-runtime warning) until contract v2 removes them; a conforming implementation must
-accept both, and this repo's `finishKernel()`/`addSugar()` provide the normalization
-for free.
+runtime warning) until a future breaking contract version removes them; a conforming
+implementation must accept both, and this repo's `finishKernel()`/`addSugar()`
+provide the normalization for free. (Contract v2, partforge 0.59, did **not** remove
+them — that bump was for `offset` semantics, see [Versioning](#versioning); legacy
+positional removal is still pending a version of its own.)
 
 ### Kernel factory ops (options-canonical; legacy positional accepted)
 
-| Op | Canonical options form | Legacy positional (until v2) |
+| Op | Canonical options form | Legacy positional (pending removal) |
 |---|---|---|
 | `cylinder` | `{r\|d, h, center?}` straight · `{r1, r2, h, center?}` or `{d1, d2, h, center?}` cone | `(rBottom, rTop, h, {center?})` |
 | `sphere` | `{r\|d}` — `sphere(5)` stays valid, undeprecated | `(r)` |
@@ -358,6 +360,8 @@ against that IR, and both backends instantiate it. Booleans run through **paper.
 `fillet`/`chamfer`/`simplify`, and `area`/`boundingBox`/`corners`/`contains` are
 **backend-identical**, not merely parity-tolerant. `area()` and `boundingBox()` are
 curve-exact (they integrate the real curves; they do not measure a tessellation).
+`offset` runs on this same shared engine (`geometry/contour-offset.js`) — see below —
+so it is backend-identical too, like everything else in this list.
 
 **Lazy materialization.** Backend geometry is built only where it is unavoidable.
 Three readbacks tessellate to point rings at the backend's own LOD (Manifold 116
@@ -371,16 +375,28 @@ contours — arcs and cubics become true B-rep edges). A `Shape2D` may be passed
 directly as the `profile` to `extrude`/`revolve`, holes included. `toContours()` is
 the one readback that tessellates nothing.
 
-**Offset is the carve-out.** `offset` is the one op that cannot run on the contour
-IR, so it routes into the backend's own 2-D engine (Clipper2 via `CrossSection` on
-Manifold, replicad's `Drawing.offset` on OCCT) and its result is lifted back into the
-IR. Manifold's returns line contours at mesh LOD; OCCT's stays curve-native. See the
-cross-backend note below.
+**Offset runs on the contour IR too.** `Shape2D.offset(delta, { corners })` runs
+backend-independently on the contour IR — no backend `CrossSection` or `Drawing` is
+ever involved. Lines and arcs offset exactly (arcs stay arcs); cubics are
+approximated to ≤ 1e-3 mm deviation. `corners: "round"` inserts exact arc joins,
+`"chamfer"` a true 45°-bisecting bevel chord at every corner angle, `"sharp"` miters
+with limit 2 (falling back to the bevel chord past the limit). Self-intersecting raw
+results are resolved through the shared planar boolean engine (paper.js), which may
+return arcs as cubic approximations — identical to boolean-op output. `segs` is
+accepted and ignored (there is no backend LOD to tune). Both backends produce
+identical offset geometry by construction, like every other Shape2D op.
+
+A region with holes offsets **material-wise**: the outer boundary moves by `delta`,
+each hole by `-delta`, so a positive `delta` always adds material (the outer grows,
+holes shrink) and a negative one always removes it (the outer shrinks, holes grow) —
+never the reverse for either. This one shared implementation is what guarantees it;
+a route that offsets a single fused `outer.cut(hole)` drawing with one call gets it
+backwards for the holes (see the migration note below).
 
 | Op | Contract |
 |---|---|
 | `union(other)` / `cut(other)` / `cutAll(others[])` / `intersect(other)` | 2-D boolean ops; `other` may be a `Shape2D` or a raw profile (lifted via `shape2d` first). Curve-exact and backend-identical (paper.js). |
-| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. The one backend-specific op: curve-preserving on OCCT, faceted at mesh LOD on Manifold. Throws if the offset collapses the shape. Empty in → empty out (short-circuits before the backend). |
+| `offset(delta, {corners?, segs?})` | Grows (`delta>0`) or insets (`delta<0`) by `delta` mm; `corners` = `round` (default) / `chamfer` / `sharp`. Runs backend-independently on the contour IR — lines/arcs offset exactly, cubics approximate to ≤ 1e-3 mm; `chamfer` is a true 45°-bisecting bevel at every corner angle, `sharp` miters with limit 2. Backend-identical by construction, like every other Shape2D op. Holes offset material-wise (`-delta` where the outer gets `delta`). `segs` is accepted and ignored. Empty in → empty out (short-circuits before the engine). Throws if the offset collapses the shape. |
 | `area()` | Net area (Σ\|outers\| − Σ\|holes\|), mm². Curve-exact. |
 | `boundingBox()` | `{min, max}` — axis-aligned 2-D bounds, curve-exact (no `center`/`size`, unlike `Solid.boundingBox`). |
 | `toRegions()` | Materialize into `{outer, holes}[]` point-ring region arrays (`assembleRegions`), tessellating curves at the backend's LOD; a boolean result may be several disjoint regions. |
@@ -410,9 +426,16 @@ pinned, Manifold silently built an empty solid where OCCT threw — behavior no 
 could rely on portably, so defining it follows the reference backend and is not a
 contract break.)
 
-On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **for convex corners with interior angle ≥ 90°** (the common case: rectangles, hexagons, rounded-rects, pentagons, …). `chamfer` is a true 45° bevel — a straight chord across the corner — matching OCCT to float precision there (a 10×10 square offset +1 gives 142.0 on both; a pentagon 298.920 on both). Manifold has no native bevel join, so it renders `chamfer` as a Round join forced to a single chord per corner (`circularSegments=4`). **At acute (<90° interior) convex corners** — triangles, star points, V-notches — Clipper2 emits 2 chords rather than 1, so Manifold's chamfer bulges ~0.4% beyond OCCT's single-chord bevel (e.g. an equilateral triangle: Manifold 235.46 vs OCCT 234.50). `round` and `sharp` are exact across backends at every angle; prefer them, or accept the small acute-corner difference on `chamfer`.
+On `offset`: `round`, `sharp`, and `chamfer` all agree across both backends **at every corner angle, convex or reflex** — a 10×10 square offset +1 gives 142.0 on both, a pentagon 298.920 on both, and an equilateral triangle's chamfer agrees to float precision on both, with no acute-corner carve-out. This follows from `offset` being one native implementation rather than a call into either backend's own 2-D engine — there is no Clipper2-vs-OCCT split left to diverge.
 
-`offset` is therefore **parity-relevant**: on OCCT the result carries exact arcs, on Manifold it is faceted at mesh LOD, and measure-parity holds within the tessellation tolerance as LOD converges (not a parity waiver). The three tessellating readbacks — `toRegions()`, `simple()`, `regions()` — are LOD-dependent for the same reason: they hand back point rings sampled at the backend's own segment count, so the two backends' output differs in vertex count and by the chord error, converging as LOD rises. Those four ops are the whole LOD-dependent surface; everything else is backend-identical.
+The three tessellating readbacks — `toRegions()`, `simple()`, `regions()` — remain LOD-dependent: they hand back point rings sampled at the backend's own segment count, so the two backends' output differs in vertex count and by chord error, converging as LOD rises. Those three ops are the whole LOD-dependent surface; everything else, including `offset`, is backend-identical.
+
+**Known limitations.** The native offset engine has verified defects on specific input
+shapes — on inward offsets that sever a shape, and on outward offsets of text — under **all
+three corner styles at nearly the same rate**; see [Offset: known
+limitations](#offset-known-limitations) below for the parked cases, their measured values,
+the committed corpus and script that produce every rate quoted there, and the independent
+construction the truths come from.
 
 **Fillet after a boolean reaches STEP as real arcs.** Because booleans preserve curves
 and `fillet` inserts true arc segments, `shape2d(a).union(b).fillet(2).extrude({h})`
@@ -420,6 +443,55 @@ exports a filleted profile as `CIRCLE` B-rep entities on OCCT — the corner op 
 have to run before the boolean, and no facet fan is baked in along the way. (Manifold
 facets at mesh LOD, as always, since its meshes have no curve representation.)
 
+### Offset: known limitations
+
+The native offset engine preserves line, arc, and cubic contour IR through its normal cleanup
+path. Tangled raw offsets are split at crossings, classified under the Positive winding rule,
+and chained back into regions by `geometry/contour-winding.js`. Positive round dilation also
+uses the source hole's inradius to prove when a counter has fully closed, and positive
+dilation drops output components that contain no source material. These are source-domain
+topology proofs, not output-area heuristics.
+
+The reported text case is covered as correctness in
+`test/offset-oracle-manifold.test.js`: the 6-glyph × 7-delta round matrix, including
+`"Scott"` at +0.8/+1.5/+2/+3, matches Clipper2 region and hole counts exactly and stays
+within the corpus area tolerance. `"Scott"` retains native arcs and cubics at every tested
+delta.
+
+**Measured failure surface.** The committed instrument is
+`node scripts/offset-rates.mjs`, over 600 deterministic seeded shapes plus six glyph cases,
+20 deltas, and three corner styles (36,090 attempts). In partforge 0.60 it reports:
+
+- before the retry ladder: round 1/12,030 (0.008%), chamfer 2/12,030 (0.017%), sharp
+  4/12,030 (0.033%);
+- after the retry ladder: zero chain-incomplete failures for all three styles;
+- seven oracle-checked rescues, with median area error 0.0972%, worst 1.663%
+  (2.2373 mm²), zero region-count losses, and zero complete arc losses.
+
+The ladder remains a numerical escape hatch: it perturbs delta by 1e-9, coarsens crossing
+clustering, then tries polyline outlines. A future case that reaches a coarse clustering or
+polyline rung can still lose fine topology or native arcs, so the order remains
+fidelity-first and every newly found rescue must be checked against the independent
+Minkowski oracle.
+
+The currently parked limitations are narrower:
+
+- **Round erosion with several holes reaching the eroded outer can keep too much material.**
+  The characterized 30×20 plate with three rectangular holes at −2 returns about 324.75
+  instead of the 258.18 oracle truth under round corners; chamfer and sharp are exact.
+- **Fully eroded holes under sharp and chamfer can leave a remnant.** The source-inradius
+  gate is intentionally limited to round joins, whose structuring element is a Euclidean
+  disk. A 1×1 hole at +2 closes correctly under round, while the sharp/chamfer variants
+  remain parked rather than applying the wrong geometric criterion.
+- **Erosion can emit sub-0.001 mm² rings.** Five exact seeded cases are pinned in
+  `test/offset-fuzz.test.js`. They are not automatically deleted: unlike positive
+  dilation, erosion has no source-membership invariant that distinguishes a false island
+  from a genuine surviving crumb.
+
+The fuzz oracle sweep covers 150 seeded shapes × 6 deltas × 3 styles and currently reports
+no region-count, hole-count, or area disagreements outside those explicit
+characterizations. Do not widen tolerances or add an area-based sliver filter when a new
+case appears; add its deterministic fixture and establish the source-domain truth first.
 ## The 2-D helper library
 
 `partforge/geometry` ships pure-JS helpers of several kinds. The **contour builders**
@@ -567,6 +639,48 @@ in `kernel.js` define the current surface; only breaking changes bump the versio
   the OpenSCAD/Manifold/CadQuery consensus (`union`, `translate`, `rotate`, `mirror`;
   `cut` per CadQuery/replicad rather than OpenSCAD's `difference`), so LLM priors
   transfer. Renames are breaking changes with no offsetting benefit — don't.
+
+**v1 → v2** (partforge 0.59): `Shape2D.offset` moved off the two per-backend 2-D
+engines (Clipper2 via `CrossSection` on Manifold, replicad's `Drawing.offset` on
+OCCT) onto the single native contour-offset engine described above. Semantics
+changed, not just implementation: `offset` is now backend-identical by construction
+at every corner angle (the old acute-corner `chamfer` divergence and the LOD-faceted
+Manifold result are both gone), and `segs` is now accepted-but-ignored rather than
+tuning Manifold's tessellation. Holes offset material-wise (`-delta` where the outer
+gets `delta`) on both backends — the deleted OCCT production route got this backwards
+by fusing `outer.cut(hole)` into one `Drawing` and offsetting it with a single call,
+so holes grew under a positive `delta` instead of shrinking; no test caught it because
+there was no holed-offset test before this contract version. Parts that relied on the
+old holed-offset direction (if any existed) need the sign of their workaround removed.
+
+**`sharp` and `chamfer` change shape on acute corners — check these when migrating.** This
+is a real geometric change, not a precision polish, and it is the one thing v1 parts should
+be re-measured for. Once a convex corner gets tighter than 90° the two old backends did not
+agree with each other, and neither agreed with this repo's own `offsetPolygon`; v1's claim
+that "`round` and `sharp` are exact across backends at every angle" was simply false.
+Measured on an 11-point star (alternating radii 10 and 4) at `delta` +2:
+
+| corners | native (v2) | Clipper2 (v1 Manifold) | OCCT (v1 B-rep) | `offsetPolygon` |
+| --- | --- | --- | --- | --- |
+| `round` | 295.933 | 295.933 | 295.933 | 295.933 |
+| `sharp` | 282.158 | 300.671 | 326.534 | 282.158 |
+| `chamfer` | 278.389 | 288.138 | 278.389 | 278.389 |
+
+The spread is **miter-limit policy**, not accuracy: OCCT miters unbounded, so an acute spike
+shoots arbitrarily far past the corner; Clipper2 squares the corner off past its own limit
+rather than bevelling it. Native applies miter limit 2 and falls back to a plain bevel — the
+same rule `offsetPolygon` (`geometry/polygon.js`) has always used, so `offset` and
+`offsetPolygon` now agree to the digit where previously *neither* backend matched the pure-JS
+helper sitting next to it. `chamfer` additionally lands exactly on OCCT's `bevel` join; only
+Clipper2 differed there, because it had no bevel join and approximated one with two chords.
+
+Practical rule: divergence from v1 is confined to `sharp` and `chamfer` on **outward**
+offsets of shapes with sub-90° convex corners (star points, V-notches, triangles, spiky text
+serifs), and native is always the *smaller*, never the over-solid, result — a clearance
+offset that fit in v1 still fits. `round` is unchanged at every angle, inward offsets are
+unchanged, and shapes whose corners are all ≥90° (rectangles, hexagons, rounded-rects, slots)
+are unchanged. A random-polygon sweep put the >1%-divergent share at 1.6% overall, every one
+of them `sharp` or `chamfer` at positive delta.
 
 ## Why not an existing CAD language
 

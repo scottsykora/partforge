@@ -4,13 +4,16 @@
 // involved). `toRegions()`/`simple()` are the only points where a shape gets tessellated
 // down to point rings, for handoff to a kernel op (extrude/revolve) or export.
 //
-// `deps.offsetRegions`/`deps.extrude`/`deps.revolve` are the two backends' own hooks
-// (Task 13 wires Manifold/OCCT versions); everything else here is pure curve math shared
-// by both. Each op returns a NEW Shape2D — value semantics, no operand is ever mutated.
+// `deps.extrude`/`deps.revolve` are the two backends' own hooks (Task 13 wires
+// Manifold/OCCT versions); everything else here is pure curve math shared by both,
+// including offset, which now runs the native contour-offset engine directly rather
+// than through a backend hook. Each op returns a NEW Shape2D — value semantics, no
+// operand is ever mutated.
 import { addShape2dSugar } from "./shape2d-sugar.js";
 import { assembleRegions } from "./shape2d-regions.js";
 import { tessellateContour } from "./profile.js";
 import { booleanRegions } from "./paper-bridge.js";
+import { offsetRegions } from "./contour-offset.js";
 import { h } from "./solid-hash.js";
 import { closeContourGap } from "./profile.js";
 import {
@@ -42,7 +45,7 @@ const checkProfile = (x) => {
   }
 };
 
-export function makeShape2dFactory({ segs, offsetRegions, extrude, revolve }) {
+export function makeShape2dFactory({ segs, extrude, revolve }) {
   // Lift any accepted profile form into stored regions: a live Shape2D is deep-copied out
   // via its own toContours() (value semantics — never alias another shape's storage);
   // anything else goes through liftProfile + per-ring winding normalization.
@@ -61,14 +64,15 @@ export function makeShape2dFactory({ segs, offsetRegions, extrude, revolve }) {
       cut:       (o) => make(booleanRegions(regions, liftRegions(o), "subtract")),
       cutAll:    (os) => make(os.reduce((acc, o) => booleanRegions(acc, liftRegions(o), "subtract"), regions)),
       intersect: (o) => make(booleanRegions(regions, liftRegions(o), "intersect")),
-      // offsetRegions is the one backend hook feeding straight into make() — it doesn't route
-      // through liftRegions, so unlike every other op here nothing already guaranteed its
-      // rings are explicitly closed. Both backends' readbacks close explicitly today, so this
-      // is a no-op in practice; it's here so the storage invariant (every stored ring
-      // explicitly closed — see closeContourGap's own comment) holds unconditionally.
-      // Empty in → empty out without calling the hook: the 2-D ops stay total on the
-      // empty shape on both backends (the OCCT hook would otherwise choke on a null
-      // Drawing); only 3-D materialization (extrude/revolve) rejects it.
+      // offset now runs the shared native engine directly, like the booleans above — no
+      // backend hook. Its result feeds straight into make() without routing through
+      // liftRegions, so unlike every other op here nothing already guaranteed its rings
+      // are explicitly closed; offsetRegions' own readback closes explicitly today, so
+      // this is a no-op in practice. It's here so the storage invariant (every stored
+      // ring explicitly closed — see closeContourGap's own comment) holds unconditionally.
+      // Empty in → empty out without entering the engine: the 2-D ops stay total on the
+      // empty shape, and the engine would otherwise read an empty result as a collapse
+      // and throw. Only 3-D materialization (extrude/revolve) rejects the empty shape.
       offset:    (delta, opts = {}) => regions.length === 0 ? make([]) : make(offsetRegions(regions, delta, opts)
         .map((rg) => ({ outer: closeContourGap(rg.outer), holes: rg.holes.map(closeContourGap) }))),
       isEmpty:   () => regions.length === 0,

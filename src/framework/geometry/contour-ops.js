@@ -124,7 +124,13 @@ export function mirrorProfile(input, axis) {
 export const SMOOTH_JOINT_DEG = 1;
 
 // Unit tangent of segment `s` (from `from`) at its start (dir=+1) or end (dir=-1 → arrival direction).
-function segTangent(from, s, atStart) {
+// Exported for contour-winding.js's _chain: junction ordering at a curved pinch point needs
+// the exact endpoint tangent, not an approximation (via/c1/c2 are NOT control points that
+// happen to sit near the tangent — via in particular is a THROUGH point near mid-sweep, so
+// from->via is systematically biased by about sweep/4). This recovers it exactly for arcs
+// (perpendicular to the radius at the recovered center, oriented by the sweep's sign) and
+// cubics (including the degenerate c1===from case, where the true tangent comes from c2).
+export function segTangent(from, s, atStart) {
   const norm = ([x, y]) => { const L = Math.hypot(x, y) || 1; return [x / L, y / L]; };
   if (s.c1) {
     if (atStart) {
@@ -239,7 +245,7 @@ const normalize2 = ([x, y]) => { const L = Math.hypot(x, y) || 1; return [x / L,
 const rot90 = ([x, y]) => [-y, x];
 const addScaled = (p, v, s) => [p[0] + v[0] * s, p[1] + v[1] * s];
 
-function cubicAt(p0, c1, c2, p1, t) {
+export function cubicAt(p0, c1, c2, p1, t) {
   const u = 1 - t;
   return [0, 1].map((k) => u * u * u * p0[k] + 3 * u * u * t * c1[k] + 3 * u * t * t * c2[k] + t * t * t * p1[k]);
 }
@@ -248,7 +254,7 @@ function cubicDeriv(p0, c1, c2, p1, t) {
   return [0, 1].map((k) => 3 * u * u * (c1[k] - p0[k]) + 6 * u * t * (c2[k] - c1[k]) + 3 * t * t * (p1[k] - c2[k]));
 }
 // Exact de Casteljau split of cubic (p0,c1,c2,p1) at t → two exact cubic pieces.
-function splitCubic(p0, c1, c2, p1, t) {
+export function splitCubic(p0, c1, c2, p1, t) {
   const lerp = (a, b) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
   const p01 = lerp(p0, c1), p12 = lerp(c1, c2), p23 = lerp(c2, p1);
   const p012 = lerp(p01, p12), p123 = lerp(p12, p23);
@@ -281,7 +287,7 @@ function curveEvaluator(from, seg) {
 // of its own parameterization, returning {from, seg} for the kept portion.
 // Cubic: two exact de Casteljau splits. Arc: angle interpolation, `via`
 // recomputed at the kept sweep's angular midpoint. Line: trivial endpoints.
-function trimSegment(from, seg, tStart, tEnd) {
+export function trimSegment(from, seg, tStart, tEnd) {
   if (seg.c1) {
     let cur = { p0: from, c1: seg.c1, c2: seg.c2, p1: seg.to };
     if (tStart > 1e-12) { cur = splitCubic(cur.p0, cur.c1, cur.c2, cur.p1, tStart)[1]; }

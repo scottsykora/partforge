@@ -47,10 +47,15 @@ const BASELINE_IDS = [
   "when-condition-never-true",
   "readout-shows-em-dash",
   "select-default-unreachable",
+  "shape2d-offset-winding-chain-incomplete",
   "fillet-chamfer-radius-does-not-fit",
   "fillet-chamfer-corners-overlap",
   "profile-query-needs-single-contour",
   "validate-profile-regions-overlap-or-nest",
+  "shape2d-offset-partial-reflection-residual",
+  "shape2d-offset-kissing-ring-passes-validation",
+  "shape2d-offset-reflex-cluster-too-much-material",
+  "shape2d-offset-waist-not-severed-round-join",
 ];
 
 const entries = parsePatterns(doc);

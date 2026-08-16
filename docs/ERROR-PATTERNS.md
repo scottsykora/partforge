@@ -306,6 +306,106 @@ Variant literals under this entry: `offsetPolygon: delta must be a finite number
   inset. Realistic clearances (fractions of a mm) and wall insets up to the
   narrowest feature never trip this.
 
+## shape2d-offset-partial-reflection-residual
+
+- **Symptom:** *(Fixed for positive round offsets in `0.60.0`; the ID remains
+  permanent.)* An outward `Shape2D.offset` on a region with a hole could leave a
+  residual hole ring after the source counter should have closed.
+- **Cause:** A fully eroded source counter could survive the raw offset as a
+  locally valid negative loop. Positive-winding cleanup then correctly preserved
+  that loop because the defect was introduced before winding classification.
+- **Fix:** The round resolver now computes a conservative largest-inscribed-disk
+  bound from the source hole and removes a residual counter only when the requested
+  dilation has certainly passed its source inradius. Upgrade to
+  `partforge >= 0.60.0`. Sharp and chamfer offsets use different structuring
+  elements and are not covered by this round-specific gate; continue to verify
+  those styles at the production offset and use explicit boolean stages when their
+  closing topology is critical.
+
+Searchable phrasings of the same misbehavior: hole doesn't disappear after offset;
+pocket not closed by offset; residual hole ring; `.holes.length` still 1 after
+growing a shape past the hole's own width.
+
+## shape2d-offset-reflex-cluster-too-much-material
+
+- **Symptom:** *(Fixed in `0.60.0`; the ID remains permanent.)* An inward
+  `Shape2D.offset` with clustered reflex corners could retain material outside the
+  true eroded shape.
+- **Cause:** The old overlap-side trim could extend offset lines to an intersection
+  outside the finite extent of one or both segments. The deleted Paper.js
+  `resolveSelfRegions` path is not part of the current resolver.
+- **Fix:** Overlap-side trimming now requires the intersection to lie within both
+  segment extents, and the resulting arrangement is resolved by positive winding.
+  Upgrade to `partforge >= 0.60.0`. The regression oracle pins the clustered-reflex
+  9-gon chamfer area at approximately `3.553831 mm²`.
+
+## shape2d-offset-waist-not-severed-round-join
+
+- **Symptom:** *(Fixed — kept because IDs are permanent. This pattern no longer
+  exists.)* An inward `Shape2D.offset` past the width of a narrow waist used to leave
+  the shape connected (or add a spurious blob where the waist was) under
+  `corners: "round"` or `"chamfer"`, while `"sharp"` split it correctly. The entry's
+  own witness now behaves: a 30×10 dumbbell with a 2-wide waist at `delta` −2 severs
+  into **two** regions under all three joins — 72.346873 round, 74.000000 chamfer,
+  72.000000 sharp — against the three regions and 97.258 the round join used to give.
+- **Cause:** The waist recovery it described (`splitAtDuplicateEdges` in
+  `contour-offset.js`) matched a pair of duplicate, exactly-collinear edges, so it only
+  ever handled rings made entirely of straight lines; a round or chamfer join left an
+  arc or bevel chord at the pinch with no duplicate edge to cut. That function no longer
+  exists anywhere in `src/` — the whole boolean/heuristic cleanup path was replaced by
+  the winding resolver (`geometry/contour-winding.js`), which computes the
+  positive-winding region of the raw outline directly and severs a pinched waist as an
+  ordinary consequence of that, with no per-shape recovery and no join casing.
+- **Fix:** Nothing to work around; the advice this entry used to give ("use
+  `corners: "sharp"` to split") is obsolete and was making callers change corner style
+  for no reason. If a region count still looks wrong after an inward offset, see
+  [shape2d-offset-winding-chain-incomplete](#shape2d-offset-winding-chain-incomplete)
+  and the parked cases in [KERNEL-CONTRACT.md "Offset: known
+  limitations"](KERNEL-CONTRACT.md#offset-known-limitations).
+
+## shape2d-offset-kissing-ring-passes-validation
+
+- **Symptom:** *(Fixed in partforge 0.59 — kept because IDs are permanent.)* Two
+  rings produced by the same `Shape2D.offset` call — two eroding holes that grew into
+  each other, or a hole that eroded out through its own outer — used to come back
+  still separate and overlapping, and extruded to *solid* material inside the pocket
+  or a tab of material hanging off the outline.
+- **Cause:** The offset validator's ring-crossing test only looked for transversal
+  crossings, so two rings that interfere along a shared collinear edge (which is what
+  a sharp join produces) registered as fine; and its hole-containment test sampled a
+  single point of the hole ring, which stays inside even when most of the ring has
+  escaped. The cleanup stage then self-united everything under one even-odd compound,
+  where a doubly-covered region cancels back to solid instead of merging.
+- **Fix:** Upgrade to partforge ≥ 0.59, where `ringsCross` also tests collinear
+  overlap, hole containment tests the whole ring, and cleanup unites the outers and
+  *subtracts* the united hole rings. Nearby holes now merge into one hole and a
+  near-edge hole is clipped by its eroded outer. If a ring count still looks wrong
+  after an inward offset, see
+  [shape2d-offset-waist-not-severed-round-join](#shape2d-offset-waist-not-severed-round-join).
+
+## shape2d-offset-winding-chain-incomplete
+
+- **Symptom:** `contour-winding: could not chain offset boundary (incomplete intersection
+  set)` thrown from `Shape2D.offset` (or `offsetPolygon`) after a raw offset self-overlaps
+  at a narrow pinch.
+- **Cause:** *(Known corpus fixed in partforge 0.60; ID retained permanently.)* The resolver
+  used to classify every boundary piece from one fixed midpoint probe. At a narrow cell that
+  probe could cross a nearby non-incident edge, read the wrong winding on both sides, and
+  drop a real continuation. Fully eroded round text counters were a separate upstream cause:
+  their raw offset could retain a negative pocket even under a correct Positive fill.
+- **Fix:** Upgrade to partforge ≥ 0.60. The classifier now chooses among deterministic
+  interior samples by local boundary clearance and caps its probe distance accordingly.
+  Positive round offsets also decide counter collapse from the source hole's inradius before
+  generating a raw outline. On the committed 36,090-offset corpus
+  (`node scripts/offset-rates.mjs`), chain failures before the retry ladder are
+  1 round / 2 chamfer / 4 sharp and **zero remain after it**; the full glyph matrix,
+  including `"Scott"` through +3, has no throw or topology divergence.
+
+  The literal error remains intentionally loud if a new pathological arrangement defeats
+  every retry rung. If it appears on ≥0.60, report the profile, delta, and corner style so it
+  can become a deterministic fixture. Reducing `|delta|` or simplifying nearly coincident
+  features is a temporary workaround; changing corner style is not a reliable general fix.
+
 ## fillet-chamfer-radius-does-not-fit
 
 - **Symptom:** `filletProfile: corner <i> at (<x>, <y>): r=<r> does not fit; max ≈ <m>` (or `chamferProfile: … dist=<d> does not fit; max ≈ <m>`) thrown from `Shape2D.fillet`/`.chamfer` or the free `filletProfile`/`chamferProfile` functions.
