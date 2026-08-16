@@ -541,8 +541,8 @@ between the Manifold preview and the OCCT STEP export.
 
 ## import-mesh-not-solid
 
-- **Symptom:** `import "<name>": mesh is not a solid after repair (<n> open edges) — repair it in a mesh tool or re-export watertight` thrown while registering a part's `imports` on the Manifold backend.
-- **Cause:** Basic repair (vertex merge + winding/orientation fix) couldn't close the mesh into a solid — the source STL/3MF has an open shell, missing faces, or another defect beyond what v1's repair pass attempts. The open-edge count in the message is the size of the gap.
+- **Symptom:** `import "<name>": mesh is not a solid after repair (<n> open edges) — repair it in a mesh tool or re-export watertight (<reason>)` thrown while registering a part's `imports` on the Manifold backend — the trailing `(<reason>)` always appears (it wraps the underlying Manifold error, e.g. `non-manifold edge` or `empty result`), never omitted.
+- **Cause:** Basic repair (vertex merge + winding/orientation fix) couldn't close the mesh into a solid — the source STL/3MF has an open shell, missing faces, or another defect beyond what v1's repair pass attempts. The open-edge count and the wrapped `<reason>` in the message together narrow down the gap.
 - **Fix:** Close the mesh in a dedicated mesh-repair tool, or re-export it watertight from the tool that produced it; there is no in-framework hole-filling/remeshing. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Importing geometry (STEP/STL/3MF)".
 
 ## import-unrecognized-format

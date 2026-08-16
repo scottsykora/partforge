@@ -84,7 +84,7 @@ export default {
       enabled?: (p) => boolean,            // optional — gate a conditional sub-part
       display?: { color?, opacity? },      // optional viewer-only override (0xRRGGBB / 0..1) — e.g. a reference/ghost part
       export?: { name },                   // filename/object name on export; defaults to the key
-      reference?: name,                    // name of a declared import — measure() computes a deviation fact against it (see below)
+      reference?: string,                  // name of a declared import — measure() computes a deviation fact against it (see below)
     },
   },
   views: { <name>: { label, default?, animations? } },  // view tabs; a view may own animations (below)
