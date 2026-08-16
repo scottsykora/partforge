@@ -46,6 +46,16 @@ export const SUBPART_METRICS = {
         ? `no reading from the ${sampled} of ${total} triangles sampled — not a clean bill of health; a thin spot may exist between samples`
         : `sampled ${sampled} of ${total} triangles — an upper bound; a thinner spot may exist between samples`;
     } },
+  // `s.deviation` (measure.js) exists only for a sub-part declaring `reference:
+  // "<import name>"`; on every other sub-part `extract` returns null, which
+  // `check()` already reports as status "skip" rather than a fail — the
+  // no-reference path needs nothing here.
+  refXorVolume: { kind: "gate", extract: (s) => s.deviation?.xorVolume ?? null,
+    hint: "the rebuild's symmetric difference vs its reference import is too large — compare the ghost overlay, then adjust the governing dimensions toward the measured reference" },
+  refVolumeDeltaPct: { kind: "gate", extract: (s) => s.deviation?.volumeDeltaPct ?? null,
+    hint: "rebuild volume differs from the reference import by more than the allowed percentage — a feature is missing, doubled, or mis-scaled vs the reference" },
+  refBboxDelta: { kind: "gate", extract: (s) => s.deviation?.bboxDelta ?? null,
+    hint: "the rebuild's bounding-box corners drift from the reference import — check overall dimensions and that the rebuild is aligned to the reference's coordinates" },
 };
 export const VIEW_METRICS = {
   bbox: { kind: "gate", extract: (r) => r.aggregate.bbox,

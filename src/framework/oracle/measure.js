@@ -15,7 +15,11 @@ const unionBounds = (list) => list.reduce(
 // solid facts (volume/genus/emptiness) and mesh facts (bbox/area/triangles), plus
 // the assembly overlap check plus pair gap distances (near misses are reported,
 // never folded into `ok`). All solid facts are read BEFORE assemblyOverlaps,
-// which frees the shared kernel's objects at its end.
+// which frees the shared kernel's objects at its end. A sub-part that declares
+// `reference: "<import name>"` also gets a `deviation` fact — the posed solid's
+// symmetric-difference volume, volume delta %, and bbox-corner drift against
+// that import — for the `ref*` gate metrics (verify-metrics.js); every other
+// sub-part gets `deviation: null`.
 //   → { part, view, measuredMinWall, subparts[], aggregate, overlaps[], gaps[],
 //       nearMisses[], ok }
 export function measure(kernel, part, view = Object.keys(part.views)[0], params = {}, opts = {}) {
@@ -43,16 +47,38 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // Resolved lazily and only when asked for: without min-wall, a single-sub-part
     // view (no meshGaps) must still build no index at all.
     const mw = opts.minWall ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache) }) : null;
+    const vol = solid.volume();
+    // Deviation-from-reference: only for a sub-part that declares `reference:
+    // "<import name>"` (Task 12 — the gate that holds a parametric rebuild to
+    // its imported reference), and only when this kernel can import at all (a
+    // bare/third-party kernel may lack `import`). Read here, alongside every
+    // other solid fact, so it is captured before assemblyOverlaps/cleanup below
+    // frees the shared kernel's objects.
+    const refName = part.parts[name]?.reference;
+    let deviation = null;
+    if (refName && typeof kernel.import === "function") {
+      const ref = kernel.import(refName);
+      const refVol = ref.volume();
+      const rb = ref.boundingBox();
+      const inter = solid.intersect(ref).volume();
+      deviation = {
+        ref: refName,
+        xorVolume: vol + refVol - 2 * inter, // symmetric difference, one boolean
+        volumeDeltaPct: refVol > 1e-9 ? (100 * Math.abs(vol - refVol)) / refVol : null,
+        bboxDelta: [0, 1, 2].map((i) => Math.max(Math.abs(b.min[i] - rb.min[i]), Math.abs(b.max[i] - rb.max[i]))),
+      };
+    }
     return {
       name,
       bbox: size(b),
       bounds: { min: b.min, max: b.max },
       centerOfMass: meshCentroid(mesh.positions, mesh.indices),
-      volume: solid.volume(),
+      volume: vol,
       surfaceArea: meshArea(mesh.positions, mesh.indices),
       triangleCount: mesh.triangles,
       watertight: typeof solid.isEmpty === "function" ? !solid.isEmpty() : null,
       holes: typeof solid.genus === "function" ? solid.genus() : null,
+      deviation,
       minWall: mw?.value ?? null,
       minWallAt: mw?.location ?? null,
       // Sampling accounting, so a report can tell a guaranteed minimum from an
