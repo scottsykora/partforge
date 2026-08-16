@@ -280,8 +280,8 @@ export const KERNEL_OP_SPECS = {
 };
 
 // Solid ops under the options convention; addSugar() wraps these when the
-// backend provides them natively (OCCT). The Manifold KernelCapabilityError
-// stubs ignore arguments, so options-form calls still throw the routing error.
+// backend provides them natively (OCCT). The Manifold stubs check only for the
+// zero-magnitude identity case below, then throw the routing error unnormalized.
 export const SOLID_OP_SPECS = {
   fillet:  { toArgs: (o) => { checkKeys("fillet", o, ["r", "edges"]);
     return [req("fillet", o, "r"), ...(o.edges !== undefined ? [o.edges] : [])]; } },
@@ -290,3 +290,17 @@ export const SOLID_OP_SPECS = {
   shell:   { toArgs: (o) => { checkKeys("shell", o, ["t", "open"]);
     return [req("shell", o, "t"), req("shell", o, "open")]; } },
 };
+
+// A zero-magnitude fillet/chamfer is the identity on every conformance class
+// (KERNEL-CONTRACT.md), so it neither routes a part to OCCT nor throws the
+// Manifold capability error. True only when the magnitude is PROVABLY the number
+// 0 in either calling convention — anything unprovable stays conservative
+// (routes/throws). shell is excluded: t = 0 means zero-thickness walls, which is
+// degenerate, not identity.
+export function isZeroMagnitudeCadOp(op, args) {
+  const key = op === "fillet" ? "r" : op === "chamfer" ? "d" : null;
+  if (!key) return false;
+  const a0 = args[0];
+  const v = typeof a0 === "number" ? a0 : isPlainOptions(a0) ? a0[key] : undefined;
+  return v === 0;
+}

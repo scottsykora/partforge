@@ -15,7 +15,7 @@
 // lists, which test/kernel-contract.test.js pins to both backend implementations.
 import {
   KERNEL_OPS, KERNEL_OPTIONAL_OPS,
-  SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS,
+  SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS, OCCT_ONLY_OPS,
 } from "./kernel.js";
 import { KERNEL_OP_SPECS, SOLID_OP_SPECS, isPlainOptions } from "./op-options.js";
 
@@ -92,15 +92,22 @@ function makeProbe(onCall) {
   return { kernel, proxy, shape2d };
 }
 
+const CAD_OPS = new Set(OCCT_ONLY_OPS);
+
 export function createProbeKernel() {
   const used = new Set();       // every op name, any handle kind
   const solidUsed = new Set();  // ops recorded on kernel/Solid handles only — the
                                 // routing set: Shape2D.fillet must not look like Solid.fillet
-  const { kernel } = makeProbe((scope, key) => {
+  const cadCalls = [];          // Solid-handle fillet/chamfer/shell calls WITH args —
+                                // routing needs the magnitude (fillet(0) is identity, stays on Manifold)
+  const { kernel } = makeProbe((scope, key, args) => {
     used.add(key);
-    if (scope !== "shape2d") solidUsed.add(key);
+    if (scope !== "shape2d") {
+      solidUsed.add(key);
+      if (CAD_OPS.has(key)) cadCalls.push({ op: key, args });
+    }
   });
-  return { kernel, used, solidUsed };
+  return { kernel, used, solidUsed, cadCalls };
 }
 
 export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {

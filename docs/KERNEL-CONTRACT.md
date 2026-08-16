@@ -33,10 +33,16 @@ carries the conformance semantics and that one the usage guidance;
 **Core class.** A conforming core kernel implements every op in `KERNEL_OPS` and
 every `Solid` op in `SOLID_OPS`, *except* that the B-rep ops (`fillet`, `chamfer`,
 `shell` — the `OCCT_ONLY_OPS` list — and `toSTEP`) may instead throw
-`KernelCapabilityError`. The in-repo Manifold backend is the reference core kernel.
-Kernels built from this repo get the stubs for free: `addSugar()` generates the
-Solid-level stubs from `OCCT_ONLY_OPS`, and `finishKernel()` stubs `toSTEP` (a
-kernel-level op, so it is not in that Solid-op list).
+`KernelCapabilityError`. Exception to the exception: `fillet(0)` / `chamfer({d: 0})`
+(a magnitude that is exactly the number `0`, either calling convention) is the
+**identity** on every class — it returns the solid unchanged and must not throw, so a
+parametric radius dialed to 0 builds on a core kernel with no guard in the part.
+`shell` has no identity form (`t: 0` means zero-thickness walls — degenerate, not
+identity) and always throws on core. The in-repo Manifold backend is the reference
+core kernel. Kernels built from this repo get the stubs for free: `addSugar()`
+generates the Solid-level stubs (including the zero-magnitude identity) from
+`OCCT_ONLY_OPS`, and `finishKernel()` stubs `toSTEP` (a kernel-level op, so it is
+not in that Solid-op list).
 
 **B-rep class.** Core plus native `fillet`/`chamfer`/`shell` and `toSTEP`. The in-repo
 OCCT/replicad backend is the reference.
@@ -264,7 +270,7 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 | `toMesh({quality?})` | Render mesh: `{positions, normals, indices?, triangles, edges?, featureIds?, features?}`. `indices` optional (a backend may emit soup or indexed); `normals` and `edges` are authoritative shading intent from both backends — see [Shading intent](#shading-intent-tomesh-normals-and-edges) below; `featureIds`/`features` are optional metadata. |
 | `toSTL({quality?})` | `Promise<ArrayBuffer>`, binary STL, outward CCW winding. Stored facet normals may be zero — slicers recompute them (the mesh backend happens to write them). |
 | `toIndexedMesh({quality?})` | `{positions, indices}` indexed mesh (3MF path); defaults to `"print"` like `toSTL`. Coincident vertices need NOT be welded — the 3MF writer welds, because that format reads topology from the indices rather than re-stitching soup by position the way an STL consumer does. |
-| `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | B-rep class (core throws `KernelCapabilityError`). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` hollows inward, keeping outer dimensions; `open` (face selector) is required. |
+| `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | B-rep class (core throws `KernelCapabilityError`), *except* a zero magnitude — `fillet(0)` / `chamfer({d: 0})` — which is the identity on every class (returns the solid unchanged, never throws; `shell` excluded, `t: 0` is degenerate). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` hollows inward, keeping outer dimensions; `open` (face selector) is required. |
 
 `quality` (`"preview"` | `"print"`) is **advisory**: it trades tessellation density for
 speed and a backend may bake it at kernel creation (Manifold does). A part must never

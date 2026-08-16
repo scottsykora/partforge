@@ -12,7 +12,7 @@
 //     the needs-occt reroute works without hand-written per-backend stubs.
 import { KernelCapabilityError } from "./errors.js";
 import { OCCT_ONLY_OPS } from "./kernel.js";
-import { isPlainOptions, SOLID_OP_SPECS } from "./op-options.js";
+import { isPlainOptions, isZeroMagnitudeCadOp, SOLID_OP_SPECS } from "./op-options.js";
 
 const ORIGIN = [0, 0, 0];
 const AXIS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
@@ -59,14 +59,21 @@ export function addSugar(s) {
 
   // Options-object calling convention for the multi-param B-rep ops. Wrap only
   // when the backend provides the op natively (OCCT); the Manifold stubs below
-  // ignore their arguments, so options-form calls still throw the routing error.
+  // read their arguments just enough to spot the zero-magnitude identity case,
+  // and throw the routing error for everything else.
   for (const [op, { toArgs }] of Object.entries(SOLID_OP_SPECS)) {
     const raw = s[op];
     if (raw) s[op] = (...a) => raw(...(a.length === 1 && isPlainOptions(a[0]) ? toArgs(a[0]) : a));
   }
 
   for (const op of OCCT_ONLY_OPS) {
-    s[op] ??= () => { throw new KernelCapabilityError(`${op} requires the OCCT backend`); };
+    // Zero magnitude is the identity per the contract — return a fresh handle
+    // (same idiom as along("+Z")) so an unguarded `.fillet(p.r)` at r = 0 builds
+    // on the core kernel instead of throwing the routing error.
+    s[op] ??= (...a) => {
+      if (isZeroMagnitudeCadOp(op, a)) return s.translate(ORIGIN);
+      throw new KernelCapabilityError(`${op} requires the OCCT backend`);
+    };
   }
 
   return Object.assign(s, SUGAR);
