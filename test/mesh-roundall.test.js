@@ -36,12 +36,56 @@ test("rounds a box: volume drops by the edge terms, bbox and genus are preserved
   const out = meshRoundAll(wasm, box._m, 2, "preview");
   const { positions, indices } = meshOf(out);
   const vol = meshVolume(positions, indices);
-  // Spike references: 5772.6 (12 segs) … 5800.1 (32 segs). Formula gives 15 segs.
+  // Spike references: 5772.6 (12 segs) … 5800.1 (32 segs). Both balls take the
+  // 2r ball's count here — 20 at preview (5792.9), 45 at print (5802.6).
   expect(vol).toBeGreaterThan(5700);
   expect(vol).toBeLessThan(5960);
   const size = bboxSize(positions);
   for (const [i, want] of [[0, 30], [1, 20], [2, 10]])
     expect(Math.abs(size[i] - want)).toBeLessThan(0.05); // faces stay in place
+  expect(out.genus()).toBe(0);
+  out.delete();
+});
+
+// The bbox check above only catches face drift along the world axes, where a
+// mismatched pair of sphere tessellations can still line up by luck. Rotate the
+// box off every axis and the two balls' support functions have to cancel in an
+// arbitrary direction — which they only do when both spheres share a segment
+// count (mesh-roundall.js's invariant). Under the old split segs/segs2 code the
+// faces drift ~0.07mm here; with the shared count the residual is ~1e-6.
+test("preserves planar faces exactly on an off-axis solid (shared ball tessellation)", () => {
+  const rz = (v, a) => [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a), v[2]];
+  const rx = (v, a) => [v[0], v[1] * Math.cos(a) - v[2] * Math.sin(a), v[1] * Math.sin(a) + v[2] * Math.cos(a)];
+  const support = (p, d) => {
+    let best = -Infinity;
+    for (let i = 0; i < p.length; i += 3) best = Math.max(best, p[i] * d[0] + p[i + 1] * d[1] + p[i + 2] * d[2]);
+    return best;
+  };
+  const solid = k.box({ min: [0, 0, 0], max: [30, 20, 10] })
+    .rotate(37, [0, 0, 0], [0, 0, 1])
+    .rotate(23, [0, 0, 0], [1, 0, 0]);
+  const before = meshOf(solid._m).positions;
+  const out = meshRoundAll(wasm, solid._m, 2, "preview");
+  const after = meshOf(out).positions;
+  // Same rotations applied to the box's six face normals.
+  const [a, b] = [(37 * Math.PI) / 180, (23 * Math.PI) / 180];
+  for (const axis of [[1, 0, 0], [0, 1, 0], [0, 0, 1]]) {
+    const n = rx(rz(axis, a), b);
+    for (const d of [n, n.map((x) => -x)])
+      expect(Math.abs(support(after, d) - support(before, d))).toBeLessThan(1e-3); // face plane unmoved
+  }
+  out.delete();
+});
+
+// The OCCT twin of this case lives in test/roundall-occt.test.js (same union,
+// same radius); together they hold the cross-backend parity band. Note the tiers
+// differ: the contract's band is quoted at print, and preview lands ~0.1% lower.
+test("rounds an L-shape (concave seam) to the parity reference volume", () => {
+  const l = k.box({ min: [0, 0, 0], max: [30, 20, 10] })
+    .union(k.box({ min: [0, 0, 10], max: [10, 20, 30] }));
+  const out = meshRoundAll(wasm, l._m, 2, "preview");
+  const { positions, indices } = meshOf(out);
+  expect(Math.abs(meshVolume(positions, indices) - 9723.3)).toBeLessThan(8); // measured preview value
   expect(out.genus()).toBe(0);
   out.delete();
 });

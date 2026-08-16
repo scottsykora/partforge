@@ -16,6 +16,17 @@
 // backend is roundAll's reference implementation — rerouting to OCCT would
 // trade a correct result for a skip (occt-roundall.js can only skip where
 // morphology exceeds what B-rep offsets support).
+//
+// INVARIANT — both balls share ONE segment count. Minkowski support functions
+// add, so the chain displaces a face with normal n by 2·h_r(n) − h_2r(n), where
+// h is the ball's support. Manifold spheres built with equal `segs` are similar
+// (the 2r ball is the r ball scaled by two), so h_2r = 2·h_r and the term is
+// exactly zero in EVERY direction — the input's planar faces return to their
+// original planes. Give the two balls different segment counts and the term is
+// only zero where a vertex happens to line up: axis-aligned boxes still look
+// right while off-axis faces drift (measured 0.07mm at preview, r=2). The count
+// is sized from the erosion ball (2r), the larger of the two, so the coarser of
+// the two facetings still meets the tier's sagitta tolerance.
 
 // Sphere tessellation from the facet sagitta r·(1 − cos(π/segs)): pick the
 // fewest segments that keep it under the quality tier's tolerance.
@@ -28,9 +39,14 @@ export function roundAllSegs(r, quality) {
 
 export function meshRoundAll(wasm, m, r, quality) {
   if (!Number.isFinite(r) || r <= 0) throw new Error("roundAll: r must be a finite number > 0 (r = 0 is handled as the identity by the caller)");
-  const segs = roundAllSegs(r, quality);
-  const segs2 = roundAllSegs(2 * r, quality);
-  const tol = Math.max(r / 100, 0.01);
+  const segs = roundAllSegs(2 * r, quality); // ONE count for BOTH balls — see the invariant above
+  // Simplify tolerance: max(r/100, 0.01) mm, but never enough to collapse the
+  // rim ring of a rounded edge into the next ring up. That ring sits
+  // r·(1 − cos(2π/segs)) above the face plane, and it is what holds a planar
+  // face at its exact position; collapsing it shaves the face inward (print
+  // tier, r = 2: segs 45 puts the ring 0.0195 mm up, and a flat 0.02 tolerance
+  // pulled every face of a box in by 0.034 mm). Half that spacing keeps margin.
+  const tol = Math.min(Math.max(r / 100, 0.01), 0.5 * r * (1 - Math.cos((2 * Math.PI) / segs)));
   const step = (input, sphere, op) => {
     const raw = op === "sum" ? input.minkowskiSum(sphere) : input.minkowskiDifference(sphere);
     let orig;
@@ -46,7 +62,7 @@ export function meshRoundAll(wasm, m, r, quality) {
     }
   };
   const sphR = wasm.Manifold.sphere(r, segs);
-  const sph2R = wasm.Manifold.sphere(2 * r, segs2);
+  const sph2R = wasm.Manifold.sphere(2 * r, segs);
   try {
     const a = step(m, sphR, "sum");          // dilate: rounds convex, seals holes < 2r
     let b;

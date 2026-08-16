@@ -1,6 +1,6 @@
 # `roundAll(r)` — portable whole-solid rounding
 
-Status: **proposed** (design approved in session, not yet implemented)
+Status: **implemented** (kernel contract v4; this doc is the design record)
 Date: 2026-08-16
 Base: **stacked on PR #133** (native mesh fillet/chamfer, contract v3).
 Spike: session worktree `spike/` scripts (throwaway); findings summarized below.
@@ -96,11 +96,20 @@ out = simplify(m2.minkowskiSum(sphere(r, segs)))
   complexity explodes through the chain: the spike's torture case went from
   106 s / 761k tris / broken topology without simplify to 2.4 s / 340 tris /
   clean genus with it. Simplify tolerance: `max(r / 100, 0.01)` mm — well
-  under mesh display tolerance, tight enough to preserve the arcs.
+  under mesh display tolerance, tight enough to preserve the arcs. *As
+  implemented*, capped additionally at half the rim-ring spacing
+  `r · (1 − cos(2π/segs))`: at a fine tessellation the flat tolerance collapses
+  the ring that pins a planar face to its plane and shaves the face inward
+  (print tier, r = 2: 0.034 mm per face).
 - **Sphere segments scale with quality tier and radius**: choose `segs` so
   chord sagitta `r · (1 − cos(π/segs))` stays under the tier's tolerance
-  (preview ≈ 0.05 mm, print ≈ 0.01 mm), clamped to [12, 64]. At r = 2 mm
-  preview that lands ≈ 15 segs (~0.04 mm sagitta). (`mesh-fillet.js` uses the
+  (preview ≈ 0.05 mm, print ≈ 0.01 mm), clamped to [12, 64]. *As implemented*,
+  BOTH balls take the single count sized for the 2r erosion ball (20 at preview,
+  45 at print for r = 2, not the 15/32 the r ball alone would need): equal-`segs`
+  Manifold spheres are similar, and only then do the dilation and erosion
+  support functions cancel exactly, returning planar faces to their planes in
+  every orientation rather than only along the axes. The finer r ball costs
+  roughly 2x at the print tier — bought deliberately. (`mesh-fillet.js` uses the
   same sagitta *formula* for its burial epsilons but takes full-circle
   `SEGS[quality]` for tessellation — Minkowski cost makes that unaffordable
   here, so `roundAll` owns its radius-scaled `roundAllSegs` helper.) Facets
@@ -114,11 +123,14 @@ out = simplify(m2.minkowskiSum(sphere(r, segs)))
   hash like every op — it re-runs only when upstream params change.
 - Cache key: `h("roundAll", hash, r)` (segs/tolerance derive from quality and
   radius, so they don't need to be in the key; quality is already part of the
-  kernel identity).
+  kernel identity). *As implemented* the mesh key also carries `quality` —
+  redundant but harmless, and it documents the tier dependence at the call site.
 
 ## OCCT implementation
 
-`src/framework/geometry/occt-backend.js` + a new policy in `occt-repair.js`:
+`src/framework/geometry/occt-backend.js` + a new policy module,
+`src/framework/geometry/occt-roundall.js` (it reuses `occt-repair.js`'s
+`isClosedSolid` gate and its free-everything convention):
 
 Triple offset via raw OCCT (`replicad.getOC()`), since replicad has no solid
 offset wrapper: `BRepOffsetAPI_MakeOffsetShape.PerformByJoin(shape, off, 1e-6,

@@ -146,6 +146,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     roundAll: (r) => {
       if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
+      // `quality` in the key is redundant but harmless — the cache lives on a
+      // per-quality kernel, so it can never collide across tiers (the OCCT twin
+      // key omits it for the same reason); it just spells out that the ball
+      // tessellation, and so the result, is tier-dependent.
       return cached(h("roundAll", hash, r, quality), () => T(meshRoundAll(wasm, m, r, quality)));
     },
     cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)),

@@ -72,7 +72,11 @@ Its coverage and tolerance band are part of the contract:
 `OCCT_ONLY_OPS`) and is **parity-tolerant with a regime split**: while `r` is
 strictly below the solid's smallest feature size (min wall, min hole
 diameter / 2), both classes produce the morphological result and volumes agree
-within the mesh-tolerance band. At consuming radii, only the core (mesh) class
+within the mesh-tolerance band. That band is stated at the **export (print)
+tier**, where the mesh class's tessellation is fine enough to compare against
+B-rep arcs (box and L-bracket cases: ≤ 0.05%); the preview tier is coarser by
+design and runs ~0.2% below the B-rep volume, which is tessellation, not a
+parity failure. At consuming radii, only the core (mesh) class
 performs true consumption; a B-rep class MUST either produce a valid solid or
 skip the entire op (returning the input unchanged, warning `roundall-skipped`)
 — emitting an invalid or semantically wrong solid is non-conforming. Authors
