@@ -13,7 +13,7 @@ afterAll(() => {
   rmSync(OUT, { recursive: true, force: true });
 });
 
-test("render auto-selects OCCT for a filleted part and writes a PNG", () => {
+test("render runs the filleted part (Manifold-resident now) and writes a PNG", () => {
   const out = run(["render", "src/parts/filleted-box.js", "box", "--views", "iso", "--out", OUT]);
   expect(out).toMatch(/wrote test\/\.cli-occt-render\/filleted-box-box-iso\.png/);
   expect(existsSync(`${OUT}/filleted-box-box-iso.png`)).toBe(true);
@@ -26,9 +26,15 @@ test("measure preloads a part's declared fonts on the OCCT branch too", () => {
   expect(out).toMatch(/FontRig \/ v/);
 });
 
-test("measure runs on the OCCT part and prints n/a topology", () => {
+test("measure runs the filleted part on Manifold with real topology", () => {
   const out = run(["measure", "src/parts/filleted-box.js"]);
   expect(out).toMatch(/Filleted Box \/ box/);
-  expect(out).toMatch(/watertight n\/a/);
+  expect(out).toMatch(/watertight ✓/);
   expect(existsSync("measure-filleted-box-box.json")).toBe(false); // only --out writes a file
+});
+
+test("PARTFORGE_BACKEND=occt forces the OCCT kernel (n/a topology)", () => {
+  const out = execFileSync("node", ["bin/cli.js", "measure", "src/parts/filleted-box.js"],
+    { encoding: "utf8", env: { ...process.env, PARTFORGE_BACKEND: "occt" } });
+  expect(out).toMatch(/watertight n\/a/);
 });
