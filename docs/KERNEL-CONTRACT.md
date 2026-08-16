@@ -68,6 +68,16 @@ Its coverage and tolerance band are part of the contract:
   labels upstream of the call do not survive through it (attribution uses the
   fallback path), and the result shades with the default SMOOTH policy.
 
+`roundAll` is required on **every** class (it is in `SOLID_OPS`, not
+`OCCT_ONLY_OPS`) and is **parity-tolerant with a regime split**: while `r` is
+strictly below the solid's smallest feature size (min wall, min hole
+diameter / 2), both classes produce the morphological result and volumes agree
+within the mesh-tolerance band. At consuming radii, only the core (mesh) class
+performs true consumption; a B-rep class MUST either produce a valid solid or
+skip the entire op (returning the input unchanged, warning `roundall-skipped`)
+— emitting an invalid or semantically wrong solid is non-conforming. Authors
+relying on consumption should gate it with a `verify` volume assertion.
+
 **B-rep class.** Core plus native `fillet`/`chamfer`/`shell` and `toSTEP`. The in-repo
 OCCT/replicad backend is the reference.
 
@@ -304,7 +314,7 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 | `toSTL({quality?})` | `Promise<ArrayBuffer>`, binary STL, outward CCW winding. Stored facet normals may be zero — slicers recompute them (the mesh backend happens to write them). |
 | `toIndexedMesh({quality?})` | `{positions, indices}` indexed mesh (3MF path); defaults to `"print"` like `toSTL`. Coincident vertices need NOT be welded — the 3MF writer welds, because that format reads topology from the indices rather than re-stitching soup by position the way an STL consumer does. |
 | `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | `fillet`/`chamfer`: implemented on BOTH in-repo classes since v3 — exactly on B-rep, tolerance-band on the mesh class for straight and circular-arc edge chains (see [Conformance classes](#conformance-classes)); an edge class the mesh kernel cannot blend throws `KernelCapabilityError` and reroutes. Zero magnitude — `fillet(0)` / `chamfer({d: 0})` — is the identity on every class (returns the solid unchanged, never throws; `shell` excluded, `t: 0` is degenerate). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` remains B-rep-only (core throws), hollows inward keeping outer dimensions; `open` (face selector) is required. |
-| `roundAll(r)` · `roundAll({r})` | Morphological close-then-open with a ball of radius `r`: rounds EVERY edge (convex and concave) at radius ≈ `r`; faces stay in place; features smaller than the ball are consumed (walls < 2r melt, holes < 2r seal). Implemented natively on BOTH classes — never routes, never throws `KernelCapabilityError`. Parity-tolerant only while `r` is below the smallest feature size; at consuming radii the mesh class performs true consumption and a B-rep class MAY skip the whole op unchanged with a `roundall-skipped` warning (skip is the only permitted degrade). `roundAll(0)` is the identity on every class. |
+| `roundAll(r)` · `roundAll({r})` | Morphological close-then-open with a ball of radius `r`: rounds EVERY edge (convex and concave) at radius ≈ `r`; faces stay in place (within the class's tolerance band — the B-rep offset chain can drift ~0.1 mm); features smaller than the ball are consumed (walls < 2r melt, holes < 2r seal). Implemented natively on BOTH classes — never routes, never throws `KernelCapabilityError`. Parity-tolerant only while `r` is below the smallest feature size; at consuming radii the mesh class performs true consumption and a B-rep class MAY skip the whole op unchanged with a `roundall-skipped` warning (skip is the only permitted degrade). `roundAll(0)` is the identity on every class. |
 
 `quality` (`"preview"` | `"print"`) is **advisory**: it trades tessellation density for
 speed and a backend may bake it at kernel creation (Manifold does). A part must never
@@ -680,6 +690,13 @@ in `kernel.js` define the current surface; only breaking changes bump the versio
   the OpenSCAD/Manifold/CadQuery consensus (`union`, `translate`, `rotate`, `mirror`;
   `cut` per CadQuery/replicad rather than OpenSCAD's `difference`), so LLM priors
   transfer. Renames are breaking changes with no offsetting benefit — don't.
+
+**v3 → v4** (partforge 0.63): `Solid.roundAll` is added to `SOLID_OPS` (portable
+morphological rounding — rounds every edge with a ball of radius `r`; parity-tolerant
+with the regime-split semantics described in [Conformance classes](#conformance-classes)).
+Additive for parts — nothing existing calls it — but breaking for backend
+implementers: a core kernel must now implement it (no stub, unlike the `OCCT_ONLY_OPS`
+ops).
 
 **v2 → v3** (partforge 0.62): `Solid.fillet` and `Solid.chamfer` are implemented
 natively on the mesh (core reference) kernel for straight and circular-arc edge
