@@ -261,6 +261,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     if (forcedBackend !== "occt" && forcedBackend !== "manifold") forcedBackend = null;
     const backendPolicy = createBackendPolicy(part, { forced: forcedBackend });
     const backendFor = () => backendPolicy.backendFor(params);
+    // STEP-on-Manifold import crossover (spec 2026-08-16): null → "requested" →
+    // "primed", tracking the one tessellate-imports round trip this mount instance
+    // ever needs (a worker-lifetime prime, per Task 8). One mount() call handles
+    // exactly one part for its whole lifetime — there is no rebind point to reset
+    // this at — so declaring it here beside backendPolicy is its only reset.
+    let importMeshState = null;
 
     // ?debug shows the cache debug overlay; ?debug&nocache starts with caching off.
     const qs = new URLSearchParams(location.search);
@@ -580,6 +586,41 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           // OCCT-only feature goes away.
           backendPolicy.noteNeedsOcct(params, data.subparts);
           loop.buildDone();
+          loop.kick();
+          break;
+        case "needs-import-mesh":
+          // STEP import on the Manifold worker: an unprimed import threw
+          // NEEDS_IMPORT_MESH (Task 8). Settle this build the same way
+          // needs-occt does — buildDone() only, no kick() here: the retry can't
+          // succeed until priming completes, and kicking now would just repeat
+          // the same failure before the mesh exists. The "import-meshes" case
+          // below is what kicks, once the prime has actually landed.
+          loop.buildDone();
+          if (importMeshState === "primed") {
+            // Tessellation already delivered a mesh but Manifold still can't
+            // satisfy the import — the digest didn't match. A genuinely broken
+            // state, not a retry loop: surface it like any other build error
+            // rather than re-requesting tessellation forever.
+            ui.hideBusy();
+            refreshView();
+            ui.setStatus("failed: STEP import tessellation failed to satisfy the import — see console", true);
+            onBuild?.({ status: "error", error: "STEP import tessellation failed to satisfy the import — see console" });
+            if (!readySettled) { readySettled = true; rejectReady(new Error("STEP import tessellation failed to satisfy the import — see console")); }
+          } else if (importMeshState !== "requested") {
+            importMeshState = "requested";
+            service.send({ type: "tessellate-imports" }, "occt");
+          }
+          break;
+        case "import-meshes":
+          // The OCCT worker answered tessellate-imports: prime the Manifold
+          // worker's import cache (worker-lifetime, per Task 8) with transferable
+          // mesh buffers, then kick the loop — the needs-import-mesh case above
+          // already settled the failed build (buildDone), so this kick is the
+          // other half of the same buildDone()/kick() pairing needs-occt does in
+          // one step, split across the two crossover replies here.
+          importMeshState = "primed";
+          service.send({ type: "prime-imports", meshes: data.meshes }, "manifold",
+            Object.values(data.meshes).flatMap((m) => [m.positions.buffer, m.indices.buffer]));
           loop.kick();
           break;
         case "error":

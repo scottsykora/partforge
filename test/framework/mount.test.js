@@ -538,6 +538,62 @@ test("onBuild skips a stale build (param changed mid-flight)", () => {
   expect(onBuild).toHaveBeenCalledWith({ status: "success", ms: 11 });
 });
 
+// STEP-on-Manifold crossover (spec 2026-08-16, Task 9): a Manifold build that
+// hits an unprimed STEP import throws NEEDS_IMPORT_MESH; mount asks the OCCT
+// worker to tessellate, forwards the meshes to Manifold as a prime, and
+// retries — mirroring the needs-occt reroute's buildDone()/kick() pairing.
+test("needs-import-mesh requests tessellation from OCCT exactly once while a request is outstanding", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } }); // build 1 dispatched
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  expect(workers.occt.postMessage).toHaveBeenCalledTimes(1);
+  expect(workers.occt.postMessage.mock.calls[0][0]).toMatchObject({ type: "tessellate-imports" });
+  // a second needs-import-mesh while the tessellation request is still outstanding
+  // must not fire a duplicate request
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  expect(workers.occt.postMessage).toHaveBeenCalledTimes(1);
+});
+
+test("import-meshes primes Manifold with the transfer list and retries the build", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  workers.manifold.postMessage.mockClear();
+  const positions = new Float32Array([0, 0, 0]);
+  const indices = new Uint32Array([0]);
+  const meshes = { body: { digest: "abc123", positions, indices } };
+  workers.occt.onmessage({ data: { type: "import-meshes", jobId: 1, meshes } });
+  expect(workers.manifold.postMessage).toHaveBeenCalledWith(
+    { type: "prime-imports", meshes },
+    [positions.buffer, indices.buffer],
+  );
+  // the retry: a fresh generate job goes back to Manifold now that it's primed
+  const generateCalls = workers.manifold.postMessage.mock.calls.filter(([m]) => m.type === "generate");
+  expect(generateCalls.length).toBeGreaterThan(0);
+});
+
+test("a needs-import-mesh after priming surfaces a build error instead of looping", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  const meshes = { body: { digest: "abc123", positions: new Float32Array(), indices: new Uint32Array() } };
+  workers.occt.onmessage({ data: { type: "import-meshes", jobId: 1, meshes } });
+  workers.occt.postMessage.mockClear();
+  // broken state: tessellation already delivered a mesh, but Manifold still can't
+  // satisfy the import (digest mismatch) — must not loop back into another request
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 2, subparts: ["body"] } });
+  expect(workers.occt.postMessage).not.toHaveBeenCalled();
+  expect(els.status.status.textContent).toMatch(/STEP import tessellation failed/);
+  expect(els.status.status.classList.contains("err")).toBe(true);
+  return expect(runtime.ready).rejects.toThrow(/STEP import tessellation failed/);
+});
+
 test("dispose() tears everything down and is idempotent", () => {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();
