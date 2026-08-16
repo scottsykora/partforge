@@ -38,6 +38,25 @@ const W = 40, D = 30, H = 16, R = 3;
 const box = () => k.box({ min: [0, 0, 0], max: [W, D, H] });
 const relErr = (v, expected) => Math.abs(v - expected) / Math.abs(expected);
 
+function expectSmallCircularBlends(kernel, { filletTol, chamferTol }) {
+  const a = 10, r = 0.01, d = 0.1;
+  const cyl = kernel.cylinder({ r: a, h: H });
+  const filleted = cyl.fillet({ r, edges: { inPlane: "XY", at: H } });
+  const filletRemoved = 2 * Math.PI * (a - CORNER_XBAR * r) * CORNER(r);
+  expect(filleted.genus(), "fillet genus").toBe(0);
+  expect(relErr(cyl.volume() - filleted.volume(), filletRemoved), "fillet volume").toBeLessThan(filletTol);
+
+  const chamfered = cyl.chamfer({ d, edges: { inPlane: "XY", at: H } });
+  const chamferRemoved = 2 * Math.PI * (a - d / 3) * (d * d / 2);
+  expect(chamfered.genus(), "chamfer genus").toBe(0);
+  expect(relErr(cyl.volume() - chamfered.volume(), chamferRemoved), "chamfer volume").toBeLessThan(chamferTol);
+
+  const stepped = kernel.cylinder({ r: a, h: H / 2 })
+    .union(kernel.cylinder({ r: 6, h: H / 2 }).at([0, 0, H / 2]));
+  const concave = stepped.chamfer({ d, edges: { near: [6, 0, H / 2] } });
+  expect(concave.genus(), "concave chamfer genus").toBe(0);
+}
+
 describe("chain detection", () => {
   it("chains the 12 sharp edges of a box as straight convex chains", () => {
     const chains = chainEdges(detectSharpEdges(box().toIndexedMesh()));
@@ -77,6 +96,16 @@ describe("straight-edge fillet", () => {
 });
 
 describe("circular-arc fillet (revolve cutters)", () => {
+  it("small circular blends preserve topology at preview quality", () => {
+    // At r=.01 the preview circle's 0.0037 mm facet sag is a substantial
+    // fraction of the feature; topology is exact, feature volume is LOD-bound.
+    expectSmallCircularBlends(k, { filletTol: 0.35, chamferTol: 0.1 });
+  });
+
+  it("small circular blends preserve topology at print quality", async () => {
+    expectSmallCircularBlends(await bootManifoldKernel({ quality: "print" }), { filletTol: 0.1, chamferTol: 0.02 });
+  });
+
   it("fillets a full bore rim at the Pappus torus volume", () => {
     const a = 4, r = 1;
     const bored = box().cut(k.cylinder({ d: 2 * a, h: H + 2 }).at([W / 2, D / 2, -1]));

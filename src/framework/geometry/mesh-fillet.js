@@ -358,7 +358,7 @@ function profile2D({ P, n1, n2, magnitude, mode, convex, segs, ext = 0 }) {
   if (1 + c < 1e-6) throw new UnsupportedEdgeError("~180° knife edge");
   const bl = Math.hypot(n1[0] + n2[0], n1[1] + n2[1]);
   const bis = [(n1[0] + n2[0]) / bl, (n1[1] + n2[1]) / bl];
-  const delta = Math.max(1e-3, 0.02 * magnitude);
+  const delta = 0.02 * magnitude;
   const sgn = convex ? 1 : -1; // +bis is outside the material at a convex corner, inside at a concave one
   const corner = [P[0] + sgn * delta * bis[0], P[1] + sgn * delta * bis[1]];
   if (mode === "chamfer") {
@@ -379,7 +379,7 @@ function profile2D({ P, n1, n2, magnitude, mode, convex, segs, ext = 0 }) {
       // phase-noise issue the fillet's arc extension solves); the extra polygon
       // area lies outside the material for cutters and inside it for fillers
       const ux = T1[0] - T2[0], uy = T1[1] - T2[1], ul = Math.hypot(ux, uy);
-      const e = Math.max(1e-3, 0.02 * magnitude);
+      const e = 0.02 * magnitude;
       T1[0] += (e * ux) / ul; T1[1] += (e * uy) / ul;
       T2[0] -= (e * ux) / ul; T2[1] -= (e * uy) / ul;
     }
@@ -439,12 +439,16 @@ function revolveTool(k, chain, magnitude, mode, segs) {
   // VERTICES (circumradius) while its facets sit at the apothem, so a revolved
   // tool built exactly at R grazes every facet seam tangentially — Manifold
   // keeps the resulting epsilon-degenerate needle triangles, and simplify()
-  // cannot always collapse them. `sag` is a hair more than that facet sagitta.
-  const sag = (R + magnitude) * (1 - Math.cos(Math.PI / segs)) + 2e-4;
-  // Fillet: size the arc-tail extension so the tail penetrates PAST the facet
-  // planes (depth r·(1−cos ext) ≥ sag) — the blend itself stays exactly placed
-  // and the extra groove is microns wide.
-  const ext = Math.max(0.01, Math.acos(Math.max(-1, 1 - sag / magnitude)));
+  // cannot always collapse them. `sag` is that facet sagitta plus a roundoff pad
+  // bounded relative to the requested feature, so tiny blends never inherit a
+  // fixed allowance larger than their own cross-section.
+  const sag = (R + magnitude) * (1 - Math.cos(Math.PI / segs)) + Math.min(2e-4, 0.02 * magnitude);
+  // Fillet: size the arc-tail extension to cross the facet planes, but cap it at
+  // 0.4 rad. Below the mesh's own facet scale a larger tail wraps around the tiny
+  // profile and creates one tunnel per facet; the cap bounds penetration to 8%
+  // of the requested radius while the cutter's outside corner still opens into
+  // free space.
+  const ext = Math.min(0.4, Math.max(0.01, Math.acos(Math.max(-1, 1 - sag / magnitude))));
   let poly = profile2D({ P: [R, 0], n1, n2, magnitude, mode, convex, segs, ext });
   if (mode === "chamfer") {
     // Chamfer: the cone itself is the cutting surface — no tail to extend, so
@@ -452,7 +456,11 @@ function revolveTool(k, chain, magnitude, mode, segs) {
     // The chamfer lands microns deep; dimensionally invisible.
     const bl2 = Math.hypot(n1[0] + n2[0], n1[1] + n2[1]);
     const bis2 = [(n1[0] + n2[0]) / bl2, (n1[1] + n2[1]) / bl2];
-    poly = poly.map(([x, y]) => [x - sag * bis2[0], y - sag * bis2[1]]);
+    // A convex cutter must leave its outside closure corner unburied: moving the
+    // whole profile inward can close a micro-tunnel per flank facet when sag is
+    // larger than a tiny chamfer. A concave filler needs every point buried so
+    // it overlaps the source solid instead of leaving disconnected components.
+    poly = poly.map(([x, y], i) => i === 0 && convex ? [x, y] : [x - sag * bis2[0], y - sag * bis2[1]]);
   }
   if (poly.some(([x]) => x <= 0)) throw new UnsupportedEdgeError("fillet crosses the revolve axis (radius too large for this bore)");
   // enforce CCW winding for the revolve
