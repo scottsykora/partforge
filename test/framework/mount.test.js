@@ -645,6 +645,57 @@ test("an unrelated build error does not disturb an outstanding tessellate-import
   expect(workers.occt.postMessage).not.toHaveBeenCalled();
 });
 
+// Re-review finding: the tessellate-imports request and a headless STEP
+// export both post to the OCCT worker and both allocate their jobId from a
+// counter starting at 1 (export-controller.js's `nextId`, mount's own
+// `importTessellateJobSeq`). mount's onWorkerMessage gives exportCtl first
+// refusal on every message (`exportCtl.handleMessage(data, ...)` runs before
+// mount's own switch) via a raw `pending.get(m.jobId)` — a bare numeric
+// tessellate jobId colliding with a pending export's jobId would let the
+// export controller wrongly claim the tessellate worker's error reply,
+// rejecting the unrelated export AND leaving mount's own crossover latch
+// stranded at "requested" (its switch, which resets the latch, never runs).
+// The string-namespaced "tess-N" id (mirroring capture-build.js's "cap-N")
+// makes that collision structurally impossible; this test proves it by
+// forcing the exact numeric-collision setup and checking both jobs settle
+// independently and correctly.
+test("a tessellate-imports request never collides with a pending export's numeric jobId", async () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const onDownload = vi.fn(); // sink, so triggerDownload never touches real DOM download APIs
+  const runtime = mount(makePart(), { createWorker, elements: els, onDownload });
+  finishFirstBuild(workers);
+
+  // A headless STEP export is in flight — export-controller.js hands it
+  // jobId 1 (its counter starts fresh at 1 for this mount instance), posted
+  // to the OCCT worker (STEP always routes there).
+  const exportPromise = runtime.exportParts({ parts: ["body"], format: "step", onProgress: vi.fn() });
+  const exportJobId = workers.occt.postMessage.mock.calls
+    .find(([m]) => m.type === "export-step")[0].jobId;
+  expect(exportJobId).toBe(1); // pins the exact collision this test defends against
+
+  // A STEP-on-Manifold crossover kicks off concurrently — mount's own jobId
+  // counter also starts at 1, so WITHOUT the "tess-" namespace this would be
+  // the identical id `1` on the same worker's message channel as the export above.
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 2, subparts: ["body"] } });
+  const tessellateMsg = workers.occt.postMessage.mock.calls.find(([m]) => m.type === "tessellate-imports")[0];
+  expect(tessellateMsg.jobId).toBe("tess-1");
+  expect(tessellateMsg.jobId).not.toBe(exportJobId); // never numerically equal, even by coincidence
+
+  // The OCCT worker's tessellate job fails. If the export controller wrongly
+  // claimed this (a numeric-collision bug), it would reject exportPromise
+  // with the tessellation message and delete its pending entry.
+  workers.occt.onmessage({ data: { type: "error", jobId: tessellateMsg.jobId, message: "malformed STEP" } });
+  expect(els.status.status.textContent).toBe("failed: STEP import tessellation failed — malformed STEP");
+
+  // The export is untouched — completing it normally still resolves cleanly,
+  // proving its pending entry was never claimed or deleted by the tessellate error.
+  workers.occt.onmessage({
+    data: { type: "download", jobId: exportJobId, data: new ArrayBuffer(4), filename: "body.step", mime: "application/step" },
+  });
+  await expect(exportPromise).resolves.toBeUndefined();
+});
+
 test("dispose() tears everything down and is idempotent", () => {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();

@@ -284,6 +284,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // Lets the "error" case below tell a correlated tessellation failure apart
     // from an unrelated build error sharing the same message type, so it can
     // reset the latch instead of stranding it at "requested" forever.
+    // String-namespaced ("tess-N"), mirroring capture-build.js's "cap-N" —
+    // this request shares the OCCT worker's message space with
+    // export-controller's PLAIN NUMERIC jobIds (both start counting at 1), and
+    // exportCtl.handleMessage (called before mount's own switch, below) does a
+    // raw pending.get(m.jobId) before checking type. A bare numeric id here
+    // could collide with a pending STEP export's jobId, so the export
+    // controller would wrongly claim this reply — rejecting an unrelated
+    // export with the tessellation failure text AND leaving importMeshState
+    // stranded at "requested" (mount's own switch, which would have reset it,
+    // never runs). The string namespace makes that collision impossible.
     let importTessellateJobId = null;
     let importTessellateJobSeq = 0;
 
@@ -627,7 +637,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             if (!readySettled) { readySettled = true; rejectReady(new Error(IMPORT_MESH_BROKEN_MESSAGE)); }
           } else if (importMeshState !== "requested") {
             importMeshState = "requested";
-            importTessellateJobId = ++importTessellateJobSeq;
+            importTessellateJobId = `tess-${++importTessellateJobSeq}`;
             service.send({ type: "tessellate-imports", jobId: importTessellateJobId }, "occt");
           }
           break;
