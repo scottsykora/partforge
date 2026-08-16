@@ -63,7 +63,10 @@ async function loadPart(partPath, usage) {
   return part;
 }
 
-const bootKernel = (part) => (detectBackend(part) === "occt" ? bootOcctKernel() : bootManifoldKernel());
+const bootKernel = (part) => {
+  const opts = { fonts: part.fonts, imports: part.imports };
+  return detectBackend(part) === "occt" ? bootOcctKernel(opts) : bootManifoldKernel(opts);
+};
 
 const commands = {
   async lint(args) {
