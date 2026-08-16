@@ -21,6 +21,7 @@ import { addSugar } from "./solid-sugar.js";
 import { makeShape2dFactory } from "./shape2d.js";
 import { finishKernel } from "./kernel-front.js";
 import { createOcctRepair } from "./occt-repair.js";
+import { occtRoundAll } from "./occt-roundall.js";
 import { classifyFaceGroups } from "./feature-attribution.js";
 import { resolveRings } from "./loft.js";
 import { resolveSweepStations } from "./sweep.js";
@@ -221,6 +222,14 @@ export function createOcctKernel(replicad) {
           const a = mat();
           if (distance === 0) return wrap(a._s.clone(), cloneLabels(a._labels), key); // identity, same as fillet(0)
           return wrap(validChamfer(a._s, toEdgeFinder(selector), distance), cloneLabels(a._labels), key);
+        });
+      },
+      roundAll: (r) => {
+        const key = h("roundAll", hash, r);
+        return cached(key, () => {
+          const a = mat();
+          if (r === 0) return wrap(a._s.clone(), cloneLabels(a._labels), key);
+          return wrap(occtRoundAll(replicad, a._s, r), cloneLabels(a._labels), key);
         });
       },
       shell: (thickness, openFaces) => {

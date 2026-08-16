@@ -2093,6 +2093,29 @@ print faceted — or the reverse — set the hint rather than changing facet cou
 > (Manifold-only topology); `render` works on both. Filleted parts now measure on
 > Manifold with full topology.
 
+### `roundAll(r)` — round everything at once
+
+`s.roundAll(2)` (or `s.roundAll({ r: 2 })`) rounds **every** edge of the solid
+— convex and concave — with radius ≈ 2 mm in one pass, on both backends, with
+no OCCT routing. Faces stay in place (within backend tolerance). It is the
+blunt, global counterpart to `fillet`/`chamfer`: there is no edge selection,
+and features smaller than the ball are **consumed** — walls thinner than `2r`
+melt away, holes narrower than `2r` seal shut. That makes it ideal for
+"soften this whole organic part" and wrong for parts where a specific edge
+must stay sharp (use `fillet` with a selector for that).
+
+Rules of thumb:
+
+- Keep `r` under half your thinnest wall unless you *want* melting.
+- Preview and STL/3MF export always work (mesh morphology). STEP export gets
+  true B-rep arc surfaces while `r` is below the smallest feature size; at
+  consuming radii OCCT cannot represent the melt and **skips the op whole**
+  with a `roundall-skipped` warning — the STEP then has the un-rounded shape.
+- Relying on consumption? Add a `verify` volume assertion so a regression in
+  the radius (or a backend skip) fails loudly.
+- A small ridge remaining where a thin rib was consumed is correct morphology
+  (the rib's dilation fillet survives the opening), not a bug.
+
 ### Cost on the OCCT path: fillet/chamfer scale with edge count — and order matters
 
 These costs apply when a sub-part **does** run on OCCT (a shell, an unsupported edge
