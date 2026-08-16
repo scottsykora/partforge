@@ -63,7 +63,11 @@ async function loadPart(partPath, usage) {
   return part;
 }
 
-const bootKernel = (part) => (detectBackend(part) === "occt" ? bootOcctKernel() : bootManifoldKernel());
+// Pass the part's declared fonts through, mirroring the worker path (jobs.js) —
+// otherwise a part using a named font builds in the browser but dies headlessly
+// with `text2d: unknown font …`.
+const bootKernel = (part) =>
+  (detectBackend(part) === "occt" ? bootOcctKernel({ fonts: part.fonts }) : bootManifoldKernel({ fonts: part.fonts }));
 
 const commands = {
   async lint(args) {

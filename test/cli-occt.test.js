@@ -19,6 +19,13 @@ test("render auto-selects OCCT for a filleted part and writes a PNG", () => {
   expect(existsSync(`${OUT}/filleted-box-box-iso.png`)).toBe(true);
 });
 
+test("measure preloads a part's declared fonts on the OCCT branch too", () => {
+  // Same regression as the manifold-side test in cli.test.js: bootKernel must
+  // pass part.fonts to whichever kernel it boots.
+  const out = run(["measure", "test/fixtures/font-part-occt.js"]);
+  expect(out).toMatch(/FontRig \/ v/);
+});
+
 test("measure runs on the OCCT part and prints n/a topology", () => {
   const out = run(["measure", "src/parts/filleted-box.js"]);
   expect(out).toMatch(/Filleted Box \/ box/);
