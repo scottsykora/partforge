@@ -73,6 +73,7 @@ export default {
   parameters,                              // the control-panel schema (array of sections — see below)
   defaults,                                // flat { paramKey: value } — seeds params + control values
   fonts?,                                  // { name: source } — fonts a part's k.text2d() needs; framework preloads before build (see below)
+  imports?,                                // { name: source } — STEP/STL/3MF files a part's k.import() needs; same preload timing as fonts (see below)
   derive?,                                 // (p) => d, or { group: (p, d) => {…}, … } — dependent values computed once per build
   parts: {                                 // named sub-parts; each builds ONE solid
     <name>: {
@@ -83,6 +84,7 @@ export default {
       enabled?: (p) => boolean,            // optional — gate a conditional sub-part
       display?: { color?, opacity? },      // optional viewer-only override (0xRRGGBB / 0..1) — e.g. a reference/ghost part
       export?: { name },                   // filename/object name on export; defaults to the key
+      reference?: name,                    // name of a declared import — measure() computes a deviation fact against it (see below)
     },
   },
   views: { <name>: { label, default?, animations? } },  // view tabs; a view may own animations (below)
@@ -126,6 +128,10 @@ export default {
   })` can look the font up by name. See `src/framework/fonts.js` (`resolveFonts`) and
   `k.text2d` in `docs/KERNEL-CONTRACT.md` for the full contract; fuller authoring guidance
   (recommended font sourcing, licensing notes) lands in a follow-up pass.
+- `imports` declares the STEP/STL/3MF files a part's `k.import()` calls need, same source
+  grammar and preload timing as `fonts` above. See "Importing geometry (STEP/STL/3MF)"
+  below for the full contract — backend matrix, units, the `reference` field + the
+  deviation gate, and caching.
 
 ---
 
@@ -1314,6 +1320,121 @@ Reference a font by name: `k.text2d("text", { font: "heading" })`. Omit the `fon
 Both backends produce watertight emboss/deboss geometry; the difference is export fidelity. As with any `Shape2D`, composition with booleans and offset is backend-agnostic — the same code works on both.
 
 **Overlapping / self-intersecting glyph outlines:** real font outlines aren't always simple, correctly-nested contours — counters can overlap or self-intersect. Before glyphs become curve regions, the framework resolves each glyph's raw contours with the nonzero winding rule (how all OpenType outlines — TrueType and CFF alike — are filled), so composite/overlapping outlines still produce a single correct `{outer, holes}` shape per glyph. This resolution stays curve-exact — it never flattens beziers to polygons — so the OCCT/Manifold split above still holds.
+
+---
+
+## Importing geometry (STEP/STL/3MF)
+
+`k.import(name)` returns a previously-registered imported file as an ordinary `Solid` — the same handle a `k.box()` or `k.loft()` call would give you. It exists for two uses: a **reference** the agent workflow measures and rebuilds a parametric part around (with a verify-time deviation gate holding the rebuild to it), or a **component** — a real body that participates in booleans, scaling, and export like any other solid. `src/parts/import-demo.js` is the worked example for both; read it alongside this section.
+
+**Declaring imports (the `imports` PartDefinition field):**
+
+Exactly the `fonts` grammar, one level up in the contract — a map of names to sources:
+
+```js
+imports: {
+  scan: new URL("./assets/import-demo-scan.stl", import.meta.url), // Vite serves it; Node reads disk
+  lid:  "https://…/signed-url.step",                               // URL string
+  chip: bytesOrThunk,                                               // ArrayBuffer/Uint8Array, or a (possibly async) thunk returning one
+},
+```
+
+The framework resolves these — fetch/read bytes, detect the format (filename extension when the source has one; a magic-bytes sniff otherwise — the `ISO-10303-21` STEP header, a `PK` zip signature for 3MF, else STL), and content-hash them — before the synchronous `build` runs, registering the parsed result on the kernel through an underscore-prefixed side-channel (see `docs/KERNEL-CONTRACT.md` § "Conformance classes"). Reference an import by name: `k.import("scan")`. An undeclared name throws (mirrors `text2d`'s unknown-font error) — see [ERROR-PATTERNS.md#import-unknown-name](ERROR-PATTERNS.md#import-unknown-name).
+
+**Backend matrix:**
+
+- **STEP on OCCT** — native: `replicad.importSTEP` builds a real B-rep, exact into STEP export.
+- **STEP on Manifold** — tessellated transparently: the framework routes an OCCT-worker tessellation pass behind the scenes (the "crossover" — see caching, below) and hands Manifold the resulting triangle mesh. Exactness is lost on this path; the STEP curves become facets at print quality, same as any other mesh geometry.
+- **STL/3MF on Manifold** — native: parsed, repaired (vertex merge + winding/orientation fix), and handed to `Manifold.ofMesh`. A mesh still non-manifold after repair throws loudly with the open-edge count — see [ERROR-PATTERNS.md#import-mesh-not-solid](ERROR-PATTERNS.md#import-mesh-not-solid).
+- **STL/3MF on OCCT** — never attempted: mesh-to-B-rep conversion isn't in scope for v1. Declaring a mesh import on a part (or sub-part, under per-sub-part routing) that routes to OCCT is an error — see [ERROR-PATTERNS.md#import-mesh-on-occt](ERROR-PATTERNS.md#import-mesh-on-occt).
+
+`import` is not in `OCCT_ONLY_OPS` — a STEP import does not by itself force OCCT routing (the crossover exists precisely so it doesn't have to); backend selection is still driven by `fillet`/`chamfer`/`shell` on a `Solid`, or `meta.backend`.
+
+**Units:** everything normalizes to millimetres at parse time — STEP units are honored by the OCCT importer, a 3MF file's `unit` attribute is converted, and **STL is assumed to already be in millimetres** (the format carries no unit metadata).
+
+**Registration is total; errors are lazy.** Every declared import registers on whichever kernel runs a job, regardless of whether that kernel can actually use it — this is what keeps a mixed-format part (an OCCT sub-part and a Manifold sub-part with different import formats) from having one format's registration break the other's job. A format the running kernel can't use registers as an **error entry** instead of throwing at registration; the error throws from `k.import(name)` itself, at the point in a `build` that actually calls it. Two cases surface this way:
+
+- **mesh import on OCCT** — throws immediately, every time (see the backend matrix above).
+- **unprimed STEP import on Manifold** — throws once, then self-heals: the framework's crossover machinery notices, arranges the OCCT-side tessellation (a `tessellate-imports` worker job in the browser, a `node:worker_threads` hop in the CLI/tests, since the two WASM kernels may never share a process), and retries the build. A build whose params never actually reach a `k.import()` call on that STEP file never triggers the crossover at all — the cost is paid only when the import is really used. If the crossover itself fails to produce a usable mesh, that surfaces as [ERROR-PATTERNS.md#import-step-tessellation-failed](ERROR-PATTERNS.md#import-step-tessellation-failed).
+
+**Caching & content-stability:** import sources are **content-stable for a session** — the same rule as `fonts`. Bytes are memoized process-wide by source identity (not by digest) the first time a source resolves, and stay resident for the life of that worker/process: the raw bytes in the resolver's cache, and the parsed master (a Manifold mesh or an OCCT B-rep shape) in the kernel that parsed it. A multi-megabyte STEP or STL file is read and parsed once, not on every slider drag or view switch — but it also means a changed file on disk needs a fresh worker/process to be picked up (a rebind/remount, same as changing a font). Downstream, every op built from an import folds the file's content digest into its cache key (`h("import", name, digest)`), so an actually-changed file (a new digest) still invalidates every dependent cache node correctly. On the STEP-on-Manifold crossover, note that the file is fetched **independently by both workers** — the Manifold worker resolves it to get a digest, and the OCCT worker resolves it again to tessellate — so a large STEP file used this way is held in memory twice, once per worker.
+
+**Performance:** a `reference` deviation check (below) costs one solid boolean per verify run. On a Manifold-routed part that's cheap; on an **OCCT-routed** part it's a full OpenCASCADE boolean against the entire imported B-rep, and `docs/geometry-backend-strategy.md` measures OCCT booleans at 75–1486× slower than the equivalent Manifold operation. A `reference`-bound sub-part on OCCT is a deliberate trade — exactness for STEP export vs. a slower `measure`/`verify` loop — worth knowing about before wiring one up on a large imported assembly.
+
+**The `reference` field and the deviation gate:**
+
+A sub-part can bind itself to an import by name; `measure()` then computes a `deviation` fact against it (symmetric-difference volume, volume delta %, and per-axis bbox-corner drift), which three `ref*` metrics in `verify.expect` can gate on — the same `SUBPART_METRICS` registry `holes`/`volume`/`bbox` live in, so they take the same assertion DSL:
+
+```js
+parts: {
+  body: {
+    reference: "scan",   // an import name — measure() computes s.deviation against it
+    build: (k, p) => k.box({ min: [0, 0, 0], max: [p.scanW, p.scanD, p.scanH] }),
+  },
+},
+verify: {
+  expect: {
+    body: {
+      refXorVolume: "<=5mm3",          // symmetric-difference volume — the real match check
+      refVolumeDeltaPct: "<=1",        // cheap sanity gate, % of the reference's volume
+      refBboxDelta: "<=[0.2,0.2,0.2]", // mm, per-axis max of |min|/|max| corner deltas
+    },
+  },
+},
+```
+
+Deviation is measured in build coordinates on the posed display solid — aligning the rebuild to the reference is the part author's job, and the ghost overlay (next) is how you check it by eye. A sub-part with no `reference` gets `deviation: null` and skips any `ref*` assertion rather than failing it; `npx partforge lint` catches the inverse mistake — a `ref*` assertion on a sub-part that declares no `reference` — statically, as `ref-metric-without-reference` (see "Linting" → Rule catalog → "Geometry imports", below).
+
+**The two-view ghost pattern:** `measure()`'s `ok` gate is **view-scoped and overlap-strict** — it requires zero sub-part overlaps among whatever the *current* view shows. A translucent ghost of the raw import, shown in the same view as its parametric rebuild, is by construction coincident with that rebuild — so that view's `overlaps` would always read greater than zero, failing `verify` on a part that is otherwise exactly correct. The fix is not a bigger overlap tolerance; it's two views:
+
+```js
+parts: {
+  // Ghost overlay: only in "reference" — never coincides with body in "assembly".
+  ref: {
+    label: "Reference (ghost)",
+    views: ["reference"],
+    exportable: false,
+    display: { opacity: 0.3 },
+    build: (k) => k.import("scan"),
+  },
+  // The parametric rebuild — shown alone in "assembly", and against the ghost
+  // in "reference" for visual alignment checking.
+  body: {
+    label: "Rebuild",
+    views: ["assembly", "reference"],
+    reference: "scan",
+    build: (k, p) => k.box({ min: [0, 0, 0], max: [p.scanW, p.scanD, p.scanH] }),
+  },
+},
+views: { assembly: { label: "Assembly" }, reference: { label: "Reference overlay" } },
+verify: {
+  expect: {
+    body: { refXorVolume: "<=5mm3", /* … */ },
+    _view: { overlaps: 0 },   // checked against the DEFAULT ("assembly") view only
+  },
+},
+```
+
+`assembly` is listed first so `measure`/`verify`/`render` — which all default to the **first** view key, `default: true` notwithstanding — see only the real, non-overlapping parts. `reference` is the ghost-overlay view: browse it by hand in the viewer, or pass it explicitly to `measure`/`render`, to eyeball how closely the rebuild tracks the scan. Declare `ref` `exportable: false` (it's not a real part of the design) and give it a `display.opacity` well under 1 so it reads as an overlay rather than an opaque duplicate. This is exactly `src/parts/import-demo.js`'s shape — read its `parts.ref`/`parts.body`/`views`/`verify` blocks for the fully worked, commented version.
+
+**Using an import as a real component** — the other use, no ghost involved — is an ordinary boolean, chainable like any `Solid`: `import-demo.js`'s `mount` sub-part cuts a through-socket shaped to the scan itself (scaled up slightly for clearance) out of a plate:
+
+```js
+build: (k, p, d) => {
+  const plate = k.box({
+    min: [d.mountOffsetX - p.margin, -p.margin, -p.plateH],
+    max: [d.mountOffsetX + p.scanW * p.fit + p.margin, p.scanD * p.fit + p.margin, 0],
+  });
+  const socket = k.import("scan")
+    .scale(p.fit)
+    .translate([d.mountOffsetX, 0, -p.plateH - 1]); // overcut past both plate faces
+  return plate.cut(socket);
+},
+```
+
+**Linting:** `npx partforge lint` learns `import` as a known op and adds four static checks — `import-unknown-name`, `import-mesh-on-occt`, `reference-unknown`, `ref-metric-without-reference` — described in full under "Linting" → Rule catalog → "Geometry imports", below; this section only points there rather than repeating it.
+
+**CLI:** `partforge measure|render|lint` work on an importing part exactly as on any other — the `imports` field resolves in the CLI's Node boot the same way `fonts` does, no extra flags.
 
 ---
 

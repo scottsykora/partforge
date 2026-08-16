@@ -214,6 +214,7 @@ above. All ops return a `Solid`.
 | `hull(inputs[])` | Convex hull of all inputs (each a `Shape2D`, a curve contour, or an `[[x,y],…]` point list) → a convex `Shape2D`. Backend-agnostic: a pure-JS monotone-chain hull over the inputs' sampled points (curved inputs tessellated at a fixed LOD), lifted via `shape2d` (see the parity note below). Throws on an empty input array or a degenerate (collinear/point-count < 3) hull. |
 | `hullChain(inputs[])` | Swept hull over an ordered sequence of ≥2 inputs (same input forms as `hull`): the union of `hull([inᵢ, inᵢ₊₁])` for each consecutive pair — e.g. a tapered link connecting a row of circles. Throws with fewer than 2 inputs. |
 | `toSTEP(named[])` | `[{name, solid}]` → `Promise<ArrayBuffer>` of a STEP assembly. B-rep class only. |
+| `import(name)` | Previously-registered imported geometry (STEP/STL/3MF, declared in the part's `imports` field) as an ordinary `Solid`. Required on both in-repo backends (Manifold accepts mesh formats, OCCT accepts STEP); a format the routed backend can't use throws lazily, at this call, not at registration. Fed by an underscore-prefixed side-channel, not part authors — see [Conformance classes](#conformance-classes). Additive: not in `OCCT_ONLY_OPS`, no `CONTRACT_VERSION` bump (still 2). |
 
 `hull`/`hullChain` parity: point-list and curve-contour inputs hull bit-identically
 across backends (pure-JS sampling, no backend materialization involved). A `Shape2D`
@@ -622,7 +623,11 @@ other posts — `progress`, `error`, `needs-occt` — are not gated and still re
 that survived the rebind: a stale `error` would mark a perfectly good new part failed, and
 a stale `needs-occt` would stickily flip the host's backend for a part that never asked for
 it. Handling `superseded` fixes the stuck spinner but not that crosstalk, which is why
-detaching the listener is the recommended pattern.
+detaching the listener is the recommended pattern. `needs-import-mesh` — posted when a
+build throws an error carrying code `NEEDS_IMPORT_MESH` (an unprimed STEP import on the
+Manifold backend, thrown from `imports.js`'s registration policy, not `errors.js`'s
+`KernelCapabilityError`/`NEEDS_OCCT`) — is the same message shape and the same
+non-epoch-gated risk as `needs-occt`; a host handling one should handle both the same way.
 
 **Cancellation granularity is the sub-part.** The guard is checked only between
 sub-parts (one macrotask yield each), so a single long WASM op — a big boolean, an OCCT

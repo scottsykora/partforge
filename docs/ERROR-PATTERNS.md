@@ -539,6 +539,36 @@ exposure is a `build()` that queries a twisted solid's box itself, which is the
 normal idiom for placing something relative to a solid and now silently disagrees
 between the Manifold preview and the OCCT STEP export.
 
+## import-mesh-not-solid
+
+- **Symptom:** `import "<name>": mesh is not a solid after repair (<n> open edges) — repair it in a mesh tool or re-export watertight` thrown while registering a part's `imports` on the Manifold backend.
+- **Cause:** Basic repair (vertex merge + winding/orientation fix) couldn't close the mesh into a solid — the source STL/3MF has an open shell, missing faces, or another defect beyond what v1's repair pass attempts. The open-edge count in the message is the size of the gap.
+- **Fix:** Close the mesh in a dedicated mesh-repair tool, or re-export it watertight from the tool that produced it; there is no in-framework hole-filling/remeshing. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Importing geometry (STEP/STL/3MF)".
+
+## import-unrecognized-format
+
+- **Symptom:** `unrecognized import format for "<path>" — use a .step/.stl/.3mf extension or non-empty bytes` (the `for "<path>"` clause is omitted for a bytes/thunk source with no path) thrown while resolving a part's `imports`.
+- **Cause:** Format detection couldn't identify the source: no `.step`/`.stp`/`.stl`/`.3mf` extension on a URL/string source, and the bytes are empty or start with neither a STEP header (`ISO-10303-21`) nor a zip signature (3MF) — the ASCII/binary STL fallback needs non-empty bytes too.
+- **Fix:** Give the source a recognized extension, or make sure inline/fetched bytes are non-empty and actually STEP/STL/3MF content. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Importing geometry (STEP/STL/3MF)".
+
+## import-unknown-name
+
+- **Symptom:** `import: unknown import "<name>"` — declare it in the part's `imports` field — thrown from a build, identical text on both backends.
+- **Cause:** `k.import(name)` was called with a name that isn't a key in the part's `imports` field — a typo, or the declaration was never added. Same failure shape as `text2d`'s unknown-font error.
+- **Fix:** Add the name to `imports`, or fix the typo. `npx partforge lint <part>` catches this statically, in microseconds, before any kernel boots (`import-unknown-name`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Importing geometry (STEP/STL/3MF)" and § "Linting" (Rule catalog → Geometry imports).
+
+## import-mesh-on-occt
+
+- **Symptom:** `import "<name>": STL/3MF imports need the Manifold backend — this build routes to OCCT (fillet/chamfer/shell or meta.backend); use the mesh import from a Manifold-routed build` thrown from a build calling `k.import(name)`.
+- **Cause:** STL/3MF imports are mesh geometry; mesh-to-B-rep conversion is never attempted, so a declared mesh import registers as an unusable error entry wherever the routed kernel is OCCT — thrown lazily, at the `k.import()` call inside `build`, not when the import is registered (registration itself never throws — see "Registration is total; errors are lazy" in [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Importing geometry (STEP/STL/3MF)").
+- **Fix:** Keep the mesh import on a Manifold-routed sub-part (Manifold and OCCT sub-parts can coexist under per-sub-part routing), or force `meta.backend: "manifold"` if nothing else in the part needs OCCT. `npx partforge lint <part>` catches an extension-detectable case statically, before any kernel boots (`import-mesh-on-occt`).
+
+## import-step-tessellation-failed
+
+- **Symptom:** `STEP import tessellation failed to satisfy the import — see console` in the browser (a build's status/error), or `step tessellation thread exited <n>` from a failed Node CLI/test run.
+- **Cause:** A STEP import used on the Manifold backend needs OCCT-tessellated triangles first (the "crossover" described in [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Importing geometry (STEP/STL/3MF)"). This hop is meant to self-heal — the browser worker requests a `tessellate-imports` job from the OCCT worker, Node hops through a `node:worker_threads` isolate (the two WASM kernels may never share a process) — but it surfaces here when the tessellation either delivered a mesh whose digest didn't match what Manifold now expects (a genuinely broken state, not a retry loop) or the worker/thread exited without completing.
+- **Fix:** This should be rare and self-resolving on the next build; if it persists, confirm the STEP file parses under OCCT on its own (e.g. `meta.backend: "occt"` temporarily, or `npx partforge measure` against an OCCT-routed copy of the part) to rule out a malformed STEP file, and check the console/thread output for the underlying tessellation error being wrapped.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.
