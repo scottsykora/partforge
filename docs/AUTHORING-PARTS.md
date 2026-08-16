@@ -15,7 +15,7 @@ Two worked examples to read alongside this guide: **`src/parts/demo.js`** (a
 parametric spacer — the smallest complete part) and **`src/parts/planter.js`** (a
 faceted planter — facets, taper, twist, even walls, an optional feature, a `derive`,
 and a `verify` block). **`src/parts/filleted-box.js`** is the worked example for the
-OCCT-only fillet/chamfer/shell ops.
+portable Solid fillet/chamfer API and the OCCT-only shell op.
 
 ---
 

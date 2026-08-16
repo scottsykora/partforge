@@ -1,7 +1,7 @@
 // Geometry-free build execution. Two consumers share one Proxy implementation:
 //
 //  • createProbeKernel() — records op NAMES so ../backend-select.js's
-//    detectBackend() can route a part to OCCT when it uses fillet/chamfer/shell.
+//    detectBackend() can route a part to OCCT when it uses Solid.shell.
 //  • createValidatingProbe() — additionally checks op names against the kernel
 //    contract's op lists and routes options-form calls through the same op-options
 //    normalizers the real backends use, so partforge/lint can catch a bad call in
@@ -21,11 +21,11 @@ import { KERNEL_OP_SPECS, SOLID_OP_SPECS, isPlainOptions } from "./op-options.js
 
 // The probe hands out TWO chainable handles: k.shape2d()/k.text2d() yield a Shape2D
 // handle (whose extrude/revolve yield the Solid handle), everything else yields the
-// Solid handle. The split exists for one reason — backend routing: `Shape2D.fillet`
-// is the shared pure-JS implementation and must NOT route a part to OCCT, while
-// `Solid.fillet` must. Handle-level VALIDATION stays deliberately permissive (one
-// union allowlist for both handle kinds), so the split can never false-positive on
-// an error-severity rule.
+// Solid handle. The split lets lint and routing distinguish handle-specific ops:
+// `Shape2D.fillet` is shared pure JS, `Solid.fillet` starts mesh-native and may
+// request a runtime OCCT fallback, and `Solid.shell` probe-routes up front.
+// Handle-level VALIDATION stays deliberately permissive (one union allowlist for
+// both handle kinds), so the split can never false-positive on an error rule.
 const KERNEL_ALLOWED = new Set([...KERNEL_OPS, ...KERNEL_OPTIONAL_OPS]);
 const SOLID_ALLOWED = new Set([...SOLID_OPS, ...SOLID_OPTIONAL_OPS, ...SHAPE2D_OPS]);
 
@@ -98,8 +98,7 @@ export function createProbeKernel() {
   const used = new Set();       // every op name, any handle kind
   const solidUsed = new Set();  // ops recorded on kernel/Solid handles only — the
                                 // routing set: Shape2D.fillet must not look like Solid.fillet
-  const cadCalls = [];          // Solid-handle fillet/chamfer/shell calls WITH args —
-                                // routing needs the magnitude (fillet(0) is identity, stays on Manifold)
+  const cadCalls = [];          // Probe-routed Solid ops WITH args (currently shell).
   const { kernel } = makeProbe((scope, key, args) => {
     used.add(key);
     if (scope !== "shape2d") {
