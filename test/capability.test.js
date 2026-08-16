@@ -34,3 +34,18 @@ test("Manifold shell throws KernelCapabilityError with code NEEDS_OCCT", () => {
   try { k.box({ min: [0, 0, 0], max: [10, 10, 10] }).shell({ t: 1, open: { dir: "Z" } }); }
   catch (e) { expect(e).toBeInstanceOf(KernelCapabilityError); expect(e.code).toBe("NEEDS_OCCT"); }
 });
+
+test("Manifold fillet(0)/chamfer({d: 0}) are the identity, not a capability error", () => {
+  // Zero magnitude is defined as identity on every conformance class, so a part
+  // with an unguarded `.fillet(p.r)` builds on Manifold when r is dialed to 0.
+  const out = k.box({ min: [0, 0, 0], max: [10, 10, 10] }).fillet(0);
+  expect(out.volume()).toBeCloseTo(1000, 6);
+  const out2 = k.box({ min: [0, 0, 0], max: [10, 10, 10] }).chamfer({ d: 0, edges: { dir: "Z" } });
+  expect(out2.volume()).toBeCloseTo(1000, 6);
+  expect(out2.boundingBox().size).toEqual([10, 10, 10]);
+});
+
+test("Manifold shell({t: 0}) still throws — zero-thickness walls are not identity", () => {
+  expect(() => k.box({ min: [0, 0, 0], max: [10, 10, 10] }).shell({ t: 0, open: { dir: "Z" } }))
+    .toThrow(KernelCapabilityError);
+});

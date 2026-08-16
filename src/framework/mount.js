@@ -13,7 +13,7 @@ import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
-import { detectBackend } from "./backend-select.js";
+import { createBackendPolicy } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
 import { createPoseFastPath } from "./pose-fast-path.js";
@@ -253,10 +253,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     cleanup.defer(() => ui.setStatus(""));
     cleanup.defer(() => ui.hideBusy());
 
-    // ?backend=occt|manifold forces the backend; otherwise it's detected per part.
+    // ?backend=occt|manifold forces the backend; otherwise it's re-detected per
+    // regen with the live params (so a fillet dialed to 0 reverts to Manifold),
+    // with a params-keyed latch for runtime needs-occt reroutes — see
+    // createBackendPolicy for why the latch must not outlive a param change.
     let forcedBackend = new URLSearchParams(location.search).get("backend");
     if (forcedBackend !== "occt" && forcedBackend !== "manifold") forcedBackend = null;
-    const backendFor = () => forcedBackend ?? detectBackend(part, params);
+    const backendPolicy = createBackendPolicy(part, { forced: forcedBackend });
+    const backendFor = () => backendPolicy.backendFor(params);
 
     // ?debug shows the cache debug overlay; ?debug&nocache starts with caching off.
     const qs = new URLSearchParams(location.search);
@@ -549,7 +553,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           ui.setStatus(`${data.filename} downloaded`);
           break;
         case "needs-occt":
-          forcedBackend = "occt"; // probe missed; this part needs OCCT — stick to it
+          // Probe missed for the current params — rebuild on OCCT. The latch is
+          // per params snapshot, so changing params re-consults the probe and the
+          // part can drop back to Manifold when the OCCT-only feature goes away.
+          backendPolicy.noteNeedsOcct(params);
           loop.buildDone();
           loop.kick();
           break;

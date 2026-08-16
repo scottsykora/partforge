@@ -2052,6 +2052,15 @@ OCCT: rounding a profile before extruding keeps you on fast Manifold. Force the 
 `meta.backend: "occt" | "manifold"` if you ever need to. Because an OCCT part is built
 entirely on OCCT, its fillets are exact in the STEP **and** present in the printed STL.
 
+The probe re-runs with the **live parameters on every regen**, and routing works in both
+directions: turn a fillet on and the part moves to OCCT; dial it back to 0 (or take the
+branch that skips it) and the part drops back to Manifold automatically. A zero magnitude
+— `fillet(0)`, `chamfer({ d: 0 })` — is the **identity** on both backends (see
+KERNEL-CONTRACT.md), so an unguarded `s.fillet(p.r)` needs no `if (p.r > 0)` wrapper to
+get the fast preview back when the slider hits 0. (`shell` is the exception: `t: 0` is
+degenerate, not identity, so a shell call always routes to OCCT.) Within one build the
+part runs on a single backend — there is no per-op mixing.
+
 **Shading intent.** The kernel decides what shades smooth and where edge lines
 draw — spheres, cylinders and fillets are smooth by construction; boolean cut
 seams always shade hard and draw a line; a loft's facets shade flat when its

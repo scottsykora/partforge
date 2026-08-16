@@ -104,6 +104,13 @@ test("a Manifold-routed part (planter) exports STEP via OCCT — every part gets
   expect(new TextDecoder().decode(step.slice(0, 13))).toBe("ISO-10303-21;"); // STEP header
 });
 
+test("fillet(0)/chamfer(0) are the identity — no kernel call, no repair warning", () => {
+  const a = k.box({ min: [0, 0, 0], max: [10, 10, 10] }).fillet(0);
+  expect(a.volume()).toBeCloseTo(1000, 3);
+  const b = k.box({ min: [0, 0, 0], max: [10, 10, 10] }).chamfer({ d: 0 });
+  expect(b.volume()).toBeCloseTo(1000, 3);
+});
+
 test("clone() lets the original survive a consuming transform", () => {
   const a = k.box({ min: [0, 0, 0], max: [10, 10, 10] });
   const moved = a.clone().translate([20, 0, 0]); // consumes the clone, not `a`

@@ -208,6 +208,9 @@ export function createOcctKernel(replicad) {
         const key = h("fillet", hash, radius, selKey(selector));
         return cached(key, () => {
           const a = mat();
+          // radius 0 is the identity per the contract — skip the kernel call so it
+          // can't trip the repair path's "feature skipped" warning.
+          if (radius === 0) return wrap(a._s.clone(), cloneLabels(a._labels), key);
           return wrap(safeOp(a._s.clone(), (sh) => sh.fillet(radius, toEdgeFinder(selector)), `fillet(${radius})`), cloneLabels(a._labels), key);
         });
       },
@@ -216,6 +219,7 @@ export function createOcctKernel(replicad) {
         // validChamfer probes on internal clones and never consumes its input.
         return cached(key, () => {
           const a = mat();
+          if (distance === 0) return wrap(a._s.clone(), cloneLabels(a._labels), key); // identity, same as fillet(0)
           return wrap(validChamfer(a._s, toEdgeFinder(selector), distance), cloneLabels(a._labels), key);
         });
       },
