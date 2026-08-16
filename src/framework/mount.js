@@ -402,6 +402,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
 
     // The regenerate state machine (ready gating / debounce / stale-redo) lives in
     // regen-loop.js; this send callback is the one place a build job is dispatched.
+    // Routing is per SUB-part: the missing set splits by backend and each group goes
+    // to its own worker in parallel, so a mixed part previews its plain sub-parts at
+    // Manifold speed while only the filleted ones wait on OCCT. The return value is
+    // the job count — the loop holds the cycle open until every group has replied.
     const loop = createRegenLoop({
       missingParts,
       send: (missing) => {
@@ -410,7 +414,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length, posed: pendingPosed.size };
         pendingPosed.clear(); // consumed — never counted against a second build
         ui.showBusy("generating");
-        service.send({ type: "generate", subparts: missing, view: view(), params, cache: cachingOn }, backendFor());
+        const backends = backendPolicy.backendsFor(params);
+        let jobs = 0;
+        for (const backend of ["manifold", "occt"]) {
+          const subparts = missing.filter((n) => (backends[n] ?? "manifold") === backend);
+          if (subparts.length === 0) continue;
+          service.send({ type: "generate", subparts, view: view(), params, cache: cachingOn }, backend);
+          jobs++;
+        }
+        return jobs;
       },
     });
     cleanup.defer(() => loop.dispose());
@@ -509,7 +521,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
               // delivered, which buildDone() true guarantees is at the live params.
               fastPath.recordDelivered(m.name);
             }
-            ui.hideBusy();
+            // A split dispatch answers in two meshes replies; the busy spinner
+            // stays up until the view has everything (the other worker's job may
+            // still be running — often OCCT, the slow one).
+            if (missingParts().length === 0) ui.hideBusy();
             refreshView();
             if (data.ms && missingParts().length === 0) {
               const tris = viewSubParts(part, view(), params).reduce((s, n) => s + viewer.subTriangles(n), 0);
@@ -517,11 +532,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             }
             dbg?.update({ ms: data.ms, hits: data.cache?.hits ?? 0, misses: data.cache?.misses ?? 0, skipped: lastGen.skipped, rebuilt: lastGen.rebuilt, posed: lastGen.posed });
             onBuild?.({ status: "success", ms: data.ms });
-            if (!readySettled) { readySettled = true; resolveReady(); }
-            // First-show autoplay: latched separately from `ready`, which the
-            // error branch also settles — a part whose first build fails but
-            // whose retry succeeds still deserves its autoplay.
-            if (!autoplayKicked) { autoplayKicked = true; animCtl?.autoplayKick(); }
+            // ready/autoplay wait for the WHOLE view: a split dispatch delivers in
+            // two replies, and a host acting on `ready` (screenshotting, measuring)
+            // must never see half an assembly.
+            if (missingParts().length === 0) {
+              if (!readySettled) { readySettled = true; resolveReady(); }
+              // First-show autoplay: latched separately from `ready`, which the
+              // error branch also settles — a part whose first build fails but
+              // whose retry succeeds still deserves its autoplay.
+              if (!autoplayKicked) { autoplayKicked = true; animCtl?.autoplayKick(); }
+            }
           } else if (lastAnimApplyVersion === loop.version()) {
             // Stale ONLY because animation frames kept bumping the version:
             // show the delivered meshes anyway — that IS best-effort playback —
@@ -553,10 +573,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           ui.setStatus(`${data.filename} downloaded`);
           break;
         case "needs-occt":
-          // Probe missed for the current params — rebuild on OCCT. The latch is
-          // per params snapshot, so changing params re-consults the probe and the
-          // part can drop back to Manifold when the OCCT-only feature goes away.
-          backendPolicy.noteNeedsOcct(params);
+          // Probe missed for the current params — rebuild the failed job's
+          // sub-parts on OCCT (an export reply has no subparts and latches the
+          // whole part). The latch is per params snapshot, so changing params
+          // re-consults the probe and sub-parts drop back to Manifold when the
+          // OCCT-only feature goes away.
+          backendPolicy.noteNeedsOcct(params, data.subparts);
           loop.buildDone();
           loop.kick();
           break;

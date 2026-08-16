@@ -15,14 +15,16 @@ import handling.
 
 This directory is its **own git repo** (`scottsykora/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has ten: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has eleven: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (OCCT fillet/chamfer), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `faceted-vase.js` (k.loft silhouette body), `hull-sweep.js` (k.hull/hullChain),
 `nameplate.js` (k.text2d emboss/deboss), `hinged-box.js` (the `animations`
 reference part - stepped timeline, camera cues, pose-only tracks), `screw.js`
 (the `k.screwSweep` reference part - a periodic ISO thread plus a hex head), and
-`text-smoke.js` (worker text-render CI fixture).
+`text-smoke.js` (worker text-render CI fixture), and `mixed-smoke.js` (the
+split-backend CI fixture — a filleted sub-part beside a plain one, exercising
+per-sub-part routing).
 
 ## Node version
 
@@ -141,10 +143,12 @@ and runs on either backend unchanged:
 Before building, the framework runs a **geometry-free probe** of `build` to
 detect CAD-only ops (`fillet`/`chamfer`/`shell` **on a Solid** — `Shape2D`'s
 fillet/chamfer are shared pure JS and don't count, and a provably-zero magnitude
-like `fillet(0)` is the identity and doesn't count either); if present it routes
-the whole part to OCCT, otherwise Manifold. The probe re-runs with live params
-each regen, so routing follows the parameters in both directions. Override with
-`meta.backend: "occt" | "manifold"`. The two WASM kernels run in **separate Web Workers** (`name` =
+like `fillet(0)` is the identity and doesn't count either). Preview routing is
+**per sub-part** — a mixed part's regen fans out to both workers in parallel;
+exports and the CLI route whole-part (the max over sub-parts, one worker/kernel
+per job). The probe re-runs with live params each regen, so routing follows the
+parameters in both directions. Override with `meta.backend: "occt" |
+"manifold"`. The two WASM kernels run in **separate Web Workers** (`name` =
 `"manifold"` / `"occt"`). See `docs/geometry-backend-strategy.md` for the why
 (OCCT booleans are about 75-1400x slower).
 

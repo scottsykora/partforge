@@ -2058,8 +2058,15 @@ branch that skips it) and the part drops back to Manifold automatically. A zero 
 — `fillet(0)`, `chamfer({ d: 0 })` — is the **identity** on both backends (see
 KERNEL-CONTRACT.md), so an unguarded `s.fillet(p.r)` needs no `if (p.r > 0)` wrapper to
 get the fast preview back when the slider hits 0. (`shell` is the exception: `t: 0` is
-degenerate, not identity, so a shell call always routes to OCCT.) Within one build the
-part runs on a single backend — there is no per-op mixing.
+degenerate, not identity, so a shell call always routes to OCCT.)
+
+**Preview routing is per sub-part.** Each sub-part is probed and routed independently, and
+a mixed part's regen fans out to both workers in parallel — a filleted body pays for OCCT
+while a plain lid rebuilds at Manifold speed beside it. This makes it worth isolating a
+CAD-op solid in its own sub-part rather than folding it into a bigger build. Two scopes
+still route whole-part (the max over the sub-parts): **exports** (one STL/STEP/3MF job
+builds everything in one worker) and the **CLI** (a single Node process boots exactly one
+kernel). Within one sub-part's build there is no per-op backend mixing.
 
 **Shading intent.** The kernel decides what shades smooth and where edge lines
 draw — spheres, cylinders and fillets are smooth by construction; boolean cut
