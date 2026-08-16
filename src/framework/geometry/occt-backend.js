@@ -37,11 +37,16 @@ const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.25 }, print: { tol
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
-          loft, draw, exportSTEP, measureVolume, makeSphere, makeLine, Plane } = replicad;
+          loft, draw, exportSTEP, importSTEP, measureVolume, makeSphere, makeLine, Plane } = replicad;
 
   // Fillet/chamfer/shell failure recovery (skip-on-failure, chamfer binary search) —
   // see occt-repair.js for the policies and why they differ per op.
   const { validChamfer, safeOp } = createOcctRepair(measureVolume);
+
+  // name -> { shape, digest } | { error, digest } — imported geometry the framework
+  // registers pre-build via `_registerImport` (kernel-lifetime, untracked by the
+  // solid cache: imports are the framework's own memo, keyed by name+digest).
+  const imports = new Map();
 
   const cache = createSolidCache();
   // Boundary ops route through cache.lookup. pin is unused here (no cleanup() —
@@ -487,6 +492,33 @@ export function createOcctKernel(replicad) {
     // surface.
     _offsetRegions: offsetRegions,
     toSTEP: (named) => exportSTEP(named.map(({ name, solid }) => ({ name, shape: solid._mat()._s }))).arrayBuffer(),
+    // Imported geometry, registered pre-build by the framework via `_registerImport`
+    // (ensureImports, Task 8). Every call clones the master shape — replicad ops
+    // consume their operands, and the master must never be handed out directly, or
+    // a second `import(name)` call would see the first caller's transform.
+    import: (name) => {
+      const e = imports.get(name);
+      if (!e) throw new Error(`import: unknown import "${name}" — declare it in the part's \`imports\` field`);
+      if (e.error) throw e.error; // lazy: unusable-format entries fail at use, not at registration
+      return wrap(e.shape.clone(), [], h("import", name, e.digest));
+    },
+    // Side-channel (underscore = off-contract, probe-invisible). Registration is
+    // TOTAL — it never throws for an unusable format (e.g. an STL/3MF import on
+    // this backend); an `{error}` entry is stored verbatim and thrown by
+    // `import(name)` above at call time (spec: "Registration is total; errors are
+    // lazy"). Re-registering the same name+digest is a no-op EXCEPT an error entry
+    // is always upgradable (the post-crossover retry depends on this — see
+    // `_importDigest`).
+    _registerImport: async ({ name, digest, step, error }) => {
+      const prev = imports.get(name);
+      if (!prev?.error && prev?.digest === digest) return; // error entries are always upgradable
+      if (error) { imports.set(name, { error, digest }); return; }
+      imports.set(name, { shape: await importSTEP(new Blob([step])), digest });
+    },
+    // Registration memo: undefined for an error entry, so a later registration with
+    // the same digest can upgrade it rather than being treated as a no-op repeat.
+    _importDigest: (name) => { const e = imports.get(name); return e?.error ? undefined : e?.digest; },
+    _acceptsStep: true,
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
     sweepCache: () => cache.sweep(),

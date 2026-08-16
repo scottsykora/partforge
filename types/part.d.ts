@@ -300,6 +300,14 @@ export interface SubPartDefinition<P = ResolvedParams, D = Derived> {
   enabled?: (p: P) => unknown;
   /** `false` = reference/preview-only: shown in the viewer, never exported. */
   exportable?: boolean;
+  /**
+   * Name of a declared `imports` entry this sub-part is held to. When set,
+   * `measure()` computes a `deviation` fact (symmetric-difference volume,
+   * volume delta %, bbox-corner drift) against that import's posed solid, and
+   * `verify.expect.<subpart>` may use the `refXorVolume` / `refVolumeDeltaPct`
+   * / `refBboxDelta` gate metrics.
+   */
+  reference?: string;
   /** Viewer-only override — `color` is `0xRRGGBB`, `opacity` is 0..1. */
   display?: { color?: number; opacity?: number };
   /** Filename / object name on export; defaults to the key. */
@@ -362,6 +370,12 @@ export interface SubPartExpectations {
   boundsMin?: Expectation;
   boundsMax?: Expectation;
   minWall?: Expectation;
+  /** Symmetric-difference volume vs. the sub-part's declared `reference` import. */
+  refXorVolume?: Expectation;
+  /** Percent volume delta vs. the sub-part's declared `reference` import. */
+  refVolumeDeltaPct?: Expectation;
+  /** Bounding-box corner drift `[dx, dy, dz]` vs. the sub-part's declared `reference` import. */
+  refBboxDelta?: Expectation;
 }
 
 /**

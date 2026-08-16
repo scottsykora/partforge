@@ -538,6 +538,164 @@ test("onBuild skips a stale build (param changed mid-flight)", () => {
   expect(onBuild).toHaveBeenCalledWith({ status: "success", ms: 11 });
 });
 
+// STEP-on-Manifold crossover (spec 2026-08-16, Task 9): a Manifold build that
+// hits an unprimed STEP import throws NEEDS_IMPORT_MESH; mount asks the OCCT
+// worker to tessellate, forwards the meshes to Manifold as a prime, and
+// retries — mirroring the needs-occt reroute's buildDone()/kick() pairing.
+test("needs-import-mesh requests tessellation from OCCT exactly once while a request is outstanding", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } }); // build 1 dispatched
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  expect(workers.occt.postMessage).toHaveBeenCalledTimes(1);
+  expect(workers.occt.postMessage.mock.calls[0][0]).toMatchObject({ type: "tessellate-imports" });
+  // a second needs-import-mesh while the tessellation request is still outstanding
+  // must not fire a duplicate request
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  expect(workers.occt.postMessage).toHaveBeenCalledTimes(1);
+});
+
+test("import-meshes primes Manifold with the transfer list and retries the build", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  workers.manifold.postMessage.mockClear();
+  const positions = new Float32Array([0, 0, 0]);
+  const indices = new Uint32Array([0]);
+  const meshes = { body: { digest: "abc123", positions, indices } };
+  workers.occt.onmessage({ data: { type: "import-meshes", jobId: 1, meshes } });
+  expect(workers.manifold.postMessage).toHaveBeenCalledWith(
+    { type: "prime-imports", meshes },
+    [positions.buffer, indices.buffer],
+  );
+  // the retry: a fresh generate job goes back to Manifold now that it's primed
+  const generateCalls = workers.manifold.postMessage.mock.calls.filter(([m]) => m.type === "generate");
+  expect(generateCalls.length).toBeGreaterThan(0);
+});
+
+test("a needs-import-mesh after priming surfaces a build error instead of looping", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  const meshes = { body: { digest: "abc123", positions: new Float32Array(), indices: new Uint32Array() } };
+  workers.occt.onmessage({ data: { type: "import-meshes", jobId: 1, meshes } });
+  workers.occt.postMessage.mockClear();
+  // broken state: tessellation already delivered a mesh, but Manifold still can't
+  // satisfy the import (digest mismatch) — must not loop back into another request
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 2, subparts: ["body"] } });
+  expect(workers.occt.postMessage).not.toHaveBeenCalled();
+  expect(els.status.status.textContent).toMatch(/STEP import tessellation failed/);
+  expect(els.status.status.classList.contains("err")).toBe(true);
+  return expect(runtime.ready).rejects.toThrow(/STEP import tessellation failed/);
+});
+
+// A failed tessellate-imports request (malformed STEP, etc.) is a DIFFERENT
+// failure from the digest-mismatch case above: the OCCT job throws before
+// delivering any mesh, so jobs.js's shared catch posts a plain `{type:"error"}`
+// carrying the jobId mount attached to the request. Without correlating that
+// jobId, the crossover latch (importMeshState) would strand at "requested"
+// forever — every later regen would hit needs-import-mesh, see "requested",
+// settle silently, and never re-request, i.e. an endless busy spinner.
+test("a tessellate-imports error clears the crossover latch and surfaces the failure, without looping", async () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  expect(workers.occt.postMessage).toHaveBeenCalledTimes(1);
+  const tessellateMsg = workers.occt.postMessage.mock.calls[0][0];
+  expect(tessellateMsg.type).toBe("tessellate-imports");
+  expect(tessellateMsg.jobId).not.toBeUndefined(); // mount must attach a correlatable jobId
+
+  // The OCCT worker's job throws — jobs.js's shared catch echoes msg.jobId.
+  workers.occt.onmessage({ data: { type: "error", jobId: tessellateMsg.jobId, message: "malformed STEP" } });
+  expect(els.status.status.textContent).toBe("failed: STEP import tessellation failed — malformed STEP");
+  expect(els.status.status.classList.contains("err")).toBe(true);
+  await expect(runtime.ready).rejects.toThrow(/STEP import tessellation failed — malformed STEP/);
+
+  // The latch must be reset, not stranded — a later needs-import-mesh (e.g. a
+  // fresh build after a param change) retries tessellation instead of
+  // settling silently forever.
+  workers.occt.postMessage.mockClear();
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 2, subparts: ["body"] } });
+  expect(workers.occt.postMessage).toHaveBeenCalledTimes(1);
+  expect(workers.occt.postMessage.mock.calls[0][0]).toMatchObject({ type: "tessellate-imports" });
+});
+
+test("an unrelated build error does not disturb an outstanding tessellate-imports request", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  workers.occt.postMessage.mockClear();
+  // A plain build error (no jobId, as a "generate" job's does) arrives while
+  // tessellation is still outstanding — it must not be mistaken for the
+  // correlated tessellate-imports failure and must not clear the latch.
+  workers.manifold.onmessage({ data: { type: "error", message: "unrelated failure" } });
+  expect(els.status.status.textContent).toBe("failed: unrelated failure");
+  // the tessellate-imports request is still outstanding — a second
+  // needs-import-mesh must not fire a duplicate request
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 1, subparts: ["body"] } });
+  expect(workers.occt.postMessage).not.toHaveBeenCalled();
+});
+
+// Re-review finding: the tessellate-imports request and a headless STEP
+// export both post to the OCCT worker and both allocate their jobId from a
+// counter starting at 1 (export-controller.js's `nextId`, mount's own
+// `importTessellateJobSeq`). mount's onWorkerMessage gives exportCtl first
+// refusal on every message (`exportCtl.handleMessage(data, ...)` runs before
+// mount's own switch) via a raw `pending.get(m.jobId)` — a bare numeric
+// tessellate jobId colliding with a pending export's jobId would let the
+// export controller wrongly claim the tessellate worker's error reply,
+// rejecting the unrelated export AND leaving mount's own crossover latch
+// stranded at "requested" (its switch, which resets the latch, never runs).
+// The string-namespaced "tess-N" id (mirroring capture-build.js's "cap-N")
+// makes that collision structurally impossible; this test proves it by
+// forcing the exact numeric-collision setup and checking both jobs settle
+// independently and correctly.
+test("a tessellate-imports request never collides with a pending export's numeric jobId", async () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const onDownload = vi.fn(); // sink, so triggerDownload never touches real DOM download APIs
+  const runtime = mount(makePart(), { createWorker, elements: els, onDownload });
+  finishFirstBuild(workers);
+
+  // A headless STEP export is in flight — export-controller.js hands it
+  // jobId 1 (its counter starts fresh at 1 for this mount instance), posted
+  // to the OCCT worker (STEP always routes there).
+  const exportPromise = runtime.exportParts({ parts: ["body"], format: "step", onProgress: vi.fn() });
+  const exportJobId = workers.occt.postMessage.mock.calls
+    .find(([m]) => m.type === "export-step")[0].jobId;
+  expect(exportJobId).toBe(1); // pins the exact collision this test defends against
+
+  // A STEP-on-Manifold crossover kicks off concurrently — mount's own jobId
+  // counter also starts at 1, so WITHOUT the "tess-" namespace this would be
+  // the identical id `1` on the same worker's message channel as the export above.
+  workers.manifold.onmessage({ data: { type: "needs-import-mesh", jobId: 2, subparts: ["body"] } });
+  const tessellateMsg = workers.occt.postMessage.mock.calls.find(([m]) => m.type === "tessellate-imports")[0];
+  expect(tessellateMsg.jobId).toBe("tess-1");
+  expect(tessellateMsg.jobId).not.toBe(exportJobId); // never numerically equal, even by coincidence
+
+  // The OCCT worker's tessellate job fails. If the export controller wrongly
+  // claimed this (a numeric-collision bug), it would reject exportPromise
+  // with the tessellation message and delete its pending entry.
+  workers.occt.onmessage({ data: { type: "error", jobId: tessellateMsg.jobId, message: "malformed STEP" } });
+  expect(els.status.status.textContent).toBe("failed: STEP import tessellation failed — malformed STEP");
+
+  // The export is untouched — completing it normally still resolves cleanly,
+  // proving its pending entry was never claimed or deleted by the tessellate error.
+  workers.occt.onmessage({
+    data: { type: "download", jobId: exportJobId, data: new ArrayBuffer(4), filename: "body.step", mime: "application/step" },
+  });
+  await expect(exportPromise).resolves.toBeUndefined();
+});
+
 test("dispose() tears everything down and is idempotent", () => {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();

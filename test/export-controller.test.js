@@ -93,6 +93,20 @@ test("error rejects the pending export", async () => {
   await expect(done).rejects.toThrow("boom");
 });
 
+// Fix round (task-9 review): needs-import-mesh MUST be claimed here for the
+// export job's own jobId, not left to fall through to mount's live-loop
+// crossover case — this export job never went through the regen loop, so a
+// live-crossover reading of this reply would call loop.buildDone() for a
+// build the live loop never dispatched. v1 behavior: fail the export cleanly.
+test("needs-import-mesh rejects the pending export with a clear message", async () => {
+  const { ctl, sent } = setup();
+  const done = ctl.exportParts({ parts: ["a"], format: "stl", onProgress: vi.fn() });
+  const { jobId } = sent[0].msg;
+  const consumed = ctl.handleMessage({ type: "needs-import-mesh", jobId, subparts: ["a"] }, vi.fn());
+  expect(consumed).toBe(true);
+  await expect(done).rejects.toThrow(/STEP import needs tessellation/);
+});
+
 test("messages without a matching jobId are not consumed", () => {
   const { ctl } = setup();
   expect(ctl.handleMessage({ type: "meshes", jobId: undefined }, vi.fn())).toBe(false);

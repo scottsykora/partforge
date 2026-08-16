@@ -22,7 +22,7 @@ export const CONTRACT_VERSION = 4;
 export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
   "loft", "sweep", "helixSweptTube", "screwSweep", "union", "shape2d", "text2d", "hull", "hullChain", "toSTEP",
-  "roundedCylinder", "torus", "roundedBox",
+  "roundedCylinder", "torus", "roundedBox", "import",
 ];
 
 // Backend-optional kernel ops: the sub-part cache brackets + WASM lifetime hooks.
@@ -146,6 +146,7 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hull   convex hull of all inputs → a convex Shape2D (faceted; pure-JS monotone chain)
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hullChain   swept hull over an ordered sequence (≥2): union of hull([inᵢ,inᵢ₊₁])
  * @property {(named:{name:string,solid:Solid}[]) => Promise<ArrayBuffer>} toSTEP   OCCT only (Manifold throws KernelCapabilityError)
+ * @property {(name: string) => Solid} import   imported geometry declared in the part's imports field (registered pre-build by the framework via the underscore-prefixed `_registerImport`/`_importDigest`/`_acceptsStep`/`_acceptsMesh` side-channel, not a part author's calling surface)
  * @property {(name:string) => void} [beginSubPart]   open a per-sub-part solid-cache round (both backends)
  * @property {() => void} [endSubPart]                close the cache round (always pair with beginSubPart)
  * @property {() => void} [sweepCache]   drop cache partitions idle for 3 rebinds; call once per setPart, never mid-bracket

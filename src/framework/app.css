@@ -285,7 +285,14 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   border-radius: var(--pf-radius-pill);
   box-shadow: var(--pf-shadow-float);
 }
-#topbar .seg button { min-width: 70px; padding: 7px 10px; }
+/* nowrap: `.seg button` is `flex: 1` (equal-width columns), and a part with
+   two views where one label is long (e.g. import-demo's "Reference overlay")
+   would otherwise wrap onto a second line, making this pill taller than the
+   single fixed height debug-overlay.js positions itself below (see its
+   comment) — the overlay would then overlap the now-two-row tabs. Letting the
+   label force the column wider instead keeps the pill single-row regardless
+   of label length. */
+#topbar .seg button { min-width: 70px; padding: 7px 10px; white-space: nowrap; }
 
 /* viewer controls. APPEARANCE is ungated: partforge-cloud re-anchors #viewbar's
    position in sandbox.css but inherits this pill chrome, so gating it on a class

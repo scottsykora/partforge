@@ -4,6 +4,8 @@ import { sweepMesh } from "./sweep.js";
 import { roundedBoxRings } from "./rounded-solids.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
+import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
+import { manifoldFromMesh } from "./mesh-build.js";
 import { createSolidCache } from "./solid-cache.js";
 import { addSugar } from "./solid-sugar.js";
 import { makeShape2dFactory } from "./shape2d.js";
@@ -49,6 +51,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const cache = createSolidCache();
   const featureLabels = new Map(); // originalID -> label string (grows per label(); tiny)
   const oidPolicies = new Map();   // originalID -> shading policy (grows per faceted/hinted loft; tiny)
+  // name -> { m, digest, hash } | { error, digest } — imported geometry the framework
+  // registers pre-build (ensureImports, Task 8). Kernel-lifetime, NOT tracked/T()'d:
+  // these masters must survive cleanup() and be read again on every subsequent build.
+  const imports = new Map();
   // Boundary ops route through cache.lookup; on a miss `make` runs the WASM op,
   // tracks the result, and returns the triple the cache needs to pin/dispose it.
   const cached = (hash, computeM) => cache.lookup(hash, () => {
@@ -330,6 +336,41 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     union: (solids) => solids.length === 1
       ? solids[0]
       : cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
+    // Imported geometry, registered pre-build by the framework via `_registerImport`
+    // (ensureImports, Task 8). The master Manifold is kernel-lifetime (untracked —
+    // see `imports` above); wrap() is free, so every call is cheap.
+    import: (name) => {
+      const e = imports.get(name);
+      if (!e) throw new Error(`import: unknown import "${name}" — declare it in the part's \`imports\` field`);
+      if (e.error) throw e.error; // lazy: unusable-format entries fail at use, not at registration
+      return wrap(e.m, e.hash);
+    },
+    // Side-channel (underscore = off-contract, probe-invisible). Registration is
+    // TOTAL — it never throws for an unusable format; an `{error}` entry is stored
+    // verbatim and thrown by `import(name)` above at call time (spec: "Registration
+    // is total; errors are lazy"). Re-registering the same name+digest is a no-op
+    // EXCEPT an error entry is always upgradable (the post-crossover retry depends
+    // on this — see `_importDigest`).
+    _registerImport: ({ name, digest, positions, indices, error }) => {
+      const prev = imports.get(name);
+      if (!prev?.error && prev?.digest === digest) return; // error entries are always upgradable
+      if (error) { imports.set(name, { error, digest }); return; }
+      ensureOutward(positions, indices);
+      let m;
+      try {
+        m = manifoldFromMesh(wasm, positions, indices);
+        if (m.isEmpty()) throw new Error("empty result");
+      } catch (err) {
+        const open = openEdgeCount(positions, indices);
+        throw new Error(`import "${name}": mesh is not a solid after repair (${open} open edges) — repair it in a mesh tool or re-export watertight (${err?.message || err})`);
+      }
+      prev?.m?.delete?.(); // prev may be an error entry with no manifold
+      imports.set(name, { m, digest, hash: h("import", name, digest) });
+    },
+    // Registration memo: undefined for an error entry, so a later registration with
+    // the same digest can upgrade it rather than being treated as a no-op repeat.
+    _importDigest: (name) => { const e = imports.get(name); return e?.error ? undefined : e?.digest; },
+    _acceptsMesh: true,
     shape2d,
     // Backend-internal region adapter: the shared native engine (contour-offset.js)
     // that Shape2D.offset itself runs on — published here for callers that want the

@@ -50,6 +50,18 @@ export function createExportController({ send, currentView, title, defaultBacken
     }
     if (m.type === "error") { pending.delete(m.jobId); entry.reject(new Error(m.message)); return true; }
     if (m.type === "needs-occt") { pending.delete(m.jobId); entry.reject(new Error("needs OCCT backend")); return true; }
+    // needs-import-mesh MUST be claimed here (jobId intact from the worker's
+    // shared catch) rather than falling through to mount's live-loop crossover
+    // case: this export job never went through the regen loop, so treating its
+    // reply as a live crossover would call loop.buildDone() for a build the
+    // live loop never dispatched. v1 behavior is to fail this off-loop op
+    // cleanly rather than build a second crossover flow for it — the import
+    // gets primed by the next live build instead.
+    if (m.type === "needs-import-mesh") {
+      pending.delete(m.jobId);
+      entry.reject(new Error("STEP import needs tessellation — retry after the first preview build primes it"));
+      return true;
+    }
     return false;
   }
 

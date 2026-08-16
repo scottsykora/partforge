@@ -45,6 +45,7 @@ export function runWorker(part) {
   let epoch = 0;      // bumped per incoming generate and per setPart
   const queue = [];   // { data, part, epoch } — jobs run against the part current at arrival
   let pumping = false;
+  const importMeshes = new Map(); // name → {digest, positions, indices} — primed by the host for STEP-on-manifold
 
   // Manifold is cheap to boot — bring it up eagerly and signal readiness.
   if (backend === "manifold") {
@@ -98,7 +99,7 @@ export function runWorker(part) {
           const kernel = await kernelFor(job.data);
           // handle() declares each message's transferables (the big binary buffers).
           const post = (m, transfer = []) => postMessage(m, transfer);
-          if (job.epoch === null) { await handle(kernel, job.part, job.data, post); continue; }
+          if (job.epoch === null) { await handle(kernel, job.part, job.data, post, { importMeshes }); continue; }
           const isStale = () => job.epoch !== epoch;
           // Post gate. The boundary check cannot catch a generate that goes stale during
           // its FINAL sub-part — there is no boundary after it — nor a single-sub-part
@@ -107,7 +108,7 @@ export function runWorker(part) {
           // contract simple: a `meshes` post is current as of the moment it is posted.
           const gated = (m, transfer = []) =>
             (m.type === "meshes" && isStale() ? post({ type: "superseded" }) : post(m, transfer));
-          await handle(kernel, job.part, job.data, gated, { isStale });
+          await handle(kernel, job.part, job.data, gated, { isStale, importMeshes });
         } catch (err) {
           // Same shape jobs.js posts for a failed build, so hosts need no new branch.
           // Carry the job's jobId when it has one (capture/export are correlated by it):
@@ -123,6 +124,14 @@ export function runWorker(part) {
   }
 
   self.onmessage = (e) => {
+    // STEP-on-Manifold crossover: the host primes this worker's importMeshes before
+    // (or interleaved with) a generate, so a build's k.import(name) that needs
+    // pre-tessellated triangles finds them without touching the kernel — no queueing,
+    // no epoch bump, answered on the worker's own turn like the lint intercept below.
+    if (e.data?.type === "prime-imports") {
+      for (const [name, m] of Object.entries(e.data.meshes)) importMeshes.set(name, m);
+      return;
+    }
     // Lint is geometry-free by construction, so answer it before touching — or
     // booting — a kernel. handle() in jobs.js takes an already-booted kernel, and
     // the pump awaits that boot, so routing lint through the queue would drag in

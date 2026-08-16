@@ -5,6 +5,7 @@
 import { meshTo3MF } from "./geometry/threemf.js";
 import { exportablePartNames } from "./export-select.js";
 import { resolveFonts } from "./fonts.js";
+import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
 import { measure } from "./oracle/measure.js";
@@ -105,6 +106,11 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const bufs = await resolveFonts(part.fonts);
       for (const [name, buf] of bufs) if (!kernel._fonts.has(name)) kernel._fonts.set(name, opentype.parse(buf));
     }
+    // Register this part's declared imports on the kernel running this job — the
+    // import-asset sibling of the fonts preload above. See ensureImports for the
+    // lazy-error policy that keeps a STEP import inert until a build actually
+    // calls k.import on it.
+    if (part.imports) await ensureImports(kernel, part.imports, opts.importMeshes ?? null);
     // Inside the try so a throwing derive posts an error the UI can show,
     // instead of killing the worker turn silently (an endless spinner).
     const { p, d } = resolveParams(part, msg.params);
@@ -196,6 +202,18 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       onProgress("writing 3MF file");
       const data = meshTo3MF(meshes);
       post({ type: "download", data, filename: `${fileBase}.3mf`, mime: "model/3mf", jobId: msg.jobId }, [bufferOf(data)]);
+    } else if (msg.type === "tessellate-imports") {
+      // OCCT-worker service job for the STEP-on-Manifold crossover: answer with
+      // print-quality triangle meshes for every STEP import, transferable.
+      const resolved = await resolveImports(part.imports ?? {});
+      const meshes = {};
+      for (const [name, a] of resolved) {
+        if (a.format !== "step") continue;
+        const { positions, indices } = kernel.import(name).toIndexedMesh({ quality: "print" });
+        meshes[name] = { digest: a.digest, positions, indices };
+      }
+      post({ type: "import-meshes", jobId: msg.jobId, meshes },
+           Object.values(meshes).flatMap((m) => [m.positions.buffer, m.indices.buffer]));
     } else if (msg.type === "inspect") {
       // Full geometric oracle for the current view: solid facts (volume/genus/
       // watertight), mesh facts, overlaps, and gap distances, plus the part's
@@ -246,7 +264,8 @@ export async function handle(kernel, part, msg, post, opts = {}) {
   } catch (err) {
     // `subparts` (generate jobs only) tells the reroute policy which sub-parts the
     // failed job covered, so only those latch to OCCT — not the whole part.
-    if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt", jobId: msg.jobId, subparts: msg.subparts });
+    if (err?.code === "NEEDS_IMPORT_MESH") post({ type: "needs-import-mesh", jobId: msg.jobId, subparts: msg.subparts });
+    else if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt", jobId: msg.jobId, subparts: msg.subparts });
     else post({ type: "error", message: String(err?.message || err), jobId: msg.jobId });
   } finally {
     kernel.cleanup?.();

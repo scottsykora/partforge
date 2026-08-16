@@ -93,6 +93,15 @@ them loses sub-part caching and mesh-topology gates (`holes`, emptiness), nothin
 a part (never inside a `beginSubPart`/`endSubPart` bracket), it drops cache partitions that
 have gone unbuilt for three consecutive rebinds.
 
+**`import`.** `kernel.import(name) → Solid` returns previously-registered imported geometry
+(STL/STEP/3MF geometry declared in a part's `imports` field); `_registerImport`/
+`_importDigest`/`_acceptsStep`/`_acceptsMesh` are the underscore-prefixed side-channel the
+framework uses to feed it — not a part author's calling surface. It is a required op
+(`KERNEL_OPS`) on both in-repo backends: the Manifold backend accepts mesh formats
+(`_acceptsMesh: true`) and the OCCT backend accepts STEP (`_acceptsStep: true`); a format
+neither backend accepts for the routed kernel registers as an `{error}` entry that
+`import(name)` throws lazily at call time, not at registration.
+
 `KernelCapabilityError` is a *routing signal*, not a failure: partforge's geometry-free
 probe (`probe.js`) runs `build` against a fake kernel, and any use of a
 `ROUTED_CAD_OPS` op (`shell`, since v3) **on a Solid handle** routes the build to a
@@ -248,6 +257,7 @@ above. All ops return a `Solid`.
 | `hull(inputs[])` | Convex hull of all inputs (each a `Shape2D`, a curve contour, or an `[[x,y],…]` point list) → a convex `Shape2D`. Backend-agnostic: a pure-JS monotone-chain hull over the inputs' sampled points (curved inputs tessellated at a fixed LOD), lifted via `shape2d` (see the parity note below). Throws on an empty input array or a degenerate (collinear/point-count < 3) hull. |
 | `hullChain(inputs[])` | Swept hull over an ordered sequence of ≥2 inputs (same input forms as `hull`): the union of `hull([inᵢ, inᵢ₊₁])` for each consecutive pair — e.g. a tapered link connecting a row of circles. Throws with fewer than 2 inputs. |
 | `toSTEP(named[])` | `[{name, solid}]` → `Promise<ArrayBuffer>` of a STEP assembly. B-rep class only. |
+| `import(name)` | Previously-registered imported geometry (STEP/STL/3MF, declared in the part's `imports` field) as an ordinary `Solid`. Required on both in-repo backends (Manifold accepts mesh formats, OCCT accepts STEP); a format the routed backend can't use throws lazily, at this call, not at registration. Fed by an underscore-prefixed side-channel, not part authors — see [Conformance classes](#conformance-classes). Additive: not in `OCCT_ONLY_OPS`; needed no `CONTRACT_VERSION` bump of its own (v3 came from the mesh fillet/chamfer change, not this op). |
 
 `hull`/`hullChain` parity: point-list and curve-contour inputs hull bit-identically
 across backends (pure-JS sampling, no backend materialization involved). A `Shape2D`
@@ -666,7 +676,11 @@ other posts — `progress`, `error`, `needs-occt` — are not gated and still re
 that survived the rebind: a stale `error` would mark a perfectly good new part failed, and
 a stale `needs-occt` would stickily flip the host's backend for a part that never asked for
 it. Handling `superseded` fixes the stuck spinner but not that crosstalk, which is why
-detaching the listener is the recommended pattern.
+detaching the listener is the recommended pattern. `needs-import-mesh` — posted when a
+build throws an error carrying code `NEEDS_IMPORT_MESH` (an unprimed STEP import on the
+Manifold backend, thrown from `imports.js`'s registration policy, not `errors.js`'s
+`KernelCapabilityError`/`NEEDS_OCCT`) — is the same message shape and the same
+non-epoch-gated risk as `needs-occt`; a host handling one should handle both the same way.
 
 **Cancellation granularity is the sub-part.** The guard is checked only between
 sub-parts (one macrotask yield each), so a single long WASM op — a big boolean, an OCCT
