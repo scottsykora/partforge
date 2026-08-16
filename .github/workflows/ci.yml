@@ -32,3 +32,4 @@ jobs:
       - run: CHECK_PORT=5183 node scripts/check-app.mjs hinged-box.html
       - run: CHECK_PORT=5184 node scripts/check-app.mjs screw.html
       - run: CHECK_PORT=5185 node scripts/check-app.mjs mixed-smoke.html # split-backend generate (per-sub-part routing)
+      - run: CHECK_PORT=5186 node scripts/check-app.mjs import-demo.html # k.import reference part (STL ghost + deviation gate)
