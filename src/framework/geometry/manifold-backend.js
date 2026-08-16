@@ -15,6 +15,7 @@ import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
+import { meshRoundAll } from "./mesh-roundall.js";
 import { KernelCapabilityError } from "./errors.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
@@ -148,6 +149,14 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       if (d === 0) return wrap(m, hash);
       return cached(h("chamfer", hash, d, selector ?? null, segs), () =>
         meshCadOp("chamfer", () => meshChamfer(kernel, wrap(m, hash), { d, edges: selector, segs })));
+    },
+    roundAll: (r) => {
+      if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
+      // `quality` in the key is redundant but harmless — the cache lives on a
+      // per-quality kernel, so it can never collide across tiers (the OCCT twin
+      // key omits it for the same reason); it just spells out that the ball
+      // tessellation, and so the result, is tier-dependent.
+      return cached(h("roundAll", hash, r, quality), () => T(meshRoundAll(wasm, m, r, quality)));
     },
     cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)),
       () => T(m.subtract(unionRaw(tools.map((t) => t._m))))),
