@@ -62,7 +62,13 @@ export const IMPORT_RULES = [
         : "a fillet/chamfer/shell op routes this part to OCCT";
       return mesh.map(([name]) => err("import-mesh-on-occt",
         `import "${name}" is a mesh (STL/3MF) but ${cause} — mesh imports need the Manifold backend`,
-        "Move the mesh import into a Manifold-routed part, replace it with a STEP source, or drop the CAD-only op / meta.backend pin.",
+        // detectBackend (this rule's own gate) is the whole-part max over every
+        // sub-part, same as lint/measure/single-worker export — so putting the
+        // import on a nominally Manifold sub-part does not clear this error
+        // while any OTHER sub-part routes to OCCT; that coexistence only works
+        // for the browser preview's per-sub-part routing. Say so explicitly —
+        // see ERROR-PATTERNS.md#import-mesh-on-occt for the long version.
+        "Split the mesh-importing sub-part into its own separate part (per-sub-part Manifold/OCCT coexistence is preview-only), replace it with a STEP source, or drop the CAD-only op / meta.backend pin so the whole part routes to Manifold.",
         "imports"));
     },
   },
