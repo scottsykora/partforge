@@ -78,7 +78,7 @@ export async function ensureImports(kernel, importsDecl, importMeshes = null) {
     } else {
       // No parse for a kernel that can't take the mesh — error entry directly.
       await kernel._registerImport({ name, digest: a.digest, error: new Error(
-        `import "${name}": STL/3MF imports need the Manifold backend — this build routes to OCCT (fillet/chamfer/shell or meta.backend); use the mesh import from a Manifold-routed build`) });
+        `import "${name}": STL/3MF imports need the Manifold backend — this build routes to OCCT (shell or meta.backend, or a fillet/chamfer rerouted for an unsupported edge class); use the mesh import from a Manifold-routed build`) });
     }
   }
 }

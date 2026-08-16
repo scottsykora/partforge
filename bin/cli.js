@@ -4,6 +4,7 @@
 // parsed strictly per command with util.parseArgs, so a typo'd flag or a missing
 // option value fails loudly instead of being silently ignored.
 import { parseArgs } from "node:util";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { resolve, dirname } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -35,6 +36,18 @@ const USAGE = "usage: partforge <lint|measure|render|pick-serve|pick> …";
 // Without --json there is no purity contract: human lines print as each stage
 // completes, so a later crash's message lands after them, not instead of them.
 function crash(cmd, e, jsonMode) {
+  // The mesh backend signals an edge class it can't blend (helical edge, varying
+  // dihedral, …) with NEEDS_OCCT. The two WASM kernels must never boot in one
+  // process, so the fallback is a re-exec of this exact command with the backend
+  // pinned to OCCT via the environment. One retry only — PARTFORGE_BACKEND set
+  // means we ARE the retry.
+  if (e?.code === "NEEDS_OCCT" && !process.env.PARTFORGE_BACKEND) {
+    console.error(`${cmd}: ${e.message} — retrying on the OCCT backend`);
+    const r = spawnSync(process.execPath, process.argv.slice(1), {
+      stdio: "inherit", env: { ...process.env, PARTFORGE_BACKEND: "occt" },
+    });
+    process.exit(r.status ?? 1);
+  }
   const message = e?.message || String(e);
   const m = matchPattern(message);
   if (jsonMode) {
@@ -65,7 +78,8 @@ async function loadPart(partPath, usage) {
 
 const bootKernel = (part) => {
   const opts = { fonts: part.fonts, imports: part.imports };
-  return detectBackend(part) === "occt" ? bootOcctKernel(opts) : bootManifoldKernel(opts);
+  const backend = process.env.PARTFORGE_BACKEND || detectBackend(part); // env: crash()'s NEEDS_OCCT retry
+  return backend === "occt" ? bootOcctKernel(opts) : bootManifoldKernel(opts);
 };
 
 const commands = {

@@ -50,10 +50,12 @@ test("a declared STL import on an OCCT-routed part (meta.backend) is an error", 
   expect(find(r, "import-mesh-on-occt").message).toMatch(/meta\.backend/);
 });
 
-test("a declared STL import on an OCCT-routed part (fillet op) names the CAD op as the cause", () => {
+test("a declared STL import on an OCCT-routed part (shell op) names the CAD op as the cause", () => {
+  // shell, not fillet: since contract v3 fillet/chamfer are mesh-native and no
+  // longer probe-route to OCCT — shell is the remaining statically-routed CAD op.
   const part = partWith({
     imports: { scan: new URL("https://example.com/scan.stl") },
-    parts: { body: { views: ["main"], build: (k) => k.box({ size: [1, 1, 1] }).fillet({ r: 1 }) } },
+    parts: { body: { views: ["main"], build: (k) => k.box({ size: [1, 1, 1] }).shell({ t: 0.2 }) } },
   });
   const r = lintPart(part);
   expect(ids(r.errors)).toContain("import-mesh-on-occt");

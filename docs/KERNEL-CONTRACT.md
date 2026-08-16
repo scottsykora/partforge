@@ -1,6 +1,6 @@
 # The partforge kernel contract
 
-**Contract version: 2** (introduced in partforge 0.59) — mirrored by `CONTRACT_VERSION`
+**Contract version: 3** (introduced in partforge 0.62) — mirrored by `CONTRACT_VERSION`
 in `src/framework/geometry/kernel.js` and asserted by `test/kernel-contract.test.js`;
 see [Versioning](#versioning) for what may change under which version bump.
 
@@ -14,7 +14,7 @@ geometry. There is deliberately no separate file format or DSL.
 The contract has two halves:
 
 - **Machine-checked:** the op lists in `src/framework/geometry/kernel.js`
-  (`KERNEL_OPS`, `SOLID_OPS`, `OCCT_ONLY_OPS`, `*_OPTIONAL_OPS`) and their `@typedef`
+  (`KERNEL_OPS`, `SOLID_OPS`, `OCCT_ONLY_OPS`, `ROUTED_CAD_OPS`, `*_OPTIONAL_OPS`) and their `@typedef`
   signatures. `test/kernel-contract.test.js` and the OCCT twin in
   `test/occt-backend.test.js` assert each backend exposes exactly these ops, so the list
   cannot silently drift from the implementations. **Those lists are normative.**
@@ -38,11 +38,35 @@ every `Solid` op in `SOLID_OPS`, *except* that the B-rep ops (`fillet`, `chamfer
 **identity** on every class — it returns the solid unchanged and must not throw, so a
 parametric radius dialed to 0 builds on a core kernel with no guard in the part.
 `shell` has no identity form (`t: 0` means zero-thickness walls — degenerate, not
-identity) and always throws on core. The in-repo Manifold backend is the reference
-core kernel. Kernels built from this repo get the stubs for free: `addSugar()`
-generates the Solid-level stubs (including the zero-magnitude identity) from
-`OCCT_ONLY_OPS`, and `finishKernel()` stubs `toSTEP` (a kernel-level op, so it is
-not in that Solid-op list).
+identity) and always throws on core. Kernels built from this repo get the stubs for
+free: `addSugar()` generates the Solid-level stubs (including the zero-magnitude
+identity) for whichever `OCCT_ONLY_OPS` a backend leaves undefined, and
+`finishKernel()` stubs `toSTEP` (a kernel-level op, so it is not in that Solid-op
+list).
+
+**The in-repo Manifold backend is the reference core kernel, and since contract v3 it
+implements `fillet` and `chamfer` natively** (`mesh-fillet.js` — tangent-tool CSG).
+Its coverage and tolerance band are part of the contract:
+
+- **Edge classes:** straight sharp edges with planar flanks, and circular-arc sharp
+  edges whose flanks are surfaces of revolution about the arc axis (bore rims,
+  cylinder rims, the arcs where blends meet a face) — full circles included. Convex
+  edges subtract a cutter; concave edges union a filler. Any other edge class
+  (helical edges, varying dihedral, non-circular curves, function selectors) throws
+  `KernelCapabilityError` so the host can reroute that build to a B-rep kernel.
+- **Tolerance band, not identity:** the blend surface is the exact rolling-ball
+  (fillet) or setback-chord (chamfer) surface to within tessellation, plus
+  micron-scale robustness allowances (tool overshoot past tangency and seam-grazing
+  guards, all ≤ ~1e-3 mm). Volumes agree with the B-rep result to ~0.1% on covered
+  edge classes. **Corners:** where exactly three selected straight convex chains meet
+  at a mutually orthogonal vertex (a box corner), the fillet caps it with the
+  rolling-ball sphere octant; every other junction of blended chains is a **mitre**
+  (the blend surfaces intersect), where the B-rep class builds a kernel-specific
+  vertex blend instead — parity at such corners is approximate, like `roundedBox`'s
+  documented corner carve-out.
+- **New surfaces:** like the B-rep op, a mesh blend produces new surfaces — feature
+  labels upstream of the call do not survive through it (attribution uses the
+  fallback path), and the result shades with the default SMOOTH policy.
 
 **B-rep class.** Core plus native `fillet`/`chamfer`/`shell` and `toSTEP`. The in-repo
 OCCT/replicad backend is the reference.
@@ -65,13 +89,18 @@ neither backend accepts for the routed kernel registers as an `{error}` entry th
 `import(name)` throws lazily at call time, not at registration.
 
 `KernelCapabilityError` is a *routing signal*, not a failure: partforge's geometry-free
-probe (`probe.js`) runs `build` against a fake kernel, and any use of an `OCCT_ONLY_OPS`
-op **on a Solid handle** routes the build to a B-rep-class kernel (the probe tracks
-handle kinds, so the same names on a `Shape2D` — shared pure JS, backend-identical — do
-not route). Routing granularity is a host choice: the in-repo framework routes preview
-builds per sub-part (each sub-part builds wholly on one kernel) and exports/CLI whole-
-part; a single-kernel host routes everything whole-part. A host with only a core kernel
-must surface the error ("this part needs a B-rep backend") rather than swallow it.
+probe (`probe.js`) runs `build` against a fake kernel, and any use of a
+`ROUTED_CAD_OPS` op (`shell`, since v3) **on a Solid handle** routes the build to a
+B-rep-class kernel up front (the probe tracks handle kinds, so the same names on a
+`Shape2D` — shared pure JS, backend-identical — do not route). `fillet`/`chamfer` are
+**not probe-routed anymore**: the core kernel attempts them, and throws
+`KernelCapabilityError` only for an edge class it cannot blend — which the in-repo
+framework's runtime reroute latch (`backend-select.js`) converts into a per-sub-part
+OCCT fallback, and the CLI into a re-exec on the OCCT kernel. Routing granularity is a
+host choice: the in-repo framework routes preview builds per sub-part (each sub-part
+builds wholly on one kernel) and exports/CLI whole-part; a single-kernel host routes
+everything whole-part. A host with only a core kernel must surface the error ("this
+part needs a B-rep backend") rather than swallow it.
 
 ## Global semantics
 
@@ -214,7 +243,7 @@ above. All ops return a `Solid`.
 | `hull(inputs[])` | Convex hull of all inputs (each a `Shape2D`, a curve contour, or an `[[x,y],…]` point list) → a convex `Shape2D`. Backend-agnostic: a pure-JS monotone-chain hull over the inputs' sampled points (curved inputs tessellated at a fixed LOD), lifted via `shape2d` (see the parity note below). Throws on an empty input array or a degenerate (collinear/point-count < 3) hull. |
 | `hullChain(inputs[])` | Swept hull over an ordered sequence of ≥2 inputs (same input forms as `hull`): the union of `hull([inᵢ, inᵢ₊₁])` for each consecutive pair — e.g. a tapered link connecting a row of circles. Throws with fewer than 2 inputs. |
 | `toSTEP(named[])` | `[{name, solid}]` → `Promise<ArrayBuffer>` of a STEP assembly. B-rep class only. |
-| `import(name)` | Previously-registered imported geometry (STEP/STL/3MF, declared in the part's `imports` field) as an ordinary `Solid`. Required on both in-repo backends (Manifold accepts mesh formats, OCCT accepts STEP); a format the routed backend can't use throws lazily, at this call, not at registration. Fed by an underscore-prefixed side-channel, not part authors — see [Conformance classes](#conformance-classes). Additive: not in `OCCT_ONLY_OPS`, no `CONTRACT_VERSION` bump (still 2). |
+| `import(name)` | Previously-registered imported geometry (STEP/STL/3MF, declared in the part's `imports` field) as an ordinary `Solid`. Required on both in-repo backends (Manifold accepts mesh formats, OCCT accepts STEP); a format the routed backend can't use throws lazily, at this call, not at registration. Fed by an underscore-prefixed side-channel, not part authors — see [Conformance classes](#conformance-classes). Additive: not in `OCCT_ONLY_OPS`; needed no `CONTRACT_VERSION` bump of its own (v3 came from the mesh fillet/chamfer change, not this op). |
 
 `hull`/`hullChain` parity: point-list and curve-contour inputs hull bit-identically
 across backends (pure-JS sampling, no backend materialization involved). A `Shape2D`
@@ -284,7 +313,7 @@ Normative signatures: `kernel.js`'s `@typedef Solid`.
 | `toMesh({quality?})` | Render mesh: `{positions, normals, indices?, triangles, edges?, featureIds?, features?}`. `indices` optional (a backend may emit soup or indexed); `normals` and `edges` are authoritative shading intent from both backends — see [Shading intent](#shading-intent-tomesh-normals-and-edges) below; `featureIds`/`features` are optional metadata. |
 | `toSTL({quality?})` | `Promise<ArrayBuffer>`, binary STL, outward CCW winding. Stored facet normals may be zero — slicers recompute them (the mesh backend happens to write them). |
 | `toIndexedMesh({quality?})` | `{positions, indices}` indexed mesh (3MF path); defaults to `"print"` like `toSTL`. Coincident vertices need NOT be welded — the 3MF writer welds, because that format reads topology from the indices rather than re-stitching soup by position the way an STL consumer does. |
-| `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | B-rep class (core throws `KernelCapabilityError`), *except* a zero magnitude — `fillet(0)` / `chamfer({d: 0})` — which is the identity on every class (returns the solid unchanged, never throws; `shell` excluded, `t: 0` is degenerate). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` hollows inward, keeping outer dimensions; `open` (face selector) is required. |
+| `fillet(r)` · `fillet({r, edges?})` / `chamfer(d)` · `chamfer({d, edges?})` / `shell({t, open})` | `fillet`/`chamfer`: implemented on BOTH in-repo classes since v3 — exactly on B-rep, tolerance-band on the mesh class for straight and circular-arc edge chains (see [Conformance classes](#conformance-classes)); an edge class the mesh kernel cannot blend throws `KernelCapabilityError` and reroutes. Zero magnitude — `fillet(0)` / `chamfer({d: 0})` — is the identity on every class (returns the solid unchanged, never throws; `shell` excluded, `t: 0` is degenerate). Scalar `fillet(3)`/`chamfer(1)` acts on all edges; the options form adds an `edges` selector. `shell` remains B-rep-only (core throws), hollows inward keeping outer dimensions; `open` (face selector) is required. |
 
 `quality` (`"preview"` | `"print"`) is **advisory**: it trades tessellation density for
 speed and a backend may bake it at kernel creation (Manifold does). A part must never
@@ -346,6 +375,15 @@ fillet failures are not monotonic in the radius, so per-edge retry would converg
 garbage). A failing chamfer instead binary-searches the largest valid distance. A
 conforming B-rep kernel must degrade this way — a fillet request must never brick the
 build, and authors should expect all-or-nothing filleting per call, not per edge.
+
+**Mesh degrade policy** (`mesh-fillet.js`): the mesh class degrades by *rerouting*, not
+skipping — an unsupported edge class or an empty selection throws
+`KernelCapabilityError` and the framework retries the build on the B-rep kernel, which
+then applies its own repair policy. One asymmetry is deliberate: the mesh class does
+**not** validate radius feasibility (an oversized radius yields self-intersecting tools
+and a wrong shape rather than a skipped feature), so parts should clamp magnitudes
+against local geometry the way `filleted-box.js` does — good practice on both classes,
+mandatory on this one.
 
 ## Shape2D (2-D booleans)
 
@@ -655,6 +693,18 @@ in `kernel.js` define the current surface; only breaking changes bump the versio
   the OpenSCAD/Manifold/CadQuery consensus (`union`, `translate`, `rotate`, `mirror`;
   `cut` per CadQuery/replicad rather than OpenSCAD's `difference`), so LLM priors
   transfer. Renames are breaking changes with no offsetting benefit — don't.
+
+**v2 → v3** (partforge 0.62): `Solid.fillet` and `Solid.chamfer` are implemented
+natively on the mesh (core reference) kernel for straight and circular-arc edge
+chains, and are **no longer probe-routed to OCCT** — `ROUTED_CAD_OPS` (`shell`) is
+the remaining probe-routing set, and unsupported edge classes reroute at runtime via
+`KernelCapabilityError`. Semantics change for existing parts: a part using fillet or
+chamfer now previews (and STL/3MF-exports) from the mesh kernel's tolerance-band
+blend instead of paying for the OCCT worker; STEP export still uses OCCT's exact
+blends. Behavioral deltas to re-measure when migrating: vertex junctions between
+blended chains are mitred rather than corner-blended, radius feasibility is not
+validated on the mesh class (clamp in the part), and a fillet/chamfer that previously
+*failed and was skipped* by OCCT's repair policy may now build (mesh) or reroute.
 
 **v1 → v2** (partforge 0.59): `Shape2D.offset` moved off the two per-backend 2-D
 engines (Clipper2 via `CrossSection` on Manifold, replicad's `Drawing.offset` on

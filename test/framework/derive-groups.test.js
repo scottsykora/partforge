@@ -62,7 +62,7 @@ test("grouped derive: reading a derived key no group produced falls back to all 
 test("detectBackend handles a grouped derive", () => {
   const part = grouped();
   expect(detectBackend(part)).toBe("manifold");
-  part.parts.usesCore.build = (k, p, d) => k.box(d.w, 1, 1).fillet(0.5);
+  part.parts.usesCore.build = (k, p, d) => k.box(d.w, 1, 1).shell({ t: 0.2, open: { dir: "Z" } });
   expect(detectBackend(part)).toBe("occt");
 });
 

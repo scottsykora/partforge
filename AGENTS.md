@@ -17,13 +17,13 @@ This directory is its **own git repo** (`scottsykora/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
 separate Drum-Machine repo; `src/parts/` now has twelve: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
-(OCCT fillet/chamfer), `bracket.js` (Shape2D union/intersect/cut toolkit),
+(fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `faceted-vase.js` (k.loft silhouette body), `hull-sweep.js` (k.hull/hullChain),
 `nameplate.js` (k.text2d emboss/deboss), `hinged-box.js` (the `animations`
 reference part - stepped timeline, camera cues, pose-only tracks), `screw.js`
 (the `k.screwSweep` reference part - a periodic ISO thread plus a hex head),
 `text-smoke.js` (worker text-render CI fixture), `mixed-smoke.js` (the
-split-backend CI fixture — a filleted sub-part beside a plain one, exercising
+split-backend CI fixture — a shelled sub-part beside a plain one, exercising
 per-sub-part routing), and `import-demo.js` (the `imports`/`k.import`
 reference part - STL ghost + deviation gate + import-in-boolean).
 
@@ -137,14 +137,19 @@ A part's `build(k, p, d)` is written against a **backend-agnostic kernel** (`k`)
 and runs on either backend unchanged:
 
 - **Manifold** (mesh CSG, WASM) - fast preview + STL + 3MF. Default for most
-  parts.
-- **OCCT / replicad** (OpenCASCADE WASM) - exact B-rep for STEP export and
-  native fillet/chamfer/shell.
+  parts. Implements `fillet`/`chamfer` natively since contract v3
+  (`mesh-fillet.js` — straight and circular-arc edge chains, tolerance-band
+  parity with OCCT).
+- **OCCT / replicad** (OpenCASCADE WASM) - exact B-rep for STEP export, native
+  `shell`, and the fallback for edge classes the mesh fillet can't blend.
 
 Before building, the framework runs a **geometry-free probe** of `build` to
-detect CAD-only ops (`fillet`/`chamfer`/`shell` **on a Solid** — `Shape2D`'s
-fillet/chamfer are shared pure JS and don't count, and a provably-zero magnitude
-like `fillet(0)` is the identity and doesn't count either). Preview routing is
+detect probe-routed CAD ops (`ROUTED_CAD_OPS` = `shell` **on a Solid** —
+`Shape2D`'s fillet/chamfer are shared pure JS and don't count). `fillet`/
+`chamfer` no longer probe-route: the mesh backend attempts them and throws
+`KernelCapabilityError` (code `NEEDS_OCCT`) only for unsupported edge classes,
+which the runtime reroute latch turns into a per-sub-part OCCT fallback (the CLI
+re-execs itself once with the backend pinned). Preview routing is
 **per sub-part** — a mixed part's regen fans out to both workers in parallel;
 exports and the CLI route whole-part (the max over sub-parts, one worker/kernel
 per job). The probe re-runs with live params each regen, so routing follows the

@@ -128,7 +128,7 @@ export type CornerSelector =
 /** A mirror line for `Shape2D.mirror`. */
 export type MirrorAxis2 = "x" | "y" | { point: Point2; dir: Point2 };
 
-// --- edge / face selectors (OCCT-only ops) ---------------------------------
+// --- edge / face selectors --------------------------------------------------
 
 /**
  * Which edges a `fillet`/`chamfer` applies to. Omit for every edge. The object
@@ -254,12 +254,15 @@ export interface Solid {
   toSTL(opts?: { quality?: MeshQuality }): Promise<ArrayBuffer>;
   toIndexedMesh(): IndexedMesh;
   /**
-   * Round edges — OCCT only (Manifold throws `KernelCapabilityError`, and the
-   * probe routes a part that calls this to OCCT). Legacy `(r, selector)` is
-   * accepted until contract v2.
+   * Round edges. Manifold handles straight and circular chains natively and
+   * triggers an automatic OCCT fallback for unsupported edge classes. Legacy
+   * `(r, selector)` is accepted until contract v2.
    */
   fillet(r: number | { r: number; edges?: EdgeSelector }): Solid;
-  /** Bevel edges — OCCT only. Legacy `(d, selector)` accepted until contract v2. */
+  /**
+   * Bevel edges, with the same mesh-native coverage and OCCT fallback as
+   * `fillet`. Legacy `(d, selector)` is accepted until contract v2.
+   */
   chamfer(d: number | { d: number; edges?: EdgeSelector }): Solid;
   /**
    * Hollow inward, wall `t`, opening the faces `open` selects — OCCT only.
@@ -454,7 +457,7 @@ export interface GeometryKernel {
   /** Rim round-overs via one lathe revolve; curve-exact in STEP. */
   roundedCylinder(o: RoundedCylinderOptions): Solid;
   torus(o: TorusOptions): Solid;
-  /** Selective edge rounding. Stays on Manifold (unlike `Solid.fillet`). */
+  /** Selective edge rounding built directly as one Manifold mesh. */
   roundedBox(o: RoundedBoxOptions): Solid;
   /** N-ary boolean union. */
   union(solids: Solid[]): Solid;

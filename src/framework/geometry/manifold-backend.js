@@ -14,6 +14,8 @@ import { finishKernel } from "./kernel-front.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH } from "./shading-policy.js";
+import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
+import { KernelCapabilityError } from "./errors.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
@@ -108,10 +110,45 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return { positions, indices };
   }
 
+  // Mesh fillet/chamfer (mesh-fillet.js): the tool solids are built through the
+  // kernel's own cached loft/revolve/boolean ops, so the whole op memoizes at
+  // this boundary — and the result is simplify()ed to drop the zero-area sliver
+  // triangles booleans legitimately leave behind (they are invisible but their
+  // degenerate normals poison the crease pass into drawing phantom edge lines).
+  // Unsupported edge classes (helical edges, varying dihedral, …) surface as
+  // KernelCapabilityError so the framework reroutes that sub-part to OCCT.
+  // simplify() will not collapse triangles across run (originalID) boundaries,
+  // and the boolean's sliver triangles sit exactly on them — so the result is
+  // re-originaled first. That folds every surface into one fresh original,
+  // which is also the documented B-rep semantic: fillet/chamfer produce new
+  // surfaces, so feature-label attribution downstream of the op uses the
+  // fallback path (AUTHORING-PARTS.md), and the blend shades SMOOTH.
+  const SIMPLIFY_EPS = 1e-4; // 0.1 µm — must exceed the boolean's sliver widths (~2e-5)
+  const meshCadOp = (op, run) => {
+    try {
+      return T(T(run()._m.asOriginal()).simplify(SIMPLIFY_EPS));
+    } catch (e) {
+      if (e instanceof UnsupportedEdgeError) throw new KernelCapabilityError(`${op}: ${e.message}`);
+      throw e;
+    }
+  };
+
   const wrap = (m, hash) => addSugar({
     _m: m,
     _hash: hash,
     cut: (t) => cached(h("cut", hash, t._hash), () => T(m.subtract(t._m))),
+    fillet: (r, selector) => {
+      if (typeof selector === "function") throw new KernelCapabilityError("fillet: function selectors need the OCCT backend");
+      if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
+      return cached(h("fillet", hash, r, selector ?? null, segs), () =>
+        meshCadOp("fillet", () => meshFillet(kernel, wrap(m, hash), { r, edges: selector, segs })));
+    },
+    chamfer: (d, selector) => {
+      if (typeof selector === "function") throw new KernelCapabilityError("chamfer: function selectors need the OCCT backend");
+      if (d === 0) return wrap(m, hash);
+      return cached(h("chamfer", hash, d, selector ?? null, segs), () =>
+        meshCadOp("chamfer", () => meshChamfer(kernel, wrap(m, hash), { d, edges: selector, segs })));
+    },
     cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)),
       () => T(m.subtract(unionRaw(tools.map((t) => t._m))))),
     intersect: (t) => cached(h("intersect", hash, t._hash), () => T(m.intersect(t._m))),

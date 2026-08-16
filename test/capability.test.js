@@ -6,15 +6,20 @@ import { handle } from "../src/framework/jobs.js";
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
-test("Manifold fillet/chamfer throw KernelCapabilityError with code NEEDS_OCCT", () => {
-  expect(() => k.box({ min: [0, 0, 0], max: [1, 1, 1] }).fillet(0.1)).toThrow(KernelCapabilityError);
-  try { k.box({ min: [0, 0, 0], max: [1, 1, 1] }).chamfer(0.1); } catch (e) { expect(e.code).toBe("NEEDS_OCCT"); }
+test("Manifold fillet builds natively; an unblendable case throws NEEDS_OCCT", () => {
+  // A box has sharp edges — the mesh fillet handles it.
+  expect(k.box({ min: [0, 0, 0], max: [1, 1, 1] }).fillet(0.1).volume()).toBeGreaterThan(0);
+  // A sphere has no sharp edges — the selector matches nothing, which reroutes
+  // to OCCT to decide authoritatively rather than silently skipping.
+  expect.assertions(3);
+  try { k.sphere({ r: 5 }).fillet(0.5); }
+  catch (e) { expect(e).toBeInstanceOf(KernelCapabilityError); expect(e.code).toBe("NEEDS_OCCT"); }
 });
 
-test("handle() posts needs-occt when a build uses an OCCT-only op on Manifold", async () => {
+test("handle() posts needs-occt when the mesh backend cannot blend the edges", async () => {
   const part = {
     defaults: {}, views: { v: { label: "V" } },
-    parts: { a: { views: ["v"], build: (kk) => kk.box({ min: [0, 0, 0], max: [2, 2, 2] }).fillet(0.5) } },
+    parts: { a: { views: ["v"], build: (kk) => kk.sphere({ r: 2 }).fillet(0.5) } },
   };
   const post = vi.fn();
   await handle(k, part, { type: "generate", subparts: ["a"], view: "v", params: {} }, post);

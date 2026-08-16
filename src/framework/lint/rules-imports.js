@@ -59,7 +59,7 @@ export const IMPORT_RULES = [
       if (mesh.length === 0 || detectBackend(part, p) !== "occt") return [];
       const cause = part?.meta?.backend === "occt"
         ? "meta.backend forces OCCT"
-        : "a fillet/chamfer/shell op routes this part to OCCT";
+        : "a shell op routes this part to OCCT"; // post-contract-v3, fillet/chamfer no longer probe-route
       return mesh.map(([name]) => err("import-mesh-on-occt",
         `import "${name}" is a mesh (STL/3MF) but ${cause} — mesh imports need the Manifold backend`,
         // detectBackend (this rule's own gate) is the whole-part max over every
