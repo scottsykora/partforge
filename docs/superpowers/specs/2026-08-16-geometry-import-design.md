@@ -75,9 +75,10 @@ signature → 3MF, else STL (ascii vs binary sniff).
 
 Wired in **both hosts**: the worker job loop (`src/framework/jobs.js`, where
 fonts resolve today) and the Node boots (`src/testing/manifold.js`,
-`src/testing/occt.js`). Parsed results land in a `kernel._imports`
-side-channel following the `k._fonts` convention (`_` prefix = framework
-side-channel, off the contract, invisible to the probe).
+`src/testing/occt.js`). Parsed results are registered on the kernel through an accessor side-channel
+(`_registerImport` / `_importDigest` / `_acceptsStep` / `_acceptsMesh`)
+following the `k._fonts` convention (`_` prefix = framework side-channel, off
+the contract, invisible to the probe).
 
 ### Parsing, per backend
 
