@@ -87,6 +87,14 @@ test("CLI measure prints near-misses (report-only — exit stays 0)", () => {
   expect(out).toMatch(/near-misses: left×right \(0\.20mm at \[/);
 });
 
+test("measure preloads a part's declared fonts before building", () => {
+  // Regression: bootKernel ignored part.fonts, so a part using a named font
+  // built in the browser but died headlessly with `unknown font "heading"`.
+  const out = run(["measure", "test/fixtures/font-part.js"]);
+  expect(out).toMatch(/FontRig \/ v/);
+  expect(out).toMatch(/watertight ✓/);
+});
+
 test("CLI measure prints 'near-misses: none' on a clean part", () => {
   const out = run(["measure", "src/parts/demo.js"]);
   expect(out).toMatch(/near-misses: none/);
