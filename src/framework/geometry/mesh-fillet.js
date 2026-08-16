@@ -318,13 +318,29 @@ export function matchesSelector(chain, sel) {
     if (!chain.points.every((p) => Math.abs(p[ax] - c) <= TOL)) return false;
   }
   if (near !== undefined) {
-    let best = Infinity;
-    for (let i = 0; i + 1 < chain.points.length; i++) {
-      const a = chain.points[i], b = chain.points[i + 1];
-      const ab = sub(b, a), t = Math.max(0, Math.min(1, dot(sub(near, a), ab) / (dot(ab, ab) || 1)));
-      best = Math.min(best, len(sub(near, add(a, scl(ab, t)))));
+    if (chain.kind === "arc") {
+      // Select against the fitted circle, not its tessellated chords. An exact
+      // design-space point between two mesh vertices sits one facet sagitta away
+      // from the chord and must not spuriously miss (and reroute to OCCT).
+      const q = sub(near, chain.O);
+      const axial = dot(q, chain.w);
+      const radial = sub(q, scl(chain.w, axial));
+      if (Math.abs(axial) > TOL || Math.abs(len(radial) - chain.R) > TOL) return false;
+      if (!chain.closed) {
+        let az = Math.atan2(dot(radial, chain.v0), dot(radial, chain.u0));
+        if (az < 0) az += 2 * Math.PI;
+        const angularTol = TOL / Math.max(chain.R, TOL);
+        if (az > chain.span + angularTol && 2 * Math.PI - az > angularTol) return false;
+      }
+    } else {
+      let best = Infinity;
+      for (let i = 0; i + 1 < chain.points.length; i++) {
+        const a = chain.points[i], b = chain.points[i + 1];
+        const ab = sub(b, a), t = Math.max(0, Math.min(1, dot(sub(near, a), ab) / (dot(ab, ab) || 1)));
+        best = Math.min(best, len(sub(near, add(a, scl(ab, t)))));
+      }
+      if (best > TOL) return false;
     }
-    if (best > TOL) return false;
   }
   return true;
 }

@@ -98,6 +98,21 @@ describe("circular-arc fillet (revolve cutters)", () => {
     expect(isWatertight(out.toIndexedMesh())).toBe(true);
   });
 
+  it("matches analytic near points anywhere on a circular edge", () => {
+    const a = 10, r = 1;
+    const cyl = k.cylinder({ r: a, h: H });
+    const filletAt = (deg) => {
+      const th = (deg * Math.PI) / 180;
+      return cyl.fillet({ r, edges: { near: [a * Math.cos(th), a * Math.sin(th), H] } });
+    };
+    const reference = filletAt(0);
+    for (const deg of [30, 45]) {
+      const out = filletAt(deg);
+      expect(out.genus(), `${deg}°`).toBe(0);
+      expect(out.volume(), `${deg}°`).toBeCloseTo(reference.volume(), 6);
+    }
+  });
+
   it("handles the filleted-box sequence with quarter-arc corners cleanly", () => {
     // vertical fillets create quarter-circle rim arcs; the rim fillet must chain
     // them as arcs (4 revolve cutters), not ~29 per-facet prisms each
