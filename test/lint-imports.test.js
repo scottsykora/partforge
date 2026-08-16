@@ -139,3 +139,38 @@ test("a non-ref metric on a sub-part with no reference is not flagged", () => {
   const r = lintPart(part);
   expect(ids(r.warnings)).not.toContain("ref-metric-without-reference");
 });
+
+test("a typo'd sub-part name in verify.expect is not double-flagged here (verify-unknown-subpart owns it)", () => {
+  const part = partWith({
+    verify: { expect: { boddy: { refXorVolume: "<=50mm3" } } },
+  });
+  const r = lintPart(part);
+  expect(ids(r.warnings)).not.toContain("ref-metric-without-reference");
+  expect(ids(r.errors)).toContain("verify-unknown-subpart");
+});
+
+// A function-form `verify.expect` is not statically inspectable in general, but
+// `resolveExpectOnce()` (shared with the Group 4 verify rules) already resolves it
+// safely against the probe's params — this rule intentionally does NOT skip the
+// function form, so a ref* metric surfaced through it is checked exactly like the
+// static-object form.
+test("a ref* metric inside a function-form verify.expect with no reference is a warning", () => {
+  const part = partWith({
+    verify: { expect: (p, d) => ({ body: { refXorVolume: "<=50mm3" } }) },
+  });
+  const r = lintPart(part);
+  expect(ids(r.warnings)).toContain("ref-metric-without-reference");
+  expect(find(r, "ref-metric-without-reference").message).toContain("body");
+});
+
+test("a ref* metric inside a function-form verify.expect WITH a reference is not flagged", () => {
+  const part = partWith({
+    imports: { scan: () => new ArrayBuffer(0) },
+    parts: {
+      body: { views: ["main"], reference: "scan", build: (k) => k.box({ size: [1, 1, 1] }) },
+    },
+    verify: { expect: (p, d) => ({ body: { refXorVolume: "<=50mm3" } }) },
+  });
+  const r = lintPart(part);
+  expect(ids(r.warnings)).not.toContain("ref-metric-without-reference");
+});

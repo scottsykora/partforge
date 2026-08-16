@@ -80,11 +80,25 @@ export const IMPORT_RULES = [
   },
   {
     id: "ref-metric-without-reference",
+    // Deliberately resolves function-form `verify.expect` via `resolveExpectOnce()`
+    // (same memoized, try/caught call the Group 4 verify rules share) rather than
+    // skipping it — the plan's anchor guarded with a bare `typeof expect ===
+    // "object"` check on the assumption a function-form `expect` "can't be
+    // inspected statically", but `resolveExpectOnce()` already does exactly that
+    // inspection safely (a throw is reported separately by `verify-expect-throws`
+    // and short-circuits here via `!expect`). A ref* metric surfaced from a
+    // function-form expect with no `reference` is just as real a finding as one
+    // from the static-object form, so skipping it would be a false negative, not
+    // caution.
     run: ({ part, resolveExpectOnce }) => {
       const { expect } = resolveExpectOnce();
       if (!expect || typeof expect !== "object") return [];
+      const names = new Set(Object.keys(part?.parts ?? {}));
       return Object.entries(expect)
-        .filter(([sub, metrics]) => sub !== "_view" && metrics && typeof metrics === "object" &&
+        // `sub` must name a real sub-part — a typo'd name is already reported by
+        // `verify-unknown-subpart`; skip it here so the two rules don't double-report
+        // the same typo under two different ids.
+        .filter(([sub, metrics]) => sub !== "_view" && names.has(sub) && metrics && typeof metrics === "object" &&
           Object.keys(metrics).some((k) => REF_METRICS.has(k)) && !part?.parts?.[sub]?.reference)
         .map(([sub]) => warn("ref-metric-without-reference",
           `verify.expect.${sub} uses a ref* metric but sub-part "${sub}" declares no reference`,
