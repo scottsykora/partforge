@@ -1795,6 +1795,20 @@ motion — translate/rotate — never a reshape) (both errors). An untrusted pro
 nothing either way and stays silent, matching `animation-track-rebuilds`'s own
 trust handling.
 
+**Geometry imports** — `import-unknown-name` (a build calls `k.import` with a
+name the part's `imports` field doesn't declare — this throws at build time;
+lint reaches it in microseconds instead), `import-mesh-on-occt` (a declared
+STL/3MF import on a part that routes to OCCT — mesh imports need the Manifold
+backend; the message names whether `meta.backend` or a CAD op forced OCCT.
+Only extension-detectable `imports` sources — a `URL` or string path — are
+checked; a bytes/thunk source's format can't be known without resolving it, so
+lint skips it and the lazy `k.import` error entry at build time remains the
+runtime authority for those cases), `reference-unknown` (a sub-part's
+`reference` names no declared import) (all errors); `ref-metric-without-reference`
+(a sub-part's `verify.expect` uses a `ref*` metric — `refXorVolume`,
+`refVolumeDeltaPct`, `refBboxDelta` — but the sub-part declares no `reference`,
+so the deviation gate always reports status "skip") (warning).
+
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.
 
