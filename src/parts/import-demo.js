@@ -39,7 +39,14 @@ export default {
           description: "Uniform scale applied to the imported scan before it's used as the cutting tool, so the block seats with a slip fit." },
         { key: "margin", label: "Plate margin", unit: "mm", min: 1, max: 10, step: 0.5,
           description: "Solid plate border kept around the socket on every side." },
-        { key: "plateH", label: "Plate thickness", unit: "mm", min: 2, max: 10, step: 0.5,
+        // The socket is the scan's own (fixed, ~8mm-tall) imported geometry scaled
+        // by `fit` and overcut 1mm past the plate's bottom face — see `mount.build`
+        // below. It only stays a genuine through-hole (not a blind pocket) while
+        // plateH < scanH*fit - 1; at the worst-case corner (fit at its slider
+        // minimum, 1) that's plateH < 7. max is capped at 6.5, half a millimetre
+        // inside that bound, so every reachable (plateH, fit) combination — not
+        // just the defaults — keeps `mount: { holes: 1 }` true.
+        { key: "plateH", label: "Plate thickness", unit: "mm", min: 2, max: 6.5, step: 0.5,
           description: "Mount plate thickness. The socket cuts all the way through it." },
         { key: "gap", label: "Gap from rebuild", unit: "mm", min: 5, max: 30, step: 1,
           description: "Presentation-only spacing between `body` and `mount` in the assembly view, so the two never overlap." },
