@@ -54,9 +54,8 @@ export const BUILD_RULES = [
     id: "manifold-backend-uses-occt-op",
     run: ({ part, probe }) => {
       if (part?.meta?.backend !== "manifold") return [];
-      // solidUsed, not used: `Shape2D.fillet`/`.chamfer` are backend-identical pure
-      // JS and are fine under a pinned Manifold backend; only Solid-handle uses of
-      // these names are CAD-only.
+      // solidUsed, not used: a Shape2D method with the same name as a routed Solid
+      // op is still backend-identical pure JS and is fine under pinned Manifold.
       return [...probe().solidUsed].filter((op) => OCCT_ONLY.has(op))
         .map((op) => err("manifold-backend-uses-occt-op",
           `\`meta.backend\` pins Manifold, but the build calls \`${op}\`, which only OCCT implements`,

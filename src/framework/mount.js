@@ -404,7 +404,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // regen-loop.js; this send callback is the one place a build job is dispatched.
     // Routing is per SUB-part: the missing set splits by backend and each group goes
     // to its own worker in parallel, so a mixed part previews its plain sub-parts at
-    // Manifold speed while only the filleted ones wait on OCCT. The return value is
+    // Manifold speed while only the OCCT-routed ones wait. The return value is
     // the job count — the loop holds the cycle open until every group has replied.
     const loop = createRegenLoop({
       missingParts,
@@ -577,7 +577,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
           // sub-parts on OCCT (an export reply has no subparts and latches the
           // whole part). The latch is per params snapshot, so changing params
           // re-consults the probe and sub-parts drop back to Manifold when the
-          // OCCT-only feature goes away.
+          // unsupported edge class or other runtime-only requirement goes away.
           backendPolicy.noteNeedsOcct(params, data.subparts);
           loop.buildDone();
           loop.kick();
