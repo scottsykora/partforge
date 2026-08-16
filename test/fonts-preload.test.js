@@ -22,7 +22,7 @@ function synthFont() {
 test("resolveFonts normalizes bytes, thunks, and URLs to ArrayBuffers", async () => {
   const bytes = synthFont().toArrayBuffer();
   const g = globalThis.fetch;
-  globalThis.fetch = vi.fn(async () => ({ arrayBuffer: async () => bytes }));   // stub URL fetch
+  globalThis.fetch = vi.fn(async () => ({ ok: true, arrayBuffer: async () => bytes }));   // stub URL fetch
   try {
     const map = await resolveFonts({
       a: bytes,                               // inline bytes
@@ -37,7 +37,7 @@ test("resolveFonts normalizes bytes, thunks, and URLs to ArrayBuffers", async ()
 
 test("resolveFonts memoizes a repeated source (fetch once)", async () => {
   const bytes = synthFont().toArrayBuffer();
-  const fetchMock = vi.fn(async () => ({ arrayBuffer: async () => bytes }));
+  const fetchMock = vi.fn(async () => ({ ok: true, arrayBuffer: async () => bytes }));
   globalThis.fetch = fetchMock;
   const url = "https://example.com/same.ttf";
   await resolveFonts({ x: url }); await resolveFonts({ y: url });

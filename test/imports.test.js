@@ -38,4 +38,12 @@ describe("resolveImports", () => {
   it("returns an empty map for a missing decl", async () => {
     expect((await resolveImports(undefined)).size).toBe(0);
   });
+  it("names the HTTP status when a URL source's fetch is not ok (e.g. an expired signed Storage URL)", async () => {
+    const g = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: false, status: 403, statusText: "Forbidden" });
+    try {
+      await expect(resolveImports({ a: "https://storage.example.com/scan.step?sig=expired" }))
+        .rejects.toThrow(/403/);
+    } finally { globalThis.fetch = g; }
+  });
 });

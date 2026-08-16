@@ -19,6 +19,14 @@ export function toBuffer(v) {
   return null;
 }
 
+// A source string/URL for an error message — truncated so a very long signed
+// Storage URL (query string full of credentials-shaped junk) doesn't blow up
+// the message.
+function describeSource(v) {
+  const s = String(v);
+  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+}
+
 // Build a memoized `resolveOne(source)` for one caller. `finish(bytes, value,
 // source)` turns the resolved bytes into that caller's result shape (may be
 // async); `errorMessage` is thrown when `source` doesn't match the grammar.
@@ -33,7 +41,17 @@ export function makeAssetResolver(cache, finish, errorMessage) {
       if (v && typeof v === "object" && "default" in v && !toBuffer(v) && !(v instanceof URL)) v = v.default; // dynamic-import module
       let bytes = toBuffer(v);
       if (!bytes) {
-        if (v instanceof URL || typeof v === "string") bytes = await (await fetch(v)).arrayBuffer();
+        if (v instanceof URL || typeof v === "string") {
+          const res = await fetch(v);
+          // A signed Storage URL (cloud's designed source shape) expires and
+          // then 404s/403s — without this check the error body resolves as
+          // geometry/font bytes and fails downstream as a misleading parse
+          // error instead of naming the real problem.
+          if (!res.ok) {
+            throw new Error(`fetch failed (${res.status}${res.statusText ? ` ${res.statusText}` : ""}) for ${describeSource(v)}`);
+          }
+          bytes = await res.arrayBuffer();
+        }
         else throw new Error(errorMessage);
       }
       return finish(bytes, v, source);
