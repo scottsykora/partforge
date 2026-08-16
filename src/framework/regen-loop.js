@@ -4,8 +4,10 @@
 //
 // Invariants (pinned by test/framework/regen-loop.test.js):
 // - nothing is sent until ready() (the worker announced its kernel);
-// - at most one build is in flight; kicks while generating are absorbed and the
-//   caller re-kicks after buildDone();
+// - at most one dispatch CYCLE is in flight; kicks while generating are absorbed
+//   and the caller re-kicks after the cycle's last buildDone(). `send` may fan a
+//   dispatch out to several workers (per-sub-part backend routing) and reports
+//   how many jobs it posted; each worker reply is one buildDone();
 // - markDirty() bumps the params version and debounces a kick, so dragging a
 //   slider queues one build per pause, not one per pixel;
 // - a build that a mid-flight edit outdated is reported stale by buildDone()
@@ -14,19 +16,19 @@
 //   fast-apply path kicks explicitly).
 export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
   let kernelReady = false;
-  let generating = false;
+  let pending = 0;       // worker replies still owed for the in-flight dispatch cycle
   let disposed = false;
   let paramsVersion = 0; // bumped on every settings edit
   let genVersion = -1;   // the params version the in-flight build is building
   let timer = null;
 
   function kick() {
-    if (disposed || !kernelReady || generating) return; // re-kicked when the current build finishes
+    if (disposed || !kernelReady || pending > 0) return; // re-kicked when the current cycle finishes
     const missing = missingParts();
     if (missing.length === 0) return;
-    generating = true;
     genVersion = paramsVersion;
-    send(missing);
+    // A send with no return value is the single-job case (one worker, one reply).
+    pending = send(missing) ?? 1;
   }
 
   return {
@@ -42,10 +44,12 @@ export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
       clearTimeout(timer);
       if (debounce) timer = setTimeout(kick, debounceMs);
     },
-    // The build finished (meshes / needs-occt / error). Returns whether its result
-    // is still current; the caller applies the meshes only on true, then kicks.
+    // One job of the cycle finished (meshes / needs-occt / error). Returns whether
+    // its result is still current; the caller applies the meshes only on true, then
+    // kicks (a no-op until the cycle's last reply). Guarded decrement: a reply
+    // outside any cycle (an export-triggered needs-occt) must not pre-close the next.
     buildDone() {
-      generating = false;
+      if (pending > 0) pending--;
       return genVersion === paramsVersion;
     },
     version: () => paramsVersion,

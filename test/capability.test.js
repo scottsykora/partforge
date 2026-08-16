@@ -18,7 +18,7 @@ test("handle() posts needs-occt when a build uses an OCCT-only op on Manifold", 
   };
   const post = vi.fn();
   await handle(k, part, { type: "generate", subparts: ["a"], view: "v", params: {} }, post);
-  expect(post).toHaveBeenCalledWith({ type: "needs-occt" });
+  expect(post).toHaveBeenCalledWith({ type: "needs-occt", subparts: ["a"] });
 });
 
 test("Manifold toSTEP throws KernelCapabilityError, same as every other OCCT-only op", () => {

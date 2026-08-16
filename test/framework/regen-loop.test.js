@@ -130,3 +130,49 @@ test("markDirty({debounce:false}) cancels a previously armed debounce", () => {
   vi.advanceTimersByTime(1000);
   expect(send).not.toHaveBeenCalled();
 });
+
+// --- multi-job dispatch cycles (per-sub-part backend routing) ---------------
+// send() may fan a dispatch out to several workers and reports how many jobs it
+// posted; the cycle stays in flight until every job has answered via buildDone().
+
+test("a two-job dispatch stays generating until both replies arrive", () => {
+  const { loop, send } = makeLoop({ missing: ["a", "b"] });
+  send.mockReturnValue(2);
+  loop.ready();
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(loop.buildDone()).toBe(true); // first worker's reply: fresh, but cycle not over
+  loop.kick();
+  expect(send).toHaveBeenCalledTimes(1); // still generating — no overlapping dispatch
+  expect(loop.buildDone()).toBe(true);   // second reply closes the cycle
+  loop.kick();
+  expect(send).toHaveBeenCalledTimes(2); // now a new cycle may start
+});
+
+test("staleness is reported per reply across a split dispatch", () => {
+  const { loop, send } = makeLoop({ missing: ["a", "b"] });
+  send.mockReturnValue(2);
+  loop.ready();
+  expect(loop.buildDone()).toBe(true); // reply 1 lands before the edit — fresh
+  loop.markDirty();                    // user edit mid-cycle
+  expect(loop.buildDone()).toBe(false); // reply 2 is stale
+});
+
+test("send() returning 0 jobs ends the cycle immediately", () => {
+  const { loop, send, state } = makeLoop({ missing: ["a"] });
+  send.mockReturnValue(0);
+  loop.ready();
+  send.mockReturnValue(1);
+  state.missing = ["b"];
+  loop.kick(); // not stuck generating — a zero-job dispatch must not wedge the loop
+  expect(send).toHaveBeenCalledTimes(2);
+});
+
+test("a lone buildDone() outside any cycle does not corrupt the next one", () => {
+  const { loop, send } = makeLoop();
+  send.mockReturnValue(1);
+  loop.buildDone(); // e.g. an export-triggered needs-occt reply
+  loop.ready();
+  expect(send).toHaveBeenCalledTimes(1);
+  loop.kick();
+  expect(send).toHaveBeenCalledTimes(1); // still just one — the stray reply didn't pre-close this cycle
+});

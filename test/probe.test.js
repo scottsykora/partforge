@@ -121,3 +121,62 @@ test("backend policy: a forced backend wins over both latch and probe", () => {
   policy.noteNeedsOcct({ round: 1 });
   expect(policy.backendFor({ round: 1 })).toBe("manifold");
 });
+
+// --- per-sub-part routing ---------------------------------------------------
+// detectBackends maps each sub-part to its own backend, so a mixed part previews
+// its plain sub-parts on fast Manifold while only the filleted ones pay for OCCT.
+import { detectBackends } from "../src/framework/backend-select.js";
+
+const mixed = {
+  defaults: { r: 2 }, views: view,
+  parts: {
+    body: { views: ["v"], build: (k, p) => k.box({ min: [0, 0, 0], max: [20, 20, 10] }).fillet(p.r) },
+    lid:  { views: ["v"], build: (k) => k.box({ min: [0, 0, 0], max: [20, 20, 2] }) },
+  },
+};
+
+test("detectBackends routes each sub-part independently", () => {
+  expect(detectBackends(mixed)).toEqual({ body: "occt", lid: "manifold" });
+});
+
+test("detectBackends follows live params per sub-part (fillet dialed to 0)", () => {
+  expect(detectBackends(mixed, { r: 0 })).toEqual({ body: "manifold", lid: "manifold" });
+});
+
+test("meta.backend forces every sub-part", () => {
+  expect(detectBackends({ ...mixed, meta: { backend: "occt" } })).toEqual({ body: "occt", lid: "occt" });
+});
+
+test("detectBackend agrees with the max over detectBackends (export routing)", () => {
+  expect(detectBackend(mixed)).toBe("occt");
+  expect(detectBackend(mixed, { r: 0 })).toBe("manifold");
+});
+
+test("policy.backendsFor applies the needs-occt latch per sub-part", () => {
+  const policy = createBackendPolicy(mixed, { forced: null });
+  expect(policy.backendsFor({ r: 0 })).toEqual({ body: "manifold", lid: "manifold" });
+  policy.noteNeedsOcct({ r: 0 }, ["body"]); // runtime says body needed OCCT at r: 0
+  expect(policy.backendsFor({ r: 0 })).toEqual({ body: "occt", lid: "manifold" });
+  expect(policy.backendsFor({ r: 0.5 })).toEqual({ body: "occt", lid: "manifold" }); // probe's own call
+  policy.noteNeedsOcct({ r: 0.5 }, ["lid"]);
+  expect(policy.backendsFor({ r: 0.5 })).toEqual({ body: "occt", lid: "occt" });
+  // Single-snapshot latch: the newer one replaces the older, so r:0 falls back to
+  // the probe (body retries Manifold; if it still needs OCCT the backstop simply
+  // re-latches — one cheap failed dispatch, self-correcting).
+  expect(policy.backendsFor({ r: 0 })).toEqual({ body: "manifold", lid: "manifold" });
+});
+
+test("noteNeedsOcct without subparts latches the whole part (export fallback)", () => {
+  const policy = createBackendPolicy(mixed);
+  policy.noteNeedsOcct({ r: 0 });
+  expect(policy.backendsFor({ r: 0 })).toEqual({ body: "occt", lid: "occt" });
+  expect(policy.backendFor({ r: 0 })).toBe("occt");
+  expect(policy.backendsFor({ r: 2 })).toEqual({ body: "occt", lid: "manifold" }); // params moved on → probe decides
+});
+
+test("policy.backendFor is the max over backendsFor, latch included", () => {
+  const policy = createBackendPolicy(mixed);
+  expect(policy.backendFor({ r: 0 })).toBe("manifold");
+  policy.noteNeedsOcct({ r: 0 }, ["lid"]);
+  expect(policy.backendFor({ r: 0 })).toBe("occt");
+});

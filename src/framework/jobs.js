@@ -244,7 +244,9 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       post({ type: "report", ...report }, match?.map((m) => m.delta.data.buffer) ?? []);
     }
   } catch (err) {
-    if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt", jobId: msg.jobId });
+    // `subparts` (generate jobs only) tells the reroute policy which sub-parts the
+    // failed job covered, so only those latch to OCCT — not the whole part.
+    if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt", jobId: msg.jobId, subparts: msg.subparts });
     else post({ type: "error", message: String(err?.message || err), jobId: msg.jobId });
   } finally {
     kernel.cleanup?.();
