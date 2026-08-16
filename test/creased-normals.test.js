@@ -64,6 +64,14 @@ test("different surfaces: always hard, line only past the 5° coplanar threshold
   expect(coplanar.edges.length).toBe(0);                 // 2° < 5° — coplanar seam, no line
 });
 
+test("opposite-wound coplanar cap triangles do not become a feature line", () => {
+  // Manifold can use an opposite-wound bridge while triangulating a flat cap
+  // with several holes. Its normals are +Z/-Z, but the supporting plane is the
+  // same and the shared edge is only a triangulation seam, not a visible crease.
+  const r = creasedNormals(hinge(180));
+  expect(r.edges.length).toBe(0);
+});
+
 test("sub-MIN_EDGE segments are dropped as degenerate slivers", () => {
   const r = creasedNormals(hinge(90, { scale: 0.005 })); // shared edge is 0.005mm long
   expect(r.edges.length).toBe(0);
