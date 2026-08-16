@@ -1233,7 +1233,9 @@ export const IMPORT_RULES = [
 - [ ] **Step 4: Verify pass** — `npx vitest run test/lint-imports.test.js test/lint-purity.test.js`.
 - [ ] **Step 5: Commit** — `git commit -m "feat: lint rules for geometry imports"`
 
----### Task 14: Example part + glue
+---
+
+### Task 14: Example part + glue
 
 **Files:**
 - Create: `src/parts/import-demo.js`, `src/parts/assets/import-demo-scan.stl` (small ascii STL, hand-written or from `cubeSoup` via a one-off script — keep it < 5 KB), `import-demo.html`, `src/app-import-demo.js`, `src/import-demo-worker.js` (copy the demo part's three glue files verbatim, changing only the part import)
