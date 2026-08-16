@@ -692,11 +692,11 @@ in `kernel.js` define the current surface; only breaking changes bump the versio
   transfer. Renames are breaking changes with no offsetting benefit — don't.
 
 **v3 → v4** (partforge 0.63): `Solid.roundAll` is added to `SOLID_OPS` (portable
-morphological rounding — rounds every edge with a ball of radius `r`; parity-tolerant
-with the regime-split semantics described in [Conformance classes](#conformance-classes)).
-Additive for parts — nothing existing calls it — but breaking for backend
-implementers: a core kernel must now implement it (no stub, unlike the `OCCT_ONLY_OPS`
-ops).
+morphological rounding — rounds every edge with a ball of radius `r`;
+parity-tolerant, regime-split semantics, see
+[Conformance classes](#conformance-classes)). Additive for parts — nothing
+existing calls it — but breaking for backend implementers: a core kernel must
+now implement it (no stub, unlike the `OCCT_ONLY_OPS` ops).
 
 **v2 → v3** (partforge 0.62): `Solid.fillet` and `Solid.chamfer` are implemented
 natively on the mesh (core reference) kernel for straight and circular-arc edge
