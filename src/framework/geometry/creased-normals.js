@@ -48,10 +48,17 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
     const vx = vp[c] - vp[a], vy = vp[c + 1] - vp[a + 1], vz = vp[c + 2] - vp[a + 2];
     const wx = vp[c] - vp[b], wy = vp[c + 1] - vp[b + 1], wz = vp[c + 2] - vp[b + 2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    const L = Math.hypot(nx, ny, nz) || 1;
+    const L0 = Math.hypot(nx, ny, nz), L = L0 || 1; // the || 1 is for the normal divide ONLY
     fn[t * 3] = nx / L; fn[t * 3 + 1] = ny / L; fn[t * 3 + 2] = nz / L;
     const longest = Math.max(ux * ux + uy * uy + uz * uz, vx * vx + vy * vy + vz * vz, wx * wx + wy * wy + wz * wz);
-    thin[t] = longest > 0 ? L / Math.sqrt(longest) : 0; // |cross| / maxEdge = min height
+    // |cross| / maxEdge = min height — from the RAW cross magnitude, never the
+    // guarded L: a zero-area triangle (two float32-coincident vertices — the
+    // render-precision collapse of a sub-micron boolean seam sliver) must report
+    // thin 0 so the feature-edge gate drops it. With L it reported 1/maxEdge and
+    // sailed past the gate, and its garbage (0,0,0) normal reads as a 90° crease
+    // against every neighbor — a full-weight line down an otherwise smooth wall
+    // at whatever seam produced it.
+    thin[t] = longest > 0 ? L0 / Math.sqrt(longest) : 0;
   }
 
   // canonical vertex → incident triangles

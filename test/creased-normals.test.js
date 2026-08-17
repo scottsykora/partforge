@@ -100,6 +100,32 @@ test("sub-MIN_EDGE segments are dropped as degenerate slivers", () => {
   expect(r.edges.length).toBe(0);
 });
 
+test("a zero-area triangle draws no line on its long edges", () => {
+  // A boolean seam whose two sides land sub-micron apart collapses, at render
+  // (float32) precision, into a triangle with two coincident vertices — zero
+  // area, so its face "normal" is the divide-guard's garbage and reads as a
+  // 90° crease against every neighbor. Its min-height must be computed from
+  // the RAW cross magnitude (0), not the guarded one (1), so the thin gate
+  // drops it — this drew a full-weight vertical line down an otherwise smooth
+  // extruded wall at every collapsed tool seam of a filleted glyph outline.
+  const g = {
+    numProp: 3,
+    vertProperties: Float32Array.from([
+      0, 0, 0, // v0
+      1, 0, 0, // v1
+      0, 1, 0, // v2 (healthy apex)
+      1, 0, 0, // v3 — float32-coincident with v1: tri B is zero-area
+    ]),
+    triVerts: Uint32Array.from([0, 1, 2, 1, 0, 3]),
+    mergeFromVert: new Uint32Array(0),
+    mergeToVert: new Uint32Array(0),
+    runIndex: Uint32Array.from([0, 3, 6]),
+    runOriginalID: Uint32Array.from([7, 7]),
+  };
+  const r = creasedNormals(g);
+  expect(r.edges.length).toBe(0);
+});
+
 test("feature labels map through runOriginalID unchanged", () => {
   const r = creasedNormals(hinge(45, { oids: [7, 8] }), { featureLabels: new Map([[7, "wall"]]) });
   expect(r.features).toEqual(["wall"]);
