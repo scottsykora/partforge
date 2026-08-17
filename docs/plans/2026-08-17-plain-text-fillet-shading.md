@@ -4,7 +4,7 @@
 
 **Goal:** Remove the plain-text fillet lighting groove, add the Scott label reproducer, and finish PR #144's release cleanup.
 
-**Architecture:** Keep the CSG mesh and feature-edge pass unchanged. Make `creasedNormals` resolve noisy sub-`MIN_FACE` faces per output corner against compatible healthy smoothing surfaces, and lock the behavior with both synthetic and real Roboto glyph regressions.
+**Architecture:** Keep the CSG mesh and feature-edge pass unchanged. Make `creasedNormals` resolve each noisy sub-`MIN_FACE` face against one compatible best-fit healthy smoothing surface while excluding thin-face votes from healthy neighbors, and lock the behavior with both synthetic and real Roboto glyph regressions.
 
 **Tech Stack:** JavaScript ESM, Manifold WASM, Vitest, Vite, GitHub CLI.
 
@@ -41,8 +41,8 @@ Commit message: `test: add Scott label fillet repro`
 **Step 1: Add a synthetic crease-preservation test**
 
 Construct a thin bridge touching healthy faces on two sides of a real crease. Assert
-that the sliver corners follow their local side and that the two healthy sides do not
-smooth together.
+that neither healthy side accepts the thin face's noisy vote and that the two sides
+do not smooth together.
 
 **Step 2: Add the real glyph regression**
 
@@ -62,7 +62,7 @@ normal discontinuity through the real glyph band.
 
 Commit message: `test: reproduce plain glyph fillet shading groove`
 
-### Task 3: Resolve sliver shading per corner
+### Task 3: Resolve sliver shading by best-fit surface
 
 **Files:**
 - Modify: `src/framework/geometry/creased-normals.js`
@@ -72,17 +72,16 @@ Commit message: `test: reproduce plain glyph fillet shading groove`
 For each vertex, retain incident faces at or above `MIN_FACE`. Preserve the current
 OID/policy compatibility and crease-angle rules.
 
-**Step 2: Resolve thin output corners**
+**Step 2: Resolve thin faces**
 
-For a thin face corner, select a compatible healthy incident smoothing surface by
-supporting-plane fit over the thin triangle. Resolve through adjacent thin faces only
-when the corner has no healthy candidate. Keep the choice local to the corner.
+For a thin face, select one compatible healthy incident smoothing surface by
+supporting-plane fit over the complete triangle. Resolve through adjacent thin faces
+when no healthy candidate is directly incident.
 
 **Step 3: Exclude noisy contributions**
 
-When averaging a healthy corner, do not add raw normals from sub-`MIN_FACE` faces;
-add only their resolved local surface normal when it belongs to the same smoothing
-group.
+When averaging a healthy corner, do not add any normal from a sub-`MIN_FACE` face.
+When shading a thin face, use its resolved surface and resolved thin neighbors.
 
 **Step 4: Verify GREEN**
 

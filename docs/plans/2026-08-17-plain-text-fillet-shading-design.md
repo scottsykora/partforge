@@ -19,13 +19,12 @@ radii and tool intersections.
 
 ## Chosen approach
 
-Repair only the render normals. For a face below `MIN_FACE`, resolve each corner
-against trustworthy non-thin faces incident at that vertex. Choose the compatible
-smoothing surface whose supporting plane best fits the sliver, and use that
-surface as the corner's crease reference and normal contribution. Thin faces do
-not contribute their noisy normals to healthy neighbors. Resolution is per corner,
-not one anchor for the whole triangle, so a sliver crossing a real mitre can follow
-the correct surface on either side instead of smearing the crease.
+Repair only the render normals. For a face below `MIN_FACE`, choose the compatible
+healthy smoothing surface whose supporting plane best fits the complete sliver and
+use that surface as the sliver's crease reference and normal contribution. Thin
+faces do not contribute any vote to healthy neighbors. A face-wide anchor keeps a
+long fan internally consistent; ignoring thin votes on healthy faces preserves the
+two trustworthy sides of a genuine mitre instead of smearing the crease.
 
 Do not alter the indexed mesh or the STL/3MF geometry. Keep the existing feature-
 edge topology and `MIN_FACE` line gate independent from shading.
@@ -43,7 +42,7 @@ edge topology and `MIN_FACE` line gate independent from shading.
 
 - A synthetic sliver must shade with its healthy neighbor without changing the
   neighbor's normal.
-- A thin bridge at a genuine crease must retain two distinct smoothing sides.
+- A thin bridge at a genuine crease must not soften either healthy side.
 - The real unbolded Roboto `t` must have no long, hard normal stripe through the
   fillet band, while its intended mitre edges remain present.
 - Existing boundary-line, roundAll, corner, and performance tests must remain green.
