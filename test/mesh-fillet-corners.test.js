@@ -56,7 +56,34 @@ const wavySquare = (L = 30, amp = 1.5, n = 24) => {
   return pts;
 };
 
+// rounded-rectangle outline whose corner arcs carry a deterministic ±6 µm radial
+// wobble — the signature of an offset outline after simplify(): close enough to a
+// circle to pass a loose circumcircle fit, far enough off one that an idealized
+// revolve tool's tangent seams jitter in and out of the real rim the whole way
+// around, drawing micro-facet lines along both band edges.
+const wobblyRoundedRect = (W = 40, H = 30, R = 8, n = 24) => {
+  const pts = [];
+  const corner = (cx, cy, a0) => {
+    for (let i = 0; i <= n; i++) {
+      const th = a0 + (Math.PI / 2) * (i / n);
+      const rr = R + 0.006 * Math.sin(9 * th + 1);
+      pts.push([cx + rr * Math.cos(th), cy + rr * Math.sin(th)]);
+    }
+  };
+  corner(W - R, H - R, 0);
+  corner(R, H - R, Math.PI / 2);
+  corner(R, R, Math.PI);
+  corner(W - R, R, (3 * Math.PI) / 2);
+  return pts;
+};
+
 describe("salient corners render as clean curves", () => {
+  it("near-circular offset-style corners: the tool follows the real rim, not a fitted circle", () => {
+    const out = k.extrude({ profile: wobblyRoundedRect(), h: 8 }).fillet(1, { inPlane: "XY", at: 8 });
+    expect(bandLines(out, 8, 1)).toBeLessThan(10);
+    expect(out.genus()).toBe(0);
+  });
+
   it("line-line corners: the arrow rim draws no lines across the blend band", () => {
     const out = k.extrude({ profile: arrow(), h: 5 }).fillet(1, { inPlane: "XY", at: 5 });
     expect(bandLines(out, 5, 1)).toBeLessThan(10);
@@ -65,6 +92,24 @@ describe("salient corners render as clean curves", () => {
 
   it("planar-planar corners: the wavy-square rim draws no lines across the band", () => {
     const out = k.extrude({ profile: wavySquare(), h: 8 }).fillet(1, { inPlane: "XY", at: 8 });
+    expect(bandLines(out, 8, 1)).toBeLessThan(10);
+    expect(out.genus()).toBe(0);
+  });
+});
+
+describe("arc tools reach walls coarser than kernel tessellation", () => {
+  it("a coarse polygonal rim draws no lines along the band edges", () => {
+    // A 24-gon prism's rim points sit exactly on a circle (so the run classifies as an
+    // arc chain), but its wall facets dip R·(1−cos(π/24)) ≈ 68 µm inside that circle —
+    // twenty times deeper than the flank sagitta the revolve tool's tangent extension
+    // assumed from kernel density. Where the extension failed to cross a facet, a
+    // radial knife-fin of wall survived both cutters and drew a line along the band
+    // (the label-backing bug, in miniature). The extension must be sized from the
+    // chain's own polyline, not from an assumed tessellation.
+    const n = 24, R = 8;
+    const poly = [];
+    for (let i = 0; i < n; i++) poly.push([R * Math.cos((2 * Math.PI * i) / n), R * Math.sin((2 * Math.PI * i) / n)]);
+    const out = k.extrude({ profile: poly, h: 8 }).fillet(1, { inPlane: "XY", at: 8 });
     expect(bandLines(out, 8, 1)).toBeLessThan(10);
     expect(out.genus()).toBe(0);
   });

@@ -78,6 +78,25 @@ describe("chain detection", () => {
       expect(Math.abs(arc.w[2])).toBeCloseTo(1, 6);
     }
   });
+
+  it("refuses the arc fit for a rim that only APPROXIMATES a circle", () => {
+    // an offset outline after simplify(): near-circular to a few µm, but not a circle.
+    // The arc chain's revolve tool follows the FITTED circle, so any real deviation
+    // becomes tangent-seam jitter along the whole run (measured: a label backing drew
+    // hundreds of band-edge lines from two such pseudo-arcs). These rims must fall
+    // through to the planar-path rescue, whose sweep follows the true polyline.
+    const pts = [];
+    const n = 200, R = 8;
+    for (let i = 0; i < n; i++) {
+      const th = (2 * Math.PI * i) / n;
+      const rr = R + 0.0025 * Math.sin(9 * th + 1); // ±2.5 µm — inside the old 1e-3·R fit
+      pts.push([20 + rr * Math.cos(th), 15 + rr * Math.sin(th)]);
+    }
+    const solid = k.extrude({ profile: pts, h: 8 });
+    const chains = chainEdges(detectSharpEdges(solid.toIndexedMesh()));
+    expect(chains.filter((c) => c.kind === "arc")).toHaveLength(0);
+    expect(chains.filter((c) => c.kind === "planar")).not.toHaveLength(0);
+  });
 });
 
 describe("straight-edge fillet", () => {
@@ -113,8 +132,11 @@ describe("circular-arc fillet (revolve cutters)", () => {
     const removed = 2 * Math.PI * (a + CORNER_XBAR * r) * CORNER(r);
     const before = bored.volume();
     expect(relErr(before - out.volume(), removed)).toBeLessThan(1e-2);
+    // closure via genus, not the 1e-6-weld isWatertight: in-plane rims are now SWEPT
+    // along their own polyline (planarizeArc), and swept vertices are not float32-exact
+    // the way a posed revolve's were — the strict weld check false-negatives on them
+    // (the same reason mesh-fillet-planar.test.js uses genus throughout)
     expect(out.genus()).toBe(1);
-    expect(isWatertight(out.toIndexedMesh())).toBe(true);
   });
 
   it("fillets a cylinder's top rim (outer closed arc, material inside)", () => {
@@ -124,7 +146,7 @@ describe("circular-arc fillet (revolve cutters)", () => {
     // Pappus: centroid sits INSIDE the rim now, at a − x̄·r
     const removed = 2 * Math.PI * (a - CORNER_XBAR * r) * CORNER(r);
     expect(relErr(cyl.volume() - out.volume(), removed)).toBeLessThan(1e-2);
-    expect(isWatertight(out.toIndexedMesh())).toBe(true);
+    expect(out.genus()).toBe(0); // genus, not isWatertight — swept rim, see bore rim note
   });
 
   it("matches analytic near points anywhere on a circular edge", () => {
@@ -156,8 +178,7 @@ describe("circular-arc fillet (revolve cutters)", () => {
     s = s.cut(k.cylinder({ d: 8, h: H + 2 }).at([W / 2, D / 2, -1]));
     // OCCT native fillet reference volume for the same geometry: 18158.795
     expect(relErr(s.volume(), 18158.795)).toBeLessThan(2e-3);
-    expect(s.genus()).toBe(1);
-    expect(isWatertight(s.toIndexedMesh())).toBe(true);
+    expect(s.genus()).toBe(1); // genus, not isWatertight — swept rim, see bore rim note
   });
 });
 
@@ -215,7 +236,7 @@ describe("chamfer", () => {
     // Pappus for the removed triangle (area d²/2, centroid d/3 outward from the rim)
     const removed = 2 * Math.PI * (a + d / 3) * (d * d / 2);
     expect(relErr(bored.volume() - out.volume(), removed)).toBeLessThan(1e-2);
-    expect(isWatertight(out.toIndexedMesh())).toBe(true);
+    expect(out.genus()).toBe(1); // genus, not isWatertight — swept rim, see bore rim note
   });
 });
 
