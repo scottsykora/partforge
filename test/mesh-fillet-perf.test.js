@@ -35,9 +35,12 @@ describe("blend tessellation is sagitta-bounded, not kernel-quality-bounded", ()
   });
 
   it("box top rim r=3: result stays within the triangle budget at OCCT-parity volume", () => {
-    // pre-fix baseline: 31,578 tris; OCCT native fillet reference volume 18939.956
+    // pre-fix baseline: 31,578 tris; OCCT native fillet reference volume 18939.956.
+    // The budget carries ~2k of run-boundary residue: blend surfaces keep their
+    // originalIDs for the boundary-line overlay, and simplify() cannot collapse
+    // across the surviving run boundaries.
     const out = k.box({ min: [0, 0, 0], max: [40, 30, 16] }).fillet(3, { inPlane: "XY", at: 16 });
-    expect(out._m.numTri()).toBeLessThan(26_000);
+    expect(out._m.numTri()).toBeLessThan(27_000);
     expect(relErr(out.volume(), 18939.956)).toBeLessThan(2e-3);
     expect(out.genus()).toBe(0);
   });

@@ -8,6 +8,14 @@
 
 export const SMOOTH = Object.freeze({ creaseAngle: 35, sameSurfaceLines: true });
 export const FACETED = Object.freeze({ creaseAngle: 10, sameSurfaceLines: false });
+// A blend surface (fillet/chamfer band). `boundaryLines` widens the CROSS-surface
+// rule for it: a seam between a blend and a NON-blend surface draws regardless of
+// bend — the band's start/end are tangent (~0°) and would otherwise be invisible,
+// leaving the fillet's extent unreadable in the overlay. A seam between TWO blend
+// surfaces keeps the ordinary bend rule (exactly-one-side semantics), so the
+// handover seams along one band — tool splits, corner arcs continuing a sweep —
+// stay invisible while real mitre crossings still draw.
+export const BLEND = Object.freeze({ creaseAngle: 35, sameSurfaceLines: true, boundaryLines: true });
 
 export const COPLANAR_ANGLE = 5;  // deg — cut seams bending less than this are coplanar: no line
 export const TANGENT_ANGLE = 5;   // deg — B-rep edges whose faces agree within this are tangent: no line

@@ -72,7 +72,12 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
       const v = tris[t * 3 + k];
       let nx = 0, ny = 0, nz = 0;
       for (const t2 of incident.get(remap[v])) {
-        if (triOID[t2] !== oid) continue; // different cut surface → hard
+        // different cut surface → hard, EXCEPT two blend surfaces (boundaryLines on
+        // both): one band is many tool surfaces continuing each other tangentially,
+        // and hard normals at their handovers would put lighting seams along a band
+        // that used to shade as one re-originaled surface
+        if (triOID[t2] !== oid &&
+          !(polFor(triOID[t2]).boundaryLines && polFor(oid).boundaryLines)) continue;
         if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
         nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2];
       }
@@ -105,16 +110,32 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
       // are invisible but whose long boundary edges would otherwise draw at full
       // line weight. A triangle thinner than MIN_EDGE cannot be seen, so its
       // edges are noise by definition — same threshold the segment filter uses.
-      if (thin[prev] < MIN_EDGE || thin[t] < MIN_EDGE) continue;
+      const sameOID = triOID[prev] === triOID[t];
+      // Blend boundary: a cross-surface seam with a BLEND policy on EXACTLY one side
+      // is the start/end of a fillet band — draw it even when tangent (the band's
+      // extent must be readable). It also bypasses the thin-triangle gate below:
+      // simplify() cannot collapse the boolean's slivers ACROSS the blend/base run
+      // boundary, so half the seam's edges border a sliver, and gating them dashed
+      // the ring — those slivers ride within microns OF the seam curve, so their
+      // long edges redraw it rather than add noise (the MIN_EDGE segment-length
+      // filter still drops the short ones).
+      const boundary = !sameOID &&
+        !!polFor(triOID[prev]).boundaryLines !== !!polFor(triOID[t]).boundaryLines;
+      if (!boundary && (thin[prev] < MIN_EDGE || thin[t] < MIN_EDGE)) continue;
       const dot = fn[prev * 3] * fn[t * 3] + fn[prev * 3 + 1] * fn[t * 3 + 1] + fn[prev * 3 + 2] * fn[t * 3 + 2];
       // A multi-hole cap triangulation can contain an opposite-wound bridge:
       // its two normals disagree by 180 degrees even though both triangles lie
       // in the same plane. Gate on the unoriented supporting-plane angle first
       // so that triangulation seam never becomes a feature line.
       const bends = Math.abs(dot) < COPLANAR_COS;
-      const hard = bends && (triOID[prev] === triOID[t]
+      // Two blend surfaces (a handover along one band) line-draw like ONE surface:
+      // the 35° same-surface bar, not the 5° cut-seam bar — a band is many tool
+      // surfaces whose overshoot crossings bend a few degrees by construction.
+      const bothBlend = !sameOID &&
+        !!polFor(triOID[prev]).boundaryLines && !!polFor(triOID[t]).boundaryLines;
+      const hard = boundary || (bends && (sameOID || bothBlend
         ? polFor(triOID[t]).sameSurfaceLines && dot < cosFor(triOID[t])
-        : true);
+        : true));
       if (hard) {
         const ai = i * np, bj = j * np;
         const dx = vp[ai] - vp[bj], dy = vp[ai + 1] - vp[bj + 1], dz = vp[ai + 2] - vp[bj + 2];

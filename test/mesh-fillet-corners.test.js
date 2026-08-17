@@ -11,11 +11,14 @@
 // genuinely cannot reach into the corner and the two blend surfaces truly intersect —
 // OCCT draws the same crease. Only salient corners get wedges.
 //
-// The line census runs the real creased-normals pass (the viewer's own edge source) and
-// counts segments strictly inside the blend band.
+// The line census runs the REAL render path — toMesh(), which is creased-normals plus
+// the kernel's shading-policy registry. The registry matters now: blend surfaces keep
+// their originalIDs (that is how the band's boundary rings draw), and only the BLEND
+// policy tells the crease pass that their handover seams line-draw like one surface.
+// The census window is strict-interior with a margin clear of both boundary rings, so
+// it counts exactly the unwanted lines ACROSS the band.
 import { describe, it, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
-import { creasedNormals } from "../src/framework/geometry/creased-normals.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -23,12 +26,12 @@ beforeAll(async () => { k = await bootManifoldKernel(); });
 const relErr = (v, expected) => Math.abs(v - expected) / Math.abs(expected);
 
 function bandLines(solid, zTop, r) {
-  const { edges } = creasedNormals(solid._m.getMesh());
-  const zLo = zTop - r + 1e-6, zHi = zTop - 1e-6;
+  const { edges } = solid.toMesh();
+  const zLo = zTop - r + 0.05 * r, zHi = zTop - 0.05 * r;
   let n = 0;
   for (let i = 0; i + 5 < edges.length; i += 6) {
     const inBand = (z) => z > zLo && z < zHi;
-    if (inBand(edges[i + 2]) || inBand(edges[i + 5])) n++;
+    if (inBand(edges[i + 2]) && inBand(edges[i + 5])) n++;
   }
   return n;
 }

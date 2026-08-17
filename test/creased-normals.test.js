@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { creasedNormals } from "../src/framework/geometry/creased-normals.js";
-import { FACETED } from "../src/framework/geometry/shading-policy.js";
+import { FACETED, BLEND } from "../src/framework/geometry/shading-policy.js";
 
 // Two triangles sharing the edge v0-v1 (the x axis). Tri A lies in the XY
 // plane (face normal +Z); tri B is the same quad half rotated `bend` degrees
@@ -62,6 +62,29 @@ test("different surfaces: always hard, line only past the 5° coplanar threshold
   const coplanar = creasedNormals(hinge(2, { oids: [7, 8] }));
   expect(cornerNormal(coplanar, 0, 0)[2]).toBeCloseTo(1, 5);
   expect(coplanar.edges.length).toBe(0);                 // 2° < 5° — coplanar seam, no line
+});
+
+test("a blend boundary (one side BLEND) draws even when tangent", () => {
+  // the start/end of a fillet band: the blend surface meets the flank at ~0°
+  // dihedral, under the coplanar threshold — but the seam must still draw so
+  // the band's extent is visible.
+  const r = creasedNormals(hinge(2, { oids: [7, 8] }), { policies: new Map([[8, BLEND]]) });
+  expect(r.edges.length).toBe(6);
+});
+
+test("a blend-blend handover (both sides BLEND) keeps the bend rule — no tangent line", () => {
+  // two blend tools continuing each other along one band: their handover seam
+  // is the one this module spent a branch making invisible.
+  const r = creasedNormals(hinge(2, { oids: [7, 8] }), { policies: new Map([[7, BLEND], [8, BLEND]]) });
+  expect(r.edges.length).toBe(0);
+  // a REAL crease between two blends (a reflex mitre crossing) still draws
+  const mitre = creasedNormals(hinge(60, { oids: [7, 8] }), { policies: new Map([[7, BLEND], [8, BLEND]]) });
+  expect(mitre.edges.length).toBe(6);
+});
+
+test("BLEND on a same-surface edge changes nothing", () => {
+  const r = creasedNormals(hinge(2, { oids: [8, 8] }), { policies: new Map([[8, BLEND]]) });
+  expect(r.edges.length).toBe(0);
 });
 
 test("opposite-wound coplanar cap triangles do not become a feature line", () => {
