@@ -2153,8 +2153,10 @@ the requirement that exposed the failure.
 Two backends build your part: **Manifold** (fast meshes — preview, STL, 3MF) and
 **OCCT/replicad** (exact B-rep — STEP). Most parts run on Manifold — and since
 contract v3 that **includes fillet and chamfer**: the mesh backend blends straight
-edges and circular-arc edges (bore rims, cylinder rims, the arcs where fillets meet a
-face) natively, at exact radius to within tessellation. Only `shell` still routes a
+edges, circular-arc edges (bore rims, cylinder rims, the arcs where fillets meet a
+face), and **planar contour edges at constant dihedral** — the top/bottom rims of any
+extruded profile, however curvy its outline: `text2d` lettering, `Shape2D.offset`
+outlines, spline profiles all round natively now. Only `shell` still routes a
 sub-part to OCCT up front; a fillet/chamfer on an edge class the mesh backend can't
 blend (helical edges, varying dihedral) reroutes that sub-part to OCCT automatically
 at runtime — no declaration needed either way:
