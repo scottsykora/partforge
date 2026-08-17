@@ -62,6 +62,50 @@ function bandLines(solid, zTop, r, { excludeCorners = [], margin = 0 } = {}) {
   return { away: n, atCorners };
 }
 
+// Total unique mesh-edge length whose endpoints both carry a hard normal split,
+// strictly inside the blend band. This catches an unlined lighting ridge: the
+// feature-edge pass can suppress a micron-thin boolean fan's line while its
+// per-corner normals still paint a dark groove down the rounded surface.
+function hardNormalLength(solid, zTop, r, angle = 35) {
+  const { positions, normals, edges } = solid.toMesh();
+  const keyAt = (o) => `${positions[o]}|${positions[o + 1]}|${positions[o + 2]}`;
+  const edgeKey = (a, b) => a < b ? `${a}/${b}` : `${b}/${a}`;
+  const drawn = new Set();
+  for (let o = 0; o < edges.length; o += 6) {
+    const a = `${edges[o]}|${edges[o + 1]}|${edges[o + 2]}`;
+    const b = `${edges[o + 3]}|${edges[o + 4]}|${edges[o + 5]}`;
+    drawn.add(edgeKey(a, b));
+  }
+  const incident = new Map();
+  for (let t = 0; t < positions.length; t += 9) {
+    for (const [a, b] of [[t, t + 3], [t + 3, t + 6], [t + 6, t]]) {
+      const ka = keyAt(a), kb = keyAt(b), key = edgeKey(ka, kb);
+      (incident.get(key) ?? incident.set(key, []).get(key)).push({ at: new Map([[ka, a], [kb, b]]) });
+    }
+  }
+  const cos = Math.cos((angle * Math.PI) / 180);
+  const zLo = zTop - r + 0.05 * r, zHi = zTop - 0.05 * r;
+  let length = 0;
+  for (const [key, uses] of incident) {
+    if (uses.length < 2 || drawn.has(key)) continue;
+    const [ka, kb] = key.split("/");
+    const a0 = uses[0].at.get(ka), b0 = uses[0].at.get(kb);
+    if (!(positions[a0 + 2] > zLo && positions[a0 + 2] < zHi && positions[b0 + 2] > zLo && positions[b0 + 2] < zHi)) continue;
+    let hard = false;
+    outer: for (let i = 0; i < uses.length; i++) {
+      for (let j = i + 1; j < uses.length; j++) {
+        const a1 = uses[i].at.get(ka), a2 = uses[j].at.get(ka);
+        const b1 = uses[i].at.get(kb), b2 = uses[j].at.get(kb);
+        const da = normals[a1] * normals[a2] + normals[a1 + 1] * normals[a2 + 1] + normals[a1 + 2] * normals[a2 + 2];
+        const db = normals[b1] * normals[b2] + normals[b1 + 1] * normals[b2 + 1] + normals[b1 + 2] * normals[b2 + 2];
+        if (da < cos && db < cos) { hard = true; break outer; }
+      }
+    }
+    if (hard) length += Math.hypot(positions[b0] - positions[a0], positions[b0 + 1] - positions[a0 + 1], positions[b0 + 2] - positions[a0 + 2]);
+  }
+  return length;
+}
+
 // straight-sided fixture with salient corners of mixed angles (40°, 90°, ~120°) —
 // every corner is a line-line junction. OCCT's native fillet FAILS on this outline
 // ("fillet(1) failed — feature skipped"), so the mesh path is the only kernel that
@@ -164,6 +208,14 @@ describe("corner rounds smaller than the blend collapse to virtual corners", () 
       expect(census.away).toBeLessThan(10);
       expect(out.genus()).toBe(0);
     }
+  });
+
+  it("plain Roboto t has no long hard-normal groove through its top fillet", () => {
+    const H = 2, R = 0.3;
+    const glyph = k.text2d("t", { size: 31, align: "left", valign: "baseline" }).regions()[0];
+    const out = glyph.extrude({ h: H }).fillet(R, { inPlane: "XY", at: H });
+    expect(hardNormalLength(out, H, R)).toBeLessThan(20);
+    expect(out.genus()).toBe(0);
   });
 });
 
