@@ -260,11 +260,36 @@ export function chainEdges(edges) {
 // crossing) when sharp. Chains stitch only when they share an endpoint, the same face
 // plane, and the same convexity — the same-plane test is what keeps a top rim from ever
 // stitching to a bottom rim.
-function stitchPlanarChains(chains) {
+function stitchPlanarChains(chains, { absorbLines = false } = {}) {
   const open = [], out = [];
   for (const c of chains) (c.kind === "planar" && !c.closed ? open : out).push(c);
-  if (open.length < 2) return chains;
   const key = (p) => `${Math.round(p[0] * WELD)},${Math.round(p[1] * WELD)},${Math.round(p[2] * WELD)}`;
+  // Absorb LINE chains that continue an open planar chain — apply()'s re-stitch
+  // only, post-selection, so a dir/line selector still sees the line form. A
+  // straight run flanking a planarized arc otherwise keeps its prism tool, and
+  // the tangent junction between the two tools is exactly the overlap-seam
+  // category stitching exists to remove (measured: an exact rounded-rect rim
+  // with 0.5 mm corner arcs under a 0.3 mm fillet drew ~6 lines per junction).
+  // Absorbed into the sweep, the straight is geometrically identical — a prism
+  // IS the one-segment case of the sweep — and the junction becomes an interior
+  // tangent vertex the sweep miters.
+  if (absorbLines) {
+    for (let i = out.length - 1; i >= 0; i--) {
+      const c = out[i];
+      if (c.kind !== "line") continue;
+      const ends = [key(c.a), key(c.b)];
+      const partner = open.find((p) => p.convex === c.convex &&
+        [p.points[0], p.points[p.points.length - 1]].some((q) => ends.includes(key(q))));
+      if (!partner) continue;
+      const face = [c.n1, c.n2].find((n) => dot(n, partner.faceN) > FLANK_COS);
+      if (!face) continue;
+      const wall = face === c.n1 ? c.n2 : c.n1;
+      out.splice(i, 1);
+      open.push({ kind: "planar", points: [[...c.a], [...c.b]], closed: false,
+                  convex: c.convex, w: face, faceN: face, wallNs: [wall] });
+    }
+  }
+  if (open.length < 2) return [...out, ...open];
   const compatible = (a, b) => a.convex === b.convex && dot(a.faceN, b.faceN) > FLANK_COS &&
     Math.abs(dot(a.points[0], a.faceN) - dot(b.points[0], a.faceN)) <= TOL;
   const rev = (c) => ({ ...c, points: [...c.points].reverse(), wallNs: [...c.wallNs].reverse() });
@@ -766,14 +791,23 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   // the flush stretch ends leave the corner wedge uncut and the face keeps its point);
   // too-tight salient splits keep the overshoot mitre.
   // The reach bound is SIDE-aware, mirroring the sweep's own direction-aware
-  // check: rings converge only on the inside of a bend. A salient bend curves
-  // toward the material, where the profile spans the whole blend (the rigid
-  // 1.5× bound); a reflex bend curves past the wall, where the profile reaches
-  // only profile2D's ~2%-of-magnitude corner delta — a symmetric bound there
-  // shattered any concave outline arc of radius ≲ 1.7·magnitude (the roundAll
-  // fast path's reflex arcs exactly) into per-facet tools whose mutual
-  // crossings drew a groove per facet across the band.
-  const reach = magnitude * 1.5;
+  // check: rings converge only on the inside of a bend, and only the profile's
+  // reach TOWARD the bend center matters. The bend axis of a planar chain is
+  // the face normal, so that reach is the profile's IN-PLANE extent — the
+  // face-tangency inset, magnitude (+2% corner delta; the arc between the
+  // tangencies never reaches past them on the corner side) — NOT the rigid
+  // 1.5× diagonal bound, whose extra 50% is the AXIAL extent that a bend about
+  // the face normal cannot consume. The old bound split any salient outline
+  // arc under ~1.7·magnitude into per-facet micro-tools (a bold glyph's 0.4 mm
+  // offset-round corners under a 0.3 mm rim fillet became a patchwork of
+  // ~20 µm tools whose disagreements notched the band — the "divot" artifact);
+  // with the in-plane bound those arcs ride the one continuous sweep, and
+  // splitting starts only near the genuine pinch (R ≈ 1.2·magnitude, where
+  // the top tangent contour is closing toward a point). A reflex bend curves
+  // past the wall, where the profile reaches only the corner delta — the
+  // symmetric bound there shattered concave arcs of the same radii (the
+  // roundAll fast path's reflex arcs exactly).
+  const reach = magnitude * 1.1;
   const reachWall = 0.1 * magnitude;
   const breaks = [];
   for (let i = closed ? 0 : 1; i < (closed ? m : m - 1); i++) {
@@ -1334,7 +1368,7 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   // Face-plane arc rims sweep their own polyline (see planarizeArc); re-stitch so a
   // converted arc joins its planar neighbors — chainEdges' own stitch pass ran before
   // these chains were planar, so their junctions are still open here.
-  const planarized = stitchPlanarChains(selected.map((ch) => planarizeArc(ch) ?? ch));
+  const planarized = stitchPlanarChains(selected.map((ch) => planarizeArc(ch) ?? ch), { absorbLines: true });
   const { chains: effective, arcs, horns, pivots } = roundSalientCorners(planarized, magnitude);
   const pSegs = blendSegs(segs, magnitude);
   const toolsFor = (ch) =>

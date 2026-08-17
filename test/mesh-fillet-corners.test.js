@@ -101,6 +101,33 @@ describe("salient corners render as clean curves", () => {
   });
 });
 
+describe("tight salient arcs keep the revolve", () => {
+  it("corner arcs near the blend radius render clean, not shattered", () => {
+    // Corner radius 0.5 under a 0.3 fillet — the glyph-outline regime (a bold
+    // letter's 0.4 mm offset-round corners under the label part's 0.3 mm rim
+    // fillet). Planarizing an arc this tight hands it to the planar sweep,
+    // whose fold guard fires on EVERY facet (curvature radius < ~1.67× the
+    // blend reach), shattering the band into per-facet micro-tools — measured
+    // ~20 µm-wide tools whose disagreements notched the band ("divot" artifact)
+    // and drew hundreds of lines. The revolve sweeps the tight arc exactly.
+    const W = 20, Hh = 10, R = 0.5, n = 12;
+    const pts = [];
+    const corner = (cx, cy, a0) => {
+      for (let i = 0; i <= n; i++) {
+        const th = a0 + (Math.PI / 2) * (i / n);
+        pts.push([cx + R * Math.cos(th), cy + R * Math.sin(th)]);
+      }
+    };
+    corner(W - R, Hh - R, 0);
+    corner(R, Hh - R, Math.PI / 2);
+    corner(R, R, Math.PI);
+    corner(W - R, R, (3 * Math.PI) / 2);
+    const out = k.extrude({ profile: pts, h: 2 }).fillet(0.3, { inPlane: "XY", at: 2 });
+    expect(bandLines(out, 2, 0.3)).toBeLessThan(10);
+    expect(out.genus()).toBe(0);
+  });
+});
+
 describe("arc tools reach walls coarser than kernel tessellation", () => {
   it("a coarse polygonal rim draws no lines along the band edges", () => {
     // A 24-gon prism's rim points sit exactly on a circle (so the run classifies as an
