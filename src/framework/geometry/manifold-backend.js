@@ -46,7 +46,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // (manifests as "Out of bounds memory access").
   const tracked = [];
   const T = (obj) => { tracked.push(obj); return obj; };
-  const unionRaw = (ms) => ms.reduce((a, b) => T(a.add(b))); // track each reduce step
+  // n-ary union in ONE batch op. This must never be a pairwise reduce: a hundred-tool
+  // cutAll (a text rim's fillet) reduced sequentially runs a hundred booleans on an
+  // ever-growing intermediate — measured 12 s and a 4 GB peak on a lettering part —
+  // while Manifold's own batch operator evaluates the same union as a balanced tree.
+  // A one-solid "union" returns the operand's own Manifold untouched (see union below).
+  const unionRaw = (ms) => (ms.length === 1 ? ms[0] : T(Manifold.union(ms)));
 
   const cache = createSolidCache();
   const featureLabels = new Map(); // originalID -> label string (grows per label(); tiny)
@@ -125,9 +130,23 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // surfaces, so feature-label attribution downstream of the op uses the
   // fallback path (AUTHORING-PARTS.md), and the blend shades SMOOTH.
   const SIMPLIFY_EPS = 1e-4; // 0.1 µm — must exceed the boolean's sliver widths (~2e-5)
+  // Debris sweep: where blend tools graze each other or a flank near-tangentially, the
+  // boolean can strand a CLOSED femto-component (measured ~1e-8 mm³, 4 triangles) that
+  // simplify() cannot remove — it collapses edges, never whole components — and that
+  // flips the result's genus/decompose count. Anything below DEBRIS_VOL is two orders
+  // under the smallest feature the tessellation itself can express, and three under
+  // anything printable, so dropping it can never erase real geometry.
+  const DEBRIS_VOL = 1e-6; // mm³
+  const dropDebris = (m) => {
+    const parts = m.decompose();
+    if (parts.length <= 1) { for (const p of parts) T(p); return m; }
+    const kept = [];
+    for (const p of parts) { T(p); if (p.volume() >= DEBRIS_VOL) kept.push(p); }
+    return kept.length === parts.length ? m : T(Manifold.compose(kept));
+  };
   const meshCadOp = (op, run) => {
     try {
-      return T(T(run()._m.asOriginal()).simplify(SIMPLIFY_EPS));
+      return T(dropDebris(T(run()._m.asOriginal())).simplify(SIMPLIFY_EPS));
     } catch (e) {
       if (e instanceof UnsupportedEdgeError) throw new KernelCapabilityError(`${op}: ${e.message}`);
       throw e;
@@ -158,8 +177,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       // tessellation, and so the result, is tier-dependent.
       return cached(h("roundAll", hash, r, quality), () => T(meshRoundAll(wasm, m, r, quality)));
     },
+    // batch difference: first minus the union of the rest, evaluated as one boolean
+    // tree — no materialized intermediate union (the unionRaw memory note applies)
     cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)),
-      () => T(m.subtract(unionRaw(tools.map((t) => t._m))))),
+      () => T(Manifold.difference([m, ...tools.map((t) => t._m)]))),
     intersect: (t) => cached(h("intersect", hash, t._hash), () => T(m.intersect(t._m))),
     union: (t) => cached(h("union", [hash, t._hash]), () => unionRaw([m, t._m])),
     clone: () => wrap(m, hash),
@@ -325,10 +346,14 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // (closed/cornerRadius) so a shape change is a fresh node and an identical rebuild hits.
     sweep: (profile, path, opts = {}) => cached(h("sweep", profile, path, opts), () => T(sweepMesh(wasm, profile, path, opts))),
     helixSweptTube: (o) => cached(h("helixSweptTube", o, tube), () => T(helixTube(wasm, { ...o, ...tube }))),
-    revolve: (pts, { degrees = 360 } = {}) => {
+    // opts.segs may only COARSEN below the kernel's quality (min), never exceed it:
+    // callers use it where a small feature's sagitta bound needs fewer facets than
+    // the per-circle quality would spend (mesh-fillet's free-standing corner arcs).
+    revolve: (pts, { degrees = 360, segs: segsOverride } = {}) => {
+      const density = Math.min(segs, segsOverride ?? segs);
       if (pts && pts._shape2d)
-        return cached(h("revolve", pts._hash, degrees, segs), () => T(csFor(pts).revolve(segs, degrees)));
-      return cached(h("revolve", pts, degrees, segs), () => T(Manifold.revolve([pts], segs, degrees)));
+        return cached(h("revolve", pts._hash, degrees, density), () => T(csFor(pts).revolve(density, degrees)));
+      return cached(h("revolve", pts, degrees, density), () => T(Manifold.revolve([pts], density, degrees)));
     },
     // A one-solid union is an identity — no new WASM / cache entry (avoids double-free):
     // unionRaw's reduce returns the operand's own Manifold untouched, so caching it

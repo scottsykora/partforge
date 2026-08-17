@@ -16,11 +16,19 @@
 // Anything else (helical edges, varying dihedral, branching curves) raises
 // UnsupportedEdgeError so a caller can reroute the build to the B-rep backend.
 //
-// Known limits (documented, not bugs): no spherical corner patches yet — two
-// chains meeting at a vertex leave a mitred junction where their blend surfaces
-// intersect, and a planar chain split at a sharp corner mitres the same way;
-// radius feasibility is the caller's job (clamp like filleted-box.js
-// does — an oversized radius self-intersects the cutters).
+// Corner treatment: a salient two-chain corner in a common face plane is ROUNDED —
+// a small arc chain (radius ~1.05-1.25× the magnitude) replaces the mitre, its horn
+// block shaves the sharp corner down to band depth, and the band sweeps around with
+// no crease (see roundSalientCorners). The silhouette inside the band rounds by about
+// the blend radius at such corners; the flat shelf the horn leaves at the band's base
+// is the deliberate residue. Corners keep their mitre — today's and OCCT's behavior,
+// a real crease the feature-line overlay honestly draws — when they are REFLEX (the
+// ball cannot reach in), or too tight to host the setback (glyph-scale features
+// smaller than ~3× the magnitude), or when three or more chains meet (the spherical
+// cornerPatches below own the orthogonal three-chain case).
+//
+// Known limits (documented, not bugs): radius feasibility is the caller's job (clamp
+// like filleted-box.js does — an oversized radius self-intersects the cutters).
 //
 // Selector object mirrors edge-selector.js semantics ({dir, inPlane, at, near});
 // `dir` only ever matches straight chains, like replicad's inDirection.
@@ -36,6 +44,24 @@ const DEFAULT_SEGS = 116;    // full-circle tessellation density (preview qualit
 export class UnsupportedEdgeError extends Error {
   constructor(message) { super(message); this.name = "UnsupportedEdgeError"; }
 }
+
+// Blend-band tessellation density: enough facets to keep the chord sagitta invisible,
+// never more. The kernel's `segs` is a per-circle quality knob sized for part-scale
+// circles; spending it on a blend of radius r tessellates a 0.5 mm fillet to 0.2 µm
+// sagitta at preview quality — and a text rim's hundred-tool boolean then carries ~4×
+// the triangles it needs (measured 12 s / 4 GB on a lettering part before this cap).
+// BLEND_SAG (2 µm) is finer than preview quality's own ~4 µm sagitta at part scale;
+// the 0.02·r term keeps micro-blends sane, and the floor of 12 keeps every facet
+// angle (≤30°) under the viewer's 35° same-surface crease threshold.
+const BLEND_SAG = 2e-3; // mm — max chord sagitta of a blend cross-section
+function blendSegs(segs, r) {
+  const s = Math.min(BLEND_SAG, 0.02 * r);
+  return Math.min(segs, Math.max(12, Math.ceil(Math.PI / Math.acos(1 - s / r))));
+}
+// One derivation for a synthetic corner arc's angular density, shared by revolveTool
+// (which sweeps at it) and cornerHornTool (whose apothem bound below depends on it) —
+// the horn's containment proof only holds if both compute the same number.
+const cornerArcSegs = (segs, R, magnitude) => blendSegs(segs, R + magnitude);
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -242,7 +268,19 @@ function stitchPlanarChains(chains) {
   while (progress) {
     progress = false;
     outer: for (let i = 0; i < open.length; i++) {
-      const a = open[i], aEnd = key(a.points[a.points.length - 1]);
+      let a = open[i];
+      // Orientations: b forward/reversed against a's END covers end-start and end-end;
+      // the ordered (j,i) pass covers start-end. START-START needs a itself reversed —
+      // without this clause two chains seeded outward from the same junction vertex
+      // (the edge walk picks its seeds by graph order, not geometry) never stitch, and
+      // their tools overshoot tangentially into each other at that junction.
+      if (open.some((b, j) => j !== i && compatible(a, b) &&
+        (key(b.points[0]) === key(a.points[0]) || key(b.points[b.points.length - 1]) === key(a.points[0]))) &&
+        !open.some((b, j) => j !== i && compatible(a, b) &&
+          (key(b.points[0]) === key(a.points[a.points.length - 1]) || key(b.points[b.points.length - 1]) === key(a.points[a.points.length - 1])))) {
+        a = rev(a);
+      }
+      const aEnd = key(a.points[a.points.length - 1]);
       for (let j = 0; j < open.length; j++) {
         if (i === j || !compatible(a, open[j])) continue;
         let b = open[j];
@@ -359,11 +397,39 @@ function fitArcChain(members, points, convex, closed) {
   const alpha = (l2 * (l1 - c12)) / det, beta = (l1 * (l2 - c12)) / det;
   const O = add(p0, add(scl(e1, alpha), scl(e2, beta)));
   const R = len(sub(p0, O));
-  const rtol = Math.max(1e-3, 1e-3 * R);
+  // The fit tolerance is ABSOLUTE and tight (2 µm) on purpose, sandwiched from both
+  // sides. Below: it must ACCEPT this module's own blend rims — profile2D's area-exact
+  // bump parks interior arc vertices up to r·θ²/12 ≈ 1.3 µm off the true circle (the
+  // sagitta bound caps θ so that ceiling is density-independent), and a true revolved
+  // rim's float32 quantization is far under that. Above: it must REJECT an offset
+  // outline that merely APPROXIMATES a circle after simplify() — those deviate by
+  // several microns, and the revolve tool follows the FITTED circle, so accepting one
+  // turns every real deviation into tangent-seam jitter along the whole run (measured:
+  // a label backing drew ~450 band-edge lines from two accepted pseudo-arcs). Rejected
+  // rims fall through to the planar-path rescue, whose sweep follows the true polyline
+  // exactly. The old max(1e-3, 1e-3·R) relative term is what let the pseudo-arcs in.
+  const rtol = 2e-3;
   for (const p of points) {
     if (Math.abs(len(sub(p, O)) - R) > rtol) return bad("edge curve is not circular");
     if (Math.abs(dot(sub(p, O), w)) > rtol) return bad("edge curve is not planar");
   }
+  // Chord-dip gate: the wall facets hang on these same points, so the deepest chord
+  // midpoint below the fitted circle measures how coarse the flank tessellation
+  // really is. The revolve tool is the right instrument only for kernel-quality
+  // surfaces of revolution — its tangent extension chases facets a few microns deep.
+  // A rim whose facets dip an order deeper (a polygonal prism, a coarse offset
+  // outline) must blend along its own polyline instead: the planar rescue's sweep
+  // makes station-exact contact per facet, where a revolve's round tail can only
+  // graze a deep flat facet (measured: 24-gon rim, 188 band lines as an arc, zero as
+  // a planar chain). Bound: 3× the dip a DEFAULT_SEGS-quality wall would have, plus
+  // the fit tolerance both sides of the chord ride on.
+  let dip = 0;
+  for (let i = 0; i + 1 < points.length; i++) {
+    const q = sub(scl(add(points[i], points[i + 1]), 0.5), O);
+    dip = Math.max(dip, R - len(sub(q, scl(w, dot(q, w)))));
+  }
+  if (dip > 3 * R * (1 - Math.cos(Math.PI / DEFAULT_SEGS)) + 2 * rtol)
+    return bad("edge polyline is coarser than a kernel-quality surface of revolution");
   // frame: azimuth 0 at the first point; flip w so azimuths increase along the run
   const u0 = norm(sub(points[0], O));
   let v0 = cross(w, u0);
@@ -515,17 +581,28 @@ function profile2D({ P, n1, n2, magnitude, mode, convex, segs, ext = 0 }) {
   // plane-on-plane, which the kernel resolves exactly.
   const s2 = Math.sign(phi) || 1, span = Math.abs(phi);
   const nArc = Math.max(2, Math.ceil((span / (2 * Math.PI)) * segs));
+  // Area-exact tessellation: an inscribed chord polygon under-sweeps the ball arc by a
+  // first-order-in-facet-angle area deficit whose RELATIVE size is radius-independent
+  // (~0.23/n² of the blend cross-section) — at the sagitta-bounded density above it
+  // would bias every blend's volume by ~0.2-0.3%. Interior vertices sit at
+  // r·√(θ/sinθ), the radius at which the chord polygon sweeps exactly the arc's area
+  // (a micron-scale outward nudge that is material-safe in both boolean directions:
+  // a cutter bites a hair deeper mid-chord, a filler overlaps a hair more). The two
+  // END vertices stay exactly on the ball — they are the seam with the flanks.
+  const th = (span + 2 * ext) / nArc;
+  const rEq = r * Math.sqrt(th / Math.sin(th));
   const pts = [corner];
   for (let i = 0; i <= nArc; i++) {
     const nv = rot2(n1, s2 * (-ext + ((span + 2 * ext) * i) / nArc));
-    pts.push([C[0] + sgn * r * nv[0], C[1] + sgn * r * nv[1]]);
+    const ri = i === 0 || i === nArc ? r : rEq;
+    pts.push([C[0] + sgn * ri * nv[0], C[1] + sgn * ri * nv[1]]);
   }
   return pts;
 }
 
 // ---------------------------------------------------------------------------
 // Cutter/filler solids.
-function prismTool(k, chain, magnitude, mode, segs) {
+function prismTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   const { a, dir: e, length, n1, n2, convex } = chain;
   // pose rotation Z → e; the 2D basis is the image of X,Y under the SAME rotation
   const axisRaw = cross([0, 0, 1], e);
@@ -536,10 +613,12 @@ function prismTool(k, chain, magnitude, mode, segs) {
   const u = axis ? rotVec([1, 0, 0], axis, theta) : [1, 0, 0];
   const v = axis ? rotVec([0, 1, 0], axis, theta) : [0, 1, 0];
   const p2 = (w) => [dot(w, u), dot(w, v)];
-  const poly = profile2D({ P: [0, 0], n1: p2(n1), n2: p2(n2), magnitude, mode, convex, segs });
+  const poly = profile2D({ P: [0, 0], n1: p2(n1), n2: p2(n2), magnitude, mode, convex, segs: pSegs });
   // convex cutters overshoot the edge ends (sticking outside the solid is
-  // harmless when subtracting); concave fillers must end flush — any overshoot
-  // would bulge outside the part when unioned
+  // harmless when subtracting, and at a rounded corner the overshoot continues
+  // tangentially into the arc tool, like a stadium rim's prisms always have);
+  // concave fillers must end flush — any overshoot would bulge outside the part
+  // when unioned
   const over = convex ? Math.max(1e-3, 0.05 * magnitude) : 0;
   let tool = k.loft(
     [{ polygon: poly, z: -over }, { polygon: poly, z: length + over }],
@@ -549,7 +628,11 @@ function prismTool(k, chain, magnitude, mode, segs) {
   return tool.translate(a);
 }
 
-function revolveTool(k, chain, magnitude, mode, segs) {
+// `segs` is the KERNEL quality — it sizes the flank-facet guards (sag/ext) and the
+// closed-revolve dephase, which are about matching the neighboring tessellation and
+// must not follow the blend cap. `pSegs` is the sagitta-bounded density for the blend
+// cross-section itself (blendSegs above).
+function revolveTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   const { O, w, u0, v0, R, span, closed, n1, n2, convex } = chain;
   // Seam-grazing guard. The edge circle passes through the flank tessellation's
   // VERTICES (circumradius) while its facets sit at the apothem, so a revolved
@@ -558,14 +641,33 @@ function revolveTool(k, chain, magnitude, mode, segs) {
   // cannot always collapse them. `sag` is that facet sagitta plus a roundoff pad
   // bounded relative to the requested feature, so tiny blends never inherit a
   // fixed allowance larger than their own cross-section.
-  const sag = (R + magnitude) * (1 - Math.cos(Math.PI / segs)) + Math.min(2e-4, 0.02 * magnitude);
+  //
+  // The kernel-density term is an ASSUMPTION about the flank, and it is wrong
+  // whenever the wall's facets hang on a polyline coarser than kernel quality —
+  // an offset outline, a polygonal prism — or when the rim rides the fit tolerance
+  // off the fitted circle. The wall facets hang on the chain's own points, so the
+  // real depth is measurable: the deepest chord midpoint below the fitted circle.
+  // Where the assumed extension fell short of that, the crossing failed mid-facet
+  // and a radial knife-fin of wall survived both cutters, drawing a line along the
+  // band (the label-backing bug). A synthetic corner arc measures nothing — its two
+  // points span the whole corner, and its flanks are planes, not a tessellation.
+  const kernelSag = (R + magnitude) * (1 - Math.cos(Math.PI / segs));
+  let dip = 0;
+  if (!chain.synthetic) {
+    const pts = chain.points;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const q = sub(scl(add(pts[i], pts[i + 1]), 0.5), O);
+      dip = Math.max(dip, R - len(sub(q, scl(w, dot(q, w)))));
+    }
+  }
+  const sag = Math.max(kernelSag, dip) + Math.min(2e-4, 0.02 * magnitude);
   // Fillet: size the arc-tail extension to cross the facet planes, but cap it at
   // 0.4 rad. Below the mesh's own facet scale a larger tail wraps around the tiny
   // profile and creates one tunnel per facet; the cap bounds penetration to 8%
   // of the requested radius while the cutter's outside corner still opens into
   // free space.
   const ext = Math.min(0.4, Math.max(0.01, Math.acos(Math.max(-1, 1 - sag / magnitude))));
-  let poly = profile2D({ P: [R, 0], n1, n2, magnitude, mode, convex, segs, ext });
+  let poly = profile2D({ P: [R, 0], n1, n2, magnitude, mode, convex, segs: pSegs, ext });
   if (mode === "chamfer") {
     // Chamfer: the cone itself is the cutting surface — no tail to extend, so
     // bury the whole profile by `sag` along the material-side bisector instead.
@@ -588,7 +690,12 @@ function revolveTool(k, chain, magnitude, mode, segs) {
   if (area < 0) poly = poly.slice().reverse();
   const ovAng = closed || !convex ? 0 : Math.min(0.15, Math.max(1e-3, (0.05 * magnitude) / R));
   const degrees = closed ? 360 : ((span + 2 * ovAng) * 180) / Math.PI;
-  let tool = k.revolve(poly, { degrees });
+  // A real edge-circle arc keeps the kernel's angular density — its facets interact
+  // with the flank's own tessellation of the same circle (the dephase note below).
+  // A SYNTHETIC corner arc (cornerArcAt) is free-standing between planes, so its
+  // angular density follows the same sagitta bound as the cross-section.
+  const aSegs = chain.synthetic ? cornerArcSegs(segs, R, magnitude) : segs;
+  let tool = k.revolve(poly, { degrees, segs: aSegs });
   // pose: Z → w, then twist so the revolve's start azimuth (+X) lands on the
   // chain's start direction (backed off by the angular overshoot)
   const startDir = closed ? u0 : add(scl(u0, Math.cos(-ovAng)), scl(v0, Math.sin(-ovAng)));
@@ -628,7 +735,7 @@ function revolveTool(k, chain, magnitude, mode, segs) {
 // watertight). Any residual sweep refusal (float-edge fold the pre-split missed) is
 // converted to UnsupportedEdgeError so the caller reroutes to OCCT instead of failing
 // the build. Returns an ARRAY of tools — one per stretch.
-function planarTool(k, chain, magnitude, mode, segs) {
+function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   const { points, closed, convex, faceN, wallNs } = chain;
   const pts = closed ? points.slice(0, -1) : points;   // drop the duplicated closure point
   const m = pts.length;
@@ -645,21 +752,66 @@ function planarTool(k, chain, magnitude, mode, segs) {
   // (0.45 vs 0.5) so the split fires before the sweep would throw. `reach` is a cheap
   // rigid upper bound on the profile's half-width — exact reach needs the profile, the
   // profile needs the stretch, and conservatism here only costs an extra mitred split.
+  // Split at a vertex whose miter would fold (fold guard, stricter 0.45 factor so the
+  // split fires before the sweep would throw) — and also at any stitched-junction
+  // corner sharper than SMOOTH_MAX_DEG, whose miter crease would otherwise exceed the
+  // viewer's line threshold and draw across the band. A salient split corner with room
+  // for the setback gets a corner ARC (cornerArcAt — the same rounded-corner treatment
+  // apply() gives two-chain junctions), the adjoining stretches trimmed to its tangent
+  // points; reflex or too-tight splits keep the overshoot mitre.
   const reach = magnitude * 1.5;
-  const isBreak = (i) => {   // vertex i, with a segment on both sides
-    const dIn = segDir[(i - 1 + nSeg) % nSeg], dOut = segDir[i];
-    const c = clamp1(dot(dIn, dOut));
-    if (c < -1 + 1e-6) return true;                                  // reversal cusp
-    return reach * Math.tan(Math.acos(c) / 2) > 0.45 * Math.min(segLen[(i - 1 + nSeg) % nSeg], segLen[i]);
-  };
   const breaks = [];
-  for (let i = closed ? 0 : 1; i < (closed ? m : m - 1); i++) if (isBreak(i)) breaks.push(i);
+  for (let i = closed ? 0 : 1; i < (closed ? m : m - 1); i++) {
+    const iIn = (i - 1 + nSeg) % nSeg;
+    const c = clamp1(dot(segDir[iIn], segDir[i]));
+    const turn = Math.acos(c);
+    const fold = c < -1 + 1e-6 || reach * Math.tan(turn / 2) > 0.45 * Math.min(segLen[iIn], segLen[i]);
+    const sharp = turn > (SMOOTH_MAX_DEG * Math.PI) / 180;
+    if (fold || sharp) breaks.push(i);
+  }
+  // Corner arcs per break vertex, with each side's setback budget measured along the
+  // polyline to the ADJACENT break (or chain end) — a single tessellation segment says
+  // nothing about the room a whole smooth stretch offers.
+  const cornerArcs = new Map();   // break vertex index → { arc, t }
+  if (convex && breaks.length) {
+    const segSum = (from, to) => {
+      let sum = 0;
+      for (let i = from; i < to; i++) sum += segLen[((i % nSeg) + nSeg) % nSeg];
+      return sum;
+    };
+    for (let j = 0; j < breaks.length; j++) {
+      const i = breaks[j], iIn = (i - 1 + nSeg) % nSeg;
+      const prevB = closed
+        ? breaks[(j - 1 + breaks.length) % breaks.length] - (j === 0 ? m : 0)
+        : (j > 0 ? breaks[j - 1] : 0);
+      const nextB = closed
+        ? breaks[(j + 1) % breaks.length] + (j + 1 === breaks.length ? m : 0)
+        : (j + 1 < breaks.length ? breaks[j + 1] : m - 1);
+      const got = cornerArcAt(at(i), faceN, scl(segDir[iIn], -1), segDir[i],
+        wallNs[iIn], wallNs[i], segSum(prevB, i), segSum(i, nextB), magnitude);
+      if (got) cornerArcs.set(i, got);
+    }
+  }
 
   const over = convex ? Math.max(1e-3, 0.05 * magnitude) : 0;
   const overshoot = (path) => {
     if (!(over > 0) || path.length < 2) return path;
     const a = path[0], b = path[1], y = path[path.length - 1], x = path[path.length - 2];
     return [add(a, scl(norm(sub(a, b)), over)), ...path, add(y, scl(norm(sub(y, x)), over))];
+  };
+  // pull a stretch endpoint back along the polyline by t, toward a corner arc's
+  // tangent point — consuming whole segments where the setback spans several
+  const pullBack = (path, t, fromEnd) => {
+    if (!(t > 0) || path.length < 2) return path;
+    let p = fromEnd ? path.slice().reverse() : path.slice();
+    let rem = t;
+    while (rem > 1e-12 && p.length >= 2) {
+      const seg = sub(p[1], p[0]), l = len(seg);
+      if (l > rem + 1e-9) { p[0] = add(p[0], scl(seg, rem / l)); break; }
+      rem -= l;
+      p.shift();
+    }
+    return fromEnd ? p.reverse() : p;
   };
 
   // One tool per stretch. The profile's wall normal is the SEED member's — the segment
@@ -679,7 +831,7 @@ function planarTool(k, chain, magnitude, mode, segs) {
       const q = [dot(v, N), dot(v, B)], l = Math.hypot(q[0], q[1]) || 1;
       return [q[0] / l, q[1] / l];
     };
-    const poly = profile2D({ P: [0, 0], n1: p2(faceN), n2: p2(wallN), magnitude, mode, convex, segs });
+    const poly = profile2D({ P: [0, 0], n1: p2(faceN), n2: p2(wallN), magnitude, mode, convex, segs: pSegs });
     return k.sweep(poly, path3D, { closed: isClosed });
   };
 
@@ -693,16 +845,283 @@ function planarTool(k, chain, magnitude, mode, segs) {
       ? breaks.map((b, j) => [b, breaks[(j + 1) % breaks.length] + (j + 1 === breaks.length ? m : 0)])
       : (breaks.length ? [[0, breaks[0]], ...breaks.map((b, j) => [b, j + 1 < breaks.length ? breaks[j + 1] : m - 1])] : [[0, m - 1]]);
     const tools = [];
+    const arcAt = (i) => cornerArcs.get(((i % m) + m) % m);
     for (const [s, e] of bounds) {
       if (e <= s) continue;
-      const path = [];
+      let path = [];
       for (let i = s; i <= e; i++) path.push(at(i));
+      const aS = arcAt(s), aE = arcAt(e);
+      if (aS) path = pullBack(path, aS.t, false);
+      if (aE) path = pullBack(path, aE.t, true);
       tools.push(toolFor(overshoot(path), false, wallNs[s % nSeg]));
+    }
+    for (const got of cornerArcs.values()) {
+      tools.push(revolveTool(k, got.arc, magnitude, mode, segs, pSegs));
+      if (len(sub(got.vertex, got.arc.O)) - got.arc.R > 0.02 * magnitude)
+        tools.push(cornerHornTool(k, got, magnitude, segs));
     }
     return tools;
   } catch (e) {
     throw new UnsupportedEdgeError(`planar sweep: ${e.message}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Rounded corners. Where exactly TWO selected convex chains meet at a salient corner
+// in a common face plane (a letter corner, a polygon corner on a rim), the blend used
+// to continue straight through from both sides and the two tools crossed in a mitre.
+// That groove is a REAL crease — 76-90° dihedral, measured — so the feature-line
+// overlay faithfully drew a polyline ACROSS the blend band at every such corner, and
+// OCCT's native fillet produces the same intersection-and-trim crease. There is no
+// groove-free construction that keeps the silhouette sharp: the two straight blends
+// must either intersect or the blend must steer around the corner. This steers: the
+// corner is replaced by a small circular ARC chain (radius ~1.05-1.25× the blend
+// magnitude, tangent to both neighbors at a setback), the neighbors are trimmed to the
+// tangent points, and the existing revolveTool sweeps the arc — exactly the shape a
+// rounded-rectangle rim already has, which renders line-free today. The cost, stated
+// plainly: within the band the silhouette rounds by about the blend radius at corners
+// sharper than CORNER_ROUND_MIN_TURN; gentler corners keep their exact silhouette (a
+// mitre under the viewer\'s 35° line threshold draws nothing).
+//
+// REFLEX corners keep the mitre: the ball genuinely cannot reach into the corner, the
+// crease there is real geometry, and rounding the path would ADD material. A corner
+// whose neighbors are too short to host the setback (tight glyph features) falls back
+// to the mitre too — the fallback is today\'s behavior, never a failure.
+// Corners gentler than this keep their mitre: the two blends there differ by less than
+// the mitre turn everywhere, far under the viewer's 35° line threshold, and the shallow
+// overlap sliver stays too flat for simplify() to fold into visible creases. Measured:
+// a 20.7° mitre still drew (its long shallow overlap wedge triangulates into >35°
+// junk), an ~8° one does not. The silhouette cost of rounding a gentle corner is a
+// sagitta of ρ·(1−cos(turn/2)) — sub-micron at these angles — so the gate is safe low.
+const CORNER_ROUND_MIN_TURN = (8 * Math.PI) / 180;
+const RHO_MIN = 1.05;   // × magnitude — revolve floor: the profile reaches magnitude inward of the arc
+const RHO_PREF = 1.25;  // × magnitude — preferred corner radius, a hair over the floor for margin
+
+// Corner-arc descriptor at one vertex. tin1/tin2 point from the vertex INTO each side;
+// wall1/wall2 are the sides\' outward wall normals at the vertex; len1/len2 bound the
+// setback. Returns { arc, t } (a synthetic kind:"arc" chain for revolveTool, plus the
+// setback to trim each side by) or null when the corner keeps its mitre.
+function cornerArcAt(vertex, f, tin1, tin2, wall1, wall2, len1, len2, magnitude) {
+  const tIn = scl(tin1, -1), tOut = tin2;         // travel: arrive along side 1, depart into 2
+  const turn = Math.acos(clamp1(dot(tIn, tOut)));
+  if (turn < CORNER_ROUND_MIN_TURN) return null;
+  const turnS = dot(cross(tIn, tOut), f);
+  const matLeft = dot(wall1, cross(tIn, f)) > 0;
+  if ((turnS > 0) !== matLeft) return null;       // reflex: the crease is real — keep the mitre
+  const tanH = Math.tan(turn / 2);
+  if (!(tanH > 1e-6) || !Number.isFinite(tanH)) return null;
+  const t = Math.min(RHO_PREF * magnitude * tanH, 0.45 * len1, 0.45 * len2);
+  const rho = t / tanH;
+  if (rho < RHO_MIN * magnitude) return null;     // no room: mitre fallback
+  // inward bisector from the walls; O sits at distance rho from both edge lines
+  const proj = (wl) => { const p = sub(scl(wl, -1), scl(f, -dot(wl, f))); const l = len(p) || 1; return scl(p, 1 / l); };
+  const uA = proj(wall1), uB = proj(wall2);
+  const bisRaw = add(uA, uB);
+  if (len(bisRaw) < 1e-9) return null;
+  const O = add(vertex, scl(norm(bisRaw), rho / Math.cos(turn / 2)));
+  const pA = add(vertex, scl(tin1, t)), pB = add(vertex, scl(tin2, t));
+  const u0raw = sub(pA, O), uEraw = sub(pB, O);
+  const u0 = norm(u0raw), uE = norm(uEraw);
+  const span = Math.acos(clamp1(dot(u0, uE)));
+  if (!(span > 1e-4)) return null;
+  const s = dot(cross(u0, uE), f) >= 0 ? 1 : -1;  // orient w so azimuth increases pA → pB
+  const w = scl(f, s);
+  // rotating-frame flanks, fitArcChain\'s convention ([ρ-component, w-component]):
+  // the face flank is pure ±w, the wall is pure outward radial
+  return {
+    t,
+    vertex,
+    f,
+    arc: { kind: "arc", points: [pA, pB], O, w, u0, v0: cross(w, u0), R: rho, span,
+           closed: false, n1: [0, s], n2: [1, 0], convex: true, synthetic: true },
+  };
+}
+
+// The horn cutter that completes a rounded corner. The arc tool blends the band around
+// the corner's arc cylinder, but the SOLID still has its sharp corner: the column of
+// material between that cylinder and the original vertex would poke up through the band
+// untouched. This block removes it — footprint bounded by the two walls and an arc-side
+// polyline held strictly INSIDE the arc tool's own cut region — from just above the
+// face down to exactly band depth. What remains below is a small flat shelf at the
+// corner base; its rim is a boundary line BELOW the band, the deliberate trade for a
+// band with no lines across it.
+//
+// The arc-side vertices sit at the arc TOOL's guaranteed apothem, R·cos(π/aSegs), less
+// a micron margin — not on the circle itself. Vertices on the circle only bow inside
+// the SMOOTH cylinder; the tool is a polygonal revolve whose facets sit at ITS apothem,
+// and whenever the horn's chords landed shallower than a tool facet (a short-span arc
+// at reduced angular density), the wall between them survived both cutters as a lens
+// filament — an island or a handle, decided by facet phase (measured: the arrow's
+// 20.7° corner flipped genus at some densities and not others). The apothem bound makes
+// containment a proof instead of a phase lottery: tool pitch ≤ 2π/aSegs by definition
+// of its step count, so its apothem ≥ R·cos(π/aSegs) > every horn vertex radius. The
+// cost is a micron-deep extra bite at the corner base, covered near the tangent lines
+// by the neighbors' own overshoot.
+function cornerHornTool(k, { vertex, f, arc }, magnitude, segs) {
+  const { O, w, u0, R, span } = arc;
+  const delta = 0.02 * magnitude;
+  const rH = R * Math.cos(Math.PI / cornerArcSegs(segs, R, magnitude)) - Math.min(1e-3, 0.02 * magnitude);
+  // Pose and depth run along the FACE normal f (material below the face), never the
+  // arc's w — w flips sign with the arc's travel direction, and a block lofted along a
+  // downward w would stand above the face and cut the top instead of the horn.
+  const aRaw = cross([0, 0, 1], f);
+  const s = len(aRaw);
+  let axis = null, theta = 0;
+  if (s > 1e-9) { axis = scl(aRaw, 1 / s); theta = Math.atan2(s, f[2]); }
+  else if (f[2] < 0) { axis = [1, 0, 0]; theta = Math.PI; }
+  const u = axis ? rotVec([1, 0, 0], axis, theta) : [1, 0, 0];
+  const v = axis ? rotVec([0, 1, 0], axis, theta) : [0, 1, 0];
+  const p2 = (p) => { const q = sub(p, O); return [dot(q, u), dot(q, v)]; };
+  const poly = [];
+  poly.push(p2(add(vertex, scl(norm(sub(vertex, O)), delta))));      // vertex, nudged outward
+  poly.push(p2(add(O, scl(u0, R + delta))));                         // tangent A, nudged past its wall
+  const steps = 8;
+  for (let i = 0; i <= steps; i++) poly.push(p2(add(O, scl(rotVec(u0, w, (span * i) / steps), rH))));
+  poly.push(p2(add(O, scl(rotVec(u0, w, span), R + delta))));        // tangent B, nudged past its wall
+  let area = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i], [x2, y2] = poly[(i + 1) % poly.length];
+    area += x1 * y2 - x2 * y1;
+  }
+  const ring = area < 0 ? poly.slice().reverse() : poly;
+  let tool = k.loft([{ polygon: ring, z: -magnitude }, { polygon: ring, z: delta }], { shading: "smooth" });
+  if (axis) tool = tool.rotateAbout({ axis, deg: (theta * 180) / Math.PI });
+  return tool.translate(O);
+}
+
+function chainEndInfo(ch, end) {
+  if (ch.kind === "line") {
+    return end === "start"
+      ? { v: ch.a, tin: ch.dir, flanks: [ch.n1, ch.n2], len: ch.length }
+      : { v: ch.b, tin: scl(ch.dir, -1), flanks: [ch.n1, ch.n2], len: ch.length };
+  }
+  const pts = ch.points, m = pts.length;
+  let plen = 0;
+  for (let i = 0; i + 1 < m; i++) plen += len(sub(pts[i + 1], pts[i]));
+  return end === "start"
+    ? { v: pts[0], tin: norm(sub(pts[1], pts[0])), flanks: [ch.faceN, ch.wallNs[0]], len: plen }
+    : { v: pts[m - 1], tin: norm(sub(pts[m - 2], pts[m - 1])), flanks: [ch.faceN, ch.wallNs[ch.wallNs.length - 1]], len: plen };
+}
+
+// Corner arc for two chain ends meeting at one vertex, or null (no common face plane,
+// gentle turn, reflex corner, or no room for the setback).
+function cornerArcBetween(E1, E2, magnitude) {
+  let f = null, wall1 = null, wall2 = null;
+  for (const c1 of E1.flanks) {
+    for (const c2 of E2.flanks) {
+      if (dot(c1, c2) <= FLANK_COS) continue;
+      // the shared face is ⟂ BOTH tangents; each wall is ⟂ only its own chain\'s
+      if (Math.abs(dot(c1, E1.tin)) > 0.05 || Math.abs(dot(c1, E2.tin)) > 0.05) continue;
+      f = norm(add(c1, c2));
+      wall1 = E1.flanks[0] === c1 ? E1.flanks[1] : E1.flanks[0];
+      wall2 = E2.flanks[0] === c2 ? E2.flanks[1] : E2.flanks[0];
+    }
+  }
+  if (!f) return null;
+  return cornerArcAt(E1.v, f, E1.tin, E2.tin, wall1, wall2, E1.len, E2.len, magnitude);
+}
+
+// Convert a FACE-PLANE arc chain to the equivalent planar chain, or return null when
+// the arc has no world-constant flank (a rim on a curved face — revolveTool's
+// irreplaceable case). In-plane rims blend by sweeping their own polyline instead of
+// revolving a fitted circle, for two reasons measured on a label backing. The sweep's
+// stations sit ON the rim vertices, so its flank contact is plane-exact per wall facet,
+// where the revolve's contact is a three-way micron contest (its own angular chords,
+// the wall's facets, and the circle fit's offset) that strands radial knife-fins along
+// the band whenever the margins interfere. And a planar chain STITCHES to its planar
+// neighbors, so the arc↔planar junction — two tools overshooting tangentially into
+// each other, which roundSalientCorners never handled because it skips arc chains —
+// stops existing as a category. Selection still runs on the ARC form (near-selectors
+// match the fitted circle, not its chords); conversion happens after, in apply().
+function planarizeArc(ch) {
+  if (ch.kind !== "arc") return null;
+  // face flank = the rotating-frame flank that is axial (±w, world-constant); ~3° bar
+  const pick = Math.abs(ch.n1[0]) <= 0.05 ? 0 : Math.abs(ch.n2[0]) <= 0.05 ? 1 : -1;
+  if (pick === -1) return null;
+  const [face, wall] = pick === 0 ? [ch.n1, ch.n2] : [ch.n2, ch.n1];
+  const faceN = scl(ch.w, Math.sign(face[1]));
+  const pts = ch.points;
+  const wallNs = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const q = sub(scl(add(pts[i], pts[i + 1]), 0.5), ch.O);
+    const rho = norm(sub(q, scl(ch.w, dot(q, ch.w))));
+    wallNs.push(norm(add(scl(rho, wall[0]), scl(ch.w, wall[1]))));
+  }
+  return { kind: "planar", points: pts.map((p) => [p[0], p[1], p[2]]), closed: ch.closed,
+           convex: ch.convex, w: faceN, faceN, wallNs };
+}
+
+// Trim a chain back by tStart/tEnd (0 = untouched) toward the corner arcs that replace
+// its mitred ends. Line chains shift their endpoints; planar chains walk the polyline in
+// from each end, dropping consumed vertices (and their members\' wall normals) and
+// planting the new endpoint mid-segment. Returns the trimmed copy, or null when nothing
+// usable remains (guarded against by cornerArcAt\'s 0.45·length setback cap).
+function trimChain(ch, tStart, tEnd) {
+  if (!(tStart > 0) && !(tEnd > 0)) return ch;
+  if (ch.kind === "line") {
+    const length = ch.length - tStart - tEnd;
+    if (!(length > 1e-9)) return null;
+    return { ...ch, a: add(ch.a, scl(ch.dir, tStart)), b: sub(ch.b, scl(ch.dir, tEnd)), length };
+  }
+  let pts = ch.points.map((p) => [p[0], p[1], p[2]]);
+  let walls = ch.wallNs.slice();
+  const eat = (t) => {   // consume t from the FRONT of pts/walls
+    while (t > 1e-12 && pts.length >= 2) {
+      const seg = sub(pts[1], pts[0]), l = len(seg);
+      if (l > t + 1e-12) { pts[0] = add(pts[0], scl(seg, t / l)); return true; }
+      t -= l;
+      pts.shift();
+      walls.shift();
+    }
+    return pts.length >= 2;
+  };
+  const flip = () => { pts.reverse(); walls.reverse(); };
+  if (tStart > 0 && !eat(tStart)) return null;
+  if (tEnd > 0) { flip(); if (!eat(tEnd)) return null; flip(); }
+  if (pts.length < 2) return null;
+  return { ...ch, points: pts, wallNs: walls, closed: false };
+}
+
+// Round the salient two-chain corners of a selection: returns the effective chain list
+// (trimmed neighbors substituted in place) plus the synthetic corner-arc chains.
+function roundSalientCorners(selected, magnitude) {
+  const keyOf = (p) => `${Math.round(p[0] * WELD)},${Math.round(p[1] * WELD)},${Math.round(p[2] * WELD)}`;
+  const ends = new Map();
+  for (const ch of selected) {
+    if (ch.closed || ch.convex !== true) continue;
+    if (ch.kind !== "line" && ch.kind !== "planar") continue;
+    for (const end of ["start", "end"]) {
+      const info = chainEndInfo(ch, end);
+      const kk = keyOf(info.v);
+      (ends.get(kk) ?? ends.set(kk, []).get(kk)).push({ ch, end, info });
+    }
+  }
+  const arcs = [], horns = [], trims = new Map();
+  const addTrim = (ch, end, t) => {
+    const cur = trims.get(ch) ?? { start: 0, end: 0 };
+    cur[end] = t;
+    trims.set(ch, cur);
+  };
+  for (const list of ends.values()) {
+    if (list.length !== 2 || (list[0].ch === list[1].ch && list[0].end === list[1].end)) continue;
+    const got = cornerArcBetween(list[0].info, list[1].info, magnitude);
+    if (!got) continue;
+    arcs.push(got.arc);
+    // a gentle corner's horn is a sliver — depth ρ·(1/cos(turn/2) − 1), microns at
+    // small turns — not worth a cutter (and thin cutters are their own noise source)
+    if (len(sub(got.vertex, got.arc.O)) - got.arc.R > 0.02 * magnitude)
+      horns.push({ vertex: got.vertex, f: got.f, arc: got.arc });
+    addTrim(list[0].ch, list[0].end, got.t);
+    addTrim(list[1].ch, list[1].end, got.t);
+  }
+  if (!arcs.length) return { chains: selected, arcs, horns };
+  const chains = [];
+  for (const ch of selected) {
+    const tr = trims.get(ch);
+    const eff = tr ? trimChain(ch, tr.start, tr.end) : ch;
+    if (eff) chains.push(eff);
+  }
+  return { chains, arcs, horns };
 }
 
 // ---------------------------------------------------------------------------
@@ -776,13 +1195,20 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   if (!selected.length) throw new UnsupportedEdgeError(`${mode} selector matched no sharp edges`);
   const unsupported = selected.find((ch) => ch.kind === "unsupported");
   if (unsupported) throw new UnsupportedEdgeError(`${mode}: ${unsupported.reason}`);
+  // Face-plane arc rims sweep their own polyline (see planarizeArc); re-stitch so a
+  // converted arc joins its planar neighbors — chainEdges' own stitch pass ran before
+  // these chains were planar, so their junctions are still open here.
+  const planarized = stitchPlanarChains(selected.map((ch) => planarizeArc(ch) ?? ch));
+  const { chains: effective, arcs, horns } = roundSalientCorners(planarized, magnitude);
+  const pSegs = blendSegs(segs, magnitude);
   const toolsFor = (ch) =>
     ch.kind === "planar"
-      ? planarTool(k, ch, magnitude, mode, segs)
-      : [(ch.kind === "arc" ? revolveTool : prismTool)(k, ch, magnitude, mode, segs)];
-  const cutters = selected.filter((ch) => ch.convex).flatMap(toolsFor);
-  const fillers = selected.filter((ch) => !ch.convex).flatMap(toolsFor);
-  if (mode === "fillet") cutters.push(...cornerPatches(k, selected, magnitude, segs));
+      ? planarTool(k, ch, magnitude, mode, segs, pSegs)
+      : [(ch.kind === "arc" ? revolveTool : prismTool)(k, ch, magnitude, mode, segs, pSegs)];
+  const cutters = [...effective, ...arcs].filter((ch) => ch.convex).flatMap(toolsFor);
+  cutters.push(...horns.map((h) => cornerHornTool(k, h, magnitude, segs)));
+  const fillers = effective.filter((ch) => !ch.convex).flatMap(toolsFor);
+  if (mode === "fillet") cutters.push(...cornerPatches(k, effective, magnitude, segs));
   let out = solid;
   if (cutters.length) out = out.cutAll(cutters);
   if (fillers.length) out = k.union([out, ...fillers]);
