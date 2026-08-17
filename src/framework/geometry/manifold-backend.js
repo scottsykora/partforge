@@ -13,7 +13,7 @@ import { offsetRegions } from "./contour-offset.js";
 import { finishKernel } from "./kernel-front.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
-import { loftShadingPolicy, SMOOTH } from "./shading-policy.js";
+import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { meshRoundAll } from "./mesh-roundall.js";
 import { KernelCapabilityError } from "./errors.js";
@@ -123,12 +123,6 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // degenerate normals poison the crease pass into drawing phantom edge lines).
   // Unsupported edge classes (helical edges, varying dihedral, …) surface as
   // KernelCapabilityError so the framework reroutes that sub-part to OCCT.
-  // simplify() will not collapse triangles across run (originalID) boundaries,
-  // and the boolean's sliver triangles sit exactly on them — so the result is
-  // re-originaled first. That folds every surface into one fresh original,
-  // which is also the documented B-rep semantic: fillet/chamfer produce new
-  // surfaces, so feature-label attribution downstream of the op uses the
-  // fallback path (AUTHORING-PARTS.md), and the blend shades SMOOTH.
   const SIMPLIFY_EPS = 1e-4; // 0.1 µm — must exceed the boolean's sliver widths (~2e-5)
   // Debris sweep: where blend tools graze each other or a flank near-tangentially, the
   // boolean can strand a CLOSED femto-component (measured ~1e-8 mm³, 4 triangles) that
@@ -144,9 +138,30 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     for (const p of parts) { T(p); if (p.volume() >= DEBRIS_VOL) kept.push(p); }
     return kept.length === parts.length ? m : T(Manifold.compose(kept));
   };
-  const meshCadOp = (op, run) => {
+  // Blend surfaces KEEP their originalIDs, and every id the op introduced is
+  // registered with the BLEND policy — that is what lets creased-normals draw the
+  // band's start/end (a tangent blend↔base seam draws regardless of bend) while
+  // blend↔blend handovers along one band stay invisible. This replaced a blanket
+  // asOriginal(): folding the result into one fresh original made simplify able to
+  // collapse boundary slivers, but it also erased the one distinction the boundary
+  // lines need. The trade is stated honestly: simplify() cannot collapse across the
+  // surviving run boundaries, so seam-adjacent slivers persist as triangles — they
+  // are sub-MIN_EDGE thin, so the line pass gates them, and closed sliver DEBRIS is
+  // swept above; the visible cost is a modestly larger mesh, bounded by
+  // mesh-fillet-perf.test.js. Shading is unchanged (BLEND shades like SMOOTH), and
+  // label() on a blend result already handles a mixed-original mesh (the majority
+  // vote below).
+  const runOids = (mm) => { const g = mm.getMesh(); const s = new Set(g.runOriginalID); g.delete?.(); return s; };
+  const meshCadOp = (op, baseM, run) => {
     try {
-      return T(dropDebris(T(run()._m.asOriginal())).simplify(SIMPLIFY_EPS));
+      const raw = run()._m;
+      const baseOids = runOids(baseM);
+      for (const oid of runOids(raw)) if (!baseOids.has(oid)) oidPolicies.set(oid, BLEND);
+      // debris sweep AFTER simplify: the boolean's own femto-components are joined by
+      // ones simplify() itself pinches off while collapsing seam slivers (measured:
+      // 4-triangle atto-scale bubbles, one with negative volume, after a rim fillet
+      // over vertical-fillet bands) — sweeping first missed those
+      return dropDebris(T(raw.simplify(SIMPLIFY_EPS)));
     } catch (e) {
       if (e instanceof UnsupportedEdgeError) throw new KernelCapabilityError(`${op}: ${e.message}`);
       throw e;
@@ -161,13 +176,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       if (typeof selector === "function") throw new KernelCapabilityError("fillet: function selectors need the OCCT backend");
       if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
       return cached(h("fillet", hash, r, selector ?? null, segs), () =>
-        meshCadOp("fillet", () => meshFillet(kernel, wrap(m, hash), { r, edges: selector, segs })));
+        meshCadOp("fillet", m, () => meshFillet(kernel, wrap(m, hash), { r, edges: selector, segs })));
     },
     chamfer: (d, selector) => {
       if (typeof selector === "function") throw new KernelCapabilityError("chamfer: function selectors need the OCCT backend");
       if (d === 0) return wrap(m, hash);
       return cached(h("chamfer", hash, d, selector ?? null, segs), () =>
-        meshCadOp("chamfer", () => meshChamfer(kernel, wrap(m, hash), { d, edges: selector, segs })));
+        meshCadOp("chamfer", m, () => meshChamfer(kernel, wrap(m, hash), { d, edges: selector, segs })));
     },
     roundAll: (r) => {
       if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
@@ -192,6 +207,49 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     label: (name) => {
       const lh = h("label", hash, name);
       return cache.lookup(lh, () => {
+        // Blend-aware re-stamp. If this mesh carries blend surfaces (the boundaryLines
+        // policy), one asOriginal() would fold band and base into a single surface and
+        // erase the band-boundary overlay on exactly the solids parts label — every
+        // real part labels its top-level solids. Re-stamp as TWO reserved ids instead,
+        // base and blend: the label covers both (same string → one feature entry), the
+        // distinction survives labeling and every later boolean, and reserved ids are
+        // fresh so cached-solid reuse under another label cannot collide — the same
+        // guarantee asOriginal() gives the plain path below.
+        const g0 = m.getMesh();
+        const isBlend = (oid) => !!oidPolicies.get(oid)?.boundaryLines;
+        const oids0 = new Set(g0.runOriginalID);
+        if ([...oids0].some(isBlend)) {
+          const baseId = Manifold.reserveIDs(2), blendId = baseId + 1;
+          // base-group policy: the same triangle-weighted majority vote as the plain
+          // path, but over the NON-blend runs only — blend runs would elect BLEND for
+          // the base group and flag BOTH sides of every boundary seam, which is
+          // exactly the no-line state this path exists to avoid.
+          const ri = g0.runIndex, roid = g0.runOriginalID;
+          const weightByKey = new Map();
+          let bestWeight = -1, basePol;
+          for (let r = 0; r < roid.length; r++) {
+            if (isBlend(roid[r])) continue;
+            const pol = oidPolicies.get(roid[r]) ?? SMOOTH;
+            const key = `${pol.creaseAngle}/${pol.sameSurfaceLines}/${!!pol.boundaryLines}`;
+            const weight = (weightByKey.get(key) || 0) + (ri[r + 1] / 3 - ri[r] / 3);
+            weightByKey.set(key, weight);
+            const better = weight > bestWeight || (weight === bestWeight && !pol.sameSurfaceLines && basePol?.sameSurfaceLines);
+            if (better) { bestWeight = weight; basePol = pol; }
+          }
+          g0.runOriginalID = Uint32Array.from(roid, (o2) => (isBlend(o2) ? blendId : baseId));
+          const o = T(new Manifold(g0));
+          g0.delete?.();
+          featureLabels.set(baseId, name);
+          featureLabels.set(blendId, name);
+          oidPolicies.set(blendId, BLEND);
+          if (basePol !== undefined) oidPolicies.set(baseId, basePol);
+          return { value: wrap(o, lh), pin: o, dispose: () => {
+            featureLabels.delete(baseId); featureLabels.delete(blendId);
+            oidPolicies.delete(baseId); oidPolicies.delete(blendId);
+            o.delete?.();
+          } };
+        }
+        g0.delete?.();
         const prevId = typeof m.originalID === "function" ? m.originalID() : -1;
         const o = T(m.asOriginal());
         const id = o.originalID();
@@ -231,7 +289,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
           let bestWeight = -1, bestPol;
           for (let r = 0; r < roid.length; r++) {
             const pol = oidPolicies.get(roid[r]) ?? SMOOTH;
-            const key = `${pol.creaseAngle}/${pol.sameSurfaceLines}`;
+            const key = `${pol.creaseAngle}/${pol.sameSurfaceLines}/${!!pol.boundaryLines}`;
             const weight = (weightByKey.get(key) || 0) + (ri[r + 1] / 3 - ri[r] / 3);
             weightByKey.set(key, weight);
             const better = weight > bestWeight || (weight === bestWeight && !pol.sameSurfaceLines && bestPol?.sameSurfaceLines);

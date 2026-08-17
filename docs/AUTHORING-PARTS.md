@@ -2241,6 +2241,16 @@ melt away, holes narrower than `2r` seal shut. That makes it ideal for
 "soften this whole organic part" and wrong for parts where a specific edge
 must stay sharp (use `fillet` with a selector for that).
 
+**Cost warning: roundAll is morphological (three Minkowski passes) and its
+runtime grows steeply with the solid's triangle count.** On a simple bracket it
+is interactive; on a complex outline it is not — measured 30+ seconds on a
+text-outline extrusion whose `fillet({ r, edges: { inPlane: "XY", at: h } })`
+takes well under a second. **Never use roundAll just to round the top or bottom
+rim of an extrusion** — that is exactly what the `inPlane` fillet selector is
+for, at a tiny fraction of the cost. Reach for roundAll only when the design
+genuinely needs every edge softened at once and the solid is geometrically
+simple.
+
 Rules of thumb:
 
 - Keep `r` under half your thinnest wall unless you *want* melting.
