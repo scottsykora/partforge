@@ -112,12 +112,22 @@ export function resolveSweepStations(profile2D, path3D, { closed = false, corner
           rodrigues(N, axis, ang), rodrigues(B, axis, ang)));
       }
     } else {                                              // sharp miter: one station in the bisecting plane
-      if (maxReach * Math.tan(theta / 2) > 0.5 * Math.min(lenIn, lenOut))
-        throw new Error(`sweep: profile too wide for the bend at vertex ${vtx} (turn too sharp / segment too short) — increase cornerRadius or lengthen the segment`);
       const Nh = rodrigues(N, axis, theta / 2), Bh = rodrigues(B, axis, theta / 2);
       const mDir = rodrigues(tIn, axis, theta / 2);       // ring-plane normal (average travel dir)
       const u = norm(cross(axis, mDir));                  // in-plane bend direction (stretch axis)
       const cosh = Math.cos(theta / 2);
+      // Fold check, DIRECTION-aware: consecutive mitered rings converge only on
+      // the inside of the bend (u points toward the bend center; the far side
+      // diverges), so what must fit is the profile's stretched reach along +u —
+      // not its symmetric max-|vertex| bound, which refused tight concave rim
+      // sweeps whose inside-of-bend extent is only the blend profile's ~2%-of-
+      // magnitude beyond-wall margin (mesh-fillet's planar chains over a
+      // radius≈magnitude concave outline arc are exactly that case).
+      const uN = dot(u, Nh), uB = dot(u, Bh);
+      let reachIn = 0;
+      for (const [x, y] of profile2D) reachIn = Math.max(reachIn, x * uN + y * uB);
+      if ((reachIn / cosh) * Math.tan(theta / 2) > 0.5 * Math.min(lenIn, lenOut))
+        throw new Error(`sweep: profile too wide for the bend at vertex ${vtx} (turn too sharp / segment too short) — increase cornerRadius or lengthen the segment`);
       stations.push(profile2D.map(([x, y]) => {
         const p = add(scl(Nh, x), scl(Bh, y));            // profile point in the miter plane (spanned by u, axis)
         return add(center, add(scl(axis, dot(p, axis)), scl(u, dot(p, u) / cosh))); // stretch the u component

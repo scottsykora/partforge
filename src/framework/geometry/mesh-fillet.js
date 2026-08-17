@@ -765,13 +765,26 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   // points; a reflex split gets the rolling-ball PIVOT (reflexPivotTool — without it
   // the flush stretch ends leave the corner wedge uncut and the face keeps its point);
   // too-tight salient splits keep the overshoot mitre.
+  // The reach bound is SIDE-aware, mirroring the sweep's own direction-aware
+  // check: rings converge only on the inside of a bend. A salient bend curves
+  // toward the material, where the profile spans the whole blend (the rigid
+  // 1.5× bound); a reflex bend curves past the wall, where the profile reaches
+  // only profile2D's ~2%-of-magnitude corner delta — a symmetric bound there
+  // shattered any concave outline arc of radius ≲ 1.7·magnitude (the roundAll
+  // fast path's reflex arcs exactly) into per-facet tools whose mutual
+  // crossings drew a groove per facet across the band.
   const reach = magnitude * 1.5;
+  const reachWall = 0.1 * magnitude;
   const breaks = [];
   for (let i = closed ? 0 : 1; i < (closed ? m : m - 1); i++) {
     const iIn = (i - 1 + nSeg) % nSeg;
     const c = clamp1(dot(segDir[iIn], segDir[i]));
     const turn = Math.acos(c);
-    const fold = c < -1 + 1e-6 || reach * Math.tan(turn / 2) > 0.45 * Math.min(segLen[iIn], segLen[i]);
+    // inside-of-bend direction ≈ change of travel; past the wall ⇒ reflex bend
+    const bendIn = norm(sub(segDir[i], segDir[iIn]));
+    const reflexBend = dot(bendIn, wallNs[iIn]) + dot(bendIn, wallNs[i % nSeg]) > 0;
+    const r = reflexBend ? reachWall : reach;
+    const fold = c < -1 + 1e-6 || r * Math.tan(turn / 2) > 0.45 * Math.min(segLen[iIn], segLen[i]);
     const sharp = turn > (SMOOTH_MAX_DEG * Math.PI) / 180;
     if (fold || sharp) breaks.push(i);
   }
@@ -1246,12 +1259,28 @@ function roundSalientCorners(selected, magnitude) {
 // so the only new surface is the octant. Non-orthogonal corners keep the mitre
 // — the safe, documented default.
 function cornerPatches(k, selected, r, segs) {
-  const lines = selected.filter((ch) => ch.kind === "line" && ch.convex);
   const byVertex = new Map();
-  for (const ch of lines) {
-    for (const [pt, dirOut] of [[ch.a, ch.dir], [ch.b, scl(ch.dir, -1)]]) {
-      const key = pt.map((v) => Math.round(v * 1e4)).join(",");
-      (byVertex.get(key) ?? byVertex.set(key, []).get(key)).push({ pt, dirOut });
+  const push = (pt, dirOut) => {
+    const key = pt.map((v) => Math.round(v * 1e4)).join(",");
+    (byVertex.get(key) ?? byVertex.set(key, []).get(key)).push({ pt, dirOut });
+  };
+  for (const ch of selected) {
+    if (ch.convex !== true) continue;
+    if (ch.kind === "line") {
+      push(ch.a, ch.dir);
+      push(ch.b, scl(ch.dir, -1));
+    } else if (ch.kind === "planar" && !ch.closed) {
+      // A planar chain END whose end segment runs straight for ≥ r qualifies
+      // too: inside the corner cube the sweep is the same straight cylinder a
+      // line chain's prism tool would cut, so the octant construction holds
+      // unchanged. This is the roundAll fast path's mixed corner — a straight
+      // rim edge and a vertical edge (line chains) meeting a planar rim chain
+      // whose curvature lives far from the corner. Requiring the full r of
+      // straight run keeps the cube inside the cylinder-only zone.
+      const p = ch.points, n = p.length;
+      const d0 = sub(p[1], p[0]), dN = sub(p[n - 2], p[n - 1]);
+      if (len(d0) >= r) push(p[0], scl(d0, 1 / len(d0)));
+      if (len(dN) >= r) push(p[n - 1], scl(dN, 1 / len(dN)));
     }
   }
   const patches = [];
