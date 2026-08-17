@@ -132,6 +132,41 @@ describe("smooth rims render as clean curves, sharp corners mitre honestly", () 
   });
 });
 
+describe("corner rounds smaller than the blend collapse to virtual corners", () => {
+  it("sub-threshold corner rounds mitre as corners instead of shattering", () => {
+    // A corner round with radius under the fold threshold (~0.37·magnitude)
+    // cannot be swept — the band pinches — and cannot be steered (no setback
+    // room), so the fold guard used to break at EVERY facet and the band
+    // shattered into overshot micro-tools (the non-bold glyph "divot" regime:
+    // raw letter terminals carry ~0.1–0.25 mm rounds under a 0.3 mm fillet;
+    // bold outlines never hit this because the 0.4 mm round offset pads every
+    // convex radius past the threshold). collapseTightCorners replaces the run
+    // with the flanking edge lines' intersection and the corner mitres like
+    // the sharp corner it effectively is: seam at the corner, clean elsewhere.
+    for (const R of [0.12, 0.25]) {
+      const W = 20, Hh = 10, n = 6;
+      const pts = [];
+      const corner = (cx, cy, a0) => {
+        for (let i = 0; i <= n; i++) {
+          const th = a0 + (Math.PI / 2) * (i / n);
+          pts.push([cx + R * Math.cos(th), cy + R * Math.sin(th)]);
+        }
+      };
+      corner(W - R, Hh - R, 0);
+      corner(R, Hh - R, Math.PI / 2);
+      corner(R, R, Math.PI);
+      corner(W - R, R, (3 * Math.PI) / 2);
+      const out = k.extrude({ profile: pts, h: 2 }).fillet(0.3, { inPlane: "XY", at: 2 });
+      const census = bandLines(out, 2, 0.3, {
+        excludeCorners: [[W, Hh], [0, Hh], [0, 0], [W, 0]],
+        margin: 0.75,
+      });
+      expect(census.away).toBeLessThan(10);
+      expect(out.genus()).toBe(0);
+    }
+  });
+});
+
 describe("tight salient arcs keep the revolve", () => {
   it("corner arcs near the blend radius render clean, not shattered", () => {
     // Corner radius 0.5 under a 0.3 fillet — the glyph-outline regime (a bold

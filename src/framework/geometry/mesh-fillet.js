@@ -770,9 +770,107 @@ function revolveTool(k, chain, magnitude, mode, segs, pSegs = segs) {
 // watertight). Any residual sweep refusal (float-edge fold the pre-split missed) is
 // converted to UnsupportedEdgeError so the caller reroutes to OCCT instead of failing
 // the build. Returns an ARRAY of tools — one per stretch.
+// Collapse corner features smaller than the blend into virtual sharp corners.
+// A convex corner round with radius under the fold threshold (~0.37·magnitude at
+// the 1.1× reach) cannot be swept — the band's top tangent contour pinches — and
+// cannot be steered either (no setback room), so the fold guard breaks at EVERY
+// facet joint and the band shatters into overshot micro-tools. But such a feature
+// is geometrically a sharp corner blurred by less than the blend radius: replace
+// each maximal run of two or more consecutive breaking joints whose connecting
+// segments are shorter than the magnitude with the intersection of the flanking
+// edge lines, and the ordinary corner machinery (mitre / gentle steer / reflex
+// pivot) handles it downstream. The silhouette cost is bounded by the feature's
+// own radius — sub-blend by construction. Runs that have no usable intersection
+// (a ~180° cap, whose radius is stroke-scale and sweeps fine anyway) or whose
+// intersection lands implausibly far are left untouched.
+function collapseTightCorners(pts0, wallNs0, closed, magnitude) {
+  let pts = pts0, wallNs = wallNs0;
+  const m0 = pts.length, nSeg0 = closed ? m0 : m0 - 1;
+  if (nSeg0 < 3) return { pts, wallNs };
+  const reach = magnitude * 1.1, reachWall = 0.1 * magnitude;
+  const breaksAt = (pp, ww) => {
+    const m = pp.length, nSeg = closed ? m : m - 1;
+    const dir = [], sl = [];
+    for (let i = 0; i < nSeg; i++) {
+      const d = sub(pp[(i + 1) % m], pp[i]), l = len(d);
+      dir.push(scl(d, 1 / (l || 1))); sl.push(l);
+    }
+    const flags = new Array(m).fill(false);
+    for (let i = closed ? 0 : 1; i < (closed ? m : m - 1); i++) {
+      const iIn = (i - 1 + nSeg) % nSeg;
+      const c = clamp1(dot(dir[iIn], dir[i]));
+      const turn = Math.acos(c);
+      const bendIn = norm(sub(dir[i], dir[iIn]));
+      const reflexBend = dot(bendIn, ww[iIn]) + dot(bendIn, ww[i % nSeg]) > 0;
+      const r = reflexBend ? reachWall : reach;
+      flags[i] = c < -1 + 1e-6 || r * Math.tan(turn / 2) > 0.45 * Math.min(sl[iIn], sl[i]) ||
+        turn > (SMOOTH_MAX_DEG * Math.PI) / 180;
+    }
+    return { flags, dir, sl };
+  };
+  let { flags, dir, sl } = breaksAt(pts, wallNs);
+  // rotate a closed chain so runs never wrap; a chain breaking everywhere is left alone
+  if (closed) {
+    const pivot = flags.findIndex((b) => !b);
+    if (pivot === -1) return { pts, wallNs };
+    if (pivot > 0) {
+      pts = [...pts.slice(pivot), ...pts.slice(0, pivot)];
+      wallNs = [...wallNs.slice(pivot), ...wallNs.slice(0, pivot)];
+      ({ flags, dir, sl } = breaksAt(pts, wallNs));
+    }
+  }
+  const m = pts.length, nSeg = closed ? m : m - 1;
+  const out = [], outWalls = [];
+  let i = 0;
+  const pushPoint = (p, wallIdx) => {
+    out.push(p);
+    if (wallIdx != null) outWalls.push(wallNs[wallIdx]);
+  };
+  while (i < m) {
+    // maximal run of breaking joints chained by sub-magnitude segments
+    let j = i;
+    while (j + 1 < m && flags[j] && flags[j + 1] && sl[j] < magnitude) j++;
+    if (flags[i] && j > i) {
+      const iIn = (i - 1 + nSeg) % nSeg;
+      const d1 = dir[iIn], d2 = dir[j % nSeg];
+      const p1 = pts[i], p2 = pts[j];
+      // intersect the flanking edge lines: p1 + a·d1 = p2 − b·d2 (in-plane)
+      const c12 = dot(d1, d2);
+      const denom = 1 - c12 * c12;
+      let V = null;
+      if (denom > 1e-6) {
+        const w0 = sub(p2, p1);
+        const a = (dot(w0, d1) - c12 * dot(w0, d2)) / denom;
+        const cand = add(p1, scl(d1, a));
+        let extent = 0;
+        for (let t = i; t < j; t++) extent += sl[t];
+        if (len(sub(cand, p1)) < 2 * magnitude + extent) V = cand;
+      }
+      if (V) {
+        pushPoint(V, j % nSeg); // V starts the outgoing segment: wall of seg j
+        i = j + 1;
+        continue;
+      }
+    }
+    pushPoint(pts[i], i < nSeg ? i : null);
+    i++;
+  }
+  if (out.length < (closed ? 3 : 2)) return { pts: pts0, wallNs: wallNs0 };
+  return { pts: out, wallNs: outWalls };
+}
+
 function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = null) {
-  const { points, closed, convex, faceN, wallNs } = chain;
-  const pts = closed ? points.slice(0, -1) : points;   // drop the duplicated closure point
+  const { points, closed, convex, faceN } = chain;
+  let { wallNs } = chain;
+  let pts = closed ? points.slice(0, -1) : points;   // drop the duplicated closure point
+  // Corner features SMALLER than the blend collapse to a virtual sharp corner
+  // BEFORE any tool is built (see collapseTightCorners) — a run of fold-breaking
+  // joints on a sub-blend-radius corner round otherwise shatters into per-facet
+  // micro-tools whose disagreements notch the band (the non-bold glyph "divot":
+  // a raw letter terminal's ~0.1-0.25 mm corner rounds under a 0.3 mm fillet;
+  // bold outlines never hit this because the 0.4 mm round offset pads every
+  // convex radius past the fold threshold).
+  if (convex) ({ pts, wallNs } = collapseTightCorners(pts, wallNs, closed, magnitude));
   const m = pts.length;
   const at = (i) => pts[((i % m) + m) % m];
   const nSeg = closed ? m : m - 1;
