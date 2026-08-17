@@ -43,6 +43,20 @@ const rodrigues = (v, k, ang) => {
 const placeRing = (profile2D, center, N, B) =>
   profile2D.map(([x, y]) => add(center, add(scl(N, x), scl(B, y))));
 
+// The seed frame a sweep of `path3D` will start from — exported so a caller authoring a
+// profile FOR a sweep (mesh-fillet's planar-chain tool) can express it in exactly the
+// frame the sweep will use, instead of replicating the reference-vector pick and drifting
+// when it changes. Matches resolveSweepStations: the frame is ⟂ the tangent coming INTO
+// the first processed station (the closing segment for a closed loop, the first segment
+// for an open path).
+export function sweepSeedFrame(path3D, closed = false) {
+  const m = path3D.length;
+  const T = closed ? norm(sub(path3D[0], path3D[m - 1])) : norm(sub(path3D[1], path3D[0]));
+  const ref = Math.abs(dot(T, Z)) < 0.9 ? Z : X;
+  const N = norm(sub(ref, scl(T, dot(ref, T))));
+  return { T, N, B: cross(T, N) };
+}
+
 export function resolveSweepStations(profile2D, path3D, { closed = false, cornerRadius = 0 } = {}) {
   if (!Array.isArray(profile2D) || profile2D.length < 3)
     throw new Error("sweep: profile2D must be an array of ≥3 [x,y] points");
@@ -66,11 +80,9 @@ export function resolveSweepStations(profile2D, path3D, { closed = false, corner
   for (const [x, y] of profile2D) maxReach = Math.max(maxReach, Math.hypot(x, y));
 
   // Seed the frame ⟂ the tangent coming INTO the first processed station (reference-vector
-  // method; the ref pick avoids N collapsing when the path starts along Z).
-  const seedT = closed ? dir[segCount - 1] : dir[0];
-  const ref = Math.abs(dot(seedT, Z)) < 0.9 ? Z : X;
-  let N = norm(sub(ref, scl(seedT, dot(ref, seedT))));
-  let B = cross(seedT, N);
+  // method; the ref pick avoids N collapsing when the path starts along Z). Shared with
+  // sweepSeedFrame above so profile authors can target the exact same frame.
+  let { N, B } = sweepSeedFrame(P, closed);
 
   const stations = [];
 

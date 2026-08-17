@@ -10,17 +10,22 @@
 //   - straight chains with planar flanks           → lofted prism cutter
 //   - circular-arc chains with revolved flanks     → revolved cutter (bore rims,
 //     cylinder rims, the arcs where fillets meet a face), full circles included
+//   - planar contour chains at constant dihedral   → swept cutter/filler along the
+//     chain's own polyline (top/bottom rims of extruded text, offset outlines,
+//     splines — see tryPlanarChain/planarTool)
 // Anything else (helical edges, varying dihedral, branching curves) raises
 // UnsupportedEdgeError so a caller can reroute the build to the B-rep backend.
 //
 // Known limits (documented, not bugs): no spherical corner patches yet — two
 // chains meeting at a vertex leave a mitred junction where their blend surfaces
-// intersect; radius feasibility is the caller's job (clamp like filleted-box.js
+// intersect, and a planar chain split at a sharp corner mitres the same way;
+// radius feasibility is the caller's job (clamp like filleted-box.js
 // does — an oversized radius self-intersects the cutters).
 //
 // Selector object mirrors edge-selector.js semantics ({dir, inPlane, at, near});
 // `dir` only ever matches straight chains, like replicad's inDirection.
 // Pure module: no DOM, no node:, no three — safe anywhere in the worker graph.
+import { sweepSeedFrame } from "./sweep.js";
 
 const TOL = 1e-4;            // selector / coplanarity tolerance (mm)
 const WELD = 1e6;            // vertex weld quantization (1/WELD mm grid)
@@ -193,12 +198,123 @@ export function chainEdges(edges) {
     }
     if (run) runs.push(run);
     // a run's type is the joint type joining its members; single-member runs are lines
+    const runChains = [];
     for (const r of runs) {
       const type = r.ks.length === 1 || r.type === "coll" || r.type === null ? "line" : "arc";
-      chains.push(buildChain(edges, path, r.ks, type, closedUniform && runs.length === 1));
+      runChains.push(buildChain(edges, path, r.ks, type, closedUniform && runs.length === 1));
+    }
+    // Planar rescue is per-PATH, not per-run, and replaces the WHOLE path's chains: a rim
+    // that mixes straight, curvy, and short runs must become ONE swept tool, because
+    // per-run tools along the same rim continue each other nearly collinearly — their
+    // overshoots then overlap surface-on-surface (not the clean perpendicular crossing of
+    // a box corner) and the boolean leaves degenerate seams where identical blend
+    // surfaces coincide. A path whose runs are ALL line/arc keeps its exact per-run tools
+    // exactly as before — promotion only fires where the path would otherwise reroute.
+    if (runChains.some((c) => c.kind === "unsupported")) {
+      const rescue = buildPlanarPath(edges, path);
+      if (rescue) { chains.push(rescue); continue; }
+    }
+    chains.push(...runChains);
+  }
+  return stitchPlanarChains(chains);
+}
+
+// Join open planar chains that continue each other across a path junction. The edge walk
+// ends a path at any degree≠2 vertex — and a real rim grows one wherever its outline
+// turns past sharpDeg, because that corner puts a sharp VERTICAL edge up the wall. The
+// rim's halves then arrive as separate open planar chains whose swept tools would cross
+// at the junction's own shallow angle — a near-parallel surface overlap that leaves
+// degenerate seams (the same disease the whole-path promotion cures within one path).
+// Stitched into one chain, the junction becomes an interior vertex: the sweep miters it
+// when gentle, and planarTool's fold guard splits it (with a clean, wide-angle mitre
+// crossing) when sharp. Chains stitch only when they share an endpoint, the same face
+// plane, and the same convexity — the same-plane test is what keeps a top rim from ever
+// stitching to a bottom rim.
+function stitchPlanarChains(chains) {
+  const open = [], out = [];
+  for (const c of chains) (c.kind === "planar" && !c.closed ? open : out).push(c);
+  if (open.length < 2) return chains;
+  const key = (p) => `${Math.round(p[0] * WELD)},${Math.round(p[1] * WELD)},${Math.round(p[2] * WELD)}`;
+  const compatible = (a, b) => a.convex === b.convex && dot(a.faceN, b.faceN) > FLANK_COS &&
+    Math.abs(dot(a.points[0], a.faceN) - dot(b.points[0], a.faceN)) <= TOL;
+  const rev = (c) => ({ ...c, points: [...c.points].reverse(), wallNs: [...c.wallNs].reverse() });
+  let progress = true;
+  while (progress) {
+    progress = false;
+    outer: for (let i = 0; i < open.length; i++) {
+      const a = open[i], aEnd = key(a.points[a.points.length - 1]);
+      for (let j = 0; j < open.length; j++) {
+        if (i === j || !compatible(a, open[j])) continue;
+        let b = open[j];
+        if (key(b.points[b.points.length - 1]) === aEnd) b = rev(b);
+        if (key(b.points[0]) !== aEnd) continue;
+        const points = [...a.points, ...b.points.slice(1)];
+        const closed = key(points[0]) === key(points[points.length - 1]);
+        const joined = { ...a, points, wallNs: [...a.wallNs, ...b.wallNs], closed };
+        open.splice(Math.max(i, j), 1);
+        open.splice(Math.min(i, j), 1);
+        (closed ? out : open).push(joined);
+        progress = true;
+        break outer;
+      }
     }
   }
-  return chains;
+  return [...out, ...open];
+}
+
+// Whole-path planar rescue, called by chainEdges when any of a path's runs classified
+// unsupported: rebuild the ENTIRE path (every member, in walk order) as one candidate
+// planar chain. See the promotion comment at the call site for why the whole path — and
+// tryPlanarChain below for what qualifies.
+function buildPlanarPath(edges, path) {
+  const members = path.members.map((i) => edges[i]);
+  const points = [vertPos(members[0], path.verts[0])];
+  members.forEach((m, i) => points.push(vertPos(m, otherVid(m, path.verts[i]))));
+  return tryPlanarChain(members, points, members[0].convex, path.loop);
+}
+
+// Rescue an unsupported path as a PLANAR chain: every point of the path lies in one plane,
+// one flank IS that plane's face (a world-constant normal — the top of an extrusion, the
+// plate around a boss), and the other flank — the wall — turns with the path at a constant
+// dihedral. Top and bottom rims of extruded profiles whose outlines are neither straight
+// nor circular (text, offset outlines, splines) are exactly this shape, and they used to
+// be this module's most common NEEDS_OCCT reroute. The blend tool for a planar chain is a
+// sweep of the same 2-D cross-section the prism and revolve tools use (planarTool below):
+// in the sweep's transported frame both flanks have constant coordinates along the whole
+// run — the same rotating-frame argument fitArcChain makes about surfaces of revolution —
+// so one fixed profile blends the entire path.
+//
+// Flank pairing keys on the CANDIDATE face normal itself (each of member 0's two flanks
+// in turn): every member contributes whichever of its flanks lies closer to the candidate.
+// Neighbor-pairing — the trick classifyChain's line branch uses — is deliberately NOT
+// reused here: over a long turning run the wall normal rotates far enough that it pairs
+// against the face and scrambles both columns (measured on a 37-edge run of the wavy-rim
+// fixture). Keying on the candidate is stable however far the wall turns, because the
+// true face flank stays within FLANK_COS of it while the wall sits a whole dihedral away.
+// A run where neither candidate yields a constant column (a helix, a saddle) returns null
+// and stays unsupported — the rescue never guesses.
+const FLANK_COS = 0.9986;   // ~3°, the same constancy bar the line classifier uses
+function tryPlanarChain(members, points, convex, closed) {
+  if (points.length < 3) return null;              // a 2-point run is a line chain's job
+  for (const cand of [members[0].n1, members[0].n2]) {
+    const face = [], wall = [];
+    for (const m of members) {
+      const [f, wl] = dot(m.n1, cand) >= dot(m.n2, cand) ? [m.n1, m.n2] : [m.n2, m.n1];
+      face.push(f);
+      wall.push(wl);
+    }
+    const meanRaw = face.reduce((s, f) => add(s, f), [0, 0, 0]);
+    if (len(meanRaw) < 1e-9) continue;
+    const w = norm(meanRaw);
+    if (!face.every((f) => dot(f, w) > FLANK_COS)) continue;          // not world-constant
+    const d0 = dot(points[0], w);
+    if (!points.every((p) => Math.abs(dot(p, w) - d0) <= TOL)) continue;   // run not in the face plane
+    const dots = wall.map((n) => dot(n, w));
+    const meanDot = dots.reduce((s, x) => s + x, 0) / dots.length;
+    if (!dots.every((x) => Math.abs(x - meanDot) <= 0.05)) continue;  // dihedral drifts (~3°)
+    return { kind: "planar", points, closed, convex, w, faceN: w, wallNs: wall };
+  }
+  return null;
 }
 
 function buildChain(edges, path, ks, type, closed) {
@@ -495,6 +611,101 @@ function revolveTool(k, chain, magnitude, mode, segs) {
 }
 
 // ---------------------------------------------------------------------------
+// Planar-chain blend tool: sweep the shared 2-D cross-section (profile2D) along the
+// chain's own polyline with k.sweep — a prism IS the one-segment case of this sweep,
+// generalized to a path that turns. In the sweep's transported frame the face and wall
+// flanks keep constant coordinates along a planar constant-dihedral path, so ONE profile
+// polygon serves every station; sweepSeedFrame gives the exact frame the sweep will seed,
+// so the profile is authored in it rather than re-deriving (and drifting from) the pick.
+//
+// The sweep miters gently-turning joints on its own. A vertex whose miter would fold —
+// a sharp corner, a reversal cusp, a segment shorter than the profile's reach — SPLITS
+// the chain there instead, and each open stretch overshoots its ends the way prism
+// cutters do, so adjacent stretches mitre into each other across the split. Concave
+// fillers stay flush at their ends — overshoot would bulge outside the part when unioned
+// (prismTool's own rule) — which can leave a hairline notch in a bead at a split; that is
+// the mitred-junction limit from the module header, not a leak (the boolean stays
+// watertight). Any residual sweep refusal (float-edge fold the pre-split missed) is
+// converted to UnsupportedEdgeError so the caller reroutes to OCCT instead of failing
+// the build. Returns an ARRAY of tools — one per stretch.
+function planarTool(k, chain, magnitude, mode, segs) {
+  const { points, closed, convex, faceN, wallNs } = chain;
+  const pts = closed ? points.slice(0, -1) : points;   // drop the duplicated closure point
+  const m = pts.length;
+  const at = (i) => pts[((i % m) + m) % m];
+  const nSeg = closed ? m : m - 1;
+  const segDir = [], segLen = [];
+  for (let i = 0; i < nSeg; i++) {
+    const d = sub(at(i + 1), at(i)), l = len(d);
+    segDir.push(scl(d, 1 / (l || 1)));
+    segLen.push(l);
+  }
+
+  // Fold guard, mirrored from resolveSweepStations' miter check with a stricter factor
+  // (0.45 vs 0.5) so the split fires before the sweep would throw. `reach` is a cheap
+  // rigid upper bound on the profile's half-width — exact reach needs the profile, the
+  // profile needs the stretch, and conservatism here only costs an extra mitred split.
+  const reach = magnitude * 1.5;
+  const isBreak = (i) => {   // vertex i, with a segment on both sides
+    const dIn = segDir[(i - 1 + nSeg) % nSeg], dOut = segDir[i];
+    const c = clamp1(dot(dIn, dOut));
+    if (c < -1 + 1e-6) return true;                                  // reversal cusp
+    return reach * Math.tan(Math.acos(c) / 2) > 0.45 * Math.min(segLen[(i - 1 + nSeg) % nSeg], segLen[i]);
+  };
+  const breaks = [];
+  for (let i = closed ? 0 : 1; i < (closed ? m : m - 1); i++) if (isBreak(i)) breaks.push(i);
+
+  const over = convex ? Math.max(1e-3, 0.05 * magnitude) : 0;
+  const overshoot = (path) => {
+    if (!(over > 0) || path.length < 2) return path;
+    const a = path[0], b = path[1], y = path[path.length - 1], x = path[path.length - 2];
+    return [add(a, scl(norm(sub(a, b)), over)), ...path, add(y, scl(norm(sub(y, x)), over))];
+  };
+
+  // One tool per stretch. The profile's wall normal is the SEED member's — the segment
+  // whose tangent the sweep frame is seeded ⟂ to: the closing segment for a closed loop,
+  // the first segment for an open stretch (overshoot extends along that same tangent, so
+  // it never changes the seed).
+  // ext stays 0 for every planar sweep, cutters and fillers alike — measured both ways
+  // on the fixtures. Stations sit ON the path vertices, so the profile's tangent lines
+  // ride the flank facets exactly: plane-on-plane contact the kernel resolves cleanly.
+  // An arc-tail extension (revolveTool's recipe for curved-vs-curved phase noise) turns
+  // that exact contact into a ~2° grazing CROSSING — and a grazing crossing's float
+  // wiggle carves sliver seams whether the tool is subtracted or unioned, because the
+  // crossing curve is exactly where the boolean's boundary hands over, always exposed.
+  const toolFor = (path3D, isClosed, wallN) => {
+    const { N, B } = sweepSeedFrame(path3D, isClosed);
+    const p2 = (v) => {
+      const q = [dot(v, N), dot(v, B)], l = Math.hypot(q[0], q[1]) || 1;
+      return [q[0] / l, q[1] / l];
+    };
+    const poly = profile2D({ P: [0, 0], n1: p2(faceN), n2: p2(wallN), magnitude, mode, convex, segs });
+    return k.sweep(poly, path3D, { closed: isClosed });
+  };
+
+  try {
+    if (closed && breaks.length === 0) {
+      return [toolFor(pts.map((p) => [p[0], p[1], p[2]]), true, wallNs[nSeg - 1])];
+    }
+    // Open stretches between breaks. An open chain's endpoints are implicit breaks; a
+    // closed chain's stretches wrap from each break to the next.
+    const bounds = closed
+      ? breaks.map((b, j) => [b, breaks[(j + 1) % breaks.length] + (j + 1 === breaks.length ? m : 0)])
+      : (breaks.length ? [[0, breaks[0]], ...breaks.map((b, j) => [b, j + 1 < breaks.length ? breaks[j + 1] : m - 1])] : [[0, m - 1]]);
+    const tools = [];
+    for (const [s, e] of bounds) {
+      if (e <= s) continue;
+      const path = [];
+      for (let i = s; i <= e; i++) path.push(at(i));
+      tools.push(toolFor(overshoot(path), false, wallNs[s % nSeg]));
+    }
+    return tools;
+  } catch (e) {
+    throw new UnsupportedEdgeError(`planar sweep: ${e.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Spherical corner patches. Where exactly three selected straight convex chains
 // meet at a vertex with mutually orthogonal directions (a box-like corner), the
 // three edge blends are capped with a rolling-ball sphere octant instead of the
@@ -565,9 +776,12 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   if (!selected.length) throw new UnsupportedEdgeError(`${mode} selector matched no sharp edges`);
   const unsupported = selected.find((ch) => ch.kind === "unsupported");
   if (unsupported) throw new UnsupportedEdgeError(`${mode}: ${unsupported.reason}`);
-  const tool = (ch) => (ch.kind === "arc" ? revolveTool : prismTool)(k, ch, magnitude, mode, segs);
-  const cutters = selected.filter((ch) => ch.convex).map(tool);
-  const fillers = selected.filter((ch) => !ch.convex).map(tool);
+  const toolsFor = (ch) =>
+    ch.kind === "planar"
+      ? planarTool(k, ch, magnitude, mode, segs)
+      : [(ch.kind === "arc" ? revolveTool : prismTool)(k, ch, magnitude, mode, segs)];
+  const cutters = selected.filter((ch) => ch.convex).flatMap(toolsFor);
+  const fillers = selected.filter((ch) => !ch.convex).flatMap(toolsFor);
   if (mode === "fillet") cutters.push(...cornerPatches(k, selected, magnitude, segs));
   let out = solid;
   if (cutters.length) out = out.cutAll(cutters);
