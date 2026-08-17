@@ -656,7 +656,34 @@ function simplifyRun(scope, from, segs, tolerance) {
   return refitRunViaPaper(scope, from, segs, tolerance);
 }
 
-function simplifyContour(scope, contour, tolerance) {
+// Sweep segments whose ENTIRE extent (endpoint and every control point) stays within the
+// caller's tolerance of their own start — degenerate loop-backs and dust segments. These
+// are exactly the artifacts an upstream offset/boolean can leave behind (the winding
+// resolver's splice debris: zero-chord cubics with controls ~0.01-0.03 mm out), and
+// without this pass they DEFEAT simplify: contourCorners reads the loop's joints as real
+// corners, and the corner-preserving contract then pins the debris bit-exact, so
+// `.simplify(0.03)` used to return a 0.02 mm loop untouched. Dropping a segment moves the
+// path by at most its chord (≤ tolerance) — precisely the change the caller authorized.
+// Everything larger than the tolerance is geometry, not debris, and passes through.
+function sweepDegenerateSegments(contour, tolerance) {
+  const segments = [];
+  let from = contour.start;
+  for (const seg of contour.segments) {
+    const controls = [seg.via, seg.c1, seg.c2].filter(Boolean);
+    const extent = Math.max(
+      Math.hypot(seg.to[0] - from[0], seg.to[1] - from[1]),
+      ...controls.map((p) => Math.hypot(p[0] - from[0], p[1] - from[1])),
+    );
+    if (extent <= tolerance) continue;              // debris: path continues from `from`
+    segments.push(seg);
+    from = seg.to;
+  }
+  if (segments.length < 2) return contour;          // a ring of dust is not ours to delete
+  return closeContourGap({ start: [contour.start[0], contour.start[1]], segments });
+}
+
+function simplifyContour(scope, rawContour, tolerance) {
+  const contour = sweepDegenerateSegments(rawContour, tolerance);
   const corners = contourCorners(contour);
   if (corners.length === 0) {
     // Cornerless (smooth closed loop): simplify as ONE closed path — toPaperPath's default

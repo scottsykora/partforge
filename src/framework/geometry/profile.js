@@ -118,14 +118,36 @@ export function sampleBezier(p0, c1, c2, p1, segs) {
   recurse(p0, c1, c2, p1, 0);
   if (out.length === 0) out.push([p1[0], p1[1]]);
   out[out.length - 1] = [p1[0], p1[1]];   // pin the exact endpoint
-  return out;
+  // Emit-if-moved: near a cusp (a degenerate loop-back cubic — e.g. the winding
+  // resolver's splice debris, start === end with controls ~0.01 mm out) the curve's
+  // SPEED collapses, so depth-capped parameter-uniform splits cluster spatially and
+  // the raw list carries runs of samples nanometers apart (measured min gap 2e-9 mm).
+  // Those land in tessellated rings as coincident points and poison every consumer
+  // (sliver wall facets, mesh edge chains, ring dedup). Keep a sample only once it has
+  // moved SAMPLE_EPS from the last kept one; the exact endpoint stays pinned — it
+  // replaces a final sample that stopped short of it, so the one pair flanking the pin
+  // may be tighter than SAMPLE_EPS, and that is the only pair allowed to be. 1e-6 mm is
+  // a nanometer: far below any legitimate facet spacing (a 1 µm-radius arc at segs 96
+  // still spaces ~6e-5), so no real curve loses a sample.
+  const SAMPLE_EPS = 1e-6;
+  const kept = [];
+  let last = p0;
+  for (const p of out) {
+    if (Math.hypot(p[0] - last[0], p[1] - last[1]) < SAMPLE_EPS) continue;
+    kept.push(p);
+    last = p;
+  }
+  if (kept.length && Math.hypot(kept[kept.length - 1][0] - p1[0], kept[kept.length - 1][1] - p1[1]) < SAMPLE_EPS)
+    kept[kept.length - 1] = [p1[0], p1[1]];
+  else kept.push([p1[0], p1[1]]);
+  return kept;
 }
 
 // Tessellate a single contour into a CCW point ring. A legacy array is returned unchanged
 // (identical to the former path); a path contour is walked start→segment→segment, lines
 // pushing their `to`, arcs and cubics pushing their sampled points (sampleArc/sampleBezier).
 export function tessellateContour(contour, segs) {
-  if (Array.isArray(contour)) return contour;
+  if (Array.isArray(contour)) return contour;   // legacy point list: caller's data, bit-exact
   const ring = [[contour.start[0], contour.start[1]]];
   let prev = contour.start;
   for (const seg of contour.segments) {
@@ -134,7 +156,27 @@ export function tessellateContour(contour, segs) {
     else ring.push([seg.to[0], seg.to[1]]);
     prev = seg.to;
   }
-  return ring;
+  // Coincident consecutive points never survive tessellation: a zero-length line segment
+  // (or a sampler edge case) would otherwise land verbatim in the ring and hand every
+  // consumer (extrude walls, mesh edge chains, silhouette masks) a degenerate edge. The
+  // very last point is kept unconditionally — it replaces a duplicate predecessor rather
+  // than being dropped — so the explicit-closure convention (final point lands exactly on
+  // `start`) survives the sweep.
+  const TESS_EPS = 1e-9;
+  const out = [ring[0]];
+  for (let i = 1; i < ring.length; i++) {
+    const p = ring[i], last = out[out.length - 1];
+    if (Math.hypot(p[0] - last[0], p[1] - last[1]) < TESS_EPS) {
+      if (i === ring.length - 1) out[out.length - 1] = p;   // keep the exact closure point
+      continue;
+    }
+    out.push(p);
+  }
+  // A path contour always tessellates to ≥2 points (start + arrival), even when the whole
+  // contour is degenerate — consumers walk poly EDGES (contour-winding's pieceSamples) and
+  // a single-point poly has none to walk.
+  if (out.length < 2) return [ring[0], ring[ring.length - 1]];
+  return out;
 }
 
 // Normalize + tessellate a whole region to { outer:[[x,y],…], holes:[[[x,y],…],…] } of

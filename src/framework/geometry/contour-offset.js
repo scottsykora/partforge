@@ -826,14 +826,26 @@ function sourceBackedPositiveRegions(source, out, delta) {
 
 // Crossing clustering can snap both ends of a tiny curve run onto the same pool vertex.
 // The run then survives as a closed loop attached at one point (or as a whole one-segment
-// contour). It encloses only geometry inside the resolver's own 2*CLUSTER_TOL cluster-
-// diameter uncertainty, but a downstream cap triangulator may bridge that loop across the
-// face and expose the bridge as a bogus feature edge. Positive dilation may discard these
-// sub-resolution counter loops: they are collapsed negative boundaries, never new material.
-// Keep erosion unchanged; its tiny surviving islands have no equivalent source-domain proof.
+// contour). It encloses only geometry inside the resolver's own splice uncertainty, but a
+// downstream cap triangulator may bridge that loop across the face and expose the bridge
+// as a bogus feature edge — and a surviving zero-chord loop also breaks the NEXT offset or
+// boolean over this output (its crossing chaining reads the loop as an unclosable
+// arrangement: the "could not chain offset boundary" class of failure). Positive dilation
+// may discard these sub-resolution counter loops: they are collapsed negative boundaries,
+// never new material. Keep erosion unchanged; its tiny surviving islands have no
+// equivalent source-domain proof.
+//
+// The radius is 10*CLUSTER_TOL, not the 2*CLUSTER_TOL cluster-diameter bound this pass
+// shipped with: the CROSSINGS that got merged sit within one cluster, but the curve run
+// BETWEEN them wanders further before returning — measured on offset(6, round) of
+// "Scotty" size 24 (test/contour-cleanup.test.js), the surviving splice loops reached
+// 0.028 mm of control extent, 5.6x the old radius, and every one of them slipped this
+// pass. 10x (0.05 mm) covers them with margin while staying far below any printable
+// feature; a genuine pinch-off lobe bigger than that survives as its own region ring and
+// never presents as a single zero-chord segment in the first place.
 function dropSubresolutionPositiveLoops(out, delta) {
   if (delta <= 0) return out;
-  const radius = 2 * CLUSTER_TOL;
+  const radius = 10 * CLUSTER_TOL;
   const clean = (contour) => {
     const segments = [];
     let from = contour.start;
