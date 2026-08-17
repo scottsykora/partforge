@@ -16,20 +16,25 @@
 // Anything else (helical edges, varying dihedral, branching curves) raises
 // UnsupportedEdgeError so a caller can reroute the build to the B-rep backend.
 //
-// Corner treatment: a salient two-chain corner in a common face plane is ROUNDED —
-// a small arc chain (radius ~1.05-1.25× the magnitude) replaces the mitre, its horn
-// block shaves the sharp corner down to band depth, and the band sweeps around with
-// no crease (see roundSalientCorners). The silhouette inside the band rounds by about
-// the blend radius at such corners; the flat shelf the horn leaves at the band's base
-// is the deliberate residue. A REFLEX corner in a common face plane gets the
-// rolling-ball PIVOT (reflexPivotAt/reflexPivotTool): the ball swings about the
-// corner's face-normal axis, touching the face and the vertical corner edge, and the
-// face's blend boundary rounds into an arc of radius r about the vertex — without it
-// the flush-ended neighbor tools leave a wedge of the original rim uncut and the face
-// keeps a point AT the corner (the label-part "artifacts" bug). Corners keep their
-// mitre only when too tight to host the salient setback (glyph-scale features smaller
-// than ~3× the magnitude), or when three or more chains meet (the spherical
-// cornerPatches below own the orthogonal three-chain case).
+// Corner treatment, by how sharp the corner is. A SHARP salient corner (turn past
+// SMOOTH_MAX_DEG — the same bar that makes chainEdges call it a corner at all) keeps
+// the honest MITRE: the two blends run to the vertex and cross in the classic
+// intersection seam every B-rep fillet shows; the seam is a real crease, its feature
+// line is correct, and the top face keeps its sharp corner (decided 2026-08-17 —
+// there is provably no band that hugs both walls around a salient corner without
+// creasing, and every lift-off construction strands a corner column that reads as an
+// artifact). A GENTLE salient corner (CORNER_ROUND_MIN_TURN..SMOOTH_MAX_DEG) is
+// steered instead — a small arc chain (radius ~1.05-1.25× the magnitude) replaces
+// the mitre and a horn block shaves the corner column to band depth — because a
+// shallow mitre's overlap wedge triangulates into junk lines while the steer's
+// silhouette cost is sub-visible at these angles. A REFLEX corner in a common face
+// plane gets the rolling-ball PIVOT (reflexPivotAt/reflexPivotTool): the ball swings
+// about the corner's face-normal axis, touching the face and the vertical corner
+// edge, and the face's blend boundary rounds into an arc of radius r about the
+// vertex — without it the flush-ended neighbor tools leave a wedge of the original
+// rim uncut and the face keeps a point AT the corner (the label-part "artifacts"
+// bug). Three-or-more-chain vertices go to the spherical cornerPatches below (the
+// orthogonal three-chain case).
 //
 // Known limits (documented, not bugs): radius feasibility is the caller's job (clamp
 // like filleted-box.js does — an oversized radius self-intersects the cutters).
@@ -68,6 +73,7 @@ function blendSegs(segs, r) {
 const cornerArcSegs = (segs, R, magnitude) => blendSegs(segs, R + magnitude);
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const pivotKey = (p) => `${Math.round(p[0] * WELD)},${Math.round(p[1] * WELD)},${Math.round(p[2] * WELD)}`;
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scl = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -764,7 +770,7 @@ function revolveTool(k, chain, magnitude, mode, segs, pSegs = segs) {
 // watertight). Any residual sweep refusal (float-edge fold the pre-split missed) is
 // converted to UnsupportedEdgeError so the caller reroutes to OCCT instead of failing
 // the build. Returns an ARRAY of tools — one per stretch.
-function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
+function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = null) {
   const { points, closed, convex, faceN, wallNs } = chain;
   const pts = closed ? points.slice(0, -1) : points;   // drop the duplicated closure point
   const m = pts.length;
@@ -841,8 +847,12 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
       const nextB = closed
         ? breaks[(j + 1) % breaks.length] + (j + 1 === breaks.length ? m : 0)
         : (j + 1 < breaks.length ? breaks[j + 1] : m - 1);
+      // a SHARP corner may steer only when another selected chain leaves this
+      // vertex out of the face plane (see apply()'s endTins note) — otherwise
+      // it keeps the honest mitre and cornerArcAt's upper gate refuses it
+      const allowSharp = !!(endTins?.get(pivotKey(at(i)))?.some((t) => Math.abs(dot(t, faceN)) > 0.7));
       const got = cornerArcAt(at(i), faceN, scl(segDir[iIn], -1), segDir[i],
-        wallNs[iIn], wallNs[i], segSum(prevB, i), segSum(i, nextB), magnitude);
+        wallNs[iIn], wallNs[i], segSum(prevB, i), segSum(i, nextB), magnitude, allowSharp);
       if (got) { cornerArcs.set(i, got); continue; }
       const piv = reflexPivotAt(at(i), faceN, scl(segDir[iIn], -1), segDir[i], wallNs[iIn], wallNs[i]);
       if (piv) pivots.push(piv);
@@ -924,33 +934,32 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
 }
 
 // ---------------------------------------------------------------------------
-// Rounded corners. Where exactly TWO selected convex chains meet at a salient corner
-// in a common face plane (a letter corner, a polygon corner on a rim), the blend used
-// to continue straight through from both sides and the two tools crossed in a mitre.
-// That groove is a REAL crease — 76-90° dihedral, measured — so the feature-line
-// overlay faithfully drew a polyline ACROSS the blend band at every such corner, and
-// OCCT's native fillet produces the same intersection-and-trim crease. There is no
-// groove-free construction that keeps the silhouette sharp: the two straight blends
-// must either intersect or the blend must steer around the corner. This steers: the
-// corner is replaced by a small circular ARC chain (radius ~1.05-1.25× the blend
-// magnitude, tangent to both neighbors at a setback), the neighbors are trimmed to the
-// tangent points, and the existing revolveTool sweeps the arc — exactly the shape a
-// rounded-rectangle rim already has, which renders line-free today. The cost, stated
-// plainly: within the band the silhouette rounds by about the blend radius at corners
-// sharper than CORNER_ROUND_MIN_TURN; gentler corners keep their exact silhouette (a
-// mitre under the viewer\'s 35° line threshold draws nothing).
+// Steered corners. Where exactly TWO selected convex chains meet at a salient corner
+// in a common face plane (a letter corner, a polygon corner on a rim), the two blends
+// cross in a mitre — a REAL crease, 76-90° dihedral measured, the same
+// intersection-and-trim seam OCCT's native fillet produces. There is no groove-free
+// construction that keeps the silhouette sharp: a band tangent to both walls around a
+// salient corner must crease, and a band that lifts off the walls strands the corner
+// column (verified again 2026-08-17 — the reflex pivot's torus does NOT mirror to
+// salient corners; the ball never touches a convex corner edge, and the mitre groove
+// of the neighbor cylinders survives beyond any such patch). So the mitre IS the
+// treatment for corners sharp enough to read as corners — see cornerArcAt's upper
+// gate — and the steer below exists only for the GENTLE band
+// (CORNER_ROUND_MIN_TURN..SMOOTH_MAX_DEG): the corner is replaced by a small
+// circular ARC chain (radius ~1.05-1.25× the blend magnitude, tangent to both
+// neighbors at a setback), the neighbors are trimmed to the tangent points, and the
+// existing revolveTool sweeps the arc. At these angles a mitre's long shallow
+// overlap wedge triangulates into >35° junk lines (measured: a 20.7° mitre still
+// drew, an ~8° one does not) while the steer's silhouette cost — a sagitta of
+// ρ·(1−cos(turn/2)), plus the horn's sub-visible shelf — stays microns deep, so the
+// trade runs the opposite way to a sharp corner's.
 //
 // REFLEX corners take the rolling-ball PIVOT instead (reflexPivotAt below): steering
 // the band path around a reflex corner would ADD material, but the ball itself swings
 // about the corner touching the face and the vertical corner edge — see the reflex
-// pivot section. A salient corner whose neighbors are too short to host the setback
-// (tight glyph features) falls back to the mitre — that fallback is never a failure.
-// Corners gentler than this keep their mitre: the two blends there differ by less than
-// the mitre turn everywhere, far under the viewer's 35° line threshold, and the shallow
-// overlap sliver stays too flat for simplify() to fold into visible creases. Measured:
-// a 20.7° mitre still drew (its long shallow overlap wedge triangulates into >35°
-// junk), an ~8° one does not. The silhouette cost of rounding a gentle corner is a
-// sagitta of ρ·(1−cos(turn/2)) — sub-micron at these angles — so the gate is safe low.
+// pivot section. A gentle salient corner whose neighbors are too short to host the
+// setback (tight glyph features) falls back to the mitre — that fallback is never a
+// failure.
 const CORNER_ROUND_MIN_TURN = (8 * Math.PI) / 180;
 const RHO_MIN = 1.05;   // × magnitude — revolve floor: the profile reaches magnitude inward of the arc
 const RHO_PREF = 1.25;  // × magnitude — preferred corner radius, a hair over the floor for margin
@@ -959,10 +968,24 @@ const RHO_PREF = 1.25;  // × magnitude — preferred corner radius, a hair over
 // wall1/wall2 are the sides\' outward wall normals at the vertex; len1/len2 bound the
 // setback. Returns { arc, t } (a synthetic kind:"arc" chain for revolveTool, plus the
 // setback to trim each side by) or null when the corner keeps its mitre.
-function cornerArcAt(vertex, f, tin1, tin2, wall1, wall2, len1, len2, magnitude) {
+function cornerArcAt(vertex, f, tin1, tin2, wall1, wall2, len1, len2, magnitude, allowSharp = false) {
   const tIn = scl(tin1, -1), tOut = tin2;         // travel: arrive along side 1, depart into 2
   const turn = Math.acos(clamp1(dot(tIn, tOut)));
   if (turn < CORNER_ROUND_MIN_TURN) return null;
+  // A corner past the chain-smoothness bar READS as a corner and keeps the honest
+  // mitre (decided 2026-08-17): the two blends run to the vertex and cross in the
+  // classic intersection seam every B-rep fillet shows — the seam is a real crease,
+  // its feature line is correct, and the top face keeps its sharp corner. The
+  // arc-steer below is only for gentle corners, where the sub-visible horn shelf is
+  // a fair price for killing the shallow-overlap junk lines a gentle mitre draws.
+  // Steering SHARP corners bought a clean band at the cost of a rounded in-band
+  // silhouette hovering over the sharp extrude corner with a flat shelf between —
+  // a mismatch no CAD user expects (the label part's non-bold letter terminals).
+  // `allowSharp` is the one exception: when the corner's vertical edge is being
+  // blended too (roundAll, a selector-free fillet), the column below the band is
+  // itself rounded at r — the steer approximates the ball's sphere corner there
+  // and nothing is left to mismatch (planarTool derives it from apply()'s endTins).
+  if (!allowSharp && turn > (SMOOTH_MAX_DEG * Math.PI) / 180) return null;
   const turnS = dot(cross(tIn, tOut), f);
   const matLeft = dot(wall1, cross(tIn, f)) > 0;
   if ((turnS > 0) !== matLeft) return null;       // reflex: the crease is real — keep the mitre
@@ -1369,11 +1392,26 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   // converted arc joins its planar neighbors — chainEdges' own stitch pass ran before
   // these chains were planar, so their junctions are still open here.
   const planarized = stitchPlanarChains(selected.map((ch) => planarizeArc(ch) ?? ch), { absorbLines: true });
+  // Ends of selected chains, keyed by vertex — planarTool steers a SHARP break
+  // corner only when another selected chain leaves that vertex out of the face
+  // plane (a vertical edge being blended too, the roundAll/trihedral case where
+  // the corner column below the band is itself rounded and the steer's shelf is
+  // consumed by that blend). A sharp corner with nothing else selected there
+  // keeps the honest mitre — see the steered-corners section.
+  const endTins = new Map();
+  for (const ch of planarized) {
+    if (ch.closed || (ch.kind !== "line" && ch.kind !== "planar")) continue;
+    for (const end of ["start", "end"]) {
+      const info = chainEndInfo(ch, end);
+      const kk = pivotKey(info.v);
+      (endTins.get(kk) ?? endTins.set(kk, []).get(kk)).push(info.tin);
+    }
+  }
   const { chains: effective, arcs, horns, pivots } = roundSalientCorners(planarized, magnitude);
   const pSegs = blendSegs(segs, magnitude);
   const toolsFor = (ch) =>
     ch.kind === "planar"
-      ? planarTool(k, ch, magnitude, mode, segs, pSegs)
+      ? planarTool(k, ch, magnitude, mode, segs, pSegs, endTins)
       : [(ch.kind === "arc" ? revolveTool : prismTool)(k, ch, magnitude, mode, segs, pSegs)];
   const cutters = [...effective, ...arcs].filter((ch) => ch.convex).flatMap(toolsFor);
   cutters.push(...horns.map((h) => cornerHornTool(k, h, magnitude, segs)));

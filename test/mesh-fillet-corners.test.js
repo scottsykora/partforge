@@ -1,23 +1,31 @@
-// Rolling-ball corner wedges at two-chain junctions of the mesh fillet — the fix for
-// "feature lines across the fillet band". At a salient outline corner, two blend tools
-// used to cross in an overshot mitre; the groove where their surfaces intersect is a
-// REAL crease (measured 76–90° dihedral), so the feature-line overlay faithfully drew a
-// polyline ACROSS the blend band at every letter corner. The wedge replaces the mitre
-// with the rolling-ball torus patch (a revolve of the same blend cross-section about
-// the corner's axis — what OCCT's native fillet produces), the adjoining tools end
-// flush at the corner instead of overshooting, and the band renders as a clean curve.
+// Salient-corner treatment of the mesh fillet, by sharpness (decided 2026-08-17).
+// A SHARP salient corner (turn past the 30° chain-smoothness bar) keeps the honest
+// MITRE: the two blends run to the vertex and cross in the classic intersection
+// seam every B-rep fillet shows. The seam is a REAL crease (76–90° dihedral,
+// measured), its feature line is correct — a sharp corner IS a hard edge — and the
+// top face keeps its sharp corner. There is provably no band that hugs both walls
+// around a salient corner without creasing, and every lift-off construction strands
+// a corner column whose shelf reads as an artifact (the label part's non-bold
+// letter terminals, which motivated the decision).
 //
-// Reflex (inner) corners take the rolling-ball PIVOT instead (see
+// A GENTLE salient corner (8°–30°) steers instead — a small arc chain replaces the
+// mitre — because a shallow mitre's overlap wedge triangulates into junk lines
+// while the steer's silhouette cost stays microns deep. The one sharp-corner
+// exception: when the corner's vertical edge is being blended too (roundAll), the
+// column below the band is itself rounded and the steer approximates the ball's
+// sphere corner — covered by roundall-feature-lines.test.js.
+//
+// Reflex (inner) corners take the rolling-ball PIVOT (see
 // mesh-fillet-reflex.test.js): the ball swings about the corner's face-normal axis,
 // and the face's blend boundary rounds into an arc of radius r about the vertex.
-// Only salient corners get the wedge/steer treatment this file covers.
 //
 // The line census runs the REAL render path — toMesh(), which is creased-normals plus
-// the kernel's shading-policy registry. The registry matters now: blend surfaces keep
+// the kernel's shading-policy registry. The registry matters: blend surfaces keep
 // their originalIDs (that is how the band's boundary rings draw), and only the BLEND
 // policy tells the crease pass that their handover seams line-draw like one surface.
-// The census window is strict-interior with a margin clear of both boundary rings, so
-// it counts exactly the unwanted lines ACROSS the band.
+// The census window is strict-interior with a margin clear of both boundary rings.
+// For mitred fixtures the census EXCLUDES a neighborhood of each sharp corner —
+// the seam there is wanted — and asserts separately that the seam actually draws.
 import { describe, it, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 
@@ -26,15 +34,32 @@ beforeAll(async () => { k = await bootManifoldKernel(); });
 
 const relErr = (v, expected) => Math.abs(v - expected) / Math.abs(expected);
 
-function bandLines(solid, zTop, r) {
+// sharp outline vertices (turn > 30°) — where the mitre seam is expected
+function sharpCorners(pts) {
+  const out = [];
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const a = pts[(i - 1 + n) % n], b = pts[i], c = pts[(i + 1) % n];
+    const d1 = [b[0] - a[0], b[1] - a[1]], d2 = [c[0] - b[0], c[1] - b[1]];
+    const l1 = Math.hypot(...d1), l2 = Math.hypot(...d2);
+    const cos = (d1[0] * d2[0] + d1[1] * d2[1]) / ((l1 * l2) || 1);
+    if (Math.acos(Math.max(-1, Math.min(1, cos))) > (30 * Math.PI) / 180) out.push(b);
+  }
+  return out;
+}
+
+function bandLines(solid, zTop, r, { excludeCorners = [], margin = 0 } = {}) {
   const { edges } = solid.toMesh();
   const zLo = zTop - r + 0.05 * r, zHi = zTop - 0.05 * r;
-  let n = 0;
+  const clear = (x, y) => excludeCorners.every(([cx, cy]) => Math.hypot(x - cx, y - cy) > margin);
+  let n = 0, atCorners = 0;
   for (let i = 0; i + 5 < edges.length; i += 6) {
     const inBand = (z) => z > zLo && z < zHi;
-    if (inBand(edges[i + 2]) && inBand(edges[i + 5])) n++;
+    if (!inBand(edges[i + 2]) || !inBand(edges[i + 5])) continue;
+    if (clear(edges[i], edges[i + 1]) && clear(edges[i + 3], edges[i + 4])) n++;
+    else atCorners++;
   }
-  return n;
+  return { away: n, atCorners };
 }
 
 // straight-sided fixture with salient corners of mixed angles (40°, 90°, ~120°) —
@@ -81,22 +106,28 @@ const wobblyRoundedRect = (W = 40, H = 30, R = 8, n = 24) => {
   return pts;
 };
 
-describe("salient corners render as clean curves", () => {
+describe("smooth rims render as clean curves, sharp corners mitre honestly", () => {
   it("near-circular offset-style corners: the tool follows the real rim, not a fitted circle", () => {
     const out = k.extrude({ profile: wobblyRoundedRect(), h: 8 }).fillet(1, { inPlane: "XY", at: 8 });
-    expect(bandLines(out, 8, 1)).toBeLessThan(10);
+    expect(bandLines(out, 8, 1).away).toBeLessThan(10);
     expect(out.genus()).toBe(0);
   });
 
-  it("line-line corners: the arrow rim draws no lines across the blend band", () => {
-    const out = k.extrude({ profile: arrow(), h: 5 }).fillet(1, { inPlane: "XY", at: 5 });
-    expect(bandLines(out, 5, 1)).toBeLessThan(10);
+  it("line-line corners: the arrow band is clean between corners, seamed at them", () => {
+    const profile = arrow();
+    const out = k.extrude({ profile, h: 5 }).fillet(1, { inPlane: "XY", at: 5 });
+    const census = bandLines(out, 5, 1, { excludeCorners: sharpCorners(profile), margin: 2.5 });
+    expect(census.away).toBeLessThan(10);   // no junk lines along the band
+    expect(census.atCorners).toBeGreaterThan(0); // the mitre seam draws — it is a hard edge
     expect(out.genus()).toBe(0);
   });
 
-  it("planar-planar corners: the wavy-square rim draws no lines across the band", () => {
-    const out = k.extrude({ profile: wavySquare(), h: 8 }).fillet(1, { inPlane: "XY", at: 8 });
-    expect(bandLines(out, 8, 1)).toBeLessThan(10);
+  it("planar-planar corners: the wavy-square band is clean between corners, seamed at them", () => {
+    const profile = wavySquare();
+    const out = k.extrude({ profile, h: 8 }).fillet(1, { inPlane: "XY", at: 8 });
+    const census = bandLines(out, 8, 1, { excludeCorners: sharpCorners(profile), margin: 2.5 });
+    expect(census.away).toBeLessThan(10);
+    expect(census.atCorners).toBeGreaterThan(0);
     expect(out.genus()).toBe(0);
   });
 });
@@ -123,7 +154,7 @@ describe("tight salient arcs keep the revolve", () => {
     corner(R, R, Math.PI);
     corner(W - R, R, (3 * Math.PI) / 2);
     const out = k.extrude({ profile: pts, h: 2 }).fillet(0.3, { inPlane: "XY", at: 2 });
-    expect(bandLines(out, 2, 0.3)).toBeLessThan(10);
+    expect(bandLines(out, 2, 0.3).away).toBeLessThan(10);
     expect(out.genus()).toBe(0);
   });
 });
@@ -141,13 +172,13 @@ describe("arc tools reach walls coarser than kernel tessellation", () => {
     const poly = [];
     for (let i = 0; i < n; i++) poly.push([R * Math.cos((2 * Math.PI * i) / n), R * Math.sin((2 * Math.PI * i) / n)]);
     const out = k.extrude({ profile: poly, h: 8 }).fillet(1, { inPlane: "XY", at: 8 });
-    expect(bandLines(out, 8, 1)).toBeLessThan(10);
+    expect(bandLines(out, 8, 1).away).toBeLessThan(10);
     expect(out.genus()).toBe(0);
   });
 });
 
-describe("wedge geometry matches the B-rep rolling ball", () => {
-  it("box top rim: volume matches OCCT's native fillet (torus corners)", () => {
+describe("mitred corners match the B-rep result", () => {
+  it("box top rim: volume matches OCCT's native fillet", () => {
     // OCCT reference measured 2026-08-16 on this exact fixture:
     //   k.box({min:[0,0,0],max:[40,30,16]}).fillet(3, {inPlane:"XY", at:16})
     const out = k.box({ min: [0, 0, 0], max: [40, 30, 16] }).fillet(3, { inPlane: "XY", at: 16 });

@@ -55,16 +55,24 @@ describe("fillet band boundaries draw as feature lines", () => {
     expect(features).toEqual(["plate"]); // the label still covers the whole solid
   });
 
-  it("the band interior stays clean: boundary lines do not reintroduce cross-lines", () => {
+  it("the band interior stays clean between corners; the mitre seams draw at them", () => {
+    // the box's 90° rim corners keep the honest mitre (see mesh-fillet-corners.
+    // test.js) — the seam at each corner is a real crease and its line is wanted,
+    // so the clean-interior assertion excludes a neighborhood of each corner
     const W = 40, D = 30, H = 16, r = 3;
     const out = k.box({ min: [0, 0, 0], max: [W, D, H] }).fillet(r, { inPlane: "XY", at: H });
     const { edges } = out.toMesh();
-    let inBand = 0;
+    const corners = [[0, 0], [W, 0], [W, D], [0, D]];
+    let away = 0, atCorners = 0;
     const zLo = H - r + 0.05 * r, zHi = H - 0.05 * r; // strict interior, clear of both rings
+    const clear = (x, y) => corners.every(([cx, cy]) => Math.hypot(x - cx, y - cy) > 2.5 * r);
     for (let i = 0; i + 5 < edges.length; i += 6) {
       const w = (z) => z > zLo && z < zHi;
-      if (w(edges[i + 2]) && w(edges[i + 5])) inBand++;
+      if (!w(edges[i + 2]) || !w(edges[i + 5])) continue;
+      if (clear(edges[i], edges[i + 1]) && clear(edges[i + 3], edges[i + 4])) away++;
+      else atCorners++;
     }
-    expect(inBand).toBeLessThan(10);
+    expect(away).toBeLessThan(10);
+    expect(atCorners).toBeGreaterThan(0); // the corner seams are hard edges and draw
   });
 });
