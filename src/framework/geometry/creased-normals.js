@@ -89,10 +89,80 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
       if (arr) arr.push(t); else incident.set(cv, [t]);
     }
 
+  // A sub-MIN_FACE face's normal is noise, in shading exactly as in the line
+  // pass: the boolean's fan slivers tilt 40-56° over sub-15µm of relief, so a
+  // sliver that kept its own facet normal (the crease check below rejects every
+  // fat neighbor against the garbage reference) painted a zigzag lighting
+  // stripe down an otherwise perfect band — the shading half of the artifact
+  // whose line half MIN_FACE already gates (170mm of hard, unlined shading
+  // crease on one plain glyph's band, all of it sliver-adjacent). The sliver
+  // instead ANCHORS to a trustworthy neighbor and shades as part of that
+  // surface: the anchor's facet normal replaces its own everywhere (crease
+  // reference and averaging contribution alike). The anchor is chosen by
+  // GEOMETRY, not adjacency: the vertex-incident fat triangle whose supporting
+  // plane is nearest to all three of the sliver's vertices — a sliver lies IN
+  // its own surface to ~1µm but sits the seam's full 7-15µm relief off the
+  // crossing tool's, so plane distance separates the two cleanly. The tempting
+  // topological rules both fail: "average all fat neighbors, no crease check"
+  // smears the two sides of a wanted mitre seam together at the fan apex that
+  // sits ON the seam (370mm of crease vs the 170mm baseline), and "anchor
+  // across the longest shared edge" walks the fan stack sideways into the
+  // corner geometry the apex crossed (only halves the baseline). Fan stacks
+  // with no fat vertex-neighbor anchor transitively; a sliver with none at all
+  // (a genuinely tiny feature) keeps its own facet normal.
+  const anchorOf = new Int32Array(nTri).fill(-1);
+  {
+    const thins = [];
+    for (let t = 0; t < nTri; t++) if (thin[t] < MIN_FACE) thins.push(t);
+    const planeDist = (cand, t) => {
+      // max distance of t's three vertices from cand's supporting plane
+      const o = tris[cand * 3] * np;
+      const px = vp[o], py = vp[o + 1], pz = vp[o + 2];
+      const cnx = fn[cand * 3], cny = fn[cand * 3 + 1], cnz = fn[cand * 3 + 2];
+      let worst = 0;
+      for (let k = 0; k < 3; k++) {
+        const q = tris[t * 3 + k] * np;
+        const d = Math.abs((vp[q] - px) * cnx + (vp[q + 1] - py) * cny + (vp[q + 2] - pz) * cnz);
+        if (d > worst) worst = d;
+      }
+      return worst;
+    };
+    const allowed = (a, b) => triOID[a] === triOID[b] ||
+      !!polFor(triOID[a]).boundaryLines || !!polFor(triOID[b]).boundaryLines;
+    // Scored, iterative: a sliver's candidates are its fat vertex-neighbors
+    // plus the anchors its thin vertex-neighbors have already resolved (fan
+    // stacks routinely have not one fat triangle in vertex reach — a 5mm chord
+    // whose endpoints touch only other chords). Every candidate is judged by
+    // planeDist, never by arrival order: the first-found transitive adoption
+    // put two slivers of the SAME chord on different walls' bands, a 74° stripe
+    // down the band's length. A candidate's score is fixed, so each round's
+    // minimum only improves and the loop settles; bounded rounds regardless.
+    for (let round = 0; round < 8; round++) {
+      let changed = false;
+      for (const t of thins) {
+        let best = anchorOf[t];
+        let bestD = best === -1 ? Infinity : planeDist(best, t);
+        for (let k = 0; k < 3; k++)
+          for (const nb of incident.get(weld[tris[t * 3 + k]])) {
+            if (nb === t || !allowed(nb, t)) continue;
+            const cand = thin[nb] >= MIN_FACE ? nb : anchorOf[nb];
+            if (cand === -1 || cand === best) continue;
+            const d = planeDist(cand, t);
+            if (d < bestD) { bestD = d; best = cand; }
+          }
+        if (best !== anchorOf[t]) { anchorOf[t] = best; changed = true; }
+      }
+      if (!changed) break;
+    }
+  }
+  // the facet normal each triangle SHADES with — its anchor's for slivers
+  const sfn = (t) => { const a = anchorOf[t]; return a === -1 ? t : a; };
+
   const positions = new Float32Array(nTri * 9);
   const normals = new Float32Array(nTri * 9);
   for (let t = 0; t < nTri; t++) {
-    const fx = fn[t * 3], fy = fn[t * 3 + 1], fz = fn[t * 3 + 2], oid = triOID[t];
+    const ref = sfn(t);
+    const fx = fn[ref * 3], fy = fn[ref * 3 + 1], fz = fn[ref * 3 + 2], oid = triOID[t];
     const sharpCos = cosFor(oid); // per-surface crease threshold
     for (let k = 0; k < 3; k++) {
       const v = tris[t * 3 + k];
@@ -110,8 +180,9 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
         // band end-cap against a wall) stays hard.
         if (triOID[t2] !== oid &&
           !(polFor(triOID[t2]).boundaryLines || polFor(oid).boundaryLines)) continue;
-        if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
-        nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2];
+        const r2 = sfn(t2); // a sliver contributes its anchor's normal, not its own
+        if (fn[r2 * 3] * fx + fn[r2 * 3 + 1] * fy + fn[r2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
+        nx += fn[r2 * 3]; ny += fn[r2 * 3 + 1]; nz += fn[r2 * 3 + 2];
       }
       const L = Math.hypot(nx, ny, nz) || 1;
       const o = (t * 3 + k) * 3, vv = v * np;

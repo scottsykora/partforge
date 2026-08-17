@@ -144,6 +144,34 @@ test("a sub-visible fan sliver draws no line despite a sharp bend", () => {
   expect(creasedNormals(g).edges.length).toBe(0);
 });
 
+test("a fan sliver shades with its fat neighbor's normals, and does not harden them", () => {
+  // The same fan sliver, shading channel: its facet normal is tilted 40° over
+  // 20µm of actual relief, so keeping it (the crease check rejects the fat
+  // neighbor against the garbage reference) paints a zigzag lighting stripe
+  // down an otherwise smooth band — the "line along the fillet" that survived
+  // gating the LINE pass alone. A sub-MIN_FACE face's normal is noise: it must
+  // not be the crease reference for its own corners, and it must not
+  // contribute to a fat neighbor's average.
+  const t = (40 * Math.PI) / 180, w = 0.02;
+  const g = {
+    numProp: 3,
+    vertProperties: Float32Array.from([
+      0, 0, 0,                                  // v0
+      1, 0, 0,                                  // v1
+      0, 1, 0,                                  // v2 (fat triangle's apex)
+      0.5, -w * Math.cos(t), w * Math.sin(t),   // v3 (sliver's apex, 20µm out)
+    ]),
+    triVerts: Uint32Array.from([0, 1, 2, 1, 0, 3]),
+    mergeFromVert: new Uint32Array(0),
+    mergeToVert: new Uint32Array(0),
+    runIndex: Uint32Array.from([0, 3, 6]),
+    runOriginalID: Uint32Array.from([7, 7]),
+  };
+  const r = creasedNormals(g);
+  expect(cornerNormal(r, 1, 0)[2]).toBeCloseTo(1, 4); // sliver corner adopts the fat +Z field
+  expect(cornerNormal(r, 0, 0)[2]).toBeCloseTo(1, 4); // fat corner stays +Z, unpolluted
+});
+
 test("a zero-area triangle draws no line on its long edges", () => {
   // A boolean seam whose two sides land sub-micron apart collapses, at render
   // (float32) precision, into a triangle with two coincident vertices — zero
