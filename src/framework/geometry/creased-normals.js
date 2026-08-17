@@ -8,7 +8,7 @@
 // near-tangent), and a surface's own sharp edges stay crisp too. Each original
 // surface may carry a shading policy (shading-policy.js); surfaces without one
 // use SMOOTH, which reproduces the pre-policy behavior exactly.
-import { SMOOTH, COPLANAR_ANGLE, MIN_EDGE, cosDeg } from "./shading-policy.js";
+import { SMOOTH, COPLANAR_ANGLE, MIN_EDGE, MIN_FACE, cosDeg } from "./shading-policy.js";
 
 const COPLANAR_COS = cosDeg(COPLANAR_ANGLE);
 const MIN_EDGE2 = MIN_EDGE * MIN_EDGE;
@@ -140,8 +140,12 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
       // independently tessellated tangent surfaces (e.g. a corner sphere meeting
       // its edge-fillet cylinders) can leave micron-wide wall strips whose FACES
       // are invisible but whose long boundary edges would otherwise draw at full
-      // line weight. A triangle thinner than MIN_EDGE cannot be seen, so its
-      // edges are noise by definition — same threshold the segment filter uses.
+      // line weight. A triangle thinner than MIN_FACE cannot carry a visible
+      // crease — the fan slivers a boolean face-split leaves near a tool
+      // crossing are 14-34µm wide with wildly tilted normals over sub-15µm of
+      // actual relief (see shading-policy.js) — so its edges are noise by
+      // definition. The gate is deliberately wider than the segment filter's
+      // MIN_EDGE below, which stays tight so short REAL segments survive.
       const sameOID = triOID[prev] === triOID[t];
       // Blend boundary: a cross-surface seam with a BLEND policy on EXACTLY one side
       // is the start/end of a fillet band — draw it even when tangent (the band's
@@ -153,7 +157,7 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
       // filter still drops the short ones).
       const boundary = !sameOID &&
         !!polFor(triOID[prev]).boundaryLines !== !!polFor(triOID[t]).boundaryLines;
-      if (!boundary && (thin[prev] < MIN_EDGE || thin[t] < MIN_EDGE)) continue;
+      if (!boundary && (thin[prev] < MIN_FACE || thin[t] < MIN_FACE)) continue;
       const dot = fn[prev * 3] * fn[t * 3] + fn[prev * 3 + 1] * fn[t * 3 + 1] + fn[prev * 3 + 2] * fn[t * 3 + 2];
       // A multi-hole cap triangulation can contain an opposite-wound bridge:
       // its two normals disagree by 180 degrees even though both triangles lie

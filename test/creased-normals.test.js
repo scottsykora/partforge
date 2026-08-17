@@ -116,6 +116,34 @@ test("sub-MIN_EDGE segments are dropped as degenerate slivers", () => {
   expect(r.edges.length).toBe(0);
 });
 
+test("a sub-visible fan sliver draws no line despite a sharp bend", () => {
+  // A boolean face-split near a tool crossing (mitre corner, pivot overshoot)
+  // re-triangulates the split band quad against seam vertices that sit microns
+  // off its plane — long fan slivers ~14-34µm wide whose normals tilt 40-56°
+  // over sub-15µm of actual relief. The crease is real to the mesh but
+  // invisible to any viewer, and it drew a full-weight line down an otherwise
+  // perfect band (the label part's "line along the fillet" report). MIN_FACE
+  // gates it: both incident faces must be wide enough to carry a visible
+  // crease. The shared edge is LONG (1mm), so the segment-length filter is
+  // not what saves this — the face gate is.
+  const t = (40 * Math.PI) / 180, w = 0.02; // 20µm-wide sliver, 40° bend
+  const g = {
+    numProp: 3,
+    vertProperties: Float32Array.from([
+      0, 0, 0,                                  // v0
+      1, 0, 0,                                  // v1
+      0, 1, 0,                                  // v2 (fat triangle's apex)
+      0.5, -w * Math.cos(t), w * Math.sin(t),   // v3 (sliver's apex, 20µm out)
+    ]),
+    triVerts: Uint32Array.from([0, 1, 2, 1, 0, 3]),
+    mergeFromVert: new Uint32Array(0),
+    mergeToVert: new Uint32Array(0),
+    runIndex: Uint32Array.from([0, 3, 6]),
+    runOriginalID: Uint32Array.from([7, 7]),
+  };
+  expect(creasedNormals(g).edges.length).toBe(0);
+});
+
 test("a zero-area triangle draws no line on its long edges", () => {
   // A boolean seam whose two sides land sub-micron apart collapses, at render
   // (float32) precision, into a triangle with two coincident vertices — zero
