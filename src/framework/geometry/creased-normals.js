@@ -61,11 +61,30 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
     thin[t] = longest > 0 ? L0 / Math.sqrt(longest) : 0;
   }
 
+  // Second-stage weld for SHADING adjacency only: a boolean seam whose two
+  // sides land sub-micron apart keeps two distinct vertex columns that the
+  // merge map does not join, yet at render (float32) precision they are the
+  // same point — without this weld the facets on either side average their
+  // normals separately and the seam shades as a lighting crease. The line
+  // pass below deliberately keeps `remap` (Manifold's own topology): welding
+  // its edge keys would make pairing at collapsed seams order-dependent and
+  // could pair a boundary ring's edges away.
+  const weld = Uint32Array.from(remap);
+  {
+    const byPos = new Map();
+    for (let i = 0; i < nVert; i++) {
+      const o = i * np;
+      const key = `${vp[o]}|${vp[o + 1]}|${vp[o + 2]}`;
+      const first = byPos.get(key);
+      if (first === undefined) byPos.set(key, weld[i]); else weld[i] = first;
+    }
+  }
+
   // canonical vertex → incident triangles
   const incident = new Map();
   for (let t = 0; t < nTri; t++)
     for (let k = 0; k < 3; k++) {
-      const cv = remap[tris[t * 3 + k]];
+      const cv = weld[tris[t * 3 + k]];
       const arr = incident.get(cv);
       if (arr) arr.push(t); else incident.set(cv, [t]);
     }
@@ -78,13 +97,19 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
     for (let k = 0; k < 3; k++) {
       const v = tris[t * 3 + k];
       let nx = 0, ny = 0, nz = 0;
-      for (const t2 of incident.get(remap[v])) {
-        // different cut surface → hard, EXCEPT two blend surfaces (boundaryLines on
-        // both): one band is many tool surfaces continuing each other tangentially,
-        // and hard normals at their handovers would put lighting seams along a band
-        // that used to shade as one re-originaled surface
+      for (const t2 of incident.get(weld[v])) {
+        // different cut surface → hard, EXCEPT when a blend surface (boundaryLines)
+        // is involved on either side. Blend↔blend: one band is many tool surfaces
+        // continuing each other tangentially, and hard normals at their handovers
+        // would put lighting seams along a band that used to shade as one
+        // re-originaled surface. Blend↔base: the band's start/end seams are TANGENT
+        // by construction (that is why the line pass needs boundaryLines to draw
+        // them at all), so shading them hard painted a permanent lighting ridge
+        // along every fillet boundary ring. Both cases still fall to the crease
+        // check below, so a genuinely sharp crossing (a chamfer's 45° shoulder, a
+        // band end-cap against a wall) stays hard.
         if (triOID[t2] !== oid &&
-          !(polFor(triOID[t2]).boundaryLines && polFor(oid).boundaryLines)) continue;
+          !(polFor(triOID[t2]).boundaryLines || polFor(oid).boundaryLines)) continue;
         if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
         nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2];
       }

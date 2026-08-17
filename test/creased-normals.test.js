@@ -72,6 +72,22 @@ test("a blend boundary (one side BLEND) draws even when tangent", () => {
   expect(r.edges.length).toBe(6);
 });
 
+test("a tangent blend boundary shades SMOOTH while its line still draws", () => {
+  // The band meets the flank tangentially by construction, so the boundary
+  // must not shade hard — that painted a permanent lighting ridge along every
+  // fillet's boundary ring. The line (above) and the shading are independent.
+  const r = creasedNormals(hinge(6, { oids: [7, 8] }), { policies: new Map([[8, BLEND]]) });
+  expect(r.edges.length).toBe(6);                      // 6° > 5° coplanar bar: line draws
+  expect(cornerNormal(r, 0, 0)[2]).toBeLessThan(0.9999); // averaged across the seam, not tri A's own +Z
+});
+
+test("a steep blend↔base crossing still shades hard", () => {
+  // a chamfer's 45° shoulder, or a band end-cap against a wall: past the
+  // crease angle the boundary is a real crease and keeps hard normals.
+  const r = creasedNormals(hinge(45, { oids: [7, 8] }), { policies: new Map([[8, BLEND]]) });
+  expect(cornerNormal(r, 0, 0)[2]).toBeCloseTo(1, 5);
+});
+
 test("a blend-blend handover (both sides BLEND) keeps the bend rule — no tangent line", () => {
   // two blend tools continuing each other along one band: their handover seam
   // is the one this module spent a branch making invisible.
