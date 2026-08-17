@@ -7,9 +7,10 @@
 // the corner's axis — what OCCT's native fillet produces), the adjoining tools end
 // flush at the corner instead of overshooting, and the band renders as a clean curve.
 //
-// Reflex (inner) corners keep the mitre overlap deliberately: there the rolling ball
-// genuinely cannot reach into the corner and the two blend surfaces truly intersect —
-// OCCT draws the same crease. Only salient corners get wedges.
+// Reflex (inner) corners take the rolling-ball PIVOT instead (see
+// mesh-fillet-reflex.test.js): the ball swings about the corner's face-normal axis,
+// and the face's blend boundary rounds into an arc of radius r about the vertex.
+// Only salient corners get the wedge/steer treatment this file covers.
 //
 // The line census runs the REAL render path — toMesh(), which is creased-normals plus
 // the kernel's shading-policy registry. The registry matters now: blend surfaces keep
