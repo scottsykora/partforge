@@ -60,10 +60,15 @@ Its coverage and tolerance band are part of the contract:
   guards, all ≤ ~1e-3 mm). Volumes agree with the B-rep result to ~0.1% on covered
   edge classes. **Corners:** where exactly three selected straight convex chains meet
   at a mutually orthogonal vertex (a box corner), the fillet caps it with the
-  rolling-ball sphere octant; every other junction of blended chains is a **mitre**
-  (the blend surfaces intersect), where the B-rep class builds a kernel-specific
-  vertex blend instead — parity at such corners is approximate, like `roundedBox`'s
-  documented corner carve-out.
+  rolling-ball sphere octant. A two-chain corner in a common face plane (a rim
+  corner) blends by turn direction: SALIENT corners steer the band around a small
+  arc (the silhouette rounds by about the blend radius inside the band), and REFLEX
+  corners get the rolling-ball pivot — the face's blend boundary rounds into an arc
+  of the blend radius about the vertex, exactly what a ball rolling into an inside
+  corner leaves. Every other junction of blended chains is a **mitre** (the blend
+  surfaces intersect), where the B-rep class builds a kernel-specific vertex blend
+  instead — parity at such corners is approximate, like `roundedBox`'s documented
+  corner carve-out.
 - **New surfaces:** like the B-rep op, a mesh blend produces new surfaces — feature
   labels upstream of the call do not survive through it (attribution uses the
   fallback path), and the result shades with the default SMOOTH policy.

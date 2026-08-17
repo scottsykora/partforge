@@ -2195,8 +2195,10 @@ STEP export always builds on OCCT, so a filleted part gets exact B-rep blends in
 STEP even though it previews (and STL/3MF-exports) from the mesh blend — the two agree
 to within tessellation on the supported edge classes, with one visible exception:
 orthogonal box-style corners where three filleted edges meet get a true sphere-octant
-cap, but other blend junctions are mitred on the mesh where OCCT builds a vertex
-blend.
+cap, and a planar rim's own corners blend by turn direction (salient corners steer
+the band around a small arc; reflex/inside corners round into an arc of the blend
+radius about the vertex — the rolling-ball pivot), but other blend junctions are
+mitred on the mesh where OCCT builds a vertex blend.
 
 If the mesh backend hits an edge class it can't blend, it signals `NEEDS_OCCT` and the
 framework reroutes **just that sub-part** to OCCT for those exact parameters —

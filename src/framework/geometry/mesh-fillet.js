@@ -21,10 +21,14 @@
 // block shaves the sharp corner down to band depth, and the band sweeps around with
 // no crease (see roundSalientCorners). The silhouette inside the band rounds by about
 // the blend radius at such corners; the flat shelf the horn leaves at the band's base
-// is the deliberate residue. Corners keep their mitre — today's and OCCT's behavior,
-// a real crease the feature-line overlay honestly draws — when they are REFLEX (the
-// ball cannot reach in), or too tight to host the setback (glyph-scale features
-// smaller than ~3× the magnitude), or when three or more chains meet (the spherical
+// is the deliberate residue. A REFLEX corner in a common face plane gets the
+// rolling-ball PIVOT (reflexPivotAt/reflexPivotTool): the ball swings about the
+// corner's face-normal axis, touching the face and the vertical corner edge, and the
+// face's blend boundary rounds into an arc of radius r about the vertex — without it
+// the flush-ended neighbor tools leave a wedge of the original rim uncut and the face
+// keeps a point AT the corner (the label-part "artifacts" bug). Corners keep their
+// mitre only when too tight to host the salient setback (glyph-scale features smaller
+// than ~3× the magnitude), or when three or more chains meet (the spherical
 // cornerPatches below own the orthogonal three-chain case).
 //
 // Known limits (documented, not bugs): radius feasibility is the caller's job (clamp
@@ -758,7 +762,9 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   // viewer's line threshold and draw across the band. A salient split corner with room
   // for the setback gets a corner ARC (cornerArcAt — the same rounded-corner treatment
   // apply() gives two-chain junctions), the adjoining stretches trimmed to its tangent
-  // points; reflex or too-tight splits keep the overshoot mitre.
+  // points; a reflex split gets the rolling-ball PIVOT (reflexPivotTool — without it
+  // the flush stretch ends leave the corner wedge uncut and the face keeps its point);
+  // too-tight salient splits keep the overshoot mitre.
   const reach = magnitude * 1.5;
   const breaks = [];
   for (let i = closed ? 0 : 1; i < (closed ? m : m - 1); i++) {
@@ -773,6 +779,7 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
   // polyline to the ADJACENT break (or chain end) — a single tessellation segment says
   // nothing about the room a whole smooth stretch offers.
   const cornerArcs = new Map();   // break vertex index → { arc, t }
+  const pivots = [];              // reflex break vertices → rolling-ball pivots
   if (convex && breaks.length) {
     const segSum = (from, to) => {
       let sum = 0;
@@ -789,7 +796,9 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
         : (j + 1 < breaks.length ? breaks[j + 1] : m - 1);
       const got = cornerArcAt(at(i), faceN, scl(segDir[iIn], -1), segDir[i],
         wallNs[iIn], wallNs[i], segSum(prevB, i), segSum(i, nextB), magnitude);
-      if (got) cornerArcs.set(i, got);
+      if (got) { cornerArcs.set(i, got); continue; }
+      const piv = reflexPivotAt(at(i), faceN, scl(segDir[iIn], -1), segDir[i], wallNs[iIn], wallNs[i]);
+      if (piv) pivots.push(piv);
     }
   }
 
@@ -860,6 +869,7 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
       if (len(sub(got.vertex, got.arc.O)) - got.arc.R > 0.02 * magnitude)
         tools.push(cornerHornTool(k, got, magnitude, segs));
     }
+    for (const piv of pivots) tools.push(reflexPivotTool(k, piv, magnitude, mode, segs, pSegs));
     return tools;
   } catch (e) {
     throw new UnsupportedEdgeError(`planar sweep: ${e.message}`);
@@ -883,10 +893,11 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs) {
 // sharper than CORNER_ROUND_MIN_TURN; gentler corners keep their exact silhouette (a
 // mitre under the viewer\'s 35° line threshold draws nothing).
 //
-// REFLEX corners keep the mitre: the ball genuinely cannot reach into the corner, the
-// crease there is real geometry, and rounding the path would ADD material. A corner
-// whose neighbors are too short to host the setback (tight glyph features) falls back
-// to the mitre too — the fallback is today\'s behavior, never a failure.
+// REFLEX corners take the rolling-ball PIVOT instead (reflexPivotAt below): steering
+// the band path around a reflex corner would ADD material, but the ball itself swings
+// about the corner touching the face and the vertical corner edge — see the reflex
+// pivot section. A salient corner whose neighbors are too short to host the setback
+// (tight glyph features) falls back to the mitre — that fallback is never a failure.
 // Corners gentler than this keep their mitre: the two blends there differ by less than
 // the mitre turn everywhere, far under the viewer's 35° line threshold, and the shallow
 // overlap sliver stays too flat for simplify() to fold into visible creases. Measured:
@@ -989,6 +1000,95 @@ function cornerHornTool(k, { vertex, f, arc }, magnitude, segs) {
   return tool.translate(O);
 }
 
+// ---------------------------------------------------------------------------
+// Reflex pivots. At a REFLEX corner the neighboring blend tools end flush against the
+// planes through the vertex (their only overshoot is the 0.05·r anti-graze allowance),
+// so the wedge of rim material between those end planes — azimuthal extent = the turn
+// angle — survives both cutters and the face keeps a point essentially AT the vertex.
+// The rolling ball does not stop there: it pivots about the corner, touching the face
+// and the vertical corner edge, its center swinging on an arc of radius r about the
+// face-normal axis through the vertex. The envelope is a horn-torus patch — the
+// revolve, about that axis, of the blend cross-section running from the axis point
+// r below the face to the face tangency at radius r — and the face's blend boundary
+// becomes an arc of radius r about the vertex (the "rounded inside curve"). The pivot
+// cross-section at each span end coincides exactly with the neighbor tool's own
+// cross-section at the vertex (same circle, same plane), so the handover is G1; the
+// small angular overshoot below only re-cuts band the neighbors already cut.
+
+// Pivot descriptor at one vertex, or null (salient — cornerArcAt's case — or a turn
+// too gentle to matter). Same argument convention as cornerArcAt: tin1/tin2 point
+// from the vertex INTO each side, wall1/wall2 are the sides' outward wall normals.
+function reflexPivotAt(vertex, f, tin1, tin2, wall1, wall2) {
+  const tIn = scl(tin1, -1), tOut = tin2;
+  const turn = Math.acos(clamp1(dot(tIn, tOut)));
+  if (turn < CORNER_ROUND_MIN_TURN) return null;  // wedge sagitta sub-micron: keep today's behavior
+  const turnS = dot(cross(tIn, tOut), f);
+  const matLeft = dot(wall1, cross(tIn, f)) > 0;
+  if ((turnS > 0) === matLeft) return null;       // salient: roundSalientCorners' territory
+  // inward in-plane wall normals bound the uncut wedge; the pivot sweeps between them
+  const proj = (wl) => { const p = sub(scl(wl, -1), scl(f, -dot(wl, f))); const l = len(p) || 1; return scl(p, 1 / l); };
+  let u0 = proj(wall1), uE = proj(wall2);
+  const span = Math.acos(clamp1(dot(u0, uE)));
+  if (!(span > 1e-4)) return null;
+  if (dot(cross(u0, uE), f) < 0) [u0, uE] = [uE, u0]; // azimuth increases u0 → uE about +f
+  return { vertex, f, u0, span };
+}
+
+// The pivot cutter: revolve of the blend cross-section about the face-normal axis
+// through the vertex. Cross-section in (ρ, z) with z along f (face at z = 0): the
+// fillet arc runs from the axis point (0, −r) to the face tangency (r, 0) on the
+// circle centered (r, −r) — extended past the tangency by revolveTool's arc-tail
+// recipe, because the blend meets the face tangentially there and a tessellated
+// tangency grazes — then closes above the face so the corner column goes with it.
+// A chamfer takes the chord instead (a cone), which meets face and edge transversally
+// and needs no tail. Interior arc vertices use profile2D's area-exact radius.
+function reflexPivotTool(k, { vertex, f, u0, span }, magnitude, mode, segs, pSegs) {
+  const r = magnitude;
+  const delta = 0.02 * r;
+  let poly;
+  if (mode === "chamfer") {
+    poly = [[0, -r], [r, 0], [r + delta, delta], [0, delta]];
+  } else {
+    const sag = Math.min(2e-4, 0.02 * r);
+    const ext = Math.min(0.4, Math.max(0.01, Math.acos(Math.max(-1, 1 - sag / r))));
+    const arcSpan = Math.PI / 2 + ext;
+    const nArc = Math.max(2, Math.ceil((arcSpan / (2 * Math.PI)) * pSegs));
+    const th = arcSpan / nArc;
+    const rEq = r * Math.sqrt(th / Math.sin(th));
+    poly = [];
+    for (let i = 0; i <= nArc; i++) {
+      const a = Math.PI - arcSpan * (i / nArc);       // 180° (axis) → past the face tangency
+      const ri = i === 0 || i === nArc ? r : rEq;
+      poly.push([r + ri * Math.cos(a), -r + ri * Math.sin(a)]);
+    }
+    poly.push([poly[poly.length - 1][0], delta], [0, delta]);
+  }
+  let area = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i], [x2, y2] = poly[(i + 1) % poly.length];
+    area += x1 * y2 - x2 * y1;
+  }
+  if (area < 0) poly = poly.slice().reverse();
+  // angular overshoot past both span ends: crosses the walls (tangent contacts at the
+  // ends) decisively, re-cutting only band the flush-ended neighbors already cut
+  const ovAng = 0.05;
+  const degrees = ((span + 2 * ovAng) * 180) / Math.PI;
+  let tool = k.revolve(poly, { degrees, segs: cornerArcSegs(segs, 0, magnitude) });
+  // pose: Z → f, then twist the revolve's start azimuth (+X) onto u0 backed off by ovAng
+  const v0 = cross(f, u0);
+  const startDir = add(scl(u0, Math.cos(-ovAng)), scl(v0, Math.sin(-ovAng)));
+  const axisRaw = cross([0, 0, 1], f);
+  const s = len(axisRaw);
+  let axis = null, theta = 0;
+  if (s > 1e-9) { axis = scl(axisRaw, 1 / s); theta = Math.atan2(s, f[2]); }
+  else if (f[2] < 0) { axis = [1, 0, 0]; theta = Math.PI; }
+  if (axis) tool = tool.rotateAbout({ axis, deg: (theta * 180) / Math.PI });
+  const xImage = axis ? rotVec([1, 0, 0], axis, theta) : [1, 0, 0];
+  const twist = Math.atan2(dot(f, cross(xImage, startDir)), dot(xImage, startDir));
+  if (Math.abs(twist) > 1e-9) tool = tool.rotateAbout({ axis: f, deg: (twist * 180) / Math.PI });
+  return tool.translate(vertex);
+}
+
 function chainEndInfo(ch, end) {
   if (ch.kind === "line") {
     return end === "start"
@@ -1003,9 +1103,10 @@ function chainEndInfo(ch, end) {
     : { v: pts[m - 1], tin: norm(sub(pts[m - 2], pts[m - 1])), flanks: [ch.faceN, ch.wallNs[ch.wallNs.length - 1]], len: plen };
 }
 
-// Corner arc for two chain ends meeting at one vertex, or null (no common face plane,
-// gentle turn, reflex corner, or no room for the setback).
-function cornerArcBetween(E1, E2, magnitude) {
+// Corner treatment for two chain ends meeting at one vertex: {arc} for a salient
+// corner with room for the setback, {pivot} for a reflex corner, or null (no common
+// face plane, gentle turn, or a too-tight salient corner keeping its mitre).
+function cornerBlendBetween(E1, E2, magnitude) {
   let f = null, wall1 = null, wall2 = null;
   for (const c1 of E1.flanks) {
     for (const c2 of E2.flanks) {
@@ -1018,7 +1119,10 @@ function cornerArcBetween(E1, E2, magnitude) {
     }
   }
   if (!f) return null;
-  return cornerArcAt(E1.v, f, E1.tin, E2.tin, wall1, wall2, E1.len, E2.len, magnitude);
+  const corner = cornerArcAt(E1.v, f, E1.tin, E2.tin, wall1, wall2, E1.len, E2.len, magnitude);
+  if (corner) return { corner };
+  const pivot = reflexPivotAt(E1.v, f, E1.tin, E2.tin, wall1, wall2);
+  return pivot ? { pivot } : null;
 }
 
 // Convert a FACE-PLANE arc chain to the equivalent planar chain, or return null when
@@ -1082,8 +1186,9 @@ function trimChain(ch, tStart, tEnd) {
   return { ...ch, points: pts, wallNs: walls, closed: false };
 }
 
-// Round the salient two-chain corners of a selection: returns the effective chain list
-// (trimmed neighbors substituted in place) plus the synthetic corner-arc chains.
+// Blend the two-chain corners of a selection: salient corners round (trimmed neighbors
+// substituted in place, plus the synthetic corner-arc chains and their horns); reflex
+// corners get rolling-ball pivots (neighbors stay flush — the pivot owns the wedge).
 function roundSalientCorners(selected, magnitude) {
   const keyOf = (p) => `${Math.round(p[0] * WELD)},${Math.round(p[1] * WELD)},${Math.round(p[2] * WELD)}`;
   const ends = new Map();
@@ -1096,7 +1201,7 @@ function roundSalientCorners(selected, magnitude) {
       (ends.get(kk) ?? ends.set(kk, []).get(kk)).push({ ch, end, info });
     }
   }
-  const arcs = [], horns = [], trims = new Map();
+  const arcs = [], horns = [], pivots = [], trims = new Map();
   const addTrim = (ch, end, t) => {
     const cur = trims.get(ch) ?? { start: 0, end: 0 };
     cur[end] = t;
@@ -1104,8 +1209,10 @@ function roundSalientCorners(selected, magnitude) {
   };
   for (const list of ends.values()) {
     if (list.length !== 2 || (list[0].ch === list[1].ch && list[0].end === list[1].end)) continue;
-    const got = cornerArcBetween(list[0].info, list[1].info, magnitude);
-    if (!got) continue;
+    const blend = cornerBlendBetween(list[0].info, list[1].info, magnitude);
+    if (!blend) continue;
+    if (blend.pivot) { pivots.push(blend.pivot); continue; }
+    const got = blend.corner;
     arcs.push(got.arc);
     // a gentle corner's horn is a sliver — depth ρ·(1/cos(turn/2) − 1), microns at
     // small turns — not worth a cutter (and thin cutters are their own noise source)
@@ -1114,14 +1221,14 @@ function roundSalientCorners(selected, magnitude) {
     addTrim(list[0].ch, list[0].end, got.t);
     addTrim(list[1].ch, list[1].end, got.t);
   }
-  if (!arcs.length) return { chains: selected, arcs, horns };
+  if (!arcs.length) return { chains: selected, arcs, horns, pivots };
   const chains = [];
   for (const ch of selected) {
     const tr = trims.get(ch);
     const eff = tr ? trimChain(ch, tr.start, tr.end) : ch;
     if (eff) chains.push(eff);
   }
-  return { chains, arcs, horns };
+  return { chains, arcs, horns, pivots };
 }
 
 // ---------------------------------------------------------------------------
@@ -1199,7 +1306,7 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
   // converted arc joins its planar neighbors — chainEdges' own stitch pass ran before
   // these chains were planar, so their junctions are still open here.
   const planarized = stitchPlanarChains(selected.map((ch) => planarizeArc(ch) ?? ch));
-  const { chains: effective, arcs, horns } = roundSalientCorners(planarized, magnitude);
+  const { chains: effective, arcs, horns, pivots } = roundSalientCorners(planarized, magnitude);
   const pSegs = blendSegs(segs, magnitude);
   const toolsFor = (ch) =>
     ch.kind === "planar"
@@ -1207,6 +1314,7 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
       : [(ch.kind === "arc" ? revolveTool : prismTool)(k, ch, magnitude, mode, segs, pSegs)];
   const cutters = [...effective, ...arcs].filter((ch) => ch.convex).flatMap(toolsFor);
   cutters.push(...horns.map((h) => cornerHornTool(k, h, magnitude, segs)));
+  cutters.push(...pivots.map((p) => reflexPivotTool(k, p, magnitude, mode, segs, pSegs)));
   const fillers = effective.filter((ch) => !ch.convex).flatMap(toolsFor);
   if (mode === "fillet") cutters.push(...cornerPatches(k, effective, magnitude, segs));
   let out = solid;
