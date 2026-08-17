@@ -103,6 +103,7 @@ Commit message: `fix: smooth boolean slivers per fillet surface`
 
 **Files:**
 - Modify: `package.json`
+- Modify: `package-lock.json`
 - Review: all files changed from `origin/main`
 
 **Step 1: Audit the patch**
@@ -116,7 +117,8 @@ Keep cleanup within PR #144's roundAll, planar-rim, feature-line, and shading sc
 
 **Step 3: Bump the release version**
 
-Change `package.json` from `0.67.0` to `0.67.1`.
+Change `package.json` and both root package-version entries in `package-lock.json`
+to `0.67.1` (the lockfile was still stamped `0.64.0` before installation synced it).
 
 **Step 4: Commit**
 
