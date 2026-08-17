@@ -2241,15 +2241,19 @@ melt away, holes narrower than `2r` seal shut. That makes it ideal for
 "soften this whole organic part" and wrong for parts where a specific edge
 must stay sharp (use `fillet` with a selector for that).
 
-**Cost warning: roundAll is morphological (three Minkowski passes) and its
-runtime grows steeply with the solid's triangle count.** On a simple bracket it
-is interactive; on a complex outline it is not — measured 30+ seconds on a
-text-outline extrusion whose `fillet({ r, edges: { inPlane: "XY", at: h } })`
-takes well under a second. **Never use roundAll just to round the top or bottom
-rim of an extrusion** — that is exactly what the `inPlane` fillet selector is
-for, at a tiny fraction of the cost. Reach for roundAll only when the design
-genuinely needs every edge softened at once and the solid is geometrically
-simple.
+**Cost note.** On a Z-aligned extrusion (constant cross-section — a plate, a
+text backing, any straight-sided prism) roundAll takes a fast path: the ball
+morphology is computed as a 2-D close-open of the cross-section plus rim
+fillets, so even a complex text-outline backing rounds in well under a second.
+Everything else pays the full morphology (three Minkowski passes), whose
+runtime grows steeply with triangle count — a rotated or lofted solid of a few
+thousand triangles can take tens of seconds. When only a specific edge needs
+rounding, `fillet` with a selector (e.g. `{ inPlane: "XY", at: h }` for a rim)
+says what you mean and is always the cheap, predictable choice; reach for
+roundAll when the design genuinely calls for every edge softened at once. At
+the fast path's corners the plan silhouette follows the rim fillet's corner
+rounding (radius ≈ 1.05–1.25·r rather than exactly r) — the same corner
+treatment fillet itself applies.
 
 Rules of thumb:
 

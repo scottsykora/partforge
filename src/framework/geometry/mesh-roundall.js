@@ -81,3 +81,46 @@ export function meshRoundAll(wasm, m, r, quality) {
     sph2R.delete?.();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Prism detection for the fast path (manifold-backend.js). The Minkowski chain
+// above is seconds-per-thousand-triangles, but roundAll's expensive real-world
+// inputs are almost always Z-prisms (text backings, plates, extruded outlines) —
+// and on a prism the ball morphology decomposes exactly into the 2-D disk
+// morphology of the cross-section plus rim fillets, all of which are fast. This
+// function answers "is m a Z-prism, and what is its constant cross-section?"
+//
+// Detection is deliberately behavioral, not structural: three slices must have
+// equal area AND vanishing symmetric difference (a sheared prism has equal-area
+// TRANSLATED sections — the subtract catches it), and the solid's volume must
+// equal section × height (a bulge parked between the slice planes would pass the
+// slice checks alone). Any failure returns null and the caller keeps the
+// reference morphology — the fast path may only ever substitute, never widen.
+//
+// On success the returned CrossSection is the CALLER's to delete.
+export function prismSection(wasm, m, relTol = 1e-4) {
+  const bb = m.boundingBox();
+  const z0 = bb.min[2], h = bb.max[2] - z0;
+  if (!(h > 0)) return null;
+  const volume = m.volume();
+  if (!(volume > 0)) return null;
+  const slices = [0.25, 0.5, 0.75].map((t) => m.slice(z0 + t * h));
+  try {
+    const area = slices[1].area();
+    if (!(area > 0)) return null;
+    for (const s of slices) if (Math.abs(s.area() - area) > relTol * area) return null;
+    for (const s of [slices[0], slices[2]]) {
+      const d1 = slices[1].subtract(s), d2 = s.subtract(slices[1]);
+      const diff = d1.area() + d2.area();
+      d1.delete?.();
+      d2.delete?.();
+      if (diff > relTol * area) return null;
+    }
+    if (Math.abs(volume - area * h) > 10 * relTol * area * h) return null;
+    const cs = slices[1];
+    slices[1] = null; // ownership moves to the caller
+    return { cs, z0, h };
+  } finally {
+    for (const s of slices) s?.delete?.();
+  }
+}

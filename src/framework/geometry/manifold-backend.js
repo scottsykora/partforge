@@ -15,7 +15,7 @@ import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
 import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
-import { meshRoundAll } from "./mesh-roundall.js";
+import { meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
 import { KernelCapabilityError } from "./errors.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
@@ -168,6 +168,66 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     }
   };
 
+  // roundAll prism fast path. Ball close-then-open via native Minkowski is
+  // seconds-per-thousand-triangles (a text-outline backing measured 30+ s), but on
+  // a Z-prism the SAME morphology decomposes: the 2-D close-open of the
+  // cross-section (Clipper2 offsets +r, -2r, +r) supplies the wall melting and
+  // hole sealing, and a selector-free fillet of the re-extruded section at r
+  // supplies every rounded surface — vertical edges, both rims, and the corner
+  // treatments. Returns a raw (tracked) manifold, or null to
+  // keep the reference morphology — the fast path may only ever SUBSTITUTE for
+  // it: any doubt (not a prism, plate too thin, everything melted, a fillet
+  // refusal) falls back rather than widening or narrowing what roundAll accepts,
+  // and roundAll must never surface NEEDS_OCCT (it is its own reference
+  // implementation), which is why the whole attempt is fenced by a bare catch.
+  const prismRoundAllFast = (m, mHash, r) => {
+    let sect = null;
+    try {
+      sect = prismSection(wasm, m);
+      if (!sect) return null;
+      const { cs, z0, h: height } = sect;
+      // the erosion consumes the whole plate below 2r, and just above it the two
+      // rim bands graze each other — both belong to the reference morphology
+      if (!(height > 2 * r * 1.05)) return null;
+      // MITER joins on all three offsets, deliberately: the true morphology mints
+      // outline corners of radius exactly r, and a rim fillet of radius r over an
+      // r-radius corner pinches its top tangent contour to a point — the planar
+      // sweep refuses, structurally. Miter keeps every corner SHARP instead, and
+      // the selector-free fillet below performs ALL the rounding: convex vertical
+      // edges (cutters at r — the same solid the round join would have produced),
+      // concave verticals (fillers), both rims, and the corner treatments. Melt
+      // and seal thresholds stay exact on straight stretches; corner-local
+      // thresholds and silhouettes differ from the ball morphology by the rim
+      // fillet's own corner tolerance (~0.25·r) — the documented corner trade.
+      let cur = null;
+      try {
+        for (const delta of [r, -2 * r, r]) {
+          const next = (cur ?? cs).offset(delta, "Miter", 2);
+          const cleaned = next.simplify(1e-6);
+          next.delete?.();
+          cur?.delete?.();
+          cur = cleaned;
+        }
+        if (!(cur.area() > 0)) return null; // everything melted — reference path owns the empty result
+        let base = T(Manifold.extrude(cur, height));
+        if (z0 !== 0) base = T(base.translate([0, 0, z0]));
+        const wrapped = wrap(base, h("roundAllPrismBase", mHash, r, quality));
+        // selector-free: every sharp edge of the mitered prism gets its radius here
+        const filleted = wrapped.fillet(r);
+        // decouple from the fillet cache's pin: cached() will pin the object this
+        // returns under the roundAll hash, and one WASM object must never sit
+        // under two cache entries (double-dispose on eviction)
+        return T(filleted._m.asOriginal());
+      } finally {
+        cur?.delete?.();
+      }
+    } catch {
+      return null;
+    } finally {
+      sect?.cs?.delete?.();
+    }
+  };
+
   const wrap = (m, hash) => addSugar({
     _m: m,
     _hash: hash,
@@ -190,7 +250,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       // per-quality kernel, so it can never collide across tiers (the OCCT twin
       // key omits it for the same reason); it just spells out that the ball
       // tessellation, and so the result, is tier-dependent.
-      return cached(h("roundAll", hash, r, quality), () => T(meshRoundAll(wasm, m, r, quality)));
+      return cached(h("roundAll", hash, r, quality), () =>
+        prismRoundAllFast(m, hash, r) ?? T(meshRoundAll(wasm, m, r, quality)));
     },
     // batch difference: first minus the union of the rest, evaluated as one boolean
     // tree — no materialized intermediate union (the unionRaw memory note applies)
