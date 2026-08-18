@@ -4,6 +4,7 @@
 import Module from "manifold-3d";
 import { createManifoldKernel } from "../framework/geometry/manifold-backend.js";
 import { resolveFonts } from "../framework/fonts.js";
+import { normalizeOpentype } from "../framework/geometry/opentype-interop.js";
 import { ensureImports } from "../framework/imports.js";
 import { nodeAssetSources } from "./assets.js";
 import { tessellateStepAssets } from "./step-mesh.js";
@@ -12,7 +13,7 @@ export async function bootManifoldKernel({ quality = "preview", fonts, imports, 
   const wasm = await Module();
   wasm.setup();
   const kernel = createManifoldKernel(wasm, { quality });
-  if (fonts) { const opentype = (await import("opentype.js")).default;
+  if (fonts) { const opentype = normalizeOpentype(await import("opentype.js"));
     for (const [name, buf] of await resolveFonts(nodeAssetSources(fonts))) kernel._fonts.set(name, opentype.parse(buf)); }
   if (imports) {
     const decl = nodeAssetSources(imports);

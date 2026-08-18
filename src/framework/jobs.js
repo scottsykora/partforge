@@ -5,6 +5,7 @@
 import { meshTo3MF } from "./geometry/threemf.js";
 import { exportablePartNames } from "./export-select.js";
 import { resolveFonts } from "./fonts.js";
+import { normalizeOpentype } from "./geometry/opentype-interop.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
@@ -100,9 +101,11 @@ export async function handle(kernel, part, msg, post, opts = {}) {
   try {
     // Preload any part-declared fonts into the kernel before building — once per
     // font name; a lazy dynamic import because this is async context (unlike the
-    // synchronous kernel-front), so it doesn't cost sync callers anything.
+    // synchronous kernel-front), so it doesn't cost sync callers anything. The
+    // namespace shape differs between bundler and Node resolution (a bare
+    // `.default` here is undefined in every browser bundle) — normalize it.
     if (part.fonts && kernel._fonts) {
-      const opentype = (await import("opentype.js")).default;
+      const opentype = normalizeOpentype(await import("opentype.js"));
       const bufs = await resolveFonts(part.fonts);
       for (const [name, buf] of bufs) if (!kernel._fonts.has(name)) kernel._fonts.set(name, opentype.parse(buf));
     }
