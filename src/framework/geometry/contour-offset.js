@@ -901,6 +901,31 @@ function dropSubresolutionPositiveLoops(out, delta) {
   });
 }
 
+// Positive dilation may also discard whole SUB-SLIVER rings — the multi-segment
+// sibling of the zero-chord splice loops above. The winding resolver can emit
+// entire junk rings a few segments long (measured on "Scott" size 28, delta 5:
+// 14 of 16 holes were resolver debris of 1e-8..1e-5 mm² beside two real ~6-8 mm²
+// counters), and every one of them extrudes into a degenerate fin or sliver face
+// that downstream mesh consumers trip over (the planar rim fillet's knife-edge
+// refusals). The bar is the corpus oracle's own SLIVER convention (1e-3 mm² —
+// test/offset-text.test.js, the fuzz suite): rings under it are "resolver
+// artifacts, not features". The proof this cannot eat real geometry is
+// dilation-only, in two halves: a genuine separate REGION of a dilation is at
+// least the dilation disc (area ≥ π·δ²), and a genuine HOLE under that bar is a
+// counter within a hair of closing — which the oracle already counts as closed.
+// Erosion keeps everything, same as dropSubresolutionPositiveLoops: a tiny
+// surviving island there is real geometry with no source-domain proof otherwise.
+const RING_SLIVER = 1e-3;   // mm² — the corpus oracle's sub-sliver bar
+function dropSubSliverRings(out, delta) {
+  if (delta <= 0) return out;
+  const tiny = (ring) => Math.abs(ringArea(tessellateContour(ring, VALIDATE_SEGS))) < RING_SLIVER;
+  return out.flatMap((rg) => {
+    if (tiny(rg.outer)) return [];
+    const holes = rg.holes.filter((h) => !tiny(h));
+    return [holes.length === rg.holes.length ? rg : { outer: rg.outer, holes }];
+  });
+}
+
 // Region-in / region-out offset: the engine behind Shape2D.offset on BOTH backends.
 // Fast path: raw per-ring offsets that validate cleanly are returned as-is (lines/arcs
 // exact). Cleanup path: anything dirty or invalid goes through resolveOffsetWinding
@@ -928,6 +953,7 @@ export function offsetRegions(regions, delta, { corners = "round" } = {}) {
   }
   out = sourceBackedPositiveRegions(regions, out, delta);
   out = dropSubresolutionPositiveLoops(out, delta);
+  out = dropSubSliverRings(out, delta);
   if (out.length === 0) throw new Error("Shape2D.offset: offset collapses the shape (reduce |delta|)");
   return out;
 }
