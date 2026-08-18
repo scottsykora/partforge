@@ -6,6 +6,7 @@ import path from "path";
 import fs from "fs";
 import { createOcctKernel } from "../framework/geometry/occt-backend.js";
 import { resolveFonts } from "../framework/fonts.js";
+import { normalizeOpentype } from "../framework/geometry/opentype-interop.js";
 import { ensureImports } from "../framework/imports.js";
 import { nodeAssetSources } from "./assets.js";
 
@@ -18,7 +19,7 @@ export async function bootOcctKernel({ fonts, imports, importMeshes } = {}) {
   const replicad = await import("replicad");
   replicad.setOC(OC);
   const kernel = createOcctKernel(replicad);
-  if (fonts) { const opentype = (await import("opentype.js")).default;
+  if (fonts) { const opentype = normalizeOpentype(await import("opentype.js"));
     for (const [name, buf] of await resolveFonts(nodeAssetSources(fonts))) kernel._fonts.set(name, opentype.parse(buf)); }
   if (imports) await ensureImports(kernel, nodeAssetSources(imports), importMeshes ?? null);
   return kernel;
