@@ -15,7 +15,7 @@
 // opentype.js's namespace shape differs between bundler and Node resolution —
 // see opentype-interop.js for the trap (it has bitten once in each direction).
 import * as opentypeNamespace from "opentype.js";
-import { normalizeOpentype } from "./opentype-interop.js";
+import { normalizeOpentype, parseFont } from "./opentype-interop.js";
 const opentype = normalizeOpentype(opentypeNamespace);
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
@@ -95,7 +95,7 @@ export function finishKernel(k) {
       // EXACT byte range — arg.buffer alone spans the whole (possibly pooled) backing
       // buffer, which would feed opentype garbage for a byteOffset>0 view.
       const buf = ArrayBuffer.isView(arg) ? arg.buffer.slice(arg.byteOffset, arg.byteOffset + arg.byteLength) : arg;
-      f = opentype.parse(buf); byteCache.set(arg, f);
+      f = parseFont(opentype, buf); byteCache.set(arg, f);
     }
     return f;
   };
@@ -109,7 +109,7 @@ export function finishKernel(k) {
       // guards against that ever changing.
       if (!k._defaultFont) {
         const { buffer, byteOffset, byteLength } = DEFAULT_FONT_BYTES;
-        k._defaultFont = opentype.parse(buffer.slice(byteOffset, byteOffset + byteLength));
+        k._defaultFont = parseFont(opentype, buffer.slice(byteOffset, byteOffset + byteLength), "the bundled default");
       }
       return k._defaultFont;
     }

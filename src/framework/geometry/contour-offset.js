@@ -8,7 +8,7 @@
 // The cubic subdivision approach is ported from glenzli/paperjs-offset
 // (https://github.com/glenzli/paperjs-offset, MIT License, Copyright (c) glenzli),
 // adapted from paper.js Segments to the partforge contour IR.
-import { arcCenterAndSweep } from "./paper-bridge.js";
+import { arcCenterAndSweep, booleanRegions } from "./paper-bridge.js";
 import { cubicAt, splitCubic, jointTangents, SMOOTH_JOINT_DEG } from "./contour-ops.js";
 import { tessellateContour, closeContourGap } from "./profile.js";
 import { ringArea, pointInRing } from "./shape2d-regions.js";
@@ -718,7 +718,11 @@ const flattenRing = (contour, segs) => {
 // All seven rescues are oracle-checked: median area error 0.0972 %, worst 1.663 %, with zero
 // region-count losses and zero complete arc losses. The ladder stays because those seven raw
 // arrangements remain numerically unclosable, not because the formerly parked comb/text
-// failures still exist.
+// failures still exist. Those seven are all erosion (negative delta) or single-region cases;
+// the per-region rung below is positive-delta-and-multi-region only, so it wins none of them
+// and the rates above are unchanged by its addition — its own coverage class (whole-word text
+// dilation, feedback 86970b00) sits outside this corpus, whose glyphs are single characters
+// and whose "Scott" case never reaches the delta band where the merged word fails to close.
 //
 // Rung ORDER is by fidelity of what survives, not by hit rate:
 //   1. delta perturbed by ±1e-9 relative. Escapes an exactly-degenerate arrangement (two
@@ -729,7 +733,13 @@ const flattenRing = (contour, segs) => {
 //      that radius apart onto one vertex. This can merge a genuine severing pinch, so the
 //      20x rung is not widened further even though the current seven rescues preserve the
 //      oracle's region count.
-//   3. the raw outline re-run as polylines (64/256/1024 facets per turn). Geometrically
+//   3. per-region-union (delta > 0, more than one region only). Offsets each region alone and
+//      unites the results through paper's curve-native boolean. EXACT, not approximate: a
+//      positive dilation distributes over union, so this equals the whole-region offset the
+//      resolver could not close — with arcs intact, above the polyline rungs. It is here rather
+//      than at #1 only because it costs a boolean per region and re-runs the earlier rungs on
+//      each; the two cheaper exact rungs get first refusal.
+//   4. the raw outline re-run as polylines (64/256/1024 facets per turn). Geometrically
 //      faithful to the chord error of that tessellation, but it DEGRADES THE IR: round joins
 //      come back as chords, so A STEP EXPORT OF A POLYLINE-RUNG RESULT LOSES ITS TRUE CIRCLES.
 //      No current corpus rescue loses every arc, but these rungs remain last because that
@@ -753,6 +763,25 @@ const flattenRing = (contour, segs) => {
 // (±1e-4 and ±1e-3 mm absolute rungs) was measured too: it bought ONE extra case out of 62 and
 // more than doubled the worst absolute error, 0.048 → 0.112 mm², so it is not here either.
 //
+// Offset each region on its own and unite the results through paper's planar boolean engine.
+// This is EXACT for a positive delta, not an approximation: Minkowski dilation distributes
+// over union, (⋃ Rᵢ) ⊕ B = ⋃ (Rᵢ ⊕ B), so the whole-region offset the winding resolver cannot
+// close as one merged arrangement equals the union of the single-region offsets. Each single
+// region is a far simpler arrangement — a lone glyph rather than a whole word's worth of offset
+// walls meeting near-tangentially — and its own base offset still gets the earlier rungs'
+// rescues, because the per-region call re-enters the public offsetRegions (which runs its own
+// ladder for that one region). booleanRegions unites through paper's CURVE-native engine rather
+// than a tessellation, so arcs stay arcs and a STEP export keeps its true circles — which is why
+// this rung sits ABOVE the polyline rungs, whose chord approximation is the fidelity floor.
+function perRegionUnion(regions, delta, corners) {
+  let out = [];
+  for (const rg of regions) {
+    const one = offsetRegions([rg], delta, { corners });   // single region: never re-enters this rung
+    out = out.length ? booleanRegions(out, one, "unite") : one;
+  }
+  return out;
+}
+
 // The ladder as named, LAZY rungs — one list, walked by chainFallback below and by
 // scripts/offset-rates.mjs, so a measurement of "what each rung costs" can never drift from
 // the ladder that actually ships. Every rung's whole body (including tessellating the outline
@@ -765,6 +794,13 @@ export function _ladderRungs(regions, raw, delta, corners) {
       run: () => resolveOrRaw(rawOffset(regions, delta * (1 + sign * 1e-9), corners)) })),
     ...[4, 20].map((mult) => ({ name: `clusterTol*${mult}`,
       run: () => resolveOffsetWinding(raw, { clusterTol: CLUSTER_TOL * mult }) })),
+    // Exact for positive dilation and arc-preserving, so it ranks above the polyline rungs but
+    // below the two cheaper exact rungs that need no boolean. Only meaningful when there is more
+    // than one region to decompose, and only distributive for a positive delta; the guard is
+    // also what bounds the recursion — a single-region offsetRegions call never reaches here.
+    ...(delta > 0 && regions.length > 1
+      ? [{ name: "per-region-union", run: () => perRegionUnion(regions, delta, corners) }]
+      : []),
     ...[64, 256, 1024].map((segs) => ({ name: `polyline@${segs}`,
       run: () => resolveOffsetWinding(raw.map((rg) => ({ outer: flattenRing(rg.outer, segs),
                                                          holes: rg.holes.map((h) => flattenRing(h, segs)) }))) })),

@@ -72,3 +72,21 @@ test("handle preloads part.fonts into kernel._fonts (parsed, once)", async () =>
   expect(parseSpy.mock.calls.length).toBe(afterFirst);         // already present → not re-parsed
   parseSpy.mockRestore();
 });
+
+// A single unreadable font must fail as a NAMED, actionable error rather than an opaque
+// opentype.js parse throw (a RangeError deep in the TrueType reader that names neither the
+// font nor the fix). This is the dead end a variable font or a WOFF/WOFF2 upload lands in —
+// opentype.js 2.x reads neither — and the reason a whole part "just won't build".
+test("handle surfaces an unreadable font as a named, actionable error", async () => {
+  const kernel = { _fonts: new Map(), cleanup() {} };
+  const badBytes = new Uint8Array([0x77, 0x4f, 0x46, 0x32, 1, 2, 3, 4, 5, 6, 7, 8]).buffer; // 'wOF2'…, not a TTF/OTF
+  const part = { fonts: { greatVibes: badBytes }, parts: {}, defaults: {} };
+  const msg = { type: "generate", subparts: [], view: "iso", params: {} };
+  const posts = [];
+  await handle(kernel, part, msg, (m) => posts.push(m));
+  const err = posts.find((m) => m.type === "error");
+  expect(err).toBeTruthy();
+  expect(err.message).toContain('"greatVibes"');               // names the offending font
+  expect(err.message).toMatch(/TTF|OTF/);                      // says what to provide instead
+  expect(kernel._fonts.has("greatVibes")).toBe(false);         // nothing half-registered
+});

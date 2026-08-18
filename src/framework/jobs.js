@@ -5,7 +5,7 @@
 import { meshTo3MF } from "./geometry/threemf.js";
 import { exportablePartNames } from "./export-select.js";
 import { resolveFonts } from "./fonts.js";
-import { normalizeOpentype } from "./geometry/opentype-interop.js";
+import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
@@ -107,7 +107,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     if (part.fonts && kernel._fonts) {
       const opentype = normalizeOpentype(await import("opentype.js"));
       const bufs = await resolveFonts(part.fonts);
-      for (const [name, buf] of bufs) if (!kernel._fonts.has(name)) kernel._fonts.set(name, opentype.parse(buf));
+      for (const [name, buf] of bufs) if (!kernel._fonts.has(name)) kernel._fonts.set(name, parseFont(opentype, buf, name));
     }
     // Register this part's declared imports on the kernel running this job — the
     // import-asset sibling of the fonts preload above. See ensureImports for the
