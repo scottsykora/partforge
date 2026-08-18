@@ -20,6 +20,15 @@ export const BLEND = Object.freeze({ creaseAngle: 35, sameSurfaceLines: true, bo
 export const COPLANAR_ANGLE = 5;  // deg — cut seams bending less than this are coplanar: no line
 export const TANGENT_ANGLE = 5;   // deg — B-rep edges whose faces agree within this are tangent: no line
 export const MIN_EDGE = 0.01;     // mm — drop shorter segments (degenerate slivers, pole edges)
+// mm — a feature-line's incident FACES must both be at least this wide (min height).
+// Wider than MIN_EDGE deliberately: a boolean face-split near a tool crossing (a
+// mitre corner, a pivot's angular overshoot) re-triangulates the split band quad
+// against seam vertices that sit microns off its plane — long fan slivers 14-34µm
+// wide whose normals tilt 40-56°, drawing a full-weight line down an otherwise
+// perfect band (total surface relief under 15µm — sub-visible at any scale this
+// kernel prints at). Real band facets at the sagitta-bounded density are ≥ ~70µm
+// wide; boundary rings bypass the gate entirely.
+export const MIN_FACE = 0.04;
 
 // Loft rings with at least this many sides read as an approximation of a smooth
 // surface (e.g. a 64-gon "circle"), not as 64 intentional facets.

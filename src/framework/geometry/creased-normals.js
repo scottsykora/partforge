@@ -8,7 +8,7 @@
 // near-tangent), and a surface's own sharp edges stay crisp too. Each original
 // surface may carry a shading policy (shading-policy.js); surfaces without one
 // use SMOOTH, which reproduces the pre-policy behavior exactly.
-import { SMOOTH, COPLANAR_ANGLE, MIN_EDGE, cosDeg } from "./shading-policy.js";
+import { SMOOTH, COPLANAR_ANGLE, MIN_EDGE, MIN_FACE, cosDeg } from "./shading-policy.js";
 
 const COPLANAR_COS = cosDeg(COPLANAR_ANGLE);
 const MIN_EDGE2 = MIN_EDGE * MIN_EDGE;
@@ -48,17 +48,43 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
     const vx = vp[c] - vp[a], vy = vp[c + 1] - vp[a + 1], vz = vp[c + 2] - vp[a + 2];
     const wx = vp[c] - vp[b], wy = vp[c + 1] - vp[b + 1], wz = vp[c + 2] - vp[b + 2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    const L = Math.hypot(nx, ny, nz) || 1;
+    const L0 = Math.hypot(nx, ny, nz), L = L0 || 1; // the || 1 is for the normal divide ONLY
     fn[t * 3] = nx / L; fn[t * 3 + 1] = ny / L; fn[t * 3 + 2] = nz / L;
     const longest = Math.max(ux * ux + uy * uy + uz * uz, vx * vx + vy * vy + vz * vz, wx * wx + wy * wy + wz * wz);
-    thin[t] = longest > 0 ? L / Math.sqrt(longest) : 0; // |cross| / maxEdge = min height
+    // |cross| / maxEdge = min height — from the RAW cross magnitude, never the
+    // guarded L: a zero-area triangle (two float32-coincident vertices — the
+    // render-precision collapse of a sub-micron boolean seam sliver) must report
+    // thin 0 so the feature-edge gate drops it. With L it reported 1/maxEdge and
+    // sailed past the gate, and its garbage (0,0,0) normal reads as a 90° crease
+    // against every neighbor — a full-weight line down an otherwise smooth wall
+    // at whatever seam produced it.
+    thin[t] = longest > 0 ? L0 / Math.sqrt(longest) : 0;
+  }
+
+  // Second-stage weld for SHADING adjacency only: a boolean seam whose two
+  // sides land sub-micron apart keeps two distinct vertex columns that the
+  // merge map does not join, yet at render (float32) precision they are the
+  // same point — without this weld the facets on either side average their
+  // normals separately and the seam shades as a lighting crease. The line
+  // pass below deliberately keeps `remap` (Manifold's own topology): welding
+  // its edge keys would make pairing at collapsed seams order-dependent and
+  // could pair a boundary ring's edges away.
+  const weld = Uint32Array.from(remap);
+  {
+    const byPos = new Map();
+    for (let i = 0; i < nVert; i++) {
+      const o = i * np;
+      const key = `${vp[o]}|${vp[o + 1]}|${vp[o + 2]}`;
+      const first = byPos.get(key);
+      if (first === undefined) byPos.set(key, weld[i]); else weld[i] = first;
+    }
   }
 
   // canonical vertex → incident triangles
   const incident = new Map();
   for (let t = 0; t < nTri; t++)
     for (let k = 0; k < 3; k++) {
-      const cv = remap[tris[t * 3 + k]];
+      const cv = weld[tris[t * 3 + k]];
       const arr = incident.get(cv);
       if (arr) arr.push(t); else incident.set(cv, [t]);
     }
@@ -71,13 +97,19 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
     for (let k = 0; k < 3; k++) {
       const v = tris[t * 3 + k];
       let nx = 0, ny = 0, nz = 0;
-      for (const t2 of incident.get(remap[v])) {
-        // different cut surface → hard, EXCEPT two blend surfaces (boundaryLines on
-        // both): one band is many tool surfaces continuing each other tangentially,
-        // and hard normals at their handovers would put lighting seams along a band
-        // that used to shade as one re-originaled surface
+      for (const t2 of incident.get(weld[v])) {
+        // different cut surface → hard, EXCEPT when a blend surface (boundaryLines)
+        // is involved on either side. Blend↔blend: one band is many tool surfaces
+        // continuing each other tangentially, and hard normals at their handovers
+        // would put lighting seams along a band that used to shade as one
+        // re-originaled surface. Blend↔base: the band's start/end seams are TANGENT
+        // by construction (that is why the line pass needs boundaryLines to draw
+        // them at all), so shading them hard painted a permanent lighting ridge
+        // along every fillet boundary ring. Both cases still fall to the crease
+        // check below, so a genuinely sharp crossing (a chamfer's 45° shoulder, a
+        // band end-cap against a wall) stays hard.
         if (triOID[t2] !== oid &&
-          !(polFor(triOID[t2]).boundaryLines && polFor(oid).boundaryLines)) continue;
+          !(polFor(triOID[t2]).boundaryLines || polFor(oid).boundaryLines)) continue;
         if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
         nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2];
       }
@@ -108,8 +140,12 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
       // independently tessellated tangent surfaces (e.g. a corner sphere meeting
       // its edge-fillet cylinders) can leave micron-wide wall strips whose FACES
       // are invisible but whose long boundary edges would otherwise draw at full
-      // line weight. A triangle thinner than MIN_EDGE cannot be seen, so its
-      // edges are noise by definition — same threshold the segment filter uses.
+      // line weight. A triangle thinner than MIN_FACE cannot carry a visible
+      // crease — the fan slivers a boolean face-split leaves near a tool
+      // crossing are 14-34µm wide with wildly tilted normals over sub-15µm of
+      // actual relief (see shading-policy.js) — so its edges are noise by
+      // definition. The gate is deliberately wider than the segment filter's
+      // MIN_EDGE below, which stays tight so short REAL segments survive.
       const sameOID = triOID[prev] === triOID[t];
       // Blend boundary: a cross-surface seam with a BLEND policy on EXACTLY one side
       // is the start/end of a fillet band — draw it even when tangent (the band's
@@ -121,7 +157,7 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
       // filter still drops the short ones).
       const boundary = !sameOID &&
         !!polFor(triOID[prev]).boundaryLines !== !!polFor(triOID[t]).boundaryLines;
-      if (!boundary && (thin[prev] < MIN_EDGE || thin[t] < MIN_EDGE)) continue;
+      if (!boundary && (thin[prev] < MIN_FACE || thin[t] < MIN_FACE)) continue;
       const dot = fn[prev * 3] * fn[t * 3] + fn[prev * 3 + 1] * fn[t * 3 + 1] + fn[prev * 3 + 2] * fn[t * 3 + 2];
       // A multi-hole cap triangulation can contain an opposite-wound bridge:
       // its two normals disagree by 180 degrees even though both triangles lie

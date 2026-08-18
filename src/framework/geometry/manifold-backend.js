@@ -132,11 +132,20 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // anything printable, so dropping it can never erase real geometry.
   const DEBRIS_VOL = 1e-6; // mm³
   const dropDebris = (m) => {
-    const parts = m.decompose();
-    if (parts.length <= 1) { for (const p of parts) T(p); return m; }
-    const kept = [];
-    for (const p of parts) { T(p); if (p.volume() >= DEBRIS_VOL) kept.push(p); }
-    return kept.length === parts.length ? m : T(Manifold.compose(kept));
+    // Iterated, not single-pass: compose() re-welds, and a sliver riding a kept
+    // component only as a vertex-weld can come apart as a FRESH femto-component
+    // in the composed result (measured on the melt fixture's grazing neck arcs:
+    // four needles dropped, two re-minted by the compose). Loop until a pass
+    // drops nothing; volumes shrink every round, so three passes is plenty.
+    for (let pass = 0; pass < 3; pass++) {
+      const parts = m.decompose();
+      if (parts.length <= 1) { for (const p of parts) T(p); return m; }
+      const kept = [];
+      for (const p of parts) { T(p); if (p.volume() >= DEBRIS_VOL) kept.push(p); }
+      if (kept.length === parts.length) return m;
+      m = T(Manifold.compose(kept));
+    }
+    return m;
   };
   // Blend surfaces KEEP their originalIDs, and every id the op introduced is
   // registered with the BLEND policy — that is what lets creased-normals draw the
@@ -189,20 +198,36 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       // the erosion consumes the whole plate below 2r, and just above it the two
       // rim bands graze each other — both belong to the reference morphology
       if (!(height > 2 * r * 1.05)) return null;
-      // MITER joins on all three offsets, deliberately: the true morphology mints
-      // outline corners of radius exactly r, and a rim fillet of radius r over an
-      // r-radius corner pinches its top tangent contour to a point — the planar
-      // sweep refuses, structurally. Miter keeps every corner SHARP instead, and
-      // the selector-free fillet below performs ALL the rounding: convex vertical
-      // edges (cutters at r — the same solid the round join would have produced),
-      // concave verticals (fillers), both rims, and the corner treatments. Melt
-      // and seal thresholds stay exact on straight stretches; corner-local
-      // thresholds and silhouettes differ from the ball morphology by the rim
-      // fillet's own corner tolerance (~0.25·r) — the documented corner trade.
+      // Join types are per-STEP, because a join only acts on the side an offset
+      // DIVERGES on. The two dilates diverge at SALIENT corners and use MITER,
+      // deliberately: the true morphology mints salient corners of radius
+      // exactly r, and a rim fillet of radius r over an r-radius salient corner
+      // pinches its top tangent contour to a point — the planar sweep refuses,
+      // structurally. Miter keeps them SHARP instead and the selector-free
+      // fillet below performs their rounding (cutters at r — the same solid the
+      // round join would have produced — plus the corner treatments). The erode
+      // diverges at REFLEX corners and uses ROUND: the ball morphology rounds a
+      // reflex corner into a radius-r concave arc (2r at the erode, halved by
+      // the re-dilate), and a concave arc offsets INWARD to 2r, so it cannot
+      // pinch the rim sweep — the rim rides it as an ordinary arc-in-planar
+      // chain. Keeping reflex corners sharp instead (all-Miter, the original
+      // design) handed the fillet a sharp vertical filler PLUS a sharp rim
+      // corner at once, and the filler — unioned after the cutters — re-covered
+      // the rim tools' corner cut, reintroducing the uncut-wedge point artifact
+      // the reflex pivot exists to remove. Melt and seal thresholds stay exact
+      // on straight stretches; salient-corner silhouettes differ from the ball
+      // morphology by the rim fillet's own corner tolerance (~0.25·r) — the
+      // documented corner trade — while reflex corners now match it exactly.
+      //
+      // Arc facets must stay well under the fillet's sharp-edge threshold
+      // (detectSharpEdges' 20° default) or the rounded wall would re-detect as a
+      // run of sharp vertical edges: floor the round join at 36 segments/360°
+      // (10° per facet) even when the sagitta rule alone would allow coarser.
+      const arcSegs = Math.max(roundAllSegs(2 * r, quality), 36);
       let cur = null;
       try {
         for (const delta of [r, -2 * r, r]) {
-          const next = (cur ?? cs).offset(delta, "Miter", 2);
+          const next = (cur ?? cs).offset(delta, delta > 0 ? "Miter" : "Round", 2, arcSegs);
           const cleaned = next.simplify(1e-6);
           next.delete?.();
           cur?.delete?.();
@@ -214,10 +239,30 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         const wrapped = wrap(base, h("roundAllPrismBase", mHash, r, quality));
         // selector-free: every sharp edge of the mitered prism gets its radius here
         const filleted = wrapped.fillet(r);
-        // decouple from the fillet cache's pin: cached() will pin the object this
+        // Decouple from the fillet cache's pin: cached() will pin the object this
         // returns under the roundAll hash, and one WASM object must never sit
-        // under two cache entries (double-dispose on eviction)
-        return T(filleted._m.asOriginal());
+        // under two cache entries (double-dispose on eviction). The decouple is
+        // blend-AWARE, the same re-stamp label() performs: a blanket asOriginal()
+        // folded blend and base into one fresh surface, erasing the distinction
+        // the band-boundary lines need — a roundAll'd prism rendered with no
+        // feature lines at all, unlike the identical geometry from fillet().
+        // Re-stamp as two reserved ids instead (base stays unregistered → SMOOTH,
+        // the extruded section has no policy of its own) so the result draws
+        // exactly the lines the fillet drew.
+        const g0 = filleted._m.getMesh();
+        try {
+          const isBlend = (oid) => !!oidPolicies.get(oid)?.boundaryLines;
+          if (![...new Set(g0.runOriginalID)].some(isBlend)) return T(filleted._m.asOriginal());
+          const baseId = Manifold.reserveIDs(2), blendId = baseId + 1;
+          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o) => (isBlend(o) ? blendId : baseId));
+          oidPolicies.set(blendId, BLEND);
+          // The constructor re-welds, and that can pinch a latent sliver off a
+          // component as fresh femto-debris (the same rebirth dropDebris's own
+          // compose() loop guards against) — sweep the reconstruction too.
+          return dropDebris(T(new Manifold(g0)));
+        } finally {
+          g0.delete?.();
+        }
       } finally {
         cur?.delete?.();
       }
