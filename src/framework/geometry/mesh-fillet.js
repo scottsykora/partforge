@@ -59,10 +59,10 @@ export class UnsupportedEdgeError extends Error {
 // circles; spending it on a blend of radius r tessellates a 0.5 mm fillet to 0.2 µm
 // sagitta at preview quality — and a text rim's hundred-tool boolean then carries ~4×
 // the triangles it needs (measured 12 s / 4 GB on a lettering part before this cap).
-// BLEND_SAG (2 µm) is finer than preview quality's own ~4 µm sagitta at part scale;
+// BLEND_SAG (1 µm) is finer than preview quality's own ~4 µm sagitta at part scale;
 // the 0.02·r term keeps micro-blends sane, and the floor of 12 keeps every facet
 // angle (≤30°) under the viewer's 35° same-surface crease threshold.
-const BLEND_SAG = 2e-3; // mm — max chord sagitta of a blend cross-section
+const BLEND_SAG = 1e-3; // mm — max chord sagitta of a blend cross-section
 function blendSegs(segs, r) {
   const s = Math.min(BLEND_SAG, 0.02 * r);
   return Math.min(segs, Math.max(12, Math.ceil(Math.PI / Math.acos(1 - s / r))));

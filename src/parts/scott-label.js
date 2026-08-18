@@ -165,7 +165,7 @@ export default {
   defaults: {
     text: "Scott",
     fontStyle: "roboto",
-    bold: 1,
+    bold: 0,
     italic: 0,
     backingStyle: "roundAll",
     textSize: 31,

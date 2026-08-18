@@ -33,6 +33,7 @@ let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
 const relErr = (v, expected) => Math.abs(v - expected) / Math.abs(expected);
+const unit2 = ([x, y]) => { const l = Math.hypot(x, y) || 1; return [x / l, y / l]; };
 
 // sharp outline vertices (turn > 30°) — where the mitre seam is expected
 function sharpCorners(pts) {
@@ -62,48 +63,123 @@ function bandLines(solid, zTop, r, { excludeCorners = [], margin = 0 } = {}) {
   return { away: n, atCorners };
 }
 
-// Total unique mesh-edge length whose endpoints both carry a hard normal split,
-// strictly inside the blend band. This catches an unlined lighting ridge: the
-// feature-edge pass can suppress a micron-thin boolean fan's line while its
-// per-corner normals still paint a dark groove down the rounded surface.
-function hardNormalLength(solid, zTop, r, angle = 35) {
-  const { positions, normals, edges } = solid.toMesh();
-  const keyAt = (o) => `${positions[o]}|${positions[o + 1]}|${positions[o + 2]}`;
-  const edgeKey = (a, b) => a < b ? `${a}/${b}` : `${b}/${a}`;
-  const drawn = new Set();
-  for (let o = 0; o < edges.length; o += 6) {
-    const a = `${edges[o]}|${edges[o + 1]}|${edges[o + 2]}`;
-    const b = `${edges[o + 3]}|${edges[o + 4]}|${edges[o + 5]}`;
-    drawn.add(edgeKey(a, b));
+// Maximum inward departure of a sharp corner's vertical-bisector silhouette
+// from the requested rolling-ball arc.  This reads the indexed geometry, not
+// render normals: a boolean notch at the cutter handover is visible from the
+// side even when shading and feature lines are disabled.
+function miterSilhouetteError(solid, corner, zTop, r, inward1 = [-1, 0], inward2 = [0, -1]) {
+  const { positions, indices } = solid.toIndexedMesh();
+  const [cx, cy] = corner;
+  const onBisector = [];
+  for (const vi of new Set(indices)) {
+    const x = positions[3 * vi], y = positions[3 * vi + 1], z = positions[3 * vi + 2];
+    const dx = x - cx, dy = y - cy;
+    const d1 = dx * inward1[0] + dy * inward1[1];
+    const d2 = dx * inward2[0] + dy * inward2[1];
+    if (z <= zTop - r + 0.02 * r || z >= zTop - 0.02 * r) continue;
+    if (Math.abs(d1 - d2) > 1e-3) continue;
+    if (Math.hypot(d1, d2) > 2 * r) continue;
+    const inset = (d1 + d2) / Math.SQRT2;
+    const dz = z - (zTop - r);
+    const idealInset = Math.SQRT2 * (r - Math.sqrt(Math.max(0, r * r - dz * dz)));
+    onBisector.push(inset - idealInset);
   }
-  const incident = new Map();
-  for (let t = 0; t < positions.length; t += 9) {
-    for (const [a, b] of [[t, t + 3], [t + 3, t + 6], [t + 6, t]]) {
-      const ka = keyAt(a), kb = keyAt(b), key = edgeKey(ka, kb);
-      (incident.get(key) ?? incident.set(key, []).get(key)).push({ at: new Map([[ka, a], [kb, b]]) });
-    }
-  }
-  const cos = Math.cos((angle * Math.PI) / 180);
-  const zLo = zTop - r + 0.05 * r, zHi = zTop - 0.05 * r;
-  let length = 0;
-  for (const [key, uses] of incident) {
-    if (uses.length < 2 || drawn.has(key)) continue;
-    const [ka, kb] = key.split("/");
-    const a0 = uses[0].at.get(ka), b0 = uses[0].at.get(kb);
-    if (!(positions[a0 + 2] > zLo && positions[a0 + 2] < zHi && positions[b0 + 2] > zLo && positions[b0 + 2] < zHi)) continue;
-    let hard = false;
-    outer: for (let i = 0; i < uses.length; i++) {
-      for (let j = i + 1; j < uses.length; j++) {
-        const a1 = uses[i].at.get(ka), a2 = uses[j].at.get(ka);
-        const b1 = uses[i].at.get(kb), b2 = uses[j].at.get(kb);
-        const da = normals[a1] * normals[a2] + normals[a1 + 1] * normals[a2 + 1] + normals[a1 + 2] * normals[a2 + 2];
-        const db = normals[b1] * normals[b2] + normals[b1 + 1] * normals[b2 + 1] + normals[b1 + 2] * normals[b2 + 2];
-        if (da < cos && db < cos) { hard = true; break outer; }
+  if (!onBisector.length) return Infinity;
+  return Math.max(...onBisector);
+}
+
+// Same geometry check as seen by a side camera: intersect every triangle with
+// horizontal planes, project the local corner outline from several azimuths,
+// and compare the foremost point with the ideal inset cross-section. This
+// catches a notch away from the exact miter bisector.
+function miterProjectionError(solid, corner, zTop, r, inward1 = [-1, 0], inward2 = [0, -1]) {
+  const { positions, indices } = solid.toIndexedMesh();
+  const point = (vi) => [positions[3 * vi], positions[3 * vi + 1], positions[3 * vi + 2]];
+  let worst = -Infinity, samples = 0;
+  for (const deg of [5, 15, 30, 45, 60, 75, 85]) {
+    const a = (deg * Math.PI) / 180, w1 = Math.cos(a), w2 = Math.sin(a);
+    for (let si = 1; si < 30; si++) {
+      const z = zTop - r + (r * si) / 30;
+      let actual = Infinity;
+      for (let t = 0; t < indices.length; t += 3) {
+        const tri = [point(indices[t]), point(indices[t + 1]), point(indices[t + 2])];
+        for (let e = 0; e < 3; e++) {
+          const p = tri[e], q = tri[(e + 1) % 3];
+          if ((z - p[2]) * (z - q[2]) > 1e-14 || Math.abs(q[2] - p[2]) < 1e-12) continue;
+          const u = (z - p[2]) / (q[2] - p[2]);
+          if (u < -1e-8 || u > 1 + 1e-8) continue;
+          const x = p[0] + u * (q[0] - p[0]), y = p[1] + u * (q[1] - p[1]);
+          const dx = x - corner[0], dy = y - corner[1];
+          const d1 = dx * inward1[0] + dy * inward1[1];
+          const d2 = dx * inward2[0] + dy * inward2[1];
+          if (d1 < -0.02 * r || d2 < -0.02 * r || d1 > 2 * r || d2 > 2 * r) continue;
+          actual = Math.min(actual, w1 * d1 + w2 * d2);
+        }
       }
+      if (!Number.isFinite(actual)) continue;
+      const dz = z - (zTop - r);
+      const inset = r - Math.sqrt(Math.max(0, r * r - dz * dz));
+      worst = Math.max(worst, actual - (w1 + w2) * inset);
+      samples++;
     }
-    if (hard) length += Math.hypot(positions[b0] - positions[a0], positions[b0 + 1] - positions[a0 + 1], positions[b0 + 2] - positions[a0 + 2]);
   }
-  return length;
+  return samples ? worst : Infinity;
+}
+
+// Cross-section a straight selected edge at its midpoint and compare the outside
+// silhouette through the whole blend band with the requested rolling-ball arc.
+function straightProfileError(solid, a, b, zTop, r) {
+  const { positions, indices } = solid.toIndexedMesh();
+  const tangent = unit2([b[0] - a[0], b[1] - a[1]]);
+  const inward = [-tangent[1], tangent[0]];
+  const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const point = (vi) => [positions[3 * vi], positions[3 * vi + 1], positions[3 * vi + 2]];
+  const crossSection = [];
+  for (let t = 0; t < indices.length; t += 3) {
+    const tri = [point(indices[t]), point(indices[t + 1]), point(indices[t + 2])];
+    const hits = [];
+    for (let e = 0; e < 3; e++) {
+      const p = tri[e], q = tri[(e + 1) % 3];
+      const sp = (p[0] - mid[0]) * tangent[0] + (p[1] - mid[1]) * tangent[1];
+      const sq = (q[0] - mid[0]) * tangent[0] + (q[1] - mid[1]) * tangent[1];
+      if (Math.abs(sp) < 1e-10 && Math.abs(sq) < 1e-10) {
+        for (const hit of [p, q].map(([x, y, z]) => [(x - mid[0]) * inward[0] + (y - mid[1]) * inward[1], z]))
+          if (!hits.some((h) => Math.hypot(h[0] - hit[0], h[1] - hit[1]) < 1e-8)) hits.push(hit);
+        continue;
+      }
+      if (sp * sq > 1e-14 || Math.abs(sq - sp) < 1e-12) continue;
+      const u = -sp / (sq - sp);
+      if (u < -1e-8 || u > 1 + 1e-8) continue;
+      const x = p[0] + u * (q[0] - p[0]), y = p[1] + u * (q[1] - p[1]);
+      const hit = [(x - mid[0]) * inward[0] + (y - mid[1]) * inward[1], p[2] + u * (q[2] - p[2])];
+      if (!hits.some((h) => Math.hypot(h[0] - hit[0], h[1] - hit[1]) < 1e-8)) hits.push(hit);
+    }
+    if (hits.length >= 2) {
+      let pair = [hits[0], hits[1]], span = 0;
+      for (let i = 0; i < hits.length; i++) for (let j = i + 1; j < hits.length; j++) {
+        const d = Math.hypot(hits[i][0] - hits[j][0], hits[i][1] - hits[j][1]);
+        if (d > span) { span = d; pair = [hits[i], hits[j]]; }
+      }
+      crossSection.push(pair);
+    }
+  }
+  let worst = -Infinity, samples = 0;
+  for (let si = 1; si < 30; si++) {
+    const z = zTop - r + (r * si) / 30;
+    let actual = Infinity;
+    for (const [p, q] of crossSection) {
+      if ((z - p[1]) * (z - q[1]) > 1e-14 || Math.abs(q[1] - p[1]) < 1e-12) continue;
+      const u = (z - p[1]) / (q[1] - p[1]);
+      const d = p[0] + u * (q[0] - p[0]);
+      if (d >= -0.02 * r && d <= 2 * r) actual = Math.min(actual, d);
+    }
+    if (!Number.isFinite(actual)) continue;
+    const dz = z - (zTop - r);
+    const ideal = r - Math.sqrt(Math.max(0, r * r - dz * dz));
+    worst = Math.max(worst, actual - ideal);
+    samples++;
+  }
+  return samples ? worst : Infinity;
 }
 
 // straight-sided fixture with salient corners of mixed angles (40°, 90°, ~120°) —
@@ -151,6 +227,14 @@ const wobblyRoundedRect = (W = 40, H = 30, R = 8, n = 24) => {
 };
 
 describe("smooth rims render as clean curves, sharp corners mitre honestly", () => {
+  it("a box miter follows the fillet arc without a side-profile notch", () => {
+    const H = 2, R = 0.3, L = 10;
+    const out = k.box({ min: [0, 0, 0], max: [L, L, H] }).fillet(R, { inPlane: "XY", at: H });
+    expect(straightProfileError(out, [L, 0], [L, L], H, R)).toBeLessThan(0.01);
+    expect(miterSilhouetteError(out, [L, L], H, R)).toBeLessThan(0.01);
+    expect(miterProjectionError(out, [L, L], H, R)).toBeLessThan(0.01);
+  });
+
   it("near-circular offset-style corners: the tool follows the real rim, not a fitted circle", () => {
     const out = k.extrude({ profile: wobblyRoundedRect(), h: 8 }).fillet(1, { inPlane: "XY", at: 8 });
     expect(bandLines(out, 8, 1).away).toBeLessThan(10);
@@ -206,16 +290,30 @@ describe("corner rounds smaller than the blend collapse to virtual corners", () 
         margin: 0.75,
       });
       expect(census.away).toBeLessThan(10);
-      expect(out.genus()).toBe(0);
+      expect(out.genus(), `corner radius ${R}`).toBe(0);
     }
   });
 
-  it("plain Roboto t has no long hard-normal groove through its top fillet", () => {
+  it("the exact centered Scott t regions have clean sharp-corner miter silhouettes", () => {
     const H = 2, R = 0.3;
-    const glyph = k.text2d("t", { size: 31, align: "left", valign: "baseline" }).regions()[0];
-    const out = glyph.extrude({ h: H }).fillet(R, { inPlane: "XY", at: H });
-    expect(hardNormalLength(out, H, R)).toBeLessThan(20);
-    expect(out.genus()).toBe(0);
+    const regions = k.text2d("Scott", { size: 31, align: "center", valign: "middle" }).regions();
+    for (const glyph of [regions[3], regions[4]]) {
+      const outline = glyph.toRegions()[0].outer;
+      const out = glyph.extrude({ h: H }).fillet(R, { inPlane: "XY", at: H });
+      // Every sharp salient corner in each t outline. Indices 100 and 101 are
+      // the two stem-top silhouettes from the report; the other three ensure a
+      // repair does not just move the defect around the crossbar.
+      for (const i of [97, 98, 100, 101, 103]) {
+        const a = outline[(i - 1 + outline.length) % outline.length], b = outline[i], c = outline[(i + 1) % outline.length];
+        const inward1 = unit2([a[0] - b[0], a[1] - b[1]]);
+        const inward2 = unit2([c[0] - b[0], c[1] - b[1]]);
+        expect(miterSilhouetteError(out, b, H, R, inward1, inward2)).toBeLessThan(0.01);
+        expect(miterProjectionError(out, b, H, R, inward1, inward2)).toBeLessThan(0.01);
+      }
+      for (const [i, j] of [[97, 98], [98, 99], [100, 101], [102, 103], [103, 104]])
+        expect(straightProfileError(out, outline[i], outline[j], H, R), `edge ${i}->${j}`).toBeLessThan(0.01);
+      expect(out.genus()).toBe(0);
+    }
   });
 });
 

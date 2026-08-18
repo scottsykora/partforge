@@ -144,54 +144,6 @@ test("a sub-visible fan sliver draws no line despite a sharp bend", () => {
   expect(creasedNormals(g).edges.length).toBe(0);
 });
 
-test("a sub-visible fan sliver shades with its healthy surface", () => {
-  // The feature-edge gate above hides the sliver's line, but the same noisy
-  // face normal must not survive in shading. Its 40° tilt spans only 20µm of
-  // relief, so both the sliver and the healthy face should shade as the +Z
-  // surface the boolean fan is approximating.
-  const t = (40 * Math.PI) / 180, w = 0.02;
-  const g = {
-    numProp: 3,
-    vertProperties: Float32Array.from([
-      0, 0, 0,
-      1, 0, 0,
-      0, 1, 0,
-      0.5, -w * Math.cos(t), w * Math.sin(t),
-    ]),
-    triVerts: Uint32Array.from([0, 1, 2, 1, 0, 3]),
-    mergeFromVert: new Uint32Array(0),
-    mergeToVert: new Uint32Array(0),
-    runIndex: Uint32Array.from([0, 3, 6]),
-    runOriginalID: Uint32Array.from([7, 7]),
-  };
-  const r = creasedNormals(g);
-  expect(cornerNormal(r, 1, 0)[2]).toBeCloseTo(1, 4);
-  expect(cornerNormal(r, 0, 0)[2]).toBeCloseTo(1, 4);
-});
-
-test("sliver repair does not smooth the healthy sides of a real crease", () => {
-  const g = {
-    numProp: 3,
-    vertProperties: Float32Array.from([
-      0, 0, 0,       // v0 — shared crease edge
-      1, 0, 0,       // v1
-      0, 1, 0,       // v2 — healthy +Z face
-      0.5, 0, 1,     // v3 — healthy +Y face
-      0.5, -0.02, 0.02, // v4 — thin bridge near the crease
-    ]),
-    triVerts: Uint32Array.from([0, 1, 2, 1, 0, 3, 0, 1, 4]),
-    mergeFromVert: new Uint32Array(0),
-    mergeToVert: new Uint32Array(0),
-    runIndex: Uint32Array.from([0, 3, 6, 9]),
-    runOriginalID: Uint32Array.from([7, 8, 7]),
-  };
-  const r = creasedNormals(g);
-  const a = cornerNormal(r, 0, 0), b = cornerNormal(r, 1, 1);
-  expect(a[2]).toBeCloseTo(1, 4);
-  expect(b[1]).toBeCloseTo(1, 4);
-  expect(a[0] * b[0] + a[1] * b[1] + a[2] * b[2]).toBeCloseTo(0, 4);
-});
-
 test("a zero-area triangle draws no line on its long edges", () => {
   // A boolean seam whose two sides land sub-micron apart collapses, at render
   // (float32) precision, into a triangle with two coincident vertices — zero

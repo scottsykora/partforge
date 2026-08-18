@@ -89,77 +89,15 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
       if (arr) arr.push(t); else incident.set(cv, [t]);
     }
 
-  // A sub-MIN_FACE triangle cannot supply a trustworthy shading normal. Boolean
-  // tool crossings routinely leave long fan slivers whose relief is only a few
-  // microns but whose unit face normal is tilted 40° or more; the line pass gates
-  // their edges below, yet using those normals still paints a dark, unlined groove.
-  // Resolve each sliver to the healthy smoothing surface whose supporting plane
-  // contains it most closely. One anchor per face keeps every edge of a long fan
-  // on one normal field; healthy faces ignore thin neighbors entirely below, so
-  // the repair cannot smear the two trustworthy sides of a genuine mitre.
-  const anchorOf = new Int32Array(nTri).fill(-1);
-  const planeDist = (cand, t) => {
-    const o = tris[cand * 3] * np;
-    const px = vp[o], py = vp[o + 1], pz = vp[o + 2];
-    const nx = fn[cand * 3], ny = fn[cand * 3 + 1], nz = fn[cand * 3 + 2];
-    let worst = 0;
-    for (let k = 0; k < 3; k++) {
-      const q = tris[t * 3 + k] * np;
-      const d = Math.abs((vp[q] - px) * nx + (vp[q + 1] - py) * ny + (vp[q + 2] - pz) * nz);
-      if (d > worst) worst = d;
-    }
-    return worst;
-  };
-  const compatibleSurface = (a, b) => triOID[a] === triOID[b] ||
-    !!polFor(triOID[a]).boundaryLines || !!polFor(triOID[b]).boundaryLines;
-  const chooseAnchor = (t, candidates, prior = -1) => {
-    let best = prior, bestD = best === -1 ? Infinity : planeDist(best, t);
-    for (const cand of candidates) {
-      if (cand === -1 || !compatibleSurface(cand, t)) continue;
-      const d = planeDist(cand, t);
-      if (d < bestD - 1e-12 || (Math.abs(d - bestD) <= 1e-12 && cand < best)) {
-        best = cand; bestD = d;
-      }
-    }
-    return best;
-  };
-  const thinTris = [];
-  for (let t = 0; t < nTri; t++) if (thin[t] < MIN_FACE) thinTris.push(t);
-  // A fan stack may reach its healthy surface through several thin neighbors,
-  // so propagate scored candidates to a small fixed point.
-  for (let round = 0; round < 8; round++) {
-    let changed = false;
-    for (const t of thinTris) {
-      const candidates = [];
-      for (let k = 0; k < 3; k++) {
-        const cv = weld[tris[t * 3 + k]];
-        for (const nb of incident.get(cv))
-          candidates.push(thin[nb] >= MIN_FACE ? nb : anchorOf[nb]);
-      }
-      const best = chooseAnchor(t, candidates, anchorOf[t]);
-      if (best !== anchorOf[t]) { anchorOf[t] = best; changed = true; }
-    }
-    if (!changed) break;
-  }
-
   const positions = new Float32Array(nTri * 9);
   const normals = new Float32Array(nTri * 9);
   for (let t = 0; t < nTri; t++) {
+    const fx = fn[t * 3], fy = fn[t * 3 + 1], fz = fn[t * 3 + 2], oid = triOID[t];
+    const sharpCos = cosFor(oid); // per-surface crease threshold
     for (let k = 0; k < 3; k++) {
       const v = tris[t * 3 + k];
-      const cv = weld[v];
-      const ref = thin[t] < MIN_FACE && anchorOf[t] !== -1 ? anchorOf[t] : t;
-      const fx = fn[ref * 3], fy = fn[ref * 3 + 1], fz = fn[ref * 3 + 2], oid = triOID[ref];
-      const sharpCos = cosFor(oid); // per-surface crease threshold
       let nx = 0, ny = 0, nz = 0;
-      for (const t2 of incident.get(cv)) {
-        // A healthy face never needs a thin face's duplicate vote; excluding it
-        // prevents a tiny boolean fan from steering the surrounding surface. A
-        // thin output corner does need resolved thin neighbors so its fan can
-        // carry one healthy normal field through vertices with no fat incident.
-        if (thin[t] >= MIN_FACE && thin[t2] < MIN_FACE) continue;
-        const ref2 = thin[t2] < MIN_FACE ? anchorOf[t2] : t2;
-        if (ref2 === -1) continue;
+      for (const t2 of incident.get(weld[v])) {
         // different cut surface → hard, EXCEPT when a blend surface (boundaryLines)
         // is involved on either side. Blend↔blend: one band is many tool surfaces
         // continuing each other tangentially, and hard normals at their handovers
@@ -170,10 +108,10 @@ export function creasedNormals(g, { policies = null, featureLabels = null } = {}
         // along every fillet boundary ring. Both cases still fall to the crease
         // check below, so a genuinely sharp crossing (a chamfer's 45° shoulder, a
         // band end-cap against a wall) stays hard.
-        if (triOID[ref2] !== oid &&
-          !(polFor(triOID[ref2]).boundaryLines || polFor(oid).boundaryLines)) continue;
-        if (fn[ref2 * 3] * fx + fn[ref2 * 3 + 1] * fy + fn[ref2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
-        nx += fn[ref2 * 3]; ny += fn[ref2 * 3 + 1]; nz += fn[ref2 * 3 + 2];
+        if (triOID[t2] !== oid &&
+          !(polFor(triOID[t2]).boundaryLines || polFor(oid).boundaryLines)) continue;
+        if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz < sharpCos) continue; // sharp same-surface edge → hard
+        nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2];
       }
       const L = Math.hypot(nx, ny, nz) || 1;
       const o = (t * 3 + k) * 3, vv = v * np;
