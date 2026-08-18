@@ -43,7 +43,7 @@ describe("planar top fillet on an offset text outline", () => {
     // (1 − π/4)·0.3² ≈ 0.0193 mm³ per mm of convex rim; the outline runs a few
     // hundred mm, so anything past ~20 mm³ means a tool gouged the part
     expect(removed).toBeLessThan(20);
-  });
+  }, 120_000);   // the noisy outline sweeps hundreds of stretch tools — well past the 30s default
 
   it("builds unscaled too (the non-bold path)", () => {
     const profile = offsetTextProfile(0);
@@ -52,5 +52,5 @@ describe("planar top fillet on an offset text outline", () => {
     const removed = base.volume() - filleted.volume();
     expect(removed).toBeGreaterThan(0);
     expect(removed).toBeLessThan(20);
-  });
+  }, 120_000);
 });
