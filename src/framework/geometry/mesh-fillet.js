@@ -572,7 +572,10 @@ export function matchesSelector(chain, sel) {
 const rot2 = ([x, y], th) => [x * Math.cos(th) - y * Math.sin(th), x * Math.sin(th) + y * Math.cos(th)];
 function profile2D({ P, n1, n2, magnitude, mode, convex, segs, ext = 0 }) {
   const c = clamp1(n1[0] * n2[0] + n1[1] * n2[1]);
-  if (1 + c < 1e-6) throw new UnsupportedEdgeError("~180° knife edge");
+  // `knifeEdge` marks the refusal as the anti-parallel-flank degeneracy, so the
+  // planar rim machinery can SKIP a noise stretch (a sliver facet's flipped
+  // normal) instead of failing the whole selection on it.
+  if (1 + c < 1e-6) throw Object.assign(new UnsupportedEdgeError("~180° knife edge"), { knifeEdge: true });
   const bl = Math.hypot(n1[0] + n2[0], n1[1] + n2[1]);
   const bis = [(n1[0] + n2[0]) / bl, (n1[1] + n2[1]) / bl];
   const delta = 0.02 * magnitude;
@@ -859,6 +862,35 @@ function collapseTightCorners(pts0, wallNs0, closed, magnitude) {
   return { pts: out, wallNs: outWalls };
 }
 
+// Weld consecutive coincident chain points (the module's own 1/WELD vertex-identity
+// grid, pivotKey's). collapseTightCorners can land a virtual corner V exactly ON a
+// flanking chain point — an offset outline's micro-spike doubles back through the
+// same vertex, so the flanking edge lines intersect AT it — and a coincident pair
+// becomes a zero-length sweep path segment that k.sweep rejects, failing the whole
+// fillet (the "Scott" offset-backing regression). Dropping the point drops the
+// degenerate segment's WALL, keeping walls one-per-surviving-segment.
+function weldChainPoints(pts, wallNs, closed) {
+  const eps = 1 / WELD;
+  const outP = [pts[0]], outW = [];
+  for (let i = 1; i < pts.length; i++) {
+    if (len(sub(pts[i], outP[outP.length - 1])) < eps) continue;
+    outP.push(pts[i]);
+    outW.push(wallNs[i - 1]);   // wall of the span arriving at pts[i]
+  }
+  if (closed) {
+    // The closing segment's wall: the original closing span's — unless the wrap
+    // itself welds (last ≈ first), where the popped point's arriving wall is the
+    // span that now closes the loop.
+    let closingW = wallNs[pts.length - 1];
+    while (outP.length > 1 && len(sub(outP[outP.length - 1], outP[0])) < eps) {
+      outP.pop();
+      closingW = outW.pop();
+    }
+    outW.push(closingW);
+  }
+  return { pts: outP, wallNs: outW };
+}
+
 function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = null) {
   const { points, closed, convex, faceN } = chain;
   let { wallNs } = chain;
@@ -871,6 +903,10 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = nul
   // bold outlines never hit this because the 0.4 mm round offset pads every
   // convex radius past the fold threshold).
   if (convex) ({ pts, wallNs } = collapseTightCorners(pts, wallNs, closed, magnitude));
+  ({ pts, wallNs } = weldChainPoints(pts, wallNs, closed));
+  // A chain welded below the grid (a sub-micron rim loop — offset-noise islands)
+  // has nothing a blend of this magnitude can attach to; skip it rather than fail.
+  if (pts.length < (closed ? 3 : 2)) return [];
   const m = pts.length;
   const at = (i) => pts[((i % m) + m) % m];
   const nSeg = closed ? m : m - 1;
@@ -999,9 +1035,48 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = nul
     return k.sweep(poly, path3D, { closed: isClosed });
   };
 
+  // Sweep one open stretch; when the sweep refuses a VERTEX fold the pre-split
+  // guard let through — the guard classifies bends by the LOCAL wall normals,
+  // and an offset outline's micro-spike facets carry noise normals that can
+  // read reflex (lenient reach) where the sweep's frame-transported measure is
+  // salient (full magnitude) — split at that exact vertex and sweep the pieces.
+  // That is the same treatment the guard itself would have applied with the
+  // right classification: adjacent stretches mitre into each other across the
+  // split via their overshoots. The sweep is the oracle, so the two can never
+  // disagree into a failure.
+  const buildStretch = (path, wallN, depth = 0) => {
+    try {
+      return [toolFor(overshoot(path), false, wallN)];
+    } catch (e) {
+      // A knife PROFILE here means this stretch's wall is a degenerate sliver's
+      // flipped normal (anti-parallel to the face) — a real rim wall is ~90° to
+      // its face and cannot produce it. The rim piece is sub-resolution noise;
+      // skip it rather than fail every other stretch of the selection.
+      if (e?.knifeEdge) return [];
+      const v = e?.foldVertex;
+      // overshoot() prepended one point, so sweep index v is path index v-1
+      const i = v != null ? v - (over > 0 && path.length >= 2 ? 1 : 0) : null;
+      if (i == null || depth > 16 || !(i > 0 && i < path.length - 1)) throw e;
+      return [
+        ...buildStretch(path.slice(0, i + 1), wallN, depth + 1),
+        ...buildStretch(path.slice(i), wallN, depth + 1),
+      ];
+    }
+  };
+
   try {
     if (closed && breaks.length === 0) {
-      return [toolFor(pts.map((p) => [p[0], p[1], p[2]]), true, wallNs[nSeg - 1])];
+      const loop = pts.map((p) => [p[0], p[1], p[2]]);
+      try {
+        return [toolFor(loop, true, wallNs[nSeg - 1])];
+      } catch (e) {
+        if (e?.knifeEdge) return [];   // degenerate sliver loop — nothing to blend
+        const v = e?.foldVertex;
+        if (v == null) throw e;
+        // the loop folds at v with no break to split on: open it there and let
+        // buildStretch's splitting take over (the seam gets the overshoot mitre)
+        return buildStretch([...loop.slice(v), ...loop.slice(0, v + 1)], wallNs[v % nSeg]);
+      }
     }
     // Open stretches between breaks. An open chain's endpoints are implicit breaks; a
     // closed chain's stretches wrap from each break to the next.
@@ -1017,7 +1092,7 @@ function planarTool(k, chain, magnitude, mode, segs, pSegs = segs, endTins = nul
       const aS = arcAt(s), aE = arcAt(e);
       if (aS) path = pullBack(path, aS.t, false);
       if (aE) path = pullBack(path, aE.t, true);
-      tools.push(toolFor(overshoot(path), false, wallNs[s % nSeg]));
+      tools.push(...buildStretch(path, wallNs[s % nSeg]));
     }
     for (const got of cornerArcs.values()) {
       tools.push(revolveTool(k, got.arc, magnitude, mode, segs, pSegs));
@@ -1505,7 +1580,20 @@ function apply(k, solid, mode, magnitude, { edges, segs = DEFAULT_SEGS, sharpDeg
       (endTins.get(kk) ?? endTins.set(kk, []).get(kk)).push(info.tin);
     }
   }
-  const { chains: effective, arcs, horns, pivots } = roundSalientCorners(planarized, magnitude);
+  let { chains: effective, arcs, horns, pivots } = roundSalientCorners(planarized, magnitude);
+  // An edge whose two flanks fold back on themselves (anti-parallel normals) is a
+  // zero-thickness fin or slit rim — a self-touching offset outline extrudes these.
+  // There is no wedge between the flanks for a blend to live in (profile2D's own
+  // ~180° knife-edge refusal), so skip the chain rather than fail every OTHER edge
+  // of the selection with it.
+  // Planar variant of the same degeneracy: a zero-area sliver in the face
+  // triangulation flips its facet normal, classifying as a "wall" anti-parallel
+  // to the face — profile2D's projected normals then hit the same refusal.
+  const knife = (ch) => ch.kind === "planar"
+    ? ch.wallNs.every((wn) => dot(ch.faceN, wn) < -1 + 1e-6)
+    : ch.n1 && ch.n2 && dot(ch.n1, ch.n2) < -1 + 1e-6;
+  effective = effective.filter((ch) => !knife(ch));
+  arcs = arcs.filter((ch) => !knife(ch));
   const pSegs = blendSegs(segs, magnitude);
   const toolsFor = (ch) =>
     ch.kind === "planar"

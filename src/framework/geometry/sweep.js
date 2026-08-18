@@ -43,6 +43,13 @@ const rodrigues = (v, k, ang) => {
 const placeRing = (profile2D, center, N, B) =>
   profile2D.map(([x, y]) => add(center, add(scl(N, x), scl(B, y))));
 
+// A per-VERTEX fold refusal (miter would fold / reversal is ambiguous) carries the
+// offending path index as `foldVertex`, so a caller that owns the path can split it
+// there and sweep the pieces instead of failing — mesh-fillet's planar chains do
+// exactly that when their pre-split guard's wall-normal heuristic disagrees with
+// this module's direction-aware measure (offset-outline micro-noise walls).
+const foldError = (message, vtx) => Object.assign(new Error(message), { foldVertex: vtx });
+
 // The seed frame a sweep of `path3D` will start from — exported so a caller authoring a
 // profile FOR a sweep (mesh-fillet's planar-chain tool) can express it in exactly the
 // frame the sweep will use, instead of replicating the reference-vector pick and drifting
@@ -91,7 +98,7 @@ export function resolveSweepStations(profile2D, path3D, { closed = false, corner
     const axisRaw = cross(tIn, tOut), s = vlen(axisRaw);
     const cdot = Math.max(-1, Math.min(1, dot(tIn, tOut)));
     if (cdot < -1 + 1e-6)
-      throw new Error(`sweep: 180° reversal at vertex ${vtx} is ambiguous — insert an intermediate point or use cornerRadius`);
+      throw foldError(`sweep: 180° reversal at vertex ${vtx} is ambiguous — insert an intermediate point or use cornerRadius`, vtx);
     if (s < EPS) { stations.push(placeRing(profile2D, center, N, B)); return; } // collinear: no turn, frame unchanged
     const axis = scl(axisRaw, 1 / s);
     const theta = Math.atan2(s, cdot);                    // exterior turn angle
@@ -127,7 +134,7 @@ export function resolveSweepStations(profile2D, path3D, { closed = false, corner
       let reachIn = 0;
       for (const [x, y] of profile2D) reachIn = Math.max(reachIn, x * uN + y * uB);
       if ((reachIn / cosh) * Math.tan(theta / 2) > 0.5 * Math.min(lenIn, lenOut))
-        throw new Error(`sweep: profile too wide for the bend at vertex ${vtx} (turn too sharp / segment too short) — increase cornerRadius or lengthen the segment`);
+        throw foldError(`sweep: profile too wide for the bend at vertex ${vtx} (turn too sharp / segment too short) — increase cornerRadius or lengthen the segment`, vtx);
       stations.push(profile2D.map(([x, y]) => {
         const p = add(scl(Nh, x), scl(Bh, y));            // profile point in the miter plane (spanned by u, axis)
         return add(center, add(scl(axis, dot(p, axis)), scl(u, dot(p, u) / cosh))); // stretch the u component

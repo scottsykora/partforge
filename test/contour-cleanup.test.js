@@ -12,6 +12,7 @@ import { beforeAll, expect, test } from "vitest";
 import { offsetRegions } from "../src/framework/geometry/contour-offset.js";
 import { sampleBezier, tessellateContour } from "../src/framework/geometry/profile.js";
 import { simplifyProfile, profileArea } from "../src/framework/geometry/contour-ops.js";
+import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
 import { loadDefaultFont } from "./helpers/offset-corpus.js";
 
 let glyphs;
@@ -54,6 +55,38 @@ test("offset of an offset builds (splice loops used to break the second chaining
   const second = offsetRegions(first, -0.6, { corners: "round" });   // must not throw
   expect(profileArea(second)).toBeGreaterThan(0);
   expect(profileArea(second)).toBeLessThan(profileArea(first));
+});
+
+// The multi-segment sibling of the splice loops: whole junk RINGS below the corpus
+// oracle's sliver bar (1e-3 mm²). Measured on offset(5, round) of "Scott" size 28
+// (feedback 0f3c799d, the "Scott Layered Label" backing): 14 of 16 emitted holes
+// were resolver debris of 1e-8..1e-5 mm² beside two real ~6-8 mm² counters, and
+// each junk ring extrudes into a degenerate fin or sliver face that broke the
+// planar rim fillet downstream (zero-length sweep segments, knife-edge profiles).
+// dropSubSliverRings sweeps them for positive deltas; the two real counters and
+// the outer must survive untouched.
+test("offset of text emits no sub-sliver junk rings", async () => {
+  const font = await loadDefaultFont();
+  const { textGlyphs } = await import("../src/framework/geometry/text2d.js");
+  const scott = textGlyphs(font, "Scott", { size: 28 });
+  const out = offsetRegions(scott, 5, { corners: "round" });
+  expect(out.length).toBe(1);
+  expect(out[0].holes.length).toBe(2);      // the two real counters, nothing else
+  const area = (ring) => Math.abs(ringArea(tessellateContour(ring, 64)));
+  for (const rg of out) {
+    expect(area(rg.outer)).toBeGreaterThan(1e-3);
+    for (const h of rg.holes) expect(area(h)).toBeGreaterThan(1e-3);
+  }
+});
+
+test("erosion keeps every ring (sub-sliver sweep is dilation-only)", async () => {
+  const font = await loadDefaultFont();
+  const { textGlyphs } = await import("../src/framework/geometry/text2d.js");
+  const scott = textGlyphs(font, "Scott", { size: 28 });
+  // erode lightly: tiny surviving islands are real geometry, not resolver debris,
+  // so nothing may be silently dropped on this side (the dropSubresolutionPositiveLoops rule)
+  const out = offsetRegions(scott, -0.2, { corners: "round" });
+  expect(out.length).toBeGreaterThan(0);
 });
 
 // ── layer 2: tessellation never hands consumers coincident points ────────────────────
