@@ -28,6 +28,8 @@ import { attachAnimationControls } from "./animation-controls.js";
 import { resolveDefaultView } from "./default-view.js";
 import { createMeasureMode } from "./measure/measure-mode.js";
 import { attachMeasureControls } from "./measure/measure-controls.js";
+import { createAnnotateMode } from "./annotate/annotate-mode.js";
+import { attachAnnotateControls } from "./annotate/annotate-controls.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
@@ -37,6 +39,14 @@ const NOOP_TOOLTIP_BINDING = { sync: () => {}, hide: () => {}, detach: () => {} 
 // Same no-op-default stance as attachTooltips/setHostPane below, for a
 // makeHandle caller (or a direct test) that doesn't wire measure mode.
 const NOOP_MEASURE = { isEnabled: () => false, setEnabled: () => {}, clearPins: () => {}, pinCount: () => 0 };
+// Same stance as NOOP_MEASURE: the handle's annotate surface exists whether or
+// not this mount wired the mode (it wires only when the host passes
+// onAnnotationSend — without a sink, Send would have nowhere to go).
+const NOOP_ANNOTATE = {
+  isEnabled: () => false, setEnabled: () => {}, undo: () => {}, clear: () => {},
+  strokeCount: () => 0, send: () => false,
+  onInkChange: () => () => {}, onModeChange: () => () => {},
+};
 // The STEP-on-Manifold import crossover's broken-state message (a second
 // needs-import-mesh after the mesh is already primed — see the "needs-import-mesh"
 // case below). One shared string so the status line, onBuild, and the ready
@@ -49,7 +59,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure, annotate }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -91,6 +101,11 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // button. Dimensions render in the scene, so a dimensioned capture is just
     // captureCurrent() taken while the mode is on.
     measure: measure ?? NOOP_MEASURE,
+    // Annotation-mode API (spec 2026-08-18): { isEnabled, setEnabled, clear,
+    // strokeCount, send, onModeChange } — an embedder drives the mode without
+    // the built-in pencil button. send() delivers to onAnnotationSend and
+    // returns false when there is no ink or the capture failed.
+    annotate: annotate ?? NOOP_ANNOTATE,
   };
 }
 
@@ -182,6 +197,12 @@ function createCleanupStack() {
 //   const off = runtime.onContextLost(() => …);  // WebGL context loss, i.e. the GPU or the
 //                                 // OS gave up — surface it rather than showing a dead
 //                                 // canvas. Returns an unsubscribe.
+//   runtime.annotate: { isEnabled, setEnabled, undo, clear, strokeCount, send, onInkChange,
+//                       onModeChange } — drive annotation mode without the built-in button;
+//                                 // no-op when onAnnotationSend was not supplied. Both
+//                                 // subscribes return an unsubscribe; onInkChange fires on
+//                                 // every stroke/undo/clear, which is what a host driving its
+//                                 // own Send button gates that button on (strokeCount() > 0).
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
@@ -194,10 +215,27 @@ function createCleanupStack() {
 //                                         // is a snapshot copy. Never fired by setParams or
 //                                         // animation playback — hosts call setParams from their
 //                                         // own undo/reset, and firing here would loop.
+// onAnnotationSend(payload)              // receive user annotations (freehand ink over the frozen
+//                                         // view). Supplying this reveals the #annotate viewbar
+//                                         // button; omitting it hides the button entirely.
+//                                         // payload.images carries two data URLs (the ink drawing
+//                                         // and the rendered model), each bounded to a 2048px long
+//                                         // edge — a stage bigger than that exports scaled down
+//                                         // rather than at its own hi-DPI size. Still hundreds of
+//                                         // KB of base64 apiece, so a host should not assume this
+//                                         // payload is small, only that it is bounded.
+// annotateSend: "viewbar" | "host"       // who owns the Send affordance. "viewbar" (default) puts
+//                                         // Send beside Undo/Clear in the annotate actions row.
+//                                         // "host" drops it and leaves Undo/Clear: the host draws
+//                                         // its own send control — e.g. a composer that pairs the
+//                                         // sketch with a typed message — and calls
+//                                         // runtime.annotate.send() itself. Ignored without
+//                                         // onAnnotationSend (there is no button to place).
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
-export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange, onParamsCommit,
+export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange, onParamsCommit, onAnnotationSend,
+                              annotateSend = "viewbar",
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
@@ -228,6 +266,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       theme: elements.chrome?.theme ?? byId("theme"),
       cutaway: elements.chrome?.cutaway ?? byId("cutaway"),
       measure: elements.chrome?.measure ?? byId("measure"),
+      annotate: elements.chrome?.annotate ?? byId("annotate"),
       railToggle: elements.chrome?.railToggle ?? byId("rail-toggle"),
     },
   };
@@ -349,6 +388,30 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       getParamsVersion: () => loop.version(),
     });
     cleanup.defer(() => measureMode.detach());
+    // Annotation mode (spec 2026-08-18): freehand ink over the frozen view,
+    // delivered to the host via onAnnotationSend. Wired only when the host
+    // passes the sink; the chrome hides the button otherwise (mode = null).
+    let annotateMode = null;
+    if (onAnnotationSend) {
+      annotateMode = createAnnotateMode(viewer, {
+        stage: els.viewer,
+        getContext: () => ({ view: view(), params }),
+        onSend: onAnnotationSend,
+      });
+      cleanup.defer(() => annotateMode.detach());
+      // Annotate and measure both claim canvas pointer input — mutually
+      // exclusive, whichever turns on turns the other off.
+      cleanup.defer(annotateMode.onModeChange(() => {
+        if (annotateMode.isEnabled()) measureMode.setEnabled(false);
+      }));
+      cleanup.defer(measureMode.onModeChange(() => {
+        if (measureMode.isEnabled()) annotateMode.setEnabled(false);
+      }));
+    }
+    const annotateChrome = attachAnnotateControls(viewer, annotateMode, {
+      annotate: els.chrome.annotate,
+    }, { tooltip, escapeScope: els.viewer, send: annotateSend });
+    cleanup.defer(() => annotateChrome.detach());
     // escapeScope: cutaway's Flip/Reset buttons are canvas SIBLINGS inside
     // #viewbar, not descendants of the canvas — attaching Escape to
     // viewer.domElement alone would leave a guarded Escape from those buttons
@@ -360,13 +423,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     cleanup.defer(() => measureChrome.detach());
     const cutawayChrome = attachCutawayControls(viewer, {
       cutaway: els.chrome.cutaway,
-    }, { tooltip, escapeGuard: () => measureMode.isEnabled() });
+    }, { tooltip, escapeGuard: () => measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) });
     cleanup.defer(() => cutawayChrome.detach());
-    // Suppress the always-on hover tooltip while measure mode is active — its
-    // own feature highlight + dims take over the pointer.
-    const offMeasureHover = measureMode.onModeChange(() =>
-      hover.setSuppressed(measureMode.isEnabled()));
-    cleanup.defer(offMeasureHover);
+    // Suppress the always-on hover tooltip while measure OR annotate mode is
+    // active — measure's highlight + dims take the pointer; annotate's overlay
+    // canvas takes it entirely.
+    const syncHoverSuppression = () =>
+      hover.setSuppressed(measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false));
+    cleanup.defer(measureMode.onModeChange(syncHoverSuppression));
+    if (annotateMode) cleanup.defer(annotateMode.onModeChange(syncHoverSuppression));
 
     // Current selection context for the pickers: the active view + live params +
     // derived values. Shared by every pick mode below.
@@ -392,7 +457,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         // resync on mode changes. The ?pick/?pickserver harnesses below are
         // deliberately not guarded — one is armed by an explicit dev toggle,
         // the other per agent request.
-        suppressed: () => measureMode.isEnabled(),
+        suppressed: () => measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
         onPick: (selection) => onPick({
           selection,
           label: selection.feature?.label ?? part.parts[selection.subPart]?.label ?? selection.subPart,
@@ -869,6 +934,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         clearPins: measureMode.clearPins,
         pinCount: measureMode.pinCount,
       },
+      annotate: annotateMode ? {
+        isEnabled: annotateMode.isEnabled,
+        setEnabled: annotateMode.setEnabled,
+        undo: annotateMode.undo,
+        clear: annotateMode.clear,
+        strokeCount: annotateMode.strokeCount,
+        send: annotateMode.send,
+        onInkChange: annotateMode.onInkChange,
+        onModeChange: annotateMode.onModeChange,
+      } : null,
     });
   } catch (error) {
     try {

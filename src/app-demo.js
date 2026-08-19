@@ -14,4 +14,8 @@ import { mount } from "./framework/index.js";
 window.__pfRuntime = mount(demoPart, {
   createWorker: (name) =>
     new Worker(new URL("./demo-worker.js", import.meta.url), { type: "module", name }),
+  onAnnotationSend: (payload) => {
+    window.__pfLastAnnotation = payload;
+    console.log("annotation payload", payload);
+  },
 });
