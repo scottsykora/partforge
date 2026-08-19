@@ -2213,6 +2213,15 @@ radius self-intersects its cutters and yields a wrong shape rather than a skippe
 feature (OCCT skips instead). Clamp magnitudes against local geometry the way
 `filleted-box.js` does: `Math.min(p.fillet, halfWidth - 0.5, p.h - 0.5)`.
 
+**A defeated fillet/chamfer skips, and the build reports it.** On both backends a
+fillet or chamfer the geometry defeats does **not** fail the build: the op returns its
+input solid unchanged (edges left sharp) and the build result carries a feature-skip
+warning naming the op, its magnitude, and the reason — so the part on screen is real,
+minus that one feature, with everything downstream of it still applied. When a build
+answer includes such a warning, treat it as a failed feature, not a success: say so,
+and either adjust the geometry/radius and retry or leave the feature off deliberately.
+Do not conclude a fillet landed just because the build succeeded.
+
 **Preview routing is per sub-part.** Each sub-part is probed and routed independently, and
 a mixed part's regen fans out to both workers in parallel — a shelled body pays for OCCT
 while a plain lid rebuilds at Manifold speed beside it. Two scopes

@@ -396,14 +396,27 @@ garbage). A failing chamfer instead binary-searches the largest valid distance. 
 conforming B-rep kernel must degrade this way — a fillet request must never brick the
 build, and authors should expect all-or-nothing filleting per call, not per edge.
 
-**Mesh degrade policy** (`mesh-fillet.js`): the mesh class degrades by *rerouting*, not
-skipping — an unsupported edge class or an empty selection throws
-`KernelCapabilityError` and the framework retries the build on the B-rep kernel, which
-then applies its own repair policy. One asymmetry is deliberate: the mesh class does
-**not** validate radius feasibility (an oversized radius yields self-intersecting tools
-and a wrong shape rather than a skipped feature), so parts should clamp magnitudes
-against local geometry the way `filleted-box.js` does — good practice on both classes,
-mandatory on this one.
+**Mesh degrade policy** (`mesh-fillet.js` + `manifold-backend.js`): an unsupported edge
+class or a function selector *reroutes* — it throws `KernelCapabilityError` and the
+framework retries the build on the B-rep kernel, which then applies its own repair
+policy. Every other fillet/chamfer failure on the mesh class (a geometry-defeated
+blend, a selector naming an unknown plane, an empty selection error from the machinery)
+now **skips like the B-rep policy**: the op returns its input solid unchanged and
+records a feature-skip warning instead of failing the build. One asymmetry is
+deliberate: the mesh class does **not** validate radius feasibility (an oversized
+radius yields self-intersecting tools and a wrong shape rather than a skipped feature),
+so parts should clamp magnitudes against local geometry the way `filleted-box.js`
+does — good practice on both classes, mandatory on this one.
+
+**Feature-skip warnings channel** (both backends, partforge 0.69): every skipped or
+rescued feature — a mesh fillet/chamfer that returned its input, occt-repair's
+skip/bisection rescues, a `roundall-skipped` — is recorded on the kernel and drained
+with `kernel.takeBuildWarnings()`. The worker job layer (`jobs.js`) drains per
+sub-part and attaches `warnings: [{part, message}]` to the `meshes` /
+`capture-meshes` result when any were recorded, so a host can tell its user (or its
+agent) that the part on screen is missing a feature it asked for. A skipped op still
+console.warns as before; the channel is additive. Hosts that ignore the field see
+exactly the old behavior.
 
 ## Shape2D (2-D booleans)
 

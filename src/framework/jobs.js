@@ -130,6 +130,13 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const t0 = Date.now();
       const useCache = msg.cache !== false; // ?debug toggle can disable caching (cache:false)
       const meshes = [];
+      // Feature-skip warnings (a fillet/chamfer the geometry defeated — see the
+      // backends' takeBuildWarnings): drained per sub-part below so each message
+      // names the sub-part whose build recorded it, and drained-and-discarded here
+      // first so a previous job's stragglers (an oracle build, an export) cannot be
+      // misattributed to this build's first sub-part.
+      kernel.takeBuildWarnings?.();
+      const warnings = [];
       kernel.resetCacheStats?.(); // count hits/misses for just this job
       for (const [i, name] of msg.subparts.entries()) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
@@ -137,6 +144,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
           const m = posed(name, "display").toMesh({ quality: "preview" });
           meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features });
         } finally {
+          for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
           kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)
         }
@@ -152,7 +160,8 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       }
       const transfer = meshes.flatMap((m) =>
         [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
-      post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.() }, transfer);
+      post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.(),
+             ...(warnings.length ? { warnings } : {}) }, transfer);
     } else if (msg.type === "capture-generate") {
       // A private, job-correlated one-shot channel for captureView — builds a
       // (possibly non-active) view's meshes off the regen loop, so it can never
@@ -161,19 +170,23 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // isStale/superseded polling — there's nothing to supersede a one-shot.
       const useCache = msg.cache !== false;
       const meshes = [];
+      kernel.takeBuildWarnings?.(); // discard a previous job's stragglers (same as generate)
+      const warnings = [];
       for (const name of msg.subparts) {
         if (useCache) kernel.beginSubPart?.(name);
         try {
           const m = posed(name, "display").toMesh({ quality: "preview" });
           meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features });
         } finally {
+          for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
           if (useCache) kernel.endSubPart?.();
           kernel.cleanup?.();
         }
       }
       const captureTransfer = meshes.flatMap((m) =>
         [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
-      post({ type: "capture-meshes", jobId: msg.jobId, meshes }, captureTransfer);
+      post({ type: "capture-meshes", jobId: msg.jobId, meshes,
+             ...(warnings.length ? { warnings } : {}) }, captureTransfer);
     } else if (msg.type === "export-stl") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");

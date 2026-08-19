@@ -39,9 +39,15 @@ export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
           loft, draw, exportSTEP, importSTEP, measureVolume, makeSphere, makeLine, Plane } = replicad;
 
+  // Feature-skip warnings: everything occt-repair (and roundAll) skips or rescues
+  // is recorded here as well as console.warned, and jobs.js drains it per
+  // sub-part (takeBuildWarnings) onto the meshes message — same channel as the
+  // Manifold backend's fillet/chamfer degradation.
+  const buildWarnings = [];
+  const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
   // Fillet/chamfer/shell failure recovery (skip-on-failure, chamfer binary search) —
   // see occt-repair.js for the policies and why they differ per op.
-  const { validChamfer, safeOp } = createOcctRepair(measureVolume);
+  const { validChamfer, safeOp } = createOcctRepair(measureVolume, recordWarning);
 
   // name -> { shape, digest } | { error, digest } — imported geometry the framework
   // registers pre-build via `_registerImport` (kernel-lifetime, untracked by the
@@ -234,7 +240,7 @@ export function createOcctKernel(replicad) {
         return cached(key, () => {
           const a = mat();
           if (r === 0) return wrap(a._s.clone(), cloneLabels(a._labels), key);
-          return wrap(occtRoundAll(replicad, a._s, r), cloneLabels(a._labels), key);
+          return wrap(occtRoundAll(replicad, a._s, r, recordWarning), cloneLabels(a._labels), key);
         });
       },
       shell: (thickness, openFaces) => {
@@ -524,6 +530,9 @@ export function createOcctKernel(replicad) {
     sweepCache: () => cache.sweep(),
     cacheStats: () => cache.stats(),
     resetCacheStats: () => cache.resetStats(),
+    // Drain the feature-skip warnings recorded since the last drain — the
+    // Manifold backend's channel, mirrored (see occt-repair.js for the sources).
+    takeBuildWarnings: () => buildWarnings.splice(0),
   });
   return kernel;
 }

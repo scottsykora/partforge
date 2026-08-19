@@ -592,6 +592,13 @@ between the Manifold preview and the OCCT STEP export.
 - **Symptom:** A Manifold-built fillet/chamfer produces a mangled or over-cut shape (no error), where the same part on OCCT would skip the feature with a `fillet(…) failed` warning.
 - **Cause:** The mesh fillet does not validate radius feasibility — a magnitude larger than the local geometry self-intersects its cutter solids and the booleans happily apply them.
 - **Fix:** Clamp the magnitude against local dimensions in the part (`Math.min(p.fillet, halfWidth - 0.5, …)` — see `src/parts/filleted-box.js`), which is required practice on the mesh class per [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md) § "Mesh degrade policy".
+
+## feature-skipped-warning
+
+- **Symptom:** The build succeeds but its result carries a warning like `fillet 1.15 failed (<reason>) — feature skipped, edges left sharp` (mesh backend), or `fillet(2) failed (…) — feature skipped` / `chamfer 3 over-ran the geometry — reduced to …` (OCCT repair policy), and the rendered part is missing the blend.
+- **Cause:** *(partforge ≥ 0.69.)* A fillet/chamfer the geometry (or its own selector) defeats no longer fails the whole build on either backend: the op returns its input solid unchanged, everything downstream still applies, and the skip is recorded on the build result's `warnings` (`kernel.takeBuildWarnings()` / the `meshes` message's `warnings: [{part, message}]`).
+- **Fix:** Read the parenthesized reason. A bad selector (unknown plane, wrong `at` height) is a part bug — fix the selector. A geometry-defeated blend usually wants a smaller magnitude or simpler input (clamp per the entry above), or the feature deliberately left off. Treat the warning as "this feature did not land", never as a cosmetic note — the shape on screen genuinely lacks it.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.
