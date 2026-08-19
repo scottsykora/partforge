@@ -530,13 +530,14 @@ delta.
 
 **Measured failure surface.** The committed instrument is
 `node scripts/offset-rates.mjs`, over 600 deterministic seeded shapes plus six glyph cases,
-20 deltas, and three corner styles (36,090 attempts). In partforge 0.60 it reports:
+20 deltas, and three corner styles (36,090 attempts). In partforge 0.68.1 (after the
+fold-aware clearance fix in the winding classifier) it reports:
 
-- before the retry ladder: round 1/12,030 (0.008%), chamfer 2/12,030 (0.017%), sharp
-  4/12,030 (0.033%);
+- before the retry ladder: round 0/12,030, chamfer 1/12,030 (0.008%), sharp
+  1/12,030 (0.008%);
 - after the retry ladder: zero chain-incomplete failures for all three styles;
-- seven oracle-checked rescues, with median area error 0.0972%, worst 1.663%
-  (2.2373 mm²), zero region-count losses, and zero complete arc losses.
+- two oracle-checked rescues, with median area error 0.0727%, worst 0.073%
+  (0.0720 mm²), zero region-count losses, and zero complete arc losses.
 
 The ladder remains a numerical escape hatch: it perturbs delta by 1e-9, coarsens crossing
 clustering, then tries polyline outlines. A future case that reaches a coarse clustering or

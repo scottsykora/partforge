@@ -394,21 +394,28 @@ growing a shape past the hole's own width.
 - **Symptom:** `contour-winding: could not chain offset boundary (incomplete intersection
   set)` thrown from `Shape2D.offset` (or `offsetPolygon`) after a raw offset self-overlaps
   at a narrow pinch.
-- **Cause:** *(Known corpus fixed in partforge 0.60; ID retained permanently.)* The resolver
+- **Cause:** *(Known corpus fixed in partforge 0.60, fold-apex case in 0.68.1; ID retained
+  permanently.)* The resolver
   used to classify every boundary piece from one fixed midpoint probe. At a narrow cell that
   probe could cross a nearby non-incident edge, read the wrong winding on both sides, and
   drop a real continuation. Fully eroded round text counters were a separate upstream cause:
-  their raw offset could retain a negative pocket even under a correct Positive fill.
-- **Fix:** Upgrade to partforge ≥ 0.60. The classifier now chooses among deterministic
-  interior samples by local boundary clearance and caps its probe distance accordingly.
+  their raw offset could retain a negative pocket even under a correct Positive fill. A third
+  cause survived to 0.68.1: at a hairpin fold the antiparallel return branch is the probe
+  anchor's immediate ring neighbour, which the clearance measurement blanket-excluded as
+  incident geometry — the probe stepped across the fold and kept an interior piece
+  (italic-sheared whole-word text was the reproduction).
+- **Fix:** Upgrade to partforge ≥ 0.68.1. The classifier chooses among deterministic
+  interior samples by local boundary clearance, caps its probe distance accordingly, and
+  counts a fold-back neighbour edge (direction reversed against the anchor's) as an
+  obstruction rather than incident geometry.
   Positive round offsets also decide counter collapse from the source hole's inradius before
   generating a raw outline. On the committed 36,090-offset corpus
   (`node scripts/offset-rates.mjs`), chain failures before the retry ladder are
-  1 round / 2 chamfer / 4 sharp and **zero remain after it**; the full glyph matrix,
+  0 round / 1 chamfer / 1 sharp and **zero remain after it**; the full glyph matrix,
   including `"Scott"` through +3, has no throw or topology divergence.
 
   The literal error remains intentionally loud if a new pathological arrangement defeats
-  every retry rung. If it appears on ≥0.60, report the profile, delta, and corner style so it
+  every retry rung. If it appears on ≥0.68.1, report the profile, delta, and corner style so it
   can become a deterministic fixture. Reducing `|delta|` or simplifying nearly coincident
   features is a temporary workaround; changing corner style is not a reliable general fix.
 
