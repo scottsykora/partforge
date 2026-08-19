@@ -367,7 +367,10 @@
   width: 100%;
   height: 100%;
   z-index: 10;
-  cursor: crosshair;
+  /* Pencil cursor (the viewbar toggle's lucide pencil), hotspot at the tip.
+     White halo under a dark stroke keeps it readable over both the model and
+     the backdrop; crosshair is the no-custom-cursor fallback. */
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='white' stroke-width='4.5'%3E%3Cpath d='M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z'/%3E%3Cpath d='m15 5 4 4'/%3E%3C/g%3E%3Cg stroke='%231d232b' stroke-width='2'%3E%3Cpath d='M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z'/%3E%3Cpath d='m15 5 4 4'/%3E%3C/g%3E%3C/svg%3E") 2 22, crosshair;
   touch-action: none;
 }
 .pf-ink-canvas[hidden] { display: none; }

@@ -34,7 +34,7 @@ export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, 
   button.type = "button";
   button.innerHTML = PENCIL_ICON;
   button.setAttribute("aria-pressed", "false");
-  if (!tooltip && !button.hasAttribute("title")) button.title = "Annotate the view";
+  if (!tooltip && !button.hasAttribute("title")) button.title = "Sketch";
 
   const actions = document.createElement("span");
   actions.className = "pf-annotate-actions";
@@ -64,7 +64,7 @@ export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, 
   function sync() {
     const on = mode.isEnabled();
     button.setAttribute("aria-pressed", String(on));
-    button.setAttribute("aria-label", on ? "Stop annotating" : "Annotate the view");
+    button.setAttribute("aria-label", on ? "Stop sketching" : "Sketch");
     button.classList.toggle("on", on);
     actions.hidden = !on;
     const empty = mode.strokeCount() === 0;
