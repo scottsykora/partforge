@@ -5,6 +5,12 @@
 // behavior; this file only puts it on screen. One extra contract: a host whose
 // markup HAS the button but whose mount passed no onAnnotationSend gets the
 // button hidden entirely (spec: no dead Send) — mount passes mode = null.
+//
+// `send: "host"` drops the Send button from the row and leaves Undo/Clear.
+// It is for a host that draws its own send affordance (partforge-cloud pairs
+// the sketch with a typed prompt in its own composer, then calls
+// runtime.annotate.send()) — two Send buttons in two places, one of which
+// ignores the typed message, is the failure this avoids.
 import { attachButtonTooltips } from "../tooltip.js";
 import { runCleanupSteps, captureAttributes, restoreAttributes } from "../teardown.js";
 
@@ -13,7 +19,7 @@ const PENCIL_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none"
 
 const noop = () => {};
 
-export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, { tooltip, escapeScope } = {}) {
+export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, { tooltip, escapeScope, send = "viewbar" } = {}) {
   if (!button) return { detach: noop };
 
   const hostAttributes = captureAttributes(button, BUTTON_ATTRIBUTES);
@@ -48,17 +54,21 @@ export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, 
   clearButton.textContent = "Clear";
   clearButton.title = "Remove all strokes";
   clearButton.setAttribute("aria-label", "Remove all strokes");
-  const sendButton = document.createElement("button");
-  sendButton.type = "button";
-  sendButton.className = "pf-annotate-send";
-  sendButton.textContent = "Send";
-  sendButton.title = "Send the annotation";
-  sendButton.setAttribute("aria-label", "Send the annotation");
-  actions.append(undoButton, clearButton, sendButton);
+  let sendButton = null;
+  if (send !== "host") {
+    sendButton = document.createElement("button");
+    sendButton.type = "button";
+    sendButton.className = "pf-annotate-send";
+    sendButton.textContent = "Send";
+    sendButton.title = "Send the annotation";
+    sendButton.setAttribute("aria-label", "Send the annotation");
+  }
+  actions.append(...[undoButton, clearButton, sendButton].filter(Boolean));
   button.after(actions);
 
+  const buttons = [button, undoButton, clearButton, sendButton].filter(Boolean);
   const tooltipBinding = tooltip
-    ? attachButtonTooltips(tooltip, [button, undoButton, clearButton, sendButton].map((element) => ({ element })))
+    ? attachButtonTooltips(tooltip, buttons.map((element) => ({ element })))
     : null;
 
   function sync() {
@@ -70,7 +80,7 @@ export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, 
     const empty = mode.strokeCount() === 0;
     undoButton.disabled = empty;
     clearButton.disabled = empty;
-    sendButton.disabled = empty;
+    if (sendButton) sendButton.disabled = empty;
     tooltipBinding?.sync();
   }
 
@@ -95,8 +105,8 @@ export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, 
   button.addEventListener("click", onToggle);
   undoButton.addEventListener("click", onUndo);
   clearButton.addEventListener("click", onClear);
-  sendButton.addEventListener("click", onSendClick);
-  const escapeTargets = [escapeScope ?? viewer.domElement, button, undoButton, clearButton, sendButton];
+  sendButton?.addEventListener("click", onSendClick);
+  const escapeTargets = [escapeScope ?? viewer.domElement, ...buttons];
   for (const element of escapeTargets) element.addEventListener("keydown", onEscape);
   sync();
 
@@ -111,7 +121,7 @@ export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, 
         () => button.removeEventListener("click", onToggle),
         () => undoButton.removeEventListener("click", onUndo),
         () => clearButton.removeEventListener("click", onClear),
-        () => sendButton.removeEventListener("click", onSendClick),
+        () => sendButton?.removeEventListener("click", onSendClick),
         ...escapeTargets.map((element) => () => element.removeEventListener("keydown", onEscape)),
         () => tooltipBinding?.detach(),
         () => actions.remove(),

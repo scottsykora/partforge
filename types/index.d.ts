@@ -117,6 +117,13 @@ export interface MountOptions {
    * entirely.
    */
   onAnnotationSend?: (payload: AnnotationPayload) => void;
+  /**
+   * Who owns annotation mode's Send affordance. `"viewbar"` (the default) puts
+   * Send beside Undo/Clear in the actions row. `"host"` drops it and leaves
+   * Undo/Clear: the host draws its own send control — e.g. a composer pairing
+   * the sketch with a typed message — and calls `runtime.annotate.send()`.
+   */
+  annotateSend?: "viewbar" | "host";
   /** @deprecated alias for `elements.viewer`. */
   container?: HTMLElement | null;
   /** @deprecated alias for `elements.controls`. */
@@ -208,9 +215,18 @@ export interface AnnotationPayload {
 export interface AnnotateRuntime {
   isEnabled(): boolean;
   setEnabled(on: boolean): void;
+  /** Drop the most recent stroke. */
+  undo(): void;
   clear(): void;
   strokeCount(): number;
+  /**
+   * Assemble the payload and hand it to `onAnnotationSend`, then exit the mode
+   * and discard the ink. Returns false — delivering nothing and keeping the ink
+   * — when the mode is off, the canvas is empty, or the render failed.
+   */
   send(): boolean;
+  /** Every stroke, undo and clear. Returns an unsubscribe. */
+  onInkChange(cb: () => void): () => void;
   onModeChange(cb: () => void): () => void;
 }
 

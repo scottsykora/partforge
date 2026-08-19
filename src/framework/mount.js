@@ -43,8 +43,9 @@ const NOOP_MEASURE = { isEnabled: () => false, setEnabled: () => {}, clearPins: 
 // not this mount wired the mode (it wires only when the host passes
 // onAnnotationSend — without a sink, Send would have nowhere to go).
 const NOOP_ANNOTATE = {
-  isEnabled: () => false, setEnabled: () => {}, clear: () => {},
-  strokeCount: () => 0, send: () => false, onModeChange: () => () => {},
+  isEnabled: () => false, setEnabled: () => {}, undo: () => {}, clear: () => {},
+  strokeCount: () => 0, send: () => false,
+  onInkChange: () => () => {}, onModeChange: () => () => {},
 };
 // The STEP-on-Manifold import crossover's broken-state message (a second
 // needs-import-mesh after the mesh is already primed — see the "needs-import-mesh"
@@ -196,9 +197,12 @@ function createCleanupStack() {
 //   const off = runtime.onContextLost(() => …);  // WebGL context loss, i.e. the GPU or the
 //                                 // OS gave up — surface it rather than showing a dead
 //                                 // canvas. Returns an unsubscribe.
-//   runtime.annotate: { isEnabled, setEnabled, clear, strokeCount, send, onModeChange } — drive
-//                                 // annotation mode without the built-in button; no-op when
-//                                 // onAnnotationSend was not supplied.
+//   runtime.annotate: { isEnabled, setEnabled, undo, clear, strokeCount, send, onInkChange,
+//                       onModeChange } — drive annotation mode without the built-in button;
+//                                 // no-op when onAnnotationSend was not supplied. Both
+//                                 // subscribes return an unsubscribe; onInkChange fires on
+//                                 // every stroke/undo/clear, which is what a host driving its
+//                                 // own Send button gates that button on (strokeCount() > 0).
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
@@ -218,10 +222,18 @@ function createCleanupStack() {
 //                                         // and the rendered model); on a large hi-DPI stage the
 //                                         // drawing PNG alone can run several MB of base64, so a
 //                                         // host should not assume this payload is small.
+// annotateSend: "viewbar" | "host"       // who owns the Send affordance. "viewbar" (default) puts
+//                                         // Send beside Undo/Clear in the annotate actions row.
+//                                         // "host" drops it and leaves Undo/Clear: the host draws
+//                                         // its own send control — e.g. a composer that pairs the
+//                                         // sketch with a typed message — and calls
+//                                         // runtime.annotate.send() itself. Ignored without
+//                                         // onAnnotationSend (there is no button to place).
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
 export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange, onParamsCommit, onAnnotationSend,
+                              annotateSend = "viewbar",
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
   const byId = (id) => document.getElementById(id);
@@ -396,7 +408,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     }
     const annotateChrome = attachAnnotateControls(viewer, annotateMode, {
       annotate: els.chrome.annotate,
-    }, { tooltip, escapeScope: els.viewer });
+    }, { tooltip, escapeScope: els.viewer, send: annotateSend });
     cleanup.defer(() => annotateChrome.detach());
     // escapeScope: cutaway's Flip/Reset buttons are canvas SIBLINGS inside
     // #viewbar, not descendants of the canvas — attaching Escape to
@@ -923,9 +935,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       annotate: annotateMode ? {
         isEnabled: annotateMode.isEnabled,
         setEnabled: annotateMode.setEnabled,
+        undo: annotateMode.undo,
         clear: annotateMode.clear,
         strokeCount: annotateMode.strokeCount,
         send: annotateMode.send,
+        onInkChange: annotateMode.onInkChange,
         onModeChange: annotateMode.onModeChange,
       } : null,
     });

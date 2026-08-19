@@ -33,6 +33,8 @@ test("annotate defaults to an inert no-op with the full surface", () => {
   expect(rt.annotate.send()).toBe(false);
   expect(() => rt.annotate.setEnabled(true)).not.toThrow();
   expect(() => rt.annotate.clear()).not.toThrow();
+  expect(() => rt.annotate.undo()).not.toThrow();
+  expect(typeof rt.annotate.onInkChange(() => {})).toBe("function");
   expect(typeof rt.annotate.onModeChange(() => {})).toBe("function");
 });
 

@@ -79,6 +79,24 @@ test("Undo/Clear/Send disable while the canvas is empty, enable with ink", () =>
   expect(mode.clear).toHaveBeenCalledTimes(1);
 });
 
+test("send:host drops Send and keeps Undo/Clear working", () => {
+  const { viewer, button } = fixture();
+  const mode = fakeMode();
+  const chrome = attachAnnotateControls(viewer, mode, { annotate: button }, { send: "host" });
+  button.click(); // enable
+  const actionButtons = [...document.querySelectorAll(".pf-annotate-actions button")];
+  expect(actionButtons.map((b) => b.textContent)).toEqual(["Undo", "Clear"]);
+  mode.__setStrokes(1);
+  const [undoBtn, clearBtn] = actionButtons;
+  expect(undoBtn.disabled || clearBtn.disabled).toBe(false);
+  undoBtn.click();
+  expect(mode.undo).toHaveBeenCalledTimes(1);
+  // The host drives Send itself; nothing in the row does.
+  expect(mode.send).not.toHaveBeenCalled();
+  expect(() => chrome.detach()).not.toThrow();
+  expect(document.querySelector(".pf-annotate-actions")).toBe(null);
+});
+
 test("Escape exits the mode and consumes the keystroke", () => {
   const { viewer, button, canvas } = fixture();
   const mode = fakeMode();
