@@ -356,3 +356,18 @@
 @media (prefers-reduced-motion: reduce) {
   .pf-rail, .pf-rail-seam > span { transition: none; }
 }
+
+/* ---- annotation ink layer: a transparent 2D canvas over the viewer --------
+   Shown only while annotation mode is on. It deliberately owns pointer events
+   while visible — that is what freezes orbit/pan/zoom during drawing. Below
+   the viewbar (z 15) so Undo/Clear/Send stay clickable. */
+.pf-ink-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  cursor: crosshair;
+  touch-action: none;
+}
+.pf-ink-canvas[hidden] { display: none; }
