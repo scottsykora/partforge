@@ -821,6 +821,38 @@ try {
   }
   await checkCaptureCurrent(); // before checkDebugOverlay — that one navigates away
   await checkCutawayCapture(); // cutaway is still enabled from the toggle above
+
+  // Annotate's actions row (Undo/Clear/Send) is the widest of the viewbar's
+  // three contextual rows — see app.css's 430px/360px shrink rules — so its
+  // containment is worth its own pass through checkCompactLayout, mirroring
+  // the cutaway pass above. Only apps that wire onAnnotationSend show #annotate
+  // (demo.html does); other apps skip this block entirely. Run only after the
+  // canvas-screenshot checks above: opening annotate lazily creates an overlay
+  // <canvas> inside #app, and their "#app canvas" locators assume there is
+  // exactly one. Isolated from cutaway (toggled off first, restored after):
+  // the two are independent toggles, and running both open at once would show
+  // two contextual action rows stacked in the same pill — a real but separate
+  // overflow case from the one this fix's arithmetic covers.
+  const annotateButton = page.locator("#annotate");
+  if (await annotateButton.count() && !(await annotateButton.isDisabled())) {
+    const cutawayWasOn = cutaway && await cutawayButton.getAttribute("aria-pressed") === "true";
+    if (cutawayWasOn) await cutawayButton.click();
+    await annotateButton.click();
+    const annotateOpen = (await annotateButton.getAttribute("aria-pressed")) === "true";
+    if (annotateOpen) {
+      const viewport = page.viewportSize();
+      await checkCompactLayout(601);
+      await checkCompactLayout(390);
+      await checkCompactLayout(320);
+      // Restore a normal-width viewport before clicking to close: at 320px
+      // the pill (by design) sits close to the stage's edge, and clicking an
+      // element outside the actual browser window would hang.
+      if (viewport) await page.setViewportSize(viewport);
+      await annotateButton.click(); // close it again
+    }
+    if (cutawayWasOn) await cutawayButton.click(); // restore cutaway's prior state
+  }
+
   // 390px is below the 720px stacked-layout breakpoint; 850px sits in the
   // narrower-but-still-side-by-side range where the tabs and a corner overlay
   // are most likely to collide (see the debug-overlay-fix report).

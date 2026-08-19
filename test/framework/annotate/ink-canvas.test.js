@@ -65,6 +65,29 @@ test("a one-point stroke draws as a filled dot, twice (halo + core)", () => {
   expect(ctx.calls.filter(([op]) => op === "fill")).toHaveLength(2);
 });
 
+test("resize observer callback ignores a hidden canvas", () => {
+  let observerCallback;
+  class FakeResizeObserver {
+    constructor(cb) { observerCallback = cb; }
+    observe() {}
+    disconnect() {}
+  }
+  const original = global.ResizeObserver;
+  global.ResizeObserver = FakeResizeObserver;
+  try {
+    const { ctx, canvas } = fixture();
+    expect(canvas.element.hidden).toBe(true);
+    observerCallback(); // still hidden: must not re-rasterize
+    expect(ctx.calls).toHaveLength(0);
+    canvas.show();
+    ctx.calls.length = 0;
+    observerCallback(); // visible: resize()/draw() run as before
+    expect(ctx.calls.some(([op]) => op === "clearRect")).toBe(true);
+  } finally {
+    global.ResizeObserver = original;
+  }
+});
+
 test("dispose removes the element and is idempotent", () => {
   const { stage, canvas } = fixture();
   canvas.dispose();

@@ -214,6 +214,10 @@ function createCleanupStack() {
 // onAnnotationSend(payload)              // receive user annotations (freehand ink over the frozen
 //                                         // view). Supplying this reveals the #annotate viewbar
 //                                         // button; omitting it hides the button entirely.
+//                                         // payload.images carries two data URLs (the ink drawing
+//                                         // and the rendered model); on a large hi-DPI stage the
+//                                         // drawing PNG alone can run several MB of base64, so a
+//                                         // host should not assume this payload is small.
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.

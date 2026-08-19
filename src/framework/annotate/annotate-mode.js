@@ -140,6 +140,11 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     detach() {
       if (detached) return;
       detached = true;
+      // Leave the state machine honest: a detach while enabled must not
+      // strand isEnabled() at true forever. Runs before listeners/canvas
+      // teardown below — setEnabled(false) notifies mode listeners and hides
+      // the canvas, both of which still need to be live for this call.
+      setEnabled(false);
       offInk();
       if (!canvas) return;
       canvas.element.removeEventListener("pointerdown", onPointerDown);

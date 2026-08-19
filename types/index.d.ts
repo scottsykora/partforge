@@ -197,6 +197,8 @@ export interface AnnotationPayload {
   version: 1;
   strokes: AnnotationStroke[];
   anchors: AnnotationAnchor[];
+  /** Two base64 data URLs. On a large hi-DPI stage the drawing PNG alone can
+   *  run several MB of base64 — hosts should not assume this payload is small. */
   images: { drawing: string; model: string };
   camera: AnnotationCamera;
   viewport: { width: number; height: number; dpr: number };

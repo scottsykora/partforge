@@ -68,8 +68,14 @@ export function createInkCanvas(stage, { getContext2d = (canvas) => canvas.getCo
 
   // The viewer's own ResizeObserver is internal (viewer.js exposes no resize
   // hook), so the overlay runs its own — ink is normalized, so a resize is
-  // just a re-rasterize at the new bitmap size.
-  const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
+  // just a re-rasterize at the new bitmap size. Skip it while hidden: the
+  // stage keeps resizing (rail drags, window resizes) whether or not
+  // annotate mode is on, and re-rasterizing an invisible canvas is wasted
+  // work; show() already calls resize() so nothing is missed on re-entry.
+  const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+    if (canvas.hidden) return;
+    resize();
+  });
   observer?.observe(stage);
 
   let disposed = false;

@@ -147,3 +147,12 @@ test("detach disposes the canvas and is idempotent", () => {
   mode.detach();
   expect(canvas.dispose).toHaveBeenCalledTimes(1);
 });
+
+test("detach while enabled leaves the state machine honest", () => {
+  const { canvas, mode } = fixture();
+  mode.setEnabled(true);
+  mode.detach();
+  expect(mode.isEnabled()).toBe(false);
+  expect(canvas.hide).toHaveBeenCalled();
+  expect(canvas.dispose).toHaveBeenCalledTimes(1);
+});
