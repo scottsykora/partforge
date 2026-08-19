@@ -88,6 +88,7 @@ export interface MountElements {
     theme?: HTMLElement | null;
     cutaway?: HTMLElement | null;
     measure?: HTMLElement | null;
+    annotate?: HTMLElement | null;
     railToggle?: HTMLElement | null;
   };
 }
@@ -110,6 +111,12 @@ export interface MountOptions {
   onDownload?: (file: DownloadPayload) => void;
   /** The active view (tab) name — emitted once on mount, then on every change. */
   onViewChange?: (view: string) => void;
+  /**
+   * Receive user annotations (freehand ink over the frozen view). Supplying
+   * this reveals the `#annotate` viewbar button; omitting it hides the button
+   * entirely.
+   */
+  onAnnotationSend?: (payload: AnnotationPayload) => void;
   /** @deprecated alias for `elements.viewer`. */
   container?: HTMLElement | null;
   /** @deprecated alias for `elements.controls`. */
@@ -154,6 +161,55 @@ export interface MeasureRuntime {
   setEnabled(on: boolean): void;
   clearPins(): void;
   pinCount(): number;
+}
+
+/** One freehand stroke: points normalized 0..1 in viewport space; width as a
+ *  fraction of the viewport's short edge. */
+export interface AnnotationStroke {
+  points: [number, number][];
+  width: number;
+}
+
+/** A raycast sample grounding a stroke in the model. `t` anchors sit at the
+ *  stroke's start/mid/end by arc length; `kind: "centroid"` anchors sit at the
+ *  enclosed-region centroid of a closed stroke. `hit` is null when the sample
+ *  ray missed all geometry — a deliberate signal, not an error. */
+export interface AnnotationAnchor {
+  stroke: number;
+  t?: number;
+  kind?: "centroid";
+  screen: [number, number];
+  hit: { subPart: string; pointLocal: [number, number, number] } | null;
+}
+
+/** A camera pose. `world` replays exactly against the annotated build; `parts`
+ *  is the same pose in the shared CAD frame (survives per-view recentring when
+ *  the model is rebuilt), or null when no meshes were live. */
+export interface AnnotationCamera {
+  world: { pos: number[]; target: number[]; up: number[]; fov: number };
+  parts: { pos: number[]; target: number[]; up: number[]; fov: number } | null;
+}
+
+/** What onAnnotationSend receives. The drawing and the 3D render are separate
+ *  images over the same framing, so a host can composite them now and
+ *  re-render the model from the same camera against later updates. */
+export interface AnnotationPayload {
+  version: 1;
+  strokes: AnnotationStroke[];
+  anchors: AnnotationAnchor[];
+  images: { drawing: string; model: string };
+  camera: AnnotationCamera;
+  viewport: { width: number; height: number; dpr: number };
+  context: { view: string; params: Record<string, unknown> };
+}
+
+export interface AnnotateRuntime {
+  isEnabled(): boolean;
+  setEnabled(on: boolean): void;
+  clear(): void;
+  strokeCount(): number;
+  send(): boolean;
+  onModeChange(cb: () => void): () => void;
 }
 
 /** Where playback is: idle, swinging the camera to an intro cue, playing, or paused. */
@@ -269,6 +325,8 @@ export interface PartRuntime {
   animation: AnimationRuntime | null;
   /** Measurement mode's runtime-controls API — mode on/off, unit, and pin state; dimensioned captures come from `captureCurrent()` while enabled. Always present (a no-op stand-in outside `makeHandle` tests). */
   measure: MeasureRuntime;
+  /** Annotation mode's runtime-controls API — mode on/off, ink state, and send. Always present; a no-op stand-in when `onAnnotationSend` was not supplied. */
+  annotate: AnnotateRuntime;
 }
 
 /** Mount a full parametric-part app from a `PartDefinition`. */
