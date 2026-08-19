@@ -12,46 +12,56 @@ const CORE_COLOR = "#d92d20";
 const HALO_COLOR = "rgba(255, 255, 255, 0.85)";
 const HALO_RATIO = 2.2; // halo pass width relative to the core width
 
-export function createInkCanvas(stage, { getContext2d = (canvas) => canvas.getContext("2d") } = {}) {
-  const canvas = document.createElement("canvas");
+export function createInkCanvas(stage, {
+  getContext2d = (canvas) => canvas.getContext("2d"),
+  createCanvas = () => document.createElement("canvas"),
+} = {}) {
+  const canvas = createCanvas();
   canvas.className = "pf-ink-canvas";
   canvas.hidden = true;
   stage.appendChild(canvas);
   const ctx = getContext2d(canvas);
   let strokes = [];
 
-  function drawPass(color, widthScale) {
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    const short = Math.min(canvas.width, canvas.height);
+  // Strokes are normalized, so a pass is written against whatever bitmap it is
+  // handed — the live canvas, or the scratch one toDataUrl uses to bound an
+  // export. Width scales with the target's short edge for the same reason.
+  function drawPass(target, targetCtx, color, widthScale) {
+    targetCtx.strokeStyle = color;
+    targetCtx.fillStyle = color;
+    targetCtx.lineCap = "round";
+    targetCtx.lineJoin = "round";
+    const short = Math.min(target.width, target.height);
     for (const stroke of strokes) {
       const w = stroke.width * short * widthScale;
       if (stroke.points.length === 1) {
         const [nx, ny] = stroke.points[0];
-        ctx.beginPath();
-        ctx.arc(nx * canvas.width, ny * canvas.height, w / 2, 0, Math.PI * 2);
-        ctx.fill();
+        targetCtx.beginPath();
+        targetCtx.arc(nx * target.width, ny * target.height, w / 2, 0, Math.PI * 2);
+        targetCtx.fill();
         continue;
       }
-      ctx.lineWidth = w;
-      ctx.beginPath();
+      targetCtx.lineWidth = w;
+      targetCtx.beginPath();
       stroke.points.forEach(([nx, ny], i) => {
-        const x = nx * canvas.width;
-        const y = ny * canvas.height;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+        const x = nx * target.width;
+        const y = ny * target.height;
+        if (i === 0) targetCtx.moveTo(x, y);
+        else targetCtx.lineTo(x, y);
       });
-      ctx.stroke();
+      targetCtx.stroke();
     }
+  }
+
+  function drawInto(targetCtx, target) {
+    targetCtx.clearRect(0, 0, target.width, target.height);
+    drawPass(target, targetCtx, HALO_COLOR, HALO_RATIO);
+    drawPass(target, targetCtx, CORE_COLOR, 1);
   }
 
   function draw() {
     if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawPass(HALO_COLOR, HALO_RATIO);
-    drawPass(CORE_COLOR, 1);
+    drawInto(ctx, canvas);
   }
 
   function resize() {
@@ -84,7 +94,28 @@ export function createInkCanvas(stage, { getContext2d = (canvas) => canvas.getCo
     show() { canvas.hidden = false; resize(); },
     hide() { canvas.hidden = true; },
     setStrokes(next) { strokes = next; draw(); },
-    toDataUrl: () => canvas.toDataURL("image/png"),
+    // The ink layer as a transparent PNG. `maxEdge` bounds the exported
+    // bitmap: the live canvas is stage-sized × devicePixelRatio, so on a large
+    // hi-DPI display it runs to several thousand pixels a side, and a PNG that
+    // big is both slow to encode and large enough that a host with a payload
+    // ceiling would have to drop it — losing the drawing while keeping the
+    // picture of the model, which is the one outcome worse than failing. Above
+    // the bound the strokes are re-rasterized into a scratch canvas rather than
+    // resampled, so thin ink stays crisp instead of turning to mush. Under it
+    // (the ordinary case) nothing is copied and the live canvas exports
+    // directly.
+    toDataUrl({ maxEdge } = {}) {
+      const long = Math.max(canvas.width, canvas.height);
+      if (!maxEdge || long <= maxEdge) return canvas.toDataURL("image/png");
+      const scale = maxEdge / long;
+      const scratch = createCanvas();
+      scratch.width = Math.max(1, Math.round(canvas.width * scale));
+      scratch.height = Math.max(1, Math.round(canvas.height * scale));
+      const scratchCtx = getContext2d(scratch);
+      if (!scratchCtx) return canvas.toDataURL("image/png");
+      drawInto(scratchCtx, scratch);
+      return scratch.toDataURL("image/png");
+    },
     size: () => ({ width: canvas.width, height: canvas.height, dpr: globalThis.devicePixelRatio || 1 }),
     dispose() {
       if (disposed) return;

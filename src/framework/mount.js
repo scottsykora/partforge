@@ -219,9 +219,11 @@ function createCleanupStack() {
 //                                         // view). Supplying this reveals the #annotate viewbar
 //                                         // button; omitting it hides the button entirely.
 //                                         // payload.images carries two data URLs (the ink drawing
-//                                         // and the rendered model); on a large hi-DPI stage the
-//                                         // drawing PNG alone can run several MB of base64, so a
-//                                         // host should not assume this payload is small.
+//                                         // and the rendered model), each bounded to a 2048px long
+//                                         // edge — a stage bigger than that exports scaled down
+//                                         // rather than at its own hi-DPI size. Still hundreds of
+//                                         // KB of base64 apiece, so a host should not assume this
+//                                         // payload is small, only that it is bounded.
 // annotateSend: "viewbar" | "host"       // who owns the Send affordance. "viewbar" (default) puts
 //                                         // Send beside Undo/Clear in the annotate actions row.
 //                                         // "host" drops it and leaves Undo/Clear: the host draws

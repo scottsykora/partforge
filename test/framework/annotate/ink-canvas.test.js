@@ -88,6 +88,44 @@ test("resize observer callback ignores a hidden canvas", () => {
   }
 });
 
+test("toDataUrl re-rasterizes into a bounded scratch canvas above maxEdge", () => {
+  const stage = document.createElement("div");
+  stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 4000, height: 2000 });
+  document.body.appendChild(stage);
+  const made = [];
+  const ctx = fakeCtx();
+  const canvas = createInkCanvas(stage, {
+    getContext2d: () => ctx,
+    createCanvas: () => {
+      const c = document.createElement("canvas");
+      c.toDataURL = () => `data:image/png;base64,${c.width}x${c.height}`;
+      made.push(c);
+      return c;
+    },
+  });
+  canvas.show();
+  canvas.setStrokes([{ points: [[0, 0], [1, 1]], width: 0.01 }]);
+  const live = canvas.size();
+  expect(Math.max(live.width, live.height)).toBeGreaterThan(2048);
+
+  // Bounded: the scratch canvas is a second canvas, scaled to the cap, with the
+  // aspect ratio kept — and the strokes are re-drawn into it, not resampled.
+  ctx.calls.length = 0;
+  const bounded = canvas.toDataUrl({ maxEdge: 2048 });
+  const scratch = made.at(-1);
+  expect(scratch).not.toBe(canvas.element);
+  expect(scratch.width).toBe(2048);
+  expect(scratch.height).toBe(1024);
+  expect(bounded).toBe("data:image/png;base64,2048x1024");
+  expect(ctx.calls.filter(([op]) => op === "stroke")).toHaveLength(2);
+
+  // Under the cap nothing is copied: the live canvas exports directly.
+  made.length = 0;
+  const direct = canvas.toDataUrl({ maxEdge: 99_999 });
+  expect(made).toHaveLength(0);
+  expect(direct).toBe(`data:image/png;base64,${live.width}x${live.height}`);
+});
+
 test("dispose removes the element and is idempotent", () => {
   const { stage, canvas } = fixture();
   canvas.dispose();

@@ -18,7 +18,7 @@ function fakeCanvas() {
     show: vi.fn(),
     hide: vi.fn(),
     setStrokes: vi.fn(),
-    toDataUrl: () => "data:image/png;base64,INK",
+    toDataUrl: vi.fn(() => "data:image/png;base64,INK"),
     size: () => ({ width: 400, height: 200, dpr: 2 }),
     dispose: vi.fn(),
   };
@@ -102,11 +102,26 @@ test("send assembles the payload, calls onSend, exits, and clears", () => {
   expect(payload.anchors.map((a) => a.t)).toEqual([0, 0.5, 1]);
   expect(payload.anchors.every((a) => a.hit === null)).toBe(true);
   expect(payload.anchors[0].stroke).toBe(0);
-  // capture size follows the ink bitmap's long edge
+  // capture size follows the ink bitmap's long edge, under the 2048 bound
   expect(viewer.captureCurrent).toHaveBeenCalledWith({ size: 400 });
   // sent → mode exits and ink clears
   expect(mode.isEnabled()).toBe(false);
   expect(mode.strokeCount()).toBe(0);
+});
+
+test("both pictures are bounded to the same long edge", () => {
+  // A large hi-DPI stage: unbounded, the ink layer would export at 5120px and
+  // the model render would follow it, handing the host two multi-megabyte data
+  // URLs to carry somewhere.
+  const big = fakeCanvas();
+  big.size = () => ({ width: 5120, height: 2560, dpr: 2 });
+  const { viewer, onSend, mode } = fixture({ opts: { createCanvas: () => big } });
+  mode.setEnabled(true);
+  drawStroke(big);
+  expect(mode.send()).toBe(true);
+  expect(viewer.captureCurrent).toHaveBeenCalledWith({ size: 2048 });
+  expect(big.toDataUrl).toHaveBeenCalledWith({ maxEdge: 2048 });
+  expect(onSend).toHaveBeenCalledTimes(1);
 });
 
 test("send aborts (ink intact, still enabled) when captureCurrent returns null", () => {

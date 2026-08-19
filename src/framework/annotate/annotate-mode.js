@@ -10,6 +10,14 @@ import { createInkCanvas } from "./ink-canvas.js";
 import { raycastViewer } from "../selection/raycast.js";
 
 export const ANNOTATION_VERSION = 1;
+// Long-edge bound on BOTH pictures in the payload. The ink canvas is stage
+// sized × devicePixelRatio, so an unbounded send on a large hi-DPI display
+// hands the host a multi-megabyte pair of base64 strings — slow to encode,
+// and past the ceiling a host that ships them anywhere has to enforce. 2048
+// is captureCurrent's own default and comfortably above what any reviewer
+// (human or model) reads a sketch at; a smaller stage exports at its own size
+// and pays nothing.
+const SEND_MAX_EDGE = 2048;
 
 export function createAnnotateMode(viewer, { stage, getContext, onSend, createCanvas = createInkCanvas } = {}) {
   const ink = createInkStore();
@@ -94,7 +102,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     const { width, height, dpr } = canvas.size();
     // Model render FIRST: on a lost WebGL context captureCurrent returns null
     // and we abort with the ink intact — nothing is silently dropped.
-    const model = viewer.captureCurrent({ size: Math.max(width, height) });
+    const model = viewer.captureCurrent({ size: Math.min(Math.max(width, height), SEND_MAX_EDGE) });
     if (!model) return false;
     const strokes = ink.strokes();
     const aspect = rect.width / rect.height;
@@ -118,7 +126,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       version: ANNOTATION_VERSION,
       strokes,
       anchors,
-      images: { drawing: canvas.toDataUrl(), model },
+      images: { drawing: canvas.toDataUrl({ maxEdge: SEND_MAX_EDGE }), model },
       camera: cameraBlock(),
       viewport: { width: rect.width, height: rect.height, dpr },
       context: { view, params: { ...params } },
