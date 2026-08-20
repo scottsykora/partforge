@@ -15,6 +15,9 @@ vi.mock("../../src/framework/viewer.js", () => ({
     // and to orbit starts. tickFrame(dt) is the test's hand on that loop.
     const frameCbs = new Set();
     const orbitCbs = new Set();
+    const themeCbs = new Set();
+    const projectionCbs = new Set();
+    let projection = "perspective";
     const v = {
       onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
       onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
@@ -33,7 +36,19 @@ vi.mock("../../src/framework/viewer.js", () => ({
       getCameraState: vi.fn(() => ({ pos: [0, 0, 0], target: [0, 0, 0] })),
       setCameraState: vi.fn(),
       onCameraEnd: vi.fn(),
-      camera: {},
+      // The view cube subscribes to all three and reads the camera's
+      // quaternion every frame through its dirty check.
+      camera: { quaternion: { x: 0, y: 0, z: 0, w: 1 }, isOrthographicCamera: false, zoom: 1 },
+      onThemeChange: (cb) => { themeCbs.add(cb); return () => themeCbs.delete(cb); },
+      getTheme: () => "dark",
+      getProjection: () => projection,
+      setProjection: vi.fn((mode) => {
+        projection = mode === "orthographic" ? "orthographic" : "perspective";
+        for (const cb of [...projectionCbs]) cb(projection);
+        return projection;
+      }),
+      onProjectionChange: (cb) => { projectionCbs.add(cb); return () => projectionCbs.delete(cb); },
+      orbitBy: vi.fn(),
       _subMeshes: {},
       flashPoint: vi.fn(),
       cutawaySupported: vi.fn(() => true),
@@ -61,7 +76,9 @@ vi.mock("../../src/framework/selection/index.js", async (importOriginal) => {
   const real = await importOriginal(); // keep formatSelection real — the prompt text matters
   return {
     ...real,
-    attachHoverLabels: vi.fn(() => ({ detach: vi.fn() })),
+    // setSuppressed: real hover.js's toggle for measure/annotate mode, exercised
+    // now that a mount.test.js test actually flips Sketch on inside a full mount.
+    attachHoverLabels: vi.fn(() => ({ detach: vi.fn(), setSuppressed: vi.fn() })),
     attachPickToggle: vi.fn(() => ({ detach: vi.fn() })),
     attachPicker: vi.fn(() => ({ setActive: vi.fn(), detach: vi.fn() })),
   };
@@ -1319,5 +1336,60 @@ test("onParamsCommit fires on a finished panel edit with a snapshot, never from 
   runtime.setParams({ h: 9 });
   expect(commits[0].params.h).toBe(6);
   expect(commits).toHaveLength(1);                   // setParams never commits
+  runtime.dispose();
+});
+
+test("mounts the view cube stack inside the stage", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  finishFirstBuild(workers);
+  expect(els.viewer.querySelector(".pf-viewcube-stack")).not.toBeNull();
+  expect(els.viewer.querySelector("#projection")).not.toBeNull();
+  runtime.dispose();
+  expect(els.viewer.querySelector(".pf-viewcube-stack")).toBeNull();
+});
+
+test("exposes projection on the runtime and drives the viewer with it", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  const viewer = fakeViewers.at(-1);
+  expect(runtime.projection.get()).toBe("perspective");
+  runtime.projection.set("orthographic");
+  expect(viewer.setProjection).toHaveBeenCalledWith("orthographic");
+  expect(runtime.projection.get()).toBe("orthographic");
+  runtime.dispose();
+});
+
+test("hides the whole cube stack while Sketch is on", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  // Sketch only appears when the host wires a send callback.
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, onAnnotationSend: () => {},
+  });
+  const stack = els.viewer.querySelector(".pf-viewcube-stack");
+  expect(stack.hidden).toBe(false);
+  els.chrome.annotate.click();
+  // Ink is pose-locked: an orbit OR a projection swap invalidates it, so the
+  // projection button goes away with the cube, not just the cube.
+  expect(stack.hidden).toBe(true);
+  els.chrome.annotate.click();
+  expect(stack.hidden).toBe(false);
+  runtime.dispose();
+});
+
+test("restores a persisted orthographic projection before any framing", () => {
+  localStorage.setItem("partforge:projection", "orthographic");
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  const viewer = fakeViewers.at(-1);
+  // Before the first build settles, so the first frameTo already knows.
+  expect(viewer.setProjection).toHaveBeenCalledWith("orthographic");
+  expect(viewer.setProjection.mock.invocationCallOrder[0])
+    .toBeLessThan(viewer.frame.mock.invocationCallOrder[0] ?? Infinity);
+  localStorage.clear();
   runtime.dispose();
 });

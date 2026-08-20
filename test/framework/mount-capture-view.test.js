@@ -14,6 +14,9 @@ vi.mock("../../src/framework/viewer.js", () => ({
     const built = new Set();
     const frameCbs = new Set();
     const orbitCbs = new Set();
+    const themeCbs = new Set();
+    const projectionCbs = new Set();
+    let projection = "perspective";
     const v = {
       onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
       onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
@@ -32,7 +35,20 @@ vi.mock("../../src/framework/viewer.js", () => ({
       getCameraState: vi.fn(() => ({ pos: [0, 0, 0], target: [0, 0, 0] })),
       setCameraState: vi.fn(),
       onCameraEnd: vi.fn(),
-      camera: {},
+      // The view cube (mounted for every part now — Task 12) subscribes to all
+      // three and reads the camera's quaternion every frame through its dirty
+      // check; see mount.test.js's identical fake for the full rationale.
+      camera: { quaternion: { x: 0, y: 0, z: 0, w: 1 }, isOrthographicCamera: false, zoom: 1 },
+      onThemeChange: (cb) => { themeCbs.add(cb); return () => themeCbs.delete(cb); },
+      getTheme: () => "dark",
+      getProjection: () => projection,
+      setProjection: vi.fn((mode) => {
+        projection = mode === "orthographic" ? "orthographic" : "perspective";
+        for (const cb of [...projectionCbs]) cb(projection);
+        return projection;
+      }),
+      onProjectionChange: (cb) => { projectionCbs.add(cb); return () => projectionCbs.delete(cb); },
+      orbitBy: vi.fn(),
       _subMeshes: {},
       flashPoint: vi.fn(),
       cutawaySupported: vi.fn(() => true),
