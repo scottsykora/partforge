@@ -298,3 +298,55 @@ describe("placeDims — plane and cylinder", () => {
     expect(d2.leaders[0].rim[0]).toBeCloseTo(4, 5); // on the arc, along rimDir
   });
 });
+
+// The extreme scan is the single most expensive thing placement does — two
+// linear passes over every vertex, per axis, per sign, i.e. twelve full passes
+// over a soup that carries three points per triangle. placeBox asks for all six
+// directions, so the soup is walked ONCE per (geometry, pose) and later calls
+// read only the handful of vertices tied with an extreme. Read straight off the
+// positions array: a counting proxy makes "did we walk the soup again?"
+// observable.
+describe("extremeVertex — scan reuse", () => {
+  // A scatter with no two vertices sharing a coordinate, so each extreme has a
+  // tie set of exactly one and a cached call's reads are countable.
+  function countingScatter(n = 200) {
+    const pts = [];
+    for (let i = 0; i < n; i++) pts.push(i * 0.7, i * 1.1 + 0.3, i * 1.9 + 0.11);
+    let reads = 0;
+    const positions = new Proxy(pts, {
+      get(target, key) {
+        if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+        return target[key];
+      },
+    });
+    return { md: [{ positions, matrix: new THREE.Matrix4() }], reads: () => reads, size: pts.length };
+  }
+
+  it("walks the soup once for a geometry, then reads only the tied vertices", () => {
+    const { md, reads, size } = countingScatter();
+    extremeVertex(md, 0, +1, new THREE.Vector3(0, 0, 0));
+    expect(reads()).toBeGreaterThan(size); // the cold build is two passes
+
+    const before = reads();
+    for (const axis of [0, 1, 2]) {
+      extremeVertex(md, axis, +1, new THREE.Vector3(200, 200, 400));
+      extremeVertex(md, axis, -1, new THREE.Vector3(0, 0, 0));
+    }
+    // six more directions, and between them they cost a small fraction of even
+    // ONE pass over the soup — the tie sets, not the vertices
+    expect(reads() - before).toBeLessThan(size / 4);
+  });
+
+  it("re-scans when the same geometry is re-posed", () => {
+    const { md } = countingScatter();
+    const top = extremeVertex(md, 0, +1, new THREE.Vector3(0, 0, 0)).x;
+    md[0].matrix = new THREE.Matrix4().makeTranslation(100, 0, 0);
+    expect(extremeVertex(md, 0, +1, new THREE.Vector3(0, 0, 0)).x).toBeCloseTo(top + 100, 6);
+  });
+
+  it("still tie-breaks toward `near` when answering from the cache", () => {
+    const md = boxMeshData(); // 8 corners: every extreme is a 4-way tie
+    expect(extremeVertex(md, 0, +1, new THREE.Vector3(10, 0, 0)).toArray()).toEqual([10, 0, 0]);
+    expect(extremeVertex(md, 0, +1, new THREE.Vector3(10, 20, 30)).toArray()).toEqual([10, 20, 30]);
+  });
+});
