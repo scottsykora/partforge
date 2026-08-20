@@ -88,11 +88,12 @@ export function unionRect(a, b) {
 // The stack's edges are derived from the viewbar's because chrome.css anchors
 // both to the same margin: `.pf-float-viewbar` is `bottom: 12px; right: 12px`
 // and `.pf-viewcube-stack` is `right: 12px` with its bottom resting on top of
-// the viewbar (`--pf-viewbar-clear` + 8px). So the stack shares the viewbar's
-// right edge, reaches a published width in from it, and occupies the band
-// directly above the viewbar's top. The 8px gap between them is deliberately
-// NOT subtracted: a hair taller than the truth is the safe direction for a
-// "would these two collide?" test.
+// the viewbar (`--pf-viewbar-clear` + a few px). So the stack shares the
+// viewbar's right edge, reaches a published width in from it, and occupies the
+// band directly above the viewbar's top. That small gap between them is
+// deliberately NOT subtracted: a hair taller than the truth is the safe
+// direction for a "would these two collide?" test — and this rect is therefore
+// unaffected the day chrome.css retunes it (2026-08-20 took it from 8px to 3).
 //
 // Null/empty-tolerant on exactly unionRect's terms — a zero-area rect is the
 // ABSENCE of a claim, not a claim on the stage's top-left corner:

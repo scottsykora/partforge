@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CUBE_CONSTANTS,
+  CUBE_DOWN_BIAS_PX,
   FACE_LABEL_UP,
   cubeCells,
   cubeEdges,
@@ -156,6 +157,39 @@ describe("projectCube", () => {
     expect(reach).toBeGreaterThan(centre * 0.95);
   });
 
+  it("shifts the whole drawing DOWN by downBias without changing its size", () => {
+    // The 2026-08-20 lowering: chrome.css can only take the 8px the stack
+    // clears the viewbar by, and the rest of the "gap" the user sees is unused
+    // canvas below the cube. downBias spends that padding asymmetrically —
+    // every projected point moves down by exactly the bias, and nothing scales
+    // (the scale is derived from outerPad alone, so the cube must not resize).
+    const q = [0.2, 0.3, 0.1, 0.927];
+    const base = projectCube(q, { size: SIZE, outerPad: 23 });
+    const low = projectCube(q, { size: SIZE, outerPad: 23, downBias: 7 });
+    const pointsOf = (p) => [
+      ...[...p.back, ...p.front].flatMap((c) => c.points),
+      ...[...p.backEdges, ...p.frontEdges].flatMap((e) => e.points),
+      ...p.arrows.flatMap((a) => [a.from, a.tip]),
+    ];
+    const a = pointsOf(base), b = pointsOf(low);
+    expect(b.length).toBe(a.length);
+    for (let i = 0; i < a.length; i++) {
+      expect(b[i][0]).toBeCloseTo(a[i][0], 9);      // x untouched
+      expect(b[i][1]).toBeCloseTo(a[i][1] + 7, 9);  // y down by the bias
+    }
+  });
+
+  it("defaults downBias to 0 — the caller supplies it, exactly like outerPad", () => {
+    const q = [0.2, 0.3, 0.1, 0.927];
+    const bare = projectCube(q, { size: SIZE, outerPad: 23 });
+    const zero = projectCube(q, { size: SIZE, outerPad: 23, downBias: 0 });
+    expect(zero.arrows[0].tip).toEqual(bare.arrows[0].tip);
+    // The production value lives here beside CUBE_CONSTANTS but is not applied
+    // by default: with no outerPad there is no unused padding to spend, and a
+    // bias would push the drawing straight out of the box.
+    expect(CUBE_DOWN_BIAS_PX).toBeGreaterThan(0);
+  });
+
   it("shrinks the drawing by outerPad so screen-space extras (head/label) still fit", () => {
     const full = projectCube(IDENTITY, { size: SIZE });
     const padded = projectCube(IDENTITY, { size: SIZE, outerPad: 20 });
@@ -262,6 +296,30 @@ describe("hitRegion", () => {
     const [, bottomY] = centroidOf(p, "bottom-front-left");
     expect(leftX).toBeLessThan(rightX);   // model -X is screen-left
     expect(topY).toBeLessThan(bottomY);   // model +Z is screen-up (y grows down)
+  });
+
+  it("follows a downBias: the same click lands on the same region at the drawing's new centre", () => {
+    // Hit-testing derives from the same projection as the painting, so the
+    // 2026-08-20 lowering needs no work of its own — but that is exactly the
+    // kind of "obviously fine" coupling that breaks silently the day someone
+    // biases the drawing in one place and not the other.
+    const q = [0.2, 0.3, 0.1, 0.927];
+    const base = projectCube(q, { size: SIZE, outerPad: 23 });
+    const low = projectCube(q, { size: SIZE, outerPad: 23, downBias: CUBE_DOWN_BIAS_PX });
+    for (const [x, y] of [centre(), [SIZE / 2 - 12, SIZE / 2 - 9], [SIZE / 2 + 14, SIZE / 2 + 6]]) {
+      const before = hitRegion(x, y, base);
+      expect(before).not.toBeNull();
+      expect(hitRegion(x, y + CUBE_DOWN_BIAS_PX, low)).toBe(before);
+    }
+    // And the clickable silhouette really did move, rather than the paint
+    // moving while the hit test stayed put: a point just below the unbiased
+    // cube's lowest edge is outside it and inside the lowered one.
+    const lowest = base.front
+      .flatMap((c) => c.points)
+      .reduce((best, pt) => (pt[1] > best[1] ? pt : best));
+    const probe = [lowest[0], lowest[1] + 1];
+    expect(hitRegion(...probe, base)).toBeNull();
+    expect(hitRegion(...probe, low)).not.toBeNull();
   });
 
   it("returns null outside the cube silhouette", () => {

@@ -30,6 +30,28 @@ export const CUBE_CONSTANTS = {
   faceHalf: 0.62, // half-width of the centre (face) cell, cube half-extent = 1
 };
 
+// How far DOWN its canvas the drawing sits, in CSS px — the second half of the
+// 2026-08-20 "lower the cube toward the viewbar" change (the first half was
+// chrome.css taking most of the 8px the stack cleared #viewbar by). Kept out of
+// CUBE_CONSTANTS on purpose: everything in there is a model-space proportion,
+// and this is pixels.
+//
+// It buys room from the padding the cube already leaves inside its box, so its
+// ceiling is arithmetic, not taste. `projectCube` scales the cube to
+// (size/2 - outerPad) of reach from the box centre, and the renderer then paints
+// headLengthPx + labelGapPx + the axis glyph past that — so the only slack that
+// exists is `labelPx` minus how far the glyph actually paints past its anchor
+// (about 3.2px down for `600 10px ui-sans-serif`), i.e. ~6.8px. 5 leaves nearly
+// 2px of that unspent, which is the margin for a platform whose system font is
+// heavier than Chromium's. Spending more clips an axis label whenever that axis
+// points straight down the screen — see viewcube-mode.test.js's orientation
+// sweep, which is the guard, and note that raising this WILL fail it.
+//
+// The cube is NOT re-centred as it turns (a bias that tracked the projected
+// bounding box would win another ~14px at most poses): the cube would then bob
+// up and down as you orbit, which is a worse artefact than a smaller gap.
+export const CUBE_DOWN_BIAS_PX = 5;
+
 // The viewer's pivot is rotation.x = -PI/2: quaternion (sin(-PI/4), 0, 0, cos(-PI/4)).
 const HALF_SQRT2 = Math.SQRT1_2;
 export const PIVOT_QUAT = [-HALF_SQRT2, 0, 0, HALF_SQRT2];
@@ -241,6 +263,12 @@ export function projectCube(cameraQuat, {
   // and leaves supplying a real value to the caller that knows those pixel
   // sizes (viewcube-mode.js).
   outerPad = 0,
+  // Pixels to push the whole drawing DOWN inside the box (CUBE_DOWN_BIAS_PX).
+  // Defaults to 0 and is supplied by the caller for the same reason outerPad
+  // is: it is only safe to the extent the caller's own outerPad reserved room
+  // for it, and this module cannot see the render pixels that decide that. It
+  // does NOT touch the scale — the cube is the same size, it just sits lower.
+  downBias = 0,
 } = {}) {
   const toView = qMul(qConj(cameraQuat), PIVOT_QUAT);
 
@@ -251,7 +279,7 @@ export function projectCube(cameraQuat, {
   // whatever the head/label add beyond it is screen pixels, covered by
   // `outerPad` instead.
   const scale = (size / 2 - outerPad) / Math.sqrt(3);
-  const cx = size / 2, cy = size / 2;
+  const cx = size / 2, cy = size / 2 + downBias;
   const project = (p) => {
     const v = qApply(toView, p);
     return { xy: [cx + v[0] * scale, cy - v[1] * scale], z: v[2] };

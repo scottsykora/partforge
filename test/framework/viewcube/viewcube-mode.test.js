@@ -4,7 +4,8 @@
 // unchanged camera must draw NOTHING) and the drag/click split.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createViewcubeMode } from "../../../src/framework/viewcube/viewcube-mode.js";
-import { CUBE_SIZE, CUBE_SIZE_NARROW } from "../../../src/framework/viewcube/cube-canvas.js";
+import { CUBE_SIZE, CUBE_SIZE_NARROW, CUBE_RENDER } from "../../../src/framework/viewcube/cube-canvas.js";
+import { CUBE_DOWN_BIAS_PX, projectCube } from "../../../src/framework/viewcube/cube-geom.js";
 import { RAIL_NARROW_BREAKPOINT } from "../../../src/framework/rail-state.js";
 
 function stubViewer() {
@@ -263,5 +264,158 @@ describe("narrow breakpoint (matchMedia, not a ResizeObserver)", () => {
     expect(mm.listenerCount()).toBe(1);
     narrowMode.detach();
     expect(mm.listenerCount()).toBe(0);
+  });
+});
+
+// The acceptance criterion for the 2026-08-20 lowering (chrome.css took the
+// stack's 8px viewbar clearance; this took the canvas's unused bottom padding).
+// Both halves of the pixel budget the drawing has to live inside are composed
+// HERE — outerPad and downBias are mode's to pass — so this is where the
+// "nothing paints outside the box" guarantee belongs, not in either leaf.
+//
+// The three axis arrows radiate from ONE fixed model corner, so whichever way
+// that corner has rotated an arrowhead and its glyph can approach any edge of
+// the canvas. Biasing the drawing downward eats the bottom margin, so an axis
+// pointing straight down the screen is the case that clips first — hence a
+// sweep, not a single pose.
+describe("painted extent stays inside the canvas box at every orientation", () => {
+  // How far past its anchor the axis glyph actually paints. Measured in
+  // Chromium for `600 10px ui-sans-serif` with textAlign/textBaseline centre:
+  // ascent 3.85, descent 3.20, side bearings <= 3.20 for X/Y/Z. Rounded UP to
+  // 4 so a platform whose system font is a little heavier still has room —
+  // this is the number that decides how much downward bias is affordable.
+  const LABEL_REACH_PX = 4;
+
+  const sweepCanvas = (size) => {
+    const seen = [];
+    const factory = (wrap, opts) => {
+      const handle = minimalCanvas(wrap, { ...opts, size });
+      const inner = handle.draw;
+      handle.draw = (projected, o) => { seen.push(projected); return inner(projected, o); };
+      // The mode asks the canvas for its size; the fake must report the one
+      // under test rather than whatever the factory was handed.
+      Object.defineProperty(handle, "size", { get: () => size });
+      return handle;
+    };
+    return { seen, factory };
+  };
+
+  // A quaternion grid over SO(3), built from euler angles: the arrows have to
+  // stay inside the box for ANY orientation the projection can be handed, not
+  // just the poses today's orbit happens to reach.
+  function* orientations(n) {
+    const mul = (a, b) => [
+      a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+      a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+      a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+      a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ];
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        for (let k = 0; k < n / 2; k++) {
+          const [a, b, c] = [(i / n) * 2 * Math.PI, (j / n) * 2 * Math.PI, (k / (n / 2)) * 2 * Math.PI];
+          const qz = [0, 0, Math.sin(a / 2), Math.cos(a / 2)];
+          const qy = [0, Math.sin(b / 2), 0, Math.cos(b / 2)];
+          const qx = [Math.sin(c / 2), 0, 0, Math.cos(c / 2)];
+          yield mul(mul(qz, qy), qx);
+        }
+      }
+    }
+  }
+
+  // Everything the renderer paints for one arrow, in the renderer's own terms
+  // (cube-canvas.js's arrowDirection / arrowFurniture / drawArrow), so the
+  // sweep covers the SCREEN-space furniture and not just the projected shaft.
+  function arrowPoints(arrow) {
+    const pts = [arrow.from, arrow.tip];
+    const dx = arrow.tip[0] - arrow.from[0], dy = arrow.tip[1] - arrow.from[1];
+    const len = Math.hypot(dx, dy);
+    if (len < 0.5) return pts; // degenerate: no head or label is drawn at all
+    const d = [dx / len, dy / len];
+    const headTip = [arrow.tip[0] + d[0] * CUBE_RENDER.headLengthPx, arrow.tip[1] + d[1] * CUBE_RENDER.headLengthPx];
+    const nx = -d[1] * CUBE_RENDER.headHalfWidthPx, ny = d[0] * CUBE_RENDER.headHalfWidthPx;
+    const anchor = [headTip[0] + d[0] * CUBE_RENDER.labelGapPx, headTip[1] + d[1] * CUBE_RENDER.labelGapPx];
+    return [
+      ...pts,
+      headTip,
+      [arrow.tip[0] + nx, arrow.tip[1] + ny],
+      [arrow.tip[0] - nx, arrow.tip[1] - ny],
+      // the glyph's own painted box around its anchor
+      [anchor[0] - LABEL_REACH_PX, anchor[1] - LABEL_REACH_PX],
+      [anchor[0] + LABEL_REACH_PX, anchor[1] + LABEL_REACH_PX],
+    ];
+  }
+
+  for (const size of [CUBE_SIZE, CUBE_SIZE_NARROW]) {
+    it(`never paints outside a ${size}px canvas, arrowheads and axis glyphs included`, () => {
+      const { seen, factory } = sweepCanvas(size);
+      const sweepViewer = stubViewer();
+      const sweepHost = document.createElement("div");
+      document.body.append(sweepHost);
+      const sweepMode = createViewcubeMode(sweepViewer, { host: sweepHost, createCanvas: factory });
+      try {
+        let checked = 0;
+        for (const q of orientations(24)) {
+          Object.assign(sweepViewer.quat, { x: q[0], y: q[1], z: q[2], w: q[3] });
+          sweepViewer.tick();
+          // Deliberately NOT cleared per iteration: the dirty check skips a
+          // redraw when an orientation repeats the previous one (the grid opens
+          // on the identity the mode already drew at attach), and the standing
+          // projection is the right one to check in that case.
+          const projected = seen.at(-1);
+          expect(projected).toBeTruthy();
+          const points = [
+            ...[...projected.back, ...projected.front].flatMap((c) => c.points),
+            ...[...projected.backEdges, ...projected.frontEdges].flatMap((e) => e.points),
+            ...projected.arrows.flatMap(arrowPoints),
+          ];
+          for (const [x, y] of points) {
+            if (x < 0 || x > size || y < 0 || y > size) {
+              throw new Error(`painted [${x.toFixed(2)}, ${y.toFixed(2)}] outside 0..${size} at quaternion [${q.map((v) => v.toFixed(4))}]`);
+            }
+          }
+          checked++;
+        }
+        expect(checked).toBeGreaterThan(1000);
+      } finally {
+        sweepMode.detach();
+        sweepHost.remove();
+      }
+    });
+  }
+
+  it("keeps the downward bias inside the pixel budget the label pad reserves", () => {
+    // The sweep above is empirical; this is the same guarantee in closed form,
+    // so it holds at the exact worst orientation a finite grid can only get
+    // near. Every cube vertex sits at model distance sqrt(3), and the scale is
+    // (size/2 - outerPad)/sqrt(3) — so the drawing's own reach from the box
+    // centre is exactly (size/2 - outerPad), and the renderer then adds
+    // headLengthPx + labelGapPx + the glyph past that. What is left over,
+    // labelPx - LABEL_REACH_PX, is the whole slack the bias can spend.
+    const budget = CUBE_RENDER.labelPx - LABEL_REACH_PX;
+    expect(CUBE_DOWN_BIAS_PX).toBeLessThanOrEqual(budget);
+    // ...and outerPad really is that sum, or the arithmetic above is fiction.
+    expect(CUBE_RENDER.headLengthPx + CUBE_RENDER.labelGapPx + CUBE_RENDER.labelPx).toBe(23);
+  });
+
+  it("hands the projection BOTH knobs — outerPad and the downward bias", () => {
+    const size = CUBE_SIZE;
+    const { seen, factory } = sweepCanvas(size);
+    const wiringViewer = stubViewer();
+    const wiringHost = document.createElement("div");
+    document.body.append(wiringHost);
+    const wiringMode = createViewcubeMode(wiringViewer, { host: wiringHost, createCanvas: factory });
+    try {
+      Object.assign(wiringViewer.quat, { x: 0.2, y: 0.3, z: 0.1, w: 0.927 });
+      seen.length = 0;
+      wiringViewer.tick();
+      const outerPad = CUBE_RENDER.headLengthPx + CUBE_RENDER.labelGapPx + CUBE_RENDER.labelPx;
+      expect(seen.at(-1)).toEqual(
+        projectCube([0.2, 0.3, 0.1, 0.927], { size, outerPad, downBias: CUBE_DOWN_BIAS_PX }),
+      );
+    } finally {
+      wiringMode.detach();
+      wiringHost.remove();
+    }
   });
 });

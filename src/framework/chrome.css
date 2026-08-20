@@ -258,6 +258,21 @@
    informative part of the drawing — is small enough not to hide anything worth
    clicking, and the canvas keeps receiving pointer events everywhere else.
 
+   The 8px that used to sit between the stack and the viewbar is now 3px
+   (2026-08-20: "lower the whole box so it's closer to the bottom bar"). 3
+   rather than 0 because the stack's own box MUST NOT overlap #viewbar: the
+   stack is a later sibling at the same z-index, and its canvas is
+   pointer-events:auto across its whole footprint, so any vertical overlap
+   would silently swallow clicks on the viewbar's rightmost buttons (both are
+   right: 12px). --pf-viewbar-clear is published rounded to whole px, so a
+   fractional viewbar height can move this by half a pixel either way; 3px
+   absorbs that and still reads as a deliberate gap rather than a collision.
+   The other ~5px of the lowering comes from inside the canvas — see
+   cube-geom.js's CUBE_DOWN_BIAS_PX; that is where the rest of the perceived
+   gap actually lives, and it is capped by the axis labels' clearance, so
+   this pair (3 + 5) is the whole slack that exists without either overlapping
+   the viewbar or shrinking the cube.
+
    The stack itself is pointer-transparent. With the button back inside the
    canvas's footprint there is no dead gap left at all: the stack's box IS the
    canvas's box, and both the canvas and the button opt back in below. The
@@ -267,7 +282,7 @@
 .pf-viewcube-stack {
   position: absolute;
   right: 12px;
-  bottom: calc(var(--pf-viewbar-clear, 56px) + 8px);
+  bottom: calc(var(--pf-viewbar-clear, 56px) + 3px);
   z-index: 15;
   display: flex;
   pointer-events: none;

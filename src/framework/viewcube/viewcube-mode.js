@@ -2,7 +2,7 @@
 // viewer and the DOM (the annotate-mode.js / measure-mode.js stance). Owns the
 // frame subscription, the dirty check that keeps idle frames free, pointer
 // input, and the drag/click split.
-import { projectCube, hitRegion } from "./cube-geom.js";
+import { projectCube, hitRegion, CUBE_DOWN_BIAS_PX } from "./cube-geom.js";
 import { createCubeCanvas, CUBE_SIZE, CUBE_SIZE_NARROW, CUBE_RENDER } from "./cube-canvas.js";
 import { RAIL_NARROW_BREAKPOINT } from "../rail-state.js";
 import { runCleanupSteps } from "../teardown.js";
@@ -63,7 +63,17 @@ export function createViewcubeMode(viewer, {
     // still sticks out a few px past that point — one font-size's worth of
     // slack comfortably covers a single uppercase character at this size).
     const outerPad = CUBE_RENDER.headLengthPx + CUBE_RENDER.labelGapPx + CUBE_RENDER.labelPx;
-    projected = projectCube([q.x, q.y, q.z, q.w], { size: canvas.size, outerPad });
+    // downBias spends part of that same reservation on ONE side, so the cube
+    // sits lower in its box and reads closer to the viewbar (the other half of
+    // that change is chrome.css's stack offset). Passed rather than defaulted
+    // inside projectCube because the two knobs are one budget: the bias is only
+    // safe against the pad this call just reserved. Hit-testing rides along for
+    // free — it reads the same projection.
+    projected = projectCube([q.x, q.y, q.z, q.w], {
+      size: canvas.size,
+      outerPad,
+      downBias: CUBE_DOWN_BIAS_PX,
+    });
     canvas.draw(projected, { hover });
   }
 
