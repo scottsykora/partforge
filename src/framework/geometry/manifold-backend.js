@@ -7,6 +7,7 @@ import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
 import { manifoldFromMesh } from "./mesh-build.js";
 import { createSolidCache } from "./solid-cache.js";
+import { hoistCommonSuffix } from "./transform-hoist.js";
 import { addSugar } from "./solid-sugar.js";
 import { makeShape2dFactory } from "./shape2d.js";
 import { offsetRegions } from "./contour-offset.js";
@@ -93,6 +94,20 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     const m = computeM();                 // already T()-tracked by the op
     return { value: wrap(m, hash), pin: m, dispose: () => m.delete?.() };
   });
+
+  // Booleans commute with any invertible affine map, so a transform EVERY operand
+  // ends with can be lifted out of the boolean and applied to its result instead.
+  // That is what collapses N identically-built copies into one evaluation: with the
+  // shared transform gone, the operand hashes are identical for every copy, so the
+  // boolean itself hits the cache. Returns null when nothing is shared, leaving the
+  // caller on its ordinary path.
+  const hoistBoolean = (opName, solids, evaluate) => {
+    const { hoisted, residuals } = hoistCommonSuffix(solids.map((s2) => s2._canon.chain));
+    if (!hoisted.length) return null;
+    const ops = solids.map((s2, i) => replay(wrap(s2._canon.m, s2._canon.hash), residuals[i]));
+    const canonical = cached(h(opName, ops.map((s2) => s2._hash)), () => evaluate(ops));
+    return replay(canonical, hoisted);
+  };
 
   // Contour-IR region list -> flat point rings at `nSeg` (outer + holes, even/odd
   // fill sorts them out). The one place the IR meets CrossSection.ofPolygons.
@@ -306,14 +321,27 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     }
   };
 
+  // Replay a recorded transform chain onto a solid. Each record maps back to the op
+  // that produced it, so the replayed solid rebuilds the same chain on its own canon.
+  const replay = (solid, chain) => chain.reduce(
+    (s2, r) => (r.op === "translate" ? s2.translate(r.v) : s2.rotate(r.deg, r.center, r.axis)), solid);
+
+  // `canon` is this solid expressed as a base solid plus the trailing transform chain
+  // applied to it (oldest first). Only ops that provably COMMUTE with a rigid
+  // transform extend the chain — translate, rotate, and label; everything else starts
+  // a fresh canonical base. fillet/chamfer are deliberately excluded even though they
+  // look eligible: their edge selectors can be world-space, so filleting the
+  // untranslated base would pick different edges — wrong geometry, not a missed hit.
+  //
   // `self` names the wrapper being built so the degrading public fillet/chamfer
   // can delegate to their throwing `_`-prefixed twins above without re-deriving
   // the cache key or the capability checks. Declared as a binding the closures
   // capture: every reference runs after addSugar has returned.
-  const wrap = (m, hash) => {
+  const wrap = (m, hash, canon = { m, hash, chain: [] }) => {
     const self = addSugar({
     _m: m,
     _hash: hash,
+    _canon: canon,
     cut: (t) => cached(h("cut", hash, t._hash), () => T(m.subtract(t._m))),
     // THROWING forms. These are the composition primitives — internal callers
     // that have their own recovery (prismRoundAllFast, which answers a failed
@@ -388,6 +416,11 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // registry entry lives exactly as long as the cache pins the solid — eviction
     // disposes both, so the registry can't grow unboundedly across regenerates.
     label: (name) => {
+      // Labeling only re-stamps surface ids, so it commutes with the trailing
+      // transform. This is load-bearing rather than an optimization: the common
+      // authoring idiom labels each piece AFTER positioning it, which would give every
+      // copy its own canonical base and stop the hoist below from ever firing.
+      if (canon.chain.length) return replay(wrap(canon.m, canon.hash).label(name), canon.chain);
       const lh = h("label", hash, name);
       return cache.lookup(lh, () => {
         // Blend-aware re-stamp. If this mesh carries blend surfaces (the boundaryLines
@@ -492,14 +525,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     volume: () => m.volume(),
     genus: () => m.genus(),
     isEmpty: () => m.isEmpty(),
-    translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v)),
+    translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v),
+      { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "translate", v }] }),
     rotate: (deg, center, axis) => {
       const nz = (axis[0] !== 0) + (axis[1] !== 0) + (axis[2] !== 0);
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = nz <= 1
         ? T(a.rotate([axis[0] * deg, axis[1] * deg, axis[2] * deg]))   // basis axis — euler is exact; unchanged
         : T(a.transform(axisAngleMat4(axis, deg)));                    // general axis-angle
-      return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis));
+      return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis),
+        { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "rotate", deg, center, axis }] });
     },
     mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)),
     scale: (factor, center) => { // factor validated (and center defaulted) by addSugar
@@ -603,7 +638,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // would pin one WASM object under two entries and eviction would dispose it twice.
     union: (solids) => solids.length === 1
       ? solids[0]
-      : cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
+      : hoistBoolean("union", solids, (ops) => unionRaw(ops.map((s) => s._m)))
+        ?? cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
     // Imported geometry, registered pre-build by the framework via `_registerImport`
     // (ensureImports, Task 8). The master Manifold is kernel-lifetime (untracked —
     // see `imports` above); wrap() is free, so every call is cheap.

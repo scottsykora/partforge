@@ -1,15 +1,33 @@
 // Worker-side cache of boundary-op solids, partitioned per sub-part. Retention is
 // bounded to the CURRENT build's graph: each begin()/end() bracket rebuilds a
 // sub-part's retained set from scratch, disposing any entry not re-used this round.
+// Partitions bound RETENTION, never reuse: a `index` keyed by hash spans them all, so
+// geometry one sub-part builds is adopted by the next rather than rebuilt (a sheet of
+// identical cells split across row sub-parts paid that rebuild per row). An adopted
+// entry is retained by BOTH partitions, so disposal is refcounted — see release().
 // WASM-agnostic — it stores opaque {value, pin, dispose} triples supplied by the
 // caller (the Manifold backend), so it is unit-testable with plain objects.
 export function createSolidCache() {
-  const caches = new Map(); // name -> Map(hash -> { value, pin, dispose })
+  const caches = new Map(); // name -> Map(hash -> { value, pin, dispose, refs })
   const pinned = new Set();  // every live `pin` across all sub-parts
+  const index = new Map();   // hash -> entry, ACROSS partitions: identical geometry built
+                             // for one sub-part is reused by every other (see lookup).
   const lastBuilt = new Map(); // name -> rebind generation of the partition's last begin()
   let generation = 0;          // bumped only by sweep() (i.e. per part rebind)
   let name = null, active = null, prev = null;
   let hits = 0, misses = 0;
+
+  // One partition stops retaining `entry`. Disposal waits for the LAST holder:
+  // a solid shared across sub-parts is one WASM object, so disposing it when the
+  // first partition drops it would leave every other partition — and the shared
+  // index — pointing at freed memory. Dropping the index entry in the same breath
+  // is what keeps the cache from handing out a disposed solid later.
+  const release = (hash, entry) => {
+    if (--entry.refs > 0) return;
+    if (index.get(hash) === entry) index.delete(hash);
+    pinned.delete(entry.pin);
+    entry.dispose();
+  };
 
   return {
     begin(n) { name = n; lastBuilt.set(n, generation); prev = caches.get(n) ?? new Map(); active = new Map(); },
@@ -17,7 +35,7 @@ export function createSolidCache() {
     end() {
       if (name == null) return;
       for (const [hash, entry] of prev) {
-        if (!active.has(hash)) { pinned.delete(entry.pin); entry.dispose(); } // evict
+        if (!active.has(hash)) release(hash, entry); // this partition drops it
       }
       caches.set(name, active);
       name = null; active = prev = null;
@@ -31,7 +49,7 @@ export function createSolidCache() {
       generation++;
       for (const [n, entries] of caches) {
         if (generation - (lastBuilt.get(n) ?? 0) < 3) continue;
-        for (const entry of entries.values()) { pinned.delete(entry.pin); entry.dispose(); }
+        for (const [hash, entry] of entries) release(hash, entry); // refcounted: a shared solid survives
         caches.delete(n);
         lastBuilt.delete(n);
       }
@@ -41,9 +59,14 @@ export function createSolidCache() {
       if (name == null) return make().value; // not bracketed → no caching
       if (active.has(hash)) { hits++; return active.get(hash).value; }
       if (prev.has(hash)) { hits++; const e = prev.get(hash); active.set(hash, e); return e.value; }
+      // Another sub-part already built this exact solid — adopt it. `refs` rises
+      // because a second partition now retains it; see release().
+      if (index.has(hash)) { hits++; const e = index.get(hash); e.refs++; active.set(hash, e); return e.value; }
       misses++;
       const entry = make();
+      entry.refs = 1;
       active.set(hash, entry);
+      index.set(hash, entry);
       pinned.add(entry.pin);
       return entry.value;
     },

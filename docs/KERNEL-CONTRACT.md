@@ -98,6 +98,23 @@ them loses sub-part caching and mesh-topology gates (`holes`, emptiness), nothin
 a part (never inside a `beginSubPart`/`endSubPart` bracket), it drops cache partitions that
 have gone unbuilt for three consecutive rebinds.
 
+Sub-part brackets bound cache RETENTION, not reuse: a solid one sub-part builds is reused
+by any other that asks for the same content hash, so a sheet of identical cells split
+across row sub-parts evaluates each distinct cell once rather than once per row. An adopted
+entry is retained by both partitions and disposed only when the last one drops it.
+
+**Transform hoisting.** Booleans commute with rigid transforms, so a conforming backend MAY
+lift a transform every operand shares out of the boolean and apply it to the result
+instead — which is what lets N identically-built copies share one evaluation. Two
+consequences a host must expect. Hoisting evaluates the boolean in a different frame, so
+the result is geometrically equivalent but **not** guaranteed mesh-identical: vertex order,
+triangulation, and triangle count may differ (measured on the in-repo `scott-label`
+lettering: same genus and bounding box, volume agreeing to ~1e-9 relative, ~1% more
+triangles). Output stays deterministic for a given build. And an op is eligible only if it
+provably commutes with the transform — `fillet`/`chamfer` do NOT, because their edge
+selectors can be world-space, so hoisting past one would select different edges and emit
+wrong geometry.
+
 **`import`.** `kernel.import(name) → Solid` returns previously-registered imported geometry
 (STL/STEP/3MF geometry declared in a part's `imports` field); `_registerImport`/
 `_importDigest`/`_acceptsStep`/`_acceptsMesh` are the underscore-prefixed side-channel the
