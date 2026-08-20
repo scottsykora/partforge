@@ -24,7 +24,7 @@ function indexNodes(nodes, map) {
   }
 }
 
-export function buildControls(root, parameters, params, onDirty, onCommit) {
+export function buildControls(root, parameters, params, onDirty, onCommit, opts = {}) {
   const info = createInfoPopover();
   const tree = buildTree(desugar(parameters));
 
@@ -225,6 +225,7 @@ export function buildControls(root, parameters, params, onDirty, onCommit) {
       onChange: () => { markCustom(); onEdit(); },
       onCommit: () => commit([node.key]),
       info,
+      fontCatalog: opts.fontCatalog,
     });
     nodeEls.set(node.id, widget.el);
     if (node.key && !keyToId.has(node.key)) keyToId.set(node.key, node.id);

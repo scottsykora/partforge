@@ -198,6 +198,19 @@ textarea.text-input { min-height: 64px; resize: vertical; }
 .text-input:focus { outline: none; border-color: var(--pf-accent);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 
+/* the `type: "font"` control — a button that shows the current face IN it */
+.font-btn { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; cursor: pointer;
+  background: var(--pf-input-bg); color: var(--pf-text-strong);
+  border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); padding: 7px 9px; }
+.font-btn:hover { border-color: color-mix(in oklab, var(--pf-accent) 45%, var(--pf-border)); }
+.font-btn:focus-visible { outline: none; border-color: var(--pf-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
+.font-btn .fname { flex: 1; min-width: 0; font-size: 15px; line-height: 1.25;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.font-btn .fvar { flex: none; font: 10px/1 var(--pf-mono); color: var(--pf-muted); }
+.font-btn .caret { flex: none; opacity: .5; }
+.text-input.warn { border-color: var(--pf-err); color: var(--pf-err); }
+
 /* crafted range slider — hairline track + CAD-blue handle (the panel's signature control) */
 input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; margin: 0; background: transparent; cursor: pointer; }
 input[type="range"]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--pf-border); }

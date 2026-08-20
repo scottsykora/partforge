@@ -4,6 +4,7 @@ import { makeNumeric } from "./numeric.js";
 import { makeText } from "./text.js";
 import { makeCheckbox } from "./checkbox.js";
 import { makeSelect, makeRadio } from "./select.js";
+import { makeFont } from "./font.js";
 
 export const WIDGET_FACTORIES = {
   slider: makeNumeric,
@@ -13,4 +14,5 @@ export const WIDGET_FACTORIES = {
   checkbox: makeCheckbox,
   select: makeSelect,
   radio: makeRadio,
+  font: makeFont,
 };
