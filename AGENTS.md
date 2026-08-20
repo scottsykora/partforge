@@ -106,7 +106,11 @@ the installed package, so let the publish finish before bumping the dep there.
   front of it and a perspective/orthographic toggle beneath -
   `cube-geom.js` is the pure projection/hit leaf, `cube-canvas.js` the 2D
   renderer, `viewcube-mode.js` the orchestrator, `viewcube-controls.js` the
-  stack chrome), and `app.css` /
+  stack chrome. The stack hides for either of two independent reasons, OR-ed in
+  mount: Sketch mode, and a crowded animation transport bar - the stack
+  publishes its size as `data-pf-w`/`data-pf-h` so
+  `animation-controls.js` can judge that crowding against a footprint that does
+  not change when the cube goes away), and `app.css` /
   `chrome.css` (the shell/rail layout - `rail.js` binds
   it to the DOM, `rail-state.js` is its pure drag/collapse state machine).
   `camera-tween.js`, `camera-orbit.js` and `projection.js` are further pure

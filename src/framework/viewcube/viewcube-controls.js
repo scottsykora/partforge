@@ -90,6 +90,34 @@ export function attachViewcubeControls(viewer, { stage } = {}, { tooltip } = {})
   const offProjection = viewer.onProjectionChange(sync);
   sync();
 
+  // Publish the stack's size on the element itself, in the data-pf-* convention
+  // the shell already uses (data-pf-pane). animation-controls.js reads it to
+  // decide whether the transport bar is crowded, and that decision has to come
+  // out the same whether or not the stack is on screen — otherwise hiding the
+  // cube un-crowds the bar, the bar un-hides the cube, and the two oscillate a
+  // frame at a time (see nominalClusterRect for the full argument). A
+  // display:none element measures all zeros, so the size cannot be read live;
+  // it has to have been written down.
+  //
+  // Only ever written from a REAL measured size, so the last real values survive
+  // a hide. They change only at the rail's narrow breakpoint, which leaves one
+  // stale case: a breakpoint change that happens WHILE hidden leaves the
+  // full-size value published. That is benign and deliberately not "fixed" — it
+  // is the conservative direction (it keeps the cube hidden rather than
+  // flickering it back), and the next real measurement corrects it.
+  //
+  // A dataset write affects no layout, so this observer cannot feed itself.
+  const publishSize = () => {
+    const { width, height } = stack.getBoundingClientRect();
+    if (width <= 0 || height <= 0) return;
+    stack.dataset.pfW = String(Math.round(width));
+    stack.dataset.pfH = String(Math.round(height));
+  };
+  const sizeObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(publishSize) : null;
+  sizeObserver?.observe(stack);
+  publishSize(); // the observer's first callback is a frame away; the reader may not be
+
   function setHidden(flag) {
     const next = !!flag;
     stack.hidden = next;
@@ -107,6 +135,7 @@ export function attachViewcubeControls(viewer, { stage } = {}, { tooltip } = {})
       detached = true;
       runCleanupSteps([
         offProjection,
+        () => sizeObserver?.disconnect(),
         () => button.removeEventListener("click", onToggle),
         ...keyButtons.map((b, i) => () => b.removeEventListener("click", keyHandlers[i])),
         () => tooltipBinding?.detach(),

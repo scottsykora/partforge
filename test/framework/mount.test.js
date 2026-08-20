@@ -118,6 +118,24 @@ vi.mock("../../src/framework/viewer-controls.js", async (importOriginal) => {
   return { ...real, attachViewerControls: vi.fn(real.attachViewerControls) };
 });
 
+// Delegates to the real transport (makePart declares no animations, so it
+// returns null either way) purely to capture the crowding callback mount wires
+// into it. Driving that callback by hand is the only deterministic way to reach
+// mount's OR of the two hide reasons: real crowding needs layout, which
+// happy-dom does not have. The geometry side is pinned in
+// animation-controls.test.js.
+const crowdedHook = { report: null };
+vi.mock("../../src/framework/animation-controls.js", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    attachAnimationControls: vi.fn((viewer, part, opts) => {
+      crowdedHook.report = opts.onCrowded;
+      return real.attachAnimationControls(viewer, part, opts);
+    }),
+  };
+});
+
 import { mount, makeHandle } from "../../src/framework/mount.js";
 import { attachPicker, attachPickToggle, attachHoverLabels } from "../../src/framework/selection/index.js";
 import { attachCutawayControls } from "../../src/framework/cutaway-controls.js";
@@ -203,6 +221,7 @@ beforeEach(() => {
   document.body.innerHTML = "";
   fakeViewers.length = 0;
   fakeTooltips.length = 0;
+  crowdedHook.report = null; // never let one test's callback stand in for another's
   vi.clearAllMocks();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -1374,6 +1393,40 @@ test("hides the whole cube stack while Sketch is on", () => {
   els.chrome.annotate.click();
   // Ink is pose-locked: an orbit OR a projection swap invalidates it, so the
   // projection button goes away with the cube, not just the cube.
+  expect(stack.hidden).toBe(true);
+  els.chrome.annotate.click();
+  expect(stack.hidden).toBe(false);
+  runtime.dispose();
+});
+
+// setHidden takes one boolean and there are two independent reasons to hide the
+// cube — Sketch mode and a crowded transport bar. Applied straight, whichever
+// fires last wins, and leaving Sketch would reveal a cube that crowding still
+// wants gone. All four combinations, in the order that catches that.
+test("the cube's two hide reasons OR rather than overwrite each other", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, onAnnotationSend: () => {},
+  });
+  const stack = els.viewer.querySelector(".pf-viewcube-stack");
+  const reportCrowded = crowdedHook.report;
+  expect(typeof reportCrowded).toBe("function"); // mount wired it
+
+  expect(stack.hidden).toBe(false);            // neither reason
+  reportCrowded(true);
+  expect(stack.hidden).toBe(true);             // crowded only
+  els.chrome.annotate.click();
+  expect(stack.hidden).toBe(true);             // both
+  els.chrome.annotate.click();
+  expect(stack.hidden).toBe(true);             // still crowded — the regression
+  reportCrowded(false);
+  expect(stack.hidden).toBe(false);            // neither again
+
+  // And the mirror image: Sketch alone survives crowding clearing.
+  els.chrome.annotate.click();
+  expect(stack.hidden).toBe(true);
+  reportCrowded(false);
   expect(stack.hidden).toBe(true);
   els.chrome.annotate.click();
   expect(stack.hidden).toBe(false);

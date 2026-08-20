@@ -4,7 +4,7 @@
 // cue → tween dispatch, intro gating, snapshot/reset, user-edit pause, and the
 // runtime surface.
 import { afterEach, describe, expect, it, test, vi } from "vitest";
-import { attachAnimationControls, planAnimBarPlacement, clampBubbleX, snapUpToScrubGrid, unionRect } from "../../src/framework/animation-controls.js";
+import { attachAnimationControls, planAnimBarPlacement, clampBubbleX, snapUpToScrubGrid, unionRect, nominalClusterRect } from "../../src/framework/animation-controls.js";
 
 function fakeViewer() {
   const frameCbs = new Set(); const orbitCbs = new Set();
@@ -1190,6 +1190,244 @@ test("placement wiring: a hidden cube's zero rect is ignored, not unioned in", a
     expect(bar.style.left).toBe("290px");
     expect(bar.style.maxWidth).toBe("");
     expect(bar.classList.contains("pf-squeezed")).toBe(false);
+  } finally {
+    globalThis.ResizeObserver = OriginalRO;
+  }
+});
+
+// --- crowding: the cube gives way when the bar runs out of room --------------
+// The bar caps its own width as a last resort, and under that cap its controls
+// fall below the 44x44 tap-target floor (scripts/check-app.mjs catches it at
+// 320px on hinged-box). Rather than let that stand, the cube stack gives way and
+// the bar reclaims the space. `onCrowded` is how the transport says so.
+
+describe("nominalClusterRect", () => {
+  // The point of the nominal rect is that it does NOT depend on whether the cube
+  // is currently displayed — see the fixed-point test below.
+  const viewbar = { left: 208, right: 348, top: 584, bottom: 628 };
+
+  it("puts the stack's published footprint directly above the viewbar, sharing its right edge", () => {
+    // chrome.css anchors both to right: 12px, with the stack sitting on top of
+    // the viewbar, so the stack's edges follow from the viewbar's.
+    const r = nominalClusterRect(viewbar, null, { width: 101, height: 101 });
+    expect(r).toEqual({ left: 208, right: 348, top: 483, bottom: 628 });
+    // A stack narrower than the viewbar leaves the union's left edge on the
+    // viewbar; a wider one moves it onto the stack.
+    expect(nominalClusterRect(viewbar, null, { width: 200, height: 101 }).left).toBe(148);
+  });
+
+  it("falls back to the cube's measured rect when there is no viewbar (a host that drops it)", () => {
+    const cube = { left: 247, right: 348, top: 483, bottom: 584 };
+    expect(nominalClusterRect(null, cube, { width: 101, height: 101 })).toEqual(cube);
+    // Nothing to anchor a nominal claim on and nothing measured either: no
+    // decision to make.
+    expect(nominalClusterRect(null, null, { width: 101, height: 101 })).toBeNull();
+  });
+
+  it("claims nothing for the stack when no size has been published", () => {
+    expect(nominalClusterRect(viewbar, null, null)).toEqual(viewbar);
+    expect(nominalClusterRect(viewbar, null, { width: 0, height: 0 })).toEqual(viewbar);
+  });
+
+  it("treats an empty measured rect as the absence of a claim, like unionRect does", () => {
+    const zero = { left: 0, right: 0, top: 0, bottom: 0 };
+    expect(nominalClusterRect(null, zero, null)).toBeNull();
+    // A zero viewbar rect must not anchor the stack at the stage's top-left.
+    expect(nominalClusterRect(zero, null, { width: 101, height: 101 })).toBeNull();
+  });
+});
+
+// A 320px phone stage: the touch layout gives the bar (100% − 24px) and lifts it
+// to bottom: 64px, right into the band the cube stack occupies above #viewbar.
+// Rects are client-space with the stage's top-left at the origin.
+function crowdedStage() {
+  const container = document.createElement("div");
+  const viewbar = document.createElement("div");
+  viewbar.id = "viewbar";
+  const cube = document.createElement("div");
+  cube.className = "pf-viewcube-stack";
+  // What viewcube-controls.js publishes (see its own test): the stack's real
+  // size, readable even once it is display:none.
+  cube.dataset.pfW = "101";
+  cube.dataset.pfH = "101";
+  container.append(viewbar, cube);
+  document.body.append(container);
+  container.getBoundingClientRect = () =>
+    ({ left: 0, right: 360, top: 0, bottom: 640, width: 360, height: 640 });
+  viewbar.getBoundingClientRect = () =>
+    ({ left: 208, right: 348, top: 584, bottom: 628, width: 140, height: 44 });
+  return { container, viewbar, cube };
+}
+// The bar as the touch layout renders it: 336 wide, 80 tall (two rows), its top
+// at 496 — inside the nominal cluster's band (483…628), so the collision test
+// fires and planAnimBarPlacement caps it (available 208−10−12 = 186 < 336).
+const stubCrowdedBar = (bar) => {
+  bar.getBoundingClientRect = () =>
+    ({ left: 12, right: 348, top: 496, bottom: 576, width: 336, height: 80 });
+};
+
+// THE test. The naive implementation decides crowding from the MEASURED union,
+// which the cube is part of: hiding the cube shrinks the union, the bar fits,
+// crowding reports false, the cube comes back, and the bar is crowded again —
+// two frames per cycle, each one a ResizeObserver notification, on screen as a
+// flickering cube. A single-pass test cannot see it, so this one drives two
+// passes whose ONLY difference is the cube's measured rect (a real rect, then
+// the all-zeros one a display:none element reports) and pins that the answer
+// does not move.
+test("crowding is a fixed point: the cube's own visibility cannot change the answer", async () => {
+  const OriginalRO = globalThis.ResizeObserver;
+  let roCallback;
+  globalThis.ResizeObserver = class {
+    constructor(fn) { roCallback = fn; }
+    observe() {}
+    disconnect() {}
+  };
+  try {
+    const { container, cube } = crowdedStage();
+    const crowded = [];
+    const ctl = attachAnimationControls(fakeViewer(), part, {
+      container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "box",
+      onCrowded: (v) => crowded.push(v),
+    });
+    handles.push(ctl);
+    const bar = container.querySelector(".pf-anim-bar");
+    stubCrowdedBar(bar);
+
+    // Pass 1 — cube on screen and measured.
+    cube.getBoundingClientRect = () =>
+      ({ left: 247, right: 348, top: 483, bottom: 584, width: 101, height: 101 });
+    roCallback(); await nextFrame();
+    expect(crowded).toEqual([true]);
+    expect(bar.style.maxWidth).toBe("186px"); // the cap that shrinks the controls
+
+    // Pass 2 — the cube is hidden, which is what the `true` above asks mount to
+    // do. Its MEASURED rect is all zeros, so the bar is now placed as if the
+    // cube were not there (that is how the space is reclaimed: no cap at all) —
+    // and the crowding answer is unchanged, so nothing brings the cube back.
+    cube.hidden = true;
+    cube.getBoundingClientRect = () =>
+      ({ left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 });
+    roCallback(); await nextFrame();
+    expect(bar.style.maxWidth).toBe("");
+    expect(bar.classList.contains("pf-squeezed")).toBe(false);
+    expect(crowded).toEqual([true]); // NOT [true, false]
+  } finally {
+    globalThis.ResizeObserver = OriginalRO;
+  }
+});
+
+test("crowding: reported on change only, and never for a bar that is not on screen", async () => {
+  const OriginalRO = globalThis.ResizeObserver;
+  let roCallback;
+  globalThis.ResizeObserver = class {
+    constructor(fn) { roCallback = fn; }
+    observe() {}
+    disconnect() {}
+  };
+  try {
+    const { container, cube } = crowdedStage();
+    cube.getBoundingClientRect = () =>
+      ({ left: 247, right: 348, top: 483, bottom: 584, width: 101, height: 101 });
+    const crowded = [];
+    let activeView = "box";
+    const ctl = attachAnimationControls(fakeViewer(), part, {
+      container, applyValues: () => {}, getParamValues: () => ({}),
+      getView: () => activeView, onCrowded: (v) => crowded.push(v),
+    });
+    handles.push(ctl);
+    stubCrowdedBar(container.querySelector(".pf-anim-bar"));
+
+    roCallback(); await nextFrame();
+    roCallback(); await nextFrame();
+    roCallback(); await nextFrame();
+    expect(crowded).toEqual([true]); // the initial value, reported once
+
+    // A view with no animations hides the bar, and a bar that is not on screen
+    // cannot be crowded by anything — whatever the cluster's geometry says.
+    activeView = "solo";
+    ctl.viewChanged();
+    await nextFrame();
+    expect(crowded).toEqual([true, false]);
+    roCallback(); await nextFrame();
+    expect(crowded).toEqual([true, false]);
+
+    activeView = "box";
+    ctl.viewChanged();
+    await nextFrame();
+    expect(crowded).toEqual([true, false, true]);
+  } finally {
+    globalThis.ResizeObserver = OriginalRO;
+  }
+});
+
+// A stage with room: the bar slides clear of the cluster instead of capping
+// itself, its controls keep their full size, and the cube has no reason to go.
+// Crowding is about the CAP, not about the clamp.
+test("crowding: false when the bar only has to slide", async () => {
+  const OriginalRO = globalThis.ResizeObserver;
+  let roCallback;
+  globalThis.ResizeObserver = class {
+    constructor(fn) { roCallback = fn; }
+    observe() {}
+    disconnect() {}
+  };
+  try {
+    const container = document.createElement("div");
+    const viewbar = document.createElement("div");
+    viewbar.id = "viewbar";
+    const cube = document.createElement("div");
+    cube.className = "pf-viewcube-stack";
+    cube.dataset.pfW = "135";
+    cube.dataset.pfH = "135";
+    container.append(viewbar, cube);
+    document.body.append(container);
+    container.getBoundingClientRect = () =>
+      ({ left: 0, right: 1000, top: 0, bottom: 700, width: 1000, height: 700 });
+    viewbar.getBoundingClientRect = () =>
+      ({ left: 700, right: 988, top: 644, bottom: 688, width: 288, height: 44 });
+    cube.getBoundingClientRect = () =>
+      ({ left: 853, right: 988, top: 509, bottom: 644, width: 135, height: 135 });
+    const crowded = [];
+    const ctl = attachAnimationControls(fakeViewer(), part, {
+      container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "box",
+      onCrowded: (v) => crowded.push(v),
+    });
+    handles.push(ctl);
+    const bar = container.querySelector(".pf-anim-bar");
+    // Band 610…646 overlaps the nominal cluster (509…688), so this reaches
+    // planAnimBarPlacement: centeredLeft 300 > limit 700−10−400 = 290, so the
+    // bar slides — but available (700−10−12 = 678) still fits its 400px, so
+    // there is no cap and nothing is crowded.
+    bar.getBoundingClientRect = () =>
+      ({ left: 300, right: 700, top: 610, bottom: 646, width: 400, height: 36 });
+    roCallback(); await nextFrame();
+    expect(bar.style.left).toBe("290px");
+    expect(crowded).toEqual([false]);
+  } finally {
+    globalThis.ResizeObserver = OriginalRO;
+  }
+});
+
+test("crowding: onCrowded defaults to a no-op, so an unwired caller is unaffected", async () => {
+  const OriginalRO = globalThis.ResizeObserver;
+  let roCallback;
+  globalThis.ResizeObserver = class {
+    constructor(fn) { roCallback = fn; }
+    observe() {}
+    disconnect() {}
+  };
+  try {
+    const { container, cube } = crowdedStage();
+    cube.getBoundingClientRect = () =>
+      ({ left: 247, right: 348, top: 483, bottom: 584, width: 101, height: 101 });
+    const ctl = attachAnimationControls(fakeViewer(), part, {
+      container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "box",
+    });
+    handles.push(ctl);
+    const bar = container.querySelector(".pf-anim-bar");
+    stubCrowdedBar(bar);
+    roCallback(); await nextFrame();
+    expect(bar.style.maxWidth).toBe("186px"); // it still placed the bar, it just told nobody
   } finally {
     globalThis.ResizeObserver = OriginalRO;
   }

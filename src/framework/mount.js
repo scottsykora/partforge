@@ -432,12 +432,23 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     const viewcube = attachViewcubeControls(viewer, { stage: els.viewer }, { tooltip });
     cleanup.defer(() => viewcube.detach());
     cleanup.defer(viewer.onProjectionChange((mode) => saveProjection(mode)));
+    // setHidden takes one boolean, and there are two independent reasons to hide
+    // the cube: Sketch mode (below) and a crowded transport bar (wired into the
+    // animation controls further down). Applied straight, whichever fires last
+    // would win — leaving Sketch would reveal a cube that crowding still wants
+    // gone. Track a flag per reason and OR them through one place, the
+    // syncHoverSuppression precedent below.
+    let cubeHiddenForSketch = false;
+    let cubeHiddenForCrowding = false;
+    const syncViewcubeHidden = () =>
+      viewcube.setHidden(cubeHiddenForSketch || cubeHiddenForCrowding);
     // Sketch freezes the view on purpose: ink is stored in screen space and is
     // meaningful only against the pose it was drawn over. A live camera control
     // on top of that — orbit OR a projection swap — invalidates the drawing.
     if (annotateMode) {
       cleanup.defer(annotateMode.onModeChange(() => {
-        viewcube.setHidden(annotateMode.isEnabled());
+        cubeHiddenForSketch = annotateMode.isEnabled();
+        syncViewcubeHidden();
       }));
     }
     // Publish the viewbar's vertical claim so chrome.css can stack the cube on
@@ -886,6 +897,17 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       applyValues: applyAnimationValues,
       getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
       getView: view,
+      // On a narrow stage the transport bar has to cap its own width to stay
+      // clear of the bottom-right cluster, and under that cap its controls fall
+      // below the 44px tap target. The cube gives way instead — it is the
+      // reclaimable half of that cluster. Nothing here keys on the viewport
+      // width: a part with no animations, or one whose bar fits, keeps its cube
+      // at every size. syncViewcubeHidden and the viewcube itself are both
+      // declared above this point, so this can never fire into a hole.
+      onCrowded: (crowded) => {
+        cubeHiddenForCrowding = crowded;
+        syncViewcubeHidden();
+      },
     });
     if (animCtl) cleanup.defer(() => animCtl.detach());
 
