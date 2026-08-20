@@ -1950,6 +1950,15 @@ runtime authority for those cases), `reference-unknown` (a sub-part's
 `refVolumeDeltaPct`, `refBboxDelta` — but the sub-part declares no `reference`,
 so the deviation gate always reports status "skip") (warning).
 
+**Font controls** — `font-control-not-in-fonts` (a `type: "font"` control's
+`key` is not read by a function-form `fonts` — a static `fonts` object or a
+missing `fonts` field both provably can't depend on a param, so the picker
+changes a param and nothing else happens; the message names which of the two
+it is) (error); `font-source-scheme` (`defaults` holds a value for a font
+control that the control's own `allow` list would refuse — at build time it's
+swapped for `defaults[key]`, i.e. itself, so the part boots with no usable
+font; use a source `allow` accepts, or widen `allow`) (warning).
+
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.
 
