@@ -4,7 +4,7 @@
 // two things that decide whether a ghost cube with arrows in front of it reads
 // correctly (the ink-canvas.js / dim3-scene paintLabel precedent).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createCubeCanvas, CUBE_PALETTE } from "../../../src/framework/viewcube/cube-canvas.js";
+import { createCubeCanvas, CUBE_PALETTE, CUBE_RENDER } from "../../../src/framework/viewcube/cube-canvas.js";
 
 function fakeContext() {
   const calls = [];
@@ -18,7 +18,10 @@ function fakeContext() {
     lineTo: (...a) => calls.push(["lineTo", ...a]),
     closePath: () => calls.push(["closePath"]),
     fill: () => calls.push(["fill", ctx.fillStyle]),
-    stroke: () => calls.push(["stroke", ctx.strokeStyle]),
+    // lineWidth captured at call time too, so a test can assert which stroke
+    // width was in force for a given stroke — needed to prove CUBE_RENDER's
+    // width knobs (not just its presence) are actually read by draw().
+    stroke: () => calls.push(["stroke", ctx.strokeStyle, ctx.lineWidth]),
     fillText: (...a) => calls.push(["fillText", a[0], ctx.fillStyle]),
     set fillStyle(v) { this._fill = v; },
     get fillStyle() { return this._fill; },
@@ -101,6 +104,21 @@ describe("createCubeCanvas", () => {
     expect(tail).toBeLessThan(frontFace);
     expect(frontFace).toBeLessThan(head);
     expect(head).toBeLessThan(label);
+  });
+
+  it("honours CUBE_RENDER.arrowWidth at the arrow-tail stroke, not a hardcoded width", () => {
+    // A test that only checked CUBE_RENDER.arrowWidth === 2 would assert nothing
+    // about draw() actually reading it — mutate the tunable and confirm the
+    // stroke recorded for the tail carries the mutated value.
+    const original = CUBE_RENDER.arrowWidth;
+    CUBE_RENDER.arrowWidth = 7;
+    try {
+      handle.draw(projection, {});
+      const tail = ctx.calls.find((c) => c[0] === "stroke" && c[1] === CUBE_PALETTE.dark.axisX);
+      expect(tail[2]).toBe(7);
+    } finally {
+      CUBE_RENDER.arrowWidth = original;
+    }
   });
 
   it("labels the three model axes", () => {

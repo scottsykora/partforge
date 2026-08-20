@@ -36,7 +36,16 @@ export const CUBE_PALETTE = {
   },
 };
 
-const HEAD_HALF_WIDTH = 0.34; // arrowhead half-width as a fraction of its length
+// Render proportions the look-and-feel spike sweeps (plan Task 4), kept here
+// rather than inline for the same reason CUBE_PALETTE is: a tunable nobody can
+// find is a tunable nobody tunes. Geometry proportions live in cube-geom.js's
+// CUBE_CONSTANTS; these are the ones that only affect how it is PAINTED.
+export const CUBE_RENDER = {
+  headHalfWidth: 0.34, // arrowhead half-width as a fraction of its length
+  arrowWidth: 2,       // axis arrow stroke, CSS px
+  edgeWidth: 1,        // cell outline stroke, CSS px
+  labelPx: 10,         // axis label size, CSS px
+};
 
 export function createCubeCanvas(host, {
   getContext2d = (canvas) => canvas.getContext("2d"),
@@ -77,7 +86,7 @@ export function createCubeCanvas(host, {
     const [tx, ty] = arrow.tip;
     const [bx, by] = arrow.tail;
     const dx = tx - bx, dy = ty - by;
-    const nx = -dy * HEAD_HALF_WIDTH, ny = dx * HEAD_HALF_WIDTH;
+    const nx = -dy * CUBE_RENDER.headHalfWidth, ny = dx * CUBE_RENDER.headHalfWidth;
     ctx.fillStyle = colour;
     polygon([[tx, ty], [bx + nx, by + ny], [bx - nx, by - ny]]);
     ctx.fill();
@@ -91,7 +100,7 @@ export function createCubeCanvas(host, {
     syncBackingStore(dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size, size);
-    ctx.lineWidth = 1;
+    ctx.lineWidth = CUBE_RENDER.edgeWidth;
 
     for (const cell of projected.back) {
       ctx.fillStyle = p.backFill;
@@ -104,13 +113,13 @@ export function createCubeCanvas(host, {
     const axisColour = { X: p.axisX, Y: p.axisY, Z: p.axisZ };
     for (const arrow of projected.arrows) {
       ctx.strokeStyle = axisColour[arrow.axis];
-      ctx.lineWidth = 2;
+      ctx.lineWidth = CUBE_RENDER.arrowWidth;
       ctx.beginPath();
       ctx.moveTo(arrow.from[0], arrow.from[1]);
       ctx.lineTo(arrow.tail[0], arrow.tail[1]);
       ctx.stroke();
     }
-    ctx.lineWidth = 1;
+    ctx.lineWidth = CUBE_RENDER.edgeWidth;
 
     for (const cell of projected.front) {
       ctx.fillStyle = cell.id === hover ? p.hoverFill : p.frontFill;
@@ -122,7 +131,7 @@ export function createCubeCanvas(host, {
 
     for (const arrow of projected.arrows) head(arrow, axisColour[arrow.axis]);
 
-    ctx.font = "600 10px ui-sans-serif, system-ui, sans-serif";
+    ctx.font = `600 ${CUBE_RENDER.labelPx}px ui-sans-serif, system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     for (const arrow of projected.arrows) {
