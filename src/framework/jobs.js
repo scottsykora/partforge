@@ -107,7 +107,17 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     if (part.fonts && kernel._fonts) {
       const opentype = normalizeOpentype(await import("opentype.js"));
       const bufs = await resolveFonts(part.fonts);
-      for (const [name, buf] of bufs) if (!kernel._fonts.has(name)) kernel._fonts.set(name, parseFont(opentype, buf, name));
+      // Keyed on the SOURCE, not the name. A name is not a font identity: one
+      // worker outlives many parts (worker-rebind) and, once a font can come
+      // from a param, many picks — all of which reuse the same declared name.
+      // The old `if (!_fonts.has(name))` made the first bytes ever seen under a
+      // name permanent for the life of the worker.
+      kernel._fontsBySource ??= new Map();
+      for (const [name, buf] of bufs) {
+        let font = kernel._fontsBySource.get(buf);
+        if (!font) { font = parseFont(opentype, buf, name); kernel._fontsBySource.set(buf, font); }
+        kernel._fonts.set(name, font);            // rewritten every job, deliberately
+      }
     }
     // Register this part's declared imports on the kernel running this job — the
     // import-asset sibling of the fonts preload above. See ensureImports for the
