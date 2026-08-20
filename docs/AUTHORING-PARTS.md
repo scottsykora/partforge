@@ -1964,9 +1964,14 @@ carries:
 Subpart facts include `minWall` (number or `null` — null exactly when no reading
 exists, e.g. the OCCT backend or min-wall measurement turned off, matching
 `minWallAt`'s null) and `minWallAt` (`[x,y,z]` or `null`). Min wall casts one ray
-per triangle, which is unbounded work on a dense mesh, so past 50,000 triangles
+per triangle, which is unbounded work on a dense mesh, so past a sample budget
 it casts from a spread, deterministic subset instead — `minWallSampled` (boolean)
 and `minWallSamples` (`{ sampled, total }` or `null`) say whether that happened.
+**The budget depends on whether the reading is checked against anything**: a part
+that declares a min-wall gate — a `verify.process` profile, or an `expect`
+mentioning `minWall` — gets 50,000, because a gate's verdict rides on it; a part
+that declares neither gets 5,000, because there the number is a diagnostic for a
+reader rather than an assertion. Declaring the gate is what buys the resolution.
 `sampled` is how many triangles the walk *selected*, not how many rays were
 cast: a degenerate (zero-area) triangle has no normal to cast along and is
 skipped. A sampled reading is an **upper bound**: it can miss a thin spot, never
@@ -1980,6 +1985,24 @@ Overlap entries are
 `{ a, b, volume, location }`. Pair-distance facts are `gaps` (every sub-part
 pair: `{ a, b, distance, at }`, distance 0 = touching or overlapping) and
 `nearMisses` (the pairs with an unintended-looking gap under 0.5 mm).
+`measuredGaps` is the companion to `measuredMinWall` for that pass, and `gaps` is
+**absent** rather than empty when it did not run — an empty table means "measured,
+and these pairs have no distance", which a declared `clearance` gate fails on.
+
+### Quick checks
+
+An editor may ask for a **quick** check, which skips both ray-casting passes — min
+wall and pair distances — and keeps everything derived from the build itself:
+triangles, bbox, volume, genus, watertight, the assembly overlap check, and lint.
+On a 460k-triangle assembly that is roughly 6.8 s down to 0.9 s.
+
+Gates still run on a quick check wherever the facts allow it, so a violated `bbox`
+or `holes` expectation still fails. What a quick check will **never** do is return a
+pass: any gate it could not evaluate is listed in `verify.unevaluated`, and one such
+gate makes `verify.ok` **`null`** rather than `true`. So `ok` is tri-state — `false`
+(something failed), `null` (nothing failed, but something went unchecked), `true`
+(everything declared was checked and passed) — and code that treats a truthy `ok` as
+"passed" stays correct without changing. Run a full check before trusting a part.
 
 A **thrown** error (bad part module, kernel failure) with `--json` prints pure
 JSON to stdout and exits 1:

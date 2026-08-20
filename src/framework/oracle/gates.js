@@ -1,0 +1,50 @@
+// Which declared gates a part actually has — the questions the oracle asks before
+// deciding how hard to work. Kept out of verify.js so measure() can ask the same
+// question without importing verify (which imports measure), and so there is ONE
+// definition of "does this part gate on min wall": measure sizes its sample budget
+// by it and verify decides whether to measure it at all. Two derivations that drift
+// would put a coarse reading behind a real gate, which is exactly the trap verify's
+// seeding block guards against.
+//
+// Every function here is TOTAL. A part whose profile name is unknown, or whose
+// `expect` function throws, is reported as GATED — the conservative direction, since
+// that is the full-resolution behaviour every part had before budgets existed. The
+// real error surfaces from verify, which is where a reader can act on it.
+import { resolveProfile } from "./dfm-profiles.js";
+import { expandCases } from "./cases.js";
+import { resolveParams } from "../part-model.js";
+
+// `expect` may be a function of a case's resolved params, so the answer is a property
+// of the EXPANDED cases, not of the raw spec — which means answering it costs a call
+// to the PART'S OWN code, once per case. Both callers here are on hot paths (verify
+// expands for its case loop; measure asks the gate question on every call, and verify
+// calls measure once per case), so an unmemoized expansion would invoke a part's
+// `expect` O(cases²) times per report. Memoized by part identity, and re-derived if
+// the spec object behind that identity was swapped — the realistic mutation, and the
+// one a bare WeakMap would serve staleness for.
+const expansions = new WeakMap();
+
+export function expandExpectations(part) {
+  const spec = part?.verify?.expect ?? {};
+  const hit = expansions.get(part);
+  if (hit && hit.spec === spec) return hit.expanded;
+  const expanded = typeof spec !== "function"
+    ? expandCases(part).map((c) => ({ ...c, expect: spec }))
+    : expandCases(part).map((c) => {
+      const { p, d } = resolveParams(part, c.params);
+      return { ...c, expect: spec(p, d) ?? {} };
+    });
+  if (part && typeof part === "object") expansions.set(part, { spec, expanded });
+  return expanded;
+}
+
+export function partGatesMinWall(part, { process, expanded } = {}) {
+  try {
+    const spec = process ?? part?.verify?.process;
+    if (spec && resolveProfile(spec)?.minWall != null) return true;
+    return (expanded ?? expandExpectations(part)).some(({ expect }) =>
+      Object.values(expect ?? {}).some((o) => o && typeof o === "object" && "minWall" in o));
+  } catch {
+    return true; // unresolvable → measure it properly and let verify report the error
+  }
+}
