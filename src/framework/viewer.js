@@ -6,6 +6,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { createCutaway } from "./cutaway.js";
 import { createCameraTween } from "./camera-tween.js";
+import { orbitPose } from "./camera-orbit.js";
 import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
 import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
 
@@ -384,6 +385,30 @@ export function createViewer(container, part) {
     );
   }
   const cancelCameraTween = () => camTween.cancel();
+
+  // Orbit from a pixel delta — the view cube's drag. Routed through the viewer
+  // rather than done in the widget so the two things a real orbit owes its
+  // subscribers happen: an in-flight camera cue is cancelled, and the
+  // camera-start listeners fire (the animation driver disarms remaining cues).
+  // Same contract as grabbing the canvas, which OrbitControls' "start" event
+  // gives us for free.
+  function orbitBy(dx, dy) {
+    camTween.cancel();
+    for (const cb of [...cameraStartListeners]) cb();
+    const next = orbitPose(
+      {
+        position: camera.position.toArray(),
+        target: controls.target.toArray(),
+        up: camera.up.toArray(),
+      },
+      { dx, dy },
+      // Match OrbitControls' own feel: a full drag down the viewport is a half
+      // turn, so the cube and the canvas rotate at the same rate.
+      { radiansPerPx: (2 * Math.PI) / Math.max(1, container.clientHeight || 1) },
+    );
+    camera.position.fromArray(next.position);
+    controls.update();
+  }
 
   // User grabbing the orbit cancels any cue tween (the user owns the camera) and
   // tells subscribers (the animation driver disarms remaining cues).
@@ -947,6 +972,7 @@ export function createViewer(container, part) {
     onFrame,
     tweenCameraTo,
     cancelCameraTween,
+    orbitBy,
     onCameraStart,
     setActive,
     onContextLost,
