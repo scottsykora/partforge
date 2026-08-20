@@ -466,6 +466,124 @@ test.each([[300, 700], [400, 900]])(
   },
 );
 
+// The view cube's clicks. tweenCameraTo re-derives its target pose from the
+// visible bounds, so in PERSPECTIVE a click already reframes — apparent size is
+// distance there. Under ORTHOGRAPHIC it is the frustum and camera.zoom instead,
+// so a tween alone changes the angle and leaves the user's dolly untouched. With
+// the reframe button gone from the framework's pages, viewer.frame() is no
+// longer reachable there, so the cube's clicks have to do the refit themselves —
+// which is what `{ refit: true }` is.
+describe("tweenCameraTo({ refit })", () => {
+  // Drive the real render loop: the tween advances on dt, and renderFrame is
+  // what applies its pose. dt is clamped to 0.1s a frame, so a 0.6s tween needs
+  // several ticks — which is exactly what makes "once, at the end" observable.
+  const tick = (ms) => state.renderer.animationLoop(ms);
+  const runToCompletion = (fromMs = 0) => {
+    for (let t = fromMs; t <= fromMs + 900; t += 100) tick(t);
+  };
+  const dollyedOrthoViewer = () => {
+    const viewer = makeViewer();
+    viewer.setSubGeometry("body", triangle());
+    viewer.showAssembly(["body"], { frame: true });
+    viewer.setProjection("orthographic");
+    viewer.camera.zoom = 4; // the user dollies in; ortho does that with zoom
+    viewer.camera.updateProjectionMatrix();
+    return viewer;
+  };
+
+  test("refits under ortho — once, on completion, not on every frame", () => {
+    const viewer = dollyedOrthoViewer();
+
+    viewer.tweenCameraTo("top", { duration: 0.6, refit: true });
+    tick(0);
+    tick(100); // 0.1s into a 0.6s tween
+    expect(viewer.camera.zoom).toBe(4); // still the user's dolly: not per frame
+
+    runToCompletion(200);
+
+    expect(viewer.camera.zoom).toBe(1);
+    // The frustum is the perspective half-height at the pose's own distance —
+    // the same identity viewer.frame() establishes.
+    expect(viewer.camera.top).toBeCloseTo(distanceOf(viewer) * HALF_FOV_TAN, 6);
+    viewer.dispose();
+  });
+
+  test("frames from the pose's distance, not from a frame short of it", () => {
+    // The tween calls onComplete from inside its own update(), one step BEFORE
+    // the render loop writes the final pose onto the camera. Reading the live
+    // camera there would frame from ~95% of the travel, so this needs a tween
+    // whose radius actually CHANGES: park the camera well off the framed
+    // distance first, and it has ~50mm to cover.
+    const viewer = makeViewer();
+    viewer.setSubGeometry("body", triangle());
+    viewer.showAssembly(["body"], { frame: true });
+    viewer.setProjection("orthographic");
+    const framed = distanceOf(viewer);
+    viewer.setCameraState({ pos: [0, 0, 60], target: [0, 0, 0] });
+    expect(distanceOf(viewer)).toBeGreaterThan(framed * 5);
+
+    viewer.tweenCameraTo("top", { duration: 0.6, refit: true });
+    runToCompletion();
+
+    expect(distanceOf(viewer)).toBeCloseTo(framed, 6); // back to the framed pose
+    expect(viewer.camera.top).toBeCloseTo(framed * HALF_FOV_TAN, 9);
+    viewer.dispose();
+  });
+
+  test("leaves the frustum alone without the flag, however long the tween runs", () => {
+    const viewer = dollyedOrthoViewer();
+
+    viewer.tweenCameraTo("top", { duration: 0.6 });
+    runToCompletion();
+
+    expect(viewer.camera.zoom).toBe(4);
+    viewer.dispose();
+  });
+
+  test("does nothing under perspective, where the pose already carries the framing", () => {
+    const viewer = makeViewer();
+    viewer.setSubGeometry("body", triangle());
+    viewer.showAssembly(["body"], { frame: true });
+    const zoom = viewer.camera.zoom;
+
+    viewer.tweenCameraTo("top", { duration: 0.6, refit: true });
+    runToCompletion();
+
+    // Nothing ortho-shaped may be touched: a perspective camera has no frustum
+    // to re-derive, and syncOrthoToPerspectiveFraming would zero its zoom.
+    expect(viewer.camera.isPerspectiveCamera).toBe(true);
+    expect(viewer.camera.zoom).toBe(zoom);
+    viewer.dispose();
+  });
+
+  test("still calls a caller-supplied onComplete, exactly once", () => {
+    const viewer = dollyedOrthoViewer();
+    const onComplete = vi.fn();
+
+    viewer.tweenCameraTo("top", { duration: 0.6, refit: true, onComplete });
+    runToCompletion();
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(viewer.camera.zoom).toBe(1); // and the refit still happened
+    viewer.dispose();
+  });
+
+  test("an empty scene reports completion without refitting anything", () => {
+    // No visible bounds means no pose to tween to, so the call short-circuits.
+    const viewer = makeViewer();
+    viewer.setProjection("orthographic");
+    viewer.camera.zoom = 4;
+    viewer.camera.updateProjectionMatrix();
+    const onComplete = vi.fn();
+
+    viewer.tweenCameraTo("top", { duration: 0.6, refit: true, onComplete });
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(viewer.camera.zoom).toBe(4);
+    viewer.dispose();
+  });
+});
+
 test("an unrecognised mode resolves to perspective", () => {
   const viewer = makeViewer();
   viewer.setProjection("orthographic");

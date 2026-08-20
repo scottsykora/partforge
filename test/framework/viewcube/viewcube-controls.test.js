@@ -103,9 +103,12 @@ describe("keyboard access", () => {
     for (const b of buttons) expect(b.getAttribute("aria-label")).toBeTruthy();
   });
 
-  it("tweens to the named view when one is activated", () => {
+  it("tweens to the named view when one is activated, refitting like a click does", () => {
+    // These buttons are the keyboard route to clicking that face on the canvas,
+    // so they carry the same `refit` — without it, reaching a view by keyboard
+    // under orthographic would change the angle and leave the dolly alone.
     stage.querySelector('.pf-viewcube-key button[data-view="top"]').click();
-    expect(viewer.tweenCameraTo).toHaveBeenCalledWith("top", { duration: 0.6 });
+    expect(viewer.tweenCameraTo).toHaveBeenCalledWith("top", { duration: 0.6, refit: true });
   });
 });
 

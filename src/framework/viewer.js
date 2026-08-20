@@ -389,7 +389,23 @@ export function createViewer(container, part) {
   const camTween = createCameraTween();
   // Tween the orbit camera to a canonical angle, framed on what's visible now.
   // Presentational only; a caller passing duration 0 gets a jump cut.
-  function tweenCameraTo(viewName, { duration = 0.6, onComplete } = {}) {
+  //
+  // `refit` opts in to also restoring the FRAMING at the end of the tween, and
+  // only matters under orthographic: the pose above already re-derives the
+  // framing distance from the visible bounds, which is the whole job in
+  // perspective, but under ortho apparent size comes from the frustum and
+  // camera.zoom rather than from distance, so a tween alone leaves whatever
+  // dolly the user had accumulated in place. Off by default, because "look from
+  // this direction" and "refit the part" are different intentions: an animation
+  // camera cue means only the former, and refitting mid-animation would resize
+  // the part under the user. The view cube's clicks mean both — clicking a face
+  // is the reframe button's job now — so they pass it.
+  //
+  // Applied ONCE, on completion, never per frame: re-deriving the frustum inside
+  // the tween would re-zoom on every frame of a 0.6s cue (see setCameraState's
+  // comment, which is where that reasoning is written down). Composed with the
+  // caller's own onComplete rather than replacing it.
+  function tweenCameraTo(viewName, { duration = 0.6, onComplete, refit = false } = {}) {
     const box = getVisibleWorldBounds();
     if (!box || box.isEmpty()) { onComplete?.(); return; }
     const center = box.getCenter(new THREE.Vector3()).toArray();
@@ -397,10 +413,27 @@ export function createViewer(container, part) {
     // radius = full max extent (not half), matching frameTo's framing distance so a
     // live camera cue doesn't land twice as close as the reframe button and crop the part.
     const pose = cameraPoseForView(viewName, { center, radius: Math.max(size.x, size.y, size.z) || 12 });
+    // The projection is read at COMPLETION, not now: a 0.6s tween is long
+    // enough for the user to have toggled projection under it.
+    const finish = refit
+      ? () => {
+        if (projectionMode === "orthographic") {
+          // The tween fires onComplete from inside its own update(), BEFORE the
+          // render loop writes the final pose onto the camera — so the camera is
+          // still a frame short of where it is going. Frame from the distance
+          // this pose asked for rather than from wherever it has got to.
+          syncOrthoToPerspectiveFraming({
+            distance: new THREE.Vector3().fromArray(pose.position)
+              .distanceTo(new THREE.Vector3().fromArray(pose.target)),
+          });
+        }
+        onComplete?.();
+      }
+      : onComplete;
     camTween.start(
       { position: activeCamera.position.toArray(), target: controls.target.toArray() },
       { position: pose.position, target: pose.target },
-      { duration, onComplete },
+      { duration, onComplete: finish },
     );
   }
   const cancelCameraTween = () => camTween.cancel();
@@ -459,8 +492,13 @@ export function createViewer(container, part) {
   // camera's CURRENT distance from the orbit target. Called on every swap into
   // ortho and after any reframe, which is what keeps the two projections
   // showing the same amount of part.
-  function syncOrthoToPerspectiveFraming() {
-    const distance = activeCamera.position.distanceTo(controls.target) || 1;
+  //
+  // `distance` overrides "current": tweenCameraTo's refit runs from the tween's
+  // completion callback, which fires one frame BEFORE the final pose reaches the
+  // camera, so it frames from the distance it asked for rather than from where
+  // the camera happens to be at that instant.
+  function syncOrthoToPerspectiveFraming({ distance: atDistance } = {}) {
+    const distance = atDistance || activeCamera.position.distanceTo(controls.target) || 1;
     applyOrthoFrustum(orthoFrustum({
       fovDeg: camera.fov,
       distance,
@@ -1039,11 +1077,13 @@ export function createViewer(container, part) {
     // to start. Done here rather than at the mount's call site so every caller
     // is fixed, including a host that restores a pose itself.
     //
-    // Deliberately NOT done in tweenCameraTo: a cube click or an animation
-    // camera cue means "look from this direction", not "reframe". Under ortho the
-    // camera's distance has no effect on apparent size anyway, so re-deriving
-    // there would silently re-zoom the part on every click — and mid-tween, on
-    // every frame of one.
+    // Deliberately NOT done DURING a tweenCameraTo: an animation camera cue
+    // means "look from this direction", not "reframe". Under ortho the camera's
+    // distance has no effect on apparent size anyway, so re-deriving there would
+    // silently re-zoom the part — and mid-tween, on every frame of one. A caller
+    // that really does mean "refit" opts in with `{ refit: true }`, which runs
+    // this same sync exactly once, on the tween's completion; the view cube's
+    // clicks are the only callers that do.
     if (projectionMode === "orthographic") syncOrthoToPerspectiveFraming();
   }
   function onCameraEnd(cb) { controls.addEventListener("end", cb); }

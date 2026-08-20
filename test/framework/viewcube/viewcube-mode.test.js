@@ -96,11 +96,15 @@ describe("idle cost", () => {
 });
 
 describe("click versus drag", () => {
-  it("tweens on a release inside the threshold", () => {
+  it("tweens on a release inside the threshold, asking for a refit", () => {
     pointer("pointerdown", 45, 45);
     pointer("pointermove", 47, 46);
     pointer("pointerup", 47, 46);
     expect(viewer.tweenCameraTo).toHaveBeenCalledTimes(1);
+    // refit: a click on the cube is the reframe control now that the framework's
+    // pages ship no reframe button, and under orthographic a plain tween does
+    // not refit (see viewer.js's tweenCameraTo).
+    expect(viewer.tweenCameraTo.mock.calls[0][1]).toMatchObject({ refit: true });
     expect(viewer.orbitBy).not.toHaveBeenCalled();
   });
 

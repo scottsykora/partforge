@@ -213,6 +213,19 @@ test("play runs the intro tween, then frames drive param values", () => {
   expect(applied.at(-1).lidAngle).toBeCloseTo(55);
 });
 
+test("a camera cue never asks for a refit — it means 'look from here', not 'refit'", () => {
+  // The view cube's clicks pass `{ refit: true }` to tweenCameraTo (see
+  // viewer.js). A cue must not: under orthographic that re-derives the frustum,
+  // which would resize the part under the user partway through an animation.
+  const { ctl } = setup(); handles.push(ctl);
+  const viewer = ctl.__viewer;
+  ctl.runtime.play();
+  expect(viewer.tweenCameraTo).toHaveBeenCalled();
+  for (const [, options] of viewer.tweenCameraTo.mock.calls) {
+    expect(options?.refit).toBeUndefined();
+  }
+});
+
 test("reset restores the pre-animation param snapshot", () => {
   const { applied, ctl } = setup(); handles.push(ctl);
   ctl.runtime.play();

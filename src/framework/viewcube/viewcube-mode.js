@@ -116,7 +116,11 @@ export function createViewcubeMode(viewer, {
     press = null;
     if (wasDrag) return;
     const id = hitRegion(...localPoint(event), projected);
-    if (id) viewer.tweenCameraTo(id, { duration: 0.6 });
+    // refit: clicking a region is now the only reframe control the framework's
+    // own pages ship, so it has to actually refit — under orthographic a tween
+    // alone changes the angle and leaves the user's dolly in place. See
+    // viewer.js's tweenCameraTo.
+    if (id) viewer.tweenCameraTo(id, { duration: 0.6, refit: true });
   };
 
   const onPointerLeave = () => {

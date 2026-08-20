@@ -1472,13 +1472,20 @@ stylesheet). `mount` looks up these element IDs:
 | `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
-| `#viewbar` with `#reframe` / `#cutaway` / `#measure` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#theme` | optional viewer controls (omit any you don't want) |
 | `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
 | `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme` |
 
 Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
 `"occt"` for STEP — handled for you).
+
+**`#reframe` is supported but no longer shipped.** The framework's own pages dropped
+the button on 2026-08-20: clicking a face, edge or corner on the view cube reframes
+too, so a separate control was one more thing in a crowded bottom-right corner. The
+wiring is untouched and fully optional — supply the button (by ID or as
+`elements.chrome.reframe`) and it works exactly as before — so a host with its own
+scaffold need change nothing.
 
 **View control (the mount handle).** For an embedder driving the view tabs from its own UI
 instead of (or in addition to) the built-in `#part` bar:

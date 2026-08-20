@@ -88,7 +88,9 @@ export function attachViewcubeControls(viewer, { stage } = {}, { tooltip } = {})
   button.addEventListener("click", onToggle);
 
   const keyHandlers = keyButtons.map((b) => {
-    const handler = () => viewer.tweenCameraTo(b.dataset.view, { duration: 0.6 });
+    // Same user intent as clicking the face on the canvas, so the same
+    // `refit` — these buttons ARE the keyboard route to that click.
+    const handler = () => viewer.tweenCameraTo(b.dataset.view, { duration: 0.6, refit: true });
     b.addEventListener("click", handler);
     return handler;
   });
