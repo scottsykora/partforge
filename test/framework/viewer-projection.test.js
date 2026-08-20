@@ -8,6 +8,7 @@
 // matters — the part does not change size when the projection is toggled — is a
 // property of createViewer's two cameras together, not of projection.js alone.
 import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
+import * as THREE from "three";
 // vi.mock is hoisted above these imports, so the fakes below are in force here.
 import { captureCurrentFromScene, createViewer } from "../../src/framework/viewer.js";
 import { orthoFrustum } from "../../src/framework/projection.js";
@@ -109,7 +110,7 @@ describe("orthoFrustum round trip through a resize", () => {
 
 // --- the live viewer -------------------------------------------------------
 
-const state = vi.hoisted(() => ({ renderer: null, cutaway: null, resize: null }));
+const state = vi.hoisted(() => ({ renderer: null, cutaway: null, resize: null, lastCamera: null }));
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
 
@@ -126,7 +127,9 @@ vi.mock("three", async (importOriginal) => {
     getPixelRatio() { return this.pixelRatio ?? 1; }
     setSize() {}
     setAnimationLoop(callback) { this.animationLoop = callback; }
-    render() {}
+    // Record the temp camera renderOffscreen built — the only place the capture
+    // path's projection decisions are observable without a GL context.
+    render(scene, camera) { state.lastCamera = camera; }
     get capabilities() { return { maxTextureSize: 8192 }; }
     setRenderTarget() {}
     readRenderTargetPixels() {}
@@ -187,18 +190,36 @@ const distanceOf = (viewer) => {
   return Math.hypot(pos[0] - target[0], pos[1] - target[1], pos[2] - target[2]);
 };
 
+let origGetContext;
+let origToDataURL;
+
 beforeEach(() => {
   state.renderer = null;
   state.cutaway = createFakeCutaway();
   state.resize = null;
+  state.lastCamera = null;
   globalThis.ResizeObserver = class {
     constructor(cb) { state.resize = cb; }
     observe() {}
     disconnect() {}
   };
+  // Shim the 2D canvas the headless env lacks (same trick as
+  // viewer-capture-view.test.js) so the REAL capture path runs to completion.
+  origGetContext = HTMLCanvasElement.prototype.getContext;
+  origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+  HTMLCanvasElement.prototype.getContext = function getContext(type) {
+    if (type !== "2d") return null;
+    return {
+      createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+      putImageData: () => {},
+    };
+  };
+  HTMLCanvasElement.prototype.toDataURL = () => "data:image/jpeg;base64,TEST";
 });
 afterEach(() => {
   globalThis.ResizeObserver = OriginalResizeObserver;
+  HTMLCanvasElement.prototype.getContext = origGetContext;
+  HTMLCanvasElement.prototype.toDataURL = origToDataURL;
   document.body.innerHTML = "";
   vi.restoreAllMocks();
 });
@@ -307,6 +328,96 @@ test("projection listeners fire on a real change only, and unsubscribe", () => {
 
   expect(seen).toEqual(["orthographic"]);
   expect(viewer.getProjection()).toBe("perspective");
+  viewer.dispose();
+});
+
+// The camera that becomes live has never been rendered, so nothing has composed
+// its matrixWorld — and the listeners fire synchronously, before any frame. Both
+// halves matter, because raycaster.setFromCamera (selection, measure) reads the
+// origin AND the direction out of matrixWorld.
+//
+// A CONTRACT test, not a regression pin: it also passes without setProjection's
+// explicit updateMatrixWorld(), because controls.update() ends in
+// Object3D.lookAt, which itself calls updateWorldMatrix — and by then the
+// quaternion has already been copied from the outgoing camera, so the composed
+// matrix is right. The explicit call still earns its place (lookAt refreshes the
+// matrix BEFORE writing the quaternion, so a rotation applied inside the same
+// update — damping momentum still decaying when the toggle lands — would leave
+// the rotation one frame stale), but that case can't be reached through the
+// public handle, so this asserts the invariant rather than pinning the line.
+test("the newly live camera's world matrix is current before anyone is told", () => {
+  const viewer = makeViewer();
+  const seen = [];
+  viewer.onProjectionChange(() => {
+    const cam = viewer.camera;
+    seen.push({
+      drift: new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld).distanceTo(cam.position),
+      // The view direction as matrixWorld encodes it — what a picker would use.
+      dir: new THREE.Vector3(0, 0, -1).transformDirection(cam.matrixWorld),
+    });
+  });
+
+  viewer.setProjection("orthographic");
+  viewer.setProjection("perspective");
+
+  expect(seen).toHaveLength(2);
+  for (const { drift, dir } of seen) {
+    expect(drift).toBeLessThan(1e-9);
+    // Pointing at the orbit target (the origin) rather than down -Z.
+    const toTarget = viewer.camera.position.clone().negate().normalize();
+    expect(dir.distanceTo(toTarget)).toBeLessThan(1e-6);
+  }
+  viewer.dispose();
+});
+
+// The two corrections to the brief both lived here, and both were invisible:
+// wrong only in the saved image. This is the regression pin for both.
+test("captureCurrent under ortho carries the zoomed half-height and the viewport aspect", () => {
+  const viewer = makeViewer();
+  viewer.setSubGeometry("body", triangle());
+  viewer.showAssembly(["body"], { frame: true });
+  viewer.setProjection("orthographic");
+  const halfH = viewer.camera.top;
+  viewer.camera.zoom = 2; // a dolly performed in ortho
+  viewer.camera.updateProjectionMatrix();
+
+  const url = viewer.captureCurrent({ size: 512 });
+
+  expect(url).toBe("data:image/jpeg;base64,TEST");
+  const cam = state.lastCamera;
+  expect(cam.isOrthographicCamera).toBe(true);
+  // Half-height DIVIDED BY the zoom, or the capture ignores the user's dolly.
+  expect(cam.top).toBeCloseTo(halfH / 2, 9);
+  // Aspect from the frustum, not the ortho camera's absent `aspect` (which would
+  // have made this 1 and captured square from a 4:3 viewport).
+  expect(cam.right / cam.top).toBeCloseTo(400 / 300, 9);
+  viewer.dispose();
+});
+
+test("captureCurrent stays perspective while perspective is live", () => {
+  const viewer = makeViewer();
+  viewer.setSubGeometry("body", triangle());
+  viewer.showAssembly(["body"], { frame: true });
+
+  viewer.captureCurrent({ size: 512 });
+
+  expect(state.lastCamera.isPerspectiveCamera).toBe(true);
+  expect(state.lastCamera.fov).toBe(45);
+  viewer.dispose();
+});
+
+test("a degenerate ortho zoom cannot strand the camera past the far plane", () => {
+  const viewer = makeViewer();
+  viewer.setProjection("orthographic");
+  viewer.camera.zoom = 0; // guarded, or perspectiveDistance returns Infinity
+  viewer.setProjection("perspective");
+  expect(Number.isFinite(distanceOf(viewer))).toBe(true);
+
+  viewer.setProjection("orthographic");
+  viewer.camera.zoom = 1e-4; // ortho zoom-out is unbounded and looks harmless
+  viewer.setProjection("perspective");
+  // Clamped instead of ~281,000mm — beyond far = 1000 the viewer just goes blank.
+  expect(distanceOf(viewer)).toBeCloseTo(viewer.camera.far / 2, 6);
   viewer.dispose();
 });
 

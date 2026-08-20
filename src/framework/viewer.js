@@ -489,8 +489,19 @@ export function createViewer(container, part) {
       // Recover whatever dolly the user did while in ortho: OrbitControls
       // changes camera.zoom there rather than moving the camera, so the zoom
       // has to come back as a distance or the part jumps size.
+      //
+      // Clamped at half the far plane, because ortho zoom is unbounded and
+      // zooming a long way out costs nothing there (an ortho projection has no
+      // depth falloff) — but the recovered distance goes as 1/zoom, so a zoom
+      // near nothing would place the perspective camera past its own far plane
+      // and blank the viewer with no cue as to why. Half the far plane leaves
+      // the other half for the part's own depth. `|| 1` on the zoom for the same
+      // reason captureCurrent guards it: a zero would make this non-finite.
       const halfH = (orthoCamera.top - orthoCamera.bottom) / 2 || 1;
-      const distance = perspectiveDistance({ halfH, zoom: orthoCamera.zoom, fovDeg: camera.fov });
+      const distance = Math.min(
+        perspectiveDistance({ halfH, zoom: orthoCamera.zoom || 1, fovDeg: camera.fov }),
+        camera.far / 2,
+      );
       const direction = from.position.clone().sub(controls.target).normalize();
       camera.position.copy(controls.target).addScaledVector(direction, distance);
     }
@@ -498,6 +509,20 @@ export function createViewer(container, part) {
     activeCamera = to;
     controls.object = to;
     controls.update();
+    // The projection matrix is not the world matrix, and `to` has never been
+    // rendered — nothing has composed its matrixWorld, which WebGLRenderer would
+    // not fix up until the NEXT frame. Two readers get there first: the listener
+    // fan-out below is synchronous, and cutaway.updateForCamera runs before
+    // render(). Both end up in matrixWorld (raycaster.setFromCamera takes the
+    // ray's origin AND direction from it).
+    //
+    // controls.update() ends in Object3D.lookAt, which does refresh matrixWorld
+    // — but it refreshes BEFORE writing the new quaternion, so a rotation
+    // applied inside that same update (damping momentum still decaying as the
+    // toggle lands) leaves the rotation one frame behind. One matrix compose is
+    // cheaper than depending on that ordering. Placed after controls.update()
+    // for the same reason: it is the last writer of the pose.
+    to.updateMatrixWorld();
     cutaway.setCamera(to);
     projectionMode = next;
     for (const cb of [...projectionListeners]) cb(projectionMode);
