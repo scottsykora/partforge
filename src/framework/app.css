@@ -353,14 +353,21 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    second toolbar competing with the first. Explicitly a PLACEHOLDER ("just be a
    floating icon for now"): the position is settled, the treatment is not.
 
-   44px is #viewbar's own height (34px button + 4px padding + 1px border, twice),
-   not the 34px of a button inside it: the thing this should read as a peer of is
-   the BAR. It is also the tap-target floor scripts/check-app.mjs enforces.
+   38px is the MEASURED height of the centred view selector (`#topbar .seg`:
+   4px padding + a 28px tab + 4px + 2 hairlines, the same 38 on every page), and
+   the reference is that selector rather than #viewbar's 44px bar it briefly
+   matched: both floats sit at `top: 12px`, so equal heights put the two on one
+   line and their centres coincide by construction. Sizing to the selector is
+   also what keeps the hover chip from reading as oversized — the chip IS this
+   box. Note the trade: 38px is under the 44px tap-target floor
+   scripts/check-app.mjs enforces, and the check cannot see it, because it
+   measures targets at 320px where rail.js has already hidden this button.
 
    A rounded rect, and deliberately NOT the view cube's projection circle: two
    different controls in two different corners, where a shared silhouette would
-   invite reading one as the other. The radius is the same --pf-radius-control
-   every other square control in the framework uses.
+   invite reading one as the other. --pf-radius-control, the token `.seg` and its
+   tabs use, so the chip reads as part of the selector's family (the selector's
+   own outer corner is rounder — `#topbar .seg` overrides it to --pf-radius-pill).
 
    The hover fill is WHITE, and that is a placeholder as well — asked for in as
    many words, and true only over the dark viewer. Translucent rather than #fff
@@ -374,7 +381,7 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    selector list above. It used to inherit that through `#viewbar button`, which
    no longer matches it. */
 .pf-float-rail-toggle {
-  width: 44px; height: 44px;
+  width: 38px; height: 38px;
   border: 0; border-radius: var(--pf-radius-control);
   background: transparent; box-shadow: none;
   color: var(--pf-muted-2); cursor: pointer;
@@ -389,13 +396,13 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    compete with it. scripts/check-app.mjs asserts the computed display. */
 .pf-float-rail-toggle[hidden] { display: none; }
 .pf-float-rail-toggle:hover { color: var(--pf-text); background: rgb(255 255 255 / 14%); }
-/* Collapsed is this button's pressed state. Icon colour only, the way the
-   projection toggle does it: an accent-filled 44px rect would be exactly the
-   card the resting state deliberately goes without. The chevron `d` swap
-   (rail.js) stays the primary tell, and aria-expanded carries it for assistive
-   tech. After the :hover rule and at equal specificity, so the accent survives
-   a hover. */
-.pf-float-rail-toggle.on { color: var(--pf-accent); }
+/* GREY IN BOTH STATES, deliberately. rail.js still toggles `.on` when the rail
+   collapses, and inside #viewbar that class picked up the accent fill; there is
+   no rule for it here on purpose, so collapsed and expanded look identical. The
+   chevron `d` swap is the signal (it flips to point back out of the divider) and
+   aria-expanded carries it for assistive tech — a tint would have been a second
+   signal on a bare icon over the model, which is what the accent-coloured
+   version read as. Do not add one back without asking. */
 
 /* ---- view cube ------------------------------------------------------------
    APPEARANCE only (placement lives in chrome.css, per the split at the top of
@@ -419,11 +426,15 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    disc in orthographic mode read as a blob over the geometry rather than as
    a control. A background appears on HOVER only, in both states.
 
-   That leaves the orthographic state carrying two signals rather than the
-   previous three: the icon GLYPH changes (a perspective frustum becomes an
-   axonometric box — the primary tell, and the one that survives any colour
-   scheme) and the icon takes the accent colour. `aria-pressed` carries it for
-   assistive tech either way, so nothing depends on the fill being there. */
+   The last revision of the day took the accent COLOUR away too, so the
+   orthographic state now carries exactly ONE visual signal: the icon GLYPH (a
+   perspective frustum becomes an axonometric box). The button is grey in both
+   projections, resting and hovered, and there is deliberately no `.on` rule
+   below — viewcube-controls.js still adds the class, and `aria-pressed` still
+   carries the state for assistive tech. That is a choice, not an oversight: a
+   blue icon sitting on the cube's own drawing read as a stray tint rather than
+   as a mode, and the glyph is the tell that survives any colour scheme anyway.
+   Do not reintroduce a tint without asking. */
 .pf-viewcube-canvas {
   display: block;
   touch-action: none;
@@ -441,13 +452,6 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   display: flex; align-items: center; justify-content: center;
 }
 .pf-viewcube-toggle:hover { color: var(--pf-text); background: var(--pf-surface-2); }
-/* Icon colour only — no resting fill, per the note above. Source order matters:
-   this sits AFTER the :hover rule and both are specificity 0-2-0, so the accent
-   colour survives a hover in orthographic rather than reverting to --pf-text. */
-.pf-viewcube-toggle.on { color: var(--pf-accent); }
-/* 25%, not the 38% this used to step up to: that step existed to lift a hover
-   clear of a 25% resting fill. With the resting fill gone, 25% IS the hover. */
-.pf-viewcube-toggle.on:hover { background: color-mix(in oklab, var(--pf-accent) 25%, transparent); }
 /* The focus ring is NOT restated here: the toggle joins the shared
    :focus-visible selector list above, beside #viewbar's own.
 

@@ -135,9 +135,11 @@ test("app.css gives the floating rail toggle its appearance, and only that", () 
   const own = rules(css).filter((r) => r.selector === ".pf-float-rail-toggle");
   expect(own.length, "app.css must style .pf-float-rail-toggle").toBe(1);
   const [{ body }] = own;
-  // The viewbar's own height, so it reads as a peer of the viewer controls.
-  expect(body).toMatch(/width\s*:\s*44px/);
-  expect(body).toMatch(/height\s*:\s*44px/);
+  // The centred view selector's MEASURED height (#topbar .seg renders 38px on
+  // every page). Both sit at top: 12px, so matching that height is what puts
+  // the two on one line — and it sizes the hover chip to the selector too.
+  expect(body).toMatch(/width\s*:\s*38px/);
+  expect(body).toMatch(/height\s*:\s*38px/);
   // A bare floating icon at rest: no card of any kind.
   expect(body).toMatch(/background\s*:\s*transparent/);
   expect(body).toMatch(/border\s*:\s*0/);
@@ -152,6 +154,23 @@ test("app.css gives the floating rail toggle its appearance, and only that", () 
   expect(rules(css).some((r) =>
     r.selector === ".pf-float-rail-toggle:hover" && /background\s*:/.test(r.body)),
   "a hover background is the whole affordance").toBe(true);
+});
+
+// Both bare floating buttons read GREY in either state (2026-08-20). Each has an
+// `.on` class its JS still toggles — rail.js on collapse, viewcube-controls.js
+// on orthographic — and each used to take the accent colour with it. The state
+// is carried by the icon instead (the rail toggle's chevron flips, the
+// projection toggle's glyph changes) plus aria-expanded / aria-pressed, so an
+// accent tint was a third signal that only made a bare icon over the model look
+// like a stray blob. Any `.on` rule for either one is a regression.
+test("no accent tint on the floating rail toggle or the projection toggle", () => {
+  const css = read("app.css");
+  for (const base of [".pf-float-rail-toggle", ".pf-viewcube-toggle"]) {
+    const tinted = rules(css)
+      .filter((r) => r.selector.includes(`${base}.on`))
+      .map((r) => `${r.selector} {${r.body.trim()}}`);
+    expect(tinted, `${base}.on must not restyle the button`).toEqual([]);
+  }
 });
 
 // The trap `#viewbar button[hidden]` already guards against, inherited: this
