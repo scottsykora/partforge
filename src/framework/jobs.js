@@ -4,7 +4,7 @@
 // kernel-bound module back.
 import { meshTo3MF } from "./geometry/threemf.js";
 import { exportablePartNames } from "./export-select.js";
-import { resolveFonts } from "./fonts.js";
+import { fontsFor, resolveFonts } from "./fonts.js";
 import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
@@ -99,14 +99,21 @@ export async function handle(kernel, part, msg, post, opts = {}) {
   const exportName = (name) => part.parts[name].export?.name ?? name;
 
   try {
-    // Preload any part-declared fonts into the kernel before building — once per
-    // font name; a lazy dynamic import because this is async context (unlike the
-    // synchronous kernel-front), so it doesn't cost sync callers anything. The
-    // namespace shape differs between bundler and Node resolution (a bare
-    // `.default` here is undefined in every browser bundle) — normalize it.
-    if (part.fonts && kernel._fonts) {
+    // Params first: the fonts declaration may be a function of them, and a
+    // throwing derive() should surface before a font download rather than
+    // after one. Still inside the try, so that throw posts an error the UI can
+    // show instead of killing the worker turn silently (an endless spinner).
+    const { p, d } = resolveParams(part, msg.params);
+    // Preload any part-declared fonts into the kernel before building. A lazy
+    // dynamic import because this is async context (unlike the synchronous
+    // kernel-front), so it doesn't cost sync callers anything. The namespace
+    // shape differs between bundler and Node resolution (a bare `.default`
+    // here is undefined in every browser bundle) — normalize it.
+    const fontsDecl = fontsFor(part, p);
+    if (fontsDecl && kernel._fonts) {
+      onProgress("resolving fonts");
       const opentype = normalizeOpentype(await import("opentype.js"));
-      const bufs = await resolveFonts(part.fonts);
+      const bufs = await resolveFonts(fontsDecl);
       // Keyed on the SOURCE, not the name. A name is not a font identity: one
       // worker outlives many parts (worker-rebind) and, once a font can come
       // from a param, many picks — all of which reuse the same declared name.
@@ -116,7 +123,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       for (const [name, buf] of bufs) {
         let font = kernel._fontsBySource.get(buf);
         if (!font) { font = parseFont(opentype, buf, name); kernel._fontsBySource.set(buf, font); }
-        kernel._fonts.set(name, font);            // rewritten every job, deliberately
+        kernel._fonts.set(name, font);
       }
     }
     // Register this part's declared imports on the kernel running this job — the
@@ -124,9 +131,6 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // lazy-error policy that keeps a STEP import inert until a build actually
     // calls k.import on it.
     if (part.imports) await ensureImports(kernel, part.imports, opts.importMeshes ?? null);
-    // Inside the try so a throwing derive posts an error the UI can show,
-    // instead of killing the worker turn silently (an endless spinner).
-    const { p, d } = resolveParams(part, msg.params);
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
     const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
     // Explicit selection (headless exportParts) overrides view-derived selection.
