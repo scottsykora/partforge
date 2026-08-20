@@ -31,17 +31,25 @@ export function fontSourceAllowed(source, allow = FONT_ALLOW_DEFAULT) {
   return false;
 }
 
-// paramKey → allow list, for every `type: "font"` control in the authored tree.
-// Walks sections and nested groups; deliberately tolerant of the legacy section
-// shapes (advanced/toggles/features), which have no font controls but must not
-// throw the walk.
+// paramKey → allow list, for every `type: "font"` control in the authored tree —
+// new-shape (`controls`, including nested `group`s) AND legacy-shape
+// (`advanced`/`toggles`/`features`, where panel/legacy.js desugars a
+// descriptor's `control:` field to `type:` — see legacy.js's `toControl`).
+// Missing the legacy arrays here would leave a `{key, control:"font"}`
+// descriptor with no entry in the returned map, and jobs.js's check only
+// looks at keys present in the map — so a legacy-declared font control would
+// get silently unrestricted. Walk is deliberately tolerant of any of these
+// arrays being absent or malformed; it must never throw on an existing part.
 export function fontControlAllows(part) {
   const out = new Map();
   const visit = (nodes) => {
     for (const n of nodes ?? []) {
       if (!n || typeof n !== "object") continue;
       if (Array.isArray(n.controls)) visit(n.controls);
-      if (n.type === "font" && typeof n.key === "string") {
+      if (Array.isArray(n.advanced)) visit(n.advanced);
+      if (Array.isArray(n.toggles)) visit(n.toggles);
+      if (Array.isArray(n.features)) visit(n.features);
+      if ((n.type === "font" || n.control === "font") && typeof n.key === "string") {
         out.set(n.key, Array.isArray(n.allow) && n.allow.length ? n.allow : FONT_ALLOW_DEFAULT);
       }
     }

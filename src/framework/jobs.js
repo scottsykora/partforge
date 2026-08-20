@@ -122,10 +122,29 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // shape differs between bundler and Node resolution (a bare `.default`
     // here is undefined in every browser bundle) — normalize it.
     const fontsDecl = fontsFor(part, p);
-    if (fontsDecl && kernel._fonts) {
+    // A nullish/empty source means "no font declared" for that name, not an
+    // error — e.g. `fonts: (p) => ({ face: p.face })` when p.face ended up
+    // undefined because the refusal above had no default to fall back to, or
+    // because the author simply left it unset. text2d falls back to the
+    // bundled Roboto for a name with no declared source. Passing it through
+    // to resolveFonts would throw ("must be bytes, a URL, or a thunk…"),
+    // producing exactly the error-page outcome the refusal above exists to
+    // avoid. Drop it here, centrally, rather than teaching resolveFonts about
+    // "empty is fine" (it still must error on a *present* source of the wrong
+    // shape — that's a real authoring bug). The progress note is what keeps a
+    // genuine typo (a name that never resolves) visible instead of silently
+    // swallowed.
+    const fontsToResolve = fontsDecl && Object.fromEntries(
+      Object.entries(fontsDecl).filter(([name, src]) => {
+        if (src !== null && src !== undefined && src !== "") return true;
+        onProgress(`no font source declared for "${name}" — skipping`);
+        return false;
+      }),
+    );
+    if (fontsToResolve && Object.keys(fontsToResolve).length && kernel._fonts) {
       onProgress("resolving fonts");
       const opentype = normalizeOpentype(await import("opentype.js"));
-      const bufs = await resolveFonts(fontsDecl);
+      const bufs = await resolveFonts(fontsToResolve);
       // Keyed on the SOURCE, not the name. A name is not a font identity: one
       // worker outlives many parts (worker-rebind) and, once a font can come
       // from a param, many picks — all of which reuse the same declared name.
