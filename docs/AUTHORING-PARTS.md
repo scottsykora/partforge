@@ -1546,6 +1546,32 @@ pane's pixel size:
   counterpart (fixed poses, framed to the visible assembly, 1024², grid hidden). Sized
   for feeding a vision model, not for display; use `captureCurrent` for showcase images.
 
+### `runtime.projection`
+
+`{ get(), set(mode), onChange(cb) }` where `mode` is `"perspective"` or
+`"orthographic"`. Drives the **live view** and `captureCurrent` only —
+`captureCanonicalViews`, `renderMeshPayloads`, and the CLI's `partforge render`
+stay perspective unconditionally, so agent-facing output does not depend on a UI
+toggle. The choice persists across reloads under `partforge:projection` and is
+restored before the first framing. The orientation cube and its projection
+button are hidden while Sketch (annotate) mode is active, but that only governs
+*user-driven* view changes — the framework does not police programmatic ones. A
+host that calls `runtime.projection.set()` mid-sketch will produce an
+annotation payload whose recorded camera metadata doesn't match the view the
+ink was drawn over, the same way it's always been free to call
+`setCameraState` during Sketch.
+
+### The annotation payload's camera block
+
+`onAnnotationSend(payload)` receives a `camera` block in two frames — `world`
+(replays exactly against the build that produced it) and `parts` (pinned to
+the CAD geometry, so it survives a later rebuild's bbox recentring; reread a
+sketch's camera intrinsics from `parts`, not `world`, once the model has been
+rebuilt). `ANNOTATION_VERSION` is **2**: both frames carry
+`projection: "perspective" | "orthographic"`, and under an orthographic camera
+`fov` is `null` while `orthoHeight` gives the frustum's world height instead.
+(v1 had `fov` only, and predates the projection toggle.)
+
 **The markup convention (`demo.html` is the canonical copy-me page):** `<body>` carries
 `class="pf-shell"`, the flex row that lays the viewer column next to the rail. `#app`
 (`class="pf-stage"`) *is* that viewer column, and now contains the floating chrome

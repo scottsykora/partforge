@@ -100,7 +100,15 @@ the installed package, so let the publish finish before bumping the dep there.
   annotation mode: freehand ink on a transparent canvas over the frozen view,
   sent to the host via `onAnnotationSend` - `ink.js` is the pure stroke model,
   `ink-canvas.js` the overlay renderer, `annotate-mode.js` the orchestrator,
-  `annotate-controls.js` the viewbar chrome), and `app.css` /
+  `annotate-controls.js` the viewbar chrome), `viewcube/` (the orientation
+  cube: a ghost cube whose 26 regions - 6 faces, 12 edges, 8 corners - tween
+  the camera to canonical angles, with model-frame X/Y/Z arrows drawn in
+  front of it and a perspective/orthographic toggle beneath -
+  `cube-geom.js` is the pure projection/hit leaf, `cube-canvas.js` the 2D
+  renderer, `viewcube-mode.js` the orchestrator, `viewcube-controls.js` the
+  stack chrome). `camera-orbit.js` and `projection.js` are pure leaves the
+  viewer imports - spherical orbit math for external drag sources, and the
+  perspective/orthographic framing pair, and `app.css` /
   `chrome.css` (the shell/rail layout - `rail.js` binds
   it to the DOM, `rail-state.js` is its pure drag/collapse state machine).
   Below `RAIL_NARROW_BREAKPOINT` (720px) the rail cannot sit beside the viewer:
