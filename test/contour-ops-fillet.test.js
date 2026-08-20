@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { filletProfile, chamferProfile, profileCorners } from "../src/framework/geometry/contour-ops.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
@@ -26,8 +26,13 @@ test("{near} picks the closest corner; {indices} takes per-corner radii", () => 
   expect(idx.segments.filter((s) => s.via).length).toBe(2);
 });
 
-test("radius that does not fit throws with the max that would", () => {
-  expect(() => filletProfile(sq, 6)).toThrow(/corner \d+ at \(.*\): r=6 does not fit; max ≈ 5/);
+test("radius that does not fit is CLAMPED to the max that would, and reported", () => {
+  // Was a throw before the clamp policy (see contour-ops-clamp.test.js for why):
+  // the ceiling it named is now the radius actually used.
+  const record = vi.fn();
+  const out = filletProfile(sq, 6, undefined, record);
+  expect(out.segments.filter((s) => s.via).length).toBe(4);
+  expect(record.mock.calls[0][0]).toMatch(/corner \d+ at \(.*\): r=6 does not fit — clamped to 5/);
 });
 
 test("an isolated corner's cap isn't halved by an unselected neighbour", () => {
@@ -35,9 +40,13 @@ test("an isolated corner's cap isn't halved by an unselected neighbour", () => {
   expect(out.segments.filter((s) => s.via).length).toBe(1);
 });
 
-test("adjacent fillets consuming one segment throw an overlap error", () => {
+test("adjacent fillets consuming one segment are both shrunk to fit it", () => {
   const thin = [[0, 0], [3, 0], [3, 20], [0, 20]];
-  expect(() => filletProfile(thin, 2)).toThrow(/overlap on segment/);
+  const record = vi.fn();
+  const out = filletProfile(thin, 2, undefined, record);
+  expect(out.segments.filter((s) => s.via).length).toBe(4);
+  expect(record).toHaveBeenCalled();
+  expect(record.mock.calls.some(([m]) => /clamped to/.test(m))).toBe(true);
 });
 
 test("chamfer emits straight cuts and shrinks area by 4·d²/2", () => {

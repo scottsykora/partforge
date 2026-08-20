@@ -309,7 +309,21 @@ function scanArrangement(p, tessRings, near = null) {
       if (near) {
         const n = ring.length;
         const delta = r === near.ring ? (i - near.edge + n) % n : -1;
-        const incident = r === near.ring && (delta === 0 || delta === 1 || delta === n - 1);
+        // The projected edge and its immediate neighbours are incident geometry, not an
+        // obstruction — but ONLY while the neighbour actually continues the run. At a fold
+        // apex (a hairpin doubling back on itself within a couple of tessellation edges),
+        // the antiparallel return branch IS edge±1, and blanket-excluding it made clearance
+        // overestimate the safe probe radius by an order of magnitude: the probe stepped
+        // across the fold into a face not adjacent to the piece at all, and _classify kept
+        // an interior piece on the fabricated wRight (the Scott-label italic offset,
+        // feedback 746c4ac2). A neighbour that turns back against the projected edge
+        // (direction dot < 0) is a wall the probe can hit, so it participates in clearance.
+        let incident = r === near.ring && (delta === 0 || delta === 1 || delta === n - 1);
+        if (incident && delta !== 0) {
+          const e = ring[(near.edge + 1) % n], s = ring[near.edge];
+          const dot = (b[0] - a[0]) * (e[0] - s[0]) + (b[1] - a[1]) * (e[1] - s[1]);
+          if (dot < 0) incident = false;
+        }
         if (!incident) clearance = Math.min(clearance, pointEdgeDistance(near.point, a, b));
       }
     }

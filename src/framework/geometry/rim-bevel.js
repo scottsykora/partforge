@@ -67,7 +67,7 @@ const ccw = (r) => {
 // loop is deterministic, preserving build purity. `corners: "sharp"` keeps the
 // offset 1:1 with the input points — loft stitching requires every ring to
 // share the profile's exact point count (a mismatch is treated as a failed try).
-const fit = (ring, delta, what) => {
+const fit = (ring, delta, what, record) => {
   const requested = Math.abs(delta), sign = Math.sign(delta);
   let c = requested;
   for (;;) {
@@ -75,13 +75,13 @@ const fit = (ring, delta, what) => {
       const off = offsetPolygon(ring, sign * c, { corners: "sharp" });
       if (off.length === ring.length) {
         if (c < requested)
-          console.warn(`partforge: extrude bevel ${requested} exceeds what the ${what} can take — reduced to ${c.toFixed(2)}`);
+          record(`extrude bevel ${requested} exceeds what the ${what} can take — reduced to ${c.toFixed(2)}`);
         return { ring: off, c };
       }
     } catch { /* offset collapsed or self-intersected — try smaller */ }
     c *= 0.85;
     if (c < 0.05) {
-      console.warn(`partforge: extrude bevel ${requested} has no valid offset for this ${what} — rim left square`);
+      record(`extrude bevel ${requested} has no valid offset for this ${what} — rim left square`);
       return null;
     }
   }
@@ -96,12 +96,12 @@ const outerRings = (outer, h, b, t) => {
   return rings;
 };
 
-const bevelRegion = (k, region, h, bottom, top) => {
+const bevelRegion = (k, region, h, bottom, top, record) => {
   const outer = ccw(region.outer);
   const holes = (region.holes ?? []).map(ccw);
   let s = k.extrude({ profile: holes.length ? { outer, holes } : outer, h });
-  const b = bottom > 0 ? fit(outer, -bottom, "profile") : null;
-  const t = top > 0 ? fit(outer, -top, "profile") : null;
+  const b = bottom > 0 ? fit(outer, -bottom, "profile", record) : null;
+  const t = top > 0 ? fit(outer, -top, "profile", record) : null;
   // shading: "smooth" on all three internal lofts — a bevel band inherits the
   // profile's own shading intent (sharp corners at the bevel's start/end
   // rings, as a real chamfer would look), not the loft op's own facet-vs-
@@ -112,11 +112,11 @@ const bevelRegion = (k, region, h, bottom, top) => {
   if (b || t) s = s.intersect(k.loft({ rings: outerRings(outer, h, b, t), shading: "smooth" }));
   const cutters = [];
   for (const hole of holes) {
-    const hb = bottom > 0 ? fit(hole, bottom, "hole") : null;
+    const hb = bottom > 0 ? fit(hole, bottom, "hole", record) : null;
     if (hb) cutters.push(k.loft({ rings: [
       { polygon: hb.ring, z: -1 }, { polygon: hb.ring, z: 0 }, { polygon: hole, z: hb.c },
     ], shading: "smooth" }));
-    const ht = top > 0 ? fit(hole, top, "hole") : null;
+    const ht = top > 0 ? fit(hole, top, "hole", record) : null;
     if (ht) cutters.push(k.loft({ rings: [
       { polygon: hole, z: h - ht.c }, { polygon: ht.ring, z: h }, { polygon: ht.ring, z: h + 1 },
     ], shading: "smooth" }));
@@ -124,7 +124,14 @@ const bevelRegion = (k, region, h, bottom, top) => {
   return cutters.length ? s.cutAll(cutters) : s;
 };
 
-export function beveledExtrude(k, { profile, h, twist, scaleTop, bevel }) {
+// `record` reports the two ways a rim bevel degrades — reduced to what the ring
+// can take, or skipped entirely with the rim left square. Both used to reach only
+// console.warn, which meant a build could come back ok:true with a bevel the part
+// asked for and never got, invisible to the caller (and to the cloud agent). The
+// kernel supplies its own recorder; the default keeps the historical console.warn
+// for a direct call with no kernel recorder behind it.
+export function beveledExtrude(k, { profile, h, twist, scaleTop, bevel },
+                               record = k?._recordWarning ?? ((m) => console.warn(`partforge: ${m}`))) {
   if (twist !== undefined || scaleTop !== undefined)
     throw new Error("extrude: bevel cannot combine with twist or scaleTop");
   const { bottom, top } = resolveBevel(bevel, h);
@@ -135,5 +142,5 @@ export function beveledExtrude(k, { profile, h, twist, scaleTop, bevel }) {
     ? profile.toRegions()
     : [tessellateProfile(profile, BEVEL_SEGS)];
   if (regions.length === 0) throw new Error("extrude: bevel profile produced no regions");
-  return regions.map((r) => bevelRegion(k, r, h, bottom, top)).reduce((a, x) => a.union(x));
+  return regions.map((r) => bevelRegion(k, r, h, bottom, top, record)).reduce((a, x) => a.union(x));
 }

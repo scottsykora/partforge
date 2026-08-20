@@ -498,4 +498,10 @@ export interface GeometryKernel {
   resetCacheStats?(): void;
   /** Free per-job WASM objects (Manifold backend); call after each job. */
   cleanup?(): void;
+  /**
+   * Drain the feature-skip warnings recorded since the last drain — one message
+   * per fillet/chamfer (or roundAll) the backend skipped instead of failing the
+   * build over. Drain per sub-part to attribute each message to its build.
+   */
+  takeBuildWarnings?(): string[];
 }
