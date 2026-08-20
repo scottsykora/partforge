@@ -713,12 +713,14 @@ const flattenRing = (contour, segs) => {
 //
 // RATES, and where they come from. `node scripts/offset-rates.mjs` sweeps the committed
 // corpus (600 seeded shapes + 6 glyphs, 20 deltas, 3 styles = 36 090 offsets). After the
-// adaptive pinch classifier, failures before the ladder / after it are:
-//   round 1 -> 0   chamfer 2 -> 0   sharp 4 -> 0
-// All seven rescues are oracle-checked: median area error 0.0972 %, worst 1.663 %, with zero
-// region-count losses and zero complete arc losses. The ladder stays because those seven raw
+// adaptive pinch classifier and the fold-aware clearance fix in contour-winding's
+// scanArrangement (which also resolved five of the seven former pre-ladder failures),
+// failures before the ladder / after it are:
+//   round 0 -> 0   chamfer 1 -> 0   sharp 1 -> 0
+// Both rescues are oracle-checked: median area error 0.0727 %, worst 0.073 %, with zero
+// region-count losses and zero complete arc losses. The ladder stays because those two raw
 // arrangements remain numerically unclosable, not because the formerly parked comb/text
-// failures still exist. Those seven are all erosion (negative delta) or single-region cases;
+// failures still exist. Both are erosion (negative delta) or single-region cases;
 // the per-region rung below is positive-delta-and-multi-region only, so it wins none of them
 // and the rates above are unchanged by its addition — its own coverage class (whole-word text
 // dilation, feedback 86970b00) sits outside this corpus, whose glyphs are single characters

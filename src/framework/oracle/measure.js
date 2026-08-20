@@ -3,7 +3,8 @@ import { cachedBVH } from "./bvh.js";
 import { assemblyOverlaps } from "../assembly.js";
 import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea, meshCentroid } from "./mesh.js";
-import { minWall } from "./min-wall.js";
+import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
+import { partGatesMinWall } from "./gates.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -40,13 +41,20 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // the cache just fills it earlier. min-wall indexes exactly one mesh, so it is
   // handed the resolved BVH rather than the Map.
   const bvhCache = new Map();
+  // Sample budget for the min-wall pass. A part that declares a min-wall gate (a
+  // process profile or an `expect` mentioning it) gets the full resolution, because
+  // a gate's verdict rides on the reading. Everything else gets the diagnostic
+  // budget: min wall is the single most expensive thing the oracle does — one
+  // inward ray per sampled triangle plus the BVH those rays need — and on an
+  // ungated part it buys a fact nobody checks, at full price, on every agent edit.
+  const minWallSamples = partGatesMinWall(part) ? undefined : DIAGNOSTIC_SAMPLES;
   const subBounds = [];
   const subparts = built.map(({ name, solid, mesh }) => {
     const b = bounds(mesh.positions);
     subBounds.push(b);
     // Resolved lazily and only when asked for: without min-wall, a single-sub-part
     // view (no meshGaps) must still build no index at all.
-    const mw = opts.minWall ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache) }) : null;
+    const mw = opts.minWall ? minWall(mesh, { bvh: cachedBVH(mesh, bvhCache), maxSamples: minWallSamples }) : null;
     const vol = solid.volume();
     // Deviation-from-reference: only for a sub-part that declares `reference:
     // "<import name>"` (Task 12 — the gate that holds a parametric rebuild to
@@ -96,7 +104,13 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // so this reads on OCCT too. nearMisses = the issue-#29 signal: pairs that
   // *almost* touch; overlapping pairs are excluded by name (a fully-contained
   // sub-part has surface distance > 0 but is the overlap gate's business).
-  const gaps = built.length > 1 ? meshGaps(built, { bvhCache }) : [];
+  // `opts.gaps: false` is the quick lap's second half (see jobs.js): pair distances
+  // are the other ray-casting pass, and they and min-wall share the BVH, so skipping
+  // only one leaves the index build standing. The result is `undefined`, NEVER `[]`:
+  // pairGapChecks reads an empty table as "measured, and this pair has no distance"
+  // and fails a declared gate on it, while an absent table reads as no reading.
+  const measuredGaps = opts.gaps !== false;
+  const gaps = measuredGaps ? (built.length > 1 ? meshGaps(built, { bvhCache }) : []) : undefined;
 
   // Rebuilds with the same kernel and cleans up at its end — every solid fact
   // above is already read, so this is safe.
@@ -106,7 +120,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
 
   const overlapping = new Set(overlaps.map((o) => pairKey(o.a, o.b)));
   const gapThreshold = opts.gapThreshold ?? GAP_THRESHOLD;
-  const nearMisses = gaps.filter(
+  const nearMisses = (gaps ?? []).filter(
     (g) => g.distance > CONTACT_EPS && g.distance < gapThreshold && !overlapping.has(pairKey(g.a, g.b)),
   );
 
@@ -133,6 +147,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // nothing measured it, which reads identically to "no reading available";
     // verify's seeding rule turns on exactly this distinction (see verify.js).
     measuredMinWall: !!opts.minWall,
+    // Companion stamp to measuredMinWall, and read the same way: whether the pass
+    // ran, said by the pass itself rather than claimed by whoever holds the result.
+    measuredGaps,
     subparts,
     aggregate,
     overlaps,

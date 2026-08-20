@@ -2,9 +2,8 @@ import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { resolveProfile } from "./dfm-profiles.js";
-import { expandCases } from "./cases.js";
+import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../param-deps.js";
-import { resolveParams } from "../part-model.js";
 import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
 
 // Re-exported for backwards compatibility: the registries moved to framework/ so
@@ -52,11 +51,19 @@ function pairGapChecks(facts, { contacts, clearance }, subPartNames) {
   // No gap table at all = legacy facts → skip. A table that MERELY LACKS the pair
   // = the sub-part built empty (meshGaps skips empty meshes) → a declared gate
   // must fail loudly, not skip, or verify.ok would vouch for an unverified pair.
+  // `measuredGaps === false` says the pass was deliberately skipped (a quick lap);
+  // an absent stamp is a legacy result, whose skip stays exactly as untagged as it
+  // has always been rather than retroactively withholding verdicts.
+  const gapsSkipped = facts.measuredGaps === false;
   const noReading = (base) => (facts.gaps
     ? { ...base, actual: null, status: "fail", pass: false,
         message: "no measured distance for the pair",
         hint: "one sub-part produced no mesh (an empty solid?) — fix the build before trusting this gate" }
-    : { ...base, actual: null, status: "skip", pass: null, message: "unavailable" });
+    : { ...base, actual: null, status: "skip", pass: null,
+        ...(gapsSkipped
+          ? { unevaluated: true, message: "not measured (quick check)",
+              hint: "re-run this check without `quick` to measure pair distances" }
+          : { message: "unavailable" }) });
 
   if (contacts != null && !Array.isArray(contacts)) {
     throw new Error(`contacts: must be an array of ["a", "b"] pairs, got ${JSON.stringify(contacts)}`);
@@ -157,12 +164,25 @@ export function evaluateCase(facts, { profile, expect, subPartNames }) {
   for (const [metric, expr] of Object.entries(viewExp)) checks.push(check("view", null, metric, expr, VIEW_METRICS, facts));
   checks.push(...pairGapChecks(facts, { contacts, clearance }, subPartNames));
 
+  // Same rule as gapsSkipped above, one metric over: a min-wall gate with no reading
+  // is a warn ("min wall unavailable"), which does not move `ok` — right when the
+  // rays were cast and all missed, wrong when they were never cast. The stamp is
+  // what tells those apart, and it is measure()'s own, never a caller's claim.
+  const minWallSkipped = facts.measuredMinWall === false;
   for (const s of facts.subparts) {
     const merged = {
       ...(profile?.minWall != null ? { minWall: `>=${profile.minWall}` } : {}),
       ...(expect?.[s.name] ?? {}),
     };
-    for (const [metric, expr] of Object.entries(merged)) checks.push(check("subpart", s.name, metric, expr, SUBPART_METRICS, s));
+    for (const [metric, expr] of Object.entries(merged)) {
+      const c = check("subpart", s.name, metric, expr, SUBPART_METRICS, s);
+      if (minWallSkipped && metric === "minWall" && c.actual == null) {
+        checks.push({ ...c, unevaluated: true, message: "not measured (quick check)",
+          hint: "re-run this check without `quick` to measure min wall" });
+        continue;
+      }
+      checks.push(c);
+    }
   }
   return checks;
 }
@@ -170,26 +190,23 @@ export function evaluateCase(facts, { profile, expect, subPartNames }) {
 // `seed` lets a caller that has ALREADY measured this part hand the result in so
 // verify does not recompute it — see the seeding block below for the shape and
 // the one correctness rule that governs it.
-export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed } = {}) {
+// `quick` is the fast lap (see jobs.js): evaluate everything the seed already
+// supports and MEASURE NOTHING. What that leaves unchecked is reported as
+// `unevaluated` rather than quietly downgraded, and one unevaluated gate withholds
+// `ok` — a fast lap yields facts, never a verdict.
+export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false } = {}) {
   view = view ?? Object.keys(part.views)[0];
   const profileSpec = process ?? part.verify?.process;
   const profile = profileSpec ? resolveProfile(profileSpec) : null;
-  const expectSpec = part.verify?.expect ?? {};
 
-  const cases = expandCases(part);
   // `expect` can be a pure function of the case's resolved params — (p, d) →
   // expect object — so topology that legitimately changes with a preset (an
   // optional drain or bore flipping the genus) can be pinned per case instead
-  // of one static number that some presets must violate.
-  const resolveExpect = (params) => {
-    if (typeof expectSpec !== "function") return expectSpec;
-    const { p, d } = resolveParams(part, params);
-    return expectSpec(p, d) ?? {};
-  };
-  const expanded = cases.map((c) => ({ ...c, expect: resolveExpect(c.params) }));
-  const expectMentionsMinWall = expanded.some(({ expect }) =>
-    Object.values(expect).some((o) => o && typeof o === "object" && "minWall" in o));
-  const needMinWall = profile?.minWall != null || expectMentionsMinWall;
+  // of one static number that some presets must violate. The expansion lives in
+  // gates.js because measure() needs the same answer (it sizes the min-wall sample
+  // budget by it) and must not derive it separately — see there.
+  const expanded = expandExpectations(part);
+  const needMinWall = partGatesMinWall(part, { process, expanded });
   const readKeys = subPartReadKeys(part, view, part.defaults);
   const signature = (params) =>
     readKeys === RELEVANT_ALL
@@ -237,24 +254,48 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   //
   // Non-default measure options (a custom `gapThreshold`) are the caller's
   // responsibility: seed only a measurement taken the way verify would take it.
-  if (seed?.result && (seed.result.measuredMinWall || !needMinWall) && seed.result.view === view) {
+  // Under `quick` the superset rule is not waived so much as satisfied differently:
+  // a min-wall-less seed is reused, and the min-wall gate it cannot answer becomes
+  // `unevaluated` instead of being re-measured. The rule exists to stop a coarse
+  // reading standing in for a gate's verdict, and a withheld verdict does that too.
+  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && seed.result.view === view) {
     memo.set(signature({ ...part.defaults, ...(seed.params ?? {}) }), seed.result);
   }
 
   const measureCase = (params) => {
     const key = signature(params);
-    if (!memo.has(key)) memo.set(key, measureFn(kernel, part, view, params, { minWall: needMinWall }));
+    if (memo.has(key)) return memo.get(key);
+    if (quick) return null;   // a case the seed does not cover — reported, never built
+    memo.set(key, measureFn(kernel, part, view, params, { minWall: needMinWall }));
     return memo.get(key);
   };
 
   const subPartNames = Object.keys(part.parts);
-  const caseResults = expanded.map(({ name, params, expect }) => ({ name, params, checks: evaluateCase(measureCase(params), { profile, expect, subPartNames }) }));
+  // An unmeasured case gets ONE check standing for the whole case rather than a
+  // silent absence: "this preset was not checked" has to be visible in the same
+  // list every other verdict lives in, or a reader counting passes sees a shorter
+  // list and no reason.
+  const notMeasured = (name) => [{
+    scope: "case", subpart: null, metric: "measured", kind: "gate", expr: "measured",
+    actual: null, status: "skip", pass: null, unevaluated: true,
+    message: "not measured (quick check)",
+    hint: "re-run this check without `quick` to evaluate this case",
+  }];
+  const caseResults = expanded.map(({ name, params, expect }) => {
+    const facts = measureCase(params);
+    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames }) : notMeasured(name) };
+  });
   const all = caseResults.flatMap((c) => c.checks.map((ch) => ({ case: c.name, ...ch })));
+  const failures = all.filter((c) => c.status === "fail");
+  const unevaluated = all.filter((c) => c.unevaluated);
   return {
-    ok: !all.some((c) => c.status === "fail"),
+    // Tri-state, and the order matters: a real failure is still a failure even on a
+    // lap that skipped other gates, so `false` outranks the withheld `null`.
+    ok: failures.length ? false : unevaluated.length ? null : true,
     view,
     cases: caseResults,
-    failures: all.filter((c) => c.status === "fail"),
+    failures,
     warnings: all.filter((c) => c.status === "warn"),
+    unevaluated,
   };
 }

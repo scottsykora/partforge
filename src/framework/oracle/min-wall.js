@@ -33,6 +33,23 @@ import { buildBVH, readTriangleInto } from "./bvh.js";
 // are the only ones that engage it. Override per call with `{ maxSamples }`.
 const MAX_SAMPLES = 50_000;
 
+// The budget for a min-wall reading NOTHING GATES ON — a fact the report carries so
+// the model can notice a thin feature, rather than a number a declared minimum is
+// checked against. A tenth the rays, and the reading is stamped `sampled` either way,
+// so no consumer can mistake it for exact. measure() picks between the two by asking
+// gates.js whether the part declares a min-wall gate; a part that does gets
+// MAX_SAMPLES, unchanged.
+//
+// The win is real but bounded, and the bound is worth knowing before tuning this
+// number: the RAYS get ten times cheaper, the BVH they cast into does not, and it is
+// roughly half the pass. Measured on src/parts/screw.js (210k triangles, same code
+// path, gated vs not): measure() 837 ms → 458 ms, reporting the identical 0.008 mm.
+// Dropping the index too means not measuring min wall at all, which is the quick
+// lap's business (see jobs.js), not this constant's.
+const DIAGNOSTIC_SAMPLES = 5_000;
+
+export { MAX_SAMPLES, DIAGNOSTIC_SAMPLES };
+
 const gcd = (a, b) => { while (b) { const t = a % b; a = b; b = t; } return a; };
 
 // Stride for the sampling walk: near n/φ and coprime to n, so stepping by it visits

@@ -7,6 +7,7 @@ import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
 import { manifoldFromMesh } from "./mesh-build.js";
 import { createSolidCache } from "./solid-cache.js";
+import { hoistCommonSuffix } from "./transform-hoist.js";
 import { addSugar } from "./solid-sugar.js";
 import { makeShape2dFactory } from "./shape2d.js";
 import { offsetRegions } from "./contour-offset.js";
@@ -54,6 +55,33 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const unionRaw = (ms) => (ms.length === 1 ? ms[0] : T(Manifold.union(ms)));
 
   const cache = createSolidCache();
+  // Feature-skip warnings (the OCCT backend's safeOp policy, adopted here): a
+  // fillet/chamfer whose mesh machinery is defeated by the geometry returns its
+  // INPUT solid unchanged and records one message here instead of failing the
+  // whole build. jobs.js drains this per sub-part (takeBuildWarnings) and ships
+  // it out on the meshes message, so a caller — the cloud agent above all — is
+  // TOLD the feature was skipped rather than left believing it landed.
+  const buildWarnings = [];
+  // cache key -> warning message for ops that skipped. The identity result is
+  // deliberately NOT cached (a later build should re-attempt the feature after
+  // upstream geometry changes — same key means same failure, so re-warning is
+  // cheap), but a repeated call in the SAME session must still re-emit the
+  // warning: without this map, a no-op re-apply would rebuild from warm caches
+  // upstream, hit the recorded skip nowhere, silently re-fail and re-warn — fine
+  // — but a memoized wrapper above us could also swallow the retry. Keeping the
+  // message per key makes "skipped before, skipped again" deterministic and free.
+  const skippedOps = new Map();
+  // The one recorder. Shared, backend-neutral degrades (the extrude rim bevel in
+  // rim-bevel.js, roundedBox's rim clamp in op-options.js, Shape2D's corner-op
+  // clamps in contour-ops.js) reach it through the kernel's `_recordWarning`, so
+  // every degrade in the build lands in one drainable list rather than only in
+  // the console.
+  const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
+  const skipFeature = (key, op, magnitude, err) => {
+    const msg = `${op} ${magnitude} failed (${String(err?.message || err).slice(0, 200)}) — feature skipped, edges left sharp`;
+    skippedOps.set(key, msg);
+    recordWarning(msg);
+  };
   const featureLabels = new Map(); // originalID -> label string (grows per label(); tiny)
   const oidPolicies = new Map();   // originalID -> shading policy (grows per faceted/hinted loft; tiny)
   // name -> { m, digest, hash } | { error, digest } — imported geometry the framework
@@ -66,6 +94,20 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     const m = computeM();                 // already T()-tracked by the op
     return { value: wrap(m, hash), pin: m, dispose: () => m.delete?.() };
   });
+
+  // Booleans commute with any invertible affine map, so a transform EVERY operand
+  // ends with can be lifted out of the boolean and applied to its result instead.
+  // That is what collapses N identically-built copies into one evaluation: with the
+  // shared transform gone, the operand hashes are identical for every copy, so the
+  // boolean itself hits the cache. Returns null when nothing is shared, leaving the
+  // caller on its ordinary path.
+  const hoistBoolean = (opName, solids, evaluate) => {
+    const { hoisted, residuals } = hoistCommonSuffix(solids.map((s2) => s2._canon.chain));
+    if (!hoisted.length) return null;
+    const ops = solids.map((s2, i) => replay(wrap(s2._canon.m, s2._canon.hash), residuals[i]));
+    const canonical = cached(h(opName, ops.map((s2) => s2._hash)), () => evaluate(ops));
+    return replay(canonical, hoisted);
+  };
 
   // Contour-IR region list -> flat point rings at `nSeg` (outer + holes, even/odd
   // fill sorts them out). The one place the IR meets CrossSection.ofPolygons.
@@ -80,6 +122,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     segs,
     extrude: (o) => kernel.extrude(o),
     revolve: (o) => kernel.revolve(o),
+    recordWarning,
   });
   // Lazy CrossSection materialization, memoized through the solid cache by content
   // hash + LOD: the same shape extruded twice (or extruded and revolved) tessellates
@@ -237,8 +280,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         let base = T(Manifold.extrude(cur, height));
         if (z0 !== 0) base = T(base.translate([0, 0, z0]));
         const wrapped = wrap(base, h("roundAllPrismBase", mHash, r, quality));
-        // selector-free: every sharp edge of the mitered prism gets its radius here
-        const filleted = wrapped.fillet(r);
+        // selector-free: every sharp edge of the mitered prism gets its radius here.
+        // The THROWING form deliberately: this path's answer to a failed fillet is
+        // the `catch` below, which returns null and hands the job to the reference
+        // Minkowski roundAll. The degrading public fillet would instead hand back
+        // the un-rounded prism, and this function would emit it as a successful
+        // roundAll — silently wrong geometry instead of a correct slow result.
+        const filleted = wrapped._filletRaw(r);
         // Decouple from the fillet cache's pin: cached() will pin the object this
         // returns under the roundAll hash, and one WASM object must never sit
         // under two cache entries (double-dispose on eviction). The decouple is
@@ -273,21 +321,78 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     }
   };
 
-  const wrap = (m, hash) => addSugar({
+  // Replay a recorded transform chain onto a solid. Each record maps back to the op
+  // that produced it, so the replayed solid rebuilds the same chain on its own canon.
+  const replay = (solid, chain) => chain.reduce(
+    (s2, r) => (r.op === "translate" ? s2.translate(r.v) : s2.rotate(r.deg, r.center, r.axis)), solid);
+
+  // `canon` is this solid expressed as a base solid plus the trailing transform chain
+  // applied to it (oldest first). Only ops that provably COMMUTE with a rigid
+  // transform extend the chain — translate, rotate, and label; everything else starts
+  // a fresh canonical base. fillet/chamfer are deliberately excluded even though they
+  // look eligible: their edge selectors can be world-space, so filleting the
+  // untranslated base would pick different edges — wrong geometry, not a missed hit.
+  //
+  // `self` names the wrapper being built so the degrading public fillet/chamfer
+  // can delegate to their throwing `_`-prefixed twins above without re-deriving
+  // the cache key or the capability checks. Declared as a binding the closures
+  // capture: every reference runs after addSugar has returned.
+  const wrap = (m, hash, canon = { m, hash, chain: [] }) => {
+    const self = addSugar({
     _m: m,
     _hash: hash,
+    _canon: canon,
     cut: (t) => cached(h("cut", hash, t._hash), () => T(m.subtract(t._m))),
-    fillet: (r, selector) => {
+    // THROWING forms. These are the composition primitives — internal callers
+    // that have their own recovery (prismRoundAllFast, which answers a failed
+    // fillet by falling back to the reference Minkowski roundAll) must use
+    // these, never the degrading public ops below: a skip there would emit an
+    // UN-rounded prism as a successful roundAll, which is silently wrong
+    // geometry rather than a reported missing feature.
+    _filletRaw: (r, selector) => {
       if (typeof selector === "function") throw new KernelCapabilityError("fillet: function selectors need the OCCT backend");
       if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
       return cached(h("fillet", hash, r, selector ?? null, segs), () =>
         meshCadOp("fillet", m, () => meshFillet(kernel, wrap(m, hash), { r, edges: selector, segs })));
     },
-    chamfer: (d, selector) => {
+    _chamferRaw: (d, selector) => {
       if (typeof selector === "function") throw new KernelCapabilityError("chamfer: function selectors need the OCCT backend");
       if (d === 0) return wrap(m, hash);
       return cached(h("chamfer", hash, d, selector ?? null, segs), () =>
         meshCadOp("chamfer", m, () => meshChamfer(kernel, wrap(m, hash), { d, edges: selector, segs })));
+    },
+
+    // The AUTHOR-FACING ops degrade on failure instead of failing the build (the
+    // OCCT backend's safeOp policy — see occt-repair.js): a defeated op returns
+    // the INPUT solid and records a feature-skip warning. Only NEEDS_OCCT
+    // capability errors still propagate — they are the split-backend reroute
+    // signal, not a geometry failure, and swallowing one would strand the
+    // sub-part on the wrong backend. The skip result is not cached: same key →
+    // same failure → same cheap re-warn, while an upstream geometry change mints
+    // a new key and genuinely re-attempts the feature.
+    fillet: (r, selector) => {
+      const key = h("fillet", hash, r, selector ?? null, segs);
+      const skipped = skippedOps.get(key);
+      if (skipped !== undefined) { buildWarnings.push(skipped); return wrap(m, hash); }
+      try {
+        return self._filletRaw(r, selector);
+      } catch (e) {
+        if (e?.code === "NEEDS_OCCT") throw e;
+        skipFeature(key, "fillet", r, e);
+        return wrap(m, hash);
+      }
+    },
+    chamfer: (d, selector) => {
+      const key = h("chamfer", hash, d, selector ?? null, segs);
+      const skipped = skippedOps.get(key);
+      if (skipped !== undefined) { buildWarnings.push(skipped); return wrap(m, hash); }
+      try {
+        return self._chamferRaw(d, selector);
+      } catch (e) {
+        if (e?.code === "NEEDS_OCCT") throw e;
+        skipFeature(key, "chamfer", d, e);
+        return wrap(m, hash);
+      }
     },
     roundAll: (r) => {
       if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
@@ -311,6 +416,11 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // registry entry lives exactly as long as the cache pins the solid — eviction
     // disposes both, so the registry can't grow unboundedly across regenerates.
     label: (name) => {
+      // Labeling only re-stamps surface ids, so it commutes with the trailing
+      // transform. This is load-bearing rather than an optimization: the common
+      // authoring idiom labels each piece AFTER positioning it, which would give every
+      // copy its own canonical base and stop the hoist below from ever firing.
+      if (canon.chain.length) return replay(wrap(canon.m, canon.hash).label(name), canon.chain);
       const lh = h("label", hash, name);
       return cache.lookup(lh, () => {
         // Blend-aware re-stamp. If this mesh carries blend surfaces (the boundaryLines
@@ -415,14 +525,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     volume: () => m.volume(),
     genus: () => m.genus(),
     isEmpty: () => m.isEmpty(),
-    translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v)),
+    translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v),
+      { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "translate", v }] }),
     rotate: (deg, center, axis) => {
       const nz = (axis[0] !== 0) + (axis[1] !== 0) + (axis[2] !== 0);
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = nz <= 1
         ? T(a.rotate([axis[0] * deg, axis[1] * deg, axis[2] * deg]))   // basis axis — euler is exact; unchanged
         : T(a.transform(axisAngleMat4(axis, deg)));                    // general axis-angle
-      return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis));
+      return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis),
+        { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "rotate", deg, center, axis }] });
     },
     mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)),
     scale: (factor, center) => { // factor validated (and center defaulted) by addSugar
@@ -433,7 +545,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     toMesh: () => meshOut(m, false),
     toSTL: () => Promise.resolve(meshOut(m, true)),
     toIndexedMesh: () => indexedMeshOut(m),
-  });
+    });
+    return self;
+  };
 
   const kernel = finishKernel({
     cylinder: (rb, rt, h2, { center = false } = {}) =>
@@ -524,7 +638,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // would pin one WASM object under two entries and eviction would dispose it twice.
     union: (solids) => solids.length === 1
       ? solids[0]
-      : cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
+      : hoistBoolean("union", solids, (ops) => unionRaw(ops.map((s) => s._m)))
+        ?? cached(h("union", solids.map((s) => s._hash)), () => unionRaw(solids.map((s) => s._m))),
     // Imported geometry, registered pre-build by the framework via `_registerImport`
     // (ensureImports, Task 8). The master Manifold is kernel-lifetime (untracked —
     // see `imports` above); wrap() is free, so every call is cheap.
@@ -571,6 +686,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     sweepCache: () => cache.sweep(),
     cacheStats: () => cache.stats(),
     resetCacheStats: () => cache.resetStats(),
+    // Drain the feature-skip warnings recorded since the last drain (see
+    // buildWarnings above). jobs.js calls this per sub-part so a warning is
+    // attributed to the sub-part whose build recorded it.
+    takeBuildWarnings: () => buildWarnings.splice(0),
+    // Internal (underscore = not the contract surface): the recorder shared,
+    // backend-neutral helpers report their own degrades through.
+    _recordWarning: recordWarning,
     // Free every WASM object created since the last cleanup EXCEPT solids the cache
     // still pins (they must survive for the next build to resume from them).
     cleanup: () => { for (const o of tracked) if (!cache.isPinned(o)) o.delete?.(); tracked.length = 0; },

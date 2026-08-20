@@ -31,7 +31,7 @@ const VARIANTS = [
   { join: "int", inter: true },
 ];
 
-export function occtRoundAll(replicad, shape, r) {
+export function occtRoundAll(replicad, shape, r, warn = (msg) => console.warn(`partforge: ${msg}`)) {
   if (!Number.isFinite(r) || r <= 0) throw new Error("roundAll: r must be a finite number > 0 (r = 0 is handled as the identity by the caller)");
   const oc = replicad.getOC();
   const tryOffset = (topo, offset, v) => {
@@ -60,7 +60,7 @@ export function occtRoundAll(replicad, shape, r) {
     vol = replicad.measureVolume(shape);
   } catch (e) {
     // Can't gate what can't be measured — skip rather than run the cascade blind.
-    console.warn(`partforge: roundall-skipped: the input solid's volume could not be measured (${e?.message || e}); returning the un-rounded solid`);
+    warn(`roundall-skipped: the input solid's volume could not be measured (${e?.message || e}); returning the un-rounded solid`);
     return shape.clone(); // if the clone throws too, the caller's shape is unusable — let it propagate
   }
   let cur = shape;
@@ -85,7 +85,7 @@ export function occtRoundAll(replicad, shape, r) {
     }
     if (cur !== shape) cur.delete?.(); // superseded intermediate; never the caller's shape
     if (!next) {
-      console.warn(`partforge: roundall-skipped: offset step ${off} produced no valid solid — r=${r} is likely at/above the smallest feature size; returning the un-rounded solid`);
+      warn(`roundall-skipped: offset step ${off} produced no valid solid — r=${r} is likely at/above the smallest feature size; returning the un-rounded solid`);
       return shape.clone();
     }
     cur = next;

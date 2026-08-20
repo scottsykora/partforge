@@ -9,10 +9,17 @@ import { viewSubParts, resolveParams, buildPosed } from "./part-model.js";
 //   → [{ a, b, volume, location }] for each offending pair (empty = no collisions)
 export function assemblyOverlaps(kernel, part, view, params = {}, { tolerance = 1 } = {}) {
   const { p, d } = resolveParams(part, params);
-  const posed = viewSubParts(part, view, p).map((name) => ({
-    name,
-    solid: buildPosed(kernel, part, name, { purpose: "display", view, p, d }),
-  }));
+  // Same posed solids buildView builds, so this round is almost entirely hits off
+  // that one; only the pairwise intersects below are new. Its own oracle partition,
+  // for the reason buildView's comment gives.
+  kernel.beginSubPart?.(`oracle:overlaps:${view}`);
+  let posed;
+  try {
+    posed = viewSubParts(part, view, p).map((name) => ({
+      name,
+      solid: buildPosed(kernel, part, name, { purpose: "display", view, p, d }),
+    }));
+  } catch (e) { kernel.endSubPart?.(); throw e; } // never strand the round on a failed build
 
   const overlaps = [];
   for (let i = 0; i < posed.length; i++) {
@@ -27,6 +34,7 @@ export function assemblyOverlaps(kernel, part, view, params = {}, { tolerance = 
       }
     }
   }
-  kernel.cleanup?.(); // free the per-check WASM objects
+  kernel.endSubPart?.();
+  kernel.cleanup?.(); // free the per-check WASM objects (cached solids are pinned)
   return overlaps;
 }

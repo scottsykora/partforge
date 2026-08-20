@@ -1,4 +1,4 @@
-import { test, expect } from "vitest";
+import { test, expect, vi } from "vitest";
 import { filletProfile, profileCorners, jointTangents, liftProfile } from "../src/framework/geometry/contour-ops.js";
 import { pathProfile, circleProfile } from "../src/framework/geometry/polygon.js";
 import { booleanRegions } from "../src/framework/geometry/paper-bridge.js";
@@ -28,9 +28,13 @@ test("curved neighbor is trimmed, not replaced: remaining cubic still ends where
   expect(out.segments.some((s) => s.c1)).toBe(true);   // the bulge survives as a (trimmed) cubic
 });
 
-test("oversized radius on a curve corner throws with a computed max", () => {
-  expect(() => filletProfile(tab(), 20, { corners: { near: [20, 10] } }))
-    .toThrow(/could not fit r=20 .* max ≈ /);
+test("oversized radius on a curve corner is clamped to its bisected max", () => {
+  // The bisected ceiling used to be reported in a throw; it is now the radius
+  // the corner is actually built at.
+  const record = vi.fn();
+  const out = filletProfile(tab(), 20, { corners: { near: [20, 10] } }, record);
+  expect(out.segments.some((s) => s.via)).toBe(true);
+  expect(record.mock.calls[0][0]).toMatch(/r=20 does not fit against the curved segment — clamped to /);
 });
 
 // A short flat run (segment 1, [6,0]→[8,0]) sandwiched between two cubic bulges,
@@ -44,9 +48,11 @@ const bumps = () => pathProfile([0, 0])
   .lineTo([0, 10])
   .close();
 
-test("two curve corners over-claiming a shared line throw an overlap error", () => {
-  expect(() => filletProfile(bumps(), 2.5, { corners: { indices: [1, 2] } }))
-    .toThrow(/corners 1 and 2 overlap on segment 1 \(reduce r\)/);
+test("two curve corners over-claiming a shared line are backed off until they fit", () => {
+  const record = vi.fn();
+  const out = filletProfile(bumps(), 2.5, { corners: { indices: [1, 2] } }, record);
+  expect(out.segments.filter((s) => s.via).length).toBe(2);
+  expect(record).toHaveBeenCalled();
 });
 
 test("two curve corners that fit leave the shared line running forward, not self-intersecting", () => {

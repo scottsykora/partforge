@@ -130,6 +130,13 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const t0 = Date.now();
       const useCache = msg.cache !== false; // ?debug toggle can disable caching (cache:false)
       const meshes = [];
+      // Feature-skip warnings (a fillet/chamfer the geometry defeated — see the
+      // backends' takeBuildWarnings): drained per sub-part below so each message
+      // names the sub-part whose build recorded it, and drained-and-discarded here
+      // first so a previous job's stragglers (an oracle build, an export) cannot be
+      // misattributed to this build's first sub-part.
+      kernel.takeBuildWarnings?.();
+      const warnings = [];
       kernel.resetCacheStats?.(); // count hits/misses for just this job
       for (const [i, name] of msg.subparts.entries()) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
@@ -137,6 +144,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
           const m = posed(name, "display").toMesh({ quality: "preview" });
           meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features });
         } finally {
+          for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
           kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)
         }
@@ -152,7 +160,8 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       }
       const transfer = meshes.flatMap((m) =>
         [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
-      post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.() }, transfer);
+      post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.(),
+             ...(warnings.length ? { warnings } : {}) }, transfer);
     } else if (msg.type === "capture-generate") {
       // A private, job-correlated one-shot channel for captureView — builds a
       // (possibly non-active) view's meshes off the regen loop, so it can never
@@ -161,19 +170,23 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // isStale/superseded polling — there's nothing to supersede a one-shot.
       const useCache = msg.cache !== false;
       const meshes = [];
+      kernel.takeBuildWarnings?.(); // discard a previous job's stragglers (same as generate)
+      const warnings = [];
       for (const name of msg.subparts) {
         if (useCache) kernel.beginSubPart?.(name);
         try {
           const m = posed(name, "display").toMesh({ quality: "preview" });
           meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features });
         } finally {
+          for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
           if (useCache) kernel.endSubPart?.();
           kernel.cleanup?.();
         }
       }
       const captureTransfer = meshes.flatMap((m) =>
         [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
-      post({ type: "capture-meshes", jobId: msg.jobId, meshes }, captureTransfer);
+      post({ type: "capture-meshes", jobId: msg.jobId, meshes,
+             ...(warnings.length ? { warnings } : {}) }, captureTransfer);
     } else if (msg.type === "export-stl") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
@@ -228,10 +241,11 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // an unparameterized inspect that case IS this measurement. Seeding it in
       // (see verify.js's seeding block for the min-wall superset rule that makes
       // the reuse sound) stops the oracle from rebuilding the same geometry and
-      // re-casting the same min-wall rays a second time. Measuring `{ minWall:
-      // true }` here is what makes the seed usable by any verify run, min-wall
-      // gated or not — the result says so itself (`measuredMinWall`), so this
-      // call and the seed cannot drift apart.
+      // re-casting the same min-wall rays a second time. On a full lap the seed is
+      // usable by any verify run, min-wall gated or not, because the pass ran — and
+      // the result says so ITSELF (`measuredMinWall`/`measuredGaps`), never a claim
+      // by this caller, so the two cannot drift apart. On a quick lap the passes did
+      // not run, the stamps say false, and verify reports what it could not check.
       //
       // The view is built HERE rather than inside measure, and handed down through
       // `opts.built`, because optional match scoring needs the same meshes: one build
@@ -246,15 +260,31 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // measure built internally and its own signature default hid this. Found by a
       // live browser check, not by tests: this suite passes explicit views, and the
       // cloud's unit tests fake the worker.
+      //
+      // `checks: "quick"` is the agent's fast lap. Min wall and pair distances are
+      // the oracle's two ray-casting passes and, profiled on a 460k-triangle
+      // assembly, 79% of its cost — and they SHARE the BVH those rays need, so
+      // skipping one leaves the index build standing and saves about half of what
+      // skipping both does. Everything else is derived from the build this job
+      // already paid for and stays: triangles, bbox, volume, genus, watertight,
+      // and the assembly overlap check. verify still runs — the gates that read
+      // those facts are free — and reports what it could not evaluate rather than
+      // passing it, which is why `quick` can be honoured on a gated part instead
+      // of refused. Anything other than the literal "quick" is the full lap: an
+      // unrecognized value must never quietly buy less checking than the caller
+      // asked for.
+      const quick = msg.checks === "quick";
       const view = msg.view ?? Object.keys(part.views)[0];
       const built = buildView(kernel, part, view, msg.params ?? {});
-      const measured = measure(kernel, part, view, msg.params ?? {}, { minWall: true, built });
+      const measured = measure(kernel, part, view, msg.params ?? {},
+        { minWall: !quick, gaps: !quick, built });
       const report = {
         measure: measured,
         verify: verify(kernel, part, {
           // The defaulted view, not msg.view: the seed below was measured on it, and
           // verify's seed reuse is only sound when both name the same view.
           view,
+          quick,
           seed: { params: msg.params ?? {}, result: measured },
         }),
       };

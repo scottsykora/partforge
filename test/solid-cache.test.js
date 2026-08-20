@@ -98,3 +98,85 @@ describe("sweep (rebind-generation eviction)", () => {
     expect(disposed).toEqual(["v"]);
   });
 });
+
+describe("cross-sub-part sharing", () => {
+  it("an identical hash in another sub-part is a hit, not a recompute", () => {
+    const c = createSolidCache();
+    c.begin("row_0");
+    const v1 = c.lookup("cell", make({ id: 1 }));
+    c.end();
+
+    const second = vi.fn(() => ({ value: { id: 99 }, pin: {}, dispose: vi.fn() }));
+    c.begin("row_1");
+    const v2 = c.lookup("cell", second);
+    c.end();
+
+    expect(v2).toBe(v1);                      // the row_0 solid, reused
+    expect(second).not.toHaveBeenCalled();    // never rebuilt
+  });
+
+  it("a solid two sub-parts share survives one of them dropping it", () => {
+    const c = createSolidCache();
+    const dispose = vi.fn();
+    c.begin("row_0"); c.lookup("cell", () => ({ value: {}, pin: {}, dispose })); c.end();
+    c.begin("row_1"); c.lookup("cell", make({})); c.end();   // adopts row_0's entry
+
+    c.begin("row_0"); c.lookup("other", make({})); c.end();  // row_0 stops using "cell"
+
+    expect(dispose).not.toHaveBeenCalled();                  // row_1 still holds it
+  });
+});
+
+test("a disposed solid is dropped from the shared index, never handed out again", () => {
+  const c = createSolidCache();
+  const dispose = vi.fn();
+  const stale = { id: "freed" };
+  c.begin("row_0"); c.lookup("cell", () => ({ value: stale, pin: stale, dispose })); c.end();
+  c.begin("row_0"); c.lookup("other", make({})); c.end();  // sole holder drops it
+  expect(dispose).toHaveBeenCalledTimes(1);                // freed
+
+  const rebuilt = { id: "fresh" };
+  c.begin("row_1");
+  const v = c.lookup("cell", () => ({ value: rebuilt, pin: rebuilt, dispose: vi.fn() }));
+  c.end();
+
+  expect(v).toBe(rebuilt);   // rebuilt, NOT the disposed WASM object
+});
+
+test("sweeping an idle partition keeps a solid another partition still shares", () => {
+  const c = createSolidCache();
+  const dispose = vi.fn();
+  c.begin("gone"); c.lookup("cell", () => ({ value: {}, pin: {}, dispose })); c.end();
+  c.begin("live"); c.lookup("cell", make({})); c.end();     // adopts the same entry
+
+  for (let i = 0; i < 3; i++) {                             // "gone" goes idle and is swept
+    c.begin("live"); c.lookup("cell", make({})); c.end();
+    c.sweep();
+  }
+
+  expect(dispose).not.toHaveBeenCalled();                   // "live" still holds it
+});
+
+describe("nested brackets", () => {
+  it("an inner begin/end does not close the outer bracket", () => {
+    const c = createSolidCache();
+    c.begin("outer");
+    c.lookup("a", make({ id: "a" }));
+    c.begin("inner");          // a nested build (buildView inside an open bracket)
+    c.lookup("b", make({ id: "b" }));
+    c.end();                   // must NOT commit/close "outer"
+    const v = c.lookup("a", () => { throw new Error("outer bracket was closed"); });
+    expect(v).toEqual({ id: "a" });
+    c.end();
+  });
+
+  it("an inner round does not evict the outer round's entries", () => {
+    const c = createSolidCache();
+    const dispose = vi.fn();
+    c.begin("outer");
+    c.lookup("keep", () => ({ value: {}, pin: {}, dispose }));
+    c.begin("inner"); c.lookup("other", make({})); c.end();
+    c.end();
+    expect(dispose).not.toHaveBeenCalled();
+  });
+});

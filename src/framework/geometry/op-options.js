@@ -150,7 +150,7 @@ const checkRoundRadius = (op, name, v, max, maxDesc) => {
   if (v > max + 1e-9) throw new Error(`${op}: ${name} (${v}) must be ≤ ${maxDesc}`);
 };
 
-export function roundedBoxArgs(o) {
+export function roundedBoxArgs(o, record) {
   checkKeys("roundedBox", o, ["size", "center", "round"]);
   const size = req("roundedBox", o, "size");
   if (!Array.isArray(size) || size.length !== 3 || !size.every((v) => Number.isFinite(v) && v > 0))
@@ -174,6 +174,11 @@ export function roundedBoxArgs(o) {
         // message (and a distinct Set entry) on every rebuild, defeating the dedupe.
         const dedupeKey = `roundedBox.${key}|${round.side}`;
         const msg = `roundedBox: round.${key} ${round[key]} clamped to round.side ${round.side} (side must be 0 or ≥ rim radii; use side: 0 for a rim-only round-over)`;
+        // The console dedupe stays (a slider sweep would otherwise spam it), but
+        // the RECORDER is fed every time: warnings are drained per build, so
+        // deduping them across builds would silently drop the clamp from the
+        // second and every later build that still clamps.
+        record?.(msg);
         if (!warnedClamps.has(dedupeKey)) { warnedClamps.add(dedupeKey); console.warn(msg); }
         round[key] = round.side;
       }
