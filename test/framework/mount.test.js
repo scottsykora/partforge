@@ -1380,16 +1380,29 @@ test("hides the whole cube stack while Sketch is on", () => {
   runtime.dispose();
 });
 
-test("restores a persisted orthographic projection before any framing", () => {
+test("restores a persisted orthographic projection before the first framing", () => {
   localStorage.setItem("partforge:projection", "orthographic");
   const els = makeElements();
-  const { createWorker } = makeWorkers();
+  const { workers, createWorker } = makeWorkers();
   const runtime = mount(makePart(), { createWorker, elements: els });
   const viewer = fakeViewers.at(-1);
-  // Before the first build settles, so the first frameTo already knows.
+  // Set synchronously during mount setup, well before any worker round-trip
+  // could resolve — this alone pins "restored before the first build".
   expect(viewer.setProjection).toHaveBeenCalledWith("orthographic");
+  finishFirstBuild(workers);
+  // showAssembly's first call is the one that actually frames the camera
+  // (frame:true on the initial show — see showView in mount.js). Comparing
+  // invocation order against it is the real ordering claim: had the restore
+  // been moved to fire alongside the camera restore (inside showView, AFTER
+  // this call), this assertion would catch it. viewer.frame() (the reframe
+  // BUTTON's handler) is a different function and is never called on this
+  // path, so it can't stand in for "framing happened" — that was the flaw in
+  // the previous version of this test.
+  expect(viewer.showAssembly).toHaveBeenCalledWith(expect.anything(), { frame: true });
+  const firstFrameCall = viewer.showAssembly.mock.calls.findIndex(([, opts]) => opts?.frame);
+  expect(firstFrameCall).toBeGreaterThanOrEqual(0);
   expect(viewer.setProjection.mock.invocationCallOrder[0])
-    .toBeLessThan(viewer.frame.mock.invocationCallOrder[0] ?? Infinity);
+    .toBeLessThan(viewer.showAssembly.mock.invocationCallOrder[firstFrameCall]);
   localStorage.clear();
   runtime.dispose();
 });
