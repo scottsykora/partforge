@@ -408,10 +408,26 @@ radius yields self-intersecting tools and a wrong shape rather than a skipped fe
 so parts should clamp magnitudes against local geometry the way `filleted-box.js`
 does — good practice on both classes, mandatory on this one.
 
-**Feature-skip warnings channel** (both backends, partforge 0.69): every skipped or
-rescued feature — a mesh fillet/chamfer that returned its input, occt-repair's
-skip/bisection rescues, a `roundall-skipped` — is recorded on the kernel and drained
-with `kernel.takeBuildWarnings()`. The worker job layer (`jobs.js`) drains per
+**2-D corner-op policy** (`contour-ops.js`, partforge 0.69): `Shape2D.fillet`/`.chamfer`
+— and the free `filletProfile`/`chamferProfile` — **CLAMP** a magnitude the geometry
+cannot take rather than throwing. Two ceilings apply, and both were already computed
+for the error messages this replaces: a per-corner one (closed-form for a line-line
+corner, bisected for a curve-adjacent one) and a shared-edge one where two selected
+corners claim the same segment, resolved by scaling both until they fit — exactly in
+one step on a straight edge, geometrically on a curved one, bounded at 8 passes. Each
+clamp is reported through the warnings channel. It still throws where there is no
+feasible magnitude at all: a corner the curve solver cannot fit at any radius, a
+selector matching no corner, and a shared edge still overlapping after the pass bound.
+A conforming implementation must not silently return the requested magnitude.
+
+**Feature-skip warnings channel** (both backends, partforge 0.69): every skipped,
+clamped, or rescued feature is recorded on the kernel and drained with
+`kernel.takeBuildWarnings()`. The full set: a mesh fillet/chamfer that returned its
+input, occt-repair's skip/bisection rescues, a `roundall-skipped`, an `extrude` rim
+bevel reduced or left square, a `roundedBox` rim radius clamped to `round.side`, and
+a `Shape2D.fillet`/`.chamfer` corner clamped to what its edges can hold. Backend-neutral
+helpers reach the recorder through the kernel's internal `_recordWarning`, so there is
+one list per build rather than one per subsystem. The worker job layer (`jobs.js`) drains per
 sub-part and attaches `warnings: [{part, message}]` to the `meshes` /
 `capture-meshes` result when any were recorded, so a host can tell its user (or its
 agent) that the part on screen is missing a feature it asked for. A skipped op still

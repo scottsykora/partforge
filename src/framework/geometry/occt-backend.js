@@ -373,6 +373,7 @@ export function createOcctKernel(replicad) {
     segs: SHAPE2D_SEGS,
     extrude: (o) => kernel.extrude(o),
     revolve: (o) => kernel.revolve(o),
+    recordWarning,
   });
   // Lazy Drawing materialization for the kernel ops that need one. drawingFromRegions
   // draws a FRESH Drawing on every call, so callers never need to .clone() the result
@@ -533,6 +534,9 @@ export function createOcctKernel(replicad) {
     // Drain the feature-skip warnings recorded since the last drain — the
     // Manifold backend's channel, mirrored (see occt-repair.js for the sources).
     takeBuildWarnings: () => buildWarnings.splice(0),
+    // Internal: the recorder shared, backend-neutral helpers report through
+    // (rim-bevel, roundedBox's clamp, Shape2D corner-op clamps).
+    _recordWarning: recordWarning,
   });
   return kernel;
 }

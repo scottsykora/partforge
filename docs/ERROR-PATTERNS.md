@@ -81,11 +81,11 @@ Variant literals under this entry: `extrude: unknown bevel option`, `extrude: be
 
 - **Symptom:** `partforge: extrude bevel` warning saying the requested distance `exceeds what the profile can take — reduced to` a smaller one (or `has no valid offset for this profile — rim left square`; `hole` in place of `profile` when a hole's flare is the limit).
 - **Cause:** Offsetting the rim by the bevel distance would pinch a narrow feature (a tooth land, a thin bar, a thin web beside a hole) shut, so the bevel deterministically backs off to the largest offset the outline can take — the same geometric limit OCCT's chamfer hits, resolved in pure JS instead of kernel re-runs.
-- **Fix:** Usually nothing — the reduced bevel is the correct maximum for the geometry. To silence it, clamp the bevel parameter below the printed value or widen the narrow feature.
+- **Fix:** Usually nothing — the reduced bevel is the correct maximum for the geometry. To silence it, clamp the bevel parameter below the printed value or widen the narrow feature. Since partforge 0.69 this warning also rides the build result's `warnings` (see [feature-skipped-warning](#feature-skipped-warning)), so a host or agent is told the rim was left square rather than having to read the console.
 
 ## roundedbox-rim-clamped
 
-- **Symptom:** `roundedBox: round.top <n> clamped to round.side <m> (side must be 0 or ≥ rim radii; use side: 0 for a rim-only round-over)` in the console, and the built rim round-over is smaller than the `round.top`/`round.bottom` you passed.
+- **Symptom:** `roundedBox: round.top <n> clamped to round.side <m> (side must be 0 or ≥ rim radii; use side: 0 for a rim-only round-over)` in the console — and, since partforge 0.69, on the build result's `warnings` (see [feature-skipped-warning](#feature-skipped-warning)) — with the built rim round-over smaller than the `round.top`/`round.bottom` you passed.
 - **Cause:** the middle regime `0 < side < rim` has no closed-form corner shared by both backends, so the rim radii clamp down to `side` (the footprint-defining radius never grows silently).
 - **Fix:** either raise `round.side` to ≥ the rim radii (torus/sphere corners), or set `side: 0` exactly for a full-size rim-only round-over on sharp vertical edges.
 
@@ -421,17 +421,17 @@ growing a shape past the hole's own width.
 
 ## fillet-chamfer-radius-does-not-fit
 
-- **Symptom:** `filletProfile: corner <i> at (<x>, <y>): r=<r> does not fit; max ≈ <m>` (or `chamferProfile: … dist=<d> does not fit; max ≈ <m>`) thrown from `Shape2D.fillet`/`.chamfer` or the free `filletProfile`/`chamferProfile` functions.
+- **Symptom:** *(partforge ≥ 0.69 — a WARNING, no longer a throw.)* `filletProfile: corner <i> at (<x>, <y>): r=<r> does not fit — clamped to <m>` (or `chamferProfile: … dist=<d> does not fit — clamped to <m>`) from `Shape2D.fillet`/`.chamfer` or the free `filletProfile`/`chamferProfile` functions, and the corner comes back rounded at `<m>` rather than at what was asked for.
 - **Cause:** The requested radius/distance exceeds what the corner's adjacent edges (or curved neighbor) can hold before the tangent point runs past the segment's own end.
-- **Fix:** Use the reported `max ≈` value, or narrow `opts.corners` to skip that corner. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Editing profiles".
+- **Fix:** Usually nothing — the clamp is the designed degrade, and `<m>` is the largest magnitude that corner can hold. It throws only when a corner admits **no** valid magnitude at all. If the exact radius is functionally required (a bearing seat, a mating fit), the part must give the corner longer edges or select fewer corners; assert it in a `verify` block rather than trusting the request. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Editing profiles".
 
-Variant literal for a curve-adjacent corner (note the semicolon form, not parenthesized): `filletProfile: corner <i> at (<x>, <y>): could not fit r=<r> against the curved segment; max ≈ <m>` (`chamferProfile: … could not fit dist=<d> against the curved segment; max ≈ <m>` for chamfer).
+Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>, <y>): r=<r> does not fit against the curved segment — clamped to <m>` (`chamferProfile: … dist=<d> …` for chamfer). Its ceiling is bisected rather than closed-form, and the residual throw (`could not fit r=<r> against the curved segment; max ≈ <m>`) survives for a corner where the solver finds no valid radius at all.
 
 ## fillet-chamfer-corners-overlap
 
-- **Symptom:** `filletProfile: corners <i> and <j> overlap on segment <k> (reduce r)` (or the same from `chamferProfile`).
+- **Symptom:** *(partforge ≥ 0.69 — normally a WARNING now.)* `filletProfile: corner <i>: r=<r> overruns the edge it shares with a neighbouring corner — clamped to <m>`. The throw `filletProfile: corners <i> and <j> overlap on segment <k> (reduce r)` survives only as a backstop, when eight successive back-off passes still cannot fit the pair.
 - **Cause:** Two adjacent selected corners each claim more of the edge between them than it has — their combined setbacks exceed the segment's length (or curved arc-length span).
-- **Fix:** Reduce `r`/`dist`, or fillet/chamfer only one of the two corners (drop the other from `opts.corners`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Editing profiles".
+- **Fix:** Usually nothing — both corners are scaled down until they fit (exactly, in one step, on a straight shared edge; geometrically on a curved one). Fillet/chamfer only one of the two corners if you would rather keep the other's full radius. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Editing profiles".
 
 ## profile-query-needs-single-contour
 
@@ -598,6 +598,8 @@ between the Manifold preview and the OCCT STEP export.
 - **Symptom:** The build succeeds but its result carries a warning like `fillet 1.15 failed (<reason>) — feature skipped, edges left sharp` (mesh backend), or `fillet(2) failed (…) — feature skipped` / `chamfer 3 over-ran the geometry — reduced to …` (OCCT repair policy), and the rendered part is missing the blend.
 - **Cause:** *(partforge ≥ 0.69.)* A fillet/chamfer the geometry (or its own selector) defeats no longer fails the whole build on either backend: the op returns its input solid unchanged, everything downstream still applies, and the skip is recorded on the build result's `warnings` (`kernel.takeBuildWarnings()` / the `meshes` message's `warnings: [{part, message}]`).
 - **Fix:** Read the parenthesized reason. A bad selector (unknown plane, wrong `at` height) is a part bug — fix the selector. A geometry-defeated blend usually wants a smaller magnitude or simpler input (clamp per the entry above), or the feature deliberately left off. Treat the warning as "this feature did not land", never as a cosmetic note — the shape on screen genuinely lacks it.
+
+  The same channel carries every other degrade in a build: an `extrude` rim bevel reduced or skipped (`extrude bevel <b> …`), a `roundedBox` rim radius clamped to `round.side`, and the `Shape2D` corner-op clamps in the two entries above. A build result's `warnings` is the complete list of what the part asked for and did not get.
 
 # Hardware library
 

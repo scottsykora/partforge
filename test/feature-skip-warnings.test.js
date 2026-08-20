@@ -112,6 +112,47 @@ describe("jobs.js ships feature-skip warnings on the meshes message", () => {
   });
 });
 
+// The three degrades that already skipped or clamped but only reached the
+// console. Each is reported through the SHARED `kernel._recordWarning`, so a
+// build that quietly lost a feature is now as visible as one that skipped a
+// fillet — that invisibility was the actual bug behind feedback 746c4ac2.
+describe("shared degrades reach the same channel", () => {
+  it("an extrude bevel too big for its profile is reported, not just consoled", () => {
+    k.takeBuildWarnings();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // a 2mm bevel on a 3mm-wide profile cannot be offset — rim left square
+    k.extrude({ profile: [[0, 0], [3, 0], [3, 40], [0, 40]], h: 10, bevel: 2 });
+    warn.mockRestore();
+    const warnings = k.takeBuildWarnings();
+    expect(warnings.some((w) => /extrude bevel 2/.test(w))).toBe(true);
+  });
+
+  it("roundedBox's rim clamp is reported", () => {
+    k.takeBuildWarnings();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    k.roundedBox({ size: [20, 20, 10], round: { side: 1, top: 3 } }); // top clamps to side
+    warn.mockRestore();
+    const warnings = k.takeBuildWarnings();
+    expect(warnings.some((w) => /roundedBox: round\.top .* clamped to round\.side/.test(w))).toBe(true);
+  });
+
+  it("a Shape2D corner-op clamp is reported", () => {
+    k.takeBuildWarnings();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]).fillet(6); // max is 5
+    warn.mockRestore();
+    const warnings = k.takeBuildWarnings();
+    expect(warnings.some((w) => /filletProfile.*clamped to 5/.test(w))).toBe(true);
+  });
+
+  it("a build that degrades nothing records nothing", () => {
+    k.takeBuildWarnings();
+    k.roundedBox({ size: [20, 20, 10], round: { side: 1, top: 1 } });
+    k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]).fillet(2);
+    expect(k.takeBuildWarnings()).toEqual([]);
+  });
+});
+
 describe("occt-repair records through the injected warn", () => {
   it("safeOp reports a throwing op and returns the backup", () => {
     const warnings = [];

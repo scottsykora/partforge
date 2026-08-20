@@ -70,11 +70,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // — but a memoized wrapper above us could also swallow the retry. Keeping the
   // message per key makes "skipped before, skipped again" deterministic and free.
   const skippedOps = new Map();
+  // The one recorder. Shared, backend-neutral degrades (the extrude rim bevel in
+  // rim-bevel.js, roundedBox's rim clamp in op-options.js, Shape2D's corner-op
+  // clamps in contour-ops.js) reach it through the kernel's `_recordWarning`, so
+  // every degrade in the build lands in one drainable list rather than only in
+  // the console.
+  const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
   const skipFeature = (key, op, magnitude, err) => {
     const msg = `${op} ${magnitude} failed (${String(err?.message || err).slice(0, 200)}) — feature skipped, edges left sharp`;
     skippedOps.set(key, msg);
-    buildWarnings.push(msg);
-    console.warn(`partforge: ${msg}`);
+    recordWarning(msg);
   };
   const featureLabels = new Map(); // originalID -> label string (grows per label(); tiny)
   const oidPolicies = new Map();   // originalID -> shading policy (grows per faceted/hinted loft; tiny)
@@ -102,6 +107,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     segs,
     extrude: (o) => kernel.extrude(o),
     revolve: (o) => kernel.revolve(o),
+    recordWarning,
   });
   // Lazy CrossSection materialization, memoized through the solid cache by content
   // hash + LOD: the same shape extruded twice (or extruded and revolved) tessellates
@@ -648,6 +654,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // buildWarnings above). jobs.js calls this per sub-part so a warning is
     // attributed to the sub-part whose build recorded it.
     takeBuildWarnings: () => buildWarnings.splice(0),
+    // Internal (underscore = not the contract surface): the recorder shared,
+    // backend-neutral helpers report their own degrades through.
+    _recordWarning: recordWarning,
     // Free every WASM object created since the last cleanup EXCEPT solids the cache
     // still pins (they must survive for the next build to resume from them).
     cleanup: () => { for (const o of tracked) if (!cache.isPinned(o)) o.delete?.(); tracked.length = 0; },

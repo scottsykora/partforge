@@ -45,7 +45,11 @@ const checkProfile = (x) => {
   }
 };
 
-export function makeShape2dFactory({ segs, extrude, revolve }) {
+// `recordWarning` is the kernel's build-warning recorder (see manifold-backend /
+// occt-backend). Corner ops CLAMP a magnitude the geometry cannot take rather
+// than throwing, and a clamp that only reached the console would leave a caller
+// believing it got the radius it asked for.
+export function makeShape2dFactory({ segs, extrude, revolve, recordWarning }) {
   // Lift any accepted profile form into stored regions: a live Shape2D is deep-copied out
   // via its own toContours() (value semantics — never alias another shape's storage);
   // anything else goes through liftProfile + per-ring winding normalization.
@@ -86,8 +90,8 @@ export function makeShape2dFactory({ segs, extrude, revolve }) {
       rotate:    (deg, center) => viaOps((r) => rotateProfile(r, deg, center)),
       scale:     (f, center) => viaOps((r) => scaleProfile(r, f, center)),
       mirror:    (axis) => viaOps((r) => mirrorProfile(r, axis)),
-      fillet:    (r, opts) => viaOps((rg) => filletProfile(rg, r, opts)),
-      chamfer:   (d, opts) => viaOps((rg) => chamferProfile(rg, d, opts)),
+      fillet:    (r, opts) => viaOps((rg) => filletProfile(rg, r, opts, recordWarning)),
+      chamfer:   (d, opts) => viaOps((rg) => chamferProfile(rg, d, opts, recordWarning)),
       simplify:  (tol) => viaOps((r) => simplifyProfile(r, tol)),
       corners:   () => profileCorners(regions),
       contains:  (p) => profileContains(regions, p),
