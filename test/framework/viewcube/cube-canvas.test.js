@@ -31,6 +31,9 @@ function fakeContext() {
     save: () => calls.push(["save"]),
     restore: () => calls.push(["restore"]),
     transform: (...a) => calls.push(["transform", ...a]),
+    // The hover pass clips to a cell and clears it so the tint composites over
+    // the same (empty) backdrop on every side of a region.
+    clip: () => calls.push(["clip"]),
     set fillStyle(v) { this._fill = v; },
     get fillStyle() { return this._fill; },
     set strokeStyle(v) { this._stroke = v; },
@@ -90,6 +93,16 @@ const order = () => ctx.calls.map((c) => c[0]);
 const fills = () => ctx.calls.filter((c) => c[0] === "fill").map((c) => c[1]);
 const strokes = () => ctx.calls.filter((c) => c[0] === "stroke");
 const texts = () => ctx.calls.filter((c) => c[0] === "fillText").map((c) => c[1]);
+// Every fill paired with the polygon it painted, identified by the moveTo that
+// opened its path — the only way to tell WHICH cell a fill covered once a
+// single cell can take more than one fill (the hover base coat + tint).
+const filledPolygons = () => ctx.calls.flatMap((c, i) => {
+  if (c[0] !== "fill") return [];
+  for (let j = i - 1; j >= 0; j--) {
+    if (ctx.calls[j][0] === "moveTo") return [{ index: i, colour: c[1], p0: [ctx.calls[j][1], ctx.calls[j][2]] }];
+  }
+  return [];
+});
 
 describe("createCubeCanvas", () => {
   it("appends a canvas to the host", () => {
@@ -124,12 +137,13 @@ describe("createCubeCanvas", () => {
   it("never strokes a face polygon — cells are filled only, the grid is gone", () => {
     // Every face fill closes its path via polygon()'s closePath(); a stroke
     // is only ever legitimate on the separate (2-point, unclosed) edge and
-    // arrow-shaft paths. So the call right after any closePath must be a
-    // fill, never a stroke — for every cell, hovered or not, back or front.
+    // arrow-shaft paths. So the call right after any closePath is a fill —
+    // or, for a hovered cell, the clip that scopes its clear (see the hover
+    // pass) — but never a stroke, for any cell, hovered or not, back or front.
     handle.draw(projection, { hover: "top-front" });
     const closeIdx = ctx.calls.map((c, i) => (c[0] === "closePath" ? i : -1)).filter((i) => i >= 0);
     expect(closeIdx.length).toBeGreaterThan(0);
-    for (const i of closeIdx) expect(ctx.calls[i + 1][0]).toBe("fill");
+    for (const i of closeIdx) expect(["fill", "clip"]).toContain(ctx.calls[i + 1][0]);
   });
 
   it("strokes the subtle cube edges (untagged only) with a colour clearly quieter than the old cell outline", () => {
@@ -178,7 +192,10 @@ describe("createCubeCanvas", () => {
     const backFace = ctx.calls.findIndex((c) => c[0] === "fill" && c[1] === CUBE_PALETTE.dark.backFill);
     const backEdge = ctx.calls.findIndex((c) => c[0] === "stroke" && c[1] === CUBE_PALETTE.dark.edge);
     const hoverFill = ctx.calls.findIndex((c) => c[0] === "fill" && c[1] === CUBE_PALETTE.dark.hoverFill);
-    const frontFace = ctx.calls.findIndex((c) => c[0] === "fill" && c[1] === CUBE_PALETTE.dark.frontFill);
+    // The FIRST frontFill now belongs to the hovered cell's own base coat (see
+    // the hover pass), so the ordinary front-face pass is the first one AFTER
+    // the highlight.
+    const frontFace = ctx.calls.findIndex((c, i) => i > hoverFill && c[0] === "fill" && c[1] === CUBE_PALETTE.dark.frontFill);
     // The last (front-edge) stroke of the subtle colour, distinct from the first (back-edge) one.
     const lastEdge = ctx.calls.map((c, i) => (c[0] === "stroke" && c[1] === CUBE_PALETTE.dark.edge ? i : -1)).filter((i) => i >= 0).pop();
     const arrowHead = ctx.calls.findIndex((c) => c[0] === "fill" && c[1] === CUBE_PALETTE.dark.axisZ);
@@ -380,21 +397,63 @@ describe("createCubeCanvas", () => {
     }
 
     it("leaves no camera-facing cell unpainted while a corner is hovered", () => {
-      // The invariant that was actually violated: every cell in front gets
-      // either the highlight or the ordinary front fill, never nothing.
+      // The invariant that was actually violated: EVERY camera-facing cell
+      // gets painted, hovered or not. Asserted by polygon identity (a fill's
+      // path opens with moveTo(p0)) rather than by counting colours, because a
+      // hovered cell now takes two fills — its uniform base coat and the tint.
       handle.draw(real, { hover: "bottom-front-right" });
-      const hoverFills = fills().filter((c) => c === CUBE_PALETTE.dark.hoverFill).length;
-      const frontFills = fills().filter((c) => c === CUBE_PALETTE.dark.frontFill).length;
-      expect(hoverFills + frontFills).toBe(real.front.length);
+      const painted = new Set(filledPolygons().map(({ p0 }) => p0.join()));
+      for (const cell of real.front) expect(painted).toContain(cell.points[0].join());
+    });
+
+    it("clears each hovered cell and gives it one uniform base coat before the tint", () => {
+      // This is what keeps a TRANSLUCENT highlight uniform. At alpha 0.30 the
+      // tint takes the colour of whatever is under each cell, and a corner's
+      // three cells do not share a backdrop: one may have a back-face cell
+      // (backFill) behind it, another empty canvas, another a back-phase axis
+      // arrow. Clip + clear + one coat of frontFill makes the stack under the
+      // tint identical for all of them — which is what the (rejected) opaque
+      // fill used to achieve by brute force.
+      handle.draw(real, { hover: "bottom-front-right" });
+      // draw() opens with one full-canvas clearRect; the hover pass adds one
+      // clipped clear per hovered cell.
+      expect(ctx.calls.filter((c) => c[0] === "clearRect").length).toBe(1 + 3);
+      expect(ctx.calls.filter((c) => c[0] === "clip").length).toBe(3);
+      const clipIdx = ctx.calls.map((c, i) => (c[0] === "clip" ? i : -1)).filter((i) => i >= 0);
+      const clearIdx = ctx.calls.map((c, i) => (c[0] === "clearRect" ? i : -1)).filter((i) => i >= 0).slice(1);
+      const hoverIdx = ctx.calls
+        .map((c, i) => (c[0] === "fill" && c[1] === CUBE_PALETTE.dark.hoverFill ? i : -1))
+        .filter((i) => i >= 0);
+      const baseIdx = ctx.calls
+        .map((c, i) => (c[0] === "fill" && c[1] === CUBE_PALETTE.dark.frontFill ? i : -1))
+        .filter((i) => i >= 0);
+      expect(clearIdx.length).toBe(3);
+      expect(hoverIdx.length).toBe(3);
+      // clip -> clear -> base coat -> tint, per cell, and on the SAME polygon.
+      for (let i = 0; i < 3; i++) {
+        expect(clipIdx[i]).toBeLessThan(clearIdx[i]);
+        expect(clearIdx[i]).toBeLessThan(baseIdx[i]);
+        expect(baseIdx[i]).toBeLessThan(hoverIdx[i]);
+      }
+      const polys = filledPolygons();
+      for (const idx of hoverIdx) {
+        const tint = polys.find((f) => f.index === idx);
+        const base = polys.filter((f) => f.index < idx && f.colour === CUBE_PALETTE.dark.frontFill).pop();
+        expect(base.p0).toEqual(tint.p0);
+      }
+      // And the whole pass still happens BEFORE the ordinary front-face pass —
+      // step 4 skips hovered cells, so a highlight drawn later would be
+      // painting over nothing and a clear drawn later would erase the cube.
+      // The hovered cells' own base coats are the first 3 frontFill fills.
+      expect(Math.max(...hoverIdx)).toBeLessThan(baseIdx[3]);
     });
   });
 
-  it("uses an OPAQUE highlight colour, so the shade cannot vary with what is behind a cell", () => {
-    // Every other fill in the palette is translucent by design (the cube is a
-    // ghost). The highlight cannot be: a hovered cell with a back-face cell
-    // behind it would composite over backFill while one with empty space
-    // behind it composites over nothing, and the two read as different blues —
-    // which is the second half of the reported "one side is much lighter".
+  it("uses a TRANSLUCENT highlight — alpha 0.30 in both themes — over a cleared cell", () => {
+    // The uniformity guarantee does not come from opacity (the highlight was
+    // briefly opaque and read as far too strong a blue); it comes from the
+    // clip-and-clear above, which gives every hovered cell the same backdrop.
+    // So the tint can stay in keeping with the ghost cube.
     const alphaOf = (colour) => {
       const m = /^rgba?\(([^)]+)\)$/.exec(colour.trim());
       if (!m) return 1; // a hex colour is opaque
@@ -402,11 +461,11 @@ describe("createCubeCanvas", () => {
       return parts.length < 4 ? 1 : Number(parts[3]);
     };
     for (const mode of ["dark", "light"]) {
-      expect(alphaOf(CUBE_PALETTE[mode].hoverFill)).toBe(1);
-      // The ghost cube's own fills stay translucent — this is not a licence to
-      // make the whole widget opaque.
-      expect(alphaOf(CUBE_PALETTE[mode].frontFill)).toBeLessThan(1);
-      expect(alphaOf(CUBE_PALETTE[mode].backFill)).toBeLessThan(1);
+      expect(alphaOf(CUBE_PALETTE[mode].hoverFill)).toBe(0.3);
+      // The ghost cube's own fills stay quieter still, so the highlight reads
+      // as a highlight.
+      expect(alphaOf(CUBE_PALETTE[mode].frontFill)).toBeLessThan(0.3);
+      expect(alphaOf(CUBE_PALETTE[mode].backFill)).toBeLessThan(0.3);
     }
   });
 

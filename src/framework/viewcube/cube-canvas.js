@@ -27,26 +27,30 @@ export const CUBE_SIZE_NARROW = 101;
 // Locked by the look-and-feel spike (plan Task 4); the `edge` colour was
 // retuned in the 2026-08-19 reshape (see CUBE_RENDER's comment below).
 //
-// `hoverFill` is the ONE opaque entry, and deliberately so (2026-08-20). Every
-// other fill here is translucent because the cube is a ghost — but a
-// translucent HIGHLIGHT cannot keep a promise the highlight has to keep. A
-// hovered corner shows three cells at once, and whether each one has a
-// back-face cell behind it or empty space depends on the rotation, so a
-// translucent blue composites over `backFill` on some of them and over nothing
-// on others: three visibly different blues for one region. The hue is exactly
-// the old translucent colour at full alpha, so nothing but the compositing
-// changed.
+// `hoverFill` has to keep a promise the other fills do not: a hovered corner
+// shows THREE cells at once and all of them must read as one shade (2026-08-20
+// — "one side is much lighter"). Translucent paint alone cannot promise that,
+// because whether a given cell has a back-face cell (`backFill`), a back-phase
+// axis arrow, or bare canvas behind it depends on the rotation, and the tint
+// takes the colour of whatever that is.
 //
-// The trade-off, written down rather than left to be rediscovered: an opaque
-// highlight also hides any axis arrow drawn in the "behind" depth phase where
-// the two overlap (that arrow used to read faintly through the highlight).
-// That is accepted — a selection highlight that reads solidly is worth more
-// than an arrow showing through it — and it only affects the hovered cells.
+// Opacity would force it, and was tried — at full alpha the highlight read as
+// far too strong a blue against the ghost cube. So the uniformity comes from
+// the BACKDROP instead: draw() clips to each hovered cell, clears it, and lays
+// down one coat of `frontFill` before the tint. Every side of a region then
+// composites over exactly the same two layers, whatever the rotation put
+// behind it, and the tint itself stays quiet (alpha 0.30).
+//
+// The trade-off, written down rather than left to be rediscovered: the cleared
+// cells no longer show the cube's back geometry or a back-phase axis arrow
+// through them. That is accepted — the highlight reads as a clean tinted patch,
+// which is exactly what makes it uniform — and it affects only the 1-3 cells
+// under the cursor.
 export const CUBE_PALETTE = {
   dark: {
     backFill: "rgba(124, 143, 176, 0.10)",
     frontFill: "rgba(159, 180, 204, 0.22)",
-    hoverFill: "#7aa2f7", // OPAQUE on purpose — see the palette's note below
+    hoverFill: "rgba(122, 162, 247, 0.30)",
     edge: "rgba(190, 205, 226, 0.25)",
     faceLabel: "rgba(214, 226, 255, 0.65)",
     axisX: "#e06c75",
@@ -57,7 +61,7 @@ export const CUBE_PALETTE = {
   light: {
     backFill: "rgba(70, 88, 118, 0.08)",
     frontFill: "rgba(90, 108, 138, 0.18)",
-    hoverFill: "#2b6cd6", // OPAQUE on purpose — see the palette's note below
+    hoverFill: "rgba(43, 108, 214, 0.30)",
     edge: "rgba(56, 72, 98, 0.25)",
     faceLabel: "rgba(24, 42, 78, 0.65)",
     axisX: "#c0392b",
@@ -310,10 +314,32 @@ export function createCubeCanvas(host, {
     // A face id owns 1 cell, an edge id 2, a corner id 3 (see cube-geom.js),
     // and step 4 below skips all of them, so resolving a single cell here left
     // an edge's second cell and a corner's other two unpainted altogether.
+    //
+    // Each cell is CLEARED (clipped to its own polygon) before it is tinted, so
+    // the translucent highlight composites over identical pixels on every side
+    // of the region rather than over whatever back-face cell or back-phase
+    // arrow happens to lie behind that one — see CUBE_PALETTE's note. This must
+    // stay here, before the front faces: step 4 skips hovered cells, so a clear
+    // any later would erase the cube rather than prepare the highlight.
     if (hover) {
-      ctx.fillStyle = p.hoverFill;
       for (const cell of projected.front) {
         if (cell.id !== hover) continue;
+        ctx.save();
+        polygon(cell.points);
+        ctx.clip();
+        ctx.clearRect(0, 0, size, size); // clipped: only this cell's pixels
+        ctx.restore();
+        // Then ONE uniform base coat before the tint: the cell's own ordinary
+        // front fill. Clearing alone would leave the tint sitting on bare
+        // canvas, and on the dark theme that composites DARKER than the cube
+        // around it — the highlight read as a hole punched in the face rather
+        // than as a highlight. This keeps the backdrop identical on every side
+        // of the region (which is the whole point) while the hovered cells
+        // still read as lit.
+        ctx.fillStyle = p.frontFill;
+        polygon(cell.points);
+        ctx.fill();
+        ctx.fillStyle = p.hoverFill;
         polygon(cell.points);
         ctx.fill();
       }
