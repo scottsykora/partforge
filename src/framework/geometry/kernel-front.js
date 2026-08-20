@@ -59,7 +59,10 @@ export function finishKernel(k) {
     const raw = k[op];
     if (!raw) continue;
     k[op] = (...a) => {
-      const pos = a.length === 1 && isPlainOptions(a[0]) ? toArgs(a[0]) : a;
+      // toArgs gets the kernel's warning recorder: a couple of specs (roundedBox's
+      // rim clamp) DEGRADE during normalization rather than throwing, and that
+      // degrade has to reach the build's warning list, not just the console.
+      const pos = a.length === 1 && isPlainOptions(a[0]) ? toArgs(a[0], k._recordWarning) : a;
       check?.(...pos);
       return raw(...pos);
     };

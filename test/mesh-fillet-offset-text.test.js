@@ -53,4 +53,29 @@ describe("planar top fillet on an offset text outline", () => {
     expect(removed).toBeGreaterThan(0);
     expect(removed).toBeLessThan(20);
   }, 120_000);
+
+  // The italic variant (feedback 746c4ac2): the part shears every glyph region's
+  // points, re-unions them, and offsets the styled word by a wider 8.5 mm border,
+  // then fillets the top rim at 1.15 mm. The offset half of this is pinned in
+  // offset-text-italic.test.js (the fold-clearance fix); this pins the fillet on
+  // top of it — the user's actual saved defaults, end to end.
+  it("builds the italic-sheared variant at the part's saved defaults", () => {
+    let p = k.text2d("Scott", { size: 40, align: "center", valign: "middle" });
+    const regions = p.toRegions();
+    let sheared = null;
+    for (const region of regions) {
+      const outer = region.outer.map((pt) => [pt[0] + 0.2126 * pt[1], pt[1]]);
+      const holes = region.holes.map((h) => h.map((pt) => [pt[0] + 0.2126 * pt[1], pt[1]]));
+      const s = k.shape2d({ outer, holes });
+      sheared = sheared ? sheared.union(s) : s;
+    }
+    const profile = sheared.scale(1.035).offset(8.5, { corners: "round", segs: 32 });
+    const base = profile.extrude({ h: 2.5 });
+    const filleted = filletRegions(profile, 2.5, 1.15); // must not throw
+    const removed = base.volume() - filleted.volume();
+    expect(removed).toBeGreaterThan(0);
+    // (1 − π/4)·1.15² ≈ 0.284 mm³ per mm of convex rim over a few hundred mm of
+    // outline — anything past ~200 mm³ means a tool gouged the part
+    expect(removed).toBeLessThan(200);
+  }, 120_000);
 });

@@ -396,14 +396,43 @@ garbage). A failing chamfer instead binary-searches the largest valid distance. 
 conforming B-rep kernel must degrade this way — a fillet request must never brick the
 build, and authors should expect all-or-nothing filleting per call, not per edge.
 
-**Mesh degrade policy** (`mesh-fillet.js`): the mesh class degrades by *rerouting*, not
-skipping — an unsupported edge class or an empty selection throws
-`KernelCapabilityError` and the framework retries the build on the B-rep kernel, which
-then applies its own repair policy. One asymmetry is deliberate: the mesh class does
-**not** validate radius feasibility (an oversized radius yields self-intersecting tools
-and a wrong shape rather than a skipped feature), so parts should clamp magnitudes
-against local geometry the way `filleted-box.js` does — good practice on both classes,
-mandatory on this one.
+**Mesh degrade policy** (`mesh-fillet.js` + `manifold-backend.js`): an unsupported edge
+class or a function selector *reroutes* — it throws `KernelCapabilityError` and the
+framework retries the build on the B-rep kernel, which then applies its own repair
+policy. Every other fillet/chamfer failure on the mesh class (a geometry-defeated
+blend, a selector naming an unknown plane, an empty selection error from the machinery)
+now **skips like the B-rep policy**: the op returns its input solid unchanged and
+records a feature-skip warning instead of failing the build. One asymmetry is
+deliberate: the mesh class does **not** validate radius feasibility (an oversized
+radius yields self-intersecting tools and a wrong shape rather than a skipped feature),
+so parts should clamp magnitudes against local geometry the way `filleted-box.js`
+does — good practice on both classes, mandatory on this one.
+
+**2-D corner-op policy** (`contour-ops.js`, partforge 0.69): `Shape2D.fillet`/`.chamfer`
+— and the free `filletProfile`/`chamferProfile` — **CLAMP** a magnitude the geometry
+cannot take rather than throwing. Two ceilings apply, and both were already computed
+for the error messages this replaces: a per-corner one (closed-form for a line-line
+corner, bisected for a curve-adjacent one) and a shared-edge one where two selected
+corners claim the same segment, resolved by scaling both until they fit — exactly in
+one step on a straight edge, geometrically on a curved one, bounded at 8 passes. Each
+clamp is reported through the warnings channel. It still throws where there is no
+feasible magnitude at all: a corner the curve solver cannot fit at any radius, a
+selector matching no corner, and a shared edge still overlapping after the pass bound.
+A conforming implementation must not silently return the requested magnitude.
+
+**Feature-skip warnings channel** (both backends, partforge 0.69): every skipped,
+clamped, or rescued feature is recorded on the kernel and drained with
+`kernel.takeBuildWarnings()`. The full set: a mesh fillet/chamfer that returned its
+input, occt-repair's skip/bisection rescues, a `roundall-skipped`, an `extrude` rim
+bevel reduced or left square, a `roundedBox` rim radius clamped to `round.side`, and
+a `Shape2D.fillet`/`.chamfer` corner clamped to what its edges can hold. Backend-neutral
+helpers reach the recorder through the kernel's internal `_recordWarning`, so there is
+one list per build rather than one per subsystem. The worker job layer (`jobs.js`) drains per
+sub-part and attaches `warnings: [{part, message}]` to the `meshes` /
+`capture-meshes` result when any were recorded, so a host can tell its user (or its
+agent) that the part on screen is missing a feature it asked for. A skipped op still
+console.warns as before; the channel is additive. Hosts that ignore the field see
+exactly the old behavior.
 
 ## Shape2D (2-D booleans)
 
@@ -530,13 +559,14 @@ delta.
 
 **Measured failure surface.** The committed instrument is
 `node scripts/offset-rates.mjs`, over 600 deterministic seeded shapes plus six glyph cases,
-20 deltas, and three corner styles (36,090 attempts). In partforge 0.60 it reports:
+20 deltas, and three corner styles (36,090 attempts). In partforge 0.68.1 (after the
+fold-aware clearance fix in the winding classifier) it reports:
 
-- before the retry ladder: round 1/12,030 (0.008%), chamfer 2/12,030 (0.017%), sharp
-  4/12,030 (0.033%);
+- before the retry ladder: round 0/12,030, chamfer 1/12,030 (0.008%), sharp
+  1/12,030 (0.008%);
 - after the retry ladder: zero chain-incomplete failures for all three styles;
-- seven oracle-checked rescues, with median area error 0.0972%, worst 1.663%
-  (2.2373 mm²), zero region-count losses, and zero complete arc losses.
+- two oracle-checked rescues, with median area error 0.0727%, worst 0.073%
+  (0.0720 mm²), zero region-count losses, and zero complete arc losses.
 
 The ladder remains a numerical escape hatch: it perturbs delta by 1e-9, coarsens crossing
 clustering, then tries polyline outlines. A future case that reaches a coarse clustering or

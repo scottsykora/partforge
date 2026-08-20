@@ -1209,6 +1209,14 @@ Three rules worth internalizing before reaching for any of this:
   paper.js, which is cubic-only — an arc entering a boolean returns as a cubic
   approximation (relative error ~1e-6). `union`/`cut` first, `fillet` last keeps the
   rounded corners true circular arcs all the way to STEP export.
+- **A radius that doesn't fit is CLAMPED, not refused.** `fillet`/`chamfer` reduce any
+  corner whose magnitude its edges cannot hold down to the largest that they can, and
+  report each clamp on the build's warnings — so a slider that used to kill the part at
+  r=3.1 now rounds at whatever fits. Two ceilings apply: the corner's own edges, and
+  the edge it shares with a neighbouring selected corner (both back off together there).
+  It still throws when there is no feasible magnitude at all. **If an exact radius is
+  functionally required** — a bearing seat, a mating fit — do not trust the request:
+  clamp it yourself from the geometry that limits it, or assert it in `verify`.
 - **Run `validateProfile` after mutations.** `fillet`/`chamfer` check only their own
   corner's local fit — not whether the result self-intersects globally (a large radius
   on a narrow profile can produce arcs that cross the far side). `validateProfile`
@@ -2212,6 +2220,17 @@ routes to OCCT.)
 radius self-intersects its cutters and yields a wrong shape rather than a skipped
 feature (OCCT skips instead). Clamp magnitudes against local geometry the way
 `filleted-box.js` does: `Math.min(p.fillet, halfWidth - 0.5, p.h - 0.5)`.
+
+**A defeated fillet/chamfer skips, and the build reports it.** On both backends a
+fillet or chamfer the geometry defeats does **not** fail the build: the op returns its
+input solid unchanged (edges left sharp) and the build result carries a feature-skip
+warning naming the op, its magnitude, and the reason. The same channel carries every
+other degrade — an `extrude` rim bevel reduced or left square, a `roundedBox` rim
+clamped to `round.side`, a `Shape2D` corner rounded smaller than asked — so the part on screen is real,
+minus that one feature, with everything downstream of it still applied. When a build
+answer includes such a warning, treat it as a failed feature, not a success: say so,
+and either adjust the geometry/radius and retry or leave the feature off deliberately.
+Do not conclude a fillet landed just because the build succeeded.
 
 **Preview routing is per sub-part.** Each sub-part is probed and routed independently, and
 a mixed part's regen fans out to both workers in parallel — a shelled body pays for OCCT

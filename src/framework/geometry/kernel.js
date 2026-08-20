@@ -31,6 +31,12 @@ export const KERNEL_OPS = [
 // `?.`, so a third-party backend may simply omit them.
 export const KERNEL_OPTIONAL_OPS = [
   "beginSubPart", "endSubPart", "sweepCache", "cacheStats", "resetCacheStats", "cleanup",
+  // Drains the feature-skip warnings recorded since the last drain — a fillet or
+  // chamfer the geometry defeated and the backend skipped rather than failed the
+  // build over. Both backends implement it; a host that never calls it sees the
+  // pre-0.69 behavior (console.warn only). See KERNEL-CONTRACT.md § "Feature-skip
+  // warnings channel".
+  "takeBuildWarnings",
 ];
 
 // Ops every Solid must implement (including the sugar addSugar() attaches).
@@ -153,4 +159,5 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {() => {hits:number,misses:number}} [cacheStats]
  * @property {() => void} [resetCacheStats]
  * @property {() => void} [cleanup]   free per-job WASM objects (Manifold backend); call after each job
+ * @property {() => string[]} [takeBuildWarnings]   drain feature-skip warnings (a fillet/chamfer/roundAll the backend skipped rather than failing the build over); drain per sub-part to attribute each message
  */
