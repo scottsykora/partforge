@@ -1500,3 +1500,76 @@ test("setHidden does not resurrect the bar for a view that declares no animation
   ctl.detach();
   container.remove();
 });
+
+// Task 2 (sdd 2026-08-20-sketch-composer-slot-and-mirroring): mount.js wires a
+// second annotateMode.onModeChange subscription — registered after animCtl is
+// assigned — that stops playback before hiding the bar for Sketch, and does
+// not resume it on the way out. mount.test.js has no helper that exposes
+// animCtl directly (no `mountForTest()`; its mount fixtures return only the
+// public runtime), so per the task brief this pins the WIRING'S SHAPE here —
+// the callback body copied verbatim from mount.js, driven by a stub
+// annotateMode — rather than exercising mount()'s actual registration
+// end-to-end. It is a weaker test than a real mount-level one: a real ctl
+// (not a stub) receives the calls, so notifyUserEdit's pause and setHidden's
+// display/--pf-anim-clear effects are real, but nothing here would catch a
+// regression if mount.js's own onModeChange registration were deleted or
+// reordered — only a change to this copied callback body would. See the task
+// report for the full reasoning.
+test("sketch wiring stops playback before hiding the bar, and does not resume it on the way out", async () => {
+  const { container, ctl } = setup(); handles.push(ctl);
+  const bar = container.querySelector(".pf-anim-bar");
+  const rect = (o) => () => ({ left: 0, right: 800, width: 800, height: 0, ...o });
+  container.getBoundingClientRect = rect({ top: 0, bottom: 600, height: 600 });
+  bar.getBoundingClientRect = rect({ top: 540, bottom: 580, left: 200, right: 600, width: 400, height: 40 });
+
+  ctl.runtime.play();
+  ctl.__viewer.frame(0.1); // into the animation, so "stop" has something to stop
+  expect(ctl.runtime.state().status).toBe("playing");
+
+  const notifySpy = vi.spyOn(ctl, "notifyUserEdit");
+  const hideSpy = vi.spyOn(ctl, "setHidden");
+
+  // Stand-in for annotateMode's isEnabled()/onModeChange(cb) surface — mount.js
+  // reads nothing else off it in this wiring.
+  let enabled = false;
+  let cb = null;
+  const annotateMode = {
+    isEnabled: () => enabled,
+    onModeChange: (fn) => { cb = fn; return () => { cb = null; }; },
+  };
+
+  // mount.js, verbatim (src/framework/mount.js, after `animCtl` is assigned):
+  //   if (annotateMode && animCtl) {
+  //     cleanup.defer(annotateMode.onModeChange(() => {
+  //       const on = annotateMode.isEnabled();
+  //       if (on) animCtl.notifyUserEdit();
+  //       animCtl.setHidden(on);
+  //     }));
+  //   }
+  annotateMode.onModeChange(() => {
+    const on = annotateMode.isEnabled();
+    if (on) ctl.notifyUserEdit();
+    ctl.setHidden(on);
+  });
+
+  enabled = true;
+  cb();
+  await new Promise((r) => requestAnimationFrame(r));
+
+  expect(notifySpy).toHaveBeenCalledTimes(1);
+  expect(hideSpy).toHaveBeenCalledWith(true);
+  // Order: stop THEN hide.
+  expect(notifySpy.mock.invocationCallOrder[0]).toBeLessThan(hideSpy.mock.invocationCallOrder[0]);
+  expect(ctl.runtime.state().status).toBe("paused"); // playback actually stopped
+  expect(bar.style.display).toBe("none");
+  expect(container.style.getPropertyValue("--pf-anim-clear")).toBe("0px");
+
+  enabled = false;
+  cb();
+  await new Promise((r) => requestAnimationFrame(r));
+
+  expect(notifySpy).toHaveBeenCalledTimes(1); // leaving does not touch playback at all
+  expect(hideSpy).toHaveBeenCalledWith(false);
+  expect(bar.style.display).toBe(""); // bar's slot is back
+  expect(ctl.runtime.state().status).toBe("paused"); // and playback did NOT resume
+});

@@ -100,7 +100,10 @@ the installed package, so let the publish finish before bumping the dep there.
   annotation mode: freehand ink on a transparent canvas over the frozen view,
   sent to the host via `onAnnotationSend` - `ink.js` is the pure stroke model,
   `ink-canvas.js` the overlay renderer, `annotate-mode.js` the orchestrator,
-  `annotate-controls.js` the viewbar chrome), `viewcube/` (the orientation
+  `annotate-controls.js` the viewbar chrome; sketch mode stops animation
+  playback and hides the transport bar (`animation-controls.js`'s
+  `setHidden`), which is what frees the bottom-centre slot for a host-drawn
+  composer - playback does not resume on exit), `viewcube/` (the orientation
   cube: a ghost cube whose 26 regions - 6 faces, 12 edges, 8 corners - tween
   the camera to canonical angles, with model-frame X/Y/Z arrows drawn in
   front of it and a perspective/orthographic toggle beneath -
