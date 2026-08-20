@@ -239,34 +239,44 @@
    56px fallback is the standard viewbar's 12px bottom + 44px height, so the
    stack still sits right if the observer never fires.
 
-   The 2026-08-20 revision moved the projection toggle from its own pill card
-   BELOW the cube to a bare circle beside it, so the stack is now a row rather
-   than a column. `row-reverse` (not `row` + reordering the DOM) puts the
-   button to the LEFT while keeping the cube first in source order — the
-   viewcube-controls.test.js structural assertions, and viewcube-mode.js's own
-   append-to-host call, both predate this and still expect the cube to be the
-   stack's first child. `align-items: flex-end` gives the two a shared bottom
-   edge, the requested baseline.
+   The projection toggle has moved twice. Through 2026-08-19 it sat in its own
+   `.pf-viewcube-pill` card BELOW the cube, making the stack a column. Earlier
+   on 2026-08-20 it became a bare circle BESIDE the cube, making the stack a
+   `row-reverse` flex row (`canvas + gap + button`, 167px wide at the full
+   135px cube). It now sits OVER the cube's bottom-right corner instead:
+   absolutely positioned within the stack, right edge on the stack's right edge
+   and bottom edge on its bottom baseline, so the stack's width collapses back
+   to the canvas alone (135px, or 101 below the narrow breakpoint).
 
-   The stack itself is pointer-transparent: with the button now a sibling
-   beside the canvas rather than a nested pill below it, the gap between them
-   is the only dead zone left (small — the button's own footprint opts back
-   in, and it no longer overlaps the canvas at all), and it is deliberately
-   pass-through so an orbit/pan gesture started there still reaches the model
-   behind the stack. */
+   That is also what satisfies "aligned with the right of the toolbar" without a
+   second offset: `.pf-float-viewbar` above is `right: 12px` too, so making the
+   button's right edge the STACK's right edge lines it up with the viewbar's by
+   construction — and it keeps doing so if that margin is ever retuned.
+
+   The button is a later sibling than the cube's wrapper, so it paints over the
+   canvas with no z-index of its own; 24px over the corner cell — the least
+   informative part of the drawing — is small enough not to hide anything worth
+   clicking, and the canvas keeps receiving pointer events everywhere else.
+
+   The stack itself is pointer-transparent. With the button back inside the
+   canvas's footprint there is no dead gap left at all: the stack's box IS the
+   canvas's box, and both the canvas and the button opt back in below. The
+   declaration stays because the stack's own box is still an element over the
+   viewer, and a stray hit on it (its padding-free edges, or a future child
+   before it opts in) should reach the model behind rather than be swallowed. */
 .pf-viewcube-stack {
   position: absolute;
   right: 12px;
   bottom: calc(var(--pf-viewbar-clear, 56px) + 8px);
   z-index: 15;
   display: flex;
-  flex-direction: row-reverse;
-  align-items: flex-end;
-  gap: 8px;
   pointer-events: none;
 }
 .pf-viewcube-stack[hidden] { display: none; }
 .pf-viewcube-canvas, .pf-viewcube-toggle { pointer-events: auto; }
+/* Over the cube's bottom-right corner. Absolute against the stack, which is
+   itself absolute and so already the containing block. */
+.pf-viewcube-toggle { position: absolute; right: 0; bottom: 0; }
 
 /* The keyboard surface: six per-view buttons standing in for the DOM focus a
    canvas cannot give us. Visually hidden rather than display:none — the latter
@@ -281,8 +291,10 @@
    there is no clipping ancestor to get out of.
 
    The wrapper keeps only `position: absolute`, which takes it out of the
-   stack's flex flow: as a flex item it would earn the column's 6px gap and
-   push the cube and pill up by that much, even at zero height. */
+   stack's flex flow. That mattered when the stack had a gap (a zero-height
+   flex item still earned it, pushing the cube out of place); it still matters
+   now that it does not, because an in-flow second item would widen the stack
+   past the canvas — and the stack's width is what the crowding rule reads. */
 .pf-viewcube-key { position: absolute; }
 .pf-viewcube-key button {
   position: absolute;

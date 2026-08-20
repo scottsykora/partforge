@@ -1,5 +1,5 @@
-// The view cube's chrome: the bottom-right stack (cube with the projection
-// toggle beside it, bottom-aligned), and the visually-hidden per-view buttons
+// The view cube's chrome: the bottom-right stack (the cube, with the projection
+// toggle over its bottom-right corner), and the visually-hidden per-view buttons
 // that stand in for the DOM focus a canvas cannot give us. Generated, not
 // declared — no part's HTML carries this, and partforge-cloud's scaffold does
 // not either (the mobile-tabs.js and animation-controls.js precedent).
@@ -13,6 +13,14 @@
 // circle beside the cube instead (see chrome.css/app.css's viewcube sections),
 // so the pill card — which existed only to give a single button somewhere to
 // sit — is gone; the button is now a direct child of the stack.
+//
+// A same-day follow-up took it out of the stack's flex flow entirely and laid
+// it OVER the cube's bottom-right corner. The DOM is unchanged (still a direct
+// child, still after the cube's wrapper, which is what puts it on top); the
+// visible consequence is that the stack is now exactly as wide as the canvas
+// rather than `canvas + gap + button`, so the size it publishes below — and
+// therefore the crowding decision that reads it — went from 167px to 135
+// (101 below the rail's narrow breakpoint).
 import { attachButtonTooltips } from "../tooltip.js";
 import { runCleanupSteps } from "../teardown.js";
 import { createViewcubeMode } from "./viewcube-mode.js";

@@ -356,7 +356,13 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    state (the only signal you are in orthographic, since there is no chrome
    left to carry it) gets both an accent-tinted fill AND an accent icon
    colour, doubling the signal since a transparent button has less surface to
-   read at a glance than the old solid pill button did. */
+   read at a glance than the old solid pill button did.
+
+   A same-day follow-up moved it again, from beside the cube to OVER its
+   bottom-right corner (placement in chrome.css, as ever). Nothing here
+   changed: a bare transparent circle was already what made that legal — it
+   has no card edge to cut across the drawing underneath it, so overlapping
+   costs the cube nothing but the 24px it covers. */
 .pf-viewcube-canvas {
   display: block;
   touch-action: none;
