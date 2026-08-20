@@ -106,11 +106,14 @@ the installed package, so let the publish finish before bumping the dep there.
   front of it and a perspective/orthographic toggle beneath -
   `cube-geom.js` is the pure projection/hit leaf, `cube-canvas.js` the 2D
   renderer, `viewcube-mode.js` the orchestrator, `viewcube-controls.js` the
-  stack chrome). `camera-orbit.js` and `projection.js` are pure leaves the
-  viewer imports - spherical orbit math for external drag sources, and the
-  perspective/orthographic framing pair, and `app.css` /
+  stack chrome), and `app.css` /
   `chrome.css` (the shell/rail layout - `rail.js` binds
   it to the DOM, `rail-state.js` is its pure drag/collapse state machine).
+  `camera-tween.js`, `camera-orbit.js` and `projection.js` are further pure
+  leaves the viewer imports - eased spherical interpolation between camera
+  poses (view switches, animation camera cues, viewcube clicks), spherical
+  orbit math for external drag sources, and the perspective/orthographic
+  framing pair, respectively.
   Below `RAIL_NARROW_BREAKPOINT` (720px) the rail cannot sit beside the viewer:
   the shell shows exactly ONE pane, keyed on `data-pf-pane`, and `mobile-tabs.js`
   draws the bottom tab bar that picks it. A host that wants to draw its own bar
