@@ -4,7 +4,7 @@
 // two things that decide whether a ghost cube with arrows in front of it reads
 // correctly (the ink-canvas.js / dim3-scene paintLabel precedent).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createCubeCanvas, CUBE_PALETTE, CUBE_RENDER } from "../../../src/framework/viewcube/cube-canvas.js";
+import { createCubeCanvas, faceLabelBasis, CUBE_PALETTE, CUBE_RENDER } from "../../../src/framework/viewcube/cube-canvas.js";
 import { projectCube } from "../../../src/framework/viewcube/cube-geom.js";
 
 function fakeContext() {
@@ -50,11 +50,19 @@ function fakeContext() {
 // behaviour is exercised alongside the normal front-of-everything case. Each
 // arrow is now just `{ axis, from, tip, depth }` — the head and label are
 // screen-space constructs the renderer builds itself (see cube-canvas.js).
+//
+// The centre cells' corners are wound the way a REAL projection winds them —
+// p0 -> p1 along the face's u axis, p0 -> p3 along its v axis, which for these
+// two faces is model +Z and so points UP the screen (negative y) for any
+// upright camera. Since the 2026-08-20 label fix the winding is load-bearing:
+// the label's up comes from the declared model-space up projected along that v
+// edge, so a physically impossible winding describes an upside-down camera and
+// would (correctly) get an upside-down label.
 function makeProjection() {
   return {
-    back: [{ id: "back", points: [[0, 0], [10, 0], [10, 10], [0, 10]], depth: -1, face: "back", isCentre: true }],
+    back: [{ id: "back", points: [[0, 10], [10, 10], [10, 0], [0, 0]], depth: -1, face: "back", isCentre: true }],
     front: [
-      { id: "front", points: [[2, 2], [8, 2], [8, 8], [2, 8]], depth: 1, face: "front", isCentre: true },
+      { id: "front", points: [[2, 8], [8, 8], [8, 2], [2, 2]], depth: 1, face: "front", isCentre: true },
       { id: "top-front", points: [[2, 0], [8, 0], [8, 2], [2, 2]], depth: 1.1, face: "front", isCentre: false },
     ],
     backEdges: [{ points: [[0, 0], [0, 10]], axis: null, depth: -0.5 }],
@@ -280,15 +288,21 @@ describe("createCubeCanvas", () => {
   });
 
   it("paints the face label through an affine transform built from the face's own in-plane edges", () => {
-    // The fixture's "front" cell is the axis-aligned square [2,2]-[8,8]: half
-    // its edge vectors are (3,0) and (0,3), and its centroid is (5,5) — so the
-    // transform composed onto the DPR scale (via save()/transform(), never
-    // setTransform(), so the DPR scale survives) must carry exactly those.
+    // The fixture's "front" cell is the axis-aligned square [2,2]-[8,8] wound
+    // p0=(2,8) -> p1=(8,8) -> p3=(2,2): half its edge vectors are (3,0) along
+    // u and (0,-3) along v (v runs up the screen, as model +Z does), and its
+    // centroid is (5,5). The label's own v is that edge turned to run DOWN the
+    // face, so the transform composed onto the DPR scale (via save()
+    // /transform(), never setTransform(), so the DPR scale survives) must carry
+    // exactly (3, 0, 0, 3, 5, 5).
     handle.draw(projection, {});
     const idx = ctx.calls.findIndex((c) => c[0] === "transform");
     expect(idx).toBeGreaterThan(-1);
     expect(ctx.calls[idx - 1][0]).toBe("save");
-    expect(ctx.calls[idx]).toEqual(["transform", 3, 0, 0, 3, 5, 5]);
+    const [, a, b, c, d, e, f] = ctx.calls[idx];
+    expect([a, d, e, f]).toEqual([3, 3, 5, 5]);
+    expect(b).toBeCloseTo(0, 12); // toBeCloseTo, not toEqual: a signed zero is still zero
+    expect(c).toBeCloseTo(0, 12);
     const textIdx = ctx.calls.findIndex((c, i) => i > idx && c[0] === "fillText" && c[1] === "FRONT");
     expect(textIdx).toBeGreaterThan(idx);
     // Drawn at the LOCAL origin (0, 0) — the transform itself carries it to
@@ -298,16 +312,22 @@ describe("createCubeCanvas", () => {
     expect(ctx.calls[textIdx + 1][0]).toBe("restore");
   });
 
-  it("flips the in-plane basis when it would mirror the label, keeping the text readable", () => {
-    // p0=(0,0), p1=(2,0), p3=(0,-2): u=(1,0), v=(0,-1) — a determinant of -1,
-    // which would mirror the glyph. The renderer must flip one axis so the
-    // transform it hands the context is orientation-preserving again.
-    const mirroredCell = { id: "front", points: [[0, 0], [2, 0], [2, -2], [0, -2]], depth: 1, face: "front", isCentre: true };
+  it("flips u when the pairing would mirror the label, keeping the text readable", () => {
+    // p0=(0,0), p1=(2,0), p3=(0,2): the u edge is (1,0) and the v edge (0,1),
+    // i.e. this face's declared up projects DOWN the screen, so the label's own
+    // v is (0,-1). Paired with u=(1,0) that is a determinant of -1, which would
+    // mirror the glyph. The backstop must un-mirror it, and must do so by
+    // flipping U — flipping v would put the label back upside down.
+    const mirroredCell = { id: "front", points: [[0, 0], [2, 0], [2, 2], [0, 2]], depth: 1, face: "front", isCentre: true };
     const proj = { back: [], front: [mirroredCell], backEdges: [], frontEdges: [], arrows: [] };
     handle.draw(proj, {});
     const idx = ctx.calls.findIndex((c) => c[0] === "transform");
     const [, a, b, c, d] = ctx.calls[idx];
     expect(a * d - b * c).toBeGreaterThan(0);
+    expect(a).toBe(-1);         // u flipped
+    expect(b).toBeCloseTo(0, 12);
+    expect(c).toBeCloseTo(0, 12);
+    expect(d).toBe(-1);         // v left exactly as the declared up put it
   });
 
   it("paints the hovered region in the highlight fill and leaves the others alone", () => {
@@ -331,6 +351,92 @@ describe("createCubeCanvas", () => {
   it("removes its canvas on dispose", () => {
     handle.dispose();
     expect(host.querySelector("canvas")).toBeNull();
+  });
+});
+
+// The label-orientation contract, asserted on faceLabelBasis directly rather
+// than through draw(): the renderer only labels camera-facing centre cells, so
+// going through draw() could never cover all six faces at one camera, and a
+// loop that quietly covers three faces is exactly how LEFT and BACK got shipped
+// upside down.
+describe("faceLabelBasis", () => {
+  const IDENTITY = [0, 0, 0, 1];
+  const SIZE = 100;
+  // Two cameras with ROLL, so no face's in-plane axes land on a screen axis.
+  const ROLLED_A = [0.307377, 0.264412, 0.142983, 0.902863]; // bottom/right/front facing
+  const ROLLED_B = [-0.044922, -0.460121, -0.343351, 0.817545]; // top/front/left facing
+  // LEFT and BACK camera-facing at the same time — the two reported failures.
+  const LEFT_AND_BACK = [0.071989, -0.91346, 0.185168, 0.355135];
+
+  const centres = (q) => {
+    const p = projectCube(q, { size: SIZE });
+    return [...p.front, ...p.back].filter((c) => c.isCentre);
+  };
+  const facing = (q, face) => {
+    const p = projectCube(q, { size: SIZE });
+    return p.front.find((c) => c.isCentre && c.face === face);
+  };
+
+  it("never points any of the six faces' labels up the screen at identity", () => {
+    // Written as a loop over whatever the projection calls a centre cell so a
+    // future face-ordering or naming change cannot exempt one of them.
+    const cells = centres(IDENTITY);
+    expect(cells).toHaveLength(6);
+    for (const cell of cells) {
+      const { vx, vy } = faceLabelBasis(cell);
+      // v is the direction a glyph DESCENDS, so it must run down the screen
+      // (canvas +y) — or be zero, for a face seen exactly edge-on, where there
+      // is no in-plane direction left to point anywhere.
+      const edgeOn = Math.hypot(vx, vy) < 1e-9;
+      expect(edgeOn || vy > 0, `${cell.face}: v = (${vx}, ${vy})`).toBe(true);
+    }
+  });
+
+  it("lays LEFT and BACK the right way up — the two the old corner-order basis inverted", () => {
+    // A corner-order basis is right-handed for these two as well, so the old
+    // determinant guard passed them through rotated 180 degrees. Both are
+    // genuinely camera-facing at this quaternion, so both really are drawn.
+    for (const face of ["left", "back"]) {
+      const cell = facing(LEFT_AND_BACK, face);
+      expect(cell, `${face} should be camera-facing here`).toBeDefined();
+      const { vy } = faceLabelBasis(cell);
+      expect(vy, `${face} label reads upside down`).toBeGreaterThan(0);
+    }
+  });
+
+  it("never mirrors a label, and never inverts a SIDE face's, at any orientation", () => {
+    // The four side faces are up-to-date at every azimuth, because their
+    // declared up is the model's own up. TOP and BOTTOM are deliberately
+    // excluded: their up is a convention (see FACE_LABEL_UP), so they read
+    // rotated — including past 90 degrees — from some azimuths, and the
+    // alternative was a label that snaps mid-drag.
+    const SIDES = ["front", "back", "left", "right"];
+    for (const q of [IDENTITY, ROLLED_A, ROLLED_B, LEFT_AND_BACK, [0.5, 0.5, 0.5, 0.5]]) {
+      for (const cell of centres(q)) {
+        const { ux, uy, vx, vy } = faceLabelBasis(cell);
+        expect(ux * vy - uy * vx).toBeGreaterThanOrEqual(-1e-9); // never mirrored
+        if (!SIDES.includes(cell.face)) continue;
+        // >= 0, not > 0: a camera rolled a full 90 degrees lays a side label
+        // exactly on its side, which is the face rotating as it should.
+        expect(vy, `${cell.face}: v = (${vx}, ${vy})`).toBeGreaterThanOrEqual(-1e-9);
+      }
+    }
+  });
+
+  it("still lets the label ROTATE with the face — it is not snapped upright on screen", () => {
+    // The behaviour the fix must not regress: the name lies ON the face, so at
+    // a rolled camera its basis has to be off-axis. A "always draw upright"
+    // implementation would pass the identity-camera tests above and fail here.
+    for (const q of [ROLLED_A, ROLLED_B]) {
+      const cells = projectCube(q, { size: SIZE }).front.filter((c) => c.isCentre);
+      expect(cells.length).toBeGreaterThan(0);
+      for (const cell of cells) {
+        const { ux, uy, vx, vy } = faceLabelBasis(cell);
+        const offAxis = Math.abs(ux) > 0.5 && Math.abs(uy) > 0.5
+          && Math.abs(vx) > 0.5 && Math.abs(vy) > 0.5;
+        expect(offAxis, `${cell.face}: u = (${ux}, ${uy}), v = (${vx}, ${vy})`).toBe(true);
+      }
+    }
   });
 });
 

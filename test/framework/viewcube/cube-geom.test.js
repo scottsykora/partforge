@@ -5,8 +5,10 @@
 import { describe, expect, it } from "vitest";
 import {
   CUBE_CONSTANTS,
+  FACE_LABEL_UP,
   cubeCells,
   cubeEdges,
+  faceLabelUpSign,
   projectCube,
   hitRegion,
 } from "../../../src/framework/viewcube/cube-geom.js";
@@ -278,6 +280,45 @@ describe("hitRegion", () => {
         if (hit && backIds.has(hit)) expect(frontIds.has(hit)).toBe(true);
       }
     }
+  });
+});
+
+describe("FACE_LABEL_UP / faceLabelUpSign", () => {
+  it("gives the four side faces the MODEL up axis, +Z — not view-angles.js's Y-up", () => {
+    // The repo carries both conventions: view-angles.js names camera poses in
+    // the viewer's Y-up world, this module's cells are in the model's Z-up
+    // frame. Getting them the wrong way round lays every side label on its
+    // side, so pin the frame explicitly.
+    for (const face of ["front", "back", "left", "right"]) {
+      expect(FACE_LABEL_UP[face]).toEqual([0, 0, 1]);
+    }
+  });
+
+  it("gives TOP and BOTTOM the ups their own canonical camera pose uses", () => {
+    // view-angles.js's upFor() gives a pure top view world [0,0,-1] and a
+    // bottom view world [0,0,1]; the pivot maps model (x,y,z) -> world (x,z,-y),
+    // so those are model +Y and -Y. Sharing them is what makes a TOP/BOTTOM
+    // label read upright immediately after you click that face on the cube.
+    expect(FACE_LABEL_UP.top).toEqual([0, 1, 0]);
+    expect(FACE_LABEL_UP.bottom).toEqual([0, -1, 0]);
+  });
+
+  it("declares an up for every face, and always one of that face's in-plane axes", () => {
+    const faces = [...new Set(cubeCells().map((c) => c.id))].filter((id) => FACE_LABEL_UP[id]);
+    expect(faces).toHaveLength(6);
+    for (const face of faces) {
+      // Never the face's own normal: an up along the normal has no in-plane
+      // direction to project onto, and the renderer's single-multiply
+      // shortcut would silently collapse the label to nothing.
+      const cell = cubeCells().find((c) => c.id === face);
+      const dot = FACE_LABEL_UP[face].reduce((s, v, i) => s + v * cell.normal[i], 0);
+      expect(dot).toBe(0);
+      expect(Math.abs(faceLabelUpSign(face))).toBe(1);
+    }
+  });
+
+  it("throws on a face name it does not know rather than silently defaulting", () => {
+    expect(() => faceLabelUpSign("sideways")).toThrow(/unknown cube face/);
   });
 });
 

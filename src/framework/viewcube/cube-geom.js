@@ -43,6 +43,12 @@ const AXIS_FACE = {
 };
 const AXIS_INDEX = { x: 0, y: 1, z: 2 };
 
+// The reverse of AXIS_FACE: face name -> the axis and sign it stands for.
+const FACE_AXIS = {};
+for (const axis of ["x", "y", "z"]) {
+  for (const sign of [1, -1]) FACE_AXIS[AXIS_FACE[axis][String(sign)]] = { axis, sign };
+}
+
 // Canonical id ordering: vertical, then depth, then side (see view-angles.js).
 const ORDER = { top: 0, bottom: 0, front: 1, back: 1, left: 2, right: 2 };
 const idFor = (parts) => [...parts].sort((a, b) => ORDER[a] - ORDER[b]).join("-");
@@ -50,6 +56,57 @@ const idFor = (parts) => [...parts].sort((a, b) => ORDER[a] - ORDER[b]).join("-"
 // The two in-plane axes for each face normal, in a fixed order so cell
 // enumeration is deterministic.
 const IN_PLANE = { x: ["y", "z"], y: ["x", "z"], z: ["x", "y"] };
+
+// The direction, IN MODEL SPACE, that has to point up the screen for a face's
+// NAME to read the right way round. Declared per face rather than inferred from
+// a cell's corner ordering, which is the bug the 2026-08-20 fix removed: a
+// basis built from corner order was only ever checked for MIRRORING, and a
+// basis rotated 180 degrees is non-mirrored too, so LEFT and BACK read upside
+// down (see cube-canvas.js's faceLabelBasis).
+//
+// These are MODEL-space vectors, because that is the frame this module's cells
+// are expressed in and parts are authored Z-UP (see the file header). Do NOT
+// copy view-angles.js's FACE_DIRS here: that table is Y-up because it names
+// CAMERA poses in the viewer's world frame, and the two disagree.
+//
+// The four side faces therefore get model +Z — the model's own up.
+//
+// TOP and BOTTOM have no natural up: whichever in-plane direction is chosen,
+// the label reads upright from some azimuths and rotated from others. The
+// choice made here is the standard CAD one, and it is not arbitrary — model
+// +Y / -Y are exactly the ups view-angles.js's upFor() gives the pure top and
+// bottom camera poses (world [0,0,-1] / [0,0,1]). So TOP reads upright when the
+// camera is above and looking from the front, BOTTOM when it is below looking
+// from the front, and in particular both read upright right after you click
+// that face on the cube. Away from that azimuth they read rotated. That is
+// ACCEPTED, deliberately: re-choosing the axis as the camera orbits would snap
+// the label through 90-degree jumps mid-drag, which is worse than a label lying
+// on its side.
+export const FACE_LABEL_UP = {
+  right: [0, 0, 1],
+  left: [0, 0, 1],
+  front: [0, 0, 1],
+  back: [0, 0, 1],
+  top: [0, 1, 0],
+  bottom: [0, -1, 0],
+};
+
+// The sign of a face's declared label up along that face's own local V axis —
+// the in-plane axis a projected cell's (p3 - p0) edge runs along (cubeCells
+// winds corners from IN_PLANE, so p3 - p0 is always +vAxis).
+//
+// Always exactly +1 or -1, because every vector in FACE_LABEL_UP IS one of its
+// face's two in-plane axes: the side faces' up is model Z, the V axis of both
+// the X and the Y face pair; TOP/BOTTOM's is model Y, the V axis of the Z pair.
+// That is what lets the renderer turn its already-projected (and so already
+// foreshortened) v edge into the label's up direction with one multiply,
+// instead of needing a second projection of its own.
+export function faceLabelUpSign(face) {
+  const entry = FACE_AXIS[face];
+  if (!entry) throw new Error(`unknown cube face "${face}"`);
+  const vAxis = IN_PLANE[entry.axis][1];
+  return Math.sign(FACE_LABEL_UP[face][AXIS_INDEX[vAxis]]);
+}
 
 // Cell bounds along one in-plane axis for grid index -1 / 0 / +1.
 function span(index, half) {

@@ -7,6 +7,7 @@
 //
 // The 2D context is injected (happy-dom has no real one) — the createInkCanvas
 // and dim3-scene paintLabel precedent.
+import { faceLabelUpSign } from "./cube-geom.js";
 
 // The full-size cube. Below RAIL_NARROW_BREAKPOINT the shell has only one pane
 // on screen at a time (rail.js), so the cube drops to CUBE_SIZE_NARROW —
@@ -92,6 +93,44 @@ export const CUBE_RENDER = {
 // tunable (nobody wants to "nudge" a numerical safety epsilon by eye) so it
 // sits outside CUBE_RENDER, same as viewcube-mode.js's DRAG_THRESHOLD_PX.
 const MIN_ARROW_DIR_PX = 0.5;
+
+// Lays the face name flat ON the face — the label rotates with the face rather
+// than hovering in front of it always facing the screen (the 2026-08-19 design
+// decision, and the thing this must not regress). Returns the affine basis
+// drawFaceLabel hands the context: the cell's screen centroid plus two axes
+// where 1 local unit is half the cell's own on-screen width/height, so text
+// sized in that space (CUBE_RENDER.faceLabelScale) scales with the cube for
+// free. Pure and exported so the six faces' orientations can be asserted
+// directly, including for faces the renderer would not have drawn.
+//
+// The v (down-the-glyph) axis is deliberately NOT taken from the corner
+// ordering. That ordering is consistent, but consistency is not orientation:
+// the old basis was `u = (p1-p0)/2, v = (p3-p0)/2` with a single determinant
+// guard, and a determinant only catches MIRRORING. A basis rotated 180 degrees
+// is non-mirrored too, so LEFT and BACK sailed through it reading upside down.
+//
+// Instead each face declares an up direction in model space (cube-geom.js's
+// FACE_LABEL_UP) and faceLabelUpSign says which way that lies along this cell's
+// own projected v edge. v is that edge pointed the OTHER way, because canvas +y
+// is down: local +y, the direction a glyph descends, has to run DOWN the face.
+export function faceLabelBasis(cell) {
+  const [p0, p1, , p3] = cell.points;
+  const cx0 = cell.points.reduce((s, pt) => s + pt[0], 0) / cell.points.length;
+  const cy0 = cell.points.reduce((s, pt) => s + pt[1], 0) / cell.points.length;
+  let ux = (p1[0] - p0[0]) / 2, uy = (p1[1] - p0[1]) / 2;
+  const bx = (p3[0] - p0[0]) / 2, by = (p3[1] - p0[1]) / 2;
+  const down = -faceLabelUpSign(cell.face);
+  const vx = down * bx, vy = down * by;
+  // The handedness guard, kept as a backstop but now applied to U. Only
+  // camera-facing faces get labelled, so "toward the camera" is the handedness
+  // the basis should keep, and a negative determinant still means this pairing
+  // would mirror the text. What changed is which axis is free to fix it: v now
+  // carries the orientation, so flipping v would undo the correction above and
+  // put the label back upside down. Negating u instead reflects the pair across
+  // v, which un-mirrors the glyph while leaving its up direction alone.
+  if (ux * vy - uy * vx < 0) { ux = -ux; uy = -uy; }
+  return { cx: cx0, cy: cy0, ux, uy, vx, vy };
+}
 
 export function createCubeCanvas(host, {
   getContext2d = (canvas) => canvas.getContext("2d"),
@@ -202,26 +241,9 @@ export function createCubeCanvas(host, {
     ctx.fill();
   }
 
-  // Lays the face name flat ON the face: an affine transform built from the
-  // (already-projected, so already-foreshortened) centre cell's own two
-  // in-plane edges, composed onto the DPR scale with save()/transform()
-  // rather than replacing it via setTransform(). 1 local unit is defined as
-  // half the cell's own on-screen width/height, so text sized in that space
-  // (CUBE_RENDER.faceLabelScale) scales with the cube for free.
-  function faceLabelBasis(cell) {
-    const [p0, p1, , p3] = cell.points;
-    const cx0 = cell.points.reduce((s, pt) => s + pt[0], 0) / cell.points.length;
-    const cy0 = cell.points.reduce((s, pt) => s + pt[1], 0) / cell.points.length;
-    let ux = (p1[0] - p0[0]) / 2, uy = (p1[1] - p0[1]) / 2;
-    let vx = (p3[0] - p0[0]) / 2, vy = (p3[1] - p0[1]) / 2;
-    // Only camera-facing faces get labelled, so "toward the camera" is the
-    // handedness the (u, v) basis should keep. A negative determinant means
-    // this pairing mirrors the text; flip v to restore it (flipping either
-    // axis fixes a mirror, since it negates the determinant either way).
-    if (ux * vy - uy * vx < 0) { vx = -vx; vy = -vy; }
-    return { cx: cx0, cy: cy0, ux, uy, vx, vy };
-  }
-
+  // faceLabelBasis (module scope, above) does the geometry; this composes it
+  // onto the DPR scale with save()/transform() rather than replacing it via
+  // setTransform().
   function drawFaceLabel(cell, colour) {
     const { cx: cx0, cy: cy0, ux, uy, vx, vy } = faceLabelBasis(cell);
     ctx.save();
