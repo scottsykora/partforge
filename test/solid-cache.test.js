@@ -156,3 +156,27 @@ test("sweeping an idle partition keeps a solid another partition still shares", 
 
   expect(dispose).not.toHaveBeenCalled();                   // "live" still holds it
 });
+
+describe("nested brackets", () => {
+  it("an inner begin/end does not close the outer bracket", () => {
+    const c = createSolidCache();
+    c.begin("outer");
+    c.lookup("a", make({ id: "a" }));
+    c.begin("inner");          // a nested build (buildView inside an open bracket)
+    c.lookup("b", make({ id: "b" }));
+    c.end();                   // must NOT commit/close "outer"
+    const v = c.lookup("a", () => { throw new Error("outer bracket was closed"); });
+    expect(v).toEqual({ id: "a" });
+    c.end();
+  });
+
+  it("an inner round does not evict the outer round's entries", () => {
+    const c = createSolidCache();
+    const dispose = vi.fn();
+    c.begin("outer");
+    c.lookup("keep", () => ({ value: {}, pin: {}, dispose }));
+    c.begin("inner"); c.lookup("other", make({})); c.end();
+    c.end();
+    expect(dispose).not.toHaveBeenCalled();
+  });
+});
