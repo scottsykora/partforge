@@ -221,22 +221,91 @@ export function choicesEqual(a, b) {
 // The vertex realizing the extreme along `axis` over the posed meshes; ties
 // within tolerance (a flat base is all "the minimum") break toward `near`, so
 // the anchor lands on the side of the part the dimension is drawn on.
+//
+// placeBox asks for all six ±axis directions, and the naive shape of this —
+// one pass to find the extreme, a second to tie-break, per call — walked every
+// vertex twelve times over. On a soup carrying three points per triangle that
+// is the dominant cost of a placement, so the walk happens ONCE per (geometry,
+// pose) and every later call is answered from `extremeCache`: the six extreme
+// VALUES, plus, per direction, the posed vertices tied with that direction's
+// own extreme. `near` varies per call (it is the side the dim hangs off), so
+// the tie-break itself still runs — over the handful of tied points instead of
+// the whole soup.
+//
+// Per-mesh candidates are exact for the multi-mesh scan they feed: a vertex
+// within TIE_TOL of the GLOBAL extreme is necessarily within TIE_TOL of its own
+// mesh's extreme too (the mesh extreme sits between them), so nothing that
+// could win is missing from the union — and the loop below re-filters against
+// the global value regardless.
+//
+// A candidate is stored as its INDEX into the soup, not as a posed point: four
+// bytes instead of twenty-four, and the tie-break still runs the same f64
+// transform the un-cached version did, so the anchor it picks is bit-identical.
+// The size question that buys is a real one — most parts sit on a flat face, so
+// one direction's tie set can be a whole face of the mesh — and on the parts
+// this was measured against the whole cache lands around 0.1% of the soup.
+const TIE_TOL = 1e-3;
+// The extremes and the tie sets are both POSED, so a record is only valid for
+// the pose it was built from. A mesh's `matrix` is mutated in place by the
+// viewer's pose fast path (setSubPose), so identity says nothing about it — the
+// sixteen elements do.
+const extremeCache = new WeakMap(); // positions -> { pose, lo, hi, cand: Uint32Array[6] }
 const _sv = new THREE.Vector3();
-export function extremeVertex(meshData, axis, sign, near) {
-  let bestVal = sign > 0 ? -Infinity : Infinity;
-  for (const { positions, matrix } of meshData) {
+
+const dirIndex = (axis, sign) => axis * 2 + (sign > 0 ? 0 : 1);
+
+const samePose = (a, b) => {
+  for (let i = 0; i < 16; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
+
+function meshExtremes(positions, matrix) {
+  const hit = extremeCache.get(positions);
+  if (hit && samePose(hit.pose, matrix.elements)) return hit;
+  const lo = [Infinity, Infinity, Infinity];
+  const hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < positions.length; i += 3) {
+    _sv.set(positions[i], positions[i + 1], positions[i + 2]).applyMatrix4(matrix);
+    for (let a = 0; a < 3; a++) {
+      const v = _sv.getComponent(a);
+      if (v < lo[a]) lo[a] = v;
+      if (v > hi[a]) hi[a] = v;
+    }
+  }
+  const cand = [[], [], [], [], [], []];
+  if (Number.isFinite(lo[0])) {
     for (let i = 0; i < positions.length; i += 3) {
       _sv.set(positions[i], positions[i + 1], positions[i + 2]).applyMatrix4(matrix);
-      const val = _sv.getComponent(axis);
-      if (sign > 0 ? val > bestVal : val < bestVal) bestVal = val;
+      for (let a = 0; a < 3; a++) {
+        const v = _sv.getComponent(a);
+        if (Math.abs(v - hi[a]) <= TIE_TOL) cand[a * 2].push(i);
+        if (Math.abs(v - lo[a]) <= TIE_TOL) cand[a * 2 + 1].push(i);
+      }
     }
+  }
+  const rec = { pose: matrix.elements.slice(), lo, hi, cand: cand.map((c) => Uint32Array.from(c)) };
+  extremeCache.set(positions, rec);
+  return rec;
+}
+
+export function extremeVertex(meshData, axis, sign, near) {
+  const dir = dirIndex(axis, sign);
+  let bestVal = sign > 0 ? -Infinity : Infinity;
+  const scan = [];
+  for (const { positions, matrix } of meshData) {
+    const rec = meshExtremes(positions, matrix);
+    const v = sign > 0 ? rec.hi[axis] : rec.lo[axis];
+    if (!Number.isFinite(v)) continue; // empty mesh
+    scan.push({ positions, matrix, cand: rec.cand[dir] });
+    if (sign > 0 ? v > bestVal : v < bestVal) bestVal = v;
   }
   if (!Number.isFinite(bestVal)) return null;
   let best = null, bestD = Infinity;
-  for (const { positions, matrix } of meshData) {
-    for (let i = 0; i < positions.length; i += 3) {
+  for (const { positions, matrix, cand } of scan) {
+    for (let k = 0; k < cand.length; k++) {
+      const i = cand[k];
       _sv.set(positions[i], positions[i + 1], positions[i + 2]).applyMatrix4(matrix);
-      if (Math.abs(_sv.getComponent(axis) - bestVal) > 1e-3) continue;
+      if (Math.abs(_sv.getComponent(axis) - bestVal) > TIE_TOL) continue;
       const d = _sv.distanceToSquared(near);
       if (d < bestD) { bestD = d; best = _sv.clone(); }
     }

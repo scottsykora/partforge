@@ -277,7 +277,8 @@ button.action:disabled { opacity: .5; cursor: default; }
 
 /* keyboard focus ring shared across the panel's interactive controls */
 .seg button:focus-visible, select.preset:focus-visible, .dl-row button:focus-visible,
-button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible, #viewbar button:focus-visible {
+button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible, #viewbar button:focus-visible,
+.pf-viewcube-toggle:focus-visible, .pf-float-rail-toggle:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
@@ -355,11 +356,128 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
 
-/* At very narrow widths the full-size pill (5 icon buttons + cutaway's
+/* ---- the rail toggle: a bare floating icon at the stage's top right --------
+   APPEARANCE only (placement lives in chrome.css, per the split at the top of
+   this file). Through 2026-08-20 this was the last button in #viewbar's pill;
+   it now floats on its own, in the corner diagonally opposite the pill.
+
+   Unadorned at rest — no background, no border, no shadow — so a control that
+   is always over the model reads as an icon the viewer carries rather than as a
+   second toolbar competing with the first. Explicitly a PLACEHOLDER ("just be a
+   floating icon for now"): the position is settled, the treatment is not.
+
+   38px is the MEASURED height of the centred view selector (`#topbar .seg`:
+   4px padding + a 28px tab + 4px + 2 hairlines, the same 38 on every page), and
+   the reference is that selector rather than #viewbar's 44px bar it briefly
+   matched: both floats sit at `top: 12px`, so equal heights put the two on one
+   line and their centres coincide by construction. Sizing to the selector is
+   also what keeps the hover chip from reading as oversized — the chip IS this
+   box. Note the trade: 38px is under the 44px tap-target floor
+   scripts/check-app.mjs enforces, and the check cannot see it, because it
+   measures targets at 320px where rail.js has already hidden this button.
+
+   A rounded rect, and deliberately NOT the view cube's projection circle: two
+   different controls in two different corners, where a shared silhouette would
+   invite reading one as the other. --pf-radius-control, the token `.seg` and its
+   tabs use, so the chip reads as part of the selector's family (the selector's
+   own outer corner is rounder — `#topbar .seg` overrides it to --pf-radius-pill).
+
+   The hover fill is WHITE, and that is a placeholder as well — asked for in as
+   many words, and true only over the dark viewer. Translucent rather than #fff
+   so it reads as a lift off the viewer instead of a hole punched in it, and so
+   the icon keeps its contrast on top; in the LIGHT theme a white fill is close
+   to invisible whatever the alpha. When this stops being a placeholder the fill
+   wants the --pf-surface family (--pf-surface-2, as `#viewbar button:hover`
+   uses) so both themes get a real surface — deliberately not substituted here.
+
+   The focus ring is NOT restated: the button joins the shared :focus-visible
+   selector list above. It used to inherit that through `#viewbar button`, which
+   no longer matches it. */
+.pf-float-rail-toggle {
+  width: 38px; height: 38px;
+  border: 0; border-radius: var(--pf-radius-control);
+  background: transparent; box-shadow: none;
+  color: var(--pf-muted-2); cursor: pointer;
+  font-size: 15px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+/* The same trap `#viewbar button[hidden]` guards against, inherited along with
+   the `display: flex` above: it is author-origin and beats the UA's
+   `[hidden] { display: none }`, so rail.js's `toggle.hidden = narrow` would
+   otherwise leave this fully visible below the narrow breakpoint — where the
+   pane tab bar owns pane selection and a second collapse affordance must not
+   compete with it. scripts/check-app.mjs asserts the computed display. */
+.pf-float-rail-toggle[hidden] { display: none; }
+.pf-float-rail-toggle:hover { color: var(--pf-text); background: rgb(255 255 255 / 14%); }
+/* GREY IN BOTH STATES, deliberately. rail.js still toggles `.on` when the rail
+   collapses, and inside #viewbar that class picked up the accent fill; there is
+   no rule for it here on purpose, so collapsed and expanded look identical. The
+   chevron `d` swap is the signal (it flips to point back out of the divider) and
+   aria-expanded carries it for assistive tech — a tint would have been a second
+   signal on a bare icon over the model, which is what the accent-coloured
+   version read as. Do not add one back without asking. */
+
+/* ---- view cube ------------------------------------------------------------
+   APPEARANCE only (placement lives in chrome.css, per the split at the top of
+   this file).
+
+   Through 2026-08-19 the projection toggle sat in its own `.pf-viewcube-pill`
+   card below the cube, deliberately borrowing #viewbar's chrome so it read as
+   one of the viewer controls. The 2026-08-20 revision moved it beside the
+   cube instead, at a size and a bottom-aligned baseline that a #viewbar-style
+   card could not shrink to — so it is now a small bare circle in its own
+   right (`.pf-viewcube-toggle`), no card, no border, no shadow.
+
+   A same-day follow-up moved it again, from beside the cube to OVER its
+   bottom-right corner (placement in chrome.css, as ever). Nothing here
+   changed: a bare transparent circle was already what made that legal — it
+   has no card edge to cut across the drawing underneath it, so overlapping
+   costs the cube nothing but the 24px it covers.
+
+   A later revision that same day took the resting fill away entirely: now
+   that the button sits ON the cube's drawing, a persistent accent-tinted
+   disc in orthographic mode read as a blob over the geometry rather than as
+   a control. A background appears on HOVER only, in both states.
+
+   The last revision of the day took the accent COLOUR away too, so the
+   orthographic state now carries exactly ONE visual signal: the icon GLYPH (a
+   perspective frustum becomes an axonometric box). The button is grey in both
+   projections, resting and hovered, and there is deliberately no `.on` rule
+   below — viewcube-controls.js still adds the class, and `aria-pressed` still
+   carries the state for assistive tech. That is a choice, not an oversight: a
+   blue icon sitting on the cube's own drawing read as a stray tint rather than
+   as a mode, and the glyph is the tell that survives any colour scheme anyway.
+   Do not reintroduce a tint without asking. */
+.pf-viewcube-canvas {
+  display: block;
+  touch-action: none;
+}
+.pf-viewcube-toggle {
+  /* 24px: the low end of "small" so the bare circle reads as understated next
+     to the cube rather than as a second focal point competing with it — a
+     card's border/background used to do that visual quieting; a transparent
+     shape has nothing else to lean on but size. */
+  width: 24px; height: 24px;
+  border: 0; border-radius: 50%;
+  background: transparent; box-shadow: none;
+  color: var(--pf-muted-2); cursor: pointer;
+  font-size: 14px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.pf-viewcube-toggle:hover { color: var(--pf-text); background: var(--pf-surface-2); }
+/* The focus ring is NOT restated here: the toggle joins the shared
+   :focus-visible selector list above, beside #viewbar's own.
+
+   No narrow-width shrink rule here: unlike the old pill (which borrowed
+   #viewbar's chrome and had to shrink in lockstep with it, below), a bare
+   24px circle has no card to keep in step with a smaller viewbar — it stays
+   its one fixed size at every width. */
+
+/* At very narrow widths the full-size viewbar (5 icon buttons + cutaway's
    Flip/Reset, ~314px) is wider than a small phone's viewport minus the
    stage's 12px margins, and .pf-shell { overflow: hidden } clips the excess
    off its left edge (caught by scripts/check-app.mjs's containment check).
-   Shrink the pill instead of letting it wrap — a two-row pill would need its
+   Shrink the bar instead of letting it wrap — a two-row bar would need its
    own anchoring rework, while shrinking is a pure appearance change. */
 @media (max-width: 360px) {
   #viewbar { gap: 3px; }
@@ -368,7 +486,7 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   #viewbar .pf-cutaway-actions button, #viewbar .pf-measure-actions button, #viewbar .pf-annotate-actions button { min-width: 44px; padding: 0 6px; }
   /* Annotate's three-button row (Undo/Clear/Send) is wider than cutaway's or
      measure's two-button rows at the shared size above, so it still clips the
-     pill's left edge at 320px — shrink it further than the shared rule. */
+     bar's left edge at 320px — shrink it further than the shared rule. */
   #viewbar .pf-annotate-actions button { min-width: 38px; padding: 0 4px; font-size: 10px; }
 }
 

@@ -225,9 +225,119 @@
    (background/border/radius/shadow) from app.css, so that chrome must live in
    app.css ungated — not be duplicated into a class the cloud never sets. This
    file owns where things sit; app.css owns what they look like. */
-.pf-float-tabs, .pf-float-viewbar { position: absolute; z-index: 15; }
-.pf-float-tabs { top: 12px; left: 50%; transform: translateX(-50%); }
-.pf-float-viewbar { bottom: 12px; right: 12px; }
+.pf-float-tabs, .pf-float-viewbar, .pf-float-rail-toggle { position: absolute; z-index: 15; }
+/* Every inset below is SHARED with whichever other float sits on that edge, so
+   the stage's margin is stated once per edge and not once per element. The rail
+   toggle (2026-08-20: out of #viewbar's pill, floating on its own at the top
+   right) is the tab strip's `top` with the viewbar's `right` — a corner
+   symmetric with the viewbar's, by construction rather than by two numbers that
+   happen to agree today. Retune the margin and all three corners follow.
+   Appearance, including the `[hidden]` guard that lets rail.js hide the toggle
+   below the narrow breakpoint, is in app.css. */
+.pf-float-tabs, .pf-float-rail-toggle { top: 12px; }
+.pf-float-viewbar, .pf-float-rail-toggle { right: 12px; }
+.pf-float-tabs { left: 50%; transform: translateX(-50%); }
+.pf-float-viewbar { bottom: 12px; }
+
+/* ---- view cube stack: PLACEMENT ONLY (see the rule above) ----------------
+   Bottom-right, stacked above #viewbar. The offset is measured, not
+   hardcoded: mount.js publishes --pf-viewbar-clear on the stage from a
+   ResizeObserver on #viewbar, mirroring --pf-anim-clear. It sits there rather
+   than in viewcube-controls.js (the precedent being animation-controls.js,
+   which publishes its own --pf-anim-clear) because the value describes the
+   VIEWBAR's vertical claim, not the cube's, and mount owns both elements. The
+   56px fallback is the standard viewbar's 12px bottom + 44px height, so the
+   stack still sits right if the observer never fires.
+
+   The projection toggle has moved twice. Through 2026-08-19 it sat in its own
+   `.pf-viewcube-pill` card BELOW the cube, making the stack a column. Earlier
+   on 2026-08-20 it became a bare circle BESIDE the cube, making the stack a
+   `row-reverse` flex row (`canvas + gap + button`, 167px wide at the full
+   135px cube). It now sits OVER the cube's bottom-right corner instead:
+   absolutely positioned within the stack, right edge on the stack's right edge
+   and bottom edge on its bottom baseline, so the stack's width collapses back
+   to the canvas alone (135px, or 101 below the narrow breakpoint).
+
+   That is also what satisfies "aligned with the right of the toolbar" without a
+   second offset: `.pf-float-viewbar` above is `right: 12px` too, so making the
+   button's right edge the STACK's right edge lines it up with the viewbar's by
+   construction — and it keeps doing so if that margin is ever retuned.
+
+   The button is a later sibling than the cube's wrapper, so it paints over the
+   canvas with no z-index of its own; 24px over the corner cell — the least
+   informative part of the drawing — is small enough not to hide anything worth
+   clicking, and the canvas keeps receiving pointer events everywhere else.
+
+   The 8px that used to sit between the stack and the viewbar is now 3px
+   (2026-08-20: "lower the whole box so it's closer to the bottom bar"). 3
+   rather than 0 because the stack's own box MUST NOT overlap #viewbar: the
+   stack is a later sibling at the same z-index, and its canvas is
+   pointer-events:auto across its whole footprint, so any vertical overlap
+   would silently swallow clicks on the viewbar's rightmost buttons (both are
+   right: 12px). --pf-viewbar-clear is published rounded to whole px, so a
+   fractional viewbar height can move this by half a pixel either way; 3px
+   absorbs that and still reads as a deliberate gap rather than a collision.
+   The other ~5px of the lowering comes from inside the canvas — see
+   cube-geom.js's CUBE_DOWN_BIAS_PX; that is where the rest of the perceived
+   gap actually lives, and it is capped by the axis labels' clearance, so
+   this pair (3 + 5) is the whole slack that exists without either overlapping
+   the viewbar or shrinking the cube.
+
+   The stack itself is pointer-transparent. With the button back inside the
+   canvas's footprint there is no dead gap left at all: the stack's box IS the
+   canvas's box, and both the canvas and the button opt back in below. The
+   declaration stays because the stack's own box is still an element over the
+   viewer, and a stray hit on it (its padding-free edges, or a future child
+   before it opts in) should reach the model behind rather than be swallowed. */
+.pf-viewcube-stack {
+  position: absolute;
+  right: 12px;
+  bottom: calc(var(--pf-viewbar-clear, 56px) + 3px);
+  z-index: 15;
+  display: flex;
+  pointer-events: none;
+}
+.pf-viewcube-stack[hidden] { display: none; }
+.pf-viewcube-canvas, .pf-viewcube-toggle { pointer-events: auto; }
+/* Over the cube's bottom-right corner. Absolute against the stack, which is
+   itself absolute and so already the containing block. */
+.pf-viewcube-toggle { position: absolute; right: 0; bottom: 0; }
+
+/* The keyboard surface: six per-view buttons standing in for the DOM focus a
+   canvas cannot give us. Visually hidden rather than display:none — the latter
+   takes them out of the tab order, which is the whole point of them.
+
+   The hiding properties are on the BUTTONS, not on their wrapper, so that
+   :focus-visible can undo them. A non-`none` clip-path clips the element's
+   whole SUBTREE and makes the element a containing block for fixed-position
+   descendants, so with the clip on the wrapper no rule on a focused child
+   could escape it — the reveal below was dead CSS, and six buttons sat in the
+   tab order with no visible focus indicator at all. On the buttons themselves
+   there is no clipping ancestor to get out of.
+
+   The wrapper keeps only `position: absolute`, which takes it out of the
+   stack's flex flow. That mattered when the stack had a gap (a zero-height
+   flex item still earned it, pushing the cube out of place); it still matters
+   now that it does not, because an in-flow second item would widen the stack
+   past the canvas — and the stack's width is what the crowding rule reads. */
+.pf-viewcube-key { position: absolute; }
+.pf-viewcube-key button {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.pf-viewcube-key button:focus-visible {
+  position: fixed;
+  width: auto; height: auto;
+  margin: 0; padding: 2px 6px;
+  overflow: visible;
+  clip-path: none;
+  pointer-events: auto; /* the stack is pointer-transparent; a revealed control is not */
+}
 
 /* --- animation transport bar (generated by animation-controls.js) ----------
    PLACEMENT ONLY, per the rule above; appearance lives in app.css next to

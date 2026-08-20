@@ -1240,3 +1240,25 @@ describe("section outlines", () => {
     expect(outline.object.visible).toBe(true);
   });
 });
+
+describe("setCamera", () => {
+  test("re-points the cutaway at a swapped camera", () => {
+    // A cutaway built against one camera must follow a projection swap, or its
+    // plane math and its gizmo keep sizing against a camera nobody renders.
+    const { controller } = createFixture();
+    const ortho = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+    ortho.position.set(0, 0, 20);
+    ortho.lookAt(0, 0, 0);
+    ortho.updateMatrixWorld(true);
+    expect(() => controller.setCamera(ortho)).not.toThrow();
+    // The swap must survive a real render pass, which is where a stale camera
+    // reference would surface as a wrong section rather than an exception.
+    expect(() => controller.renderOverlay(makeRenderer(), ortho)).not.toThrow();
+  });
+
+  test("ignores a null camera rather than blanking its reference", () => {
+    const { controller, camera } = createFixture();
+    controller.setCamera(null);
+    expect(() => controller.renderOverlay(makeRenderer(), camera)).not.toThrow();
+  });
+});

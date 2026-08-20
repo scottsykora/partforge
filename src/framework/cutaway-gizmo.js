@@ -44,7 +44,7 @@ const WHITE = new THREE.Color(0xffffff);
 export function createCutawayGizmo({
   scene,
   overlayScene,
-  camera,
+  camera: initialCamera,
   domElement,
   orbitControls,
   onPoseChange = () => {},
@@ -53,6 +53,10 @@ export function createCutawayGizmo({
   onDragChange = () => {},
   pickHandle,
 }) {
+  // Reassignable: the viewer swaps cameras when the projection toggle flips,
+  // and this module holds fifteen references to it. One binding to move beats
+  // threading a getter through all of them.
+  let camera = initialCamera;
   const sceneGraph = buildGizmoScene(THEMES.dark);
   const {
     group,
@@ -535,6 +539,7 @@ export function createCutawayGizmo({
     setActiveAppearance,
     setTheme,
     updateForCamera,
+    setCamera(next) { if (next) camera = next; },
     dispose,
   };
 }

@@ -58,6 +58,13 @@ export function worldPerPx(dist, fovDeg, viewportPx) {
   return (2 * dist * Math.tan((fovDeg * Math.PI) / 360)) / viewportPx;
 }
 
+// The orthographic twin of worldPerPx. An ortho camera's scale is a property of
+// its frustum and zoom alone — distance does not enter — which is exactly why
+// the perspective formula cannot be reused with a substituted fov.
+export function orthoWorldPerPx(top, bottom, zoom, viewportPx) {
+  return Math.abs(top - bottom) / Math.max(zoom, 1e-6) / Math.max(viewportPx, 1);
+}
+
 // Kept for compatibility with earlier callers/tests: the world height that
 // renders as `targetPx` on screen.
 export function labelWorldHeight(dist, fovDeg, viewportPx, targetPx = LABEL_SCREEN_PX) {
@@ -319,8 +326,14 @@ export function createDimScene(viewer, { paintLabel = defaultPaintLabel } = {}) 
     // One shared reference distance — camera to the dim group's origin (the
     // recentred model centre) — sizes the whole drawing.
     group.getWorldPosition(_gp);
-    const dist = viewer.camera.position.distanceTo(_gp);
-    const wpp = worldPerPx(dist, viewer.camera.fov ?? 45, h);
+    // `viewer.camera.fov ?? 45` was the bug this branch removes: under an ortho
+    // camera fov is undefined, so the fallback produced a plausible-but-wrong
+    // scale and every label, arrow and standoff drifted as the user dollied.
+    // The ortho formula matches cutaway-gizmo.js:485's worldUnitsPerPixelAt.
+    const cam = viewer.camera;
+    const wpp = cam.isOrthographicCamera
+      ? orthoWorldPerPx(cam.top, cam.bottom, cam.zoom, h)
+      : worldPerPx(cam.position.distanceTo(_gp), cam.fov ?? 45, h);
     if (wpp > 0) {
       const hStar = LABEL_SCREEN_PX * wpp;
       const aw = ARROW_SCREEN_PX * wpp;

@@ -11,6 +11,7 @@
 const KEY = {
   camera: "partforge:camera",
   theme: "partforge:theme",
+  projection: "partforge:projection",
 };
 
 const viewKey = (partKey) => `partforge:view:${partKey}`;
@@ -53,6 +54,14 @@ export function loadTheme() {
 
 export function saveTheme(mode) {
   if (mode === "light" || mode === "dark") write(KEY.theme, mode);
+}
+
+export function loadProjection() {
+  return read(KEY.projection) === "orthographic" ? "orthographic" : "perspective";
+}
+
+export function saveProjection(mode) {
+  if (mode === "perspective" || mode === "orthographic") write(KEY.projection, mode);
 }
 
 // `partKey` identifies the part — createViewTabs passes `meta.title`. Without one

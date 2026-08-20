@@ -1,18 +1,30 @@
 import * as THREE from "three";
 import { EASINGS } from "./animation.js";
 
-// Retargetable orbit-camera tween for animation camera cues: eased spherical
-// interpolation of {position, target} pairs about the (linearly moving) orbit
-// target, shortest-path in azimuth, clamped off the poles so OrbitControls
-// never gimbal-locks on a "top"/"bottom" cue. Pure math, no clock — the viewer
-// feeds dt seconds into update() each frame and applies the returned pose.
-const POLE_EPS = 0.01;
-
+// Retargetable orbit-camera tween for animation camera cues and view-cube
+// clicks: eased spherical interpolation of {position, target} pairs about the
+// (linearly moving) orbit target, shortest-path in azimuth. Pure math, no clock
+// — the viewer feeds dt seconds into update() each frame and applies the
+// returned pose.
+//
+// NOT clamped off the poles. It used to be, by 0.01 rad, to keep OrbitControls
+// off its gimbal — but the clamp applied to the DESTINATION too, so a "top" or
+// "bottom" cue landed 0.573° short of the axis every single time, in both
+// projections. That is the whole of the "clicking top doesn't view from the top"
+// bug: a spacer kept a sliver of side wall visible instead of reading as a flat
+// outline.
+//
+// Landing exactly on the pole is safe, because OrbitControls' own update() is
+// the backstop: Spherical.makeSafe() holds phi off 0 and PI by 1e-6 rad (a
+// 5.7e-5° tilt, three orders of magnitude under what the eye or a frustum can
+// resolve), so the camera is never left with a degenerate lookAt basis and the
+// roll stays deterministic. Azimuth at the pole is a no-op either way, and
+// atan2(0, 0) is 0 rather than NaN — which is also the azimuth the canonical
+// top/bottom poses ask for, so the roll OrbitControls derives there is exactly
+// the `up` view-angles.js names for them.
 function toSpherical(position, target) {
   const off = new THREE.Vector3().fromArray(position).sub(new THREE.Vector3().fromArray(target));
-  const sph = new THREE.Spherical().setFromVector3(off);
-  sph.phi = Math.min(Math.PI - POLE_EPS, Math.max(POLE_EPS, sph.phi));
-  return sph;
+  return new THREE.Spherical().setFromVector3(off);
 }
 
 export function createCameraTween() {

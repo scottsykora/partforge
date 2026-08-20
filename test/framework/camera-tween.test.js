@@ -27,12 +27,32 @@ test("azimuth takes the short way around", () => {
   expect(mid.position[0]).toBeGreaterThan(0); // stays on the +x side of the arc
 });
 
-test("a straight-overhead destination is clamped off the pole", () => {
+// The regression: the destination used to be clamped 0.01 rad off the pole, so
+// every "top"/"bottom" cue landed 0.573° short of the axis and a top view kept a
+// sliver of side wall in it. Both poles, because the clamp had two ends.
+test.each([
+  ["top", [0, 10, 0]],
+  ["bottom", [0, -10, 0]],
+])("a straight-overhead %s destination lands exactly on the axis", (_name, position) => {
   const tw = createCameraTween();
-  tw.start(FROM, { position: [0, 10, 0], target: [0, 0, 0] }, { duration: 1 });
+  tw.start(FROM, { position, target: [0, 0, 0] }, { duration: 1 });
   const end = tw.update(1);
   const horizontal = Math.hypot(end.position[0], end.position[2]);
-  expect(horizontal).toBeGreaterThan(0.01); // never exactly on the Y axis
+  // Exactly on the Y axis: no horizontal offset at all, to the last ulp.
+  expect(horizontal).toBeLessThan(1e-12);
+  expect(end.position[1]).toBeCloseTo(position[1], 12);
+});
+
+test("the arc into a pole approaches it monotonically, never overshooting", () => {
+  const tw = createCameraTween();
+  tw.start(FROM, { position: [0, 10, 0], target: [0, 0, 0] }, { duration: 1 });
+  let previous = Infinity;
+  for (let i = 0; i < 10; i++) {
+    const step = tw.update(0.1);
+    const horizontal = Math.hypot(step.position[0], step.position[2]);
+    expect(horizontal).toBeLessThanOrEqual(previous);
+    previous = horizontal;
+  }
 });
 
 test("onComplete fires exactly once, at the end", () => {
