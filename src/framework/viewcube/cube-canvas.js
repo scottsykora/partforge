@@ -26,11 +26,27 @@ export const CUBE_SIZE_NARROW = 101;
 // bitmap where var() cannot reach, exactly like DIM_THEME in dim3-scene.js.
 // Locked by the look-and-feel spike (plan Task 4); the `edge` colour was
 // retuned in the 2026-08-19 reshape (see CUBE_RENDER's comment below).
+//
+// `hoverFill` is the ONE opaque entry, and deliberately so (2026-08-20). Every
+// other fill here is translucent because the cube is a ghost — but a
+// translucent HIGHLIGHT cannot keep a promise the highlight has to keep. A
+// hovered corner shows three cells at once, and whether each one has a
+// back-face cell behind it or empty space depends on the rotation, so a
+// translucent blue composites over `backFill` on some of them and over nothing
+// on others: three visibly different blues for one region. The hue is exactly
+// the old translucent colour at full alpha, so nothing but the compositing
+// changed.
+//
+// The trade-off, written down rather than left to be rediscovered: an opaque
+// highlight also hides any axis arrow drawn in the "behind" depth phase where
+// the two overlap (that arrow used to read faintly through the highlight).
+// That is accepted — a selection highlight that reads solidly is worth more
+// than an arrow showing through it — and it only affects the hovered cells.
 export const CUBE_PALETTE = {
   dark: {
     backFill: "rgba(124, 143, 176, 0.10)",
     frontFill: "rgba(159, 180, 204, 0.22)",
-    hoverFill: "rgba(122, 162, 247, 0.55)",
+    hoverFill: "#7aa2f7", // OPAQUE on purpose — see the palette's note below
     edge: "rgba(190, 205, 226, 0.25)",
     faceLabel: "rgba(214, 226, 255, 0.65)",
     axisX: "#e06c75",
@@ -41,7 +57,7 @@ export const CUBE_PALETTE = {
   light: {
     backFill: "rgba(70, 88, 118, 0.08)",
     frontFill: "rgba(90, 108, 138, 0.18)",
-    hoverFill: "rgba(43, 108, 214, 0.45)",
+    hoverFill: "#2b6cd6", // OPAQUE on purpose — see the palette's note below
     edge: "rgba(56, 72, 98, 0.25)",
     faceLabel: "rgba(24, 42, 78, 0.65)",
     axisX: "#c0392b",
@@ -290,12 +306,17 @@ export function createCubeCanvas(host, {
 
     for (const arrow of behind) drawArrow(arrow, axisColour[arrow.axis]);
 
-    // 3. the hovered cell, if any
-    const hoveredCell = hover ? projected.front.find((c) => c.id === hover) : null;
-    if (hoveredCell) {
+    // 3. the hovered region — EVERY camera-facing cell of it, not just one.
+    // A face id owns 1 cell, an edge id 2, a corner id 3 (see cube-geom.js),
+    // and step 4 below skips all of them, so resolving a single cell here left
+    // an edge's second cell and a corner's other two unpainted altogether.
+    if (hover) {
       ctx.fillStyle = p.hoverFill;
-      polygon(hoveredCell.points);
-      ctx.fill();
+      for (const cell of projected.front) {
+        if (cell.id !== hover) continue;
+        polygon(cell.points);
+        ctx.fill();
+      }
     }
 
     // 4. front faces (skip the hovered one — its highlight is already down)

@@ -341,6 +341,75 @@ describe("createCubeCanvas", () => {
     expect(fills()).not.toContain(CUBE_PALETTE.dark.hoverFill);
   });
 
+  // The 26 regions map onto 54 cells: a face id owns 1, an edge id 2 (one per
+  // adjoining face), a corner id 3. A hover pass that resolved ONE cell —
+  // `projected.front.find(...)` — filled one of them and, because step 4 skips
+  // every cell whose id matches the hover, left the other two with no front
+  // fill at all. On screen that read as "one side of the corner is much
+  // lighter"; it was in fact an unpainted hole. These three cover it on a REAL
+  // projection, since the hand-built fixture has only one cell per id and so
+  // cannot express the bug at all.
+  describe("a hovered region with several camera-facing cells", () => {
+    // A camera showing three faces at once (bottom / front / right), so the
+    // nearest corner has all 3 of its cells camera-facing and the three edges
+    // between those faces have 2 each.
+    const THREE_FACES = (() => {
+      const q = [0.35, 0.35, 0.15, 0.85];
+      const n = Math.hypot(...q);
+      return q.map((v) => v / n);
+    })();
+    const SIZE = 100;
+    let real;
+    beforeEach(() => { real = projectCube(THREE_FACES, { size: SIZE, outerPad: 23 }); });
+
+    const cellsWithId = (id) => real.front.filter((c) => c.id === id).length;
+
+    it("has a corner with 3 camera-facing cells, an edge with 2 and a face with 1 (the fixture's premise)", () => {
+      expect(cellsWithId("bottom-front-right")).toBe(3);
+      expect(cellsWithId("bottom-front")).toBe(2);
+      expect(cellsWithId("front")).toBe(1);
+    });
+
+    for (const [id, count] of [["bottom-front-right", 3], ["bottom-front", 2], ["front", 1]]) {
+      it(`fills all ${count} camera-facing cell(s) of "${id}" in one identical shade`, () => {
+        handle.draw(real, { hover: id });
+        const hoverFills = fills().filter((c) => c === CUBE_PALETTE.dark.hoverFill);
+        expect(hoverFills.length).toBe(count);
+        expect(new Set(hoverFills).size).toBe(1);
+      });
+    }
+
+    it("leaves no camera-facing cell unpainted while a corner is hovered", () => {
+      // The invariant that was actually violated: every cell in front gets
+      // either the highlight or the ordinary front fill, never nothing.
+      handle.draw(real, { hover: "bottom-front-right" });
+      const hoverFills = fills().filter((c) => c === CUBE_PALETTE.dark.hoverFill).length;
+      const frontFills = fills().filter((c) => c === CUBE_PALETTE.dark.frontFill).length;
+      expect(hoverFills + frontFills).toBe(real.front.length);
+    });
+  });
+
+  it("uses an OPAQUE highlight colour, so the shade cannot vary with what is behind a cell", () => {
+    // Every other fill in the palette is translucent by design (the cube is a
+    // ghost). The highlight cannot be: a hovered cell with a back-face cell
+    // behind it would composite over backFill while one with empty space
+    // behind it composites over nothing, and the two read as different blues —
+    // which is the second half of the reported "one side is much lighter".
+    const alphaOf = (colour) => {
+      const m = /^rgba?\(([^)]+)\)$/.exec(colour.trim());
+      if (!m) return 1; // a hex colour is opaque
+      const parts = m[1].split(",").map((s) => s.trim());
+      return parts.length < 4 ? 1 : Number(parts[3]);
+    };
+    for (const mode of ["dark", "light"]) {
+      expect(alphaOf(CUBE_PALETTE[mode].hoverFill)).toBe(1);
+      // The ghost cube's own fills stay translucent — this is not a licence to
+      // make the whole widget opaque.
+      expect(alphaOf(CUBE_PALETTE[mode].frontFill)).toBeLessThan(1);
+      expect(alphaOf(CUBE_PALETTE[mode].backFill)).toBeLessThan(1);
+    }
+  });
+
   it("repaints in the light palette after a theme change", () => {
     handle.draw(projection, {});
     ctx.calls.length = 0;
