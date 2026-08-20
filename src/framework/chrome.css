@@ -239,23 +239,34 @@
    56px fallback is the standard viewbar's 12px bottom + 44px height, so the
    stack still sits right if the observer never fires.
 
-   The stack itself is pointer-transparent: it is a flex column with a 6px gap
-   and centred items, so the gap and the ~23px either side of the 44px pill
-   would otherwise swallow orbit/pan gestures aimed at the model behind it
-   (~90x140px of dead zone over the viewer). The two real targets opt back in. */
+   The 2026-08-20 revision moved the projection toggle from its own pill card
+   BELOW the cube to a bare circle beside it, so the stack is now a row rather
+   than a column. `row-reverse` (not `row` + reordering the DOM) puts the
+   button to the LEFT while keeping the cube first in source order — the
+   viewcube-controls.test.js structural assertions, and viewcube-mode.js's own
+   append-to-host call, both predate this and still expect the cube to be the
+   stack's first child. `align-items: flex-end` gives the two a shared bottom
+   edge, the requested baseline.
+
+   The stack itself is pointer-transparent: with the button now a sibling
+   beside the canvas rather than a nested pill below it, the gap between them
+   is the only dead zone left (small — the button's own footprint opts back
+   in, and it no longer overlaps the canvas at all), and it is deliberately
+   pass-through so an orbit/pan gesture started there still reaches the model
+   behind the stack. */
 .pf-viewcube-stack {
   position: absolute;
   right: 12px;
   bottom: calc(var(--pf-viewbar-clear, 56px) + 8px);
   z-index: 15;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  flex-direction: row-reverse;
+  align-items: flex-end;
+  gap: 8px;
   pointer-events: none;
 }
 .pf-viewcube-stack[hidden] { display: none; }
-.pf-viewcube-canvas, .pf-viewcube-pill { pointer-events: auto; }
+.pf-viewcube-canvas, .pf-viewcube-toggle { pointer-events: auto; }
 
 /* The keyboard surface: six per-view buttons standing in for the DOM focus a
    canvas cannot give us. Visually hidden rather than display:none — the latter

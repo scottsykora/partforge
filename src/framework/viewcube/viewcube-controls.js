@@ -1,12 +1,18 @@
-// The view cube's chrome: the bottom-right stack (cube over projection button),
-// and the visually-hidden per-view buttons that stand in for the DOM focus a
-// canvas cannot give us. Generated, not declared — no part's HTML carries this,
-// and partforge-cloud's scaffold does not either (the mobile-tabs.js and
-// animation-controls.js precedent).
+// The view cube's chrome: the bottom-right stack (cube with the projection
+// toggle beside it, bottom-aligned), and the visually-hidden per-view buttons
+// that stand in for the DOM focus a canvas cannot give us. Generated, not
+// declared — no part's HTML carries this, and partforge-cloud's scaffold does
+// not either (the mobile-tabs.js and animation-controls.js precedent).
 //
 // The projection button deliberately lives OUTSIDE #viewbar: partforge-cloud's
 // sandbox-scaffold test enumerates #viewbar's buttons against what it renders,
 // and this one is the framework's own.
+//
+// The button used to sit in its own `.pf-viewcube-pill` card below the cube,
+// borrowing #viewbar's chrome. The 2026-08-20 revision made it a small bare
+// circle beside the cube instead (see chrome.css/app.css's viewcube sections),
+// so the pill card — which existed only to give a single button somewhere to
+// sit — is gone; the button is now a direct child of the stack.
 import { attachButtonTooltips } from "../tooltip.js";
 import { runCleanupSteps } from "../teardown.js";
 import { createViewcubeMode } from "./viewcube-mode.js";
@@ -33,13 +39,11 @@ export function attachViewcubeControls(viewer, { stage } = {}, { tooltip } = {})
 
   const mode = createViewcubeMode(viewer, { host: stack });
 
-  const pill = document.createElement("div");
-  pill.className = "pf-viewcube-pill";
   const button = document.createElement("button");
   button.type = "button";
   button.id = "projection";
-  pill.appendChild(button);
-  stack.appendChild(pill);
+  button.className = "pf-viewcube-toggle";
+  stack.appendChild(button);
 
   const keys = document.createElement("div");
   keys.className = "pf-viewcube-key";

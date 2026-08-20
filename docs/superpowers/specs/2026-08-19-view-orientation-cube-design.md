@@ -37,9 +37,20 @@ screen exposes them. Orthographic projection is not available at all.
    regenerated prompt corpus.
 5. **Placement: bottom-right, stacked above the viewbar.** All camera controls
    in one cluster. Costs a vertical stacking contract, handled below.
-6. **Toggle form: a single icon button** with the existing `#viewbar button`
-   chrome and its `.on` state, showing a perspective-frustum glyph that swaps
-   to a parallel-box glyph. Its own one-button pill directly under the cube.
+6. **Toggle form: a single icon button**, showing a perspective-frustum glyph
+   that swaps to a parallel-box glyph. Originally specified as `#viewbar
+   button` chrome in its own one-button pill directly under the cube; the
+   reasoning (that it should read as one of the viewer controls) was sound,
+   and held through the initial implementation.
+
+   **Revision (2026-08-20):** the user chose otherwise, by eye, after seeing
+   it live. The toggle is now a small (24px) transparent circular button with
+   no card, no border, no shadow — sitting beside the cube, to its left,
+   sharing its bottom edge, rather than in a pill beneath it. The `.on` state
+   (with no chrome left to carry it) is an accent-tinted fill plus an
+   accent-coloured icon. See `app.css`'s `.pf-viewcube-toggle` and
+   `chrome.css`'s `.pf-viewcube-stack` (now a bottom-aligned row, not a
+   centred column) for the implementation.
 7. **Interaction: click to snap, drag to orbit, hover to highlight.** The full
    CAD ViewCube behaviour. A drag past threshold cancels the click.
 8. **Hide rule: during Sketch (annotate) mode only.** Sketch freezes the view
@@ -224,7 +235,10 @@ scaffold does not either — which also keeps its `sandbox-scaffold.test.js`
 green, since that test enumerates `#viewbar button` and the projection button
 lives outside the viewbar.
 
-Structure, a right-aligned column `.pf-viewcube-stack`:
+Structure, a right-aligned column `.pf-viewcube-stack` (superseded by decision
+6's 2026-08-20 revision — the stack is now a bottom-aligned row, toggle to the
+cube's left, not a column with the toggle underneath; the diagram below is
+left as originally designed for the historical record):
 
 ```
 ┌─────────┐

@@ -48,10 +48,20 @@ describe("structure", () => {
     expect(stack.parentElement).toBe(stage);
   });
 
-  it("puts the cube above the projection button in the stack", () => {
+  it("appends the cube before the projection button (CSS row-reverse puts the button on screen-left)", () => {
+    // DOM order stays cube-then-button — chrome.css's `.pf-viewcube-stack`
+    // is `flex-direction: row-reverse`, which is what actually places the
+    // button to the cube's left without reordering the DOM (see its comment).
     const children = [...stage.querySelector(".pf-viewcube-stack").children];
     expect(children[0].className).toContain("pf-viewcube");
-    expect(children[1].contains(projectionButton())).toBe(true);
+    expect(children[1]).toBe(projectionButton());
+  });
+
+  it("gives the projection button its own toggle class, no wrapping pill", () => {
+    // The button used to sit inside a `.pf-viewcube-pill` card; the
+    // 2026-08-20 revision made it a bare circle and dropped the wrapper.
+    expect(projectionButton().className).toBe("pf-viewcube-toggle");
+    expect(stage.querySelector(".pf-viewcube-pill")).toBeNull();
   });
 
   it("gives the projection button a type, label and title", () => {
