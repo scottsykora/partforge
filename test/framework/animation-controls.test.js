@@ -1054,27 +1054,23 @@ describe("bottom-right cluster measurement", () => {
     expect(unionRect(null, only)).toEqual(only);
     expect(unionRect(null, null)).toBeNull();
   });
-
-  it("intersects a bar whose band overlaps the cube but not the viewbar", () => {
-    // The regression the cube introduces: at bottom:14px a transport bar clears
-    // #viewbar's band on a wide stage but not the cube's.
-    const union = unionRect(
-      { left: 300, right: 400, top: 560, bottom: 604 },
-      { left: 320, right: 400, top: 470, bottom: 552 },
-    );
-    const bar = { top: 500, bottom: 540 };
-    expect(bar.top < union.bottom && bar.bottom > union.top).toBe(true);
-  });
 });
 
 // --- placement wiring: does applyPlacement actually measure the union? ------
 // The tests above pin unionRect itself; this one pins that the CALL SITE uses
 // it rather than #viewbar alone. Reuses the "clamps against the viewbar" /
-// "no-op when bands don't intersect" harness above, but positions the viewbar
-// so ITS band alone would miss the bar (as in the no-op case) while the cube
-// stacked above it reaches into the bar's band — the exact regression the
-// cube's arrival introduces.
-test("placement wiring: clamps against the view cube stack even when the viewbar alone would clear", async () => {
+// "no-op when bands don't intersect" harness above, but splits the two
+// responsibilities across the two elements: the CUBE supplies the vertical
+// overlap with the bar (the viewbar's own band misses it, so viewbar-only
+// measurement would early-return same as the no-op case above), while the
+// VIEWBAR supplies the union's left edge (it sits further left than the
+// cube). That split means the asserted clamp is reachable only by unioning
+// both rects — a hypothetical implementation that measured the cube alone
+// would see no overlap-driven need to reach past it, and one that measured
+// the viewbar alone would never trigger the clamp at all. Either mutation
+// leaves bar.style.left empty instead of "290px" (checked below, not just
+// reasoned about).
+test("placement wiring: clamps using the viewbar's left edge, triggered by the cube's vertical overlap", async () => {
   const OriginalRO = globalThis.ResizeObserver;
   let roCallback;
   const observed = new Set();
@@ -1093,15 +1089,16 @@ test("placement wiring: clamps against the view cube stack even when the viewbar
     document.body.append(container);
     container.getBoundingClientRect = () =>
       ({ left: 0, right: 1000, top: 0, bottom: 700, width: 1000, height: 700 });
-    // viewbar sits low and right; on its own its band (656-692) misses the
-    // bar's band (610-646) entirely — measuring #viewbar alone would leave the
-    // bar centered. The cube stacked above it (590-650) reaches into the bar's
-    // band AND extends further left (700 vs 900), so the union both triggers
-    // the clamp and supplies the tighter left edge.
+    // viewbar: band (656-692) misses the bar's band (610-646) entirely — on
+    // its own it would early-return, same as the "bands don't intersect" case
+    // above — but it reaches further left (700) than the cube.
     viewbar.getBoundingClientRect = () =>
-      ({ left: 900, right: 990, top: 656, bottom: 692, width: 90, height: 36 });
+      ({ left: 700, right: 990, top: 656, bottom: 692, width: 290, height: 36 });
+    // cube: band (590-650) DOES overlap the bar's band, but sits to the right
+    // of the viewbar (900) — it alone would trigger a clamp, but a looser one
+    // than the union produces.
     cube.getBoundingClientRect = () =>
-      ({ left: 700, right: 990, top: 590, bottom: 650, width: 290, height: 60 });
+      ({ left: 900, right: 990, top: 590, bottom: 650, width: 90, height: 60 });
     const ctl = attachAnimationControls(fakeViewer(), part, {
       container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "box",
     });
@@ -1114,8 +1111,14 @@ test("placement wiring: clamps against the view cube stack even when the viewbar
     expect(observed.has(cube)).toBe(true);
 
     roCallback(); await nextFrame();
-    // centeredLeft 300 > limit (union.left 700)−10−400 = 290 → slides left,
-    // using the CUBE's left edge (700), not the viewbar's (900).
+    // union: left min(700,900)=700 (VIEWBAR), top min(656,590)=590 (CUBE),
+    // bottom max(692,650)=692 (VIEWBAR). Intersection test passes only because
+    // the cube's top (590) pulls the union's top below the bar's bottom (646).
+    // centeredLeft 300 > limit (union.left 700)−10−400 = 290 → slides left.
+    // A cube-only measurement (viewbarLeft 900) would find limit 490 ≥
+    // centeredLeft 300 → no clamp at all. A viewbar-only measurement would
+    // never reach the intersection test in the first place. Both leave
+    // bar.style.left === "" instead of "290px".
     expect(bar.style.left).toBe("290px");
   } finally {
     globalThis.ResizeObserver = OriginalRO;
