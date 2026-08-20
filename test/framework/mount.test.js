@@ -124,14 +124,20 @@ vi.mock("../../src/framework/viewer-controls.js", async (importOriginal) => {
 // mount's OR of the two hide reasons: real crowding needs layout, which
 // happy-dom does not have. The geometry side is pinned in
 // animation-controls.test.js.
+// lastAnimCtl: the real handle attachAnimationControls returns, stashed the
+// same way crowdedHook.report captures opts.onCrowded — lets a test spy on
+// the real notifyUserEdit/setHidden to pin call ORDER for the sketch-mode
+// wiring in mount.js, without adding any new fake surface.
 const crowdedHook = { report: null };
+let lastAnimCtl = null;
 vi.mock("../../src/framework/animation-controls.js", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     attachAnimationControls: vi.fn((viewer, part, opts) => {
       crowdedHook.report = opts.onCrowded;
-      return real.attachAnimationControls(viewer, part, opts);
+      lastAnimCtl = real.attachAnimationControls(viewer, part, opts);
+      return lastAnimCtl;
     }),
   };
 });
@@ -222,6 +228,7 @@ beforeEach(() => {
   fakeViewers.length = 0;
   fakeTooltips.length = 0;
   crowdedHook.report = null; // never let one test's callback stand in for another's
+  lastAnimCtl = null;
   vi.clearAllMocks();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -1268,6 +1275,65 @@ test("switching views hands the outgoing view's animation back", () => {
 
   expect(fakeViewers[0].clearSubPartOpacities).toHaveBeenCalled();
   expect(handle.animation.state()).toMatchObject({ view: "other", animation: null });
+  handle.dispose();
+});
+
+// Task 2 (sdd 2026-08-20-sketch-composer-slot-and-mirroring): Sketch takes the
+// transport bar's slot — the host floats its own composer there — so entering
+// must STOP any playing animation before hiding the bar (hiding first would
+// leave a frame where a playing animation still drives the model beneath a
+// bar that already looks gone), and leaving must not resume it. mount.js
+// wires this as a SECOND annotateMode.onModeChange subscription, registered
+// after `animCtl` is assigned (the earlier onModeChange, near the view cube,
+// runs before animCtl exists).
+test("entering sketch mode stops playback before hiding the transport bar; leaving reveals it without resuming", async () => {
+  const part = makeAnimatedPart();
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  // Sketch only appears when the host wires a send callback (same gate as the
+  // view-cube hide-reason tests above).
+  const handle = mount(part, {
+    createWorker, elements: els, onAnnotationSend: () => {},
+  });
+  finishFirstBuild(workers);
+  const viewer = fakeViewers[0];
+  const bar = els.viewer.querySelector(".pf-anim-bar");
+  expect(bar).not.toBeNull();
+  expect(bar.style.display).toBe("");
+
+  handle.animation.play();  // "grow" has no camera cue → status goes "playing" immediately
+  viewer.tickFrame(0.5);    // move it along so there is something to stop
+  expect(handle.animation.state().status).toBe("playing");
+
+  // lastAnimCtl is the REAL handle attachAnimationControls returned to
+  // mount.js (captured by the mock above) — spying on it (call-through, not
+  // replaced) pins call ORDER on the actual objects mount.js holds, with no
+  // new fake surface added.
+  const ctl = lastAnimCtl;
+  const notifySpy = vi.spyOn(ctl, "notifyUserEdit");
+  const hideSpy = vi.spyOn(ctl, "setHidden");
+  viewer.cancelCameraTween.mockClear();
+
+  handle.annotate.setEnabled(true);
+  await new Promise((r) => requestAnimationFrame(r));
+
+  expect(hideSpy).toHaveBeenCalledWith(true);
+  expect(notifySpy).toHaveBeenCalledTimes(1);
+  // STOP before hide.
+  expect(notifySpy.mock.invocationCallOrder[0]).toBeLessThan(hideSpy.mock.invocationCallOrder[0]);
+  expect(viewer.cancelCameraTween).toHaveBeenCalled(); // notifyUserEdit's own stop signal
+  expect(handle.animation.state().status).toBe("paused"); // actually stopped, not just told to
+  expect(bar.style.display).toBe("none");
+  expect(els.viewer.style.getPropertyValue("--pf-anim-clear")).toBe("0px");
+
+  handle.annotate.setEnabled(false);
+  await new Promise((r) => requestAnimationFrame(r));
+
+  expect(hideSpy).toHaveBeenCalledWith(false);
+  expect(notifySpy).toHaveBeenCalledTimes(1); // leaving does not touch playback again
+  expect(bar.style.display).toBe("");         // slot is back
+  expect(handle.animation.state().status).toBe("paused"); // and playback did NOT resume
+
   handle.dispose();
 });
 
