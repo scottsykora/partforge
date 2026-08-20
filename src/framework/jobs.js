@@ -112,7 +112,14 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // part, not an error page.
     for (const [key, allow] of fontControlAllows(part)) {
       const v = p[key];
-      if (v === undefined || fontSourceAllowed(v, allow)) continue;
+      // Nullish OR empty-string skips: an empty font source means NO font
+      // declared, not a refused one — it's the documented way to opt out of a
+      // typeface (see fonts.js/fontsFor and the "no font source declared"
+      // filter just below, which already treats "" as absent). fontSourceAllowed
+      // would reject "" under any allow list (new URL("") throws), so without
+      // this it would read as a disallowed value and post a spurious refusal
+      // notice on every build of a part whose font control is simply unset.
+      if (v === undefined || v === null || v === "" || fontSourceAllowed(v, allow)) continue;
       onProgress(`font source for "${key}" is not allowed — using the default`);
       p[key] = part.defaults?.[key];
     }

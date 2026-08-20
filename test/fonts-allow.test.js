@@ -118,3 +118,34 @@ test("a disallowed font param with no declared default completes the job instead
   expect(posts.find((m) => m.type === "error")).toBeUndefined();    // no error page
   expect(posts.find((m) => m.type === "meshes")).toBeTruthy();      // the job actually finished
 });
+
+test("an empty-string font param (no font declared) posts no refusal notice, while a disallowed value still does", async () => {
+  // Same guard, two branches — a fix that skipped everything would make the
+  // "still does" half fail to fail, which is the trap noted in the review.
+  const kernel = { _fonts: new Map(), cleanup() {} };
+  const part = {
+    parameters: [{ id: "t", controls: [{ key: "face", type: "font", allow: ["gstatic"] }] }],
+    defaults: { face: "" },                // "" = the documented "unset" state
+    fonts: (p) => (p.face ? { face: p.face } : {}),
+    parts: {},
+  };
+  const g = globalThis.fetch;
+  globalThis.fetch = async (u) => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+  const notRefused = (m) => m.type === "progress" && /not allowed/.test(m.phase);
+
+  const emptyPosts = [];
+  try {
+    await handle(kernel, part, { type: "generate", subparts: [], view: "iso",
+      params: { face: "" } }, (m) => emptyPosts.push(m));
+  } finally { globalThis.fetch = g; }
+  expect(emptyPosts.find(notRefused), "an empty source is not a refusal").toBeUndefined();
+  expect(emptyPosts.find((m) => m.type === "meshes")).toBeTruthy();   // job still completes
+
+  globalThis.fetch = async (u) => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+  const badPosts = [];
+  try {
+    await handle(kernel, part, { type: "generate", subparts: [], view: "iso",
+      params: { face: "https://evil.test/x.ttf" } }, (m) => badPosts.push(m));
+  } finally { globalThis.fetch = g; }
+  expect(badPosts.find(notRefused), "a genuinely disallowed source must still warn").toBeTruthy();
+});
