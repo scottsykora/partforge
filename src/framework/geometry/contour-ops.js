@@ -407,16 +407,24 @@ function bisectMaxDistChamfer(fromA, segA, fromB, segB, dist) {
 // cubic or arc) and return {tA, tB, TA, TB, connector} — tA/tB in the
 // neighbors' own parameterizations, ready for trimSegment(); connector is
 // the {to,via?} spliced between the trimmed neighbors.
-function solveCurveCorner(pts, contour, n, i, param, isFillet, label) {
+function solveCurveCorner(pts, contour, n, i, param, isFillet, label, record) {
   const inIdx = (i - 1 + n) % n, fromA = pts[inIdx], segA = contour.segments[inIdx];
   const fromB = pts[i], segB = contour.segments[i];
   const A = curveEvaluator(fromA, segA), B = curveEvaluator(fromB, segB);
   const p1 = pts[i];
   if (isFillet) {
-    const solved = solveFilletTangency(A, B, param);
+    let solved = solveFilletTangency(A, B, param);
     if (!solved) {
-      const maxR = roundNice(bisectMaxRFillet(A, B, param));
-      throw new Error(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): could not fit r=${param} against the curved segment; max ≈ ${maxR}`);
+      // Clamp rather than refuse. bisectMaxRFillet returns a radius the solver
+      // ACCEPTED (lo only ever moves to a solved midpoint), so re-solving at it
+      // succeeds — except when it never found one at all (lo stays 0), which is
+      // a corner with no valid fillet at any radius and stays an error.
+      const maxR = bisectMaxRFillet(A, B, param);
+      solved = maxR > 0 ? solveFilletTangency(A, B, maxR) : null;
+      if (!solved)
+        throw new Error(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): could not fit r=${param} against the curved segment; max ≈ ${roundNice(maxR)}`);
+      record?.(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): r=${param} does not fit against the curved segment — clamped to ${roundNice(maxR)}`);
+      param = maxR;
     }
     const { tA, tB, TA, TB, C } = solved;
     const a0 = Math.atan2(TA[1] - C[1], TA[0] - C[0]);
@@ -427,10 +435,15 @@ function solveCurveCorner(pts, contour, n, i, param, isFillet, label) {
     const M = [C[0] + param * Math.cos(mid), C[1] + param * Math.sin(mid)];
     return { tA, tB, TA, connector: { to: TB, via: M } };
   }
-  const solved = solveChamferArcLength(fromA, segA, fromB, segB, param);
+  let solved = solveChamferArcLength(fromA, segA, fromB, segB, param);
   if (!solved) {
-    const maxDist = roundNice(bisectMaxDistChamfer(fromA, segA, fromB, segB, param));
-    throw new Error(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): could not fit dist=${param} against the curved segment; max ≈ ${maxDist}`);
+    // Same clamp-don't-refuse rule as the fillet branch above.
+    const maxDist = bisectMaxDistChamfer(fromA, segA, fromB, segB, param);
+    solved = maxDist > 0 ? solveChamferArcLength(fromA, segA, fromB, segB, maxDist) : null;
+    if (!solved)
+      throw new Error(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): could not fit dist=${param} against the curved segment; max ≈ ${roundNice(maxDist)}`);
+    record?.(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): dist=${param} does not fit against the curved segment — clamped to ${roundNice(maxDist)}`);
+    param = maxDist;
   }
   const { tA, tB, TA, TB } = solved;
   return { tA, tB, TA, connector: { to: TB } };
@@ -440,19 +453,26 @@ function solveCurveCorner(pts, contour, n, i, param, isFillet, label) {
 // Mirrors cornerArc's tangent/center math (polygon.js:107) but WITHOUT its silent
 // per-corner clamp — filletProfile/chamferProfile throw instead of clamping, so the
 // clamp math is reproduced here unclamped, gated by our own explicit fit checks.
-function buildCornerOpRing(contour, picks, isFillet, label) {
+// ONE attempt at a ring, with `paramAt` supplying each selected corner's current
+// magnitude. Per-corner over-runs are clamped in place here (each has its own
+// computable ceiling); a SHARED-EDGE overlap cannot be, because shrinking one
+// corner changes what its neighbour may claim — so those are reported back as
+// `overlaps` for buildCornerOpRing's loop to resolve and retry.
+function attemptCornerOpRing(contour, picks, isFillet, label, paramAt, clamp, record) {
   const n = contour.segments.length;
   const pts = [contour.start, ...contour.segments.map((s) => s.to)].slice(0, n);
   const plans = new Map();   // vertex index -> {A, B, M, setback} (line-line corners only)
   const curvePlans = new Map();   // vertex index -> {tA, tB, connector} (curve-adjacent corners)
   const selected = new Set(picks.map((p) => p.corner.index));   // this ring's selected vertex indices
+  const overlaps = [];
 
-  for (const { corner, param } of picks) {
+  for (const { corner } of picks) {
     const i = corner.index;
+    let param = paramAt(i);
     if (corner.segTypes[0] !== "line" || corner.segTypes[1] !== "line") {
       // Curve-adjacent corner: routed through the numeric tangency solver, never
       // through the line-line closed-form math below (exactness/speed for lines).
-      curvePlans.set(i, solveCurveCorner(pts, contour, n, i, param, isFillet, label));
+      curvePlans.set(i, solveCurveCorner(pts, contour, n, i, param, isFillet, label, record));
       continue;
     }
     const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n];
@@ -461,7 +481,7 @@ function buildCornerOpRing(contour, picks, isFillet, label) {
     const v0 = [v0x / l0, v0y / l0], v2 = [v2x / l2, v2y / l2];
     const cosA = Math.max(-1, Math.min(1, v0[0] * v2[0] + v0[1] * v2[1]));
     const half = Math.acos(cosA) / 2;                        // angle between the two edges, halved
-    const setback = isFillet ? param / Math.tan(half) : param;
+    let setback = isFillet ? param / Math.tan(half) : param;
     // Per-corner ceiling: never past either edge's own end (hard cap, always full — a
     // tangent point can never pass an edge's own extent regardless of who else is
     // selected), and never past half the LONGER edge's "fair share" (soft cap). The soft
@@ -474,9 +494,15 @@ function buildCornerOpRing(contour, picks, isFillet, label) {
     const softL0 = prevShared ? l0 / 2 : l0, softL2 = nextShared ? l2 / 2 : l2;
     const maxSetback = Math.min(l0, l2, Math.max(softL0, softL2));
     if (setback > maxSetback + 1e-9) {
-      const maxParam = roundNice(isFillet ? maxSetback * Math.tan(half) : maxSetback);
+      // Clamp to the ceiling this corner's own edges allow, and go on. The old
+      // throw named the very number used here, so nothing is being guessed —
+      // the caller is simply spared having to read an error and retry by hand.
+      const maxParam = isFillet ? maxSetback * Math.tan(half) : maxSetback;
       const paramTxt = isFillet ? `r=${param}` : `dist=${param}`;
-      throw new Error(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): ${paramTxt} does not fit; max ≈ ${maxParam}`);
+      record?.(`${label}: corner ${i} at (${p1[0]}, ${p1[1]}): ${paramTxt} does not fit — clamped to ${roundNice(maxParam)}`);
+      clamp(i, maxParam);
+      param = maxParam;
+      setback = maxSetback;
     }
     const A = [p1[0] + v0[0] * setback, p1[1] + v0[1] * setback];
     const B = [p1[0] + v2[0] * setback, p1[1] + v2[1] * setback];
@@ -506,8 +532,10 @@ function buildCornerOpRing(contour, picks, isFillet, label) {
       // Curved segment: only curve corners can claim it (line-line requires both
       // neighbors to be "line", so a curved seg is never in `plans`). Overlap ⇔
       // the kept t-span [startCurve.tB, endCurve.tA] collapses or reverses.
-      if (endCurve.tA - startCurve.tB <= 1e-9)
-        throw new Error(`${label}: corners ${k} and ${kNext} overlap on segment ${k} (reduce r)`);
+      // A curve segment's claims are t-parameters, which are not linear in the
+      // magnitude, so there is no exact scale factor to solve for — report the
+      // pair and let the loop back both off geometrically until they fit.
+      if (endCurve.tA - startCurve.tB <= 1e-9) overlaps.push({ k, kNext, factor: null });
     } else {
       // Line segment: a curve-corner claim on it is a t-parameter (curvePlans.tB
       // measures forward from this segment's start; curvePlans.tA forward from its
@@ -516,8 +544,10 @@ function buildCornerOpRing(contour, picks, isFillet, label) {
       const segLen = Math.hypot(pts[kNext][0] - pts[k][0], pts[kNext][1] - pts[k][1]);
       const startClaim = startPlan ? startPlan.setback : startCurve.tB * segLen;
       const endClaim = endPlan ? endPlan.setback : (1 - endCurve.tA) * segLen;
+      // On a straight segment the claim IS the setback, linear in the magnitude,
+      // so the exact scale that makes the pair fit is solvable in one step.
       if (startClaim + endClaim > segLen + 1e-9)
-        throw new Error(`${label}: corners ${k} and ${kNext} overlap on segment ${k} (reduce r)`);
+        overlaps.push({ k, kNext, factor: segLen / (startClaim + endClaim) });
     }
   }
 
@@ -540,14 +570,69 @@ function buildCornerOpRing(contour, picks, isFillet, label) {
     if (endPlan) segments.push(isFillet ? { to: endPlan.B, via: endPlan.M } : { to: endPlan.B });
     if (endCurve) segments.push(endCurve.connector);
   }
-  return { start, segments };
+  return { ring: { start, segments }, overlaps };
 }
 
-function applyCornerOp(input, param, opts, label, isFillet) {
+// How many times the loop below may back off overlapping corner pairs. Each pass
+// only ever REDUCES magnitudes and a straight-segment pair is solved exactly in
+// one step, so real inputs settle in one or two; the bound exists so a
+// pathological ring cannot spin, and reaching it is a genuine failure that
+// throws rather than emitting a ring built from magnitudes still known to
+// overlap.
+const MAX_OVERLAP_PASSES = 8;
+
+// Fillet/chamfer one ring, CLAMPING every magnitude that does not fit rather
+// than refusing the whole profile. Two ceilings apply: a per-corner one, applied
+// in place by the attempt above, and a shared-edge one between two corners
+// claiming the same segment, resolved here because backing one corner off
+// changes what its neighbour may take.
+function buildCornerOpRing(contour, picks, isFillet, label, record) {
+  const params = new Map(picks.map((p) => [p.corner.index, p.param]));
+  const requested = new Map(params);
+  for (let pass = 0; ; pass++) {
+    const last = pass === MAX_OVERLAP_PASSES;
+    const passClamps = new Map();   // corner -> per-corner ceiling this pass applied
+    const messages = [];
+    const { ring, overlaps } = attemptCornerOpRing(
+      contour, picks, isFillet, label,
+      (i) => params.get(i),
+      (i, v) => passClamps.set(i, v),
+      (msg) => messages.push(msg),
+    );
+    if (overlaps.length === 0) {
+      // Report only now, from the pass that actually produced the ring: an
+      // earlier pass's clamp is routinely superseded by a later, smaller one,
+      // and emitting both would describe magnitudes the result never used.
+      for (const msg of messages) record?.(msg);
+      // A magnitude reduced by the overlap loop rather than by a per-corner
+      // ceiling has no message of its own — the attempt never saw it as a
+      // clamp, it was simply handed a smaller number. Report those here, so a
+      // shared-edge shrink is as visible as a per-corner one.
+      for (const { corner } of picks) {
+        const i = corner.index, was = requested.get(i), now = params.get(i);
+        if (now < was - 1e-9 && !passClamps.has(i))
+          record?.(`${label}: corner ${i}: ${isFillet ? "r" : "dist"}=${was} overruns the edge it shares with a neighbouring corner — clamped to ${roundNice(now)}`);
+      }
+      return ring;
+    }
+    if (last)
+      throw new Error(`${label}: corners ${overlaps[0].k} and ${overlaps[0].kNext} overlap on segment ${overlaps[0].k} (reduce r)`);
+    for (const { k, kNext, factor } of overlaps) {
+      // A hair under the exact fit so the next pass's `> segLen + 1e-9` test
+      // clears rather than landing back on the boundary; a null factor (curved
+      // segment, no closed-form scale) backs off geometrically instead.
+      const f = factor === null ? 0.8 : factor * 0.999;
+      for (const i of [k, kNext]) if (params.has(i)) params.set(i, params.get(i) * f);
+    }
+  }
+}
+
+
+function applyCornerOp(input, param, opts, label, isFillet, record) {
   const { kind, regions } = liftProfile(input);
   if (kind === "points" || kind === "contour") {
     const picks = resolveCornerSelector(contourCorners(regions[0].outer), param, opts, label);
-    const outer = buildCornerOpRing(regions[0].outer, picks, isFillet, label);
+    const outer = buildCornerOpRing(regions[0].outer, picks, isFillet, label, record);
     // Always surface a {start,segments} contour, even for a "points" input and an
     // all-line chamfer result: restoreProfile's points-downgrade is for shape-preserving
     // transforms, but a corner op changes the vertex count — it must not collapse back.
@@ -572,19 +657,25 @@ function applyCornerOp(input, param, opts, label, isFillet) {
   for (const { ringRef, picks: ringPicks } of byRing.values()) {
     const rg = newRegions[ringRef.ri];
     const contour = ringRef.key === "outer" ? rg.outer : rg.holes[ringRef.hi];
-    const rebuilt = buildCornerOpRing(contour, ringPicks, isFillet, label);
+    const rebuilt = buildCornerOpRing(contour, ringPicks, isFillet, label, record);
     if (ringRef.key === "outer") rg.outer = rebuilt; else rg.holes[ringRef.hi] = rebuilt;
   }
   return restoreProfile(kind, newRegions);
 }
 
-export function filletProfile(input, r, opts) {
-  return applyCornerOp(input, r, opts, "filletProfile", true);
+// `record` receives one message per magnitude CLAMPED to what the geometry can
+// take (see buildCornerOpRing). Defaulted to console.warn so a direct call still
+// says something; Shape2D threads its kernel's recorder in, which is what puts a
+// clamp on the build result where a caller — or the cloud agent — can act on it.
+export function filletProfile(input, r, opts, record = defaultRecord) {
+  return applyCornerOp(input, r, opts, "filletProfile", true, record);
 }
 
-export function chamferProfile(input, dist, opts) {
-  return applyCornerOp(input, dist, opts, "chamferProfile", false);
+export function chamferProfile(input, dist, opts, record = defaultRecord) {
+  return applyCornerOp(input, dist, opts, "chamferProfile", false, record);
 }
+
+const defaultRecord = (msg) => console.warn(`partforge: ${msg}`);
 
 // ── simplifyProfile (Task 9) ─────────────────────────────────────────────────
 // Corner-preserving decimation/refit: split each contour at its corners (contourCorners,

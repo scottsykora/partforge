@@ -33,7 +33,11 @@ export const isClosedSolid = (shape) => {
   return true;
 };
 
-export function createOcctRepair(measureVolume) {
+// `warn` receives every feature-skip / rescue message. The default keeps the
+// historical console.warn; the OCCT backend injects a recorder that ALSO feeds
+// the kernel's takeBuildWarnings channel, so a skipped feature reaches the
+// build result (and, in the cloud app, the agent) instead of only the console.
+export function createOcctRepair(measureVolume, warn = (msg) => console.warn(`partforge: ${msg}`)) {
   // The true maximum chamfer for an edge depends on local angles and adjacent features,
   // which is hard to predict analytically (and OCCT exposes no max-radius query). So
   // VALIDATE the result instead of guessing: try the requested distance, and if it makes
@@ -65,8 +69,8 @@ export function createOcctRepair(measureVolume) {
     // multiplies an already-expensive op by ~8x, so make the cost loud enough to
     // act on (lower the distance, or bevel profile rims with a loft instead).
     const cost = `${attempts} attempts, ${((performance.now() - t0) / 1000).toFixed(1)}s — see ERROR-PATTERNS.md#chamfer-rescue-bisection`;
-    if (best) { console.warn(`partforge: chamfer ${distance} over-ran the geometry — reduced to ${bestD.toFixed(2)} (largest valid; ${cost})`); return best; }
-    console.warn(`partforge: chamfer ${distance} has no valid distance for this geometry — feature skipped (${cost})`);
+    if (best) { warn(`chamfer ${distance} over-ran the geometry — reduced to ${bestD.toFixed(2)} (largest valid; ${cost})`); return best; }
+    warn(`chamfer ${distance} has no valid distance for this geometry — feature skipped (${cost})`);
     return shape.clone();                                    // nothing valid — skip the chamfer
   };
 
@@ -90,10 +94,10 @@ export function createOcctRepair(measureVolume) {
       const resultVolume = measureVolume(result);
       if (resultVolume > 0 && (!isValid || isValid(resultVolume, beforeVolume))) { backup.delete?.(); return result; }
       result.delete?.();
-      if (resultVolume > 0) console.warn(`partforge: ${label} produced invalid geometry — feature skipped`);
-      else console.warn(`partforge: ${label} produced an empty solid — feature skipped (radius out of range?)`);
+      if (resultVolume > 0) warn(`${label} produced invalid geometry — feature skipped`);
+      else warn(`${label} produced an empty solid — feature skipped (radius out of range?)`);
     } catch (e) {
-      console.warn(`partforge: ${label} failed (${e?.message || e}) — feature skipped`);
+      warn(`${label} failed (${e?.message || e}) — feature skipped`);
     }
     return backup;
   };
