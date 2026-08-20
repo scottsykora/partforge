@@ -94,3 +94,23 @@ test("a default within the implicit https allow list does not warn", () => {
   const r = lintPart(part);
   expect(ids(r.warnings)).not.toContain("font-source-scheme");
 });
+
+test("an empty-string default (no font declared) does not warn, even under a narrow allow list", () => {
+  const part = partWith({
+    parameters: [{ id: "s", controls: [{ key: "face", type: "font", allow: ["gstatic"] }] }],
+    defaults: { face: "" },
+    fonts: (p) => (p.face ? { face: p.face } : {}),
+  });
+  const r = lintPart(part);
+  expect(ids(r.warnings)).not.toContain("font-source-scheme");
+});
+
+test("a disallowed non-empty default still warns under the same narrow allow list", () => {
+  const part = partWith({
+    parameters: [{ id: "s", controls: [{ key: "face", type: "font", allow: ["gstatic"] }] }],
+    defaults: { face: "https://cdn.example.com/x.ttf" },
+    fonts: (p) => (p.face ? { face: p.face } : {}),
+  });
+  const r = lintPart(part);
+  expect(ids(r.warnings)).toContain("font-source-scheme");
+});

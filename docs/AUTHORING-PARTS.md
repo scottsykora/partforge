@@ -72,7 +72,7 @@ export default {
   meta: { title, units, background? },     // title string; units e.g. "mm"; background = 0xRRGGBB scene colour
   parameters,                              // the control-panel schema (array of sections — see below)
   defaults,                                // flat { paramKey: value } — seeds params + control values
-  fonts?,                                  // { name: source } — fonts a part's k.text2d() needs; framework preloads before build (see below)
+  fonts?,                                  // { name: source } — or (p) => ({ name: source }) when a control drives the typeface
   imports?,                                // { name: source } — STEP/STL/3MF files a part's k.import() needs; same preload timing as fonts (see below)
   derive?,                                 // (p) => d, or { group: (p, d) => {…}, … } — dependent values computed once per build
   parts: {                                 // named sub-parts; each builds ONE solid
@@ -631,6 +631,7 @@ Every control accepts `key`, `type`, `label`, `description`, `hidden`, `when` an
 | `"checkbox"` | an on/off box: ticked writes `on`, cleared writes `0` | `on` (default `1`) |
 | `"select"` | a dropdown | `options` |
 | `"radio"` | a segmented button row | `options` |
+| `"font"` | a typeface picker, or a URL field with no catalog | `allow`, `preview` |
 
 Numeric controls always show the number box: drag the slider *or* type an exact
 value. Typed values may be finer than `step` and clamp to `[min, max]` on commit.
@@ -1317,6 +1318,20 @@ fonts: {
 - **Inline bytes:** an `ArrayBuffer` or `Uint8Array` — useful for generated or embedded fonts
 
 Reference a font by name: `k.text2d("text", { font: "heading" })`. Omit the `font` option to use the bundled **Roboto** (Regular, SIL OFL 1.1) default.
+
+**Making the typeface a parameter.** Give `fonts` a function of params instead of a
+static object, and a `type: "font"` control can drive which face `text2d` uses —
+`src/parts/nameplate.js` is the reference:
+
+```js
+{ key: "face", type: "font", label: "Typeface" },   // in `parameters`
+fonts: (p) => (p.face ? { face: p.face } : {}),     // a function, not a static map
+k.text2d(p.label, { font: "face" }),                // only when p.face is set
+```
+
+An empty `face` declares nothing — `fonts` returns `{}`, and `text2d` falls back to
+the bundled Roboto — so the part still builds with no network access. A part with a
+fixed typeface needs none of this: a plain `{ name: source }` object is fine.
 
 **Build-time & curve semantics:**
 
@@ -2110,6 +2125,14 @@ unverified.
 `bbox`, `centerOfMass`, `boundsMin`, `boundsMax`, a componentwise vector `"<=[x,y,z]"` /
 `">=[x,y,z]"` where `*` skips an axis. The parser is strict — a malformed assertion
 fails loudly.
+
+**A part whose typeface is a parameter needs band assertions, not points.** Glyph
+advance widths differ by family, so a `text2d` sub-part's `bbox`/`volume` shifts with
+the picked face even when every other param is unchanged. Write `verify` bounds wide
+enough to hold across the fonts your `allow` list admits (a range, or `<=`/`>=`,
+rather than exact equality). `verify` runs against `defaults`, which is stable — the
+nameplate ships `face: ""` (the bundled Roboto), so its own `verify` cases don't
+need this, but a part whose default already names a specific face does.
 
 ```js
 verify: { expect: {

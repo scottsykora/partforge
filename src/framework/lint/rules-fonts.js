@@ -29,7 +29,11 @@ export const FONT_RULES = [
       const out = [];
       for (const [key, allow] of fontControlAllows(part)) {
         const v = part?.defaults?.[key];
-        if (v === undefined || fontSourceAllowed(v, allow)) continue;
+        // Nullish OR empty-string skips: an empty font source declares nothing
+        // (jobs.js filters exactly these out before resolveFonts, and text2d
+        // falls back to the bundled Roboto), which is a legitimate way to author
+        // an optional typeface — not a source the allow list is refusing.
+        if (v === undefined || v === null || v === "" || fontSourceAllowed(v, allow)) continue;
         out.push(warn("font-source-scheme",
           `defaults.${key} is "${String(v).slice(0, 120)}", which control "${key}" would refuse (allow: ${allow.join(", ")}).`,
           `Use a source the allow list accepts, or widen \`allow\` on the control. At build time this value is replaced by defaults.${key}, so as written the part has no usable font.`,
