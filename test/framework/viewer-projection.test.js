@@ -178,8 +178,10 @@ function createContainer(box = { w: 400, h: 300 }) {
   return container;
 }
 
-const triangle = () => ({
-  positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+// A right triangle `mm` on a side in the XY plane — enough of a bounding box for
+// frameTo to frame, and the size drives the framing distance (2.6r + 6).
+const triangle = (mm = 1) => ({
+  positions: new Float32Array([0, 0, 0, mm, 0, 0, 0, mm, 0]),
   normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
   triangles: 1,
 });
@@ -416,10 +418,36 @@ test("a degenerate ortho zoom cannot strand the camera past the far plane", () =
   viewer.setProjection("orthographic");
   viewer.camera.zoom = 1e-4; // ortho zoom-out is unbounded and looks harmless
   viewer.setProjection("perspective");
-  // Clamped instead of ~281,000mm — beyond far = 1000 the viewer just goes blank.
-  expect(distanceOf(viewer)).toBeCloseTo(viewer.camera.far / 2, 6);
+  // Bounded instead of ~281,000mm — beyond far = 1000 the viewer just goes blank.
+  expect(distanceOf(viewer)).toBeCloseTo(viewer.camera.far * 0.9, 6);
   viewer.dispose();
 });
+
+// The bound above must not touch a framing the user could otherwise have had.
+// Units are MILLIMETRES and frameTo frames at 2.6r + 6, so ordinary parts sit
+// well past any fixed fraction of the far plane: a 300mm part lands at 786mm
+// (past far/2) and a 400mm part at 1046mm (past far * 0.9, and already clipped
+// by the far plane — but a toggle still must not move the camera). An untouched
+// round trip has to reproduce the distance for BOTH.
+test.each([[300, 700], [400, 900]])(
+  "an untouched round trip is lossless for a %imm part framed past %imm",
+  (mm, floor) => {
+    const viewer = makeViewer();
+    viewer.setSubGeometry("body", triangle(mm));
+    viewer.showAssembly(["body"], { frame: true });
+    const distance = distanceOf(viewer);
+    expect(distance).toBeGreaterThan(floor);
+
+    viewer.setProjection("orthographic");
+    viewer.setProjection("perspective"); // no interaction at all: zoom is still 1
+
+    // Tolerance, not toBe: the position is rebuilt as target +
+    // normalize(offset) * distance, so the last ulp of a ~1000mm magnitude is
+    // not meaningful. A bound firing here would cost hundreds of mm, not 1e-9.
+    expect(distanceOf(viewer)).toBeCloseTo(distance, 9);
+    viewer.dispose();
+  },
+);
 
 test("an unrecognised mode resolves to perspective", () => {
   const viewer = makeViewer();

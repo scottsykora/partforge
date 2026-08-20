@@ -490,20 +490,26 @@ export function createViewer(container, part) {
       // changes camera.zoom there rather than moving the camera, so the zoom
       // has to come back as a distance or the part jumps size.
       //
-      // Clamped at half the far plane, because ortho zoom is unbounded and
-      // zooming a long way out costs nothing there (an ortho projection has no
-      // depth falloff) — but the recovered distance goes as 1/zoom, so a zoom
-      // near nothing would place the perspective camera past its own far plane
-      // and blank the viewer with no cue as to why. Half the far plane leaves
-      // the other half for the part's own depth. `|| 1` on the zoom for the same
-      // reason captureCurrent guards it: a zero would make this non-finite.
+      // The bound exists because ortho zoom is UNBOUNDED and zooming a long way
+      // out costs nothing there (an ortho projection has no depth falloff) —
+      // while the recovered distance goes as 1/zoom, so a zoom near nothing would
+      // fling the perspective camera past its own far plane and blank the viewer
+      // with no cue as to why. `far * 0.9` alone would be too eager: frameTo
+      // frames at 2.6r + 6 MILLIMETRES, so an everyday 300mm part sits at 786mm
+      // and a plain toggle would silently reframe it closer. Hence the max with
+      // the distance the camera is already at, which makes an untouched round
+      // trip (zoom === 1, where orthoFrustum/perspectiveDistance are exact
+      // inverses) lossless for a part of ANY size, and still never lets a
+      // degenerate zoom move the camera further out than it already was.
+      // `|| 1` on the zoom for the same reason captureCurrent guards it: a zero
+      // would make this non-finite.
       const halfH = (orthoCamera.top - orthoCamera.bottom) / 2 || 1;
+      const offset = from.position.clone().sub(controls.target);
       const distance = Math.min(
         perspectiveDistance({ halfH, zoom: orthoCamera.zoom || 1, fovDeg: camera.fov }),
-        camera.far / 2,
+        Math.max(camera.far * 0.9, offset.length()),
       );
-      const direction = from.position.clone().sub(controls.target).normalize();
-      camera.position.copy(controls.target).addScaledVector(direction, distance);
+      camera.position.copy(controls.target).addScaledVector(offset.normalize(), distance);
     }
     to.updateProjectionMatrix();
     activeCamera = to;
