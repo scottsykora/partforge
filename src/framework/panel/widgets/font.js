@@ -102,7 +102,8 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog }
   };
   paint();
 
-  // Task 6 replaces this with the real picker; the seam is deliberately one line.
+  // The picker registers itself through setFontPicker (see below); with no
+  // picker in the bundle the button is inert rather than broken.
   btn.addEventListener("click", () => {
     openFontPicker?.({ node, params, allow, fontCatalog, anchor: wrap, onPicked: () => { paint(); onChange?.(); onCommit?.(); } });
   });
@@ -110,7 +111,8 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog }
   return { el: wrap, sync: paint };
 }
 
-// Assigned by font-picker.js when the panel bundle includes it (Task 6). Kept
+// Assigned by font-picker.js, which widgets/index.js imports for the side
+// effect. Kept
 // as a mutable binding rather than a static import so this file stays usable —
 // and testable — without dragging the whole picker in.
 export let openFontPicker = null;
