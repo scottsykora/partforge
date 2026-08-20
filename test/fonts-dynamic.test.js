@@ -76,6 +76,14 @@ test("a throwing derive() errors before any font is fetched", async () => {
   const part = { defaults: {}, derive: () => { throw new Error("boom"); }, fonts: fontsSpy, parts: {} };
   const posts = [];
   await handle(kernel, part, job, (m) => posts.push(m));
-  expect(posts.find((m) => m.type === "error")).toBeTruthy();
+  const err = posts.find((m) => m.type === "error");
+  expect(err).toBeTruthy();
   expect(fontsSpy).not.toHaveBeenCalled();
+  // Two different bugs both satisfy "posted an error and never called
+  // fontsSpy": a correctly-reordered resolveParams-throws-first (what we want
+  // to prove), or an unreordered jobs.js still handing the raw function to
+  // resolveFonts, which throws its own guard error before ever calling
+  // fontsSpy. Pin the message to tell them apart.
+  expect(err.message).toContain("boom");        // derive threw first…
+  expect(err.message).not.toMatch(/fontsFor/);  // …not the resolveFonts guard
 });
