@@ -1031,6 +1031,20 @@ export function createViewer(container, part) {
     activeCamera.position.set(pos[0], pos[1], pos[2]);
     controls.target.set(target[0], target[1], target[2]);
     controls.update();
+    // A saved pose carries an implied FRAMING, so the ortho frustum has to be
+    // re-derived from the restored distance. Without it, a reload in ortho comes
+    // back at the wrong zoom: the projection is restored during mount setup,
+    // while the camera is restored much later (showView, on the first accepted
+    // build), so the frustum would stay sized for wherever the camera happened
+    // to start. Done here rather than at the mount's call site so every caller
+    // is fixed, including a host that restores a pose itself.
+    //
+    // Deliberately NOT done in tweenCameraTo: a cube click or an animation
+    // camera cue means "look from this direction", not "reframe". Under ortho the
+    // camera's distance has no effect on apparent size anyway, so re-deriving
+    // there would silently re-zoom the part on every click — and mid-tween, on
+    // every frame of one.
+    if (projectionMode === "orthographic") syncOrthoToPerspectiveFraming();
   }
   function onCameraEnd(cb) { controls.addEventListener("end", cb); }
 

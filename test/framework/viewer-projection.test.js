@@ -318,6 +318,23 @@ test("reframing while orthographic re-derives the frustum", () => {
   viewer.dispose();
 });
 
+// The mount restores the projection during setup and the camera pose much later
+// (showView, first accepted build), so the frustum would otherwise stay sized
+// for wherever the camera started: reload in ortho, come back at the wrong zoom.
+test("restoring a saved pose re-derives the ortho frustum from the new distance", () => {
+  const viewer = makeViewer();
+  viewer.setProjection("orthographic");
+  const halfHBefore = viewer.camera.top; // framed for the initial ~28mm distance
+
+  viewer.setCameraState({ pos: [0, 0, 200], target: [0, 0, 0] });
+
+  expect(distanceOf(viewer)).toBeCloseTo(200, 9);
+  expect(viewer.camera.top).toBeCloseTo(200 * HALF_FOV_TAN, 9); // ~82.8mm
+  expect(viewer.camera.top).toBeGreaterThan(halfHBefore * 5); // ~11.7mm before
+  expect(viewer.camera.right / viewer.camera.top).toBeCloseTo(400 / 300, 9);
+  viewer.dispose();
+});
+
 test("projection listeners fire on a real change only, and unsubscribe", () => {
   const viewer = makeViewer();
   const seen = [];
