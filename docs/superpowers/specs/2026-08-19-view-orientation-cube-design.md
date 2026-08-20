@@ -93,7 +93,7 @@ split:
 | File | Layer | Responsibility |
 |---|---|---|
 | `cube-geom.js` | Pure leaf (no DOM, no three, no `node:`) | The unit cube's 26 regions in the model frame as vertex lists; rotation by a camera quaternion passed as four plain numbers; orthographic projection to 2D; painter sort by region-centre depth; `hitRegion(px, py, projected)` by point-in-polygon; the three axis arrows and their label positions. |
-| `cube-canvas.js` | Renderer | Owns the `<canvas>`, its DPR backing store and its `ResizeObserver`; paints back faces → arrow tails → translucent front faces → arrowheads → labels, plus the hover highlight. 2D context acquisition is injectable (the `ink-canvas.js` / `dim3-scene` `paintLabel` precedent). |
+| `cube-canvas.js` | Renderer | Owns the `<canvas>` and its DPR backing store — no `ResizeObserver` needed, since the widget is a fixed 90px and re-checks the device pixel ratio on each draw; paints back faces → arrow tails → translucent front faces → arrowheads → labels, plus the hover highlight. 2D context acquisition is injectable (the `ink-canvas.js` / `dim3-scene` `paintLabel` precedent). |
 | `viewcube-mode.js` | Orchestrator | The only viewcube file touching both DOM and viewer: frame subscription, camera dirty-check, pointer handling with capture, the drag/click threshold, the Sketch hide rule, theme redraws. |
 | `viewcube-controls.js` | Chrome | Builds `.pf-viewcube-stack`, the projection button and its tooltip, and the visually-hidden per-view buttons. Sync only, no behaviour. |
 
@@ -179,7 +179,7 @@ the pair is a unit test.
   theme, and restored during mount **before** the first `frameTo()`, so a
   reload into ortho frames once rather than framing in perspective and then
   visibly re-framing.
-- **`orbitBy({ dx, dy })`** on the handle, for the cube's drag. Internally it
+- **`orbitBy(dx, dy)`** on the handle, for the cube's drag. Internally it
   cancels any in-flight cue tween and notifies the camera-start listeners, so
   grabbing the cube disarms remaining animation cues exactly as grabbing the
   canvas does. The math comes from `camera-orbit.js`.

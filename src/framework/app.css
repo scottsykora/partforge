@@ -264,7 +264,8 @@ button.action:disabled { opacity: .5; cursor: default; }
 
 /* keyboard focus ring shared across the panel's interactive controls */
 .seg button:focus-visible, select.preset:focus-visible, .dl-row button:focus-visible,
-button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible, #viewbar button:focus-visible {
+button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible, #viewbar button:focus-visible,
+.pf-viewcube-pill button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
@@ -366,10 +367,8 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 }
 .pf-viewcube-pill button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 .pf-viewcube-pill button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
-.pf-viewcube-pill button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
-}
+/* The focus ring is NOT restated here: the pill joins the shared
+   :focus-visible selector list above, beside #viewbar's own. */
 
 /* At very narrow widths the full-size pill (5 icon buttons + cutaway's
    Flip/Reset, ~314px) is wider than a small phone's viewport minus the
@@ -378,8 +377,12 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    Shrink the pill instead of letting it wrap — a two-row pill would need its
    own anchoring rework, while shrinking is a pure appearance change. */
 @media (max-width: 360px) {
-  #viewbar { gap: 3px; }
-  #viewbar button { width: 30px; height: 30px; font-size: 13px; }
+  #viewbar, .pf-viewcube-pill { gap: 3px; }
+  /* The VIEW CUBE's pill shrinks with the viewbar. It borrows #viewbar's
+     chrome so the projection toggle reads as one of the viewer controls, and
+     it sits directly above it — left out of this block it stayed 34px while
+     the bar beneath it went to 30px, visibly two different widgets. */
+  #viewbar button, .pf-viewcube-pill button { width: 30px; height: 30px; font-size: 13px; }
   #viewbar .pf-cutaway-actions, #viewbar .pf-measure-actions, #viewbar .pf-annotate-actions { gap: 3px; }
   #viewbar .pf-cutaway-actions button, #viewbar .pf-measure-actions button, #viewbar .pf-annotate-actions button { min-width: 44px; padding: 0 6px; }
   /* Annotate's three-button row (Undo/Clear/Send) is wider than cutaway's or

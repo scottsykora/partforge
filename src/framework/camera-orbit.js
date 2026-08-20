@@ -1,10 +1,18 @@
 // Spherical orbit math, pure. Exists so the view cube can orbit the real camera
 // by handing the viewer a pixel delta, without importing three itself.
 //
-// The frame is the camera's own `up`, not world +Y — after a tween to the top
-// view the up vector is [0, 0, -1], and orbiting about +Y there would swing the
-// camera sideways instead of around the part. OrbitControls solves this the same
-// way (it builds a quaternion taking object.up to +Y); this is that, by hand.
+// The frame is the caller's `up`, not world +Y, because that is exactly what
+// OrbitControls does: it builds a quaternion taking object.up to +Y, once, at
+// construction. Working in the same frame is what makes orbitBy's answers agree
+// with a real drag on the canvas rather than merely resemble them.
+//
+// In today's viewer that `up` is always [0, 1, 0]: cameraPoseForView returns an
+// `up`, but tweenCameraTo drops it and camera-tween.js interpolates
+// {position, target} only, so nothing ever writes the live camera's `up` (bar
+// setProjection copying it across, and the throwaway capture cameras). The
+// antiparallel branch in upFrame is therefore defensive, not currently
+// reachable through the viewer — it is kept, and its equivariance test with it,
+// so this stays correct the day a caller does set `up`.
 //
 // Sign convention follows OrbitControls exactly: dragging right decreases theta,
 // dragging down decreases phi.

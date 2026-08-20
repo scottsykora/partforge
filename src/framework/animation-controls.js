@@ -44,14 +44,26 @@ export function planAnimBarPlacement({ stageWidth, barWidth, viewbarLeft }, { ga
   return barWidth > available ? { left, maxWidth: available } : { left };
 }
 
+// A rect with no area is not a claim on the stage — it is the ABSENCE of one,
+// and unioning it in would drag the union's left/top edges to 0. The concrete
+// case is Sketch mode hiding the cube stack via the `hidden` property: a
+// `display: none` element's getBoundingClientRect() is all zeros, which made
+// the union {left: 0, top: 0} and planned the transport bar to the stage's left
+// edge at max-width: 0. But a hidden ancestor is only one way to get that rect
+// — an unattached element and a `content-visibility: hidden` subtree report the
+// same — so the filter is on the rect's own emptiness rather than on any one
+// cause of it.
+const isEmptyRect = (r) => !r || r.right - r.left <= 0 || r.bottom - r.top <= 0;
+
 // The bottom-right chrome cluster is two elements now — #viewbar with the view
 // cube stacked above it — so the transport bar has to clamp against their union
 // or it slides under the cube on a narrow stage. Null-tolerant because either
 // element can be absent (a host that drops the viewbar; a mount before the cube
-// attaches).
+// attaches) — and empty-tolerant per the rule above, which is the same "no
+// claim here" case arriving as a zero rect instead of as null.
 export function unionRect(a, b) {
-  if (!a) return b ?? null;
-  if (!b) return a;
+  if (isEmptyRect(a)) return isEmptyRect(b) ? null : b;
+  if (isEmptyRect(b)) return a;
   return {
     left: Math.min(a.left, b.left),
     right: Math.max(a.right, b.right),

@@ -1555,10 +1555,13 @@ stay perspective unconditionally, so agent-facing output does not depend on a UI
 toggle. The choice persists across reloads under `partforge:projection` and is
 restored before the first framing. The orientation cube and its projection
 button are hidden while Sketch (annotate) mode is active, but that only governs
-*user-driven* view changes — the framework does not police programmatic ones. A
-host that calls `runtime.projection.set()` mid-sketch will produce an
-annotation payload whose recorded camera metadata doesn't match the view the
-ink was drawn over, the same way it's always been free to call
+*user-driven* view changes — the framework does not police programmatic ones.
+The ink is a transparent overlay and the WebGL canvas keeps rendering beneath
+it, so a host that calls `runtime.projection.set()` mid-sketch **visibly
+re-frames the 3D view underneath ink the user may still be drawing**: the
+strokes stay where they were laid down while the model shifts out from under
+them, and the sketch that gets sent is misaligned, not merely mis-labelled.
+Deliberately unguarded, the same way it's always been free to call
 `setCameraState` during Sketch.
 
 ### The annotation payload's camera block

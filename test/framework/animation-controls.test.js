@@ -1054,6 +1054,19 @@ describe("bottom-right cluster measurement", () => {
     expect(unionRect(null, only)).toEqual(only);
     expect(unionRect(null, null)).toBeNull();
   });
+
+  // A zero-area rect is what getBoundingClientRect() reports for a display:none
+  // element (Sketch mode hides the cube stack that way), and it must count as
+  // "no claim", not as a claim on the stage's top-left corner.
+  it("ignores a zero-area rect instead of unioning its zeros in", () => {
+    const only = { left: 300, right: 400, top: 560, bottom: 604 };
+    const zero = { left: 0, right: 0, top: 0, bottom: 0 };
+    expect(unionRect(only, zero)).toEqual(only);
+    expect(unionRect(zero, only)).toEqual(only);
+    expect(unionRect(zero, zero)).toBeNull();
+    // Degenerate on one axis only is just as empty — no pixels, no claim.
+    expect(unionRect(only, { left: 0, right: 0, top: 100, bottom: 200 })).toEqual(only);
+  });
 });
 
 // --- placement wiring: does applyPlacement actually measure the union? ------
@@ -1120,6 +1133,63 @@ test("placement wiring: clamps using the viewbar's left edge, triggered by the c
     // never reach the intersection test in the first place. Both leave
     // bar.style.left === "" instead of "290px".
     expect(bar.style.left).toBe("290px");
+  } finally {
+    globalThis.ResizeObserver = OriginalRO;
+  }
+});
+
+// The regression the test above could not see, because every rect it stubs has
+// area: Sketch mode hides .pf-viewcube-stack with the `hidden` property, which
+// resolves to display:none, and a display:none element's
+// getBoundingClientRect() is ALL ZEROS. Unioning that in pulled the cluster's
+// left/top edges to 0, which (a) made the vertical-band early return
+// unreachable and (b) planned the bar to {left: 12, maxWidth: 0} — so entering
+// Sketch on any view with animations shoved the transport to the stage's left
+// edge and squeezed it to nothing. The bar must be placed exactly as if the
+// hidden cube were not there at all.
+test("placement wiring: a hidden cube's zero rect is ignored, not unioned in", async () => {
+  const OriginalRO = globalThis.ResizeObserver;
+  let roCallback;
+  globalThis.ResizeObserver = class {
+    constructor(fn) { roCallback = fn; }
+    observe() {}
+    disconnect() {}
+  };
+  try {
+    const container = document.createElement("div");
+    const viewbar = document.createElement("div");
+    viewbar.id = "viewbar";
+    const cube = document.createElement("div");
+    cube.className = "pf-viewcube-stack";
+    cube.hidden = true; // what mount does on entering Sketch mode
+    container.append(viewbar, cube);
+    document.body.append(container);
+    container.getBoundingClientRect = () =>
+      ({ left: 0, right: 1000, top: 0, bottom: 700, width: 1000, height: 700 });
+    // The viewbar alone overlaps the bar's band here, so the clamp it produces
+    // is a positive assertion rather than an early return.
+    viewbar.getBoundingClientRect = () =>
+      ({ left: 700, right: 990, top: 620, bottom: 656, width: 290, height: 36 });
+    // display:none → every field zero. jsdom's own rect is already all zeros,
+    // but stub it so the test states the premise it depends on.
+    cube.getBoundingClientRect = () =>
+      ({ left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 });
+    const ctl = attachAnimationControls(fakeViewer(), part, {
+      container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "box",
+    });
+    handles.push(ctl);
+    const bar = container.querySelector(".pf-anim-bar");
+    bar.getBoundingClientRect = () =>
+      ({ left: 300, right: 700, top: 610, bottom: 646, width: 400, height: 36 });
+
+    roCallback(); await nextFrame();
+    // Viewbar-only geometry: centeredLeft 300 > limit 700−10−400 = 290 → slide
+    // to 290, and available (700−10−12 = 678) still fits the 400px bar, so no
+    // cap. With the zero rect unioned in, viewbarLeft collapses to 0 and this
+    // reads "12px" with max-width 0px instead.
+    expect(bar.style.left).toBe("290px");
+    expect(bar.style.maxWidth).toBe("");
+    expect(bar.classList.contains("pf-squeezed")).toBe(false);
   } finally {
     globalThis.ResizeObserver = OriginalRO;
   }
