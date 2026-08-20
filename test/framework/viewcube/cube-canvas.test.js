@@ -5,6 +5,7 @@
 // correctly (the ink-canvas.js / dim3-scene paintLabel precedent).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCubeCanvas, CUBE_PALETTE, CUBE_RENDER } from "../../../src/framework/viewcube/cube-canvas.js";
+import { projectCube } from "../../../src/framework/viewcube/cube-geom.js";
 
 function fakeContext() {
   const calls = [];
@@ -131,6 +132,37 @@ describe("createCubeCanvas", () => {
     // must be visibly lower so the ungridded cube still reads as quiet.
     const alpha = Number(CUBE_PALETTE.dark.edge.match(/[\d.]+\)$/)[0].slice(0, -1));
     expect(alpha).toBeLessThan(0.45);
+  });
+
+  it("never strokes an edge cube-geom.js marked hidden", () => {
+    const hiddenProjection = {
+      ...projection,
+      frontEdges: [...projection.frontEdges, { points: [[9, 9], [9, 1]], axis: null, depth: 0.9, hidden: true }],
+    };
+    handle.draw(hiddenProjection, {});
+    // Only the one non-hidden front edge (from the base fixture) and the one
+    // back edge should have been stroked in the quiet edge colour — the
+    // hidden edge added above must not add a third.
+    const edgeStrokes = strokes().filter((c) => c[1] === CUBE_PALETTE.dark.edge);
+    expect(edgeStrokes.length).toBe(2);
+  });
+
+  it("draws all three axis arrows at their real depth even when a real projection marks their edges hidden", () => {
+    // A quaternion where the axis-origin corner has rotated to the cube's far
+    // side: cube-geom.js then marks all 3 axis-tagged edges hidden (their
+    // faces have rotated away from the camera), but the arrows themselves are
+    // a separate structure the renderer always draws, reading dimly through
+    // the translucent faces per the host's explicit choice.
+    const q = [0.79, -0.4, 0.14, -0.44];
+    const real = projectCube(q, { size: 100 });
+    const allEdges = [...real.frontEdges, ...real.backEdges];
+    expect(allEdges.filter((e) => e.axis && e.hidden)).toHaveLength(3);
+    handle.draw(real, {});
+    const p = CUBE_PALETTE.dark;
+    expect(fills().some((c) => c === p.axisX) || strokes().some((c) => c[1] === p.axisX)).toBe(true);
+    expect(fills().some((c) => c === p.axisY) || strokes().some((c) => c[1] === p.axisY)).toBe(true);
+    expect(fills().some((c) => c === p.axisZ) || strokes().some((c) => c[1] === p.axisZ)).toBe(true);
+    expect(texts()).toEqual(expect.arrayContaining(["X", "Y", "Z"]));
   });
 
   it("draws in the reshaped order: back faces, back edges, hovered cell, front faces, front edges, arrows, face labels, axis labels", () => {

@@ -100,6 +100,13 @@ const AXIS_ORIGIN_CORNER = [-1, -1, -1];
 // the axis they carry — the ones touching AXIS_ORIGIN_CORNER and running
 // toward +X / +Y / +Z — because those three are drawn as the labelled arrows;
 // the other 9 are plain (untagged) and drawn as quiet cube edges instead.
+//
+// Each edge also carries `faceNormals`: the outward normals of the two faces
+// that meet along it (an edge running along `n` at fixed (su, sv) sits on the
+// boundary of the uAxis face signed `su` and the vAxis face signed `sv`).
+// projectCube rotates those into view space to decide whether the edge is on
+// the visible silhouette — the renderer has no other way to know which faces
+// an edge belongs to without recomputing this module's geometry itself.
 export function cubeEdges() {
   const edges = [];
   for (const axis of ["x", "y", "z"]) {
@@ -113,7 +120,9 @@ export function cubeEdges() {
         // This is one of the 3 axis edges exactly when it starts at the
         // shared corner (both in-plane coords at -1) and runs toward +axis.
         const isAxisEdge = su === -1 && sv === -1;
-        edges.push({ a, b, axis: isAxisEdge ? axis : null });
+        const normalU = [0, 0, 0]; normalU[u] = su;
+        const normalV = [0, 0, 0]; normalV[v] = sv;
+        edges.push({ a, b, axis: isAxisEdge ? axis : null, faceNormals: [normalU, normalV] });
       }
     }
   }
@@ -130,6 +139,18 @@ function qMul(a, b) {
   ];
 }
 const qConj = (q) => [-q[0], -q[1], -q[2], q[3]];
+
+// An edge is on the visible silhouette when at least one of its two adjoining
+// faces is camera-facing; otherwise it is hidden (it either coincides exactly
+// with a silhouette edge already drawn on the near side, in an orthographic
+// projection, or projects to a point). "Camera-facing" here is view-space
+// normal Z > this epsilon, not > 0: at the identity quaternion four faces are
+// *exactly* edge-on (Z === 0 up to float noise from the quaternion rotation),
+// and the rule needs those treated as not-facing so the back face's edges and
+// the front-to-back edges land on the hidden side, not the visible one. Not a
+// visual tunable (nobody sweeps a numerical epsilon by eye), so it sits
+// outside CUBE_CONSTANTS, same as cube-canvas.js's MIN_ARROW_DIR_PX.
+const EDGE_FACE_VISIBLE_EPS = 1e-9;
 
 function qApply(q, v) {
   const [x, y, z, w] = q;
@@ -202,7 +223,14 @@ export function projectCube(cameraQuat, {
   for (const edge of cubeEdges()) {
     const a = project(edge.a), b = project(edge.b);
     const depth = (a.z + b.z) / 2;
-    const entry = { points: [a.xy, b.xy], axis: edge.axis, depth };
+    // Rotate the edge's two adjoining face normals the same way the cell
+    // normals above are rotated, and hide the edge only when NEITHER faces
+    // the camera — see EDGE_FACE_VISIBLE_EPS for why this is "> eps" and not
+    // "> 0". Axis-tagged edges get this too (it costs nothing to compute) but
+    // the renderer ignores it for them: they draw as arrows in real depth
+    // order regardless, by the host's explicit choice.
+    const hidden = edge.faceNormals.every((n) => qApply(toView, n)[2] <= EDGE_FACE_VISIBLE_EPS);
+    const entry = { points: [a.xy, b.xy], axis: edge.axis, depth, hidden };
     (depth >= 0 ? frontEdges : backEdges).push(entry);
   }
   backEdges.sort((x, y) => x.depth - y.depth);

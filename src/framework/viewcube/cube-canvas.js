@@ -134,6 +134,10 @@ export function createCubeCanvas(host, {
       // head, in the axis colour) — stroking them here too would just be a
       // duller line sitting under a brighter one.
       if (edge.axis) continue;
+      // Neither adjoining face is camera-facing (cube-geom.js's `hidden`) —
+      // an edge on the cube's far side, or one that projects onto a
+      // silhouette edge already drawn from the near side.
+      if (edge.hidden) continue;
       ctx.beginPath();
       ctx.moveTo(edge.points[0][0], edge.points[0][1]);
       ctx.lineTo(edge.points[1][0], edge.points[1][1]);

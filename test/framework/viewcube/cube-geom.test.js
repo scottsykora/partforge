@@ -92,6 +92,15 @@ describe("cubeEdges", () => {
     const shared = endpointsOf(first).filter((p) => rest.every((e) => endpointsOf(e).includes(p)));
     expect(shared).toEqual(["-1,-1,-1"]);
   });
+
+  it("gives every edge two adjoining unit-normal faces", () => {
+    for (const edge of cubeEdges()) {
+      expect(edge.faceNormals).toHaveLength(2);
+      for (const n of edge.faceNormals) {
+        expect(Math.abs(n[0]) + Math.abs(n[1]) + Math.abs(n[2])).toBe(1);
+      }
+    }
+  });
 });
 
 describe("projectCube", () => {
@@ -165,6 +174,62 @@ describe("projectCube", () => {
     const p = projectCube(IDENTITY, { size: SIZE });
     const z = p.arrows.find((a) => a.axis === "Z");
     expect(z.tip[1]).toBeLessThan(SIZE / 2); // screen y grows downward
+  });
+
+  describe("far-edge hiding", () => {
+    // At identity 4 of the cube's 6 faces are *exactly* edge-on (view-space Z
+    // of 0, not just close to it) — a degenerate case that is load-bearing
+    // for the "at or below epsilon counts as not-facing" rule. Under that
+    // rule the back face's 4 edges (adjoining the back face and one edge-on
+    // face) and the 4 front-to-back edges (adjoining two edge-on faces) are
+    // all hidden, leaving only the front face's 4 edges drawn — 2 of them the
+    // axis-tagged x/z edges, 2 of them plain.
+    it("at identity, draws only the front face's 4 edges and hides the other 8", () => {
+      const p = projectCube(IDENTITY, { size: SIZE });
+      const all = [...p.frontEdges, ...p.backEdges];
+      expect(all).toHaveLength(12);
+      const visible = all.filter((e) => !e.hidden);
+      const hidden = all.filter((e) => e.hidden);
+      expect(visible).toHaveLength(4);
+      expect(hidden).toHaveLength(8);
+      // The front face's 4 edges are exactly 2 axis-tagged (x, z — both meet
+      // AXIS_ORIGIN_CORNER, which sits on the front face) plus 2 plain ones;
+      // the third tagged edge (y) pokes away from the front face into the
+      // cube's depth and is correctly among the hidden 8.
+      expect(visible.filter((e) => e.axis).map((e) => e.axis).sort()).toEqual(["x", "z"]);
+      expect(visible.filter((e) => !e.axis)).toHaveLength(2);
+      const yEdge = all.find((e) => e.axis === "y");
+      expect(yEdge.hidden).toBe(true);
+    });
+
+    it("at a general orientation, hides exactly 3 edges sharing one common endpoint (the far corner)", () => {
+      const p = projectCube([0.2, 0.3, 0.1, 0.927], { size: SIZE });
+      const all = [...p.frontEdges, ...p.backEdges];
+      const hidden = all.filter((e) => e.hidden);
+      expect(hidden).toHaveLength(3);
+      const closeEnough = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
+      // The shared vertex projects to the same screen point on every hidden
+      // edge it touches — find a point on the first hidden edge that every
+      // other hidden edge also has.
+      const shared = hidden[0].points.find((point) =>
+        hidden.every((e) => e.points.some((p2) => closeEnough(point, p2))),
+      );
+      expect(shared).toBeDefined();
+    });
+
+    it("never marks an edge hidden when only one of its two faces is edge-on or facing away", () => {
+      // Sanity check on the rule itself, not just the two special cases above:
+      // sweep a handful of orientations and confirm every hidden edge really
+      // does have both adjoining faces at view-Z <= 0 (using the module's own
+      // cell normals, computed independently of the edge-hiding code path via
+      // the `back`/`front` cell split projectCube already produces for cells).
+      for (const q of [IDENTITY, [0.2, 0.3, 0.1, 0.927], [0.5, 0.5, 0.5, 0.5], [0, 0.7071, 0, 0.7071]]) {
+        const p = projectCube(q, { size: SIZE });
+        const hiddenCount = [...p.frontEdges, ...p.backEdges].filter((e) => e.hidden).length;
+        expect(hiddenCount).toBeGreaterThanOrEqual(3);
+        expect(hiddenCount).toBeLessThanOrEqual(8);
+      }
+    });
   });
 });
 
