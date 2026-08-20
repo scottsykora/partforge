@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   CUBE_CONSTANTS,
   cubeCells,
+  cubeEdges,
   projectCube,
   hitRegion,
 } from "../../../src/framework/viewcube/cube-geom.js";
@@ -61,6 +62,38 @@ describe("cubeCells", () => {
   });
 });
 
+describe("cubeEdges", () => {
+  it("emits exactly 12 edges", () => {
+    expect(cubeEdges()).toHaveLength(12);
+  });
+
+  it("tags exactly 3 of them with an axis", () => {
+    const tagged = cubeEdges().filter((e) => e.axis);
+    expect(tagged).toHaveLength(3);
+    expect(tagged.map((e) => e.axis).sort()).toEqual(["x", "y", "z"]);
+  });
+
+  it("has every endpoint on a cube vertex", () => {
+    for (const edge of cubeEdges()) {
+      for (const v of [edge.a, edge.b]) {
+        for (const c of v) expect(Math.abs(c)).toBeCloseTo(1, 10);
+      }
+    }
+  });
+
+  it("shares exactly one common endpoint among the 3 tagged edges, at (-1,-1,-1)", () => {
+    const tagged = cubeEdges().filter((e) => e.axis);
+    // Each tagged edge starts at the shared corner and runs to the adjacent
+    // vertex along its axis — the corner is whichever endpoint every tagged
+    // edge has in common.
+    const key = (v) => v.join(",");
+    const endpointsOf = (e) => [key(e.a), key(e.b)];
+    const [first, ...rest] = tagged;
+    const shared = endpointsOf(first).filter((p) => rest.every((e) => endpointsOf(e).includes(p)));
+    expect(shared).toEqual(["-1,-1,-1"]);
+  });
+});
+
 describe("projectCube", () => {
   it("splits cells into camera-facing and away-facing halves", () => {
     const p = projectCube(IDENTITY, { size: SIZE });
@@ -84,25 +117,48 @@ describe("projectCube", () => {
     expect(p.back.some((c) => c.id === "back")).toBe(true);
   });
 
-  it("keeps every projected point inside the canvas box", () => {
+  it("keeps every projected point inside the canvas box — cells, edges, and arrows alike", () => {
     const p = projectCube([0.2, 0.3, 0.1, 0.927], { size: SIZE });
-    for (const cell of [...p.back, ...p.front]) {
-      for (const [x, y] of cell.points) {
-        expect(x).toBeGreaterThanOrEqual(0);
-        expect(x).toBeLessThanOrEqual(SIZE);
-        expect(y).toBeGreaterThanOrEqual(0);
-        expect(y).toBeLessThanOrEqual(SIZE);
-      }
+    const allPoints = [
+      ...[...p.back, ...p.front].flatMap((c) => c.points),
+      ...[...p.backEdges, ...p.frontEdges].flatMap((e) => e.points),
+      ...p.arrows.flatMap((a) => [a.from, a.tip]),
+    ];
+    for (const [x, y] of allPoints) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(SIZE);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThanOrEqual(SIZE);
     }
   });
 
-  it("emits three axis arrows, all starting at the projected origin", () => {
+  it("uses the full box now that the denominator is just sqrt(3), not sqrt(3) * (arrowLength + labelOffset)", () => {
+    // Every cube vertex — and every arrow tip, which now lands exactly on one
+    // — sits at model-space distance sqrt(3) from the origin, so with no
+    // pixel pad it should reach within a hair of the box edge AT ANY
+    // ROTATION, not the ~60% the old arrowLength-weighted denominator gave.
+    const p = projectCube([0.2, 0.3, 0.1, 0.927], { size: SIZE });
+    const centre = SIZE / 2;
+    const reach = Math.max(
+      ...p.arrows.map((a) => Math.hypot(a.tip[0] - centre, a.tip[1] - centre)),
+    );
+    expect(reach).toBeGreaterThan(centre * 0.95);
+  });
+
+  it("shrinks the drawing by outerPad so screen-space extras (head/label) still fit", () => {
+    const full = projectCube(IDENTITY, { size: SIZE });
+    const padded = projectCube(IDENTITY, { size: SIZE, outerPad: 20 });
+    const centre = SIZE / 2;
+    const reachOf = (p) => Math.max(...p.arrows.map((a) => Math.hypot(a.tip[0] - centre, a.tip[1] - centre)));
+    expect(reachOf(padded)).toBeLessThan(reachOf(full));
+  });
+
+  it("emits three axis arrows, all starting at the same point — the shared corner", () => {
     const p = projectCube(IDENTITY, { size: SIZE });
     expect(p.arrows.map((a) => a.axis)).toEqual(["X", "Y", "Z"]);
-    for (const arrow of p.arrows) {
-      expect(arrow.from[0]).toBeCloseTo(SIZE / 2, 6);
-      expect(arrow.from[1]).toBeCloseTo(SIZE / 2, 6);
-    }
+    const [x, y, z] = p.arrows;
+    expect(x.from).toEqual(y.from);
+    expect(y.from).toEqual(z.from);
   });
 
   it("draws Z upward on screen at identity (model +Z is world up)", () => {
@@ -164,9 +220,5 @@ describe("CUBE_CONSTANTS", () => {
   it("keeps the face cell smaller than the whole face", () => {
     expect(CUBE_CONSTANTS.faceHalf).toBeGreaterThan(0);
     expect(CUBE_CONSTANTS.faceHalf).toBeLessThan(1);
-  });
-
-  it("pushes the arrows outside the cube so they read in front of it", () => {
-    expect(CUBE_CONSTANTS.arrowLength).toBeGreaterThan(1);
   });
 });

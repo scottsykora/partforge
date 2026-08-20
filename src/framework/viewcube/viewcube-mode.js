@@ -3,7 +3,8 @@
 // frame subscription, the dirty check that keeps idle frames free, pointer
 // input, and the drag/click split.
 import { projectCube, hitRegion } from "./cube-geom.js";
-import { createCubeCanvas } from "./cube-canvas.js";
+import { createCubeCanvas, CUBE_SIZE, CUBE_SIZE_NARROW, CUBE_RENDER } from "./cube-canvas.js";
+import { RAIL_NARROW_BREAKPOINT } from "../rail-state.js";
 import { runCleanupSteps } from "../teardown.js";
 
 // Past this many px of travel a press is an orbit, not a click. 4px is the
@@ -15,12 +16,23 @@ export function createViewcubeMode(viewer, {
   host,
   createCanvas = createCubeCanvas,
   dragThreshold = DRAG_THRESHOLD_PX,
+  matchMedia = (typeof window !== "undefined" && typeof window.matchMedia === "function")
+    ? window.matchMedia.bind(window)
+    : null,
 } = {}) {
   const wrap = document.createElement("div");
   wrap.className = "pf-viewcube";
   host.appendChild(wrap);
 
-  const canvas = createCanvas(wrap, {});
+  // Below the rail's narrow breakpoint the shell shows one pane at a time
+  // (rail.js) and the stage is a lot tighter, so the cube shrinks back to its
+  // previous size. This is a BREAKPOINT, not an element size, so it is a media
+  // query rather than a ResizeObserver — this renderer deliberately owns no
+  // observer of its own.
+  const narrowQuery = matchMedia ? matchMedia(`(max-width: ${RAIL_NARROW_BREAKPOINT}px)`) : null;
+  const sizeForViewport = () => (narrowQuery?.matches ? CUBE_SIZE_NARROW : CUBE_SIZE);
+
+  const canvas = createCanvas(wrap, { size: sizeForViewport() });
   canvas.setTheme?.(viewer.getTheme?.() ?? "dark");
 
   let hidden = false;
@@ -45,7 +57,13 @@ export function createViewcubeMode(viewer, {
     if (hidden) return;
     const cam = viewer.camera;
     const q = cam.quaternion;
-    projected = projectCube([q.x, q.y, q.z, q.w], { size: canvas.size });
+    // outerPad reserves screen-pixel room for everything cube-canvas.js draws
+    // past the cube's model geometry: the fixed-size arrowhead, the gap
+    // beyond it, and the axis label glyph (drawn centred on its anchor, so it
+    // still sticks out a few px past that point — one font-size's worth of
+    // slack comfortably covers a single uppercase character at this size).
+    const outerPad = CUBE_RENDER.headLengthPx + CUBE_RENDER.labelGapPx + CUBE_RENDER.labelPx;
+    projected = projectCube([q.x, q.y, q.z, q.w], { size: canvas.size, outerPad });
     canvas.draw(projected, { hover });
   }
 
@@ -119,6 +137,15 @@ export function createViewcubeMode(viewer, {
     redraw();
   });
 
+  const onNarrowChange = () => {
+    canvas.setSize(sizeForViewport());
+    // The projection itself is size-dependent (the scale), so the dirty-check
+    // key alone won't force a real reproject here — clear it and redraw.
+    lastKey = null;
+    redraw();
+  };
+  narrowQuery?.addEventListener?.("change", onNarrowChange);
+
   lastKey = cameraKey();
   redraw(); // never show a blank box before the first camera movement
 
@@ -146,6 +173,7 @@ export function createViewcubeMode(viewer, {
       runCleanupSteps([
         offFrame,
         offTheme,
+        () => narrowQuery?.removeEventListener?.("change", onNarrowChange),
         () => canvas.element.removeEventListener("pointerdown", onPointerDown),
         () => canvas.element.removeEventListener("pointermove", onPointerMove),
         () => canvas.element.removeEventListener("pointerup", onPointerUp),

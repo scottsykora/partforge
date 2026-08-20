@@ -15,11 +15,19 @@
 
 // Tuning block. Locked by the look-and-feel spike (see the plan's Task 4);
 // every visual proportion the widget has lives here and nowhere else.
+//
+// The reshape (2026-08-19) moved the axis arrows off the cube's centre and
+// onto the edge running from the corner where +X/+Y/+Z originate — model
+// corner (-1,-1,-1) — to the far face. A second pass then moved the
+// arrowHEAD and its label off model space entirely: the shaft now ends
+// exactly ON the far face (model coordinate 1, no overshoot), and the head +
+// label are built in fixed SCREEN pixels by cube-canvas.js so they read the
+// same size at every rotation (see CUBE_RENDER's headLengthPx/headHalfWidthPx
+// /labelGapPx). That leaves `faceHalf` as the only model-space proportion left
+// to tune here — the old `arrowOvershoot`/`labelOffset`/`tailFraction` no
+// longer have anything to mean and are gone.
 export const CUBE_CONSTANTS = {
-  faceHalf: 0.62,      // half-width of the centre (face) cell, cube half-extent = 1
-  arrowLength: 1.45,   // axis arrow tip, in cube half-extents — >1 so arrows clear the cube
-  labelOffset: 0.22,   // label sits this far beyond the tip
-  tailFraction: 0.72,  // arrow tail is drawn to this fraction of the tip, head covers the rest
+  faceHalf: 0.62, // half-width of the centre (face) cell, cube half-extent = 1
 };
 
 // The viewer's pivot is rotation.x = -PI/2: quaternion (sin(-PI/4), 0, 0, cos(-PI/4)).
@@ -84,6 +92,34 @@ export function cubeCells({ faceHalf = CUBE_CONSTANTS.faceHalf } = {}) {
   return cells;
 }
 
+// The shared corner the three axis edges radiate from: model (-1,-1,-1), the
+// vertex where +X, +Y, +Z all originate.
+const AXIS_ORIGIN_CORNER = [-1, -1, -1];
+
+// The cube's 12 edges, as model-space vertex pairs. Exactly 3 are tagged with
+// the axis they carry — the ones touching AXIS_ORIGIN_CORNER and running
+// toward +X / +Y / +Z — because those three are drawn as the labelled arrows;
+// the other 9 are plain (untagged) and drawn as quiet cube edges instead.
+export function cubeEdges() {
+  const edges = [];
+  for (const axis of ["x", "y", "z"]) {
+    const [uAxis, vAxis] = IN_PLANE[axis];
+    const n = AXIS_INDEX[axis], u = AXIS_INDEX[uAxis], v = AXIS_INDEX[vAxis];
+    for (const su of [-1, 1]) {
+      for (const sv of [-1, 1]) {
+        const a = [0, 0, 0], b = [0, 0, 0];
+        a[u] = su; a[v] = sv; a[n] = -1;
+        b[u] = su; b[v] = sv; b[n] = 1;
+        // This is one of the 3 axis edges exactly when it starts at the
+        // shared corner (both in-plane coords at -1) and runs toward +axis.
+        const isAxisEdge = su === -1 && sv === -1;
+        edges.push({ a, b, axis: isAxisEdge ? axis : null });
+      }
+    }
+  }
+  return edges;
+}
+
 // --- quaternion helpers (plain arrays, [x, y, z, w]) ------------------------
 function qMul(a, b) {
   return [
@@ -118,13 +154,25 @@ function qApply(q, v) {
 export function projectCube(cameraQuat, {
   size,
   faceHalf = CUBE_CONSTANTS.faceHalf,
-  arrowLength = CUBE_CONSTANTS.arrowLength,
-  labelOffset = CUBE_CONSTANTS.labelOffset,
-  tailFraction = CUBE_CONSTANTS.tailFraction,
+  // A render-side pixel budget (head length + label gap + label glyph size)
+  // the caller may pass through so the SCALE reserves room for what gets
+  // drawn past the cube in fixed screen pixels — the head and label are no
+  // longer model-space geometry (see CUBE_CONSTANTS's comment), so the only
+  // thing left that can run past the box edge is those pixels. This module
+  // stays import-free (no reading CUBE_RENDER itself), so it defaults to 0
+  // and leaves supplying a real value to the caller that knows those pixel
+  // sizes (viewcube-mode.js).
+  outerPad = 0,
 } = {}) {
   const toView = qMul(qConj(cameraQuat), PIVOT_QUAT);
-  // Scale so the cube's longest diagonal still fits the box at any rotation.
-  const scale = (size / 2) / (Math.sqrt(3) * Math.max(arrowLength + labelOffset, 1));
+
+  // Scale so the drawing still fits the box at any rotation. Every cube
+  // vertex — and the arrow shafts now end exactly ON one (the far face, model
+  // coordinate 1 along the axis) — sits at the same distance from the model
+  // origin: sqrt(3). That is the only model-space reach left to guard;
+  // whatever the head/label add beyond it is screen pixels, covered by
+  // `outerPad` instead.
+  const scale = (size / 2 - outerPad) / Math.sqrt(3);
   const cx = size / 2, cy = size / 2;
   const project = (p) => {
     const v = qApply(toView, p);
@@ -136,22 +184,48 @@ export function projectCube(cameraQuat, {
     const projected = cell.corners.map(project);
     const normalView = qApply(toView, cell.normal);
     const depth = projected.reduce((s, p) => s + p.z, 0) / projected.length;
-    const entry = { id: cell.id, points: projected.map((p) => p.xy), depth };
+    const face = AXIS_FACE[cell.axis][String(cell.sign)];
+    const entry = {
+      id: cell.id,
+      points: projected.map((p) => p.xy),
+      depth,
+      face,
+      isCentre: cell.id === face,
+    };
     // normalView[2] > 0 means the face's outward normal points at the camera.
     (normalView[2] > 0 ? front : back).push(entry);
   }
   back.sort((a, b) => a.depth - b.depth);
   front.sort((a, b) => a.depth - b.depth);
 
-  const origin = project([0, 0, 0]);
+  const backEdges = [], frontEdges = [];
+  for (const edge of cubeEdges()) {
+    const a = project(edge.a), b = project(edge.b);
+    const depth = (a.z + b.z) / 2;
+    const entry = { points: [a.xy, b.xy], axis: edge.axis, depth };
+    (depth >= 0 ? frontEdges : backEdges).push(entry);
+  }
+  backEdges.sort((x, y) => x.depth - y.depth);
+  frontEdges.sort((x, y) => x.depth - y.depth);
+
+  // The three axis arrows all start at the same corner and ride their own
+  // edge out to the far face (model coordinate 1 along the axis) — the whole
+  // edge, not a fraction of it. Everything past that point (the head, the
+  // label) is a screen-space add-on cube-canvas.js builds from `tip`, so
+  // there is no model-space geometry left to compute for them here.
+  const corner = project(AXIS_ORIGIN_CORNER);
+  // The edge runs corner-to-corner (length 2); +dir*2 from the shared corner
+  // lands exactly on the far face — the adjacent vertex along that axis.
+  const farFace = (dir) => AXIS_ORIGIN_CORNER.map((c, i) => c + dir[i] * 2);
   const arrows = [["X", [1, 0, 0]], ["Y", [0, 1, 0]], ["Z", [0, 0, 1]]].map(([axis, dir]) => {
-    const tip = project(dir.map((c) => c * arrowLength));
-    const tail = project(dir.map((c) => c * arrowLength * tailFraction));
-    const label = project(dir.map((c) => c * (arrowLength + labelOffset)));
-    return { axis, from: origin.xy, tail: tail.xy, tip: tip.xy, label: label.xy, depth: tip.z };
+    const tip = project(farFace(dir));
+    // The corner is the shared reference depth; the tip is where the arrow
+    // actually ends up, so average the two rather than picking either alone.
+    const depth = (corner.z + tip.z) / 2;
+    return { axis, from: corner.xy, tip: tip.xy, depth };
   });
 
-  return { back, front, arrows };
+  return { back, front, backEdges, frontEdges, arrows };
 }
 
 // Convex point-in-polygon: every cross product keeps the same sign.

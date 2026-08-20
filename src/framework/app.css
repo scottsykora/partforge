@@ -349,10 +349,8 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    toggle reads as one of the viewer controls rather than a second language. */
 .pf-viewcube-canvas {
   display: block;
-  cursor: grab;
   touch-action: none;
 }
-.pf-viewcube-canvas:active { cursor: grabbing; }
 .pf-viewcube-pill {
   display: flex; gap: 4px; padding: 4px;
   background: var(--pf-surface); border: 1px solid var(--pf-border);

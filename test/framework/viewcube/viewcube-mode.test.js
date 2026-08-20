@@ -4,6 +4,8 @@
 // unchanged camera must draw NOTHING) and the drag/click split.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createViewcubeMode } from "../../../src/framework/viewcube/viewcube-mode.js";
+import { CUBE_SIZE, CUBE_SIZE_NARROW } from "../../../src/framework/viewcube/cube-canvas.js";
+import { RAIL_NARROW_BREAKPOINT } from "../../../src/framework/rail-state.js";
 
 function stubViewer() {
   const frame = new Set();
@@ -161,5 +163,87 @@ describe("detach", () => {
   it("is idempotent", () => {
     mode.detach();
     expect(() => mode.detach()).not.toThrow();
+  });
+});
+
+// A fake matchMedia: one query, mutable `matches`, and a `.fire(next)` the
+// test uses in place of the browser actually crossing the breakpoint.
+function fakeMatchMedia(initialMatches) {
+  let matches = initialMatches;
+  const listeners = new Set();
+  const matchMedia = () => ({
+    get matches() { return matches; },
+    addEventListener: (_type, cb) => listeners.add(cb),
+    removeEventListener: (_type, cb) => listeners.delete(cb),
+  });
+  matchMedia.fire = (next) => { matches = next; listeners.forEach((cb) => cb()); };
+  matchMedia.listenerCount = () => listeners.size;
+  return matchMedia;
+}
+
+function minimalCanvas(wrap, opts = {}) {
+  const el = document.createElement("canvas");
+  el.className = "pf-viewcube-canvas";
+  wrap.appendChild(el);
+  el.getBoundingClientRect = () => ({ left: 0, top: 0, width: 90, height: 90 });
+  el.setPointerCapture = () => {};
+  el.releasePointerCapture = () => {};
+  let size = opts.size;
+  return {
+    element: el,
+    draw: vi.fn(),
+    setTheme: vi.fn(),
+    setSize: vi.fn((px) => { size = px; }),
+    get size() { return size; },
+    dispose: vi.fn(),
+  };
+}
+
+describe("narrow breakpoint (matchMedia, not a ResizeObserver)", () => {
+  let narrowHost, narrowMode;
+  beforeEach(() => {
+    narrowHost = document.createElement("div");
+    document.body.append(narrowHost);
+  });
+  afterEach(() => narrowMode?.detach());
+
+  it("creates the canvas at the full CUBE_SIZE when the breakpoint does not match", () => {
+    let seenSize;
+    const createCanvas = (wrap, opts) => { seenSize = opts.size; return minimalCanvas(wrap, opts); };
+    narrowMode = createViewcubeMode(viewer, { host: narrowHost, createCanvas, matchMedia: fakeMatchMedia(false) });
+    expect(seenSize).toBe(CUBE_SIZE);
+  });
+
+  it("creates the canvas at CUBE_SIZE_NARROW when the breakpoint already matches", () => {
+    let seenSize;
+    const createCanvas = (wrap, opts) => { seenSize = opts.size; return minimalCanvas(wrap, opts); };
+    narrowMode = createViewcubeMode(viewer, { host: narrowHost, createCanvas, matchMedia: fakeMatchMedia(true) });
+    expect(seenSize).toBe(CUBE_SIZE_NARROW);
+  });
+
+  it("queries the exact RAIL_NARROW_BREAKPOINT, imported rather than hardcoded", () => {
+    let seenQuery;
+    const matchMedia = (query) => { seenQuery = query; return fakeMatchMedia(false)(query); };
+    narrowMode = createViewcubeMode(viewer, { host: narrowHost, createCanvas: minimalCanvas, matchMedia });
+    expect(seenQuery).toBe(`(max-width: ${RAIL_NARROW_BREAKPOINT}px)`);
+  });
+
+  it("resizes and redraws when the media query's match state changes", () => {
+    let canvas;
+    const createCanvas = (wrap, opts) => { canvas = minimalCanvas(wrap, opts); return canvas; };
+    const mm = fakeMatchMedia(false);
+    narrowMode = createViewcubeMode(viewer, { host: narrowHost, createCanvas, matchMedia: mm });
+    canvas.draw.mockClear();
+    mm.fire(true);
+    expect(canvas.setSize).toHaveBeenCalledWith(CUBE_SIZE_NARROW);
+    expect(canvas.draw).toHaveBeenCalled();
+  });
+
+  it("unsubscribes from the media query on detach", () => {
+    const mm = fakeMatchMedia(false);
+    narrowMode = createViewcubeMode(viewer, { host: narrowHost, createCanvas: minimalCanvas, matchMedia: mm });
+    expect(mm.listenerCount()).toBe(1);
+    narrowMode.detach();
+    expect(mm.listenerCount()).toBe(0);
   });
 });
