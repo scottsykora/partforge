@@ -241,10 +241,11 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // an unparameterized inspect that case IS this measurement. Seeding it in
       // (see verify.js's seeding block for the min-wall superset rule that makes
       // the reuse sound) stops the oracle from rebuilding the same geometry and
-      // re-casting the same min-wall rays a second time. Measuring `{ minWall:
-      // true }` here is what makes the seed usable by any verify run, min-wall
-      // gated or not — the result says so itself (`measuredMinWall`), so this
-      // call and the seed cannot drift apart.
+      // re-casting the same min-wall rays a second time. On a full lap the seed is
+      // usable by any verify run, min-wall gated or not, because the pass ran — and
+      // the result says so ITSELF (`measuredMinWall`/`measuredGaps`), never a claim
+      // by this caller, so the two cannot drift apart. On a quick lap the passes did
+      // not run, the stamps say false, and verify reports what it could not check.
       //
       // The view is built HERE rather than inside measure, and handed down through
       // `opts.built`, because optional match scoring needs the same meshes: one build
@@ -259,15 +260,31 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // measure built internally and its own signature default hid this. Found by a
       // live browser check, not by tests: this suite passes explicit views, and the
       // cloud's unit tests fake the worker.
+      //
+      // `checks: "quick"` is the agent's fast lap. Min wall and pair distances are
+      // the oracle's two ray-casting passes and, profiled on a 460k-triangle
+      // assembly, 79% of its cost — and they SHARE the BVH those rays need, so
+      // skipping one leaves the index build standing and saves about half of what
+      // skipping both does. Everything else is derived from the build this job
+      // already paid for and stays: triangles, bbox, volume, genus, watertight,
+      // and the assembly overlap check. verify still runs — the gates that read
+      // those facts are free — and reports what it could not evaluate rather than
+      // passing it, which is why `quick` can be honoured on a gated part instead
+      // of refused. Anything other than the literal "quick" is the full lap: an
+      // unrecognized value must never quietly buy less checking than the caller
+      // asked for.
+      const quick = msg.checks === "quick";
       const view = msg.view ?? Object.keys(part.views)[0];
       const built = buildView(kernel, part, view, msg.params ?? {});
-      const measured = measure(kernel, part, view, msg.params ?? {}, { minWall: true, built });
+      const measured = measure(kernel, part, view, msg.params ?? {},
+        { minWall: !quick, gaps: !quick, built });
       const report = {
         measure: measured,
         verify: verify(kernel, part, {
           // The defaulted view, not msg.view: the seed below was measured on it, and
           // verify's seed reuse is only sound when both name the same view.
           view,
+          quick,
           seed: { params: msg.params ?? {}, result: measured },
         }),
       };
