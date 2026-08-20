@@ -18,7 +18,7 @@ const ROW_H = 44;                  // comfortable density (spec §6)
 const OVERSCAN = 4;                // rows rendered above/below the viewport
 const SEARCH_LIMIT = 200;
 const SEARCH_DEBOUNCE_MS = 120;
-const SAMPLE = "Hamburgefonstiv 0123";
+const SAMPLE = "Hamburgefonstiv 0123";   // the default variant-pane sample; `preview` overrides it
 // A variants pane can hold 18 weights; auto-loading every real face for a CJK
 // family would be tens of megabytes on one click. Past this, the sample line
 // falls back to the panel font with the weight synthesized.
@@ -55,10 +55,15 @@ let openPicker = null;
 export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPicked }) {
   // Takeover: the picker covers the rail on desktop and the single visible pane
   // below the narrow breakpoint. One layout for both widths (spec §6).
-  const host = anchor?.closest?.(".pf-rail, .rail") ?? anchor?.parentElement ?? document.body;
+  const host = anchor?.closest?.(".pf-rail") ?? anchor?.parentElement ?? document.body;
   openPicker?.close();                                  // never two at once
 
   // ── state ───────────────────────────────────────────────────────────────
+  // The author's `preview` string, when they set one. A part lettered in digits,
+  // or in a script "Hamburgefonstiv" cannot even render, is auditioned against
+  // the wrong glyphs by the generic sample — which is the whole point of the
+  // field (spec §1). Blank or non-string falls back to the default.
+  const sampleText = typeof node.preview === "string" && node.preview.trim() ? node.preview : SAMPLE;
   let results = [];          // what the catalog last returned…
   let resultsQuery = "";     // …for this query
   let query = "";            // what is in the box right now
@@ -338,7 +343,7 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
       const b = el("button", "vrow" + (v.variant === selVariant ? " on" : ""));
       b.type = "button";
       b.dataset.v = v.variant;
-      const sample = el("span", "vsample", SAMPLE);
+      const sample = el("span", "vsample", sampleText);
       sample.style.fontFamily = faceStack(`${f.family} ${v.variant}`, f.family);
       sample.style.fontWeight = String(v.variant).replace(/i$/, "") || "400";
       sample.style.fontStyle = /i$/.test(String(v.variant)) ? "italic" : "normal";

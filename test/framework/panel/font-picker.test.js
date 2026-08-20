@@ -260,3 +260,50 @@ test("a new query scrolls back to the top of the results", async () => {
   search.value = "o"; search.dispatchEvent(new Event("input"));
   expect(list.scrollTop).toBe(0);
 });
+
+// ── the author's `preview` string ──────────────────────────────────────────
+// `preview` was accepted by the registry and documented for a while before
+// anything read it — an author set it, lint stayed silent, and the picker went
+// on showing the generic specimen. These two pin both halves.
+
+test("the control's `preview` is what the weight samples render", async () => {
+  open({ node: { key: "face", preview: "0123456789" } });
+  await flush();
+  [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith("Montserrat")).click();
+  await flush();
+  expect([...document.querySelectorAll(".vsample")].map((v) => v.textContent))
+    .toEqual(["0123456789", "0123456789"]);
+});
+
+test("with no `preview` the weight samples keep the default specimen", async () => {
+  open();
+  await flush();
+  [...document.querySelectorAll(".pk-row")].find((r) => r.textContent.startsWith("Montserrat")).click();
+  await flush();
+  expect([...document.querySelectorAll(".vsample")].map((v) => v.textContent))
+    .toEqual(["Hamburgefonstiv 0123", "Hamburgefonstiv 0123"]);
+});
+
+// ── disposing the panel ────────────────────────────────────────────────────
+// The picker is a takeover: it appends itself to the RAIL, outside the panel
+// root, so buildControls' root.replaceChildren() never reaches it. As with the
+// supersede case above, "no .picker in the DOM" is not the pin — the document
+// keydown registration is, since that is what holds the closure (and its stale
+// `params`) alive.
+test("dispose() closes an open picker instead of leaking its Escape handler", async () => {
+  open().handle.close();                          // drain anything an earlier test left open
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const keydown = trackKeydown();
+  try {
+    const panel = buildControls(root, [{ id: "s", title: "S", controls: [{ key: "face", type: "font", label: "Typeface" }] }],
+      { face: CATALOG[2].variants[0].url }, () => {}, () => {}, { fontCatalog: catalog });
+    const withPanel = keydown.count();            // info.js's own Escape handler
+    root.querySelector("button.font-btn").click();
+    await flush();
+    expect(keydown.count()).toBe(withPanel + 1);  // …plus the picker's
+    panel.dispose();
+    expect(document.querySelector(".picker")).toBeNull();
+    expect(keydown.count(), "the picker's document listener must be unhooked too").toBe(0);
+  } finally { keydown.restore(); }
+});

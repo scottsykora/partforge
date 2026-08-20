@@ -104,11 +104,17 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog }
 
   // The picker registers itself through setFontPicker (see below); with no
   // picker in the bundle the button is inert rather than broken.
+  //
+  // The handle is kept because the picker is a TAKEOVER: it appends itself to
+  // the rail, outside the panel root, so tearing the panel down does not take it
+  // with it. Without dispose() the element — and the `document` keydown listener
+  // that only close() unhooks — would outlive the panel holding a stale `params`.
+  let picker = null;
   btn.addEventListener("click", () => {
-    openFontPicker?.({ node, params, allow, fontCatalog, anchor: wrap, onPicked: () => { paint(); onChange?.(); onCommit?.(); } });
+    picker = openFontPicker?.({ node, params, allow, fontCatalog, anchor: wrap, onPicked: () => { paint(); onChange?.(); onCommit?.(); } }) ?? null;
   });
 
-  return { el: wrap, sync: paint };
+  return { el: wrap, sync: paint, dispose: () => { picker?.close(); picker = null; } };
 }
 
 // Assigned by font-picker.js, which widgets/index.js imports for the side

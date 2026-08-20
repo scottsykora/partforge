@@ -646,6 +646,32 @@ each entry is both value and label — or the long form
 types, `12` is not `"12"`). An option's `description` surfaces as a hover tooltip
 on that one option, not as a ⓘ popover.
 
+**`allow` and `preview`** (font) configure the typeface control. `allow` lists the
+source kinds a **param-supplied** value may use — what the picker writes, or what
+arrives in a share link:
+
+| value | accepts |
+|---|---|
+| `"https"` | any `https:` URL. **The default** — omitting `allow` means `["https"]` |
+| `"gstatic"` | `https://fonts.gstatic.com` only (hostname-exact: a lookalike host is refused) |
+| `"asset"` | a `pfc-asset://` token — a font the host has stored for this part |
+
+Name as many as apply (`allow: ["gstatic", "asset"]`); anything unnamed is refused,
+which is how `http:`, `file:`, `data:` and `blob:` are closed off. The check is
+deliberately narrow — **it applies only to values that arrive as params.** A source
+you write into `fonts` yourself is code, not user input, and stays unrestricted:
+`fonts: { label: "https://cdn.example.com/Courier-Prime.ttf" }` keeps working
+whatever `allow` says. A refused param falls back to `defaults[key]`, and the build
+carries a warning naming the key rather than failing (lint's `font-source-scheme`
+catches the case where that default is itself refused). `allow` gates what the
+**picker fetches** too: a family whose files it refuses is dropped from the list
+rather than offered, and neither that family's name-preview face nor its weight
+samples are ever requested.
+
+`preview` is the sample string the picker's weight list renders each face in — set
+it when the generic sample shows the wrong glyphs (`preview: "0123456789"` for a
+part that letters digits). Defaults to `Hamburgefonstiv 0123`.
+
 **`"readout"` is not a control.** It has no `key`, never writes `params`, and can
 never be a preset target. It displays one output of `derive()`, named by
 `derivedKey`, refreshed on every parameter change; `unit` is appended to numeric
@@ -1332,6 +1358,10 @@ k.text2d(p.label, { font: "face" }),                // only when p.face is set
 An empty `face` declares nothing — `fonts` returns `{}`, and `text2d` falls back to
 the bundled Roboto — so the part still builds with no network access. A part with a
 fixed typeface needs none of this: a plain `{ name: source }` object is fine.
+
+The control's `allow` list bounds what a picked — or share-link-supplied — value may
+be, and defaults to `["https"]`; see the control-types table above. It does **not**
+constrain sources you declare yourself.
 
 **Build-time & curve semantics:**
 

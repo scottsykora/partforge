@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { fontSourceAllowed, fontControlAllows, FONT_ALLOW_DEFAULT } from "../src/framework/font-source.js";
+import { fontSourceAllowed, fontControlAllows, isNoFontSource, FONT_ALLOW_DEFAULT } from "../src/framework/font-source.js";
 
 test("the default allow list accepts https and nothing else", () => {
   expect(FONT_ALLOW_DEFAULT).toEqual(["https"]);
@@ -66,7 +66,15 @@ test("fontControlAllows finds a font control nested inside a legacy `features` a
   expect(m.has("shown")).toBe(false);
 });
 
+import { readFileSync } from "node:fs";
 import { handle } from "../src/framework/jobs.js";
+
+// Real, parseable bytes: these two tests run the font all the way through
+// parseFont, so the 4-byte stub the tests above use would fail the build for
+// the wrong reason. resolveFonts memoizes per URL process-wide, so every test
+// here uses a URL of its own.
+const ROBOTO = readFileSync(new URL("../src/framework/geometry/fonts/Roboto-Regular.ttf", import.meta.url));
+const fontBytes = () => ROBOTO.buffer.slice(ROBOTO.byteOffset, ROBOTO.byteOffset + ROBOTO.byteLength);
 
 test("a param font source outside `allow` falls back to the default and warns", async () => {
   const kernel = { _fonts: new Map(), cleanup() {} };
@@ -148,4 +156,77 @@ test("an empty-string font param (no font declared) posts no refusal notice, whi
       params: { face: "https://evil.test/x.ttf" } }, (m) => badPosts.push(m));
   } finally { globalThis.fetch = g; }
   expect(badPosts.find(notRefused), "a genuinely disallowed source must still warn").toBeTruthy();
+});
+
+// The one shared definition of "no font source declared" (font-source.js). Three
+// framework sites used to spell this out by hand, and twice one of them drifted.
+test("isNoFontSource is exactly the empty triple — not a general falsiness test", () => {
+  for (const v of [undefined, null, ""]) expect(isNoFontSource(v), String(v)).toBe(true);
+  for (const v of ["https://x.test/a.ttf", 0, false, new ArrayBuffer(4), " "]) {
+    expect(isNoFontSource(v), String(v)).toBe(false);
+  }
+});
+
+// derive() must observe the params build() will. The refusal used to run AFTER
+// resolveParams had already computed `d`, so a derived value read the refused
+// URL while the build read the default — one part, two answers.
+test("derive() sees the replacement, not the refused value", async () => {
+  const kernel = { _fonts: new Map(), cleanup() {} };
+  const seen = [];
+  const part = {
+    parameters: [{ id: "t", controls: [{ key: "face", type: "font", allow: ["gstatic"] }] }],
+    defaults: { face: "https://fonts.gstatic.com/s/ok/v1/ok.ttf" },
+    derive: (p) => { seen.push(p.face); return {}; },
+    fonts: (p) => ({ face: p.face }),
+    parts: {},
+  };
+  const g = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+  try {
+    await handle(kernel, part, { type: "generate", subparts: [], view: "iso",
+      params: { face: "https://evil.test/x.ttf" } }, () => {});
+  } finally { globalThis.fetch = g; }
+  expect(seen).toEqual(["https://fonts.gstatic.com/s/ok/v1/ok.ttf"]);
+});
+
+// A progress phase is overwritten by the next busy chip milliseconds later, so
+// it cannot be the only record: the result carries the refusal on `warnings`,
+// where a host (or its agent) can still read it after the build lands.
+test("a refused source rides the result's warnings, not just a progress phase", async () => {
+  const kernel = { _fonts: new Map(), cleanup() {} };
+  const part = {
+    parameters: [{ id: "t", controls: [{ key: "face", type: "font", allow: ["gstatic"] }] }],
+    defaults: { face: "https://fonts.gstatic.com/s/warn/v1/ok.ttf" },
+    fonts: (p) => ({ face: p.face }),
+    parts: {},
+  };
+  const g = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => fontBytes() });
+  const posts = [];
+  try {
+    await handle(kernel, part, { type: "generate", subparts: [], view: "iso",
+      params: { face: "https://evil.test/x.ttf" } }, (m) => posts.push(m));
+  } finally { globalThis.fetch = g; }
+  const meshes = posts.find((m) => m.type === "meshes");
+  expect(meshes.warnings).toEqual([{ part: null, message: expect.stringContaining('font source for "face" is not allowed') }]);
+});
+
+// …and a build with nothing refused must not grow a `warnings` field it never
+// had: hosts key "did this build degrade?" on its presence.
+test("an allowed source leaves the result's warnings absent", async () => {
+  const kernel = { _fonts: new Map(), cleanup() {} };
+  const part = {
+    parameters: [{ id: "t", controls: [{ key: "face", type: "font", allow: ["gstatic"] }] }],
+    defaults: { face: "https://fonts.gstatic.com/s/fine/v1/ok.ttf" },
+    fonts: (p) => ({ face: p.face }),
+    parts: {},
+  };
+  const g = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => fontBytes() });
+  const posts = [];
+  try {
+    await handle(kernel, part, { type: "generate", subparts: [], view: "iso",
+      params: { face: "https://fonts.gstatic.com/s/fine/v1/ok.ttf" } }, (m) => posts.push(m));
+  } finally { globalThis.fetch = g; }
+  expect(posts.find((m) => m.type === "meshes").warnings).toBeUndefined();
 });

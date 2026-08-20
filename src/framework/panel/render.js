@@ -34,6 +34,7 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
   const syncFns = [];             // { key, sync } for every widget
   const rawSyncs = new Map();     // sectionId -> [{ key, sync }] for preset application
   const widgetSyncs = new Map();  // id -> the RAW widget sync (no markCustom)
+  const disposers = [];           // widget teardown — a font picker lives OUTSIDE root
   const nodeById = new Map();     // id -> node, for the reveal re-sync
   const lastVisible = new Map();  // id -> previous `visible`, to detect a reveal
   const lastDisabled = new Map(); // id -> previous `disabled`, to skip a no-op input pass
@@ -230,6 +231,7 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
     nodeEls.set(node.id, widget.el);
     if (node.key && !keyToId.has(node.key)) keyToId.set(node.key, node.id);
     widgetSyncs.set(node.id, widget.sync);
+    if (widget.dispose) disposers.push(widget.dispose);
     container.append(widget.el);
 
     // The raw sync is what a PRESET application uses — it must not mark itself
@@ -352,6 +354,8 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
       }
       return true;
     },
-    dispose: () => { info.dispose(); root.replaceChildren(); },
+    // replaceChildren() only reaches what is INSIDE root; a widget that parked
+    // DOM (or a document-level listener) elsewhere has to be told to let go.
+    dispose: () => { info.dispose(); for (const d of disposers) d(); root.replaceChildren(); },
   };
 }

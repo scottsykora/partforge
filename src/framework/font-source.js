@@ -7,6 +7,17 @@
 
 export const FONT_ALLOW_DEFAULT = ["https"];
 
+// The "unset" font source. An empty value declares NO font — the documented way
+// to opt out of a typeface, after which text2d falls back to the bundled Roboto.
+// It is never a source to fetch, and never a source to refuse: fontSourceAllowed
+// rejects "" under every allow list (new URL("") throws), so a site that forgets
+// this reads "unset" as "disallowed" and warns on every build of a part whose
+// font control is simply blank. Spelled once here because three sites have to
+// agree on it — the allow check, the pre-resolve filter, and lint's default
+// check — and the two bugs this rule has already caused were both a site that
+// had drifted from the others.
+export const isNoFontSource = (v) => v === undefined || v === null || v === "";
+
 const GSTATIC_HOST = "fonts.gstatic.com";
 const ASSET_SCHEME = "pfc-asset:";
 
