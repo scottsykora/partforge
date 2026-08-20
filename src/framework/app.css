@@ -352,17 +352,24 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
    one of the viewer controls. The 2026-08-20 revision moved it beside the
    cube instead, at a size and a bottom-aligned baseline that a #viewbar-style
    card could not shrink to — so it is now a small bare circle in its own
-   right (`.pf-viewcube-toggle`), no card, no border, no shadow. The `.on`
-   state (the only signal you are in orthographic, since there is no chrome
-   left to carry it) gets both an accent-tinted fill AND an accent icon
-   colour, doubling the signal since a transparent button has less surface to
-   read at a glance than the old solid pill button did.
+   right (`.pf-viewcube-toggle`), no card, no border, no shadow.
 
    A same-day follow-up moved it again, from beside the cube to OVER its
    bottom-right corner (placement in chrome.css, as ever). Nothing here
    changed: a bare transparent circle was already what made that legal — it
    has no card edge to cut across the drawing underneath it, so overlapping
-   costs the cube nothing but the 24px it covers. */
+   costs the cube nothing but the 24px it covers.
+
+   A later revision that same day took the resting fill away entirely: now
+   that the button sits ON the cube's drawing, a persistent accent-tinted
+   disc in orthographic mode read as a blob over the geometry rather than as
+   a control. A background appears on HOVER only, in both states.
+
+   That leaves the orthographic state carrying two signals rather than the
+   previous three: the icon GLYPH changes (a perspective frustum becomes an
+   axonometric box — the primary tell, and the one that survives any colour
+   scheme) and the icon takes the accent colour. `aria-pressed` carries it for
+   assistive tech either way, so nothing depends on the fill being there. */
 .pf-viewcube-canvas {
   display: block;
   touch-action: none;
@@ -380,11 +387,13 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   display: flex; align-items: center; justify-content: center;
 }
 .pf-viewcube-toggle:hover { color: var(--pf-text); background: var(--pf-surface-2); }
-.pf-viewcube-toggle.on {
-  background: color-mix(in oklab, var(--pf-accent) 25%, transparent);
-  color: var(--pf-accent);
-}
-.pf-viewcube-toggle.on:hover { background: color-mix(in oklab, var(--pf-accent) 38%, transparent); }
+/* Icon colour only — no resting fill, per the note above. Source order matters:
+   this sits AFTER the :hover rule and both are specificity 0-2-0, so the accent
+   colour survives a hover in orthographic rather than reverting to --pf-text. */
+.pf-viewcube-toggle.on { color: var(--pf-accent); }
+/* 25%, not the 38% this used to step up to: that step existed to lift a hover
+   clear of a 25% resting fill. With the resting fill gone, 25% IS the hover. */
+.pf-viewcube-toggle.on:hover { background: color-mix(in oklab, var(--pf-accent) 25%, transparent); }
 /* The focus ring is NOT restated here: the toggle joins the shared
    :focus-visible selector list above, beside #viewbar's own.
 
