@@ -235,6 +235,7 @@ function createCleanupStack() {
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
 export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange, onParamsCommit, onAnnotationSend,
+                              fontCatalog,
                               annotateSend = "viewbar",
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
@@ -774,7 +775,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       onParamChange();
     }, onParamsCommit
       ? (changed) => onParamsCommit({ changed, params: { ...params } })
-      : undefined);
+      : undefined,
+      { fontCatalog });
     cleanup.defer(() => panel.dispose());
     panelRef = panel;
     const updateRelevance = () => {

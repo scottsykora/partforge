@@ -1532,6 +1532,18 @@ returns instead:
 Pass `onDownload({ data, filename, mime })` to `mount()` to receive the exported bytes
 yourself (e.g. to download from a different origin) instead of partforge's own DOM download.
 
+- `fontCatalog` — a provider backing every `type: "font"` control in the part:
+
+  - `search(query, { limit }) → Promise<FontFamily[]>`, where a `FontFamily` is
+    `{ id, family, category, variants: [{ variant, label, url, bytes }],
+    menuUrl }`. `url` is what the picker writes into `params`; `menuUrl` is a
+    name-only subset used to draw the list row.
+  - `describe(source) → { family, variant } | null` — optional reverse lookup so
+    the closed control can name a face whose URL carries a hashed filename.
+
+  partforge ships no provider — a host supplies one, and without it every font
+  control renders as a URL field.
+
 **Showcase capture (the mount handle).** The handle can also render the user's *current*
 framing offscreen at a resolution independent of the window size and devicePixelRatio —
 for gallery/preview images, where grabbing the live canvas would be capped at the viewer
