@@ -36,6 +36,7 @@ export const WIDGET_SPECS = [
   { type: "checkbox", kind: "control", fields: LEGACY_TOGGLE },
   { type: "select", kind: "control", fields: [...AUTHOR_COMMON, "options"] },
   { type: "radio", kind: "control", fields: [...AUTHOR_COMMON, "options"] },
+  { type: "font", kind: "control", fields: [...AUTHOR_COMMON, "allow", "preview"] },
   { type: "readout", kind: "display", fields: ["type", "label", "description", "unit", "derivedKey", "hidden", "when", "whenFalse"] },
 ];
 
@@ -54,6 +55,7 @@ const AUTHOR_EXTRAS = {
   checkbox: ["on"],
   select: ["options"],
   radio: ["options"],
+  font: ["allow", "preview"],
 };
 const AUTHOR_FIELDS = new Map(Object.entries(AUTHOR_EXTRAS).map(
   ([type, extra]) => [type, [...AUTHOR_COMMON, ...extra]]));

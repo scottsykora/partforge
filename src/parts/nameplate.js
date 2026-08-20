@@ -24,6 +24,15 @@ export default {
       ],
     },
     {
+      id: "typeface",
+      title: "Typeface",
+      description: "The face the lettering is cut in. Falls back to the bundled Roboto when left as the default.",
+      controls: [
+        { key: "face", type: "font", label: "Typeface",
+          description: "Any face the host's font catalog offers. Without a catalog this is a URL field — a direct link to a `.ttf` or `.otf` that allows cross-origin requests." },
+      ],
+    },
+    {
       id: "plate",
       title: "Plate",
       description: "A rounded-rectangle backing plate, sized automatically from the text bounding box plus the border.",
@@ -45,14 +54,19 @@ export default {
       ],
     },
   ],
-  defaults: { label: "PARTFORGE\nv0.20", size: 8, depth: 1.2, stroke: 0, margin: 4, corner: 3, thickness: 3, engrave: 0 },
+  defaults: { label: "PARTFORGE\nv0.20", size: 8, depth: 1.2, stroke: 0, margin: 4, corner: 3, thickness: 3, engrave: 0, face: "" },
+  // A function of params, not a static map — that is what makes `face` a
+  // parameter rather than a constant. An empty value declares nothing, and
+  // text2d falls back to the bundled Roboto.
+  fonts: (p) => (p.face ? { face: p.face } : {}),
   parts: {
     plate: {
       label: "Nameplate",
       views: ["plate"],
       export: { name: "nameplate" },
       build: (k, p) => {
-        let text = k.text2d(p.label, { size: p.size, align: "center", valign: "middle", lineHeight: p.size * 1.7 });
+        let text = k.text2d(p.label, { size: p.size, align: "center", valign: "middle",
+          lineHeight: p.size * 1.7, ...(p.face ? { font: "face" } : {}) });
         // Shape2D offset on the lettering: grow (>0, bolder) or shrink (<0, thinner). Guard
         // against a shrink that collapses thin strokes — keep the un-offset letters if so.
         if (p.stroke !== 0) {
