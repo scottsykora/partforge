@@ -66,4 +66,32 @@ describe("orbitPose", () => {
     const out = orbitPose(degenerate, { dx: 10, dy: 10 });
     expect(out.position).toEqual([5, 5, 5]);
   });
+
+  it("orbits correctly about an antiparallel up vector (upside-down camera)", () => {
+    // up = -Y takes the "parallel or antiparallel to +Y" branch of upFrame down
+    // its other fork (a half turn about X, not the identity taken by the +Y
+    // case just above it). A round trip (drag then negate the drag) can't tell
+    // a correct half turn from a bug that leaves upFrame as the identity: since
+    // both are self-inverse, forward-then-backward returns to the start either
+    // way — confirmed by patching the branch to identity and rerunning this
+    // style of test; it still round-tripped. So this checks an independent
+    // invariant instead: orbiting is equivariant under rotating the whole
+    // scene. Rotating a +Y-up pose 180° about world X (R below) turns its up
+    // vector into exactly -Y, so the -Y orbit of the rotated pose must equal
+    // the rotated +Y orbit of the original pose — and a bad antiparallel
+    // branch breaks that equality (verified: patching it to identity makes
+    // this fail).
+    const R = ([x, y, z]) => [x, -y, -z];
+    const yUp = { position: [6, 8, 0], target: [0, 0, 0], up: Y_UP };
+    const delta = { dx: 33, dy: 17 };
+    const opts = { radiansPerPx: 0.01 };
+
+    const outYUp = orbitPose(yUp, delta, opts);
+    const negUp = { position: R(yUp.position), target: R(yUp.target), up: R(yUp.up) };
+    const outNegUp = orbitPose(negUp, delta, opts);
+
+    const expected = R(outYUp.position);
+    for (let i = 0; i < 3; i++) expect(outNegUp.position[i]).toBeCloseTo(expected[i], 8);
+    expect(dist(outNegUp.position, outNegUp.target)).toBeCloseTo(10, 8);
+  });
 });

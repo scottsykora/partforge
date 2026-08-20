@@ -386,15 +386,32 @@ export function createViewer(container, part) {
   }
   const cancelCameraTween = () => camTween.cancel();
 
-  // Orbit from a pixel delta — the view cube's drag. Routed through the viewer
-  // rather than done in the widget so the two things a real orbit owes its
-  // subscribers happen: an in-flight camera cue is cancelled, and the
-  // camera-start listeners fire (the animation driver disarms remaining cues).
-  // Same contract as grabbing the canvas, which OrbitControls' "start" event
-  // gives us for free.
-  function orbitBy(dx, dy) {
+  // User grabbing the orbit cancels any cue tween (the user owns the camera) and
+  // tells subscribers (the animation driver disarms remaining cues).
+  const cameraStartListeners = new Set();
+  // What every real camera grab owes its subscribers: an in-flight cue tween is
+  // cancelled, and the animation driver hears about it so remaining cues disarm.
+  // OrbitControls' "start" event gives the canvas this for free; an external drag
+  // source (the view cube) has to say so explicitly — so both routes call here
+  // rather than each keeping its own copy of the contract. A hoisted function
+  // declaration, not a `const` arrow: it runs after `cameraStartListeners` and
+  // `camTween` above are initialized, but nothing requires it be declared after
+  // them textually.
+  function beginCameraGrab() {
     camTween.cancel();
     for (const cb of [...cameraStartListeners]) cb();
+  }
+  // beginCameraGrab takes no parameters, so the "start" event object
+  // OrbitControls passes in is simply ignored — safe to wire up directly.
+  const onControlsStart = beginCameraGrab;
+  controls.addEventListener("start", onControlsStart);
+  function onCameraStart(cb) { cameraStartListeners.add(cb); return () => cameraStartListeners.delete(cb); }
+
+  // Orbit from a pixel delta — the view cube's drag. Routed through the viewer
+  // rather than done in the widget so it gets the same beginCameraGrab contract
+  // that grabbing the canvas gets for free from OrbitControls' "start" event.
+  function orbitBy(dx, dy) {
+    beginCameraGrab();
     const next = orbitPose(
       {
         position: camera.position.toArray(),
@@ -402,20 +419,13 @@ export function createViewer(container, part) {
         up: camera.up.toArray(),
       },
       { dx, dy },
-      // Match OrbitControls' own feel: a full drag down the viewport is a half
-      // turn, so the cube and the canvas rotate at the same rate.
+      // Match OrbitControls' own feel: a drag spanning the full viewport height
+      // is a full turn, so the cube and the canvas rotate at the same rate.
       { radiansPerPx: (2 * Math.PI) / Math.max(1, container.clientHeight || 1) },
     );
     camera.position.fromArray(next.position);
     controls.update();
   }
-
-  // User grabbing the orbit cancels any cue tween (the user owns the camera) and
-  // tells subscribers (the animation driver disarms remaining cues).
-  const cameraStartListeners = new Set();
-  const onControlsStart = () => { camTween.cancel(); for (const cb of [...cameraStartListeners]) cb(); };
-  controls.addEventListener("start", onControlsStart);
-  function onCameraStart(cb) { cameraStartListeners.add(cb); return () => cameraStartListeners.delete(cb); }
 
   // Fallback creasing for payloads with no kernel normals. Both backends now
   // ship authoritative normals (Manifold: policy-aware crease pass; OCCT:
