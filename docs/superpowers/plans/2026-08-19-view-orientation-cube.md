@@ -1009,6 +1009,10 @@ Create `viewcube-spike.html`:
       <label>frontFill α <input id="frontA" type="range" min="0" max="1" step="0.01" /><output id="frontA-o"></output></label>
       <label>backFill α <input id="backA" type="range" min="0" max="1" step="0.01" /><output id="backA-o"></output></label>
       <label>hoverFill α <input id="hoverA" type="range" min="0" max="1" step="0.01" /><output id="hoverA-o"></output></label>
+      <label>arrowWidth <input id="arrowWidth" type="range" min="1" max="5" step="0.5" /><output id="arrowWidth-o"></output></label>
+      <label>edgeWidth <input id="edgeWidth" type="range" min="0.5" max="3" step="0.25" /><output id="edgeWidth-o"></output></label>
+      <label>headHalfWidth <input id="headHalfWidth" type="range" min="0.15" max="0.7" step="0.01" /><output id="headHalfWidth-o"></output></label>
+      <label>labelPx <input id="labelPx" type="range" min="7" max="16" step="1" /><output id="labelPx-o"></output></label>
       <button id="theme">toggle theme</button>
       <button id="dump">dump values to console</button>
       <p id="fps"></p>
@@ -1025,9 +1029,15 @@ Create `src/app-viewcube-spike.js`:
 // plan's Task 4 — do not import anything from here, and do not add it to
 // vite.config.js's rollupOptions.input.
 import { CUBE_CONSTANTS, projectCube } from "./framework/viewcube/cube-geom.js";
-import { createCubeCanvas, CUBE_PALETTE, CUBE_SIZE } from "./framework/viewcube/cube-canvas.js";
+import { createCubeCanvas, CUBE_PALETTE, CUBE_RENDER, CUBE_SIZE } from "./framework/viewcube/cube-canvas.js";
 
-const state = { ...CUBE_CONSTANTS, size: CUBE_SIZE, frontA: 0.22, backA: 0.10, hoverA: 0.55 };
+// CUBE_RENDER is spread in too: "arrow weight" and "label style" are named in
+// the spec's sweep list, and a tunable nobody can reach from here is a tunable
+// nobody tunes. Mutated in place below, since the renderer reads it per draw.
+const state = {
+  ...CUBE_CONSTANTS, ...CUBE_RENDER,
+  size: CUBE_SIZE, frontA: 0.22, backA: 0.10, hoverA: 0.55,
+};
 let theme = "dark";
 let cube = null;
 let hover = null;
@@ -1054,13 +1064,18 @@ function rebuild() {
   cube.element.addEventListener("pointerleave", () => { hover = null; });
 }
 
-for (const key of ["size", "faceHalf", "arrowLength", "labelOffset", "tailFraction", "frontA", "backA", "hoverA"]) {
+const RENDER_KEYS = ["arrowWidth", "edgeWidth", "headHalfWidth", "labelPx"];
+for (const key of ["size", "faceHalf", "arrowLength", "labelOffset", "tailFraction",
+                   "frontA", "backA", "hoverA", ...RENDER_KEYS]) {
   const input = document.getElementById(key);
   input.value = state[key];
   document.getElementById(`${key}-o`).textContent = state[key];
   input.addEventListener("input", () => {
     state[key] = Number(input.value);
     document.getElementById(`${key}-o`).textContent = input.value;
+    // The renderer reads CUBE_RENDER per draw, so writing through is what makes
+    // these four sliders live; the geometry ones are passed into projectCube.
+    if (RENDER_KEYS.includes(key)) CUBE_RENDER[key] = state[key];
     if (key === "size") rebuild();
   });
 }
@@ -1112,7 +1127,9 @@ In Chrome DevTools, with the spike running:
 
 - [ ] **Step 4: Write the chosen constants into the real modules**
 
-Edit `CUBE_CONSTANTS` in `src/framework/viewcube/cube-geom.js`, and `CUBE_SIZE` plus the alpha values in `CUBE_PALETTE` in `src/framework/viewcube/cube-canvas.js`, to the confirmed values. Change nothing else in either file.
+Edit `CUBE_CONSTANTS` in `src/framework/viewcube/cube-geom.js`, and `CUBE_SIZE`, the alpha values in `CUBE_PALETTE`, and `CUBE_RENDER` in `src/framework/viewcube/cube-canvas.js`, to the confirmed values. Change nothing else in either file.
+
+**One more thing to decide while the sliders are open.** Task 2's review found that `projectCube`'s scale denominator reserves more room than the arrows actually need: it divides by `√3 · max(arrowLength + labelOffset, 1)` ≈ 2.89, while the true worst-case point magnitude is the cube's own corner at `√3` ≈ 1.73 (the arrow-plus-label reach, ≈1.67, is *smaller* than the corner). The cube therefore draws noticeably smaller than its canvas allows. The margin is safe, not a bug — but it is headroom, and this is the task that decides how big the cube looks. Either raise `size` to compensate, or change the denominator to `√3 · max(arrowLength + labelOffset, 1)` → `Math.max(Math.sqrt(3), arrowLength + labelOffset)` so the scale tracks whichever actually reaches furthest. If you change the denominator, re-run `test/framework/viewcube/cube-geom.test.js` — its "keeps every projected point inside the canvas box" case is the guard that the new formula must still satisfy.
 
 - [ ] **Step 5: Record the outcome in the spec**
 
