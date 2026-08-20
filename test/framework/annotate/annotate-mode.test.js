@@ -95,6 +95,26 @@ function sendOneStroke({ ortho }) {
   return { payload: onSend.mock.calls[0][0] };
 }
 
+// Same as sendOneStroke, but with a sub-mesh parented under a group, so
+// cameraBlock()'s `parts` frame (near annotate-mode.js:103-104) actually
+// populates instead of returning null — the stub viewer's default
+// `_subMeshes: {}` has no parent to invert, which is the "no meshes" path the
+// other tests exercise. This is the frame that survives a model rebuild, so
+// its projection/fov/orthoHeight must agree with `world`, not just `world`'s.
+function sendOneStrokeWithParts({ ortho }) {
+  const camera = ortho ? orthographicCamera() : perspectiveCamera();
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo);
+  new THREE.Group().add(mesh); // mesh.parent now has an (identity) matrixWorld to invert
+  const { canvas, onSend, mode } = fixture({ viewer: { camera, _subMeshes: { body: mesh } } });
+  mode.setEnabled(true);
+  drawStroke(canvas);
+  mode.send();
+  return { payload: onSend.mock.calls[0][0] };
+}
+
 test("enable shows the canvas; drawing normalizes against the canvas rect", () => {
   const { canvas, mode } = fixture();
   mode.setEnabled(true);
@@ -224,5 +244,26 @@ describe("camera block under each projection", () => {
     expect(payload.camera.world.projection).toBe("orthographic");
     expect(payload.camera.world.fov).toBeNull();
     expect(payload.camera.world.orthoHeight).toBeCloseTo(40, 6);
+  });
+
+  // `parts` is the durable frame — pinned to the CAD geometry so it survives
+  // a later rebuild's per-view recentring. A consumer re-referencing a sketch
+  // against an updated model reads THIS frame, so it needs the same
+  // projection/orthoHeight/fov as `world`, not just a copy of `fov` (which
+  // would leave an ortho payload's parts frame with a null and no explanation).
+  it("parts frame agrees with world on projection/fov/orthoHeight under perspective", () => {
+    const { payload } = sendOneStrokeWithParts({ ortho: false });
+    expect(payload.camera.parts).not.toBeNull(); // guards the assertions below against a no-op
+    expect(payload.camera.parts.projection).toBe("perspective");
+    expect(payload.camera.parts.fov).toBe(45);
+    expect(payload.camera.parts.orthoHeight).toBeNull();
+  });
+
+  it("parts frame agrees with world on projection/fov/orthoHeight under orthographic", () => {
+    const { payload } = sendOneStrokeWithParts({ ortho: true });
+    expect(payload.camera.parts).not.toBeNull();
+    expect(payload.camera.parts.projection).toBe("orthographic");
+    expect(payload.camera.parts.fov).toBeNull();
+    expect(payload.camera.parts.orthoHeight).toBeCloseTo(40, 6);
   });
 });

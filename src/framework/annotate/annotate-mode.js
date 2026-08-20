@@ -106,7 +106,21 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     const inv = parent.matrixWorld.clone().invert();
     const map = (v) => new THREE.Vector3(v[0], v[1], v[2]).applyMatrix4(inv).toArray();
     const up = new THREE.Vector3(world.up[0], world.up[1], world.up[2]).transformDirection(inv).toArray();
-    return { world, parts: { pos: map(world.pos), target: map(world.target), up, fov: world.fov } };
+    return {
+      world,
+      parts: {
+        pos: map(world.pos),
+        target: map(world.target),
+        up,
+        // Camera intrinsics, not coordinates: they describe the lens, so they
+        // cross frames unchanged. `fov` alone would leave a consumer reading
+        // only this frame with a null and no way to know an ortho camera
+        // caused it — the exact hole ANNOTATION_VERSION 2 exists to close.
+        projection: world.projection,
+        fov: world.fov,
+        orthoHeight: world.orthoHeight,
+      },
+    };
   }
 
   function send() {
