@@ -387,6 +387,35 @@ export function createViewer(container, part) {
   function onFrame(cb) { frameListeners.add(cb); return () => frameListeners.delete(cb); }
 
   const camTween = createCameraTween();
+
+  // OrbitControls' damping is a rotational RESIDUAL, not a per-frame effect: it
+  // keeps applying a decaying fraction of the last drag's accumulated
+  // sphericalDelta on every update(), for seconds after the pointer went up.
+  // That is invisible DURING a cue tween — the tween writes position after
+  // controls.update() every frame, so whatever the residual did that frame is
+  // overwritten — but the residual is still unspent when the tween ends, and
+  // controls.update() then keeps walking the camera off the exact angle it just
+  // landed on. Measured on the demo part: a `top` click straight after a flick
+  // settled 3.8° off axis, where the same click from rest settled on it.
+  //
+  // Suspending damping is what drains it: with the flag off, update() applies
+  // the whole remaining sphericalDelta once and then zeroes it (same for
+  // panOffset), and that frame's position and target are overwritten by the
+  // tween anyway, so the drain never reaches the screen. The previous value is
+  // restored when the tween finishes OR is cancelled, so a user grab mid-tween —
+  // which cancels through beginCameraGrab — damps exactly as it always did.
+  let dampingBeforeTween = null;
+  function suspendDamping() {
+    if (dampingBeforeTween !== null) return; // already suspended; don't shadow the real value
+    dampingBeforeTween = controls.enableDamping;
+    controls.enableDamping = false;
+  }
+  function restoreDamping() {
+    if (dampingBeforeTween === null) return;
+    controls.enableDamping = dampingBeforeTween;
+    dampingBeforeTween = null;
+  }
+
   // Tween the orbit camera to a canonical angle, framed on what's visible now.
   // Presentational only; a caller passing duration 0 gets a jump cut.
   //
@@ -415,28 +444,30 @@ export function createViewer(container, part) {
     const pose = cameraPoseForView(viewName, { center, radius: Math.max(size.x, size.y, size.z) || 12 });
     // The projection is read at COMPLETION, not now: a 0.6s tween is long
     // enough for the user to have toggled projection under it.
-    const finish = refit
-      ? () => {
-        if (projectionMode === "orthographic") {
-          // The tween fires onComplete from inside its own update(), BEFORE the
-          // render loop writes the final pose onto the camera — so the camera is
-          // still a frame short of where it is going. Frame from the distance
-          // this pose asked for rather than from wherever it has got to.
-          syncOrthoToPerspectiveFraming({
-            distance: new THREE.Vector3().fromArray(pose.position)
-              .distanceTo(new THREE.Vector3().fromArray(pose.target)),
-          });
-        }
-        onComplete?.();
+    const finish = () => {
+      restoreDamping();
+      if (refit && projectionMode === "orthographic") {
+        // The tween fires onComplete from inside its own update(), BEFORE the
+        // render loop writes the final pose onto the camera — so the camera is
+        // still a frame short of where it is going. Frame from the distance
+        // this pose asked for rather than from wherever it has got to.
+        syncOrthoToPerspectiveFraming({
+          distance: new THREE.Vector3().fromArray(pose.position)
+            .distanceTo(new THREE.Vector3().fromArray(pose.target)),
+        });
       }
-      : onComplete;
+      onComplete?.();
+    };
+    suspendDamping();
     camTween.start(
       { position: activeCamera.position.toArray(), target: controls.target.toArray() },
       { position: pose.position, target: pose.target },
       { duration, onComplete: finish },
     );
   }
-  const cancelCameraTween = () => camTween.cancel();
+  // Cancelling has to put damping back: the tween's own completion path is the
+  // only other place that does, and it never runs for a cancelled tween.
+  const cancelCameraTween = () => { camTween.cancel(); restoreDamping(); };
 
   // User grabbing the orbit cancels any cue tween (the user owns the camera) and
   // tells subscribers (the animation driver disarms remaining cues).
@@ -450,7 +481,7 @@ export function createViewer(container, part) {
   // `camTween` above are initialized, but nothing requires it be declared after
   // them textually.
   function beginCameraGrab() {
-    camTween.cancel();
+    cancelCameraTween();
     for (const cb of [...cameraStartListeners]) cb();
   }
   // beginCameraGrab takes no parameters, so the "start" event object

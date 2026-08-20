@@ -44,6 +44,14 @@ const SIDE = ["left", "right"];
 // A pure top or bottom view is degenerate against a +Y up vector, so those two
 // keep the special-cased ups DIRS already used. Every compound orientation has
 // a well-defined +Y up.
+//
+// These ups matter to the OFFSCREEN capture path, which builds a temp camera and
+// calls lookAt itself with no orbit frame to fall back on. The LIVE camera never
+// needs them: it is driven through OrbitControls, whose polar frame derives the
+// same roll on its own at azimuth 0 (a top cue lands with screen-up on world -Z,
+// which is exactly [0, 0, -1]). Handing the live camera a non-+Y `up` would also
+// re-base every subsequent orbit drag and would not survive getCameraState, so it
+// deliberately keeps the default.
 function upFor(parts) {
   if (parts.length === 1 && parts[0] === "top") return [0, 0, -1];
   if (parts.length === 1 && parts[0] === "bottom") return [0, 0, 1];
