@@ -44,6 +44,92 @@ export function planAnimBarPlacement({ stageWidth, barWidth, viewbarLeft }, { ga
   return barWidth > available ? { left, maxWidth: available } : { left };
 }
 
+// A rect with no area is not a claim on the stage — it is the ABSENCE of one,
+// and unioning it in would drag the union's left/top edges to 0. The concrete
+// case is Sketch mode hiding the cube stack via the `hidden` property: a
+// `display: none` element's getBoundingClientRect() is all zeros, which made
+// the union {left: 0, top: 0} and planned the transport bar to the stage's left
+// edge at max-width: 0. But a hidden ancestor is only one way to get that rect
+// — an unattached element and a `content-visibility: hidden` subtree report the
+// same — so the filter is on the rect's own emptiness rather than on any one
+// cause of it.
+const isEmptyRect = (r) => !r || r.right - r.left <= 0 || r.bottom - r.top <= 0;
+
+// The bottom-right chrome cluster is two elements now — #viewbar with the view
+// cube stacked above it — so the transport bar has to clamp against their union
+// or it slides under the cube on a narrow stage. Null-tolerant because either
+// element can be absent (a host that drops the viewbar; a mount before the cube
+// attaches) — and empty-tolerant per the rule above, which is the same "no
+// claim here" case arriving as a zero rect instead of as null.
+export function unionRect(a, b) {
+  if (isEmptyRect(a)) return isEmptyRect(b) ? null : b;
+  if (isEmptyRect(b)) return a;
+  return {
+    left: Math.min(a.left, b.left),
+    right: Math.max(a.right, b.right),
+    top: Math.min(a.top, b.top),
+    bottom: Math.max(a.bottom, b.bottom),
+  };
+}
+
+// The cluster's footprint AS IF THE CUBE WERE VISIBLE — what the CROWDING
+// decision is measured against, as opposed to the measured union above, which is
+// what the bar is actually PLACED against. Two rects, two purposes.
+//
+// Deciding "is the bar crowded?" from the measured union oscillates, because the
+// cube is part of that union and hiding it is the consequence of the answer:
+// cube visible → wide union → bar capped → crowded → hide the cube → its rect
+// is all zeros → unionRect drops it → the bar fits → not crowded → show the cube
+// → round again. Two frames per cycle, each one a ResizeObserver notification,
+// on screen as a flickering cube. This rect does not depend on whether the stack
+// is displayed, so the answer is a fixed point: hiding the cube cannot change
+// it.
+//
+// The stack's edges are derived from the viewbar's because chrome.css anchors
+// both to the same margin: `.pf-float-viewbar` is `bottom: 12px; right: 12px`
+// and `.pf-viewcube-stack` is `right: 12px` with its bottom resting on top of
+// the viewbar (`--pf-viewbar-clear` + a few px). So the stack shares the
+// viewbar's right edge, reaches a published width in from it, and occupies the
+// band directly above the viewbar's top. That small gap between them is
+// deliberately NOT subtracted: a hair taller than the truth is the safe
+// direction for a "would these two collide?" test — and this rect is therefore
+// unaffected the day chrome.css retunes it (2026-08-20 took it from 8px to 3).
+//
+// Null/empty-tolerant on exactly unionRect's terms — a zero-area rect is the
+// ABSENCE of a claim, not a claim on the stage's top-left corner:
+// - no viewbar rect (a host that drops #viewbar) → nothing to anchor a nominal
+//   stack on, so fall back to the cube's own measured rect; if that is empty
+//   too there is nothing to decide against at all. This one fallback is
+//   visibility-DEPENDENT and so not a fixed point — it is the best available
+//   answer without the viewbar anchor, and it only applies to a host that has
+//   removed the viewbar entirely.
+// - no published size (no cube attached, or none ever measured) → the stack
+//   makes no nominal claim and the viewbar's rect stands alone.
+export function nominalClusterRect(viewbarRect, cubeRect, size) {
+  if (isEmptyRect(viewbarRect)) return isEmptyRect(cubeRect) ? null : cubeRect;
+  const width = size?.width > 0 ? size.width : 0;
+  const height = size?.height > 0 ? size.height : 0;
+  if (!width || !height) return viewbarRect;
+  return unionRect(viewbarRect, {
+    left: viewbarRect.right - width,
+    right: viewbarRect.right,
+    top: viewbarRect.top - height,
+    bottom: viewbarRect.top,
+  });
+}
+
+// The stack's own size, read from where viewcube-controls.js publishes it rather
+// than measured: a hidden (display:none) stack measures all zeros, and the whole
+// point of the nominal rect above is to survive that. Integer CSS px in
+// data-pf-w / data-pf-h; anything missing or non-positive means "nothing
+// published yet".
+function publishedSize(element) {
+  if (!element) return null;
+  const width = Number(element.dataset.pfW);
+  const height = Number(element.dataset.pfH);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
 // The scrubber's resolution: `t` is reported to the user as one of this many
 // steps, and read back the same way.
 export const SCRUB_STEPS = 1000;
@@ -97,7 +183,15 @@ function textSetter(element) {
   return (value) => { if (node.data !== value) node.data = value; };
 }
 
-export function attachAnimationControls(viewer, part, { container, applyValues, getParamValues, getView }) {
+export function attachAnimationControls(viewer, part, {
+  container, applyValues, getParamValues, getView,
+  // Called with `true` when the bar has run out of room beside the bottom-right
+  // cluster and has started capping its own width (see isCrowded below), and
+  // with `false` when it has not — on CHANGE only. mount uses it to stand the
+  // view cube down so the bar can have the space back. Defaulted, so a host or
+  // a test that does not care is unaffected.
+  onCrowded = () => {},
+}) {
   // A malformed animations block must degrade to "no transport bar", never a
   // crashed mount — lint reports the specifics; the viewer just goes without.
   let byView;
@@ -522,20 +616,34 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
   syncStructure();
   syncUi();
 
-  // --- placement: keep clear of the viewbar ---------------------------------
+  // --- placement: keep clear of the bottom-right cluster ---------------------
   // chrome.css centers the bar (left: 50% / translateX(-50%)), and nothing in
-  // CSS can stop that centered position sliding under #viewbar when the stage
-  // narrows — the viewbar's width is dynamic (cutaway's Flip/Reset appear and
-  // disappear), so a static reservation would either overlap or waste centre
-  // space. Measure instead: when the two bars' vertical bands intersect, clamp
-  // the bar's left so a 10px gap to the viewbar holds, capping its width if
-  // even the stage's 12px margin isn't enough. Overrides are inline and
-  // cleared at the top of every pass, so chrome.css (or a host that
-  // re-anchors either bar out of the shared band) stays authoritative the
-  // moment the constraint stops binding. The clear-measure-apply sequence is
-  // loop-safe: it settles within one frame, so ResizeObserver — which reports
-  // rendered sizes at frame boundaries — never sees the intermediate state.
+  // CSS can stop that centered position sliding under the bottom-right cluster
+  // when the stage narrows — #viewbar's width is dynamic (cutaway's Flip/Reset
+  // appear and disappear), so a static reservation would either overlap or
+  // waste centre space. Measure instead: when the transport bar's vertical
+  // band intersects the CLUSTER's — #viewbar unioned with the view cube stack
+  // sitting above it, since that stack can be taller than the viewbar alone —
+  // clamp the bar's left so a 10px gap holds, capping its width if even the
+  // stage's 12px margin isn't enough. Overrides are inline and cleared at the
+  // top of every pass, so chrome.css (or a host that re-anchors any of these
+  // elements out of the shared band) stays authoritative the moment the
+  // constraint stops binding. The clear-measure-apply sequence is loop-safe: it
+  // settles within one frame, so ResizeObserver — which reports rendered sizes
+  // at frame boundaries — never sees the intermediate state.
+  //
+  // A pass also decides whether the bar is CROWDED — out of room to the point
+  // of capping its own width, which shrinks its controls below the 44px tap
+  // target — and reports that through onCrowded so the cube can give way. That
+  // decision is measured against the NOMINAL cluster rect, never the union used
+  // for placement: see nominalClusterRect for why the difference is the whole
+  // design. It is reported LAST in the pass, after the bar has been placed, so
+  // the hide it may cause lands on the next frame's pass rather than
+  // invalidating the rects this one just measured.
   const viewbarEl = container.querySelector("#viewbar");
+  // Looked up lazily on every pass rather than captured once: the cube stack is
+  // generated by viewcube-controls.js, which may attach after this bar does.
+  const cubeSelector = ".pf-viewcube-stack";
   let placementRaf = 0;
   function applyPlacement() {
     placementRaf = 0;
@@ -556,12 +664,57 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
       ? 0
       : Math.max(0, Math.round(stageRect.bottom - barRect.top));
     container.style.setProperty("--pf-anim-clear", `${clear}px`);
-    const vb = viewbarEl?.getBoundingClientRect();
-    if (!vb || barRect.top >= vb.bottom || barRect.bottom <= vb.top) return;
+    const cubeEl = container.querySelector(cubeSelector);
+    const viewbarRect = viewbarEl?.getBoundingClientRect() ?? null;
+    const cubeRect = cubeEl?.getBoundingClientRect() ?? null;
+    // Every measurement of the pass is taken before anything is written, and
+    // the crowding verdict is one of them — it must not read rects that the
+    // placement below has already moved.
+    const crowded = isCrowded({ stageRect, barRect, viewbarRect, cubeRect, cubeEl });
+    placeBar(stageRect, barRect, unionRect(viewbarRect, cubeRect));
+    reportCrowded(crowded);
+  }
+
+  // Is the bar out of room? Judged against the nominal cluster rather than the
+  // measured union, so that hiding the cube — which is what a `true` here causes
+  // — cannot flip the answer back. `barRect.width` is the bar's NATURAL width:
+  // applyPlacement clears maxWidth/overflow/pf-squeezed before measuring, and
+  // getBoundingClientRect forces layout, so a previous pass's cap is never read
+  // back in here.
+  function isCrowded({ stageRect, barRect, viewbarRect, cubeRect, cubeEl }) {
+    // A bar that is not on screen cannot be crowded by anything — the same
+    // condition the --pf-anim-clear calculation above uses.
+    if (bar.style.display === "none") return false;
+    const nominal = nominalClusterRect(viewbarRect, cubeRect, publishedSize(cubeEl));
+    // Same vertical-band test the placement path applies, against the nominal
+    // rect: bands that do not intersect cannot collide, so there is nothing to
+    // be crowded by.
+    if (!nominal || barRect.top >= nominal.bottom || barRect.bottom <= nominal.top) return false;
     const plan = planAnimBarPlacement({
       stageWidth: stageRect.width,
       barWidth: barRect.width,
-      viewbarLeft: vb.left - stageRect.left,
+      viewbarLeft: nominal.left - stageRect.left,
+    });
+    // The CAP is the crowded state, not the slide: a bar that only moves
+    // sideways keeps its full width and its full-size controls.
+    return plan?.maxWidth != null;
+  }
+
+  let reportedCrowded = null; // null: nothing said yet, so the first pass always reports
+  function reportCrowded(crowded) {
+    if (crowded === reportedCrowded) return;
+    reportedCrowded = crowded;
+    onCrowded(crowded);
+  }
+
+  // The write half of a placement pass. `cluster` is the MEASURED union, which
+  // is what lets the bar actually reclaim the space once the cube is gone.
+  function placeBar(stageRect, barRect, cluster) {
+    if (!cluster || barRect.top >= cluster.bottom || barRect.bottom <= cluster.top) return;
+    const plan = planAnimBarPlacement({
+      stageWidth: stageRect.width,
+      barWidth: barRect.width,
+      viewbarLeft: cluster.left - stageRect.left,
     });
     if (!plan) return;
     bar.style.left = `${plan.left}px`;
@@ -598,6 +751,8 @@ export function attachAnimationControls(viewer, part, { container, applyValues, 
     placementObserver.observe(container);
     placementObserver.observe(bar);
     if (viewbarEl) placementObserver.observe(viewbarEl);
+    const cubeAtSetup = container.querySelector(cubeSelector);
+    if (cubeAtSetup) placementObserver.observe(cubeAtSetup);
   }
   onStructureChanged = schedulePlacement; // see the hook's declaration above
   schedulePlacement();

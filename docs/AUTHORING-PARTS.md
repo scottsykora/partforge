@@ -1480,13 +1480,29 @@ stylesheet). `mount` looks up these element IDs:
 | `#part` | view-tab bar — leave the div **empty**; `mount` generates one button per entry in `part.views` and opens the resolved default (see the "Which view the viewer opens on" rule above) |
 | `#download-step` / `#download` / `#download-3mf` | STEP / STL / 3MF export buttons |
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
-| `#viewbar` with `#reframe` / `#cutaway` / `#measure` / `#theme` | optional viewer controls (omit any you don't want) |
+| `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#theme` | optional viewer controls (omit any you don't want) |
 | `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
-| `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme` |
+| `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme`. A sibling of `#viewbar`, not a child of it: give it `class="pf-float-rail-toggle"` and it floats at the stage's top right |
 
 Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
 `"occt"` for STEP — handled for you).
+
+**`#reframe` is supported but no longer shipped.** The framework's own pages dropped
+the button on 2026-08-20: clicking a face, edge or corner on the view cube reframes
+too, so a separate control was one more thing in a crowded bottom-right corner. The
+wiring is untouched and fully optional — supply the button (by ID or as
+`elements.chrome.reframe`) and it works exactly as before — so a host with its own
+scaffold need change nothing.
+
+**`#rail-toggle` left the viewbar on 2026-08-20.** It used to be the pill's last
+button; it now floats alone at the stage's **top right**, opposite the pill's bottom
+right, as a bare icon that grows a background on hover. Nothing in the wiring changed —
+`mount` still resolves it by id (or `elements.chrome.railToggle`), and `rail.js` still
+hides it below the 720px narrow breakpoint, where the pane tab bar takes over. A host
+with its own scaffold gets the new look by moving the button out of `#viewbar` and adding
+`class="pf-float-rail-toggle"`; leaving it inside the pill keeps the old look and still
+works.
 
 **View control (the mount handle).** For an embedder driving the view tabs from its own UI
 instead of (or in addition to) the built-in `#part` bar:
@@ -1553,6 +1569,35 @@ pane's pixel size:
 - `runtime.captureViews(viewNames) → [{ view, dataUrl }]` — the canonical-angle
   counterpart (fixed poses, framed to the visible assembly, 1024², grid hidden). Sized
   for feeding a vision model, not for display; use `captureCurrent` for showcase images.
+
+### `runtime.projection`
+
+`{ get(), set(mode), onChange(cb) }` where `mode` is `"perspective"` or
+`"orthographic"`. Drives the **live view** and `captureCurrent` only —
+`captureCanonicalViews`, `renderMeshPayloads`, and the CLI's `partforge render`
+stay perspective unconditionally, so agent-facing output does not depend on a UI
+toggle. The choice persists across reloads under `partforge:projection` and is
+restored before the first framing. The orientation cube and its projection
+button are hidden while Sketch (annotate) mode is active, but that only governs
+*user-driven* view changes — the framework does not police programmatic ones.
+The ink is a transparent overlay and the WebGL canvas keeps rendering beneath
+it, so a host that calls `runtime.projection.set()` mid-sketch **visibly
+re-frames the 3D view underneath ink the user may still be drawing**: the
+strokes stay where they were laid down while the model shifts out from under
+them, and the sketch that gets sent is misaligned, not merely mis-labelled.
+Deliberately unguarded, the same way it's always been free to call
+`setCameraState` during Sketch.
+
+### The annotation payload's camera block
+
+`onAnnotationSend(payload)` receives a `camera` block in two frames — `world`
+(replays exactly against the build that produced it) and `parts` (pinned to
+the CAD geometry, so it survives a later rebuild's bbox recentring; reread a
+sketch's camera intrinsics from `parts`, not `world`, once the model has been
+rebuilt). `ANNOTATION_VERSION` is **2**: both frames carry
+`projection: "perspective" | "orthographic"`, and under an orthographic camera
+`fov` is `null` while `orthoHeight` gives the frustum's world height instead.
+(v1 had `fov` only, and predates the projection toggle.)
 
 **The markup convention (`demo.html` is the canonical copy-me page):** `<body>` carries
 `class="pf-shell"`, the flex row that lays the viewer column next to the rail. `#app`

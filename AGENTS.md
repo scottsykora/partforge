@@ -100,9 +100,24 @@ the installed package, so let the publish finish before bumping the dep there.
   annotation mode: freehand ink on a transparent canvas over the frozen view,
   sent to the host via `onAnnotationSend` - `ink.js` is the pure stroke model,
   `ink-canvas.js` the overlay renderer, `annotate-mode.js` the orchestrator,
-  `annotate-controls.js` the viewbar chrome), and `app.css` /
+  `annotate-controls.js` the viewbar chrome), `viewcube/` (the orientation
+  cube: a ghost cube whose 26 regions - 6 faces, 12 edges, 8 corners - tween
+  the camera to canonical angles, with model-frame X/Y/Z arrows drawn in
+  front of it and a perspective/orthographic toggle beneath -
+  `cube-geom.js` is the pure projection/hit leaf, `cube-canvas.js` the 2D
+  renderer, `viewcube-mode.js` the orchestrator, `viewcube-controls.js` the
+  stack chrome. The stack hides for either of two independent reasons, OR-ed in
+  mount: Sketch mode, and a crowded animation transport bar - the stack
+  publishes its size as `data-pf-w`/`data-pf-h` so
+  `animation-controls.js` can judge that crowding against a footprint that does
+  not change when the cube goes away), and `app.css` /
   `chrome.css` (the shell/rail layout - `rail.js` binds
   it to the DOM, `rail-state.js` is its pure drag/collapse state machine).
+  `camera-tween.js`, `camera-orbit.js` and `projection.js` are further pure
+  leaves the viewer imports - eased spherical interpolation between camera
+  poses (view switches, animation camera cues, viewcube clicks), spherical
+  orbit math for external drag sources, and the perspective/orthographic
+  framing pair, respectively.
   Below `RAIL_NARROW_BREAKPOINT` (720px) the rail cannot sit beside the viewer:
   the shell shows exactly ONE pane, keyed on `data-pf-pane`, and `mobile-tabs.js`
   draws the bottom tab bar that picks it. A host that wants to draw its own bar

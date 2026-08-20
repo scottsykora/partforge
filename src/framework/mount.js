@@ -6,7 +6,7 @@ import { attachCutawayControls } from "./cutaway-controls.js";
 import { attachRail } from "./rail.js";
 import { attachMobileTabs } from "./mobile-tabs.js";
 import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
-import { loadCamera } from "./view-state.js";
+import { loadCamera, loadProjection, saveProjection } from "./view-state.js";
 import { buildControls } from "./controls.js";
 import { relevantParamKeys } from "./param-deps.js";
 import { createMeshCache } from "./mesh-cache.js";
@@ -30,6 +30,7 @@ import { createMeasureMode } from "./measure/measure-mode.js";
 import { attachMeasureControls } from "./measure/measure-controls.js";
 import { createAnnotateMode } from "./annotate/annotate-mode.js";
 import { attachAnnotateControls } from "./annotate/annotate-controls.js";
+import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
@@ -59,7 +60,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure, annotate }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -106,6 +107,13 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // the built-in pencil button. send() delivers to onAnnotationSend and
     // returns false when there is no ink or the capture failed.
     annotate: annotate ?? NOOP_ANNOTATE,
+    // Projection is a viewer-wide display mode, not a part property — same
+    // shape as `measure` and `annotate` so a host reads one convention.
+    projection: projection ?? {
+      get: () => "perspective",
+      set: () => {},
+      onChange: () => () => {},
+    },
   };
 }
 
@@ -203,6 +211,10 @@ function createCleanupStack() {
 //                                 // subscribes return an unsubscribe; onInkChange fires on
 //                                 // every stroke/undo/clear, which is what a host driving its
 //                                 // own Send button gates that button on (strokeCount() > 0).
+//   runtime.projection: { get, set, onChange }
+//                                         // "perspective" | "orthographic". Drives the LIVE view
+//                                         // and captureCurrent only — captureCanonicalViews,
+//                                         // renderMeshPayloads and the CLI stay perspective.
 //   runtime.dispose();     // full teardown
 // onBuild fires per completed build, so it does NOT fire for a pose-only edit —
 // those are repaired in the viewer and produce no build at all.
@@ -412,6 +424,55 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       annotate: els.chrome.annotate,
     }, { tooltip, escapeScope: els.viewer, send: annotateSend });
     cleanup.defer(() => annotateChrome.detach());
+    // Orientation cube + projection toggle. Generated chrome — no host markup
+    // declares it, so an embedder gets it for free. Restored BEFORE any framing
+    // happens so a reload into ortho frames once instead of framing in
+    // perspective and then visibly re-framing.
+    viewer.setProjection(loadProjection());
+    const viewcube = attachViewcubeControls(viewer, { stage: els.viewer }, { tooltip });
+    cleanup.defer(() => viewcube.detach());
+    cleanup.defer(viewer.onProjectionChange((mode) => saveProjection(mode)));
+    // setHidden takes one boolean, and there are two independent reasons to hide
+    // the cube: Sketch mode (below) and a crowded transport bar (wired into the
+    // animation controls further down). Applied straight, whichever fires last
+    // would win — leaving Sketch would reveal a cube that crowding still wants
+    // gone. Track a flag per reason and OR them through one place, the
+    // syncHoverSuppression precedent below.
+    let cubeHiddenForSketch = false;
+    let cubeHiddenForCrowding = false;
+    const syncViewcubeHidden = () =>
+      viewcube.setHidden(cubeHiddenForSketch || cubeHiddenForCrowding);
+    // Sketch freezes the view on purpose: ink is stored in screen space and is
+    // meaningful only against the pose it was drawn over. A live camera control
+    // on top of that — orbit OR a projection swap — invalidates the drawing.
+    if (annotateMode) {
+      cleanup.defer(annotateMode.onModeChange(() => {
+        cubeHiddenForSketch = annotateMode.isEnabled();
+        syncViewcubeHidden();
+      }));
+    }
+    // Publish the viewbar's vertical claim so chrome.css can stack the cube on
+    // top of it without hardcoding a height that cutaway/measure/annotate
+    // action rows can change.
+    const viewbarEl = els.viewer.querySelector("#viewbar");
+    if (viewbarEl && typeof ResizeObserver === "function") {
+      const publishViewbarClear = () => {
+        const stageRect = els.viewer.getBoundingClientRect();
+        const barRect = viewbarEl.getBoundingClientRect();
+        els.viewer.style.setProperty(
+          "--pf-viewbar-clear",
+          `${Math.max(0, Math.round(stageRect.bottom - barRect.top))}px`,
+        );
+      };
+      const viewbarObserver = new ResizeObserver(publishViewbarClear);
+      viewbarObserver.observe(viewbarEl);
+      viewbarObserver.observe(els.viewer);
+      publishViewbarClear();
+      cleanup.defer(() => {
+        viewbarObserver.disconnect();
+        els.viewer.style.removeProperty("--pf-viewbar-clear");
+      });
+    }
     // escapeScope: cutaway's Flip/Reset buttons are canvas SIBLINGS inside
     // #viewbar, not descendants of the canvas — attaching Escape to
     // viewer.domElement alone would leave a guarded Escape from those buttons
@@ -836,6 +897,17 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       applyValues: applyAnimationValues,
       getParamValues: (keys) => Object.fromEntries(keys.map((k) => [k, params[k]])),
       getView: view,
+      // On a narrow stage the transport bar has to cap its own width to stay
+      // clear of the bottom-right cluster, and under that cap its controls fall
+      // below the 44px tap target. The cube gives way instead — it is the
+      // reclaimable half of that cluster. Nothing here keys on the viewport
+      // width: a part with no animations, or one whose bar fits, keeps its cube
+      // at every size. syncViewcubeHidden and the viewcube itself are both
+      // declared above this point, so this can never fire into a hole.
+      onCrowded: (crowded) => {
+        cubeHiddenForCrowding = crowded;
+        syncViewcubeHidden();
+      },
     });
     if (animCtl) cleanup.defer(() => animCtl.detach());
 
@@ -944,6 +1016,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         onInkChange: annotateMode.onInkChange,
         onModeChange: annotateMode.onModeChange,
       } : null,
+      projection: {
+        get: () => viewer.getProjection(),
+        set: (mode) => viewer.setProjection(mode),
+        onChange: (cb) => viewer.onProjectionChange(cb),
+      },
     });
   } catch (error) {
     try {

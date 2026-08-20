@@ -9,7 +9,12 @@ import { createInkStore, anchorSpecs, DEFAULT_STROKE_WIDTH } from "./ink.js";
 import { createInkCanvas } from "./ink-canvas.js";
 import { raycastViewer } from "../selection/raycast.js";
 
-export const ANNOTATION_VERSION = 1;
+// v2 added the camera block's `projection` / `orthoHeight` and made `fov`
+// nullable: the viewer gained an orthographic camera, and a user can switch to
+// it and THEN open Sketch. An additive optional field alone would have left any
+// consumer that reconstructs the camera from `fov` silently wrong rather than
+// loudly broken, so the version moves.
+export const ANNOTATION_VERSION = 2;
 // Long-edge bound on BOTH pictures in the payload. The ink canvas is stage
 // sized × devicePixelRatio, so an unbounded send on a large hi-DPI display
 // hands the host a multi-megabyte pair of base64 strings — slow to encode,
@@ -85,14 +90,37 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
   // it survives the per-view bbox recentring when the model is rebuilt later.
   function cameraBlock() {
     const { pos, target } = viewer.getCameraState();
-    const world = { pos, target, up: viewer.camera.up.toArray(), fov: viewer.camera.fov };
+    const cam = viewer.camera;
+    const ortho = !!cam.isOrthographicCamera;
+    const world = {
+      pos,
+      target,
+      up: cam.up.toArray(),
+      projection: ortho ? "orthographic" : "perspective",
+      fov: ortho ? null : cam.fov,
+      orthoHeight: ortho ? Math.abs(cam.top - cam.bottom) / Math.max(cam.zoom, 1e-6) : null,
+    };
     const parent = Object.values(viewer._subMeshes ?? {})[0]?.parent ?? null;
     if (!parent) return { world, parts: null };
     parent.updateWorldMatrix(true, false);
     const inv = parent.matrixWorld.clone().invert();
     const map = (v) => new THREE.Vector3(v[0], v[1], v[2]).applyMatrix4(inv).toArray();
     const up = new THREE.Vector3(world.up[0], world.up[1], world.up[2]).transformDirection(inv).toArray();
-    return { world, parts: { pos: map(world.pos), target: map(world.target), up, fov: world.fov } };
+    return {
+      world,
+      parts: {
+        pos: map(world.pos),
+        target: map(world.target),
+        up,
+        // Camera intrinsics, not coordinates: they describe the lens, so they
+        // cross frames unchanged. `fov` alone would leave a consumer reading
+        // only this frame with a null and no way to know an ortho camera
+        // caused it — the exact hole ANNOTATION_VERSION 2 exists to close.
+        projection: world.projection,
+        fov: world.fov,
+        orthoHeight: world.orthoHeight,
+      },
+    };
   }
 
   function send() {

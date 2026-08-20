@@ -15,6 +15,9 @@ vi.mock("../../src/framework/viewer.js", () => ({
     // and to orbit starts. tickFrame(dt) is the test's hand on that loop.
     const frameCbs = new Set();
     const orbitCbs = new Set();
+    const themeCbs = new Set();
+    const projectionCbs = new Set();
+    let projection = "perspective";
     const v = {
       onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
       onCameraStart: (cb) => { orbitCbs.add(cb); return () => orbitCbs.delete(cb); },
@@ -33,7 +36,19 @@ vi.mock("../../src/framework/viewer.js", () => ({
       getCameraState: vi.fn(() => ({ pos: [0, 0, 0], target: [0, 0, 0] })),
       setCameraState: vi.fn(),
       onCameraEnd: vi.fn(),
-      camera: {},
+      // The view cube subscribes to all three and reads the camera's
+      // quaternion every frame through its dirty check.
+      camera: { quaternion: { x: 0, y: 0, z: 0, w: 1 }, isOrthographicCamera: false, zoom: 1 },
+      onThemeChange: (cb) => { themeCbs.add(cb); return () => themeCbs.delete(cb); },
+      getTheme: () => "dark",
+      getProjection: () => projection,
+      setProjection: vi.fn((mode) => {
+        projection = mode === "orthographic" ? "orthographic" : "perspective";
+        for (const cb of [...projectionCbs]) cb(projection);
+        return projection;
+      }),
+      onProjectionChange: (cb) => { projectionCbs.add(cb); return () => projectionCbs.delete(cb); },
+      orbitBy: vi.fn(),
       _subMeshes: {},
       flashPoint: vi.fn(),
       cutawaySupported: vi.fn(() => true),
@@ -61,7 +76,9 @@ vi.mock("../../src/framework/selection/index.js", async (importOriginal) => {
   const real = await importOriginal(); // keep formatSelection real — the prompt text matters
   return {
     ...real,
-    attachHoverLabels: vi.fn(() => ({ detach: vi.fn() })),
+    // setSuppressed: real hover.js's toggle for measure/annotate mode, exercised
+    // now that a mount.test.js test actually flips Sketch on inside a full mount.
+    attachHoverLabels: vi.fn(() => ({ detach: vi.fn(), setSuppressed: vi.fn() })),
     attachPickToggle: vi.fn(() => ({ detach: vi.fn() })),
     attachPicker: vi.fn(() => ({ setActive: vi.fn(), detach: vi.fn() })),
   };
@@ -99,6 +116,24 @@ vi.mock("../../src/framework/cutaway-controls.js", async (importOriginal) => {
 vi.mock("../../src/framework/viewer-controls.js", async (importOriginal) => {
   const real = await importOriginal();
   return { ...real, attachViewerControls: vi.fn(real.attachViewerControls) };
+});
+
+// Delegates to the real transport (makePart declares no animations, so it
+// returns null either way) purely to capture the crowding callback mount wires
+// into it. Driving that callback by hand is the only deterministic way to reach
+// mount's OR of the two hide reasons: real crowding needs layout, which
+// happy-dom does not have. The geometry side is pinned in
+// animation-controls.test.js.
+const crowdedHook = { report: null };
+vi.mock("../../src/framework/animation-controls.js", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    attachAnimationControls: vi.fn((viewer, part, opts) => {
+      crowdedHook.report = opts.onCrowded;
+      return real.attachAnimationControls(viewer, part, opts);
+    }),
+  };
 });
 
 import { mount, makeHandle } from "../../src/framework/mount.js";
@@ -186,6 +221,7 @@ beforeEach(() => {
   document.body.innerHTML = "";
   fakeViewers.length = 0;
   fakeTooltips.length = 0;
+  crowdedHook.report = null; // never let one test's callback stand in for another's
   vi.clearAllMocks();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -1319,5 +1355,107 @@ test("onParamsCommit fires on a finished panel edit with a snapshot, never from 
   runtime.setParams({ h: 9 });
   expect(commits[0].params.h).toBe(6);
   expect(commits).toHaveLength(1);                   // setParams never commits
+  runtime.dispose();
+});
+
+test("mounts the view cube stack inside the stage", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  finishFirstBuild(workers);
+  expect(els.viewer.querySelector(".pf-viewcube-stack")).not.toBeNull();
+  expect(els.viewer.querySelector("#projection")).not.toBeNull();
+  runtime.dispose();
+  expect(els.viewer.querySelector(".pf-viewcube-stack")).toBeNull();
+});
+
+test("exposes projection on the runtime and drives the viewer with it", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  const viewer = fakeViewers.at(-1);
+  expect(runtime.projection.get()).toBe("perspective");
+  runtime.projection.set("orthographic");
+  expect(viewer.setProjection).toHaveBeenCalledWith("orthographic");
+  expect(runtime.projection.get()).toBe("orthographic");
+  runtime.dispose();
+});
+
+test("hides the whole cube stack while Sketch is on", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  // Sketch only appears when the host wires a send callback.
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, onAnnotationSend: () => {},
+  });
+  const stack = els.viewer.querySelector(".pf-viewcube-stack");
+  expect(stack.hidden).toBe(false);
+  els.chrome.annotate.click();
+  // Ink is pose-locked: an orbit OR a projection swap invalidates it, so the
+  // projection button goes away with the cube, not just the cube.
+  expect(stack.hidden).toBe(true);
+  els.chrome.annotate.click();
+  expect(stack.hidden).toBe(false);
+  runtime.dispose();
+});
+
+// setHidden takes one boolean and there are two independent reasons to hide the
+// cube — Sketch mode and a crowded transport bar. Applied straight, whichever
+// fires last wins, and leaving Sketch would reveal a cube that crowding still
+// wants gone. All four combinations, in the order that catches that.
+test("the cube's two hide reasons OR rather than overwrite each other", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, onAnnotationSend: () => {},
+  });
+  const stack = els.viewer.querySelector(".pf-viewcube-stack");
+  const reportCrowded = crowdedHook.report;
+  expect(typeof reportCrowded).toBe("function"); // mount wired it
+
+  expect(stack.hidden).toBe(false);            // neither reason
+  reportCrowded(true);
+  expect(stack.hidden).toBe(true);             // crowded only
+  els.chrome.annotate.click();
+  expect(stack.hidden).toBe(true);             // both
+  els.chrome.annotate.click();
+  expect(stack.hidden).toBe(true);             // still crowded — the regression
+  reportCrowded(false);
+  expect(stack.hidden).toBe(false);            // neither again
+
+  // And the mirror image: Sketch alone survives crowding clearing.
+  els.chrome.annotate.click();
+  expect(stack.hidden).toBe(true);
+  reportCrowded(false);
+  expect(stack.hidden).toBe(true);
+  els.chrome.annotate.click();
+  expect(stack.hidden).toBe(false);
+  runtime.dispose();
+});
+
+test("restores a persisted orthographic projection before the first framing", () => {
+  localStorage.setItem("partforge:projection", "orthographic");
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  const viewer = fakeViewers.at(-1);
+  // Set synchronously during mount setup, well before any worker round-trip
+  // could resolve — this alone pins "restored before the first build".
+  expect(viewer.setProjection).toHaveBeenCalledWith("orthographic");
+  finishFirstBuild(workers);
+  // showAssembly's first call is the one that actually frames the camera
+  // (frame:true on the initial show — see showView in mount.js). Comparing
+  // invocation order against it is the real ordering claim: had the restore
+  // been moved to fire alongside the camera restore (inside showView, AFTER
+  // this call), this assertion would catch it. viewer.frame() (the reframe
+  // BUTTON's handler) is a different function and is never called on this
+  // path, so it can't stand in for "framing happened" — that was the flaw in
+  // the previous version of this test.
+  expect(viewer.showAssembly).toHaveBeenCalledWith(expect.anything(), { frame: true });
+  const firstFrameCall = viewer.showAssembly.mock.calls.findIndex(([, opts]) => opts?.frame);
+  expect(firstFrameCall).toBeGreaterThanOrEqual(0);
+  expect(viewer.setProjection.mock.invocationCallOrder[0])
+    .toBeLessThan(viewer.showAssembly.mock.invocationCallOrder[firstFrameCall]);
+  localStorage.clear();
   runtime.dispose();
 });

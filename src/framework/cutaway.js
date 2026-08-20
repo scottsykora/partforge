@@ -32,7 +32,7 @@ function validBounds(getBounds) {
 export function createCutaway({
   renderer,
   scene,
-  camera,
+  camera: initialCamera,
   orbitControls,
   domElement,
   getBounds,
@@ -40,6 +40,9 @@ export function createCutaway({
   schedule = defaultSchedule,
   now,
 }) {
+  // Reassignable: a projection swap (perspective <-> ortho) hands the cutaway
+  // a new camera after construction, and the gizmo must follow it too.
+  let camera = initialCamera;
   let supported = false;
   try {
     supported = Boolean(
@@ -522,6 +525,11 @@ export function createCutaway({
     updateForCamera,
     renderOverlay,
     onHandleHoverChange,
+    setCamera(next) {
+      if (!next) return;
+      camera = next;
+      gizmo?.setCamera(next);
+    },
     dispose,
     _renderSetFor: (name) => renderSets.get(name)?.renderSet ?? null,
     _setDragging: setDragging,
