@@ -659,10 +659,8 @@ test("hovering re-places only the hover dim, reusing the cached base drawings", 
   expect(hasHover()).toBe(true);
   expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["hover"]]);
 
-  // and again on the next move: still just the hover item
-  placeDims.mockClear();
-  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 52 }));
-  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["hover"]]);
+  // (a further move that resolves to the SAME spec re-places nothing at all —
+  // see "a hover move that stays on the same feature re-places nothing")
 
   // pinning changes the base set, so that one does re-place both
   placeDims.mockClear();
@@ -670,6 +668,92 @@ test("hovering re-places only the hover dim, reusing the cached base drawings", 
   expect(mode.pinCount()).toBe(1);
   expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id)))
     .toEqual([["overall", "pin:plate:top face:0"], ["hover"]]);
+  mode.detach();
+});
+
+// The hover dim is fully determined by its spec + the side choices + the lane
+// seed — and the spec is IDENTICAL for every pointer position over one feature.
+// Re-placing it per rAF therefore repeats an identical vertex scan and surface
+// raycast set for as long as the pointer sits on the same face, which is what
+// makes hovering a big part hitch. A move that resolves to the same spec must
+// re-place nothing and repaint nothing.
+test("a hover move that stays on the same feature re-places nothing", () => {
+  const { viewer, mode, hasHover, dimGroup } = setup();
+  mode.setEnabled(true);
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
+  expect(hasHover()).toBe(true);
+  const first = [...dimGroup().children];
+
+  placeDims.mockClear();
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 52 }));
+  expect(placeDims.mock.calls).toEqual([]);
+  // identity, not deep equality: an unchanged drawing list must not be repainted
+  expect([...dimGroup().children]).toEqual(first);
+  expect(hasHover()).toBe(true);
+  mode.detach();
+});
+
+// The other half of the same rule: a move onto a DIFFERENT spec must still
+// re-place, or the cache would freeze the hover dim on the first thing touched.
+test("a hover move onto a different feature re-places the hover dim", () => {
+  const { viewer, mode } = setup({ mesh: plateMesh({ halfLabeled: true }) });
+  mode.setEnabled(true);
+  // inside the labeled triangle, then its mirror in the UNLABELED one, where
+  // the hover falls back to the sub-part bbox — a different spec
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 64.1, clientY: 55.6 }));
+  placeDims.mockClear();
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", { ...pointerOpts, clientX: 35.9, clientY: 44.4 }));
+  expect(placeDims.mock.calls.map((c) => c[0].map((i) => i.id))).toEqual([["hover"]]);
+  mode.detach();
+});
+
+// Orbiting flips side choices repeatedly — measured at ~15 flips over a single
+// 360° turn — and each flip invalidated a one-slot cache, so every flip paid a
+// full re-place even when the choice it landed on had just been placed moments
+// earlier. The caches are keyed and bounded instead, so an orbit that sweeps
+// back over ground it has already covered places nothing new.
+test("an orbit that revisits angles it has already placed re-places nothing", () => {
+  const { viewer, mode, labelPositions } = setup();
+  mode.setEnabled(true);
+  const orbit = () => {
+    for (const p of [[150, 5, 2], [10, 5, 40], [5, 150, 2], [10, 5, 40]]) {
+      viewer.camera.position.set(...p);
+      viewer.frame();
+    }
+  };
+  orbit(); // first pass places each distinct choice once
+  const home = labelPositions("overall");
+  expect(home.length).toBeGreaterThan(0);
+
+  placeDims.mockClear();
+  orbit(); // the identical sweep, second time round
+  expect(placeDims.mock.calls).toEqual([]);
+  expect(labelPositions("overall")).toEqual(home); // and it still draws the same
+  mode.detach();
+});
+
+// The same rule with a pointer held on a face, which is the case the report
+// describes: orbiting while hovering flips the HOVER dim's side too, so a
+// one-slot cache re-placed the hovered item on every flip.
+test("an orbit that revisits angles re-places nothing while hovering either", () => {
+  const { viewer, mode, hasHover, labelPositions } = setup();
+  mode.setEnabled(true);
+  viewer.domElement.dispatchEvent(new PointerEvent("pointermove", pointerOpts));
+  expect(hasHover()).toBe(true);
+  const orbit = () => {
+    for (const p of [[150, 5, 2], [10, 5, 40], [5, 150, 2], [10, 5, 40]]) {
+      viewer.camera.position.set(...p);
+      viewer.frame();
+    }
+  };
+  orbit();
+  const home = labelPositions("hover");
+  expect(home.length).toBeGreaterThan(0);
+
+  placeDims.mockClear();
+  orbit();
+  expect(placeDims.mock.calls).toEqual([]);
+  expect(labelPositions("hover")).toEqual(home);
   mode.detach();
 });
 

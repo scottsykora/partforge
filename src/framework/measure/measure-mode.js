@@ -19,6 +19,35 @@ import { createPinStore, occurrenceOf } from "./pins.js";
 import { evaluateChoices, choicesEqual, placeDims, specSig, laneCounts } from "./dim3-place.js";
 import { createDimScene } from "./dim3-scene.js";
 
+// How many distinct placements each cache holds. An orbit sweeps a bounded set
+// of side choices, and a session hovers a bounded set of features; anything
+// past that is ground the user has moved on from. Entries are plain drawing
+// records (numbers, no GL objects), so the ceiling is about retention hygiene
+// on a memory-tight device, not about a runaway.
+const PLACEMENT_CACHE_LIMIT = 32;
+
+// Bounded LRU. A Map iterates in insertion order, so re-inserting on a hit
+// moves the entry to the back and the oldest key is always the first one out.
+function keyedCache(limit) {
+  const entries = new Map();
+  return {
+    get(key) {
+      if (!entries.has(key)) return undefined;
+      const value = entries.get(key);
+      entries.delete(key);
+      entries.set(key, value);
+      return value;
+    },
+    set(key, value) {
+      entries.delete(key);
+      entries.set(key, value);
+      if (entries.size > limit) entries.delete(entries.keys().next().value);
+      return value;
+    },
+    clear() { entries.clear(); },
+  };
+}
+
 export function createMeasureMode(viewer, { part, getContext, revealParams, getParamsVersion, schedule = (cb) => requestAnimationFrame(cb) }) {
   const pins = createPinStore();
   const pinListeners = new Set();
@@ -218,7 +247,23 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
   // hover dim, which changes on every pointer move. placeBox scans every
   // vertex of the meshes it covers (tens of ms on a big part), so re-placing
   // the whole set per hover frame is the one path that must not exist.
-  const baseCache = { key: null, drawings: [] };
+  //
+  // Both caches are KEYED and bounded rather than one slot each. A one-slot
+  // cache is right for a monotonic sequence and wrong for an orbit, which
+  // sweeps back and forth over the same handful of side choices — measured at
+  // ~15 flips per 360° turn, every one of them a full re-place of ground
+  // already covered. Keyed, an orbit places each distinct choice once.
+  const baseCache = keyedCache(PLACEMENT_CACHE_LIMIT);
+  // ...and the PAINTED list — base plus the hover dim — cached the same way, on
+  // the base key plus everything the hover pass alone depends on. The hover
+  // spec is identical for every pointer position over one feature, so without
+  // this a pointer resting on a face re-ran that item's vertex scan and its
+  // surface raycasts on every single rAF.
+  const paintCache = keyedCache(PLACEMENT_CACHE_LIMIT);
+  // The drawing list currently on screen, held by IDENTITY: scene.update()
+  // rebuilds every child object (and repaints every label texture), so a list
+  // the cache just handed back unchanged must not reach it.
+  let painted = null;
   const _rc = new THREE.Raycaster();
   const _origin = new THREE.Vector3();
   const _dir = new THREE.Vector3();
@@ -274,12 +319,26 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
     return key;
   }
 
+  // The hover half of the choice table, which baseCacheKey deliberately omits
+  // (hover entries come and go with the pointer and must not evict the base).
+  // A camera move that flips which side the hovered dim hangs off has to
+  // re-place it, so the paint key carries them.
+  function hoverChoiceKey() {
+    let key = "";
+    for (const ck of Object.keys(choices)) {
+      if (!ck.startsWith("hover|")) continue;
+      const c = choices[ck];
+      key += `|${ck}=${c.key ?? ""}${c.du ? `,${c.du.map((n) => n.toFixed(4))}` : ""}`;
+    }
+    return key;
+  }
+
   function rebuild() {
     if (!enabled || !scene) return;
     const { items, meshes, bounds } = buildItems();
     lastItems = items;
     lastBounds = bounds ?? null;
-    if (!items.length || !bounds) { scene.clear(); baseCache.key = null; return; }
+    if (!items.length || !bounds) { scene.clear(); painted = null; return; }
     const env = buildEnv(meshes);
     choices = evaluateChoices(items, { camPos: env.camPos, center: centerOf(bounds), prev: choices });
     const place = (list, suppress, lanes) =>
@@ -287,10 +346,8 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
     const hoverItem = items.find((i) => i.id === "hover");
     const baseItems = hoverItem ? items.filter((i) => i !== hoverItem) : items;
     const key = baseCacheKey(`${units}|${meshSig()}`, baseItems);
-    if (baseCache.key !== key) {
-      baseCache.key = key;
-      baseCache.drawings = place(baseItems);
-    }
+    let baseDrawings = baseCache.get(key);
+    if (!baseDrawings) baseDrawings = baseCache.set(key, place(baseItems));
     // The hover pass can't see the base pass's items (they're cached), so it
     // hands over (a) their sigs as `suppress` — a hover duplicating an
     // already-drawn measurement (the sub-part bounds over the overall, a
@@ -298,13 +355,20 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
     // occupancy, so a hovered dim staggers into the SAME lane it will occupy
     // once pinned (pins append after the base items in the same order) and
     // clicking never moves it.
-    scene.update(hoverItem
-      ? baseCache.drawings.concat(place(
-          [hoverItem],
-          new Set(baseItems.map((i) => specSig(i.spec))),
-          laneCounts(baseCache.drawings),
-        ))
-      : baseCache.drawings);
+    const paintKey = hoverItem
+      ? `h|${key}|${specSig(hoverItem.spec)}|${hoverChoiceKey()}`
+      : `b|${key}`;
+    let drawings = paintCache.get(paintKey);
+    if (!drawings) {
+      drawings = paintCache.set(paintKey, hoverItem
+        ? baseDrawings.concat(place(
+            [hoverItem],
+            new Set(baseItems.map((i) => specSig(i.spec))),
+            laneCounts(baseDrawings),
+          ))
+        : baseDrawings);
+    }
+    if (painted !== drawings) { painted = drawings; scene.update(drawings); }
   }
 
   // ---- frame dirty check ---------------------------------------------------
@@ -500,8 +564,9 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
       scene?.clear();
       lastItems = [];
       lastBounds = null;
-      baseCache.key = null;
-      baseCache.drawings = [];
+      baseCache.clear();
+      paintCache.clear();
+      painted = null;
       dom.style.cursor = "";
     }
     notifyMode();
