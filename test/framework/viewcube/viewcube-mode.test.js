@@ -221,6 +221,20 @@ describe("narrow breakpoint (matchMedia, not a ResizeObserver)", () => {
     expect(seenSize).toBe(CUBE_SIZE_NARROW);
   });
 
+  // The two tests above read the constants back, so they hold for ANY pair of
+  // numbers — they pin the WIRING, not the sizes. This one states the tuned
+  // values outright: the narrow cube is three quarters of the full one
+  // (135 → 101), the 2026-08-19 decision to keep the cube legible on a phone
+  // rather than shrink it to the old 90px widget.
+  it("renders the narrow cube at 101 CSS px — three quarters of the full 135", () => {
+    expect(CUBE_SIZE).toBe(135);
+    expect(CUBE_SIZE_NARROW).toBe(101);
+    let seenSize;
+    const createCanvas = (wrap, opts) => { seenSize = opts.size; return minimalCanvas(wrap, opts); };
+    narrowMode = createViewcubeMode(viewer, { host: narrowHost, createCanvas, matchMedia: fakeMatchMedia(true) });
+    expect(seenSize).toBe(101);
+  });
+
   it("queries the exact RAIL_NARROW_BREAKPOINT, imported rather than hardcoded", () => {
     let seenQuery;
     const matchMedia = (query) => { seenQuery = query; return fakeMatchMedia(false)(query); };

@@ -9,10 +9,17 @@
 // and dim3-scene paintLabel precedent.
 
 // The full-size cube. Below RAIL_NARROW_BREAKPOINT the shell has only one pane
-// on screen at a time (rail.js), so the cube drops back to CUBE_SIZE_NARROW —
+// on screen at a time (rail.js), so the cube drops to CUBE_SIZE_NARROW —
 // viewcube-mode.js is the one that watches the breakpoint and calls setSize().
 export const CUBE_SIZE = 135; // CSS px; the backing store is this x devicePixelRatio
-export const CUBE_SIZE_NARROW = 90; // the widget's previous full size, reused as its narrow one
+// Three quarters of the full size: below the rail's narrow breakpoint the stage
+// is much tighter, but the cube stays VISIBLE there (the 2026-08-19 design
+// decision) and so it still has to be legible — 26 hit regions and six face
+// labels on a phone-sized widget. Deliberately a tuned literal rather than
+// `Math.round(CUBE_SIZE * 0.75)`, like every other number in this file's
+// exported blocks: a derived expression invites the next reader to retune the
+// RATIO when what they actually want is a different number of pixels.
+export const CUBE_SIZE_NARROW = 101;
 
 // Deliberately hardcoded rather than read from CSS vars: this paints into a
 // bitmap where var() cannot reach, exactly like DIM_THEME in dim3-scene.js.
