@@ -51,6 +51,15 @@ let status = "(unavailable)";
 let browser;
 let page;
 
+// The viewer's own WebGL canvas, told apart from the widget canvases that also
+// live inside #app. A bare "#app canvas" matched exactly one element until the
+// view cube shipped a permanently-attached canvas of its own; the child
+// combinator excludes the cube's (nested two deep in .pf-viewcube-stack) and
+// the :not() excludes annotate's lazily-created ink overlay, which is a direct
+// child like this one. Ordering alone can no longer disambiguate these — the
+// cube's canvas is present from boot, not created on demand.
+const VIEWER_CANVAS = "#app > canvas:not(.pf-ink-canvas)";
+
 function errorMessage(error) {
   return error?.message || String(error);
 }
@@ -623,23 +632,23 @@ async function checkCaptureCurrent() {
     const tick = () => (++n >= 120 ? resolve() : requestAnimationFrame(tick));
     requestAnimationFrame(tick);
   }));
-  let before = await page.locator("#app canvas").screenshot();
+  let before = await page.locator(VIEWER_CANVAS).screenshot();
   let stable = false;
   for (let i = 0; i < 15 && !stable; i++) {
     await sleep(200);
-    const next = await page.locator("#app canvas").screenshot();
+    const next = await page.locator(VIEWER_CANVAS).screenshot();
     stable = before.equals(next);
     before = next;
   }
   if (!stable) { errors.push("captureCurrent: canvas never stabilized for a baseline"); return; }
-  const result = await page.evaluate(async () => {
+  const result = await page.evaluate(async (sel) => {
     const dataUrl = window.__pfRuntime.captureCurrent({ size: 512 });
     if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/jpeg")) {
       return { ok: false, why: `unexpected return value: ${String(dataUrl).slice(0, 40)}` };
     }
     const img = new Image();
     await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl; });
-    const canvas = document.querySelector("#app canvas");
+    const canvas = document.querySelector(sel);
     return {
       ok: true,
       width: img.naturalWidth,
@@ -647,7 +656,7 @@ async function checkCaptureCurrent() {
       canvasW: canvas.clientWidth,
       canvasH: canvas.clientHeight,
     };
-  });
+  }, VIEWER_CANVAS);
   if (!result.ok) { errors.push(`captureCurrent: ${result.why}`); return; }
   if (Math.max(result.width, result.height) !== 512) {
     errors.push(`captureCurrent: long edge ${Math.max(result.width, result.height)} != requested 512`);
@@ -658,7 +667,7 @@ async function checkCaptureCurrent() {
     errors.push(`captureCurrent: aspect ${gotAspect.toFixed(3)} != viewport ${wantAspect.toFixed(3)}`);
   }
   await sleep(100);
-  if (!before.equals(await page.locator("#app canvas").screenshot())) {
+  if (!before.equals(await page.locator(VIEWER_CANVAS).screenshot())) {
     errors.push("captureCurrent: live canvas changed after an offscreen capture");
   }
 }
@@ -771,7 +780,7 @@ try {
 
   // Hover inspection: move the mouse across the canvas and expect the feature
   // tooltip to appear (any hit — labeled features or the sub-part fallback).
-  const box = await page.locator("#app canvas").boundingBox();
+  const box = await page.locator(VIEWER_CANVAS).boundingBox();
   if (box) {
     for (const [fx, fy] of [[0.5, 0.5], [0.4, 0.45], [0.6, 0.55], [0.5, 0.35]]) {
       await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
@@ -793,12 +802,12 @@ try {
       // remaining in-flight damping settling.
       await pauseTransportIfPlaying();
       await sleep(250);
-      frameBeforeCutaway = await page.locator("#app canvas").screenshot();
+      frameBeforeCutaway = await page.locator(VIEWER_CANVAS).screenshot();
       await cutawayButton.click();
       cutaway = await cutawayButton.getAttribute("aria-pressed") === "true";
       cutawayControl = cutaway ? "enabled" : "not pressed";
       await sleep(200);
-      if (cutaway && frameBeforeCutaway.equals(await page.locator("#app canvas").screenshot())) {
+      if (cutaway && frameBeforeCutaway.equals(await page.locator(VIEWER_CANVAS).screenshot())) {
         errors.push("render: canvas did not change after cutaway was enabled");
       }
     }
@@ -828,11 +837,15 @@ try {
   // the cutaway pass above. Only apps that wire onAnnotationSend show #annotate
   // (demo.html does); other apps skip this block entirely. Run only after the
   // canvas-screenshot checks above: opening annotate lazily creates an overlay
-  // <canvas> inside #app, and their "#app canvas" locators assume there is
-  // exactly one. Isolated from cutaway (toggled off first, restored after):
-  // the two are independent toggles, and running both open at once would show
-  // two contextual action rows stacked in the same pill — a real but separate
-  // overflow case from the one this fix's arithmetic covers.
+  // <canvas> (.pf-ink-canvas) inside #app — VIEWER_CANVAS already excludes it
+  // by class, so this ordering is no longer load-bearing for those checks, but
+  // it's kept so this block doesn't have to reason about ink on top of the
+  // view cube's own permanently-attached canvas (present since boot, on every
+  // app — the reason VIEWER_CANVAS exists at all). Isolated from cutaway
+  // (toggled off first, restored after): the two are independent toggles, and
+  // running both open at once would show two contextual action rows stacked in
+  // the same pill — a real but separate overflow case from the one this fix's
+  // arithmetic covers.
   const annotateButton = page.locator("#annotate");
   if (await annotateButton.count() && !(await annotateButton.isDisabled())) {
     const cutawayWasOn = cutaway && await cutawayButton.getAttribute("aria-pressed") === "true";
