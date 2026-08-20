@@ -270,6 +270,20 @@ const IDENTITY = [0, 0, 0, 1];
 // ("front") toward the viewer.
 const centre = () => [SIZE / 2, SIZE / 2];
 
+// Probe a cell by its own centroid rather than a hardcoded pixel. The cube
+// occupies only the middle of the canvas (the scale leaves room for the arrows
+// and their labels), and Task 4 retunes every constant that decides how much —
+// so any hardcoded probe would be both wrong now and fragile later.
+function centroidOf(projected, id) {
+  const cell = projected.front.find((c) => c.id === id);
+  if (!cell) throw new Error(`no camera-facing cell "${id}" — cannot probe it`);
+  const n = cell.points.length;
+  return [
+    cell.points.reduce((s, p) => s + p[0], 0) / n,
+    cell.points.reduce((s, p) => s + p[1], 0) / n,
+  ];
+}
+
 describe("cubeCells", () => {
   it("emits 54 cells: 6 faces x 3x3", () => {
     expect(cubeCells()).toHaveLength(54);
@@ -355,17 +369,27 @@ describe("hitRegion", () => {
     expect(hitRegion(...centre(), p)).toBe("front");
   });
 
-  it("returns a corner id near the silhouette corner", () => {
+  it("returns a corner id on the corner cell", () => {
     const p = projectCube(IDENTITY, { size: SIZE });
-    // Top-left of the projected front face at identity: model -X (left) and
-    // model +Z (top) => "top-front-left".
-    const inset = SIZE * 0.06;
-    expect(hitRegion(inset, inset, p)).toBe("top-front-left");
+    // At identity, model -X projects screen-left and model +Z projects
+    // screen-up, so the front face's upper-left cell is "top-front-left".
+    expect(hitRegion(...centroidOf(p, "top-front-left"), p)).toBe("top-front-left");
   });
 
-  it("returns an edge id along a face border", () => {
+  it("returns an edge id on the edge cell", () => {
     const p = projectCube(IDENTITY, { size: SIZE });
-    expect(hitRegion(SIZE / 2, SIZE * 0.06, p)).toBe("top-front");
+    expect(hitRegion(...centroidOf(p, "top-front"), p)).toBe("top-front");
+  });
+
+  it("places the corner cells where the axis directions say they should be", () => {
+    // Guards the projection's screen orientation, which the centroid probes
+    // above would otherwise satisfy no matter how the cube were mirrored.
+    const p = projectCube(IDENTITY, { size: SIZE });
+    const [leftX, topY] = centroidOf(p, "top-front-left");
+    const [rightX] = centroidOf(p, "top-front-right");
+    const [, bottomY] = centroidOf(p, "bottom-front-left");
+    expect(leftX).toBeLessThan(rightX);   // model -X is screen-left
+    expect(topY).toBeLessThan(bottomY);   // model +Z is screen-up (y grows down)
   });
 
   it("returns null outside the cube silhouette", () => {
@@ -701,6 +725,24 @@ describe("createCubeCanvas", () => {
     expect(order()[1]).toBe("clearRect");
   });
 
+  it("sizes the backing store by DPR while the CSS box stays in CSS px", () => {
+    // Sizing the backing store in CSS px while scaling the context by DPR
+    // renders everything at 2x on a retina display and clips the cube to its
+    // top-left quarter — silent on a 1x test machine, obvious on a laptop.
+    const original = globalThis.devicePixelRatio;
+    globalThis.devicePixelRatio = 2;
+    try {
+      handle.draw(projection, {});
+      expect(handle.element.width).toBe(handle.size * 2);
+      expect(handle.element.height).toBe(handle.size * 2);
+      expect(handle.element.style.width).toBe(`${handle.size}px`);
+      // The context is scaled by the same factor, so draw code stays in CSS px.
+      expect(ctx.calls[0]).toEqual(["setTransform", 2, 0, 0, 2, 0, 0]);
+    } finally {
+      globalThis.devicePixelRatio = original;
+    }
+  });
+
   it("draws back faces, then arrow tails, then front faces, then heads, then labels", () => {
     handle.draw(projection, {});
     const backFace = ctx.calls.findIndex((c) => c[0] === "fill" && c[1] === CUBE_PALETTE.dark.backFill);
@@ -802,8 +844,6 @@ export function createCubeCanvas(host, {
 } = {}) {
   const canvas = createCanvas();
   canvas.className = "pf-viewcube-canvas";
-  canvas.width = size;
-  canvas.height = size;
   canvas.style.width = `${size}px`;
   canvas.style.height = `${size}px`;
   host.appendChild(canvas);
@@ -811,6 +851,20 @@ export function createCubeCanvas(host, {
 
   let theme = "dark";
   let last = null; // the most recent { projected, hover }, so setTheme can repaint
+  let backingDpr = 0;
+
+  // The BACKING STORE is size x dpr while the CSS box stays `size` — and draw()
+  // scales the context by the same dpr so it can keep working in CSS px. Sizing
+  // the backing store in CSS px while scaling the context is the classic
+  // version of this bug: everything renders at 2x on a retina display and the
+  // cube is clipped to its top-left quarter. Re-checked per draw because a
+  // window can move between displays of different density.
+  function syncBackingStore(dpr) {
+    if (dpr === backingDpr) return;
+    backingDpr = dpr;
+    canvas.width = Math.max(1, Math.round(size * dpr));
+    canvas.height = Math.max(1, Math.round(size * dpr));
+  }
 
   function polygon(points) {
     ctx.beginPath();
@@ -833,6 +887,7 @@ export function createCubeCanvas(host, {
     last = { projected, hover };
     const p = CUBE_PALETTE[theme] ?? CUBE_PALETTE.dark;
     const dpr = globalThis.devicePixelRatio || 1;
+    syncBackingStore(dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size, size);
     ctx.lineWidth = 1;
@@ -1153,10 +1208,18 @@ describe("orbitPose", () => {
     for (let i = 0; i < 3; i++) expect(back.position[i]).toBeCloseTo(base.position[i], 8);
   });
 
-  it("clamps at the poles rather than flipping over the top", () => {
+  it("clamps at the top pole rather than flipping over it", () => {
+    // OrbitControls' convention: phi -= dy, so a DOWNWARD drag (positive dy)
+    // raises the camera. An unbounded drag pins it just short of straight up.
+    const out = orbitPose(base, { dx: 0, dy: 100000 }, { radiansPerPx: 0.01 });
+    expect(dist(out.position, out.target)).toBeCloseTo(10, 8);
+    expect(out.position[1]).toBeGreaterThan(9.9);
+  });
+
+  it("clamps at the bottom pole too", () => {
     const out = orbitPose(base, { dx: 0, dy: -100000 }, { radiansPerPx: 0.01 });
     expect(dist(out.position, out.target)).toBeCloseTo(10, 8);
-    expect(out.position[1]).toBeGreaterThan(9.9); // pinned just short of straight up
+    expect(out.position[1]).toBeLessThan(-9.9);
   });
 
   it("orbits about a non-Y up vector without changing the radius", () => {
@@ -1833,10 +1896,11 @@ describe("worldPerPx under an orthographic camera", () => {
     expect(Number.isFinite(orthoWorldPerPx(20, -20, 0, 400))).toBe(true);
   });
 
-  it("is independent of camera distance, unlike the perspective formula", () => {
-    const near = orthoWorldPerPx(20, -20, 1, 400);
-    const far = orthoWorldPerPx(20, -20, 1, 400);
-    expect(near).toBe(far);
+  it("takes no distance at all, unlike the perspective formula", () => {
+    // The whole reason this function exists: perspective scale varies with
+    // distance, ortho scale does not, so substituting a fov into worldPerPx
+    // can never produce the right answer under an ortho camera.
+    expect(orthoWorldPerPx.length).toBe(4); // (top, bottom, zoom, viewportPx)
     expect(worldPerPx(10, 45, 400)).not.toBeCloseTo(worldPerPx(1000, 45, 400), 6);
   });
 });
