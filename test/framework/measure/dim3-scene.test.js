@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import * as THREE from "three";
 import {
   createDimScene, DIM_THEME, RENDER_ORDER_DIMS, RENDER_ORDER_LABELS,
-  worldPerPx, labelWorldHeight, LABEL_SCREEN_PX, ARROW_SCREEN_PX,
+  worldPerPx, orthoWorldPerPx, labelWorldHeight, LABEL_SCREEN_PX, ARROW_SCREEN_PX,
   OVERSHOOT_SCREEN_PX, GAP_SCREEN_PX, STANDOFF_SCREEN_PX, STAGGER_SCREEN_PX,
 } from "../../../src/framework/measure/dim3-scene.js";
 
@@ -250,5 +250,30 @@ describe("createDimScene", () => {
     // The label currently on screen still renders correctly post-sweep.
     const label = scene.group.children.find((k) => k.userData.pfDimItemId === "item3");
     expect(label.material.map).toBeTruthy();
+  });
+});
+
+describe("worldPerPx under an orthographic camera", () => {
+  it("derives scale from the frustum, not from a fov that does not exist", () => {
+    // A 40-unit-tall frustum across a 400px viewport is 0.1 world units per px,
+    // at any distance — the property perspective's fov formula cannot express.
+    expect(orthoWorldPerPx(20, -20, 1, 400)).toBeCloseTo(0.1, 12);
+  });
+
+  it("scales inversely with the ortho zoom", () => {
+    expect(orthoWorldPerPx(20, -20, 2, 400)).toBeCloseTo(0.05, 12);
+    expect(orthoWorldPerPx(20, -20, 0.5, 400)).toBeCloseTo(0.2, 12);
+  });
+
+  it("does not divide by zero on a degenerate zoom", () => {
+    expect(Number.isFinite(orthoWorldPerPx(20, -20, 0, 400))).toBe(true);
+  });
+
+  it("takes no distance at all, unlike the perspective formula", () => {
+    // The whole reason this function exists: perspective scale varies with
+    // distance, ortho scale does not, so substituting a fov into worldPerPx
+    // can never produce the right answer under an ortho camera.
+    expect(orthoWorldPerPx.length).toBe(4); // (top, bottom, zoom, viewportPx)
+    expect(worldPerPx(10, 45, 400)).not.toBeCloseTo(worldPerPx(1000, 45, 400), 6);
   });
 });
