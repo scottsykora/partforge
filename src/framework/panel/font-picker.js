@@ -44,11 +44,19 @@ const kbLabel = (bytes) => (Number.isFinite(bytes) ? `${Math.round(bytes / 1024)
 const listVariant = (f) =>
   f.variants.find((v) => v.variant === "400" || v.variant === "regular") ?? f.variants[0];
 
+// At most one picker is open at a time, and the previous one has to be CLOSED
+// rather than merely detached: its `keydown` listener lives on `document`, so
+// dropping the element off the DOM leaves the handler — and the whole closure,
+// up to 200 admitted families — alive forever, one more on every re-open.
+// Only close() unregisters it, so every path that supersedes a picker goes
+// through here.
+let openPicker = null;
+
 export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPicked }) {
   // Takeover: the picker covers the rail on desktop and the single visible pane
   // below the narrow breakpoint. One layout for both widths (spec §6).
   const host = anchor?.closest?.(".pf-rail, .rail") ?? anchor?.parentElement ?? document.body;
-  host.querySelector(":scope > .picker")?.remove();     // never two at once
+  openPicker?.close();                                  // never two at once
 
   // ── state ───────────────────────────────────────────────────────────────
   let results = [];          // what the catalog last returned…
@@ -252,10 +260,13 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
   // exact query, show precisely what it returned (its matching may be fuzzier
   // than a substring test, and second-guessing it would drop real hits).
   function recompute() {
-    const q = query.trim().toLowerCase();
-    rows = resultsQuery === query || !q
+    // Compare TRIMMED against trimmed: runSearch stores the trimmed query, so a
+    // trailing space would otherwise never match and the list would stay stuck
+    // on the client-side narrowing instead of showing the catalog's answer.
+    const q = query.trim();
+    rows = resultsQuery === q || !q
       ? results
-      : results.filter((f) => f.family.toLowerCase().includes(q));
+      : results.filter((f) => f.family.toLowerCase().includes(q.toLowerCase()));
     render();
   }
 
@@ -281,6 +292,7 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
 
   search.addEventListener("input", () => {
     query = search.value;
+    list.scrollTop = 0;                                  // a new query starts at the top
     recompute();                                         // instant, from what we hold
     clearTimeout(debounce);
     debounce = setTimeout(() => runSearch(query.trim()), SEARCH_DEBOUNCE_MS);
@@ -352,12 +364,17 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
   back.addEventListener("click", leaveVariants);
 
   // ── closing ─────────────────────────────────────────────────────────────
+  // Named here so close() can clear the module-level handle; `close` is a
+  // hoisted function declaration, so this captures it.
+  const handle = { close };
+
   function close() {
     if (closed) return;                                  // idempotent
     closed = true;
     clearTimeout(debounce);
     document.removeEventListener("keydown", onKey);
     picker.remove();
+    if (openPicker === handle) openPicker = null;
   }
   function onKey(ev) {
     if (ev.key !== "Escape") return;
@@ -371,7 +388,8 @@ export function openFontPicker({ node, params, allow, fontCatalog, anchor, onPic
 
   runSearch("");
   render();
-  return { close };
+  openPicker = handle;
+  return handle;
 }
 
 setFontPicker(openFontPicker);

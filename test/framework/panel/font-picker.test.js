@@ -196,3 +196,67 @@ test("with no FontFace at all the rows render un-styled rather than dimmed", asy
   await flush();
   expect([...document.querySelectorAll(".pk-row")].some((r) => r.classList.contains("loading"))).toBe(false);
 });
+
+// ── superseding an open picker ─────────────────────────────────────────────
+// The Escape handler lives on `document`, so detaching the element is NOT
+// closing it: the listener (and the whole closure, up to 200 admitted families)
+// survives, one more on every re-open. Asserting "there is only one .picker in
+// the DOM" does not pin this — the leaking version satisfied that too. So count
+// the live `keydown` registrations instead.
+function trackKeydown() {
+  const add = document.addEventListener.bind(document);
+  const remove = document.removeEventListener.bind(document);
+  let live = 0;
+  document.addEventListener = (type, fn, opts) => { if (type === "keydown") live += 1; return add(type, fn, opts); };
+  document.removeEventListener = (type, fn, opts) => { if (type === "keydown") live -= 1; return remove(type, fn, opts); };
+  return {
+    count: () => live,
+    restore() { document.addEventListener = add; document.removeEventListener = remove; },
+  };
+}
+
+test("re-opening supersedes the first picker instead of leaking its Escape handler", async () => {
+  open().handle.close();                           // drain any picker an earlier test left open
+  const keydown = trackKeydown();
+  try {
+    const first = open().handle;
+    await flush();
+    expect(keydown.count()).toBe(1);
+    const second = open().handle;                  // no close() in between
+    await flush();
+    expect(keydown.count()).toBe(1);               // the first instance really closed
+
+    first.close();                                 // already closed — a no-op…
+    expect(keydown.count()).toBe(1);               // …and it must not unhook the LIVE one
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(document.querySelector(".picker")).toBeNull();
+    expect(keydown.count()).toBe(0);
+    second.close();
+    expect(keydown.count()).toBe(0);
+  } finally { keydown.restore(); }
+});
+
+// The catalog's answer for "montse" may be fuzzier than a substring test —
+// second-guessing it drops real hits. `resultsQuery` holds the TRIMMED query,
+// so comparing it against the raw box value would never match once a trailing
+// space is typed, and the list would stay stuck on the client-side narrowing.
+test("a trailing space still yields the catalog's own answer, not a re-filtered one", async () => {
+  const fuzzy = { search: async (q) => (q ? [fam("Montserrat", ["400"]), fam("Alegreya", ["400"])] : CATALOG) };
+  open({ fontCatalog: fuzzy });
+  await flush();
+  const search = document.querySelector(".pk-search");
+  search.value = "montse "; search.dispatchEvent(new Event("input"));
+  await new Promise((r) => setTimeout(r, 220));         // past the 120ms debounce
+  expect([...document.querySelectorAll(".pk-face")].map((e) => e.textContent))
+    .toEqual(["Montserrat", "Alegreya"]);
+});
+
+test("a new query scrolls back to the top of the results", async () => {
+  open();
+  await flush();
+  const list = document.querySelector(".pk-list");
+  list.scrollTop = 120;
+  const search = document.querySelector(".pk-search");
+  search.value = "o"; search.dispatchEvent(new Event("input"));
+  expect(list.scrollTop).toBe(0);
+});
