@@ -269,11 +269,15 @@ describe("worldPerPx under an orthographic camera", () => {
     expect(Number.isFinite(orthoWorldPerPx(20, -20, 0, 400))).toBe(true);
   });
 
-  it("takes no distance at all, unlike the perspective formula", () => {
-    // The whole reason this function exists: perspective scale varies with
-    // distance, ortho scale does not, so substituting a fov into worldPerPx
-    // can never produce the right answer under an ortho camera.
-    expect(orthoWorldPerPx.length).toBe(4); // (top, bottom, zoom, viewportPx)
-    expect(worldPerPx(10, 45, 400)).not.toBeCloseTo(worldPerPx(1000, 45, 400), 6);
+  it("gives a scale the fov fallback could never produce", () => {
+    // The bug: under an ortho camera `fov` is undefined, so `worldPerPx(dist,
+    // fov ?? 45, h)` returned a plausible-but-wrong number that also drifted as
+    // the user dollied. These are the two answers for the same frustum and
+    // viewport — they are not close, and only one of them is stable.
+    const truth = orthoWorldPerPx(20, -20, 1, 400); // 40 tall / 400px = 0.1
+    expect(truth).toBeCloseTo(0.1, 12);
+    for (const dist of [50, 100, 400]) {
+      expect(worldPerPx(dist, 45, 400)).not.toBeCloseTo(truth, 3);
+    }
   });
 });
