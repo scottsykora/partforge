@@ -15,6 +15,7 @@ export function createSolidCache() {
   const lastBuilt = new Map(); // name -> rebind generation of the partition's last begin()
   let generation = 0;          // bumped only by sweep() (i.e. per part rebind)
   let name = null, active = null, prev = null;
+  let depth = 0;               // bracket nesting; only the OUTERMOST one is real (see begin)
   let hits = 0, misses = 0;
 
   // One partition stops retaining `entry`. Disposal waits for the LAST holder:
@@ -30,9 +31,19 @@ export function createSolidCache() {
   };
 
   return {
-    begin(n) { name = n; lastBuilt.set(n, generation); prev = caches.get(n) ?? new Map(); active = new Map(); },
+    // Nested brackets collapse into the outermost one. There is a single open
+    // round (name/active/prev), not a stack, so an inner begin() would otherwise
+    // rebind it and the inner end() would commit-and-close the OUTER round early —
+    // evicting its entries and leaving the rest of that build uncached. Callers
+    // nest legitimately now that buildView brackets: an outer bracket is free to
+    // contain one, and the inner pair becomes a no-op.
+    begin(n) {
+      if (depth++ > 0) return;
+      name = n; lastBuilt.set(n, generation); prev = caches.get(n) ?? new Map(); active = new Map();
+    },
 
     end() {
+      if (depth > 0 && --depth > 0) return; // inner bracket — the outer one still owns the round
       if (name == null) return;
       for (const [hash, entry] of prev) {
         if (!active.has(hash)) release(hash, entry); // this partition drops it

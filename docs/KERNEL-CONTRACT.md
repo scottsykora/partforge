@@ -98,10 +98,24 @@ them loses sub-part caching and mesh-topology gates (`holes`, emptiness), nothin
 a part (never inside a `beginSubPart`/`endSubPart` bracket), it drops cache partitions that
 have gone unbuilt for three consecutive rebinds.
 
+`beginSubPart`/`endSubPart` brackets MAY nest: only the outermost pair opens and
+commits a round, and an inner pair is a balanced no-op. Nesting is real rather than
+theoretical — `buildView` opens a round of its own, so any caller that brackets around
+a view build contains one. A backend that keeps a single open round (rather than a
+stack) must collapse inner pairs this way; committing on the inner `end()` would close
+the outer round early and leave the rest of that build uncached.
+
 Sub-part brackets bound cache RETENTION, not reuse: a solid one sub-part builds is reused
 by any other that asks for the same content hash, so a sheet of identical cells split
 across row sub-parts evaluates each distinct cell once rather than once per row. An adopted
 entry is retained by both partitions and disposed only when the last one drops it.
+
+The oracle (`buildView`, `assemblyOverlaps`) brackets under partition names of its
+own rather than the display sub-part names, and a host adding another oracle-side build
+should do the same. Both reuse the display build's solids through the cross-partition
+index, so measuring a view costs almost nothing right after drawing it; keeping them in
+separate partitions is what stops a measurement's own geometry — verify walks cases with
+params of their own — from displacing the geometry the viewer is showing.
 
 **Transform hoisting.** Booleans commute with rigid transforms, so a conforming backend MAY
 lift a transform every operand shares out of the boolean and apply it to the result
