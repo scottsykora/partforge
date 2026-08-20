@@ -4,6 +4,7 @@
 // kernel-bound module back.
 import { meshTo3MF } from "./geometry/threemf.js";
 import { exportablePartNames } from "./export-select.js";
+import { fontControlAllows, fontSourceAllowed } from "./font-source.js";
 import { fontsFor, resolveFonts } from "./fonts.js";
 import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
 import { ensureImports, resolveImports } from "./imports.js";
@@ -104,6 +105,17 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // after one. Still inside the try, so that throw posts an error the UI can
     // show instead of killing the worker turn silently (an endless spinner).
     const { p, d } = resolveParams(part, msg.params);
+    // A param bound to a `type: "font"` control is user input — on a shared
+    // link it is arbitrary attacker-supplied text that `fonts: (p) => …` would
+    // turn into a fetch URL. Refuse out-of-`allow` values back to the part's
+    // own default rather than failing the build: a bad link should show the
+    // part, not an error page.
+    for (const [key, allow] of fontControlAllows(part)) {
+      const v = p[key];
+      if (v === undefined || fontSourceAllowed(v, allow)) continue;
+      onProgress(`font source for "${key}" is not allowed — using the default`);
+      p[key] = part.defaults?.[key];
+    }
     // Preload any part-declared fonts into the kernel before building. A lazy
     // dynamic import because this is async context (unlike the synchronous
     // kernel-front), so it doesn't cost sync callers anything. The namespace
