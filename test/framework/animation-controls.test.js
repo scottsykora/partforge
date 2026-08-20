@@ -3,8 +3,8 @@
 // Transport bar + driver against a fake viewer: play/pause/scrub/step wiring,
 // cue → tween dispatch, intro gating, snapshot/reset, user-edit pause, and the
 // runtime surface.
-import { afterEach, expect, test, vi } from "vitest";
-import { attachAnimationControls, planAnimBarPlacement, clampBubbleX, snapUpToScrubGrid } from "../../src/framework/animation-controls.js";
+import { afterEach, describe, expect, it, test, vi } from "vitest";
+import { attachAnimationControls, planAnimBarPlacement, clampBubbleX, snapUpToScrubGrid, unionRect } from "../../src/framework/animation-controls.js";
 
 function fakeViewer() {
   const frameCbs = new Set(); const orbitCbs = new Set();
@@ -1031,4 +1031,93 @@ test("single-animation view hides the pager and the picker", () => {
   const title = container.querySelector(".pf-anim-title");
   expect(title.style.display).not.toBe("none");
   expect(title.textContent).toBe("Open lid");
+});
+
+describe("bottom-right cluster measurement", () => {
+  // planAnimBarPlacement is pure and already covered; what this defends is that
+  // the CALLER measures the union of the viewbar and the view cube stacked
+  // above it. Measuring only #viewbar lets the bar slide under the cube.
+  it("clamps against the union's left edge, not just the viewbar's", () => {
+    const union = unionRect(
+      { left: 300, right: 400, top: 560, bottom: 604 }, // #viewbar
+      { left: 320, right: 400, top: 470, bottom: 552 }, // .pf-viewcube-stack
+    );
+    expect(union.left).toBe(300);
+    expect(union.right).toBe(400);
+    expect(union.top).toBe(470);
+    expect(union.bottom).toBe(604);
+  });
+
+  it("returns the one rect it is given when the other is missing", () => {
+    const only = { left: 300, right: 400, top: 560, bottom: 604 };
+    expect(unionRect(only, null)).toEqual(only);
+    expect(unionRect(null, only)).toEqual(only);
+    expect(unionRect(null, null)).toBeNull();
+  });
+
+  it("intersects a bar whose band overlaps the cube but not the viewbar", () => {
+    // The regression the cube introduces: at bottom:14px a transport bar clears
+    // #viewbar's band on a wide stage but not the cube's.
+    const union = unionRect(
+      { left: 300, right: 400, top: 560, bottom: 604 },
+      { left: 320, right: 400, top: 470, bottom: 552 },
+    );
+    const bar = { top: 500, bottom: 540 };
+    expect(bar.top < union.bottom && bar.bottom > union.top).toBe(true);
+  });
+});
+
+// --- placement wiring: does applyPlacement actually measure the union? ------
+// The tests above pin unionRect itself; this one pins that the CALL SITE uses
+// it rather than #viewbar alone. Reuses the "clamps against the viewbar" /
+// "no-op when bands don't intersect" harness above, but positions the viewbar
+// so ITS band alone would miss the bar (as in the no-op case) while the cube
+// stacked above it reaches into the bar's band — the exact regression the
+// cube's arrival introduces.
+test("placement wiring: clamps against the view cube stack even when the viewbar alone would clear", async () => {
+  const OriginalRO = globalThis.ResizeObserver;
+  let roCallback;
+  const observed = new Set();
+  globalThis.ResizeObserver = class {
+    constructor(fn) { roCallback = fn; }
+    observe(el) { observed.add(el); }
+    disconnect() {}
+  };
+  try {
+    const container = document.createElement("div");
+    const viewbar = document.createElement("div");
+    viewbar.id = "viewbar";
+    const cube = document.createElement("div");
+    cube.className = "pf-viewcube-stack";
+    container.append(viewbar, cube);
+    document.body.append(container);
+    container.getBoundingClientRect = () =>
+      ({ left: 0, right: 1000, top: 0, bottom: 700, width: 1000, height: 700 });
+    // viewbar sits low and right; on its own its band (656-692) misses the
+    // bar's band (610-646) entirely — measuring #viewbar alone would leave the
+    // bar centered. The cube stacked above it (590-650) reaches into the bar's
+    // band AND extends further left (700 vs 900), so the union both triggers
+    // the clamp and supplies the tighter left edge.
+    viewbar.getBoundingClientRect = () =>
+      ({ left: 900, right: 990, top: 656, bottom: 692, width: 90, height: 36 });
+    cube.getBoundingClientRect = () =>
+      ({ left: 700, right: 990, top: 590, bottom: 650, width: 290, height: 60 });
+    const ctl = attachAnimationControls(fakeViewer(), part, {
+      container, applyValues: () => {}, getParamValues: () => ({}), getView: () => "box",
+    });
+    handles.push(ctl);
+    const bar = container.querySelector(".pf-anim-bar");
+    bar.getBoundingClientRect = () =>
+      ({ left: 300, right: 700, top: 610, bottom: 646, width: 400, height: 36 });
+    // Registered at setup, per the brief's "best-effort extra" — the per-pass
+    // lookup in applyPlacement is what makes correctness NOT depend on this.
+    expect(observed.has(cube)).toBe(true);
+
+    roCallback(); await nextFrame();
+    // centeredLeft 300 > limit (union.left 700)−10−400 = 290 → slides left,
+    // using the CUBE's left edge (700), not the viewbar's (900).
+    expect(bar.style.left).toBe("290px");
+  } finally {
+    globalThis.ResizeObserver = OriginalRO;
+  }
 });
