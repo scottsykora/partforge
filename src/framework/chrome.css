@@ -225,9 +225,19 @@
    (background/border/radius/shadow) from app.css, so that chrome must live in
    app.css ungated — not be duplicated into a class the cloud never sets. This
    file owns where things sit; app.css owns what they look like. */
-.pf-float-tabs, .pf-float-viewbar { position: absolute; z-index: 15; }
-.pf-float-tabs { top: 12px; left: 50%; transform: translateX(-50%); }
-.pf-float-viewbar { bottom: 12px; right: 12px; }
+.pf-float-tabs, .pf-float-viewbar, .pf-float-rail-toggle { position: absolute; z-index: 15; }
+/* Every inset below is SHARED with whichever other float sits on that edge, so
+   the stage's margin is stated once per edge and not once per element. The rail
+   toggle (2026-08-20: out of #viewbar's pill, floating on its own at the top
+   right) is the tab strip's `top` with the viewbar's `right` — a corner
+   symmetric with the viewbar's, by construction rather than by two numbers that
+   happen to agree today. Retune the margin and all three corners follow.
+   Appearance, including the `[hidden]` guard that lets rail.js hide the toggle
+   below the narrow breakpoint, is in app.css. */
+.pf-float-tabs, .pf-float-rail-toggle { top: 12px; }
+.pf-float-viewbar, .pf-float-rail-toggle { right: 12px; }
+.pf-float-tabs { left: 50%; transform: translateX(-50%); }
+.pf-float-viewbar { bottom: 12px; }
 
 /* ---- view cube stack: PLACEMENT ONLY (see the rule above) ----------------
    Bottom-right, stacked above #viewbar. The offset is measured, not

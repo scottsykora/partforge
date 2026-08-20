@@ -265,7 +265,7 @@ button.action:disabled { opacity: .5; cursor: default; }
 /* keyboard focus ring shared across the panel's interactive controls */
 .seg button:focus-visible, select.preset:focus-visible, .dl-row button:focus-visible,
 button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible, #viewbar button:focus-visible,
-.pf-viewcube-toggle:focus-visible {
+.pf-viewcube-toggle:focus-visible, .pf-float-rail-toggle:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
@@ -342,6 +342,60 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
+
+/* ---- the rail toggle: a bare floating icon at the stage's top right --------
+   APPEARANCE only (placement lives in chrome.css, per the split at the top of
+   this file). Through 2026-08-20 this was the last button in #viewbar's pill;
+   it now floats on its own, in the corner diagonally opposite the pill.
+
+   Unadorned at rest — no background, no border, no shadow — so a control that
+   is always over the model reads as an icon the viewer carries rather than as a
+   second toolbar competing with the first. Explicitly a PLACEHOLDER ("just be a
+   floating icon for now"): the position is settled, the treatment is not.
+
+   44px is #viewbar's own height (34px button + 4px padding + 1px border, twice),
+   not the 34px of a button inside it: the thing this should read as a peer of is
+   the BAR. It is also the tap-target floor scripts/check-app.mjs enforces.
+
+   A rounded rect, and deliberately NOT the view cube's projection circle: two
+   different controls in two different corners, where a shared silhouette would
+   invite reading one as the other. The radius is the same --pf-radius-control
+   every other square control in the framework uses.
+
+   The hover fill is WHITE, and that is a placeholder as well — asked for in as
+   many words, and true only over the dark viewer. Translucent rather than #fff
+   so it reads as a lift off the viewer instead of a hole punched in it, and so
+   the icon keeps its contrast on top; in the LIGHT theme a white fill is close
+   to invisible whatever the alpha. When this stops being a placeholder the fill
+   wants the --pf-surface family (--pf-surface-2, as `#viewbar button:hover`
+   uses) so both themes get a real surface — deliberately not substituted here.
+
+   The focus ring is NOT restated: the button joins the shared :focus-visible
+   selector list above. It used to inherit that through `#viewbar button`, which
+   no longer matches it. */
+.pf-float-rail-toggle {
+  width: 44px; height: 44px;
+  border: 0; border-radius: var(--pf-radius-control);
+  background: transparent; box-shadow: none;
+  color: var(--pf-muted-2); cursor: pointer;
+  font-size: 15px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+/* The same trap `#viewbar button[hidden]` guards against, inherited along with
+   the `display: flex` above: it is author-origin and beats the UA's
+   `[hidden] { display: none }`, so rail.js's `toggle.hidden = narrow` would
+   otherwise leave this fully visible below the narrow breakpoint — where the
+   pane tab bar owns pane selection and a second collapse affordance must not
+   compete with it. scripts/check-app.mjs asserts the computed display. */
+.pf-float-rail-toggle[hidden] { display: none; }
+.pf-float-rail-toggle:hover { color: var(--pf-text); background: rgb(255 255 255 / 14%); }
+/* Collapsed is this button's pressed state. Icon colour only, the way the
+   projection toggle does it: an accent-filled 44px rect would be exactly the
+   card the resting state deliberately goes without. The chevron `d` swap
+   (rail.js) stays the primary tell, and aria-expanded carries it for assistive
+   tech. After the :hover rule and at equal specificity, so the accent survives
+   a hover. */
+.pf-float-rail-toggle.on { color: var(--pf-accent); }
 
 /* ---- view cube ------------------------------------------------------------
    APPEARANCE only (placement lives in chrome.css, per the split at the top of

@@ -499,6 +499,12 @@ async function resetRail() {
 // #rail-toggle fully visible below the breakpoint). Both are fixed; this check
 // is what would have caught them.
 //
+// #rail-toggle floats on its own at the stage's top right since 2026-08-20, so
+// the rule it now needs is `.pf-float-rail-toggle[hidden]` in app.css rather
+// than `#viewbar button[hidden]` — the trap is identical (a centring
+// `display: flex` outranking the UA sheet) and this check is still the only
+// thing that sees it, since the vitest suite loads no CSS.
+//
 // What this does NOT cover: this whole script runs Chromium headless, and
 // headless Chromium does not throttle rendering the way a headed browser
 // does for hidden content. Measured directly: a `visibility: hidden`

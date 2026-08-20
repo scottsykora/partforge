@@ -1474,7 +1474,7 @@ stylesheet). `mount` looks up these element IDs:
 | `#status`, `#busy`, `#phase` | status line + busy overlay |
 | `#viewbar` with `#annotate` / `#measure` / `#cutaway` / `#reframe` / `#theme` | optional viewer controls (omit any you don't want) |
 | `#panel` | the full-height controls rail (`class="pf-rail"`); programmatic hosts pass `elements.rail` instead |
-| `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme` |
+| `#rail-toggle` | optional — collapses/restores the rail; resolved the same way as `#reframe`/`#theme`. A sibling of `#viewbar`, not a child of it: give it `class="pf-float-rail-toggle"` and it floats at the stage's top right |
 
 Copy `demo.html` and change the title, the panel heading, and the `<script src>`. Two
 workers are spawned from your one worker entry (`name` = `"manifold"` for preview/STL/3MF,
@@ -1486,6 +1486,15 @@ too, so a separate control was one more thing in a crowded bottom-right corner. 
 wiring is untouched and fully optional — supply the button (by ID or as
 `elements.chrome.reframe`) and it works exactly as before — so a host with its own
 scaffold need change nothing.
+
+**`#rail-toggle` left the viewbar on 2026-08-20.** It used to be the pill's last
+button; it now floats alone at the stage's **top right**, opposite the pill's bottom
+right, as a bare icon that grows a background on hover. Nothing in the wiring changed —
+`mount` still resolves it by id (or `elements.chrome.railToggle`), and `rail.js` still
+hides it below the 720px narrow breakpoint, where the pane tab bar takes over. A host
+with its own scaffold gets the new look by moving the button out of `#viewbar` and adding
+`class="pf-float-rail-toggle"`; leaving it inside the pill keeps the old look and still
+works.
 
 **View control (the mount handle).** For an embedder driving the view tabs from its own UI
 instead of (or in addition to) the built-in `#part` bar:

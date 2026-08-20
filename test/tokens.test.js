@@ -1,9 +1,16 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 
 const read = (rel) =>
   readFileSync(fileURLToPath(new URL(`../src/framework/${rel}`, import.meta.url)), "utf8");
+
+// Every rule block in a sheet, as { selector, body } with comments stripped —
+// enough to ask "which file declares this property for this selector?", which is
+// the only question the placement/appearance split can be tested by.
+const rules = (css) =>
+  [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map(([, selector, body]) => ({ selector: selector.trim(), body }));
 
 test("tokens.css defines the core palette custom properties in both themes", () => {
   const css = read("tokens.css");
@@ -95,5 +102,84 @@ test("no hover state in the rail foot or viewbar can fire on a disabled button",
     expect(neutralized || guarded,
       `${bar}: hover rules must either all exclude :disabled or be neutralized by a `
       + `:disabled:hover reset. Found:\n  ${hovers.join("\n  ")}`).toBe(true);
+  }
+});
+
+// The rail toggle floats at the stage's TOP RIGHT, on its own, rather than
+// riding in #viewbar's pill (2026-08-20). Same file split as every other piece
+// of floating chrome: chrome.css says where it sits, app.css says what it looks
+// like, so partforge-cloud can re-anchor it and still inherit its appearance.
+test("chrome.css places the floating rail toggle without restating the stage margin", () => {
+  const css = read("chrome.css");
+  const own = rules(css).filter((r) => r.selector === ".pf-float-rail-toggle");
+  expect(css, "chrome.css must place .pf-float-rail-toggle").toContain(".pf-float-rail-toggle");
+  // The insets come from declarations SHARED with .pf-float-tabs (top: 12px) and
+  // .pf-float-viewbar (right: 12px) — the top-right and bottom-right corners of
+  // one stage, off one margin. A solo rule here would be a second copy of that
+  // margin, free to drift away from the corner it is supposed to mirror.
+  for (const rule of own) {
+    expect(rule.body, `.pf-float-rail-toggle must not restate its own insets: ${rule.body.trim()}`)
+      .not.toMatch(/\b(top|right|bottom|left)\s*:/);
+  }
+  const shares = (prop) => rules(css).some((r) =>
+    r.selector.includes(".pf-float-rail-toggle") && new RegExp(`\\b${prop}\\s*:\\s*12px`).test(r.body));
+  expect(shares("top"), "the toggle must take top: 12px from a shared rule").toBe(true);
+  expect(shares("right"), "the toggle must take right: 12px from a shared rule").toBe(true);
+  expect(rules(css).some((r) =>
+    r.selector.includes(".pf-float-rail-toggle") && /position\s*:\s*absolute/.test(r.body)),
+  "the toggle must be absolutely positioned within the stage").toBe(true);
+});
+
+test("app.css gives the floating rail toggle its appearance, and only that", () => {
+  const css = read("app.css");
+  const own = rules(css).filter((r) => r.selector === ".pf-float-rail-toggle");
+  expect(own.length, "app.css must style .pf-float-rail-toggle").toBe(1);
+  const [{ body }] = own;
+  // The viewbar's own height, so it reads as a peer of the viewer controls.
+  expect(body).toMatch(/width\s*:\s*44px/);
+  expect(body).toMatch(/height\s*:\s*44px/);
+  // A bare floating icon at rest: no card of any kind.
+  expect(body).toMatch(/background\s*:\s*transparent/);
+  expect(body).toMatch(/border\s*:\s*0/);
+  expect(body).toMatch(/box-shadow\s*:\s*none/);
+  // A rounded rect, NOT the projection toggle's circle — two different controls.
+  expect(body).toMatch(/border-radius\s*:\s*var\(--pf-radius-control\)/);
+  expect(body).not.toMatch(/border-radius\s*:\s*50%/);
+  // Placement stays in chrome.css.
+  expect(body, "placement belongs in chrome.css").not.toMatch(/\bposition\s*:/);
+  expect(body, "placement belongs in chrome.css").not.toMatch(/\b(top|right|bottom|left)\s*:/);
+  // The card appears on hover only.
+  expect(rules(css).some((r) =>
+    r.selector === ".pf-float-rail-toggle:hover" && /background\s*:/.test(r.body)),
+  "a hover background is the whole affordance").toBe(true);
+});
+
+// The trap `#viewbar button[hidden]` already guards against, inherited: this
+// button's author-origin `display: flex` (it centres an icon) outranks the UA's
+// `[hidden] { display: none }`, so rail.js's `toggle.hidden = narrow` would
+// leave it fully visible below the narrow breakpoint — where the pane tab bar
+// owns pane selection and a second collapse affordance must not compete.
+test("app.css keeps the floating rail toggle hideable via the hidden property", () => {
+  const css = read("app.css");
+  expect(rules(css).some((r) =>
+    r.selector === ".pf-float-rail-toggle[hidden]" && /display\s*:\s*none/.test(r.body)),
+  ".pf-float-rail-toggle[hidden] must be display: none").toBe(true);
+});
+
+// All fourteen of the framework's own pages carry this markup by hand, so they
+// can silently disagree — one page left with the button inside the pill would
+// look like a bug in the CSS rather than in that page.
+test("every part page floats the rail toggle outside #viewbar", () => {
+  const root = fileURLToPath(new URL("../", import.meta.url));
+  const pages = readdirSync(root).filter((f) => f.endsWith(".html"))
+    .map((f) => [f, readFileSync(`${root}${f}`, "utf8")])
+    .filter(([, html]) => html.includes('id="rail-toggle"'));
+  expect(pages.length, "expected the framework's part pages to carry #rail-toggle").toBeGreaterThanOrEqual(14);
+  for (const [name, html] of pages) {
+    const bar = html.slice(html.indexOf('id="viewbar"'));
+    const viewbar = bar.slice(0, bar.indexOf("</div>"));
+    expect(viewbar, `${name}: #rail-toggle must not sit inside #viewbar`).not.toContain('id="rail-toggle"');
+    expect(html, `${name}: #rail-toggle needs the .pf-float-rail-toggle class`)
+      .toContain('<button id="rail-toggle" class="pf-float-rail-toggle"');
   }
 });
