@@ -214,8 +214,25 @@ mount(part, {
 
 The provider returns **URLs the panel writes straight into `params`**. There is
 no `resolve(ref)` round trip, because there is no ref — the URL is the value.
-That keeps the seam one method wide and means a pick is instant once the
-catalog is in hand.
+A pick is instant once the catalog is in hand.
+
+A second, optional method earns its place for one reason found during planning:
+
+```js
+    // source URL → what to call it. Optional; the widget falls back to the
+    // filename when absent.
+    describe(source) { return { family: "Playfair Display", variant: "700" }; },
+```
+
+A gstatic file URL is `…/s/playfairdisplay/v37/**abcdef**.ttf` — the filename is
+a **content hash, not the family name**. So the closed control cannot label a
+live-picked face from its value alone; only the catalog knows. `describe` is
+that lookup, and the host already holds the catalog it needs.
+
+The vendored path needs no such help: cloud's `fetchWebFont` stores files as
+`<family-slug>[-<variant>].ttf`, so `pfc-asset://…/playfair-display-700.ttf`
+labels itself. A provider that omits `describe` degrades to the filename, which
+is correct for vendored values and merely ugly for live ones.
 
 `menuUrl` is the v1 API's `menu` field: a TTF subset containing only the glyphs
 of the family's own name, a few KB, hosted on gstatic with the same permissive
@@ -228,20 +245,48 @@ provider is cloud's.
 
 ## 4. Where each layer may fetch
 
-| Layer | Fetches | Allowed hosts |
+**Correction (2026-08-20, during planning).** An earlier draft of this section
+put a host allowlist on `resolveFonts` itself. That is wrong and would have
+shipped a breaking change inside a feature: `AUTHORING-PARTS.md` documents
+`fonts: { label: "https://cdn.example.com/fonts/Courier-Prime.ttf" }` as a
+supported source, and a global allowlist refuses it. The guard belongs
+somewhere else, for a reason worth stating plainly:
+
+> **An author-declared `fonts` source is code. A picker-committed param value
+> is user input.** They do not deserve the same trust, and only the second one
+> needs a guard.
+
+So:
+
+| Layer | Fetches | Constraint |
 | --- | --- | --- |
 | Panel (main thread) | catalog search, `menuUrl` previews | whatever the host's provider does |
-| Geometry worker | the chosen font URL, via existing `resolveFonts` | `fonts.gstatic.com` + the host's own asset origin |
+| Geometry worker, **author-declared** source | any `fonts` source, as today | **none — unchanged.** No existing part changes behavior. |
+| Geometry worker, **param-supplied** source | the picked font URL | the bound control's `allow` list |
 
-The worker's allowlist is the framework's SSRF stance and mirrors the one
-cloud's `webFonts.js` already takes server-side ("the catalog host and the file
-host are HARDCODED"). It lives next to `resolveFonts` as a source predicate; a
-source that fails it throws before any fetch, naming the host.
+`allow` is a field on the `type: "font"` control (§1) and takes any of:
 
-This is a deliberate departure from the current cloud posture, where source
-bytes reach the worker only by postMessage. It is safe because the host is
-fixed and the response is parsed by opentype.js, which rejects non-sfnt bytes —
-but it is a posture change and §7 records it as such.
+- `"https"` — any `https:` URL. **The default.** Permissive, but it does close
+  `file:`, `http:`, `data:` and `blob:`, which is the whole cheap win.
+- `"gstatic"` — `fonts.gstatic.com` only.
+- `"asset"` — the host's own asset origin (cloud's `pfc-asset://` tokens and the
+  URLs they resolve to).
+
+Enforced in two places, because they close different holes: the **widget**
+won't commit an out-of-`allow` value (the UI path), and **param resolution**
+re-checks values bound to a font control before they reach `resolveFonts` (the
+share-link path — a param arriving in a URL never passed through the widget).
+A rejected value falls back to `defaults[key]` and posts a named warning; it
+never becomes a fetch.
+
+The threat this closes is modest — a crafted share link causing a cross-origin
+GET whose response is only ever handed to opentype.js — but it costs one
+predicate, and leaving a user-controlled string to become a fetch URL
+unchecked is the kind of thing that is embarrassing to explain later.
+
+Direct worker fetches to `fonts.gstatic.com` remain a posture change for
+partforge-cloud, where source bytes currently reach the worker only by
+postMessage; §7 records it as such.
 
 ## 5. Registration and cache correctness
 
