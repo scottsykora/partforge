@@ -342,6 +342,35 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
 
+/* ---- view cube ------------------------------------------------------------
+   APPEARANCE only (placement lives in chrome.css, per the split at the top of
+   this file). The pill deliberately reuses #viewbar's chrome so the projection
+   toggle reads as one of the viewer controls rather than a second language. */
+.pf-viewcube-canvas {
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+.pf-viewcube-canvas:active { cursor: grabbing; }
+.pf-viewcube-pill {
+  display: flex; gap: 4px; padding: 4px;
+  background: var(--pf-surface); border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-pill);
+  box-shadow: var(--pf-shadow-float);
+}
+.pf-viewcube-pill button {
+  width: 34px; height: 34px; border: 0; border-radius: var(--pf-radius-control);
+  background: transparent; color: var(--pf-muted-2); cursor: pointer;
+  font-size: 15px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.pf-viewcube-pill button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
+.pf-viewcube-pill button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
+.pf-viewcube-pill button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
+}
+
 /* At very narrow widths the full-size pill (5 icon buttons + cutaway's
    Flip/Reset, ~314px) is wider than a small phone's viewport minus the
    stage's 12px margins, and .pf-shell { overflow: hidden } clips the excess
