@@ -712,10 +712,13 @@ git commit -m "feat(describe): least-squares fits for plane/sphere/cylinder/cone
 
 **Files:**
 - Create: `src/framework/oracle/describe/segment.js`
+- Modify: `src/framework/oracle/describe/fit.js` (add and export `deviationOf`)
 - Test: `test/describe-segment.test.js`
+- Test: `test/describe-fit.test.js` (add cases for `deviationOf`)
 
 **Interfaces:**
 - Consumes: `buildTopology` (Task 1); `fitPlane`, `fitCylinder`, `fitCone`, `fitSphere`, `fitTorus` (Task 2).
+- Adds to `fit.js`: `deviationOf(fit, point) → number` — SIGNED distance from `point` to the surface described by any Task 2 fit result. One definition of point-to-primitive distance, shared by this task's growth predicate and Task 4's RANSAC consensus test, so the two can never drift apart. Task 4 must import it rather than writing its own.
 - Produces: `segment(topo, opts?) → { patches, unassigned }` where `patches[i] = { id, faces: number[], fit, area }` (`fit` is any Task 2 fit result) and `unassigned` is a `number[]` of face indices no patch claimed.
 
 - [ ] **Step 1: Write the failing test**
@@ -796,8 +799,7 @@ Expected: FAIL — cannot resolve `describe/segment.js`.
 // tolerances lean permissive on purpose.
 //
 // Pure leaf. See spec §2.3.
-import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus } from "./fit.js";
-import { faceDeviation } from "./ransac.js";
+import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus, deviationOf } from "./fit.js";
 
 // Fit acceptance band, as a fraction of the mesh's bbox diagonal. A CAD
 // tessellation's chord error is bounded and small; this sits an order of magnitude
@@ -844,6 +846,20 @@ function facePoints(topo, faces) {
     }
   }
   return { pts, normals };
+}
+
+// Worst distance from a face's three vertices to a fitted primitive. The growth
+// predicate (ruling R19): cheap, allocation-light, and it reuses the ONE definition of
+// point-to-primitive distance that fit.js owns, so growth and RANSAC can never disagree
+// about what "within tolerance" means.
+function faceDeviation(topo, t, fit) {
+  let worst = 0;
+  for (let k = 0; k < 3; k++) {
+    const v = topo.tris[3*t + k] * 3;
+    const d = Math.abs(deviationOf(fit, [topo.verts[v], topo.verts[v+1], topo.verts[v+2]]));
+    if (d > worst) worst = d;
+  }
+  return worst;
 }
 
 // Neighbour faces across non-boundary edges.
@@ -911,7 +927,7 @@ export function segment(topo, opts = {}) {
       while (queue.length) {
         for (const nb of neighbours(topo, queue.pop())) {
           if (owner[nb] >= 0 || topo.faceArea[nb] <= 0) continue;
-          if (faceDeviation(topo, nb, fit) > tol) continue;
+          if (faceDeviation(topo, nb, fit) > tol) continue;   // see helper below
           faces.push(nb); owner[nb] = patches.length; queue.push(nb); grew = true;
         }
       }
@@ -959,7 +975,7 @@ git commit -m "feat(describe): Gauss-map seeded region-growing segmentation"
 - Test: `test/describe-ransac.test.js`
 
 **Interfaces:**
-- Consumes: `bestFit`-equivalent behavior via Task 2's fits; `topo` from Task 1.
+- Consumes: Task 2's fits plus `deviationOf` (added to `fit.js` in Task 3 — import it; do NOT write a second point-to-primitive distance); `topo` from Task 1.
 - Produces: `ransacPatches(topo, faces, tol, opts?) → { patches, unassigned }` — same patch shape as Task 3, `id` prefixed `r`. `segment()` gains an `opts.ransac = false` escape hatch and otherwise runs the mop-up over its own `unassigned`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1022,7 +1038,7 @@ Expected: FAIL — cannot resolve `describe/ransac.js`.
 // of drawing randomly. Same input, same patches, every run, in every process.
 //
 // Pure leaf. See spec §2.3.
-import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus } from "./fit.js";
+import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus, deviationOf } from "./fit.js";
 
 const MIN_INLIERS = 3;
 const MAX_ROUNDS = 64;      // consensus attempts per extraction round
@@ -1042,36 +1058,15 @@ function facePoints(topo, faces) {
   return { pts, normals };
 }
 
-// Distance from a face's three vertices to a fitted primitive, worst case. Reuses
-// each fit's own residual definition by re-fitting the single face against the
-// candidate's parameters would be circular, so this measures directly.
-function faceDeviation(topo, t, fit) {
-  const { pts } = facePoints(topo, [t]);
+// Worst distance from a face's three vertices to a fitted primitive. Exported because
+// segment.js's growth predicate needs exactly the same question answered exactly the same
+// way; the point-to-primitive distance itself lives in fit.js (ruling R19), so there is
+// one definition and neither consumer can drift from it.
+export function faceDeviation(topo, t, fit) {
   let worst = 0;
-  for (const p of pts) {
-    let d = Infinity;
-    if (fit.type === "plane") {
-      d = Math.abs(fit.normal[0]*p[0] + fit.normal[1]*p[1] + fit.normal[2]*p[2] - fit.offset);
-    } else if (fit.type === "sphere") {
-      d = Math.abs(Math.hypot(p[0]-fit.center[0], p[1]-fit.center[1], p[2]-fit.center[2]) - fit.radius);
-    } else if (fit.type === "cylinder") {
-      const o = fit.axis.origin, u = fit.axis.direction;
-      const dx = [p[0]-o[0], p[1]-o[1], p[2]-o[2]];
-      const ax = dx[0]*u[0] + dx[1]*u[1] + dx[2]*u[2];
-      d = Math.abs(Math.hypot(dx[0]-ax*u[0], dx[1]-ax*u[1], dx[2]-ax*u[2]) - fit.radius);
-    } else if (fit.type === "cone") {
-      const a = fit.apex, u = fit.direction;
-      const dx = [p[0]-a[0], p[1]-a[1], p[2]-a[2]];
-      const ax = dx[0]*u[0] + dx[1]*u[1] + dx[2]*u[2];
-      const rad = Math.hypot(dx[0]-ax*u[0], dx[1]-ax*u[1], dx[2]-ax*u[2]);
-      d = Math.abs(rad - ax * Math.tan(fit.halfAngle)) * Math.cos(fit.halfAngle);
-    } else if (fit.type === "torus") {
-      const c = fit.center, u = fit.axis;
-      const dx = [p[0]-c[0], p[1]-c[1], p[2]-c[2]];
-      const ax = dx[0]*u[0] + dx[1]*u[1] + dx[2]*u[2];
-      const rad = Math.hypot(dx[0]-ax*u[0], dx[1]-ax*u[1], dx[2]-ax*u[2]);
-      d = Math.abs(Math.hypot(rad - fit.majorRadius, ax) - fit.minorRadius);
-    }
+  for (let k = 0; k < 3; k++) {
+    const v = topo.tris[3*t + k] * 3;
+    const d = Math.abs(deviationOf(fit, [topo.verts[v], topo.verts[v+1], topo.verts[v+2]]));
     if (d > worst) worst = d;
   }
   return worst;
