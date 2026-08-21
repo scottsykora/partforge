@@ -2671,6 +2671,15 @@ git commit -m "feat(describe): value snapping, grid inference, and fastener anno
 **Important:** this is the one file in the pipeline that may import the kernel, and it
 must obey the cache-bracket rule in spec §2.8. Read that section before writing it.
 
+**Also required in this task (controller ruling R28):** `ransacPatches` measures at
+roughly O(n^2.7) in its face count — 80ms at 400 faces, 1.8s at 1600, 23.8s at 4000, with
+~60s reached around 5,500. That is safe today only because `segment()` hands it a small
+residual. This task is the second consumer, and the first that could hand it a large
+unfiltered list. Add `opts.maxFaces` to `ransacPatches` with a documented default around
+2,000, degrading gracefully — process what fits and return the remainder as `unassigned`,
+never throw — and log through the report's residual rather than silently truncating. Do
+not call it on an unfiltered face list from here.
+
 - [ ] **Step 1: Write the failing test**
 
 `test/describe-accept.test.js`:
