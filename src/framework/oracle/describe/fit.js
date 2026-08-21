@@ -90,6 +90,15 @@ function solve(A, b) {
   return M.map((row, i) => row[n] / row[i]);
 }
 
+// Relative (not absolute) threshold for "this eigenvalue is effectively zero".
+// These eigenvalues are raw sums of squared deviations/components over however
+// many points or normals were handed in — an unnormalised quantity whose scale
+// grows with the input count and with the size of the geometry in mm. An
+// absolute cutoff would be tuned for one input and wrong for the next; comparing
+// each eigenvalue against the largest one in the SAME decomposition is scale-free
+// and works whether the caller passed 8 points or 8000.
+const ZERO_EIGEN_REL = 1e-6;
+
 export function fitPlane(pts) {
   if (pts.length < MIN_PTS.plane) return null;
   const c = mean(pts);
@@ -100,7 +109,23 @@ export function fitPlane(pts) {
   }
   // The smallest-eigenvalue eigenvector of the covariance is the direction of least
   // spread — the plane normal. Its eigenvalue is the summed squared deviation.
-  const normal = unit(jacobiEigen(cov).vectors[0]);
+  const { values, vectors } = jacobiEigen(cov);
+  // Collinear (or coincident) points make the covariance rank <= 1: the null
+  // space is 2-D or 3-D, so the SECOND-smallest eigenvalue is also ~0 and
+  // whichever vector the eigensolver happens to land on in that null space gets
+  // reported as "the" normal — with a false rms of ~0, the worst possible
+  // combination (garbage parameters paired with a claim of a perfect fit).
+  // A genuine plane's points span a real 2-D spread, so its SECOND eigenvalue is
+  // NOT negligible next to the largest one; only the smallest (the true normal
+  // direction) is. Checking values[1] here (not values[0], which is expected to
+  // be small for any good planar fit) is what catches the degenerate rank-1 case
+  // without rejecting legitimate flat data. Coincident points are the further
+  // degenerate case where even the LARGEST eigenvalue is ~0 (no spread at all in
+  // any direction) — guard that first, since "values[1] < values[2] * REL" is
+  // vacuously false when values[2] itself is 0 (0 is not < 0) and would
+  // otherwise let three identical points through as a "perfect" plane fit.
+  if (!(values[2] > 0) || values[1] < values[2] * ZERO_EIGEN_REL) return null;
+  const normal = unit(vectors[0]);
   if (normal[0] === 0 && normal[1] === 0 && normal[2] === 0) return null;
   const offset = dot(normal, c);
   return { type: "plane", normal, offset, ...errors(pts.map((p) => dot(normal, p) - offset)) };
@@ -149,31 +174,51 @@ function basis(w) {
   return [u, cross(w, u), w];
 }
 
-// Recover a surface-of-revolution axis from its normal field's covariance. A full
-// sweep around the axis makes the plane PERPENDICULAR to the axis isotropic (its
-// two eigenvalues coincide), so the axis is always the ODD EIGENVALUE OUT — not
-// always the smallest, and not always the largest:
+// Recover a surface-of-revolution axis from its normal field's covariance.
 //
-//   - Cylinder: every normal is exactly perpendicular to the axis, so the axis
-//     component has exactly zero variance while the isotropic pair is positive.
-//     The axis is the odd one out AND the smallest.
-//   - Torus (revolved through a full tube turn, v over 2π): the axis component's
-//     variance is E[sin^2 v] = 1/2, while the isotropic pair splits the remaining
-//     E[cos^2 v] = 1/2 in half between them (1/4 each) — verified numerically
-//     across R/r ratios and sample densities, not a fixture artefact. The axis
-//     variance (1/2) is exactly DOUBLE the paired eigenvalue (1/4), so here the
-//     axis is the odd one out AND THE LARGEST. Picking "smallest" unconditionally
-//     (as a plane or cylinder normal covariance would suggest) instead lands on an
-//     arbitrary vector inside the degenerate perpendicular pair.
+// Two DIFFERENT invariants are in play here, and conflating them is what makes
+// this function easy to get wrong on a partial arc:
 //
-// So: sort ascending (jacobiEigen already does), and take whichever end sits
-// farther from its neighbour — the end NOT part of the close pair.
+//   - Cylinder (a RULED surface — every normal is exactly perpendicular to the
+//     axis): the axis component of the normal has EXACTLY ZERO variance, at ANY
+//     arc width, even 1°. This is a hard algebraic fact — every normal lies in
+//     the plane perpendicular to the axis, full stop — not a consequence of
+//     sampling a full sweep. So the axis eigenvalue is always the smallest, and
+//     always negligible next to the largest. What a partial arc DOES break is
+//     the isotropy of the other two eigenvalues (full sweep -> equal; a narrow
+//     fan -> one much bigger than the other), which is irrelevant to finding the
+//     zero one.
+//   - Torus, given a FULLY REVOLVED tube (v over 2π — the standing precondition
+//     for calling this a torus at all, not merely a partial fillet arc): no
+//     normal is generally perpendicular to the axis, so there is no zero
+//     eigenvalue. But there is a SECOND exact invariant, independent of how
+//     little of the main sweep (u) is covered: every normal is unit length, so
+//     the covariance's trace is exactly the point count N regardless of
+//     sampling; and the axis component's variance, E[sin^2 v] = 1/2, depends
+//     ONLY on the fully-swept tube parameter v, never on u. So the axis
+//     eigenvalue is exactly HALF THE TRACE at any main-sweep width — verified
+//     numerically at 360/180/90/45/20/10 degrees of main sweep, all matching
+//     trace/2 to machine precision. The other two eigenvalues merely
+//     redistribute the remaining half however the u range happens to split it,
+//     which is why comparing eigenvalue GAPS (an earlier version of this
+//     function did, "closest pair vs. odd one out") breaks on a partial arc: a
+//     90° main sweep produces three genuinely distinct eigenvalues with no close
+//     pair to be the odd one out of, and gap comparison silently picks the wrong
+//     eigenvector instead of failing loudly.
+//
+// So: check for the ruled-surface zero first (exact at any cylinder arc width,
+// and must run first because a narrow cylinder arc's {~0, small, large} pattern
+// would otherwise get misread by the trace/2 rule below); otherwise take
+// whichever eigenvalue sits closest to half the trace (exact at any torus
+// main-sweep width, given the standing full-tube-revolution precondition).
 function axisFromNormals(normals) {
   const cov = [[0,0,0],[0,0,0],[0,0,0]];
   for (const n of normals) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) cov[i][j] += n[i]*n[j];
   const { values, vectors } = jacobiEigen(cov);
-  const gapLow = values[1] - values[0], gapHigh = values[2] - values[1];
-  return unit(gapLow < gapHigh ? vectors[2] : vectors[0]);
+  if (values[0] < values[2] * ZERO_EIGEN_REL) return unit(vectors[0]);
+  const halfTrace = (values[0] + values[1] + values[2]) / 2;
+  const best = [0, 1, 2].reduce((a, b) => (Math.abs(values[b] - halfTrace) < Math.abs(values[a] - halfTrace) ? b : a));
+  return unit(vectors[best]);
 }
 
 export function fitCylinder(pts, normals) {
@@ -238,20 +283,56 @@ export function fitTorus(pts, normals) {
   if (pts.length < 8 || !normals || normals.length !== pts.length) return null;
   // A torus normal always lies in the plane containing the axis and the point, so
   // its covariance is degenerate the same way a cylinder's is — but the axis is
-  // the odd-eigenvalue-out, not unconditionally the smallest one; see
-  // axisFromNormals for the (verified) reasoning.
+  // whichever eigenvalue sits at half the trace, not unconditionally the
+  // smallest one; see axisFromNormals for the (verified) reasoning.
   const axis = axisFromNormals(normals);
-  const c = mean(pts);
-  // In the (radial, axial) half-plane a torus is a CIRCLE of the minor radius centred
-  // at the major radius. Fitting that 2D circle recovers both radii at once.
-  const rz = pts.map((p) => {
-    const d = sub(p, c);
-    const ax = dot(d, axis);
-    return [Math.hypot(d[0]-ax*axis[0], d[1]-ax*axis[1], d[2]-ax*axis[2]), ax];
+  const [u, v] = basis(axis);
+  // For a torus, the tube cross-section is ITSELF a circle, so the outward
+  // normal at any surface point points directly away from that cross-section's
+  // own centre — i.e. `p - r*n` (for the true minor radius r) collapses every
+  // point back onto the MAIN circle (radius R, centred on the axis), regardless
+  // of how little of the main sweep is covered. That main-circle point's AXIAL
+  // coordinate is therefore CONSTANT (the tube-centre direction is perpendicular
+  // to the axis by construction), which turns "solve for r and that constant"
+  // into a plain 1-D linear regression: dot(p,axis) = centreAxial + r*dot(n,axis).
+  //
+  // This replaces centring on the raw point mean, which a first review round
+  // caught giving the wrong answer on a partial main sweep: the point centroid
+  // only lands ON the axis when the sweep is full, and any off-axis error in it
+  // corrupts every downstream "distance from axis" magnitude (unlike fitCylinder,
+  // whose circle fit works in full 2-D (u,v) coordinates and so self-corrects for
+  // an off-centre pivot; collapsing to a 1-D radial magnitude first, as the
+  // original torus fit did, throws that self-correcting information away).
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  const na = normals.map((n) => dot(n, axis)), pa = pts.map((p) => dot(p, axis));
+  for (let i = 0; i < pts.length; i++) { sx += na[i]; sy += pa[i]; sxx += na[i]*na[i]; sxy += na[i]*pa[i]; }
+  const N = pts.length; sx /= N; sy /= N; sxx /= N; sxy /= N;
+  const denom = sxx - sx*sx;
+  // Denominator is the variance of the normal's axial component — i.e. how much
+  // of the tube is actually covered. Near zero means the tube sweep is too thin
+  // to separate the minor radius from the centre's axial position at all (a
+  // cylinder or a flat annulus in disguise), not something to divide by.
+  if (!(Math.abs(denom) > 1e-9)) return null;
+  const rSigned = (sxy - sx*sy) / denom;
+  const centreAxial = sy - rSigned*sx;
+  const minorRadius = Math.abs(rSigned);
+  if (!(minorRadius > 0)) return null;
+  const uv = pts.map((p, i) => {
+    const q = sub(p, scale(normals[i], rSigned));
+    return [dot(q, u), dot(q, v)];
   });
-  const circle = fitCircle2D(rz);
-  if (!circle || !(circle.cu > circle.radius)) return null;   // degenerate / self-intersecting
-  const center = [c[0] + circle.cv*axis[0], c[1] + circle.cv*axis[1], c[2] + circle.cv*axis[2]];
-  const devs = rz.map(([r, z]) => Math.hypot(r - circle.cu, z - circle.cv) - circle.radius);
-  return { type: "torus", center, axis, majorRadius: circle.cu, minorRadius: circle.radius, ...errors(devs) };
+  const circle = fitCircle2D(uv);
+  if (!circle || !(circle.radius > minorRadius)) return null;   // degenerate / self-intersecting
+  const center = [
+    circle.cu*u[0] + circle.cv*v[0] + centreAxial*axis[0],
+    circle.cu*u[1] + circle.cv*v[1] + centreAxial*axis[1],
+    circle.cu*u[2] + circle.cv*v[2] + centreAxial*axis[2],
+  ];
+  const devs = pts.map((p) => {
+    const d = sub(p, center);
+    const ax = dot(d, axis);
+    const rad = Math.hypot(d[0]-ax*axis[0], d[1]-ax*axis[1], d[2]-ax*axis[2]);
+    return Math.hypot(rad - circle.radius, ax) - minorRadius;
+  });
+  return { type: "torus", center, axis, majorRadius: circle.radius, minorRadius, ...errors(devs) };
 }
