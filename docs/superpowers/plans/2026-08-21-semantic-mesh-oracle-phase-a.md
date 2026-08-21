@@ -720,6 +720,7 @@ git commit -m "feat(describe): least-squares fits for plane/sphere/cylinder/cone
 
 **Interfaces:**
 - Consumes: `buildTopology` (Task 1); `fitPlane`, `fitCylinder`, `fitCone`, `fitSphere`, `fitTorus` (Task 2).
+- **Exports `facePoints(topo, faces) → { pts, normals }` from `segment.js`** — `ransac.js` and (in Task 5) `surface-graph.js` both need it; one export, no third copy.
 - Adds to `fit.js`: `deviationOf(fit, point) → number` — SIGNED distance from `point` to the surface described by any Task 2 fit result. One definition of point-to-primitive distance, shared by this task's growth predicate and Task 4's RANSAC consensus test, so the two can never drift apart. Task 4 must import it rather than writing its own.
 - Produces: `segment(topo, opts?) → { patches, unassigned }` where `patches[i] = { id, faces: number[], fit, area }` (`fit` is any Task 2 fit result) and `unassigned` is a `number[]` of face indices no patch claimed.
 
@@ -1181,7 +1182,7 @@ import { expect, test } from "vitest";
 import { buildTopology } from "../src/framework/oracle/describe/topology.js";
 import { segment } from "../src/framework/oracle/describe/segment.js";
 import { surfaceGraph, arcsOf } from "../src/framework/oracle/describe/surface-graph.js";
-import { boxMesh, annulusPlate } from "./helpers/mesh-fixtures.js";
+import { boxMesh, annulusPlate, rotateMesh } from "./helpers/mesh-fixtures.js";
 
 const graphOf = (mesh) => { const t = buildTopology(mesh); return surfaceGraph(t, segment(t).patches); };
 
@@ -1229,6 +1230,48 @@ test("every surface reports at least one closed boundary loop", () => {
   const g = graphOf(annulusPlate(10, 4, 3, 48));
   for (const s of g.surfaces) expect(s.loops.length).toBeGreaterThanOrEqual(1);
 });
+
+// Arbitrary orientation, per the Global Constraints. Task 3 shipped a defect that
+// collapsed segmentation at a 0.01-degree tilt and passed 53/53 because every fixture was
+// axis-aligned; curvature and arc classification are just as orientation-sensitive, since
+// both read normals and cross products.
+test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, 17, 29, 53)]])(
+  "%s: the washer's curvature and rim classification are identical", (_n, orient) => {
+    const g = graphOf(orient(annulusPlate(10, 4, 3, 48)));
+    const bore = g.surfaces.find((s) => s.type === "cylinder" && s.fit.radius < 6);
+    const wall = g.surfaces.find((s) => s.type === "cylinder" && s.fit.radius > 6);
+    expect(bore.curvature).toBe("concave");
+    expect(wall.curvature).toBe("convex");
+    expect(arcsOf(g, bore.id).filter((a) => a.kind === "circle").every((a) => a.convexity === "convex")).toBe(true);
+  });
+
+test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, 17, 29, 53)]])(
+  "%s: a box is six planes with twelve convex straight arcs", (_n, orient) => {
+    const g = graphOf(orient(boxMesh(10, 20, 5)));
+    expect(g.surfaces.length).toBe(6);
+    expect(g.arcs.length).toBe(12);
+    expect(g.arcs.every((a) => a.convexity === "convex" && a.kind === "line")).toBe(true);
+  });
+
+// R25/R26: one surface split by segmentation must come back out as ONE surface. A washer
+// whose bore is tessellated at mixed density splits into two coaxial equal-radius cylinder
+// patches; unmerged, Task 6 detects the same through-hole twice with the same key.
+test("co-family patches merge into one surface even when disconnected", () => {
+  const topo = buildTopology(annulusPlate(10, 4, 3, 48));
+  const { patches } = segment(topo);
+  // Split the bore patch in two by hand — this is exactly the shape a variable-density
+  // tessellation produces, without needing a mixed-density fixture to reproduce it.
+  const bore = patches.find((p) => p.fit.type === "cylinder" && p.fit.radius < 6);
+  const half = Math.floor(bore.faces.length / 2);
+  const split = patches.filter((p) => p !== bore).concat([
+    { ...bore, id: "qA", faces: bore.faces.slice(0, half) },
+    { ...bore, id: "qB", faces: bore.faces.slice(half) },
+  ]);
+  const g = surfaceGraph(topo, split);
+  const bores = g.surfaces.filter((s) => s.type === "cylinder" && s.fit.radius < 6);
+  expect(bores.length).toBe(1);
+  expect(bores[0].faces.length).toBe(bore.faces.length);
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -1268,6 +1311,12 @@ Expected: FAIL — cannot resolve `describe/surface-graph.js`.
 // the verdict makes a hole intermittently read as a boss.
 //
 // Pure leaf. See spec §2.4.
+import { fitPlane, fitSphere, fitCylinder, fitCone, fitTorus } from "./fit.js";
+import { facePoints } from "./segment.js";
+
+const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const dist = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]);
 
 // A patch pair is joined by an arc only if their shared boundary is long enough to be
 // a real edge rather than a stray facet contact at a vertex fan.
@@ -1523,7 +1572,7 @@ export function arcsOf(graph, surfaceId) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/describe-surface-graph.test.js`
-Expected: PASS, 6 tests.
+Expected: PASS, 11 tests (two are parameterised over axis-aligned and rotated).
 
 - [ ] **Step 5: Commit**
 
