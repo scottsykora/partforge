@@ -609,7 +609,12 @@ parameters: [
 ```
 
 Every control `key` must exist in `defaults`, or the control is silently dead —
-`control-key-not-in-defaults` is an error for exactly that reason.
+`control-key-not-in-defaults` is an error for exactly that reason. Its value there must
+be a **number, string or boolean** — a control writes one scalar, so a control bound to
+an array, an object, `null` or `NaN` is dead in the same silent way
+(`control-default-not-primitive`), and a host that saves panel settings back into
+`defaults` cannot write that value either. A non-primitive `defaults` entry that no
+control is bound to is fine: `defaults` also seeds `p` for `build()`.
 
 **Ids.** A section, a group and a preset may carry an `id`; the renderer keys its
 element, state and disclosure maps on ids, so they must be unique across the whole
@@ -1896,7 +1901,8 @@ about the definition as a whole use `""`.
 behave as authored — whether or not that shows up as a thrown exception. Some error
 findings do correspond to a runtime throw (`build-throws`, `verify-expect-throws`),
 but others catch **silent** wrongness: `missing-meta-title`, `part-view-unknown`,
-`control-key-not-in-defaults`, `preset-key-not-in-defaults`, and
+`control-key-not-in-defaults`, `control-default-not-primitive`,
+`preset-key-not-in-defaults`, and
 `verify-unknown-subpart` all fire on parts that build, measure, and verify cleanly —
 a dead control that's silently unreachable, a view that renders nothing, or a
 `verify` expectation that's silently dropped so its gate never runs. That's still an
@@ -1913,7 +1919,8 @@ previously didn't; that's the fix working as intended, not a regression.
 `default-view-ambiguous` (warnings).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,
-`control-key-not-in-defaults`, `preset-key-not-in-defaults`, `mixed-section-shape`,
+`control-key-not-in-defaults`, `control-default-not-primitive`,
+`preset-key-not-in-defaults`, `mixed-section-shape`,
 `duplicate-preset-name`, `duplicate-node-id`, `select-options-missing`,
 `select-default-not-in-options`, `log-scale-needs-positive-min`,
 `when-key-not-in-defaults`, `when-unknown-operator`, `unknown-control-type` (errors);
