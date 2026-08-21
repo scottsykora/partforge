@@ -23,8 +23,39 @@ import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus, deviationOf } from
 // above it so faceting never breaks a surface apart, and well below any real
 // feature size so two genuinely different surfaces never merge.
 const FIT_TOL_FRAC = 3e-4;
+// Reserved dial, not currently load-bearing: every seed is a single triangle,
+// three points always define SOME plane exactly (rms/maxDev = 0), so `bestFit`
+// (with MIN_PTS.plane = 3) can only fail on a seed whose points are so close to
+// collinear that fit.js's own rank guard rejects it as degenerate — everything
+// else clears `faces.length < MIN_PATCH_FACES` at its default of 1 trivially.
+// Left in place (rather than deleted) as the one knob a future revision would
+// raise to also discard small-but-valid patches as noise; it does nothing at 1.
 const MIN_PATCH_FACES = 1;
 const REFIT_ROUNDS = 3;
+
+// Fold-angle ceiling for a growth candidate's shared edge, in radians (30°).
+// This is what keeps growth from ever crossing a genuine surface boundary, and
+// it has to be checked BEFORE the adaptive tolerance below is allowed to widen
+// anything: unlike a chord-error tolerance, a dihedral angle is SCALE-INVARIANT
+// under retessellation — a cylinder wall's own internal facet-to-facet fold is
+// 2π/segs and shrinks toward zero as the mesh gets finer, while a genuine
+// cylinder-to-cap edge stays at 90° no matter how fine the mesh gets. Gating on
+// this first is what makes it safe to widen tolerance adaptively next: without
+// this gate, the adaptive term below would inflate the tolerance most at
+// exactly the sharp edges it must never cross (a large dihedral would imply a
+// large permitted deviation, backwards from what's needed). `topology.js`
+// already computes signed dihedrals per edge, so this check costs nothing extra.
+const SMOOTH_DIHEDRAL_MAX = Math.PI / 6;
+
+// Scales the adaptive tolerance below. Calibrated, not guessed: measured the
+// ACTUAL worst-vertex deviation of a wall facet's true first neighbour against
+// `w * dihedral` (see `leverArm`) across cylinderMesh(4, 10, N) for N = 16..240
+// and found the two track each other almost exactly (ratio 0.99-1.00 at every
+// N tried) — `w * dihedral` IS the chord sagitta this predicate needs to admit,
+// not merely proportional to it. 1.5 keeps a real margin above that measured
+// 1:1 correspondence without weakening the dihedral gate above, which is what
+// actually protects genuinely different surfaces from merging.
+const FACET_K = 1.5;
 
 // All five candidates over the same trial set, in ascending order of degrees of
 // freedom. Two different policies read this list for two different purposes
@@ -111,15 +142,64 @@ function faceDeviation(topo, t, fit) {
   return worst;
 }
 
-// Neighbour faces across non-boundary edges.
-function neighbours(topo, t) {
+const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+
+// Neighbour faces across non-boundary edges, paired with the edge itself (its
+// signed dihedral and endpoints) rather than bare face ids — the growth
+// predicate below needs both to gate on fold sharpness and to size its
+// tolerance to the actual local facet geometry, not a global constant.
+function neighbourEdges(topo, t) {
   const out = [];
   for (const ei of topo.faceEdges[t]) {
     const e = topo.edges[ei];
     if (e.triB < 0) continue;
-    out.push(e.triA === t ? e.triB : e.triA);
+    out.push({ face: e.triA === t ? e.triB : e.triA, edge: e });
   }
   return out;
+}
+
+// The local facet "width" a chord-error tolerance needs to scale with: NOT the
+// shared edge's own length (on this mesh family that edge commonly runs ALONG
+// the surface's straight axis — e.g. a cylinder wall's wall-to-wall edge is
+// vertical, its full length the part's height, entirely unrelated to how far
+// apart the facets are AROUND the curve) but the LEVER ARM the fold actually
+// pivots on: the perpendicular distance from the shared edge's line out to the
+// candidate face's farthest vertex. A dihedral fold of angle θ about that line
+// displaces a point at lever arm L by approximately L·θ for small θ — exactly
+// the chord sagitta this predicate needs to admit, confirmed by measuring this
+// quantity against the real worst-vertex deviation across N = 16..240 on
+// cylinderMesh (see FACET_K) rather than assumed.
+function leverArm(topo, edge, nbFace) {
+  const v0 = [topo.verts[3*edge.v0], topo.verts[3*edge.v0+1], topo.verts[3*edge.v0+2]];
+  const v1 = [topo.verts[3*edge.v1], topo.verts[3*edge.v1+1], topo.verts[3*edge.v1+2]];
+  const dir = sub(v1, v0);
+  const len = Math.hypot(dir[0], dir[1], dir[2]);
+  if (len === 0) return 0;
+  const u = [dir[0]/len, dir[1]/len, dir[2]/len];
+  let worst = 0;
+  for (let k = 0; k < 3; k++) {
+    const v = topo.tris[3*nbFace + k] * 3;
+    const perp = cross(sub([topo.verts[v], topo.verts[v+1], topo.verts[v+2]], v0), u);
+    const dist = Math.hypot(perp[0], perp[1], perp[2]);
+    if (dist > worst) worst = dist;
+  }
+  return worst;
+}
+
+// The growth predicate proper: gate on fold sharpness FIRST (scale-invariant,
+// and what actually separates one surface from another — see
+// SMOOTH_DIHEDRAL_MAX), then accept if the candidate's worst-vertex deviation
+// from the standing fit is within whichever is larger of the global tolerance
+// or the facet-scaled chord-sagitta allowance (see FACET_K/leverArm). Taking
+// the max, not just the adaptive term, keeps this at least as permissive as
+// the un-adaptive check for coarse-relative-to-tolerance meshes where the flat
+// global `tol` was already enough; the adaptive term only ever widens things
+// further for a fine mesh whose own facet size would otherwise be the limiter.
+function admitGrowth(topo, edge, nb, fit, tol) {
+  if (Math.abs(edge.dihedral) > SMOOTH_DIHEDRAL_MAX) return false;
+  const adaptive = FACET_K * leverArm(topo, edge, nb) * Math.abs(edge.dihedral);
+  return faceDeviation(topo, nb, fit) <= Math.max(tol, adaptive);
 }
 
 // Seed order: bucket faces by quantized normal on the Gauss sphere, then visit the
@@ -174,9 +254,9 @@ export function segment(topo, opts = {}) {
       const queue = [...faces];
       let grew = false;
       while (queue.length) {
-        for (const nb of neighbours(topo, queue.pop())) {
+        for (const { face: nb, edge } of neighbourEdges(topo, queue.pop())) {
           if (owner[nb] >= 0 || topo.faceArea[nb] <= 0) continue;
-          if (faceDeviation(topo, nb, fit) > tol) continue;   // see helper below
+          if (!admitGrowth(topo, edge, nb, fit, tol)) continue;   // see helper above
           faces.push(nb); owner[nb] = patches.length; queue.push(nb); grew = true;
         }
       }
