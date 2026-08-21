@@ -797,6 +797,7 @@ Expected: FAIL — cannot resolve `describe/segment.js`.
 //
 // Pure leaf. See spec §2.3.
 import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus } from "./fit.js";
+import { faceDeviation } from "./ransac.js";
 
 // Fit acceptance band, as a fraction of the mesh's bbox diagonal. A CAD
 // tessellation's chord error is bounded and small; this sits an order of magnitude
@@ -897,16 +898,21 @@ export function segment(topo, opts = {}) {
     // facets does the cylinder fit become the better description. Without the refit
     // rounds the whole wall would come out as a fan of tiny planes.
     for (let round = 0; round < REFIT_ROUNDS; round++) {
+      // Candidates are tested against the CURRENT fit's parameters, not by re-fitting
+      // the whole trial set (controller ruling R19). Re-fitting per candidate would call
+      // bestFit — and therefore fitTorus, the most expensive fit at ~3-17ms — on every
+      // REJECTED neighbour, which is most of them: a trial set spanning two surfaces fits
+      // nothing, so it falls through every cheaper fit first. That is thousands of full
+      // fits per part. A deviation check against the standing fit is the standard
+      // region-growing formulation, is orders of magnitude cheaper, and is
+      // correctness-neutral because the refit below re-converges the patch each round.
       const queue = [...faces];
       let grew = false;
       while (queue.length) {
         for (const nb of neighbours(topo, queue.pop())) {
           if (owner[nb] >= 0 || topo.faceArea[nb] <= 0) continue;
-          const trial = [...faces, nb];
-          const { pts, normals } = facePoints(topo, trial);
-          const f = bestFit(pts, normals, tol);
-          if (!f || f.type !== fit.type) continue;
-          faces = trial; fit = f; owner[nb] = patches.length; queue.push(nb); grew = true;
+          if (faceDeviation(topo, nb, fit) > tol) continue;
+          faces.push(nb); owner[nb] = patches.length; queue.push(nb); grew = true;
         }
       }
       if (!grew) break;
