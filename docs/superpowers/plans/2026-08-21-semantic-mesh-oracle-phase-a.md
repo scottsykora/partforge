@@ -330,7 +330,7 @@ git commit -m "feat(describe): welded topology with signed dihedral edge labels"
 
 ```js
 import { expect, test } from "vitest";
-import { fitPlane, fitSphere, fitCylinder, fitCone } from "../src/framework/oracle/describe/fit.js";
+import { fitPlane, fitSphere, fitCylinder, fitCone, fitTorus } from "../src/framework/oracle/describe/fit.js";
 
 const grid = (f, n = 12) => {
   const out = [];
@@ -393,6 +393,20 @@ test("fitCone recovers half-angle", () => {
   }
   const f = fitCone(pts, normals);
   expect(f.halfAngle).toBeCloseTo(halfAngle, 3);
+});
+
+test("fitTorus recovers major and minor radii", () => {
+  const pts = [], normals = [];
+  const R = 10, r = 2;
+  for (let i = 0; i < 32; i++) for (let j = 0; j < 16; j++) {
+    const u = 2 * Math.PI * i / 32, v = 2 * Math.PI * j / 16;
+    const radial = [Math.cos(u), Math.sin(u), 0];
+    normals.push([radial[0] * Math.cos(v), radial[1] * Math.cos(v), Math.sin(v)]);
+    pts.push([(R + r * Math.cos(v)) * radial[0], (R + r * Math.cos(v)) * radial[1], r * Math.sin(v)]);
+  }
+  const f = fitTorus(pts, normals);
+  expect(f.majorRadius).toBeCloseTo(R, 3);
+  expect(f.minorRadius).toBeCloseTo(r, 3);
 });
 
 test("a fit with too few points returns null rather than a garbage fit", () => {
@@ -650,7 +664,7 @@ export function fitTorus(pts, normals) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/describe-fit.test.js`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1040,7 +1054,7 @@ export function ransacPatches(topo, faces, tol, opts = {}) {
 
   while (pool.length >= minInliers) {
     let best = null;
-    for (let round = 0; round < MAX_ROUNDS && round * STRIDE < pool.length * STRIDE; round++) {
+    for (let round = 0; round < Math.min(MAX_ROUNDS, pool.length); round++) {
       // Deterministic minimal sample: three faces spread across the pool.
       const sample = [0, 1, 2].map((k) => pool[(round * STRIDE + k * Math.max(1, pool.length >> 2)) % pool.length]);
       if (new Set(sample).size < 3) continue;
@@ -1581,7 +1595,7 @@ git commit -m "feat(describe): hole, fillet, and chamfer rules over the adjacenc
 - Consumes: `surfaceGraph`, `arcsOf` (Task 5).
 - Produces:
   - `detectPrismatic(graph) → feature[]` — `{ id:null, key, type:"pocket"|"boss"|"extrusion", depth?, direction, floorFace?, wallFaces, profile, surfaces, evidence }`
-  - `detectSweeps(graph, topo) → feature[]` — `{ id:null, key, type:"revolve"|"shell", axis?, profile?, thickness?, surfaces, evidence }`
+  - `detectSweeps(graph) → feature[]` — `{ id:null, key, type:"revolve"|"shell", axis?, profile?, thickness?, surfaces, evidence }`
   - `profile` is `{ kind: "circle"|"polygon"|"mixed", radius?, points? }` — enough for the hints layer to propose a sketch, never claimed as exact.
 
 - [ ] **Step 1: Write the failing test**
@@ -1622,14 +1636,14 @@ test("a cylinder is an extrusion with a circular profile", () => {
 
 test("a washer is recognised as axisymmetric (a revolve candidate)", () => {
   const { t, g } = ctx(annulusPlate(10, 4, 3, 48));
-  const rev = detectSweeps(g, t).find((f) => f.type === "revolve");
+  const rev = detectSweeps(g).find((f) => f.type === "revolve");
   expect(rev).toBeDefined();
   expect(Math.abs(rev.axis.direction[2])).toBeCloseTo(1, 3);
 });
 
 test("a solid box is not reported as a shell", () => {
   const { t, g } = ctx(boxMesh(10, 20, 5));
-  expect(detectSweeps(g, t).some((f) => f.type === "shell")).toBe(false);
+  expect(detectSweeps(g).some((f) => f.type === "shell")).toBe(false);
 });
 
 test("prismatic features carry stable keys and null ids", () => {
@@ -1799,7 +1813,7 @@ const axisOf = (s) =>
   s.type === "cone" ? s.fit.direction :
   s.type === "torus" ? s.fit.axis : null;
 
-export function detectSweeps(graph, topo) {
+export function detectSweeps(graph) {
   const out = [];
 
   // --- revolve ---------------------------------------------------------------
@@ -1993,7 +2007,7 @@ export function detectPatterns(features, bounds) {
   }
 
   for (const members of groups.values()) {
-    if (members.length < MIN_MEMBERS && members.length !== 4) continue;
+    if (members.length < MIN_MEMBERS) continue;
     const pts = members.map(posOf);
 
     // Grid: the positions factor into two independent spacings. Detected before linear
@@ -2834,7 +2848,9 @@ git commit -m "feat(describe): capped full/compact report shapes and the hints l
 
 **Interfaces:**
 - Consumes: every module from Tasks 1–11.
-- Produces: `describe(kernel, mesh, opts) → fullReport` where `opts = { name?, digest?, budget?, memo? }`;
+- Produces: `describe(kernel, solid, opts) → fullReport` where `solid` is a live kernel `Solid`
+  (there is no public mesh→solid entry point — see controller ruling R1) and
+  `opts = { name?, digest?, budget?, memo? }`;
   `describeMemo() → Map` (a fresh memo store, so callers can scope one per worker);
   `DESCRIBE_ERRORS` — the frozen closed set.
 
@@ -2850,47 +2866,49 @@ import { describe as describeMesh, describeMemo, DESCRIBE_ERRORS } from "../src/
 let kernel;
 beforeAll(async () => { kernel = await bootManifoldKernel(); });
 
-const plateMesh = () => kernel.cut(kernel.box(60, 40, 12), kernel.cylinder(2.65, 40).translate([30, 20, -14])).toMesh();
+const plateSolid = () => kernel.cut(kernel.box(60, 40, 12), kernel.cylinder(2.65, 40).translate([30, 20, -14]));
 
 test("a plate with a bore reports a through hole", () => {
-  const r = describeMesh(kernel, plateMesh(), { name: "plate", digest: "d1" });
+  const r = describeMesh(kernel, plateSolid(), { name: "plate", digest: "d1" });
   expect(r.features.some((f) => f.type === "throughHole")).toBe(true);
 });
 
 test("the report explains nearly all of the surface area", () => {
-  const r = describeMesh(kernel, plateMesh(), { name: "plate", digest: "d2" });
+  const r = describeMesh(kernel, plateSolid(), { name: "plate", digest: "d2" });
   expect(r.score.explainedArea).toBeGreaterThan(0.9);
 });
 
 test("features are numbered f0..fN in a stable order", () => {
-  const a = describeMesh(kernel, plateMesh(), { digest: "d3" });
-  const b = describeMesh(kernel, plateMesh(), { digest: "d4" });
+  const a = describeMesh(kernel, plateSolid(), { digest: "d3" });
+  const b = describeMesh(kernel, plateSolid(), { digest: "d4" });
   expect(a.features.map((f) => f.id)).toEqual(b.features.map((f) => f.id));
   expect(a.features[0].id).toBe("f0");
 });
 
 test("the memo returns the identical object for the same digest", () => {
   const memo = describeMemo();
-  const a = describeMesh(kernel, plateMesh(), { digest: "same", memo });
-  const b = describeMesh(kernel, plateMesh(), { digest: "same", memo });
+  const a = describeMesh(kernel, plateSolid(), { digest: "same", memo });
+  const b = describeMesh(kernel, plateSolid(), { digest: "same", memo });
   expect(b).toBe(a);
 });
 
 test("a different digest misses the memo", () => {
   const memo = describeMemo();
-  const a = describeMesh(kernel, plateMesh(), { digest: "one", memo });
-  const b = describeMesh(kernel, plateMesh(), { digest: "two", memo });
+  const a = describeMesh(kernel, plateSolid(), { digest: "one", memo });
+  const b = describeMesh(kernel, plateSolid(), { digest: "two", memo });
   expect(b).not.toBe(a);
 });
 
-test("an empty mesh returns the `empty` error rather than throwing", () => {
-  const r = describeMesh(kernel, { positions: [] }, { digest: "e" });
+test("an empty solid returns the `empty` error rather than throwing", () => {
+  const empty = kernel.cut(kernel.box(1, 1, 1), kernel.box(4, 4, 4).translate([-2, -2, -2]));
+  const r = describeMesh(kernel, empty, { digest: "e" });
   expect(r.error).toBe("empty");
   expect(DESCRIBE_ERRORS).toContain("empty");
 });
 
 test("a closed-set error carries the structured diagnostic triple", () => {
-  const d = describeMesh(kernel, { positions: [] }, { name: "scan", digest: "e2" }).diagnostic;
+  const empty = kernel.cut(kernel.box(1, 1, 1), kernel.box(4, 4, 4).translate([-2, -2, -2]));
+  const d = describeMesh(kernel, empty, { name: "scan", digest: "e2" }).diagnostic;
   expect(d.cause).toBeTruthy();
   expect(d.location).toMatch(/scan/);
   expect(d.correctiveAction).toMatch(/ERROR-PATTERNS/);
@@ -2961,7 +2979,13 @@ const fail = (error, opts, source, cause, location, correctiveAction) => ({
   source: { name: opts.name ?? null, digest: opts.digest ?? null, ...source },
 });
 
-export function describe(kernel, mesh, opts = {}) {
+export function describe(kernel, solid, opts = {}) {
+  // A live Solid in, not a mesh. The kernel exposes no public mesh->solid constructor —
+  // geometry only enters through `_registerImport` + `import(name)` — and acceptance needs
+  // a Solid to diff against. Both real callers (the worker job and the CLI) already hold
+  // one from `k.import(name)`, so taking the Solid and deriving the mesh here is both the
+  // honest signature and the shorter path.
+  const mesh = solid.toMesh();
   const triangles = mesh?.indices ? mesh.indices.length / 3 : (mesh?.positions?.length ?? 0) / 9;
   if (!triangles) {
     return fail("empty", opts, { triangles: 0 },
@@ -2991,7 +3015,7 @@ export function describe(kernel, mesh, opts = {}) {
     ...detectHoles(graph),
     ...detectDressups(graph),
     ...detectPrismatic(graph),
-    ...detectSweeps(graph, topo),
+    ...detectSweeps(graph),
   ].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
   const features = raw.map((f, i) => {
@@ -3013,8 +3037,7 @@ export function describe(kernel, mesh, opts = {}) {
     .map((f) => toCandidate(kernel, f, b))
     .filter(Boolean);
 
-  const source = meshSolid(kernel, mesh);
-  const graded = acceptCandidates(kernel, source, candidates, { budget: opts.budget });
+  const graded = acceptCandidates(kernel, solid, candidates, { budget: opts.budget });
 
   const totalArea = meshArea(mesh.positions, mesh.indices);
   const explainedArea = totalArea > 0
@@ -3082,11 +3105,6 @@ function residualRegions(topo, unassigned) {
     out.push({ triangles: faces.length, centroid: c, bounds: { min: lo, max: hi } });
   }
   return out.sort((a, b) => b.triangles - a.triangles);
-}
-
-// The source mesh as a kernel solid, for acceptance to diff against.
-function meshSolid(kernel, mesh) {
-  return kernel.ofMesh ? kernel.ofMesh(mesh) : kernel.meshSolid(mesh);
 }
 
 // One acceptance candidate per feature. `build` is a thunk so nothing is materialised
@@ -3285,7 +3303,8 @@ import("./src/testing/manifold.js").then(async ({ bootManifoldKernel }) => {
   const { writeFileSync, mkdirSync } = await import("node:fs");
   const { meshToStl } = await import("./src/framework/geometry/mesh-stl.js");
   mkdirSync("test/fixtures", { recursive: true });
-  writeFileSync("test/fixtures/describe-washer.stl", Buffer.from(meshToStl(s.toMesh())));
+  const m = s.toMesh();
+  writeFileSync("test/fixtures/describe-washer.stl", Buffer.from(meshToStl(m.positions, m.indices)));
 });'
 ```
 
@@ -3327,8 +3346,10 @@ Add the branch immediately after the `inspect` branch, inside the same `try`:
       // attempted, so a describe job posted to an OCCT worker is a routing bug, not a
       // fallback opportunity. It surfaces as an ordinary error rather than a reroute.
       const solid = kernel.import(msg.importName);      // throws on an unknown name
-      const digest = kernel.importDigest?.(msg.importName) ?? null;
-      const full = describeMesh(kernel, solid.toMesh(), {
+      // `_importDigest` is the backend's existing underscore side-channel (KERNEL-CONTRACT
+      // "Conformance classes") — the same digest already folded into every import cache key.
+      const digest = kernel._importDigest?.(msg.importName) ?? null;
+      const full = describeMesh(kernel, solid, {
         name: msg.importName,
         digest,
         budget: msg.budget,
@@ -3339,10 +3360,6 @@ Add the branch immediately after the `inspect` branch, inside the same `try`:
       post({ type: "describe-report", report: msg.compact ? compactDescribe(full) : full });
     }
 ```
-
-If `kernel.importDigest` does not exist, add it to the Manifold backend's import
-registration alongside the existing `h("import", name, digest)` cache key — the digest is
-already computed there and only needs exposing.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -3471,9 +3488,9 @@ Add the command to the table, beside `measure`:
       }
       const kernel = await bootKernel(part);
       const solid = kernel.import(importName);
-      const report = describeMesh(kernel, solid.toMesh(), {
+      const report = describeMesh(kernel, solid, {
         name: importName,
-        digest: kernel.importDigest?.(importName) ?? null,
+        digest: kernel._importDigest?.(importName) ?? null,
         budget: flags.budget ? Number(flags.budget) : undefined,
       });
       if (flags.out) {
@@ -3600,22 +3617,23 @@ beforeAll(async () => { kernel = await bootManifoldKernel(); });
 // input class describe targets: a CAD-exported tessellation whose real dimensions we can
 // read straight out of the part source. Nothing else in the suite can check that the
 // numbers the describer reports are the numbers that were built.
-const meshOf = (part, view = Object.keys(part.views)[0]) =>
-  buildView(kernel, part, view, {})[0].mesh;
+const solidOf = (part, view = Object.keys(part.views)[0]) =>
+  buildView(kernel, part, view, {})[0].solid;
 
 test("demo.js round-trips with high coverage", () => {
-  const r = describeMesh(kernel, meshOf(demo), { digest: "rt-demo" });
+  const r = describeMesh(kernel, solidOf(demo), { digest: "rt-demo" });
   expect(r.score.explainedArea).toBeGreaterThan(0.95);
 });
 
 test("demo.js is described as a single extrusion", () => {
-  const r = describeMesh(kernel, meshOf(demo), { digest: "rt-demo2" });
+  const r = describeMesh(kernel, solidOf(demo), { digest: "rt-demo2" });
   expect(r.features.some((f) => f.type === "extrusion")).toBe(true);
 });
 
 test("demo.js's recovered bbox matches the built mesh exactly", () => {
-  const mesh = meshOf(demo);
-  const r = describeMesh(kernel, mesh, { digest: "rt-demo3" });
+  const solid = solidOf(demo);
+  const mesh = solid.toMesh();
+  const r = describeMesh(kernel, solid, { digest: "rt-demo3" });
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < mesh.positions.length; i += 3) for (let a = 0; a < 3; a++) {
     lo[a] = Math.min(lo[a], mesh.positions[i+a]); hi[a] = Math.max(hi[a], mesh.positions[i+a]);
@@ -3624,12 +3642,12 @@ test("demo.js's recovered bbox matches the built mesh exactly", () => {
 });
 
 test("filleted-box.js reports fillets", () => {
-  const r = describeMesh(kernel, meshOf(filletedBox), { digest: "rt-fb" });
+  const r = describeMesh(kernel, solidOf(filletedBox), { digest: "rt-fb" });
   expect(r.features.some((f) => f.type === "fillet")).toBe(true);
 });
 
 test("bracket.js round-trips without an error and with localised residual", () => {
-  const r = describeMesh(kernel, meshOf(bracket), { digest: "rt-br" });
+  const r = describeMesh(kernel, solidOf(bracket), { digest: "rt-br" });
   expect(r.error).toBeUndefined();
   // Whatever it cannot explain must be LOCATED, not merely counted — an agent can act
   // on "290 triangles, here" and cannot act on "1.2%".
@@ -3640,17 +3658,19 @@ test("bracket.js round-trips without an error and with localised residual", () =
 });
 
 test("noise injection degrades the score but does not throw or lose every feature", () => {
-  const mesh = meshOf(demo);
-  const noisy = { positions: Float64Array.from(mesh.positions, (v, i) => v + ((i * 2654435761 % 1000) / 1000 - 0.5) * 0.002) };
-  const clean = describeMesh(kernel, mesh, { digest: "n-clean" });
-  const dirty = describeMesh(kernel, noisy, { digest: "n-dirty" });
+  const solid = solidOf(demo);
+  const mesh = solid.toMesh();
+  const jittered = Float32Array.from(mesh.positions, (v, i) => v + ((i * 2654435761 % 1000) / 1000 - 0.5) * 0.002);
+  kernel._registerImport({ name: "noisy-demo", digest: "noisy-demo", positions: jittered, indices: mesh.indices });
+  const clean = describeMesh(kernel, solid, { digest: "n-clean" });
+  const dirty = describeMesh(kernel, kernel.import("noisy-demo"), { digest: "n-dirty" });
   expect(dirty.error).toBeUndefined();
   expect(dirty.score.explainedArea).toBeLessThanOrEqual(clean.score.explainedArea + 1e-9);
   expect(dirty.features.length).toBeGreaterThan(0);
 });
 
 test("every accepted feature's confidence is a finite fraction", () => {
-  const r = describeMesh(kernel, meshOf(demo), { digest: "rt-conf" });
+  const r = describeMesh(kernel, solidOf(demo), { digest: "rt-conf" });
   for (const f of r.features) {
     if (f.confidence == null) continue;
     expect(Number.isFinite(f.confidence)).toBe(true);
@@ -3692,8 +3712,11 @@ const DIR = fileURLToPath(new URL("./fixtures/third-party/", import.meta.url));
 
 for (const file of readdirSync(DIR).filter((f) => f.endsWith(".stl"))) {
   test(`third-party ${file} describes without an error`, () => {
-    const solid = kernel.ofMesh(parseStl(readFileSync(`${DIR}${file}`)));
-    const r = describeMesh(kernel, solid.toMesh(), { digest: `tp-${file}` });
+    // Geometry enters the kernel the one way it can: register it as an import, then read it
+    // back as a Solid — exactly what the framework's own import pipeline does.
+    const { positions, indices } = parseStl(readFileSync(`${DIR}${file}`));
+    kernel._registerImport({ name: file, digest: file, positions, indices });
+    const r = describeMesh(kernel, kernel.import(file), { digest: `tp-${file}` });
     // Deliberately weak: we have no ground truth for these. What we CAN insist on is
     // that the describer never throws, never claims coverage it cannot back, and always
     // localises what it could not explain.
