@@ -2238,6 +2238,25 @@ test("two unrelated holes produce no pattern", () => {
   expect(patterns).toEqual([]);
 });
 
+// Ruling R27's regression guard. The same four holes, rigidly rotated: a grid detector
+// that buckets world coordinates finds nothing here, which is what the original did.
+test("a rotated hole grid is still detected as a 2x2 grid with the same pitch", () => {
+  const rot = ([x, y, z]) => {
+    const c = Math.cos(0.7), s = Math.sin(0.7);           // about X, an ugly angle
+    const c2 = Math.cos(0.4), s2 = Math.sin(0.4);         // then about Z
+    const [y1, z1] = [y*c - z*s, y*s + z*c];
+    return [x*c2 - y1*s2, x*s2 + y1*c2, z1];
+  };
+  const spun = [hole(5,5), hole(55,5), hole(5,35), hole(55,35)].map((h) => ({
+    ...h, axis: { origin: rot(h.axis.origin), direction: rot([0,0,1]) },
+  }));
+  const { patterns } = detectPatterns(spun, { min: rot([0,0,0]), max: rot([60,40,12]) });
+  const grid = patterns.find((p) => p.type === "grid");
+  expect(grid).toBeDefined();
+  expect(grid.counts).toEqual([2, 2]);
+  expect(grid.pitch.map((v) => Math.round(v)).sort((a, b) => a - b)).toEqual([30, 50]);
+});
+
 test("a symmetric hole layout reports a mirror plane", () => {
   const { symmetry } = detectPatterns([hole(5,5), hole(55,5), hole(5,35), hole(55,35)], bounds);
   const mirror = symmetry.find((s) => s.type === "mirror");
@@ -2281,6 +2300,28 @@ const signature = (f) =>
 const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
 const len = (a) => Math.hypot(a[0], a[1], a[2]);
 
+// An orthonormal frame to measure repetition in. NOT the world axes (controller ruling
+// R27): a 2x2 hole grid drilled into a plate sitting at an arbitrary orientation — which is
+// every real part — has no relationship to world X/Y/Z, so bucketing world coordinates
+// finds nothing. Holes in one pattern share a drill direction, so that direction is the
+// natural third axis and the repetition lives in the plane perpendicular to it.
+//
+// Falls back to world axes only when no feature carries a direction at all, which keeps
+// the axis-aligned fixtures behaving exactly as before.
+function patternFrame(members) {
+  const dir = members.map((f) => f.axis?.direction).find(Boolean);
+  if (!dir) return [[1,0,0],[0,1,0],[0,0,1]];
+  const w = unit(dir);
+  const seed = Math.abs(w[0]) < 0.9 ? [1,0,0] : [0,1,0];
+  const u = unit(cross(w, seed));
+  return [u, cross(w, u), w];
+}
+const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const unit = (a) => { const n = len(a) || 1; return [a[0]/n, a[1]/n, a[2]/n]; };
+// A position expressed in the frame — this is what every geometric test below reads,
+// so all of them are orientation-invariant by construction rather than by inspection.
+const inFrame = (frame, p) => frame.map((axis) => p[0]*axis[0] + p[1]*axis[1] + p[2]*axis[2]);
+
 export function detectPatterns(features, bounds) {
   const diag = len(sub(bounds.max, bounds.min));
   const tol = diag * TOL_FRAC;
@@ -2295,15 +2336,21 @@ export function detectPatterns(features, bounds) {
 
   for (const members of groups.values()) {
     if (members.length < MIN_MEMBERS) continue;
-    const pts = members.map(posOf);
+    const frame = patternFrame(members);
+    const pts = members.map((f) => inFrame(frame, posOf(f)));
 
     // Grid: the positions factor into two independent spacings. Detected before linear
     // so a 2x2 layout is not reported as two unrelated 2-member lines.
+    // Directions reported back out are rotated OUT of the frame, so a consumer never has
+    // to know the frame existed.
+    const outOfFrame = (v) => v && [0,1,2].reduce((acc, i) =>
+      [acc[0] + v[i]*frame[i][0], acc[1] + v[i]*frame[i][1], acc[2] + v[i]*frame[i][2]], [0,0,0]);
+
     const grid = asGrid(members, pts, tol);
-    if (grid) { patterns.push({ id: `p${patterns.length}`, ...grid }); continue; }
+    if (grid) { patterns.push({ id: `p${patterns.length}`, ...grid, axis: outOfFrame(grid.axis) }); continue; }
 
     const linear = asLinear(members, pts, tol);
-    if (linear) { patterns.push({ id: `p${patterns.length}`, ...linear }); continue; }
+    if (linear) { patterns.push({ id: `p${patterns.length}`, ...linear, axis: outOfFrame(linear.axis) }); continue; }
 
     const circular = asCircular(members, pts, tol);
     if (circular) patterns.push({ id: `p${patterns.length}`, ...circular });
@@ -2381,27 +2428,35 @@ function spacing(sorted, tol) {
   return steps.every((s) => Math.abs(s - mean) <= tol) ? mean : null;
 }
 
-// Mirror symmetry about each bbox mid-plane: does every positioned feature have a
-// counterpart at its reflection? `coverage` is the matched fraction, so a nearly
-// symmetric part reports 0.9 rather than silently reporting nothing.
+// Mirror symmetry about each of the FRAME's mid-planes — same reasoning as the grid
+// search (ruling R27): a symmetric part at an arbitrary orientation has no symmetry plane
+// aligned to world X/Y/Z. The mid-plane is the midpoint of the features' own extent along
+// each frame axis, not the mesh bbox's, so the test does not depend on how much unrelated
+// geometry happens to surround them.
+//
+// `coverage` is the matched fraction, so a nearly symmetric part reports 0.94 rather than
+// silently reporting nothing — the agent can then decide whether the part WANTS to be
+// symmetric and the scan is just imperfect.
 function detectSymmetry(features, bounds, tol) {
   const positioned = features.filter((f) => posOf(f));
   if (positioned.length < 2) return [];
+  const frame = patternFrame(positioned);
+  const local = positioned.map((f) => inFrame(frame, posOf(f)));
   const out = [];
   for (let a = 0; a < 3; a++) {
-    const mid = (bounds.min[a] + bounds.max[a]) / 2;
+    const vals = local.map((p) => p[a]);
+    const mid = (Math.min(...vals) + Math.max(...vals)) / 2;
     let matched = 0;
-    for (const f of positioned) {
-      const p = posOf(f), want = [...p];
-      want[a] = 2 * mid - p[a];
-      const hit = positioned.some((g) =>
-        signature(g) === signature(f) && len(sub(posOf(g), want)) <= tol);
+    for (let i = 0; i < positioned.length; i++) {
+      const want = [...local[i]];
+      want[a] = 2 * mid - local[i][a];
+      const hit = local.some((q, j) =>
+        signature(positioned[j]) === signature(positioned[i]) && len(sub(q, want)) <= tol);
       if (hit) matched++;
     }
     const coverage = matched / positioned.length;
     if (coverage > 0.6) {
-      const normal = [0, 0, 0]; normal[a] = 1;
-      out.push({ type: "mirror", plane: { normal, offset: mid }, coverage: round3(coverage) });
+      out.push({ type: "mirror", plane: { normal: frame[a], offset: mid }, coverage: round3(coverage) });
     }
   }
   return out;
@@ -2411,7 +2466,7 @@ function detectSymmetry(features, bounds, tol) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/describe-patterns.test.js`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
