@@ -912,6 +912,21 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       },
     });
     if (animCtl) cleanup.defer(() => animCtl.detach());
+    // Sketch mode takes the transport bar's slot: the host floats its own
+    // composer there (partforge-cloud's sketch composer), and ink is stored in
+    // screen space against the pose it was drawn over — a playing animation
+    // under it is meaningless. STOP first, then hide: hiding first leaves a
+    // frame where an animation still drives the model beneath a bar that is
+    // already gone. Playback does not resume on the way out; "stop" is the
+    // contract, and notifyUserEdit is the same pause a user's own control edit
+    // performs.
+    if (annotateMode && animCtl) {
+      cleanup.defer(annotateMode.onModeChange(() => {
+        const on = annotateMode.isEnabled();
+        if (on) animCtl.notifyUserEdit();
+        animCtl.setHidden(on);
+      }));
+    }
 
     // Re-run the active view under the current caching setting, so toggling the
     // ?debug switch updates the readout for the same design without a param change.

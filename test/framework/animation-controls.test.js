@@ -1445,3 +1445,58 @@ test("crowding: onCrowded defaults to a no-op, so an unwired caller is unaffecte
     globalThis.ResizeObserver = OriginalRO;
   }
 });
+
+test("setHidden takes the bar off the stage and drops its clearance to 0", async () => {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const rect = (o) => () => ({ left: 0, right: 800, width: 800, height: 0, ...o });
+  container.getBoundingClientRect = rect({ top: 0, bottom: 600, height: 600 });
+  let activeView = "box";
+  const ctl = attachAnimationControls(fakeViewer(), part, {
+    container,
+    applyValues: () => {},
+    getParamValues: () => ({}),
+    getView: () => activeView,
+  });
+  const bar = container.querySelector(".pf-anim-bar");
+  bar.getBoundingClientRect = rect({ top: 540, bottom: 580, left: 200, right: 600, width: 400, height: 40 });
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(bar.style.display).toBe("");
+
+  ctl.setHidden(true);
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(bar.style.display).toBe("none");
+  expect(container.style.getPropertyValue("--pf-anim-clear")).toBe("0px");
+
+  ctl.setHidden(false);
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(bar.style.display).toBe("");
+  expect(container.style.getPropertyValue("--pf-anim-clear")).not.toBe("0px");
+  ctl.detach();
+  container.remove();
+});
+
+test("setHidden does not resurrect the bar for a view that declares no animations", async () => {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  let activeView = "solo"; // the fixture's animation-free view
+  const ctl = attachAnimationControls(fakeViewer(), part, {
+    container,
+    applyValues: () => {},
+    getParamValues: () => ({}),
+    getView: () => activeView,
+  });
+  const bar = container.querySelector(".pf-anim-bar");
+  ctl.viewChanged();
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(bar.style.display).toBe("none");
+
+  // Leaving sketch mode must not reveal a bar the ACTIVE VIEW wants hidden —
+  // the two reasons are independent, which is the whole point of the flag.
+  ctl.setHidden(true);
+  ctl.setHidden(false);
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(bar.style.display).toBe("none");
+  ctl.detach();
+  container.remove();
+});

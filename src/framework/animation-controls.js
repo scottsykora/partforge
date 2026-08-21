@@ -350,11 +350,20 @@ export function attachAnimationControls(viewer, part, {
   // even where ResizeObserver is absent.
   let onStructureChanged = null;
 
+  // Sketch mode takes this slot over: the app floats its own composer where the
+  // bar sits, and a frozen sketch over a playing animation is meaningless
+  // anyway. Its own flag rather than a straight write to `display`, for the
+  // reason mount.js spells out for the view cube's two hide reasons: with one
+  // assignment shared between causes, whichever fires last wins, and a view
+  // switch back to an animated view would reveal a bar that sketch mode still
+  // wants gone.
+  let hiddenForSketch = false;
+
   // Per-view + per-animation chrome: which chooser shows, the picker's options,
   // title, ⓘ description, pager labels, scrubber ticks. A view with no
   // animations hides the whole bar rather than showing an empty transport.
   function syncStructure() {
-    bar.style.display = current ? "" : "none";
+    bar.style.display = current && !hiddenForSketch ? "" : "none";
     onStructureChanged?.();
     hideChapterBubble();
     if (!current) return;
@@ -790,6 +799,15 @@ export function attachAnimationControls(viewer, part, {
       viewer.cancelCameraTween();
       playback?.userEdited();
       syncUi();
+    },
+    // Hide/reveal for SKETCH mode only. `--pf-anim-clear` follows for free:
+    // syncStructure notifies the placement pass, which derives the clearance
+    // from this same `display` value and publishes 0px for a hidden bar.
+    setHidden(hidden) {
+      const next = hidden === true;
+      if (next === hiddenForSketch) return;
+      hiddenForSketch = next;
+      syncStructure();
     },
     // Mount calls this from the view-tab onChange, BEFORE it refreshes the
     // view: the outgoing animation's params and opacity overrides must be
