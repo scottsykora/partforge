@@ -32,8 +32,16 @@ export function exportSubParts(part, view, params) {
 
 // Resolve a part's effective params + derived values for a build: the user's params
 // layered over the part defaults, and derive() run once over the result.
-export function resolveParams(part, params) {
+//
+// `sanitize(p)` is an optional hook that may rewrite the layered params IN PLACE —
+// the seam a caller uses to refuse an untrusted value before it means anything.
+// It runs BEFORE resolveDerived deliberately: derive() must see exactly the params
+// build() will see, or a refused value still reaches the geometry through `d`.
+// A hook rather than a second copy of this function in the caller, so "resolve a
+// part's params" keeps one definition.
+export function resolveParams(part, params, sanitize) {
   const p = { ...part.defaults, ...params };
+  sanitize?.(p);
   return { p, d: resolveDerived(part, p) };
 }
 

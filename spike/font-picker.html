@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Font picker spike — partforge</title>
+<style>
+/* ── partforge tokens (verbatim from src/framework/tokens.css) ─────────── */
+:root {
+  color-scheme: dark;
+  --pf-bg: oklch(0.19 0.01 262); --pf-surface: oklch(0.23 0.011 262); --pf-surface-2: oklch(0.274 0.006 286.033); --pf-border: oklch(1 0 0 / 12%);
+  --pf-text: oklch(0.985 0 0); --pf-text-strong: oklch(1 0 0); --pf-text-2: oklch(0.92 0.004 286.32);
+  --pf-muted: oklch(0.705 0.015 286.067); --pf-muted-2: oklch(0.80 0.01 286); --pf-hint: oklch(0.552 0.016 285.938);
+  --pf-accent: #3f7bf0; --pf-accent-soft: #26314a; --pf-on-accent: #fff; --pf-input-bg: oklch(0.165 0.009 262); --pf-err: oklch(0.704 0.191 22.216);
+  --pf-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --pf-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --pf-rail-w: 288px; --pf-rail-pad: 14px;
+  --pf-radius-control: 7px; --pf-radius-pill: 12px;
+  --pf-shadow-float: 0 0 6px rgb(0 0 0 / .04), 0 2px 14px rgb(0 0 0 / .072);
+  --pf-shadow-rail: inset 9px 0 16px -10px rgb(0 0 0 / .38);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --pf-bg: oklch(1 0 0); --pf-surface: oklch(1 0 0); --pf-surface-2: oklch(0.967 0.001 286.375); --pf-border: oklch(0.92 0.004 286.32);
+  --pf-text: oklch(0.141 0.005 285.823); --pf-text-strong: oklch(0.10 0.005 285.823); --pf-text-2: oklch(0.21 0.006 285.885);
+  --pf-muted: oklch(0.552 0.016 285.938); --pf-muted-2: oklch(0.44 0.015 285.9); --pf-hint: oklch(0.705 0.015 286.067);
+  --pf-accent: #1f5bd6; --pf-accent-soft: #e6edfc; --pf-on-accent: #fff; --pf-input-bg: #ffffff; --pf-err: oklch(0.577 0.245 27.325);
+  --pf-shadow-rail: inset 9px 0 14px -10px rgb(0 0 0 / .12);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--pf-bg); color: var(--pf-text); font-family: var(--pf-sans); overflow: hidden; }
+
+/* ── stage: viewer + rail, or one narrow pane ──────────────────────────── */
+.stage { position: relative; display: flex; height: 100vh; overflow: hidden; }
+.stage[data-view="narrow"] { width: 390px; margin: 0 auto; border-left: 1px solid var(--pf-border); border-right: 1px solid var(--pf-border); }
+.stage[data-view="narrow"] .viewer { display: none; }
+.stage[data-view="narrow"] .rail { width: 100%; box-shadow: none; }
+
+.viewer { flex: 1; display: grid; place-items: center; background:
+  radial-gradient(120% 90% at 50% 0%, color-mix(in oklab, var(--pf-accent) 7%, var(--pf-bg)), var(--pf-bg)); }
+.rail { position: relative; width: var(--pf-rail-w); flex: none; background: var(--pf-surface);
+  box-shadow: var(--pf-shadow-rail); overflow: hidden; display: flex; flex-direction: column; }
+
+.rail-head { padding: 12px var(--pf-rail-pad); border-bottom: 1px solid var(--pf-border); flex: none; }
+.rail-head b { font: 600 12px/1 var(--pf-sans); letter-spacing: .02em; }
+.rail-head span { display: block; margin-top: 3px; font: 10px/1.4 var(--pf-mono); color: var(--pf-hint); }
+.rail-body { overflow: auto; flex: 1; }
+
+/* ── controls (verbatim class shapes from app.css) ─────────────────────── */
+.section { padding: 12px var(--pf-rail-pad) 11px; }
+.section > h3 { margin: 0 0 8px; font: 600 11px/1 var(--pf-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--pf-muted); }
+.slider { margin: 9px 0; }
+.row { display: flex; justify-content: space-between; align-items: center; margin: 0 0 4px; gap: 8px; }
+.row label { font-family: var(--pf-mono); font-size: 11px; color: var(--pf-muted-2); letter-spacing: .01em; }
+.row .num { width: 54px; text-align: right; font-family: var(--pf-mono); font-size: 12px; font-variant-numeric: tabular-nums;
+  background: var(--pf-input-bg); color: var(--pf-text-strong); border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-control); padding: 3px 6px; }
+.text-input { display: block; width: 100%; font: 12px/1.4 var(--pf-mono); background: var(--pf-input-bg);
+  color: var(--pf-text-strong); border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); padding: 6px 8px; }
+.text-input:focus { outline: none; border-color: var(--pf-accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; margin: 0; background: transparent; cursor: pointer; }
+input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--pf-border); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5.5px;
+  border-radius: 50%; background: var(--pf-accent); border: 2px solid var(--pf-surface); box-shadow: 0 0 0 1px var(--pf-accent); }
+
+/* ── the font control (closed state) ───────────────────────────────────── */
+.font-btn { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; cursor: pointer;
+  background: var(--pf-input-bg); color: var(--pf-text-strong); border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-control); padding: 7px 9px; }
+.font-btn:hover { border-color: color-mix(in oklab, var(--pf-accent) 45%, var(--pf-border)); }
+.font-btn .fname { flex: 1; min-width: 0; font-size: 15px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.font-btn .fvar { font: 10px/1 var(--pf-mono); color: var(--pf-muted); flex: none; }
+.font-btn .caret { flex: none; opacity: .5; }
+
+/* ── the picker ────────────────────────────────────────────────────────── */
+/* position:relative is load-bearing — .pk-step2 is inset:0 against it. Without
+   it, step 2 escapes the inline picker and fills the whole rail. */
+.picker { position: relative; display: none; flex-direction: column; background: var(--pf-surface); }
+.picker.open { display: flex; }
+/* inline: sits in the rail flow under the control */
+.picker[data-mode="inline"] { margin-top: 8px; height: 380px; border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-control); overflow: hidden; }
+/* takeover: covers the rail (or the whole narrow pane) */
+.picker[data-mode="takeover"] { position: absolute; inset: 0; z-index: 20; height: auto; }
+
+.pk-head { flex: none; padding: 10px var(--pf-rail-pad) 8px; border-bottom: 1px solid var(--pf-border); background: var(--pf-surface); }
+.pk-titlebar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.pk-titlebar b { flex: 1; font: 600 11px/1 var(--pf-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--pf-muted); }
+.pk-x { border: 0; background: transparent; color: var(--pf-muted); cursor: pointer; padding: 2px 4px; font-size: 15px; line-height: 1; }
+.pk-x:hover { color: var(--pf-text); }
+.pk-search { width: 100%; font: 12px/1.4 var(--pf-mono); background: var(--pf-input-bg); color: var(--pf-text-strong);
+  border: 1px solid var(--pf-border); border-radius: var(--pf-radius-control); padding: 6px 8px 6px 26px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Ccircle cx='5' cy='5' r='3.4' fill='none' stroke='%238b8b94' stroke-width='1.3'/%3E%3Cpath d='M7.6 7.6 L10.5 10.5' stroke='%238b8b94' stroke-width='1.3' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: 8px center; }
+.pk-search:focus { outline: none; border-color: var(--pf-accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
+.pk-filters { display: flex; gap: 4px; margin-top: 8px; overflow-x: auto; scrollbar-width: none; }
+.pk-filters::-webkit-scrollbar { display: none; }
+.chip { flex: none; border: 1px solid var(--pf-border); background: transparent; color: var(--pf-muted);
+  font: 10px/1 var(--pf-mono); padding: 5px 8px; border-radius: var(--pf-radius-pill); cursor: pointer; }
+.chip:hover { color: var(--pf-text-2); }
+.chip.on { background: var(--pf-accent); border-color: var(--pf-accent); color: var(--pf-on-accent); }
+
+.pk-list { flex: 1; overflow-y: auto; overscroll-behavior: contain; position: relative; }
+.pk-spacer { position: relative; width: 100%; }
+.pk-row { position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: 8px;
+  padding: 0 var(--pf-rail-pad); cursor: pointer; border-bottom: 1px solid color-mix(in oklab, var(--pf-border) 45%, transparent); }
+.pk-row:hover { background: var(--pf-surface-2); }
+.pk-row.sel { background: var(--pf-accent-soft); box-shadow: inset 2px 0 0 var(--pf-accent); }
+.pk-main { flex: 1; min-width: 0; }
+.pk-face { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--pf-text-strong); line-height: 1.15; }
+.pk-sub { font: 9px/1.3 var(--pf-mono); color: var(--pf-hint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pk-meta { flex: none; font: 9px/1 var(--pf-mono); color: var(--pf-hint); }
+.pk-row.loading .pk-face { opacity: .38; }
+
+/* preview modes */
+.pk-list[data-preview="name"] .pk-sub { display: none; }
+.pk-list[data-preview="name"] .pk-face { font-size: 17px; }
+.pk-list[data-preview="both"] .pk-face { font-size: 16px; }
+.pk-list[data-preview="both"] .pk-sub { display: block; }
+.pk-list[data-preview="sample"] .pk-face { font-size: 17px; }
+.pk-list[data-preview="sample"] .pk-sub { display: block; }
+
+/* variant chips, inline mode */
+/* Two panes sliding inside .pk-panes: browse and variants. The footer sits
+   BELOW the pane box rather than being covered by it, so Done stays reachable
+   from either pane — picking a weight no longer has to exit to commit. */
+.pk-panes { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.pk-pane { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--pf-surface);
+  transition: transform .26s cubic-bezier(.4, 0, .2, 1), opacity .26s ease; }
+.pk-pane[data-pane="variants"] { transform: translateX(100%); opacity: 0; pointer-events: none; }
+.picker.at-variants .pk-pane[data-pane="browse"] { transform: translateX(-22%); opacity: .3; pointer-events: none; }
+.picker.at-variants .pk-pane[data-pane="variants"] { transform: translateX(0); opacity: 1; pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) { .pk-pane { transition: none; } }
+
+.pk-back { display: flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--pf-muted);
+  font: 10px/1 var(--pf-mono); cursor: pointer; padding: 0 0 8px; }
+.pk-back:hover { color: var(--pf-text); }
+.pk-vlist { flex: 1; overflow-y: auto; padding: 4px var(--pf-rail-pad) 12px; }
+.vrow { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; cursor: pointer;
+  background: transparent; border: 0; border-bottom: 1px solid color-mix(in oklab, var(--pf-border) 45%, transparent);
+  padding: 9px 0; color: var(--pf-text-strong); }
+.vrow:hover { background: var(--pf-surface-2); }
+.vrow.on { color: var(--pf-accent); }
+.vrow.on .vlabel { color: var(--pf-accent); }
+.vrow .vsample { flex: 1; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vrow .vlabel { flex: none; font: 10px/1 var(--pf-mono); color: var(--pf-muted); }
+
+.pk-hint { flex: none; padding: 7px var(--pf-rail-pad) 0; font: 9px/1.4 var(--pf-mono); color: var(--pf-hint); }
+.pk-empty { margin: 0; padding: 22px var(--pf-rail-pad); font: 11px/1.6 var(--pf-mono); color: var(--pf-hint); }
+
+.pk-foot { flex: none; display: flex; align-items: center; gap: 10px; padding: 9px var(--pf-rail-pad);
+  border-top: 1px solid var(--pf-border); background: var(--pf-surface); }
+.pk-sel { flex: 1; min-width: 0; font: 10px/1.4 var(--pf-mono); color: var(--pf-hint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pk-sel b { font-weight: 500; color: var(--pf-text-2); }
+.pk-done { flex: none; border: 0; border-radius: var(--pf-radius-control); cursor: pointer;
+  background: var(--pf-accent); color: var(--pf-on-accent); font: 11px/1 var(--pf-mono);
+  letter-spacing: .04em; padding: 8px 17px; }
+.pk-done:hover { filter: brightness(1.09); }
+:where(button, input):focus-visible { outline: 2px solid var(--pf-accent); outline-offset: 2px; }
+
+/* ── fake viewer content ───────────────────────────────────────────────── */
+.plate { width: min(70%, 520px); aspect-ratio: 16/7; border-radius: 10px; display: grid; place-items: center;
+  background: linear-gradient(155deg, oklch(0.62 0.02 262), oklch(0.44 0.02 262));
+  box-shadow: 0 24px 60px -20px rgb(0 0 0 / .6), inset 0 1px 0 rgb(255 255 255 / .18); }
+.plate span { font-size: clamp(24px, 6vw, 64px); color: oklch(0.30 0.02 262); line-height: 1.1;
+  text-shadow: 0 1px 0 rgb(255 255 255 / .28), 0 -1px 1px rgb(0 0 0 / .35); padding: 0 .4em; text-align: center;
+  white-space: nowrap; overflow: hidden; max-width: 100%; }
+.viewer-note { position: absolute; bottom: 14px; left: 16px; font: 10px/1.5 var(--pf-mono); color: var(--pf-hint); }
+
+/* ── spike toolbar (dev chrome — deliberately not product) ─────────────── */
+.page { display: flex; flex-direction: column; height: 100vh; background: var(--pf-bg); }
+.page > .stage { flex: 1; min-height: 0; height: auto; }
+.spike { flex: none; display: flex; flex-wrap: wrap; gap: 10px 10px; align-items: center;
+  padding: 9px 14px; background: color-mix(in oklab, var(--pf-surface) 92%, black);
+  border-top: 1px dashed color-mix(in oklab, var(--pf-accent) 45%, var(--pf-border)); }
+.spike > .tag { font: 700 9px/1 var(--pf-mono); letter-spacing: .12em; color: var(--pf-accent); }
+.grp { display: flex; align-items: center; gap: 5px; }
+.grp > i { font: 9px/1 var(--pf-mono); font-style: normal; color: var(--pf-hint); letter-spacing: .04em; }
+.grp button { border: 1px solid var(--pf-border); background: transparent; color: var(--pf-muted);
+  font: 10px/1 var(--pf-mono); padding: 5px 7px; border-radius: 5px; cursor: pointer; }
+.grp button:hover { color: var(--pf-text); }
+.grp button.on { background: var(--pf-accent); border-color: var(--pf-accent); color: var(--pf-on-accent); }
+</style>
+</head>
+<body>
+
+<div class="page">
+<div class="stage" id="stage" data-view="desktop">
+  <div class="viewer">
+    <div class="plate"><span id="plate-text">PARTFORGE</span></div>
+    <div class="viewer-note">stand-in for the viewer — the plate re-renders in the picked face</div>
+  </div>
+
+  <aside class="rail" id="rail">
+    <div class="rail-head"><b>Nameplate</b><span>font picker spike</span></div>
+    <div class="rail-body">
+      <div class="section">
+        <h3>Text</h3>
+
+        <div class="slider">
+          <div class="row"><label>Legend</label></div>
+          <input class="text-input" id="legend" value="PARTFORGE">
+        </div>
+
+        <div class="slider">
+          <div class="row"><label>Cap height</label><input class="num" id="capnum" value="8" readonly></div>
+          <input type="range" id="cap" min="3" max="20" step="0.5" value="8">
+        </div>
+
+        <div class="slider">
+          <div class="row"><label>Typeface</label></div>
+          <button class="font-btn" id="font-btn">
+            <span class="fname" id="fb-name">Roboto</span>
+            <span class="fvar" id="fb-var">400</span>
+            <svg class="caret" width="8" height="7" viewBox="0 0 8 7"><polygon points="0,0 8,0 4,7" fill="currentColor"/></svg>
+          </button>
+
+          <!-- the picker -->
+          <div class="picker" id="picker" data-mode="takeover">
+            <div class="pk-panes">
+
+              <div class="pk-pane" data-pane="browse">
+                <div class="pk-head">
+                  <div class="pk-titlebar">
+                    <b>Typeface</b>
+                    <button class="pk-x" id="pk-close" title="Close">&times;</button>
+                  </div>
+                  <input class="pk-search" id="pk-search" placeholder="Search 1,942 families" autocomplete="off" spellcheck="false">
+                  <div class="pk-filters" id="pk-filters"></div>
+                </div>
+                <div class="pk-hint" id="pk-hint" hidden></div>
+                <div class="pk-list" id="pk-list" data-preview="both">
+                  <div class="pk-spacer" id="pk-spacer"></div>
+                  <p class="pk-empty" id="pk-empty" hidden></p>
+                </div>
+              </div>
+
+              <div class="pk-pane" data-pane="variants">
+                <div class="pk-head">
+                  <button class="pk-back" id="pk-back">&larr; all families</button>
+                  <div class="pk-titlebar"><b id="pk-step2-title">Roboto</b></div>
+                </div>
+                <div class="pk-vlist" id="pk-step2-body"></div>
+              </div>
+
+            </div>
+            <div class="pk-foot">
+              <span class="pk-sel" id="pk-sel">&mdash;</span>
+              <button class="pk-done" id="pk-done">Done</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div class="spike">
+  <span class="tag">SPIKE</span>
+  <div class="grp" id="t-view"><i>pane</i></div>
+  <div class="grp" id="t-mode"><i>open as</i></div>
+  <div class="grp" id="t-preview"><i>row</i></div>
+  <div class="grp" id="t-density"><i>density</i></div>
+  <div class="grp" id="t-theme"><i>theme</i></div>
+</div>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+
+// ── A/B state ────────────────────────────────────────────────────────────
+const OPTS = {
+  view:     { el: "t-view",     values: ["desktop", "narrow"],            init: "desktop" },
+  mode:     { el: "t-mode",     values: ["inline", "takeover"],           init: "takeover" },
+  preview:  { el: "t-preview",  values: ["name", "both", "sample"],       init: "both" },
+  density:  { el: "t-density",  values: ["comfortable", "compact"],       init: "comfortable" },
+  theme:    { el: "t-theme",    values: ["dark", "light"],                init: "dark" },
+};
+const S = Object.fromEntries(Object.entries(OPTS).map(([k, o]) => [k, o.init]));
+const ROW_H = { comfortable: { name: 44, both: 56, sample: 52 }, compact: { name: 32, both: 44, sample: 38 } };
+const rowH = () => ROW_H[S.density][S.preview];
+
+for (const [key, o] of Object.entries(OPTS)) {
+  const box = $(o.el);
+  for (const v of o.values) {
+    const b = document.createElement("button");
+    b.textContent = v;
+    b.onclick = () => { S[key] = v; paintToggles(); apply(); };
+    box.append(b);
+  }
+}
+function paintToggles() {
+  for (const [key, o] of Object.entries(OPTS)) {
+    [...$(o.el).querySelectorAll("button")].forEach((b) => b.classList.toggle("on", b.textContent === S[key]));
+  }
+}
+function apply() {
+  document.documentElement.dataset.theme = S.theme;
+  $("stage").dataset.view = S.view;
+  $("picker").dataset.mode = S.mode;
+  $("pk-list").dataset.preview = S.preview;
+  // takeover on a narrow pane covers the whole stage; on desktop just the rail
+  const host = S.mode === "takeover" && S.view === "narrow" ? $("stage") : $("rail");
+  if ($("picker").parentElement !== host && S.mode === "takeover") host.append($("picker"));
+  if (S.mode === "inline" && $("picker").parentElement !== $("font-btn").parentElement) {
+    $("font-btn").parentElement.append($("picker"));
+  }
+  render();
+}
+
+// ── catalog ──────────────────────────────────────────────────────────────
+const CATS = [["all", "all"], ["sans", "sans"], ["serif", "serif"], ["display", "display"], ["hand", "script"], ["mono", "mono"]];
+const SAMPLE = "Hamburgefonstiv 0123";
+let CATALOG = [], filtered = [], cat = "all", query = "";
+let picked = { family: "Roboto", variant: "400" };
+
+const catalog = await fetch("./catalog.json").then((r) => r.json());
+CATALOG = catalog;
+$("pk-search").placeholder = `Search ${CATALOG.length.toLocaleString()} families`;
+
+for (const [value, label] of CATS) {
+  const b = document.createElement("button");
+  b.className = "chip" + (value === "all" ? " on" : "");
+  b.textContent = label;
+  b.onclick = () => { cat = value; [...$("pk-filters").children].forEach((c) => c.classList.toggle("on", c === b)); refilter(); };
+  $("pk-filters").append(b);
+}
+
+function refilter() {
+  const q = query.trim().toLowerCase();
+  filtered = CATALOG.filter((e) => (cat === "all" || e.c === cat) && (!q || e.f.toLowerCase().includes(q)));
+  $("pk-list").scrollTop = 0;
+  render();
+}
+
+// ── lazy webfont loading, batched through the css2 API ───────────────────
+// css2 is CORS-open and needs no key; `text=` subsets the download to the
+// glyphs a row actually shows, which is what keeps 1,942 rows affordable.
+const loaded = new Set();
+let loadTimer = null;
+function requestFaces(families) {
+  const want = families.filter((f) => !loaded.has(f));
+  if (!want.length) return;
+  want.forEach((f) => loaded.add(f));
+  clearTimeout(loadTimer);
+  pending.push(...want);
+  loadTimer = setTimeout(flushFaces, 90);
+}
+let pending = [];
+function flushFaces() {
+  const batch = pending.splice(0, 24);
+  if (!batch.length) return;
+  const chars = [...new Set((batch.join("") + SAMPLE).split(""))].join("");
+  const qs = batch.map((f) => `family=${encodeURIComponent(f).replace(/%20/g, "+")}`).join("&");
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = `https://fonts.googleapis.com/css2?${qs}&text=${encodeURIComponent(chars)}&display=swap`;
+  link.onload = () => { document.fonts.ready.then(render); };
+  document.head.append(link);
+  if (pending.length) setTimeout(flushFaces, 60);
+}
+
+// ── virtualized list ─────────────────────────────────────────────────────
+const list = $("pk-list"), spacer = $("pk-spacer");
+list.addEventListener("scroll", () => render());
+
+function render() {
+  const h = rowH();
+  spacer.style.height = `${filtered.length * h}px`;
+  const top = list.scrollTop, vh = list.clientHeight || 360;
+  const first = Math.max(0, Math.floor(top / h) - 4);
+  const last = Math.min(filtered.length, Math.ceil((top + vh) / h) + 4);
+
+  const wanted = new Map();
+  for (let i = first; i < last; i++) wanted.set(i, filtered[i]);
+  requestFaces([...wanted.values()].map((e) => e.f));
+
+  // Reconcile by (index, family, preview mode) — index alone is wrong: after a
+  // search the same index holds a different family, and a stale row would keep
+  // rendering the old one. Cost me one screenshot to notice.
+  for (const el of [...spacer.children]) {
+    const i = Number(el.dataset.i);
+    if (!wanted.has(i) || el.dataset.key !== rowKey(i, wanted.get(i))) el.remove();
+    else wanted.delete(i);
+  }
+  for (const [i, e] of wanted) spacer.append(rowEl(i, e, h));
+  for (const el of spacer.children) {
+    const i = Number(el.dataset.i);
+    el.style.height = `${h}px`;
+    el.style.transform = `translateY(${i * h}px)`;
+  }
+  const narrowed = query.trim() || cat !== "all";
+  $("pk-hint").hidden = !narrowed || !filtered.length;
+  if (narrowed) $("pk-hint").textContent = `${filtered.length.toLocaleString()} of ${CATALOG.length.toLocaleString()}`;
+  $("pk-empty").hidden = filtered.length > 0;
+  if (!filtered.length) $("pk-empty").textContent = `No families match "${query.trim()}".`;
+}
+
+const rowKey = (i, e) => `${i}|${e.f}|${S.preview}|${e.f === picked.family ? 1 : 0}`;
+
+function rowEl(i, e, h) {
+  const row = document.createElement("div");
+  row.className = "pk-row" + (e.f === picked.family ? " sel" : "");
+  row.dataset.i = i;
+  row.dataset.key = rowKey(i, e);
+  row.style.height = `${h}px`;
+  row.innerHTML = `<div class="pk-main">
+      <div class="pk-face">${esc(e.f)}</div>
+      <div class="pk-sub">${S.preview === "sample" ? esc(SAMPLE) : esc(`${e.v.length} style${e.v.length === 1 ? "" : "s"} · ${e.c}`)}</div>
+    </div>
+    <div class="pk-meta">${e.x ? "VF " : ""}${Math.round(e.s / 1024)}K</div>`;
+  const face = row.querySelector(".pk-face");
+  face.style.fontFamily = `"${e.f}", var(--pf-sans)`;
+  if (S.preview === "sample") {
+    face.textContent = SAMPLE;
+    row.querySelector(".pk-sub").textContent = e.f;
+    row.querySelector(".pk-sub").style.fontFamily = "var(--pf-mono)";
+  }
+  if (S.preview === "both") row.querySelector(".pk-sub").textContent = `${e.v.length} style${e.v.length === 1 ? "" : "s"} · ${e.c}`;
+  row.onclick = () => choose(e);
+  return row;
+}
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+// ── choosing ─────────────────────────────────────────────────────────────
+function choose(e) {
+  const variant = e.v.includes(picked.variant) ? picked.variant : (e.v.includes("400") ? "400" : e.v[0]);
+  picked = { family: e.f, variant };
+  commit();
+  // 1,036 of the 1,942 families ship a single face. Stepping into a one-row
+  // weight list you immediately back out of is pure friction, so for those the
+  // row click IS the selection — the pane stays on the family list.
+  if (e.v.length > 1) openStep2(e);
+}
+
+function openStep2(e) {
+  $("pk-step2-title").textContent = e.f;
+  const body = $("pk-step2-body");
+  body.innerHTML = "";
+  requestFaces([e.f]);
+  for (const v of e.v) {
+    const b = document.createElement("button");
+    b.className = "vrow" + (v === picked.variant ? " on" : "");
+    b.innerHTML = `<span class="vsample">${esc(SAMPLE)}</span><span class="vlabel">${esc(vLabel(v))}</span>`;
+    const s = b.querySelector(".vsample");
+    s.style.fontFamily = `"${e.f}", var(--pf-sans)`;
+    s.style.fontWeight = v.replace("i", "");
+    s.style.fontStyle = v.endsWith("i") ? "italic" : "normal";
+    b.dataset.v = v;
+    b.onclick = () => { picked = { family: e.f, variant: v }; commit(); };
+    body.append(b);
+  }
+  // the weights actually need loading at their own weights
+  loadWeights(e);
+  $("pk-step2-body").scrollTop = 0;
+  $("picker").classList.add("at-variants");
+}
+
+// Repaint which weight is current without rebuilding the list — the pane stays
+// put while you audition weights, so the rows must not be torn down under you.
+function paintVariants() {
+  for (const b of $("pk-step2-body").children) b.classList.toggle("on", b.dataset.v === picked.variant);
+}
+// `full` drops the `text=` subset — the picked family is the one actually in
+// use on the plate, so it gets the whole face (which is what the real thing
+// downloads anyway). List/step-2 rows stay subsetted.
+function loadWeights(e, { full = false } = {}) {
+  const wght = [...new Set(e.v.map((v) => v.replace("i", "")))].sort((a, b) => a - b);
+  const ital = e.v.some((v) => v.endsWith("i"));
+  const axis = ital ? `ital,wght@${wght.map((w) => `0,${w}`).join(";")};${wght.map((w) => `1,${w}`).join(";")}`
+                    : `wght@${wght.join(";")}`;
+  const href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(e.f).replace(/%20/g, "+")}:${axis}`
+    + (full ? "" : `&text=${encodeURIComponent(SAMPLE)}`) + "&display=swap";
+  if (document.head.querySelector(`link[href="${CSS.escape(href)}"]`)) return;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = href;
+  link.onload = () => document.fonts.ready.then(render);
+  document.head.append(link);
+}
+function closeStep2() { $("picker").classList.remove("at-variants"); render(); }
+$("pk-back").onclick = closeStep2;
+
+const vLabel = (v) => {
+  const w = v.replace("i", ""), it = v.endsWith("i");
+  const names = { 100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular", 500: "Medium", 600: "SemiBold", 700: "Bold", 800: "ExtraBold", 900: "Black" };
+  return `${names[w] ?? w}${it ? " Italic" : ""}`;
+};
+
+function commit() {
+  $("fb-name").textContent = picked.family;
+  $("fb-name").style.fontFamily = `"${picked.family}", var(--pf-sans)`;
+  $("fb-name").style.fontWeight = picked.variant.replace("i", "");
+  $("fb-name").style.fontStyle = picked.variant.endsWith("i") ? "italic" : "normal";
+  $("fb-var").textContent = vLabel(picked.variant);
+  const plate = $("plate-text");
+  plate.style.fontFamily = `"${picked.family}", var(--pf-sans)`;
+  plate.style.fontWeight = picked.variant.replace("i", "");
+  plate.style.fontStyle = picked.variant.endsWith("i") ? "italic" : "normal";
+  const e = CATALOG.find((x) => x.f === picked.family);
+  if (e) loadWeights(e, { full: true });
+  $("pk-sel").innerHTML = `<b>${esc(picked.family)}</b> &middot; ${esc(vLabel(picked.variant))}`
+    + (e ? ` &middot; ${Math.round(e.s / 1024)}K` : "");
+  paintVariants();
+  render();
+}
+
+// ── wiring ───────────────────────────────────────────────────────────────
+$("font-btn").onclick = () => { $("picker").classList.add("open"); $("pk-search").focus(); render(); };
+const closePicker = () => { $("picker").classList.remove("open"); closeStep2(); };
+$("pk-close").onclick = closePicker;
+$("pk-done").onclick = closePicker;
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape" || !$("picker").classList.contains("open")) return;
+  if ($("picker").classList.contains("at-variants")) closeStep2(); else closePicker();
+});
+$("pk-search").addEventListener("input", (ev) => { query = ev.target.value; refilter(); });
+$("legend").addEventListener("input", (ev) => { $("plate-text").textContent = ev.target.value || " "; });
+$("cap").addEventListener("input", (ev) => {
+  $("capnum").value = ev.target.value;
+  $("plate-text").style.fontSize = `clamp(18px, ${Number(ev.target.value) * 0.75}vw, 96px)`;
+});
+
+refilter();
+paintToggles();
+apply();
+commit();
+$("picker").classList.add("open");
+</script>
+</div><!-- /page -->
+
+</body>
+</html>

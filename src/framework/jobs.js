@@ -4,7 +4,8 @@
 // kernel-bound module back.
 import { meshTo3MF } from "./geometry/threemf.js";
 import { exportablePartNames } from "./export-select.js";
-import { resolveFonts } from "./fonts.js";
+import { fontControlAllows, fontSourceAllowed, isNoFontSource } from "./font-source.js";
+import { fontsFor, resolveFonts } from "./fonts.js";
 import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
@@ -98,25 +99,106 @@ export async function handle(kernel, part, msg, post, opts = {}) {
   const label = (name) => part.parts[name].label ?? name;
   const exportName = (name) => part.parts[name].export?.name ?? name;
 
+  // Warnings this job raised before any sub-part was built — a refused font
+  // source, today. They ride the result's `warnings` (below) rather than only a
+  // progress phase, which the next busy chip overwrites milliseconds later: a
+  // tampered share link must leave a notice that is still readable once the
+  // build has landed. `part: null` because these belong to the job, not to any
+  // one sub-part.
+  const jobWarnings = [];
   try {
-    // Preload any part-declared fonts into the kernel before building — once per
-    // font name; a lazy dynamic import because this is async context (unlike the
-    // synchronous kernel-front), so it doesn't cost sync callers anything. The
-    // namespace shape differs between bundler and Node resolution (a bare
-    // `.default` here is undefined in every browser bundle) — normalize it.
+    // Params first: the fonts declaration may be a function of them, and a
+    // throwing derive() should surface before a font download rather than
+    // after one. Still inside the try, so that throw posts an error the UI can
+    // show instead of killing the worker turn silently (an endless spinner).
+    //
+    // The font-source check runs as resolveParams' sanitize hook, not after it:
+    // rewriting p[key] afterwards would leave derive() — and therefore `d`, and
+    // therefore the geometry — holding the refused value while build() saw the
+    // default.
+    const { p, d } = resolveParams(part, msg.params, (params) => {
+      // A param bound to a `type: "font"` control is user input — on a shared
+      // link it is arbitrary attacker-supplied text that `fonts: (p) => …` would
+      // turn into a fetch URL. Refuse out-of-`allow` values back to the part's
+      // own default rather than failing the build: a bad link should show the
+      // part, not an error page.
+      for (const [key, allow] of fontControlAllows(part)) {
+        const v = params[key];
+        if (isNoFontSource(v) || fontSourceAllowed(v, allow)) continue;
+        const message = `font source for "${key}" is not allowed — using the default`;
+        onProgress(message);          // the live chip…
+        jobWarnings.push({ part: null, message });   // …and the durable record
+        params[key] = part.defaults?.[key];
+      }
+    });
+    // Preload any part-declared fonts into the kernel before building. A lazy
+    // dynamic import because this is async context (unlike the synchronous
+    // kernel-front), so it doesn't cost sync callers anything. The namespace
+    // shape differs between bundler and Node resolution (a bare `.default`
+    // here is undefined in every browser bundle) — normalize it.
+    const fontsDecl = fontsFor(part, p);
+    // A nullish/empty source means "no font declared" for that name, not an
+    // error — e.g. `fonts: (p) => ({ face: p.face })` when p.face ended up
+    // undefined because the refusal above had no default to fall back to, or
+    // because the author simply left it unset. text2d falls back to the
+    // bundled Roboto for a name with no declared source. Passing it through
+    // to resolveFonts would throw ("must be bytes, a URL, or a thunk…"),
+    // producing exactly the error-page outcome the refusal above exists to
+    // avoid. Drop it here, centrally, rather than teaching resolveFonts about
+    // "empty is fine" (it still must error on a *present* source of the wrong
+    // shape — that's a real authoring bug). The progress note is what keeps a
+    // genuine typo (a name that never resolves) visible instead of silently
+    // swallowed.
+    const fontsToResolve = fontsDecl && Object.fromEntries(
+      Object.entries(fontsDecl).filter(([name, src]) => {
+        if (!isNoFontSource(src)) return true;
+        onProgress(`no font source declared for "${name}" — skipping`);
+        return false;
+      }),
+    );
+    // Gated on the part DECLARING `fonts` at all, not on this job having one to
+    // resolve — the prune below has to run on the empty declaration too, and a
+    // part with no `fonts` field must not touch the map (a host or test harness
+    // may have seeded kernel._fonts directly, e.g. bootManifoldKernel({ fonts })).
     if (part.fonts && kernel._fonts) {
-      const opentype = normalizeOpentype(await import("opentype.js"));
-      const bufs = await resolveFonts(part.fonts);
-      for (const [name, buf] of bufs) if (!kernel._fonts.has(name)) kernel._fonts.set(name, parseFont(opentype, buf, name));
+      const declared = fontsToResolve ?? {};
+      if (Object.keys(declared).length) {
+        onProgress("resolving fonts");
+        const opentype = normalizeOpentype(await import("opentype.js"));
+        const bufs = await resolveFonts(declared);
+        // Keyed on the SOURCE, not the name. A name is not a font identity: one
+        // worker outlives many parts (worker-rebind) and, once a font can come
+        // from a param, many picks — all of which reuse the same declared name.
+        // The old `if (!_fonts.has(name))` made the first bytes ever seen under a
+        // name permanent for the life of the worker.
+        //
+        // The source, not the resolved buffer: the two agree only because the
+        // resolver's own memo is unbounded and hands back the identical object
+        // every time. Key on that and this memo silently degrades to per-fetch
+        // identity — a re-parse per build — the day eviction is added there.
+        kernel._fontsBySource ??= new Map();
+        for (const [name, buf] of bufs) {
+          const source = declared[name];
+          let font = kernel._fontsBySource.get(source);
+          if (!font) { font = parseFont(opentype, buf, name); kernel._fontsBySource.set(source, font); }
+          kernel._fonts.set(name, font);
+        }
+      }
+      // Drop every name this build's declaration does not supply. `_fonts` is
+      // the kernel's, and the kernel outlives the job: without this, a face the
+      // user picked and then CLEARED stays registered under its old name, and an
+      // unconditional `k.text2d(s, { font: "face" })` goes on rendering it
+      // instead of falling back — the stale-registration bug of spec §5, one
+      // step narrower and just as silent.
+      for (const name of [...kernel._fonts.keys()]) {
+        if (!Object.hasOwn(declared, name)) kernel._fonts.delete(name);
+      }
     }
     // Register this part's declared imports on the kernel running this job — the
     // import-asset sibling of the fonts preload above. See ensureImports for the
     // lazy-error policy that keeps a STEP import inert until a build actually
     // calls k.import on it.
     if (part.imports) await ensureImports(kernel, part.imports, opts.importMeshes ?? null);
-    // Inside the try so a throwing derive posts an error the UI can show,
-    // instead of killing the worker turn silently (an endless spinner).
-    const { p, d } = resolveParams(part, msg.params);
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
     const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
     // Explicit selection (headless exportParts) overrides view-derived selection.
@@ -136,7 +218,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // first so a previous job's stragglers (an oracle build, an export) cannot be
       // misattributed to this build's first sub-part.
       kernel.takeBuildWarnings?.();
-      const warnings = [];
+      const warnings = [...jobWarnings];   // job-level notices ride along with the per-sub-part ones
       kernel.resetCacheStats?.(); // count hits/misses for just this job
       for (const [i, name] of msg.subparts.entries()) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
@@ -171,7 +253,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const useCache = msg.cache !== false;
       const meshes = [];
       kernel.takeBuildWarnings?.(); // discard a previous job's stragglers (same as generate)
-      const warnings = [];
+      const warnings = [...jobWarnings];
       for (const name of msg.subparts) {
         if (useCache) kernel.beginSubPart?.(name);
         try {
