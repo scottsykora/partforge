@@ -64,20 +64,6 @@ test("fitCone recovers half-angle", () => {
   expect(f.halfAngle).toBeCloseTo(halfAngle, 3);
 });
 
-test("fitTorus recovers major and minor radii", () => {
-  const pts = [], normals = [];
-  const R = 10, r = 2;
-  for (let i = 0; i < 32; i++) for (let j = 0; j < 16; j++) {
-    const u = 2 * Math.PI * i / 32, v = 2 * Math.PI * j / 16;
-    const radial = [Math.cos(u), Math.sin(u), 0];
-    normals.push([radial[0] * Math.cos(v), radial[1] * Math.cos(v), Math.sin(v)]);
-    pts.push([(R + r * Math.cos(v)) * radial[0], (R + r * Math.cos(v)) * radial[1], r * Math.sin(v)]);
-  }
-  const f = fitTorus(pts, normals);
-  expect(f.majorRadius).toBeCloseTo(R, 3);
-  expect(f.minorRadius).toBeCloseTo(r, 3);
-});
-
 test("a fit with too few points returns null rather than a garbage fit", () => {
   expect(fitPlane([[0,0,0],[1,0,0]])).toBeNull();
   expect(fitSphere([[0,0,0],[1,0,0],[0,1,0]])).toBeNull();
@@ -108,26 +94,63 @@ test("fitCylinder recovers axis/radius/rms on a partial arc (90°, 45°, 20°)",
   }
 });
 
-// Regression: on a torus, the axis is never the smallest eigenvalue (a torus
-// normal is only perpendicular to the axis at the crown/root of the tube) — it
-// is whichever eigenvalue sits at half the covariance's trace, given the tube
-// is fully revolved. This must hold even when the MAIN sweep (u) is only a half
-// turn; a naive point-centroid centring (which only lands on the axis for a
-// full main sweep) was also found, during review, to corrupt the downstream
-// radius even once the axis itself was fixed.
-test("fitTorus recovers major radius on a half main-sweep with the tube fully revolved", () => {
-  const pts = [], normals = [];
+// Regression, table-driven over every regime axisFromNormals has to tell apart:
+//
+//   - A full torus, and a torus whose MAIN sweep (u, revolution around the
+//     axis) is partially covered but whose TUBE (v) is fully revolved: the
+//     axis is never the smallest eigenvalue here (a torus normal is only
+//     perpendicular to the axis at the crown/root of the tube) — at u=180° it
+//     happens to be the largest of a near-degenerate pair, but at u=90°/45°
+//     the perpendicular-plane eigenvalues are no longer near-degenerate at
+//     all, and the axis is recoverable only as whichever eigenvalue sits at
+//     half the covariance's trace.
+//   - A fillet/round: the MAIN sweep is full but the TUBE is only partly swept
+//     (a=90°/60°/45°/30°). Here the perpendicular pair stays near-degenerate
+//     at ANY tube coverage (a full revolution symmetrizes it regardless of the
+//     tube), so the axis is the odd eigenvalue out of that pair — but which
+//     end (smallest or largest) it lands on flips with the tube angle, and the
+//     half-trace rule that handles the previous bullet gives the WRONG answer
+//     here (verified during review: half-trace picked axis [0.99,0.15,0]
+//     instead of [0,0,1] at a=60°). This is exactly the complementary failure
+//     mode that made a single fallback rule insufficient — the pair check has
+//     to run before the half-trace check, not the reverse.
+//
+// A first review round only added the u-partial-sweep cases and missed the
+// tube-partial (fillet) ones, which is precisely how the half-trace-only
+// version passed review while still being wrong for every non-90°/180° fillet
+// — the exact case Task 6's fillet-as-torus detection depends on. Every row
+// checks axis, both radii, AND a near-zero rms, not merely a non-null result.
+test("fitTorus recovers axis and both radii across partial main-sweep and partial tube-sweep coverage", () => {
   const R = 10, r = 2;
-  for (let i = 0; i < 32; i++) for (let j = 0; j < 16; j++) {
-    const u = (Math.PI * i) / 32, v = (2 * Math.PI * j) / 16;   // u spans only 180 degrees
-    const radial = [Math.cos(u), Math.sin(u), 0];
-    normals.push([radial[0] * Math.cos(v), radial[1] * Math.cos(v), Math.sin(v)]);
-    pts.push([(R + r * Math.cos(v)) * radial[0], (R + r * Math.cos(v)) * radial[1], r * Math.sin(v)]);
+  const torusCase = (uDeg, vDeg) => {
+    const uRad = (uDeg * Math.PI) / 180, vRad = (vDeg * Math.PI) / 180;
+    const pts = [], normals = [];
+    for (let i = 0; i < 32; i++) for (let j = 0; j < 16; j++) {
+      const u = (uRad * i) / 32, v = (vRad * j) / 16;
+      const radial = [Math.cos(u), Math.sin(u), 0];
+      normals.push([radial[0] * Math.cos(v), radial[1] * Math.cos(v), Math.sin(v)]);
+      pts.push([(R + r * Math.cos(v)) * radial[0], (R + r * Math.cos(v)) * radial[1], r * Math.sin(v)]);
+    }
+    return fitTorus(pts, normals);
+  };
+  const cases = [
+    ["full torus", 360, 360],
+    ["u=180°, tube full", 180, 360],
+    ["u=90°, tube full", 90, 360],
+    ["u=45°, tube full", 45, 360],
+    ["main full, tube a=90°", 360, 90],
+    ["main full, tube a=60°", 360, 60],
+    ["main full, tube a=45°", 360, 45],
+    ["main full, tube a=30°", 360, 30],
+  ];
+  for (const [label, uDeg, vDeg] of cases) {
+    const f = torusCase(uDeg, vDeg);
+    expect(f, label).not.toBeNull();
+    expect(Math.abs(f.axis[2]), label).toBeCloseTo(1, 6);
+    expect(f.majorRadius, label).toBeCloseTo(R, 3);
+    expect(f.minorRadius, label).toBeCloseTo(r, 3);
+    expect(f.rms, label).toBeLessThan(1e-6);
   }
-  const f = fitTorus(pts, normals);
-  expect(f).not.toBeNull();
-  expect(f.majorRadius).toBeCloseTo(R, 3);
-  expect(f.minorRadius).toBeCloseTo(r, 3);
 });
 
 // fitCone recovers its axis via fitPlane(normals), a different mechanism from

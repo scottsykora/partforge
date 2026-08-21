@@ -176,46 +176,60 @@ function basis(w) {
 
 // Recover a surface-of-revolution axis from its normal field's covariance.
 //
-// Two DIFFERENT invariants are in play here, and conflating them is what makes
-// this function easy to get wrong on a partial arc:
+// THREE regimes are in play, and each has its own exact invariant — collapsing
+// any two of them into a single rule is what made this function wrong twice
+// before landing on this version (see fix-round history in the task-2 report):
 //
-//   - Cylinder (a RULED surface — every normal is exactly perpendicular to the
-//     axis): the axis component of the normal has EXACTLY ZERO variance, at ANY
-//     arc width, even 1°. This is a hard algebraic fact — every normal lies in
-//     the plane perpendicular to the axis, full stop — not a consequence of
-//     sampling a full sweep. So the axis eigenvalue is always the smallest, and
-//     always negligible next to the largest. What a partial arc DOES break is
-//     the isotropy of the other two eigenvalues (full sweep -> equal; a narrow
-//     fan -> one much bigger than the other), which is irrelevant to finding the
-//     zero one.
-//   - Torus, given a FULLY REVOLVED tube (v over 2π — the standing precondition
-//     for calling this a torus at all, not merely a partial fillet arc): no
-//     normal is generally perpendicular to the axis, so there is no zero
-//     eigenvalue. But there is a SECOND exact invariant, independent of how
-//     little of the main sweep (u) is covered: every normal is unit length, so
-//     the covariance's trace is exactly the point count N regardless of
-//     sampling; and the axis component's variance, E[sin^2 v] = 1/2, depends
-//     ONLY on the fully-swept tube parameter v, never on u. So the axis
-//     eigenvalue is exactly HALF THE TRACE at any main-sweep width — verified
-//     numerically at 360/180/90/45/20/10 degrees of main sweep, all matching
-//     trace/2 to machine precision. The other two eigenvalues merely
-//     redistribute the remaining half however the u range happens to split it,
-//     which is why comparing eigenvalue GAPS (an earlier version of this
-//     function did, "closest pair vs. odd one out") breaks on a partial arc: a
-//     90° main sweep produces three genuinely distinct eigenvalues with no close
-//     pair to be the odd one out of, and gap comparison silently picks the wrong
-//     eigenvector instead of failing loudly.
+//   1. Cylinder, a RULED surface (every normal exactly perpendicular to the
+//      axis): the axis component has EXACTLY ZERO variance at ANY arc width,
+//      even 1°. Algebraic fact, not a full-sweep consequence — always the
+//      smallest eigenvalue, always negligible next to the largest.
+//   2. A surface whose MAIN sweep (u, the revolution around the axis) is FULL —
+//      a full torus, or a fillet/round of ANY tube angle swept all the way
+//      around — symmetrizes the plane PERPENDICULAR to the axis into isotropy
+//      (its two eigenvalues coincide) regardless of how little of the TUBE (v)
+//      is covered, because averaging a direction-dependent quantity over a full
+//      revolution erases that direction dependence. So the axis is the ODD
+//      EIGENVALUE OUT of a near-degenerate pair — and it can be the smallest
+//      member of that pair (e.g. a 30°-45° fillet, full main sweep) or the
+//      largest (e.g. a full torus, tube fully revolved too), depending on
+//      whether the tube's own axial variance ends up above or below its
+//      perpendicular share. Either way, "closest pair, odd one out" is exact
+//      here at any tube coverage.
+//   3. A surface whose main sweep is PARTIAL but whose tube IS fully revolved
+//      (a torus feature only partly swept around its main axis): now regime 2's
+//      isotropy is gone (the perpendicular pair is no longer equal — verified
+//      wrong on a 90°/45° main sweep, where gap-comparison mistakes one of a
+//      genuinely non-degenerate triple for a "pair"), but a DIFFERENT exact
+//      invariant survives: because every normal is unit length, the covariance
+//      trace is exactly the point count regardless of sampling, and the axis
+//      component's variance depends only on the (fully-swept) tube parameter,
+//      never on the main-sweep angle. So the axis eigenvalue sits at exactly
+//      HALF THE TRACE, independent of main-sweep width — verified numerically
+//      from 360° down to 10° of main sweep.
 //
-// So: check for the ruled-surface zero first (exact at any cylinder arc width,
-// and must run first because a narrow cylinder arc's {~0, small, large} pattern
-// would otherwise get misread by the trace/2 rule below); otherwise take
-// whichever eigenvalue sits closest to half the trace (exact at any torus
-// main-sweep width, given the standing full-tube-revolution precondition).
+// Regimes 2 and 3 are near-exact complements (a full main sweep satisfies both
+// the pair test and, often only coincidentally, the half-trace test; a partial
+// main sweep with a wide tube satisfies neither pair test but does satisfy
+// half-trace) — so the pair check MUST run before the half-trace fallback, not
+// the reverse, or a genuine fillet at an odd tube angle gets the wrong pick.
+//
+// Order: (1) ruled-surface zero, exact at any arc width; then (2) near-
+// degenerate pair -> odd one out, exact whenever the main sweep is full at any
+// tube coverage; then (3) half-trace, exact whenever the tube is full at any
+// main-sweep coverage. The pair test uses the SAME relative scale as the zero
+// test (not a separately-tuned constant): both are asking "is this gap
+// negligible next to the largest eigenvalue", just between different pairs of
+// eigenvalues, and these are unnormalised sums over an arbitrary point count so
+// only a relative comparison is meaningful for either.
 function axisFromNormals(normals) {
   const cov = [[0,0,0],[0,0,0],[0,0,0]];
   for (const n of normals) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) cov[i][j] += n[i]*n[j];
   const { values, vectors } = jacobiEigen(cov);
   if (values[0] < values[2] * ZERO_EIGEN_REL) return unit(vectors[0]);
+  const gapLow = values[1] - values[0], gapHigh = values[2] - values[1];
+  const pairEps = values[2] * ZERO_EIGEN_REL;
+  if (gapLow < pairEps || gapHigh < pairEps) return unit(gapLow < gapHigh ? vectors[2] : vectors[0]);
   const halfTrace = (values[0] + values[1] + values[2]) / 2;
   const best = [0, 1, 2].reduce((a, b) => (Math.abs(values[b] - halfTrace) < Math.abs(values[a] - halfTrace) ? b : a));
   return unit(vectors[best]);
