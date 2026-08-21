@@ -43,7 +43,7 @@ export function annulusPlate(rOut, rIn, h, segs = 32) {
     tri(positions, o0, o1, o2); tri(positions, o0, o2, o3);   // outer wall, normal outward
     tri(positions, n1, n0, n3); tri(positions, n1, n3, n2);   // bore wall, normal inward-facing
     tri(positions, o1, o0, n0); tri(positions, o1, n0, n1);   // bottom annulus, normal -Z
-    tri(positions, o3, n3, n2); tri(positions, o3, n2, o2);   // top annulus, normal +Z
+    tri(positions, o3, o2, n2); tri(positions, o3, n2, n3);   // top annulus, normal +Z
   }
   return { positions };
 }
