@@ -541,7 +541,7 @@ function solve(A, b) {
       for (let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
     }
   }
-  return M.map((row, i) => row[n] / row[i][i]);
+  return M.map((row, i) => row[n] / row[i]);
 }
 
 export function fitPlane(pts) {
@@ -603,15 +603,26 @@ function basis(w) {
   return [u, cross(w, u), w];
 }
 
-export function fitCylinder(pts, normals) {
-  if (pts.length < 6 || !normals || normals.length !== pts.length) return null;
-  // Every normal of a cylinder is perpendicular to its axis, so the normals span a
-  // plane whose own normal IS the axis. Recovering direction from the normal field
-  // rather than from the points is what makes this robust on a partial arc, where
-  // the points alone barely constrain it.
+// Axis of a surface of revolution, from its NORMAL field rather than its points — which
+// is what makes it robust on a partial arc, where the points alone barely constrain it.
+//
+// Which eigenvector is the axis depends on the surface, and getting this wrong is a real
+// trap (controller ruling R13). A cylinder's normals lie in a plane perpendicular to the
+// axis: covariance eigenvalues go {0, 1/2, 1/2} and the axis is the SMALLEST. A full
+// torus's normals sweep the whole sphere: eigenvalues go {1/4, 1/4, 1/2} and the axis is
+// the LARGEST. What is invariant across both is that two eigenvalues are near-degenerate
+// and the axis is the odd one out — so pick by which gap is wider, not by a fixed end.
+function axisFromNormals(normals) {
   const cov = [[0,0,0],[0,0,0],[0,0,0]];
   for (const n of normals) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) cov[i][j] += n[i]*n[j];
-  const direction = unit(jacobiEigen(cov).vectors[0]);
+  const { values, vectors } = jacobiEigen(cov);
+  const gapLow = values[1] - values[0], gapHigh = values[2] - values[1];
+  return unit(gapLow < gapHigh ? vectors[2] : vectors[0]);
+}
+
+export function fitCylinder(pts, normals) {
+  if (pts.length < 6 || !normals || normals.length !== pts.length) return null;
+  const direction = axisFromNormals(normals);
   const [u, v] = basis(direction);
   const c = mean(pts);
   const circle = fitCircle2D(pts.map((p) => { const d = sub(p, c); return [dot(d, u), dot(d, v)]; }));
@@ -665,11 +676,8 @@ export function fitCone(pts, normals) {
 
 export function fitTorus(pts, normals) {
   if (pts.length < 8 || !normals || normals.length !== pts.length) return null;
-  // A torus normal always lies in the plane containing the axis and the point, so
-  // the normal field's least-spread direction is the axis, same as the cylinder.
-  const cov = [[0,0,0],[0,0,0],[0,0,0]];
-  for (const n of normals) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) cov[i][j] += n[i]*n[j];
-  const axis = unit(jacobiEigen(cov).vectors[0]);
+  // NOT the smallest eigenvector — see axisFromNormals for why a torus inverts the choice.
+  const axis = axisFromNormals(normals);
   const c = mean(pts);
   // In the (radial, axial) half-plane a torus is a CIRCLE of the minor radius centred
   // at the major radius. Fitting that 2D circle recovers both radii at once.
