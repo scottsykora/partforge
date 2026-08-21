@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { resolve, dirname } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { detectBackend } from "../src/framework/backend-select.js";
+import { fontsFor } from "../src/framework/fonts.js";
 import { viewAnimations, evaluate, cueAt } from "../src/framework/animation.js";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
@@ -78,9 +79,13 @@ async function loadPart(partPath, usage) {
 
 // Pass the part's declared fonts through, mirroring the worker path (jobs.js) —
 // otherwise a part using a named font builds in the browser but dies headlessly
-// with `text2d: unknown font …`.
-const bootKernel = (part) => {
-  const opts = { fonts: part.fonts, imports: part.imports };
+// with `text2d: unknown font …`. A function-form `fonts` is resolved against
+// the CLI's base params; see "CLI limitation" in the design doc — a verify case
+// or animation frame that CHANGES the font param still builds with the
+// base-params face, because the kernel is booted once.
+const bootKernel = (part, params = {}) => {
+  const p = { ...(part.defaults ?? {}), ...params };
+  const opts = { fonts: fontsFor(part, p), imports: part.imports };
   const backend = process.env.PARTFORGE_BACKEND || detectBackend(part); // env: crash()'s NEEDS_OCCT retry
   return backend === "occt" ? bootOcctKernel(opts) : bootManifoldKernel(opts);
 };
@@ -238,7 +243,7 @@ const commands = {
         anim = byView.get(animView).find((x) => x.name === flags.animation);
       }
 
-      const kernel = await bootKernel(part);
+      const kernel = await bootKernel(part, baseParams);
 
       if (anim === null) {
         const files = await renderViews(kernel, part, view, { views, out: outDir, params: baseParams });

@@ -72,7 +72,7 @@ export default {
   meta: { title, units, background? },     // title string; units e.g. "mm"; background = 0xRRGGBB scene colour
   parameters,                              // the control-panel schema (array of sections — see below)
   defaults,                                // flat { paramKey: value } — seeds params + control values
-  fonts?,                                  // { name: source } — fonts a part's k.text2d() needs; framework preloads before build (see below)
+  fonts?,                                  // { name: source } — or (p) => ({ name: source }) when a control drives the typeface
   imports?,                                // { name: source } — STEP/STL/3MF files a part's k.import() needs; same preload timing as fonts (see below)
   derive?,                                 // (p) => d, or { group: (p, d) => {…}, … } — dependent values computed once per build
   parts: {                                 // named sub-parts; each builds ONE solid
@@ -631,6 +631,7 @@ Every control accepts `key`, `type`, `label`, `description`, `hidden`, `when` an
 | `"checkbox"` | an on/off box: ticked writes `on`, cleared writes `0` | `on` (default `1`) |
 | `"select"` | a dropdown | `options` |
 | `"radio"` | a segmented button row | `options` |
+| `"font"` | a typeface picker, or a URL field with no catalog | `allow`, `preview` |
 
 Numeric controls always show the number box: drag the slider *or* type an exact
 value. Typed values may be finer than `step` and clamp to `[min, max]` on commit.
@@ -644,6 +645,32 @@ each entry is both value and label — or the long form
 `defaults[key]` **must be one of them** (`select-default-not-in-options`; watch
 types, `12` is not `"12"`). An option's `description` surfaces as a hover tooltip
 on that one option, not as a ⓘ popover.
+
+**`allow` and `preview`** (font) configure the typeface control. `allow` lists the
+source kinds a **param-supplied** value may use — what the picker writes, or what
+arrives in a share link:
+
+| value | accepts |
+|---|---|
+| `"https"` | any `https:` URL. **The default** — omitting `allow` means `["https"]` |
+| `"gstatic"` | `https://fonts.gstatic.com` only (hostname-exact: a lookalike host is refused) |
+| `"asset"` | a `pfc-asset://` token — a font the host has stored for this part |
+
+Name as many as apply (`allow: ["gstatic", "asset"]`); anything unnamed is refused,
+which is how `http:`, `file:`, `data:` and `blob:` are closed off. The check is
+deliberately narrow — **it applies only to values that arrive as params.** A source
+you write into `fonts` yourself is code, not user input, and stays unrestricted:
+`fonts: { label: "https://cdn.example.com/Courier-Prime.ttf" }` keeps working
+whatever `allow` says. A refused param falls back to `defaults[key]`, and the build
+carries a warning naming the key rather than failing (lint's `font-source-scheme`
+catches the case where that default is itself refused). `allow` gates what the
+**picker fetches** too: a family whose files it refuses is dropped from the list
+rather than offered, and neither that family's name-preview face nor its weight
+samples are ever requested.
+
+`preview` is the sample string the picker's weight list renders each face in — set
+it when the generic sample shows the wrong glyphs (`preview: "0123456789"` for a
+part that letters digits). Defaults to `Hamburgefonstiv 0123`.
 
 **`"readout"` is not a control.** It has no `key`, never writes `params`, and can
 never be a preset target. It displays one output of `derive()`, named by
@@ -1318,6 +1345,24 @@ fonts: {
 
 Reference a font by name: `k.text2d("text", { font: "heading" })`. Omit the `font` option to use the bundled **Roboto** (Regular, SIL OFL 1.1) default.
 
+**Making the typeface a parameter.** Give `fonts` a function of params instead of a
+static object, and a `type: "font"` control can drive which face `text2d` uses —
+`src/parts/nameplate.js` is the reference:
+
+```js
+{ key: "face", type: "font", label: "Typeface" },   // in `parameters`
+fonts: (p) => (p.face ? { face: p.face } : {}),     // a function, not a static map
+k.text2d(p.label, { font: "face" }),                // only when p.face is set
+```
+
+An empty `face` declares nothing — `fonts` returns `{}`, and `text2d` falls back to
+the bundled Roboto — so the part still builds with no network access. A part with a
+fixed typeface needs none of this: a plain `{ name: source }` object is fine.
+
+The control's `allow` list bounds what a picked — or share-link-supplied — value may
+be, and defaults to `["https"]`; see the control-types table above. It does **not**
+constrain sources you declare yourself.
+
 **Build-time & curve semantics:**
 
 `text2d` is a **build-time operation** (not `derive()`), and **the curve representation differs by backend:**
@@ -1547,6 +1592,18 @@ returns instead:
 
 Pass `onDownload({ data, filename, mime })` to `mount()` to receive the exported bytes
 yourself (e.g. to download from a different origin) instead of partforge's own DOM download.
+
+- `fontCatalog` — a provider backing every `type: "font"` control in the part:
+
+  - `search(query, { limit }) → Promise<FontFamily[]>`, where a `FontFamily` is
+    `{ id, family, category, variants: [{ variant, label, url, bytes }],
+    menuUrl }`. `url` is what the picker writes into `params`; `menuUrl` is a
+    name-only subset used to draw the list row.
+  - `describe(source) → { family, variant } | null` — optional reverse lookup so
+    the closed control can name a face whose URL carries a hashed filename.
+
+  partforge ships no provider — a host supplies one, and without it every font
+  control renders as a URL field.
 
 **Showcase capture (the mount handle).** The handle can also render the user's *current*
 framing offscreen at a resolution independent of the window size and devicePixelRatio —
@@ -1983,6 +2040,15 @@ runtime authority for those cases), `reference-unknown` (a sub-part's
 `refVolumeDeltaPct`, `refBboxDelta` — but the sub-part declares no `reference`,
 so the deviation gate always reports status "skip") (warning).
 
+**Font controls** — `font-control-not-in-fonts` (a `type: "font"` control's
+`key` is not read by a function-form `fonts` — a static `fonts` object or a
+missing `fonts` field both provably can't depend on a param, so the picker
+changes a param and nothing else happens; the message names which of the two
+it is) (error); `font-source-scheme` (`defaults` holds a value for a font
+control that the control's own `allow` list would refuse — at build time it's
+swapped for `defaults[key]`, i.e. itself, so the part boots with no usable
+font; use a source `allow` accepts, or widen `allow`) (warning).
+
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.
 
@@ -2134,6 +2200,14 @@ unverified.
 `bbox`, `centerOfMass`, `boundsMin`, `boundsMax`, a componentwise vector `"<=[x,y,z]"` /
 `">=[x,y,z]"` where `*` skips an axis. The parser is strict — a malformed assertion
 fails loudly.
+
+**A part whose typeface is a parameter needs band assertions, not points.** Glyph
+advance widths differ by family, so a `text2d` sub-part's `bbox`/`volume` shifts with
+the picked face even when every other param is unchanged. Write `verify` bounds wide
+enough to hold across the fonts your `allow` list admits (a range, or `<=`/`>=`,
+rather than exact equality). `verify` runs against `defaults`, which is stable — the
+nameplate ships `face: ""` (the bundled Roboto), so its own `verify` cases don't
+need this, but a part whose default already names a specific face does.
 
 ```js
 verify: { expect: {

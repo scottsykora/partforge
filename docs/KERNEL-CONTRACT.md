@@ -463,7 +463,9 @@ sub-part and attaches `warnings: [{part, message}]` to the `meshes` /
 `capture-meshes` result when any were recorded, so a host can tell its user (or its
 agent) that the part on screen is missing a feature it asked for. A skipped op still
 console.warns as before; the channel is additive. Hosts that ignore the field see
-exactly the old behavior.
+exactly the old behavior. The same array also carries *job-level* notices that
+belong to no single sub-part — currently a font source refused by its control's
+`allow` list — as entries with `part: null`.
 
 ## Shape2D (2-D booleans)
 

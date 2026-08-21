@@ -16,8 +16,9 @@ import { VERIFY_RULES, resolveExpect } from "./rules-verify.js";
 import { ANIMATION_RULES } from "./rules-animations.js";
 import { PLACE_RULES } from "./rules-place.js";
 import { IMPORT_RULES } from "./rules-imports.js";
+import { FONT_RULES } from "./rules-fonts.js";
 
-export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES, ...IMPORT_RULES];
+export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES, ...IMPORT_RULES, ...FONT_RULES];
 
 // Every rule runs inside a guard. lintPart is called on a user-facing hosted path
 // (partforge-cloud's sandbox), and a linter that takes down the preview it exists to
