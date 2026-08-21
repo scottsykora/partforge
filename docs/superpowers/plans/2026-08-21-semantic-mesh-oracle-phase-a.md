@@ -22,6 +22,8 @@
 - **Report array caps** (Task 13, exact values): `MAX_SURFACES` 200, `MAX_EDGES` 400, `MAX_FEATURES` 120, `MAX_PATTERNS` 40, `MAX_RESIDUAL_REGIONS` 20, `MAX_SUGGESTION_STEPS` 60.
 - **Closed error-code set** (Task 14, exact strings): `not-manifold` | `too-large` | `empty` | `budget-exceeded` | `unreadable`. Adding a code without adding an `ERROR-PATTERNS.md` entry is incomplete work.
 - **On any build, test, or measure failure, grep `docs/ERROR-PATTERNS.md` for the symptom first.** It maps literal error text → cause → fix.
+- **Every fixture-based test must cover at least one ARBITRARY ORIENTATION**, not only axis-aligned geometry. Use the rotation helper in `test/helpers/mesh-fixtures.js` with a deliberately ugly angle triple such as (17°, 29°, 53°), and keep the axis-aligned case as well. This is not defensive padding: Task 3 shipped a defect that collapsed segmentation completely at a 0.01° tilt — boxes, cylinders and washers alike — and passed 53/53 because every fixture in the repo was built axis-aligned and origin-centred, so coplanar diagonals landed on bit-exact `0.0` by construction luck. Real CAD parts are never conveniently aligned to their own mesh frame.
+- **Never compare floats for exact equality** — not to `0`, not to each other. `topology.js` already owns the one definition of flatness (`FLAT_EPS`, surfaced as `edge.convexity === "flat"`); reuse it rather than declaring a second epsilon or testing `dihedral === 0`.
 - **Commit after every task.** Do not batch commits across tasks.
 
 ---
