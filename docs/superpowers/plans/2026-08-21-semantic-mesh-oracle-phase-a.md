@@ -1351,7 +1351,56 @@ function curvatureOf(topo, patch) {
   return vote > 0 ? "convex" : "concave";
 }
 
-export function surfaceGraph(topo, patches) {
+// Adjacent patches describing the SAME surface, merged before anything is numbered.
+// Segmentation can split one true surface in two — a bore tessellated coarse on one half
+// and fine on the other splits into two coaxial cylinder patches of identical radius
+// (controller ruling R25). Left unmerged those become two `surfaces`, and because Task 6
+// walks every concave cylinder independently and both fragments reach both end planes,
+// the SAME hole is detected twice with the SAME geometry-derived `key` — a collision that
+// breaks the stable-id invariant the whole report rests on.
+//
+// Merging here rather than deduplicating in Task 6 is deliberate: this stage is already
+// "merge patches into surfaces", the duplicate is a segmentation artefact rather than a
+// feature-rule concern, and fixing it at the source means no downstream rule has to know
+// the artefact exists.
+function mergeCoFamily(topo, patches) {
+  const merged = patches.map((p) => ({ ...p, faces: [...p.faces] }));
+  const owner = new Int32Array(topo.faceArea.length).fill(-1);
+  merged.forEach((p, i) => { for (const t of p.faces) owner[t] = i; });
+  const adjacent = (a, b) => merged[a].faces.some((t) =>
+    topo.faceEdges[t].some((ei) => {
+      const e = topo.edges[ei];
+      if (e.triB < 0) return false;
+      return owner[e.triA === t ? e.triB : e.triA] === b;
+    }));
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 0; i < merged.length && !changed; i++) {
+      if (!merged[i]) continue;
+      for (let j = i + 1; j < merged.length && !changed; j++) {
+        if (!merged[j] || !sameSurface(merged[i].fit, merged[j].fit) || !adjacent(i, j)) continue;
+        for (const t of merged[j].faces) owner[t] = i;
+        merged[i].faces.push(...merged[j].faces);
+        merged[i].area += merged[j].area;
+        merged[j] = null;
+        changed = true;   // restart: a merge can make a third patch adjacent
+      }
+    }
+  }
+  // Refit each merged patch so its parameters describe the WHOLE surface, not whichever
+  // fragment happened to be first — a half-bore's fit is right about radius but its
+  // `extent` covers only half the wall.
+  return merged.filter(Boolean).map((p) => {
+    if (p.faces.length === patches.find((q) => q.id === p.id).faces.length) return p;
+    const { pts, normals } = facePoints(topo, p.faces);
+    return { ...p, fit: refitAs(p.fit.type, pts, normals) ?? p.fit };
+  });
+}
+
+export function surfaceGraph(topo, rawPatches) {
+  const patches = mergeCoFamily(topo, rawPatches);
   const surfaces = patches.map((p, i) => ({
     id: `s${i}`, type: p.fit.type, fit: p.fit, faces: p.faces, area: p.area, loops: [],
     curvature: curvatureOf(topo, p),
