@@ -57,6 +57,86 @@ const SMOOTH_DIHEDRAL_MAX = Math.PI / 6;
 // actually protects genuinely different surfaces from merging.
 const FACET_K = 1.5;
 
+// `FACET_K * leverArm * |dihedral|` has NO ceiling: leverArm grows with facet
+// size without limit, so a large, coarsely-tessellated flat face (exactly the
+// shape a CAD exporter emits for a big plane — ONE quad) gets an arbitrarily
+// loose effective tolerance at a FIXED fold angle. Measured directly: two flat
+// quads hinged at 10°-29° merge into a single mis-typed "cylinder" patch at
+// every facet width from 5 to 100mm, a regression this dihedral+adaptive
+// design introduced (verified absent on the pre-adaptive code). The dihedral
+// gate alone can't catch this — 10-29° is exactly the range it's SUPPOSED to
+// let through for real curvature.
+//
+// The physical distinction: on a genuinely tessellated curve, `leverArm /
+// dihedral` (the IMPLIED RADIUS of curvature — see `impliedRadius`) is close
+// to CONSTANT and density-independent: every internal edge implies close to
+// the same radius, because that's what "the same curved surface, sampled at
+// different densities" means. On a flat-to-flat fold, that same ratio is
+// UNBOUNDED (a fixed design angle over an arbitrarily large facet), and
+// crucially there is only ONE such edge — a real polygon corner borders
+// exactly one other face along it, alone, with no repetition. A genuinely
+// curved patch, by contrast, always has at least one MORE internal edge with
+// a closely matching implied radius and sign nearby (the facet on the
+// curve's other side), because the curvature that produced this edge's fold
+// didn't stop existing one facet later.
+//
+// So the adaptive allowance is granted only when the candidate edge's fold
+// has a WITNESS: another edge of the same sign and comparable IMPLIED RADIUS,
+// either already confirmed inside the growing patch, or discovered in the
+// very same growth pass (see `established`/`sameFamily` in `segment`). A lone
+// fold, however permissive the raw sagitta arithmetic would allow, never
+// gets one.
+//
+// Comparing on implied radius rather than on raw dihedral matters, not just
+// as a style choice: measured directly on a flat plane tangent (G1-smooth) to
+// a cylinder wall, sharing one edge with it — the FIRST-order tangent
+// transition edge has EXACTLY HALF the dihedral of the wall's own internal
+// wall-to-wall edges (1.875° vs 3.75° at N=96; 0.9626° vs 1.925° at N=187 —
+// consistently a factor of 2, at every density tried, so this is a general
+// property of a tangent boundary, not a fixture artifact), while its
+// `leverArm` is IDENTICAL to the internal edge's. Raw-dihedral matching
+// would treat "half the internal step" as plausibly the same family (well
+// within a loose ratio bound) and merge the flat plane into the cylinder
+// through a small leaked chunk — reproduced directly before this fix.
+// Implied radius makes the gap explicit and large: the tangent edge's
+// leverArm/dihedral comes out at ~2x the wall's own true radius (~8mm vs the
+// fixture's actual r=4mm) at every density tried, a robust, structural
+// distinction (a G1-tangent boundary is HALF a facet-step removed from the
+// curve's own interior sampling, definitionally) rather than a coincidence
+// of one test case.
+//
+// `MATCH_RATIO` sits between that measured 1x (genuine internal consistency)
+// and 2x (the tangent-boundary artifact) gap: loose enough that a uniformly
+// tessellated surface's implied radius (identical edge to edge on every
+// fixture measured) clears it with margin, tight enough that the 2x tangent
+// artifact does not.
+const MATCH_RATIO = 1.5;
+
+// The radius of curvature this edge's fold IMPLIES, if it were one facet's
+// worth of sampling a circular arc: `leverArm` (the chord's perpendicular
+// throw) over the fold angle, since for small angles the two are related by
+// `leverArm ≈ R * dihedral`. Meaningless (and never called) for a flat
+// (dihedral = 0) edge.
+const impliedRadius = (leverArm, dihedral) => leverArm / Math.abs(dihedral);
+
+// Same sign (same convexity direction) and within a MATCH_RATIO factor of
+// each other in IMPLIED RADIUS — the corroboration test `established`/
+// `pending` signatures call to decide whether a candidate edge's fold is "the
+// same curvature sampled again" rather than an unrelated coincidence (a
+// design corner, or a tangent boundary onto a DIFFERENT surface — see the
+// comment on MATCH_RATIO for why implied radius, not raw dihedral, is what
+// gets compared).
+function sameFamily(sigA, sigB) {
+  if (sigA.sign !== sigB.sign) return false;
+  const ratio = sigA.R / sigB.R;
+  return ratio >= 1 / MATCH_RATIO && ratio <= MATCH_RATIO;
+}
+
+// The corroboration signature for one nonzero-dihedral edge: its convexity
+// sign and its implied radius. Built once, wherever an edge is about to enter
+// `established` or `pending`, rather than re-derived ad hoc at each compare.
+const familySignature = (edge, arm) => ({ sign: Math.sign(edge.dihedral), R: impliedRadius(arm, edge.dihedral) });
+
 // All five candidates over the same trial set, in ascending order of degrees of
 // freedom. Two different policies read this list for two different purposes
 // below (`bestFit` vs `growthFit`) — see the comment on `growthFit` for why one
@@ -187,19 +267,32 @@ function leverArm(topo, edge, nbFace) {
   return worst;
 }
 
-// The growth predicate proper: gate on fold sharpness FIRST (scale-invariant,
-// and what actually separates one surface from another — see
-// SMOOTH_DIHEDRAL_MAX), then accept if the candidate's worst-vertex deviation
-// from the standing fit is within whichever is larger of the global tolerance
-// or the facet-scaled chord-sagitta allowance (see FACET_K/leverArm). Taking
-// the max, not just the adaptive term, keeps this at least as permissive as
-// the un-adaptive check for coarse-relative-to-tolerance meshes where the flat
-// global `tol` was already enough; the adaptive term only ever widens things
-// further for a fine mesh whose own facet size would otherwise be the limiter.
-function admitGrowth(topo, edge, nb, fit, tol) {
-  if (Math.abs(edge.dihedral) > SMOOTH_DIHEDRAL_MAX) return false;
-  const adaptive = FACET_K * leverArm(topo, edge, nb) * Math.abs(edge.dihedral);
-  return faceDeviation(topo, nb, fit) <= Math.max(tol, adaptive);
+// Classifies one growth candidate against the standing fit. Returns
+// `{ verdict, leverArm }`. `tol` alone is NOT a safe unconditional pass for a
+// NONZERO-dihedral edge, even though it always was for the pre-adaptive
+// design: `tol` is a fraction of the WHOLE MESH's bbox diagonal, so one large
+// feature anywhere in the same part (a big flat face, say) inflates it for
+// every OTHER feature too — measured directly, a coarse flat plane merely
+// 50mm across was enough to inflate `tol` past the true, small deviation of a
+// genuine flat-to-cylinder transition edge, letting it through with no
+// dihedral or corroboration check ever firing. So only a PERFECTLY flat
+// continuation (`dihedral === 0` — the two triangles of one tessellated
+// quad, or any edge a real curve's own sampling makes exactly coplanar) is
+// unconditionally safe ("accept", no corroboration: there is no fold to be
+// wrong about). Every other edge within the smoothness ceiling — whether it
+// clears the plain `tol` or only the facet-scaled adaptive allowance — is
+// "pending": admissible only with a witness (see `sameFamily`/
+// `familySignature` and the growth loop in `segment`), because a nonzero
+// fold is exactly the case a witness-less allowance can quietly get wrong.
+// `leverArm` is reported whenever the edge clears the dihedral gate so the
+// caller can build a corroboration signature without recomputing it.
+function classifyCandidate(topo, edge, nb, fit, tol) {
+  if (Math.abs(edge.dihedral) > SMOOTH_DIHEDRAL_MAX) return { verdict: "reject" };
+  const dev = faceDeviation(topo, nb, fit);
+  if (edge.dihedral === 0) return { verdict: dev <= tol ? "accept" : "reject" };
+  const arm = leverArm(topo, edge, nb);
+  const adaptive = FACET_K * arm * Math.abs(edge.dihedral);
+  return { verdict: dev <= Math.max(tol, adaptive) ? "pending" : "reject", leverArm: arm };
 }
 
 // Seed order: bucket faces by quantized normal on the Gauss sphere, then visit the
@@ -238,6 +331,14 @@ export function segment(topo, opts = {}) {
     let fit = growthFit(...Object.values(facePoints(topo, faces)), tol);
     if (!fit) { owner[seed] = -1; continue; }
 
+    // Corroboration signatures (sign + implied radius, see `familySignature`)
+    // for the nonzero-dihedral edges this patch has already grown across,
+    // carried across REFIT_ROUNDS (not reset per round) so a later, coarser
+    // round can corroborate against curvature evidence an earlier round already
+    // established — see `sameFamily` / `classifyCandidate` for why a "pending"
+    // (adaptive-only) candidate needs a witness here before it can be admitted.
+    const established = [];
+
     // Grow, refit, grow again. Refitting matters: a patch seeded on one facet of a
     // cylinder starts out fitted as a PLANE, and only once it has grown across a few
     // facets does the cylinder fit become the better description. Without the refit
@@ -251,13 +352,41 @@ export function segment(topo, opts = {}) {
       // thousands of full fits per part. A deviation check against the standing fit is
       // the standard region-growing formulation, is orders of magnitude cheaper, and is
       // correctness-neutral because the refit below re-converges the patch each round.
-      const queue = [...faces];
       let grew = false;
-      while (queue.length) {
-        for (const { face: nb, edge } of neighbourEdges(topo, queue.pop())) {
-          if (owner[nb] >= 0 || topo.faceArea[nb] <= 0) continue;
-          if (!admitGrowth(topo, edge, nb, fit, tol)) continue;   // see helper above
-          faces.push(nb); owner[nb] = patches.length; queue.push(nb); grew = true;
+      // Fixed-point loop: a pass may admit some faces outright (flat `tol`) and
+      // shelve others as "pending" (adaptive-only, awaiting a witness). Promoting
+      // a pending candidate can itself supply the witness a DIFFERENT pending
+      // candidate was waiting on (or open up brand-new neighbours), so the whole
+      // scan repeats until a full pass changes nothing.
+      let changed = true;
+      while (changed) {
+        changed = false;
+        const queue = [...faces];
+        const pending = [];
+        const pendingOwned = new Set();
+        while (queue.length) {
+          for (const { face: nb, edge } of neighbourEdges(topo, queue.pop())) {
+            if (owner[nb] >= 0 || topo.faceArea[nb] <= 0 || pendingOwned.has(nb)) continue;
+            const { verdict, leverArm: arm } = classifyCandidate(topo, edge, nb, fit, tol);
+            if (verdict === "reject") continue;
+            if (verdict === "accept") {
+              faces.push(nb); owner[nb] = patches.length; queue.push(nb);
+              grew = true; changed = true;
+              if (edge.dihedral !== 0) established.push(familySignature(edge, arm));
+              continue;
+            }
+            pending.push({ nb, edge, leverArm: arm }); pendingOwned.add(nb);   // verdict === "pending"
+          }
+        }
+        for (const p of pending) {
+          if (owner[p.nb] >= 0) continue;   // claimed by another pending promotion this pass
+          const sig = familySignature(p.edge, p.leverArm);
+          const witnessed = established.some((s) => sameFamily(s, sig)) ||
+            pending.some((q) => q !== p && sameFamily(familySignature(q.edge, q.leverArm), sig));
+          if (!witnessed) continue;
+          faces.push(p.nb); owner[p.nb] = patches.length;
+          established.push(sig);
+          grew = true; changed = true;
         }
       }
       if (!grew) break;

@@ -109,3 +109,101 @@ test("a fixture with one legitimate quad and one isolated sliver triangle report
   expect(patches[0].faces.length).toBe(2);
   expect(unassigned).toEqual([2]);
 });
+
+// Regression: the dihedral-gated adaptive tolerance that makes the sweep above
+// pass (FACET_K * leverArm * |dihedral|, see segment.js) has NO ceiling on its
+// own — leverArm grows with facet size without limit, so two flat quads hinged
+// at a fixed design angle (10-29 degrees, comfortably under the 30-degree
+// smoothness gate) merge into a single mis-typed "cylinder" patch once EITHER
+// side is coarse enough to be just one quad, which is exactly how a CAD
+// exporter emits a large flat face. Verified directly against the shipped
+// dihedral-gate-only design before the corroboration fix below existed: this
+// merged at every angle 10-29 degrees and every facet width 5-100mm tried.
+// The fix (see `sameFamily`/`familySignature` in segment.js) requires a
+// candidate fold to have a WITNESS — another edge of matching sign and implied
+// radius — before the adaptive allowance may admit it; a lone design corner,
+// unlike a real tessellated curve, never has one.
+function hingedPlanes(thetaRad, w) {
+  const a0 = [-w, 0, 0], a1 = [-w, 10, 0], a2 = [0, 10, 0], a3 = [0, 0, 0];
+  const c = Math.cos(thetaRad), s = Math.sin(thetaRad);
+  const rotate = (p) => [p[0] * c - p[2] * s, p[1], p[0] * s + p[2] * c];
+  const b0 = [0, 0, 0], b1 = [0, 10, 0], b2 = rotate([w, 10, 0]), b3 = rotate([w, 0, 0]);
+  const positions = [];
+  const tri = (out, a, b, cc) => out.push(...a, ...b, ...cc);
+  tri(positions, a0, a3, a2); tri(positions, a0, a2, a1);
+  tri(positions, b0, b3, b2); tri(positions, b0, b2, b1);
+  return { positions };
+}
+
+const HINGE_ANGLE_DEG_AND_WIDTH = [
+  [10, 5], [10, 20], [10, 50], [10, 100],
+  [20, 5], [20, 20], [20, 50], [20, 100],
+  [29, 5], [29, 20], [29, 50], [29, 100],
+];
+
+test.for(HINGE_ANGLE_DEG_AND_WIDTH)(
+  "two flat quads hinged at %i degrees (facet width %i) stay two separate planes",
+  ([thetaDeg, w]) => {
+    const { patches, unassigned } = run(hingedPlanes((thetaDeg * Math.PI) / 180, w));
+    const tag = `theta=${thetaDeg} w=${w}`;
+    expect(patches.length, tag).toBe(2);
+    expect(patches.every((p) => p.fit.type === "plane"), tag).toBe(true);
+    expect(unassigned.length, tag).toBe(0);
+  },
+);
+
+// Regression, the harder direction of the same bug: a flat plane that is
+// TANGENT (G1-smooth, zero dihedral right at the seam) to a cylinder wall is
+// the case the smoothness gate cannot reject on dihedral alone, since a true
+// tangent boundary's own immediate fold is small by construction — exactly
+// the range the gate is SUPPOSED to admit for real curvature. Verified
+// directly: with the flat side coarsely tessellated as ONE quad, the entire
+// flat face folded into a patch mis-typed "cylinder" covering nearly the
+// whole model, both via the raw adaptive term (no ceiling) and via a second,
+// independent mechanism — `tol` itself is a fraction of the WHOLE MESH's bbox
+// diagonal, so the large flat quad's own size inflated `tol` enough to admit
+// the transition edge outright, bypassing the dihedral/corroboration logic
+// entirely (a nonzero-dihedral edge that merely happens to also clear the
+// flat, unrelated-feature-inflated `tol`). Fixed by routing every nonzero-
+// dihedral edge through corroboration regardless of which tolerance path
+// admits it (see `classifyCandidate` in segment.js) — only a PERFECTLY flat
+// (dihedral === 0) continuation skips the witness requirement.
+function cylinderPlusTangentPlane(r, h, segs, w) {
+  const positions = [];
+  const p = (i, z) => [r * Math.cos((2 * Math.PI * i) / segs), r * Math.sin((2 * Math.PI * i) / segs), z];
+  const tri = (out, a, b, c) => out.push(...a, ...b, ...c);
+  for (let i = 0; i < segs; i++) {
+    const a = p(i, 0), b = p(i + 1, 0), c = p(i + 1, h), d = p(i, h);
+    tri(positions, a, b, c); tri(positions, a, c, d);           // wall
+    tri(positions, [0, 0, 0], b, a);                             // bottom cap
+    tri(positions, [0, 0, h], d, c);                             // top cap
+  }
+  // Flat quad tangent to the wall at theta=0: shares the vertical edge
+  // (r,0,0)-(r,0,h), extending in the wall's own tangent direction there
+  // (+Y) rather than curving — the flat continuation a fillet-to-plane
+  // blend or a straight extrusion wall would produce.
+  const q0 = [r, 0, 0], q1 = [r, 0, h], q2 = [r, w, h], q3 = [r, w, 0];
+  tri(positions, q0, q3, q2); tri(positions, q0, q2, q1);
+  return { positions };
+}
+
+const TANGENT_SEGS_AND_WIDTH = [
+  [48, 5], [48, 20], [48, 50],
+  [96, 5], [96, 20], [96, 50],
+];
+
+test.for(TANGENT_SEGS_AND_WIDTH)(
+  "a flat quad tangent to a %i-segment cylinder wall (width %i) stays typed plane, not folded into the cylinder",
+  ([segs, w]) => {
+    const topo = buildTopology(cylinderPlusTangentPlane(4, 10, segs, w));
+    const totalFaces = topo.faceArea.length;
+    const tangentFaces = [totalFaces - 2, totalFaces - 1];
+    const { patches, unassigned } = segment(topo);
+    const tag = `segs=${segs} w=${w}`;
+    const flatPatch = patches.find((p) => tangentFaces.every((i) => p.faces.includes(i)));
+    expect(flatPatch, tag).toBeDefined();
+    expect(flatPatch.fit.type, tag).toBe("plane");
+    expect(flatPatch.faces.length, tag).toBe(2);
+    expect(unassigned.length, tag).toBe(0);
+  },
+);
