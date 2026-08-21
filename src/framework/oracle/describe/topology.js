@@ -15,7 +15,7 @@ import { meshTriangles } from "../bvh.js";
 // tessellated cylinder's wall edges are genuinely convex at a small angle and must
 // NOT be swallowed by this, so the band is much tighter than any facet step a
 // reasonable chord tolerance produces: 1e-4 rad is ~0.006°.
-const FLAT_EPS = 1e-4;
+export const FLAT_EPS = 1e-4;
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a, b) => [a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]];

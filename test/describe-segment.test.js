@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { buildTopology } from "../src/framework/oracle/describe/topology.js";
 import { segment } from "../src/framework/oracle/describe/segment.js";
-import { boxMesh, cylinderMesh, annulusPlate } from "./helpers/mesh-fixtures.js";
+import { boxMesh, cylinderMesh, annulusPlate, rotateMesh } from "./helpers/mesh-fixtures.js";
 
 const run = (mesh) => segment(buildTopology(mesh));
 
@@ -207,3 +207,53 @@ test.for(TANGENT_SEGS_AND_WIDTH)(
     expect(unassigned.length, tag).toBe(0);
   },
 );
+
+// Regression: EVERY fixture in this file, and in mesh-fixtures.js itself, is
+// axis-aligned and origin-centred — which is exactly why a real bug shipped
+// passing 53/53 while broken for essentially every REAL (i.e. arbitrarily
+// oriented) part. `classifyCandidate` in segment.js once tested a coplanar
+// quad diagonal's flatness with `dihedral === 0`: bit-exact zero only when
+// the mesh happens to be axis-aligned (a lucky cancellation in the
+// underlying cross/dot/atan2 chain topology.js derives it through). Rotate
+// the identical, still-perfectly-flat geometry and the same diagonal comes
+// out as noise like `-9.4e-17` — a real zero with the wrong bit pattern —
+// which routed it into the witness-requiring "pending" path, where a lone
+// seed triangle's only internal edge has nothing to corroborate against.
+// Verified directly before this fix: a 0.01-degree tilt was enough to
+// collapse `cylinderMesh(4,10,48)` into single-triangle plane patches, and
+// rotating a box, cylinder, or washer by an arbitrary (17°, 29°, 53°) failed
+// at every density tried, while `b242be8` (round 2, pre-epsilon-fix) handled
+// the identical rotated meshes correctly — this was a round-3 regression,
+// not a pre-existing gap. Fixed by using `topology.js`'s own tested
+// `convexity === "flat"` band instead of reinventing a second, exact-equality
+// epsilon. These rotated variants are permanent, alongside (not instead of)
+// the axis-aligned tests above, since the two failure modes are independent.
+const TILT = [(17 * Math.PI) / 180, (29 * Math.PI) / 180, (53 * Math.PI) / 180];
+
+test("a rotated box still segments into exactly six planes", () => {
+  const { patches, unassigned } = run(rotateMesh(boxMesh(10, 20, 5), TILT));
+  expect(patches.length).toBe(6);
+  expect(patches.every((p) => p.fit.type === "plane")).toBe(true);
+  expect(unassigned.length).toBe(0);
+});
+
+test.for([16, 48, 96])("a rotated cylinder at %i segments still segments into two planes and one cylinder of radius 4", (segs) => {
+  const { patches, unassigned } = run(rotateMesh(cylinderMesh(4, 10, segs), TILT));
+  const tag = `segs=${segs}`;
+  const types = patches.map((p) => p.fit.type).sort();
+  expect(types, tag).toEqual(["cylinder", "plane", "plane"]);
+  const cyl = patches.find((p) => p.fit.type === "cylinder");
+  expect(cyl.fit.radius, tag).toBeCloseTo(4, 2);
+  expect(unassigned.length, tag).toBe(0);
+});
+
+test.for([16, 48, 96])("a rotated washer at %i segments still segments into two annulus planes and cylinders at r=4 and r=10", (segs) => {
+  const { patches, unassigned } = run(rotateMesh(annulusPlate(10, 4, 3, segs), TILT));
+  const tag = `segs=${segs}`;
+  expect(patches.length, tag).toBe(4);
+  const radii = patches.filter((p) => p.fit.type === "cylinder").map((p) => p.fit.radius).sort((a, b) => a - b);
+  expect(radii.length, tag).toBe(2);
+  expect(radii[0], tag).toBeCloseTo(4, 1);
+  expect(radii[1], tag).toBeCloseTo(10, 1);
+  expect(unassigned.length, tag).toBe(0);
+});

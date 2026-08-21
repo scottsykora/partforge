@@ -275,21 +275,39 @@ function leverArm(topo, edge, nbFace) {
 // every OTHER feature too — measured directly, a coarse flat plane merely
 // 50mm across was enough to inflate `tol` past the true, small deviation of a
 // genuine flat-to-cylinder transition edge, letting it through with no
-// dihedral or corroboration check ever firing. So only a PERFECTLY flat
-// continuation (`dihedral === 0` — the two triangles of one tessellated
-// quad, or any edge a real curve's own sampling makes exactly coplanar) is
-// unconditionally safe ("accept", no corroboration: there is no fold to be
-// wrong about). Every other edge within the smoothness ceiling — whether it
-// clears the plain `tol` or only the facet-scaled adaptive allowance — is
-// "pending": admissible only with a witness (see `sameFamily`/
-// `familySignature` and the growth loop in `segment`), because a nonzero
-// fold is exactly the case a witness-less allowance can quietly get wrong.
-// `leverArm` is reported whenever the edge clears the dihedral gate so the
-// caller can build a corroboration signature without recomputing it.
+// dihedral or corroboration check ever firing. So only a genuinely FLAT
+// continuation (`edge.convexity === "flat"` — the two triangles of one
+// tessellated quad, or any edge a real curve's own sampling makes coplanar)
+// is unconditionally safe ("accept", no corroboration: there is no fold to
+// be wrong about).
+//
+// This MUST be `topology.js`'s own `convexity` band (`|dihedral| <
+// FLAT_EPS`), never an exact `dihedral === 0` check: a genuinely coplanar
+// pair of triangles only comes out bit-exact zero when the mesh happens to
+// be axis-aligned, which is a property of the FIXTURE, not of the geometry.
+// Rotate the very same mesh by an arbitrary angle and the identical
+// coplanar diagonal computes to something like `-9.4e-17` — a real zero
+// with the wrong bit pattern from accumulated floating-point rounding in
+// the cross/dot/atan2 chain `topology.js` derives it through. An exact
+// equality test sends that edge down the "pending" path instead, where its
+// own numerically-noisy implied radius has nothing to corroborate against
+// (it is the ONLY internal edge a single seed triangle has), and growth
+// never gets past one triangle — verified directly: every mesh in this
+// module's own test fixtures is axis-aligned, which is exactly why this
+// shipped working and rotating ANY of them (a cylinder, a box, a washer,
+// at every density tried) collapsed growth entirely.
+//
+// Every other edge within the smoothness ceiling — whether it clears the
+// plain `tol` or only the facet-scaled adaptive allowance — is "pending":
+// admissible only with a witness (see `sameFamily`/`familySignature` and
+// the growth loop in `segment`), because a nonzero fold is exactly the
+// case a witness-less allowance can quietly get wrong. `leverArm` is
+// reported whenever the edge clears the dihedral gate so the caller can
+// build a corroboration signature without recomputing it.
 function classifyCandidate(topo, edge, nb, fit, tol) {
   if (Math.abs(edge.dihedral) > SMOOTH_DIHEDRAL_MAX) return { verdict: "reject" };
   const dev = faceDeviation(topo, nb, fit);
-  if (edge.dihedral === 0) return { verdict: dev <= tol ? "accept" : "reject" };
+  if (edge.convexity === "flat") return { verdict: dev <= tol ? "accept" : "reject" };
   const arm = leverArm(topo, edge, nb);
   const adaptive = FACET_K * arm * Math.abs(edge.dihedral);
   return { verdict: dev <= Math.max(tol, adaptive) ? "pending" : "reject", leverArm: arm };
@@ -372,7 +390,7 @@ export function segment(topo, opts = {}) {
             if (verdict === "accept") {
               faces.push(nb); owner[nb] = patches.length; queue.push(nb);
               grew = true; changed = true;
-              if (edge.dihedral !== 0) established.push(familySignature(edge, arm));
+              if (edge.convexity !== "flat") established.push(familySignature(edge, arm));
               continue;
             }
             pending.push({ nb, edge, leverArm: arm }); pendingOwned.add(nb);   // verdict === "pending"

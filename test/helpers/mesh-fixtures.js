@@ -47,3 +47,32 @@ export function annulusPlate(rOut, rIn, h, segs = 32) {
   }
   return { positions };
 }
+
+// Applies an arbitrary rotation (Euler angles in radians, X then Y then Z) to
+// a mesh's flat `positions` array. Exists because EVERY fixture above is
+// axis-aligned and origin-centred, which is not incidental to a real bug this
+// module's own tests once missed entirely: a coplanar quad diagonal's
+// dihedral computes to bit-exact `0.0` only when the mesh happens to be
+// axis-aligned (a lucky cancellation in the underlying cross/dot/atan2
+// chain); rotate the identical, still-perfectly-flat geometry and the same
+// diagonal comes out as noise like `-9.4e-17` — a real zero with the wrong
+// bit pattern. Code in `segment.js` that tested `dihedral === 0` passed every
+// axis-aligned fixture in this file while being completely broken for any
+// rotated (i.e. almost every REAL) part. `rotateMesh` lets the segmentation
+// suite prove recovery does not depend on axis alignment, by running the same
+// fixtures through an arbitrary, deliberately unremarkable rotation.
+export function rotateMesh({ positions }, [rx, ry, rz]) {
+  const cx = Math.cos(rx), sx = Math.sin(rx);
+  const cy = Math.cos(ry), sy = Math.sin(ry);
+  const cz = Math.cos(rz), sz = Math.sin(rz);
+  const out = new Array(positions.length);
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i], y = positions[i+1], z = positions[i+2];
+    const y1 = y*cx - z*sx, z1 = y*sx + z*cx;           // rotate about X
+    const x2 = x*cy + z1*sy, z2 = -x*sy + z1*cy;         // rotate about Y
+    const x3 = x2*cz - y1*sz, y3 = x2*sz + y1*cz;        // rotate about Z
+    out[i] = x3; out[i+1] = y3; out[i+2] = z2;
+  }
+  return { positions: out };
+}
+
