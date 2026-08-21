@@ -17,6 +17,7 @@
 //
 // Pure leaf. See spec §2.3.
 import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus, deviationOf } from "./fit.js";
+import { ransacPatches } from "./ransac.js";
 
 // Fit acceptance band, as a fraction of the mesh's bbox diagonal. A CAD
 // tessellation's chord error is bounded and small; this sits an order of magnitude
@@ -433,5 +434,16 @@ export function segment(topo, opts = {}) {
 
   const unassigned = [];
   for (let t = 0; t < owner.length; t++) if (owner[t] < 0 && topo.faceArea[t] > 0) unassigned.push(t);
+
+  // Region growing is connectivity-bound; RANSAC is not. Anything growth could not
+  // claim gets one consensus pass before it is declared residual, so a surface split
+  // into islands by a crossing feature is recovered rather than reported as a hole in
+  // the description. `opts.ransac === false` skips it — used by ransac.js's own tests
+  // and by the budget path in accept.js.
+  if (opts.ransac !== false && unassigned.length) {
+    const mop = ransacPatches(topo, unassigned, tol);
+    patches.push(...mop.patches);
+    return { patches, unassigned: mop.unassigned };
+  }
   return { patches, unassigned };
 }
