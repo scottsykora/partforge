@@ -196,7 +196,16 @@ const faceNormalOf = (topo, t) => [topo.faceNormal[3*t], topo.faceNormal[3*t+1],
 // All three vertices of a face, so a fit sees the real surface rather than a cloud
 // of centroids — a cylinder fitted from centroids alone comes out systematically
 // under-radius by the sagitta of one facet.
-function facePoints(topo, faces) {
+//
+// Exported: this is the same helper `ransac.js` and `surface-graph.js` both need
+// (a point/normal cloud for a face set is not specific to region growing), and it
+// used to exist as three near-identical private copies. `ransac.js` imports it
+// from here rather than keeping its own — a function declaration, not a `const`,
+// specifically so the resulting segment.js <-> ransac.js circular import resolves
+// cleanly (function declarations are hoisted and live before either module's
+// top-level code runs, unlike a `const` binding, which would be in its temporal
+// dead zone at the point the cycle closes).
+export function facePoints(topo, faces) {
   const pts = [], normals = [];
   for (const t of faces) {
     const n = faceNormalOf(topo, t);

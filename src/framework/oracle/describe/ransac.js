@@ -13,6 +13,7 @@
 //
 // Pure leaf. See spec §2.3.
 import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus, deviationOf } from "./fit.js";
+import { facePoints } from "./segment.js";
 
 const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 const unit = (a) => { const n = Math.hypot(a[0], a[1], a[2]); return n > 0 ? [a[0]/n, a[1]/n, a[2]/n] : [0, 0, 0]; };
@@ -77,19 +78,6 @@ function faceCentroid(topo, t) {
   }
   return [c[0]/3, c[1]/3, c[2]/3];
 }
-function facePoints(topo, faces) {
-  const pts = [], normals = [];
-  for (const t of faces) {
-    const n = faceNormalOf(topo, t);
-    for (let k = 0; k < 3; k++) {
-      const v = topo.tris[3*t + k] * 3;
-      pts.push([topo.verts[v], topo.verts[v+1], topo.verts[v+2]]);
-      normals.push(n);
-    }
-  }
-  return { pts, normals };
-}
-
 // Worst distance from a face's three vertices to a fitted primitive. Exported because
 // segment.js's growth predicate needs exactly the same question answered exactly the same
 // way; the point-to-primitive distance itself lives in fit.js (ruling R19), so there is
