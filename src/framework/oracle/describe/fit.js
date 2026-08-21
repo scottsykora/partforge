@@ -174,65 +174,26 @@ function basis(w) {
   return [u, cross(w, u), w];
 }
 
-// Recover a surface-of-revolution axis from its normal field's covariance.
-//
-// THREE regimes are in play, and each has its own exact invariant — collapsing
-// any two of them into a single rule is what made this function wrong twice
-// before landing on this version (see fix-round history in the task-2 report):
-//
-//   1. Cylinder, a RULED surface (every normal exactly perpendicular to the
-//      axis): the axis component has EXACTLY ZERO variance at ANY arc width,
-//      even 1°. Algebraic fact, not a full-sweep consequence — always the
-//      smallest eigenvalue, always negligible next to the largest.
-//   2. A surface whose MAIN sweep (u, the revolution around the axis) is FULL —
-//      a full torus, or a fillet/round of ANY tube angle swept all the way
-//      around — symmetrizes the plane PERPENDICULAR to the axis into isotropy
-//      (its two eigenvalues coincide) regardless of how little of the TUBE (v)
-//      is covered, because averaging a direction-dependent quantity over a full
-//      revolution erases that direction dependence. So the axis is the ODD
-//      EIGENVALUE OUT of a near-degenerate pair — and it can be the smallest
-//      member of that pair (e.g. a 30°-45° fillet, full main sweep) or the
-//      largest (e.g. a full torus, tube fully revolved too), depending on
-//      whether the tube's own axial variance ends up above or below its
-//      perpendicular share. Either way, "closest pair, odd one out" is exact
-//      here at any tube coverage.
-//   3. A surface whose main sweep is PARTIAL but whose tube IS fully revolved
-//      (a torus feature only partly swept around its main axis): now regime 2's
-//      isotropy is gone (the perpendicular pair is no longer equal — verified
-//      wrong on a 90°/45° main sweep, where gap-comparison mistakes one of a
-//      genuinely non-degenerate triple for a "pair"), but a DIFFERENT exact
-//      invariant survives: because every normal is unit length, the covariance
-//      trace is exactly the point count regardless of sampling, and the axis
-//      component's variance depends only on the (fully-swept) tube parameter,
-//      never on the main-sweep angle. So the axis eigenvalue sits at exactly
-//      HALF THE TRACE, independent of main-sweep width — verified numerically
-//      from 360° down to 10° of main sweep.
-//
-// Regimes 2 and 3 are near-exact complements (a full main sweep satisfies both
-// the pair test and, often only coincidentally, the half-trace test; a partial
-// main sweep with a wide tube satisfies neither pair test but does satisfy
-// half-trace) — so the pair check MUST run before the half-trace fallback, not
-// the reverse, or a genuine fillet at an odd tube angle gets the wrong pick.
-//
-// Order: (1) ruled-surface zero, exact at any arc width; then (2) near-
-// degenerate pair -> odd one out, exact whenever the main sweep is full at any
-// tube coverage; then (3) half-trace, exact whenever the tube is full at any
-// main-sweep coverage. The pair test uses the SAME relative scale as the zero
-// test (not a separately-tuned constant): both are asking "is this gap
-// negligible next to the largest eigenvalue", just between different pairs of
-// eigenvalues, and these are unnormalised sums over an arbitrary point count so
-// only a relative comparison is meaningful for either.
-function axisFromNormals(normals) {
+// Recover a RULED SURFACE's (a cylinder's) axis from its normal field's
+// covariance. Every normal of a cylinder is exactly perpendicular to the axis,
+// so the axis component of the normal has EXACTLY ZERO variance — an algebraic
+// fact, not a consequence of sampling a full sweep, so it holds at any arc
+// width down to a sliver (verified to 0.5°) and survives real tessellation
+// facet noise (a cylinder's facet normals still average to exactly
+// perpendicular-to-axis, since faceting only perturbs direction WITHIN that
+// perpendicular plane). The axis is therefore always the smallest eigenvalue's
+// eigenvector, unconditionally — no fallback needed, because this function is
+// only ever called for a ruled surface. (A torus does NOT have this property —
+// its normal is only perpendicular to the axis at the crown/root of the tube —
+// so fitTorus recovers its axis a different way entirely: see the comment
+// there. Two earlier fix rounds tried to extend this same normals-only
+// covariance trick to the torus case via gap-comparison and half-trace rules;
+// both were provably wrong on some combination of partial main-sweep and
+// partial tube-sweep coverage, which is why fitTorus no longer calls this.)
+function ruledSurfaceAxis(normals) {
   const cov = [[0,0,0],[0,0,0],[0,0,0]];
   for (const n of normals) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) cov[i][j] += n[i]*n[j];
-  const { values, vectors } = jacobiEigen(cov);
-  if (values[0] < values[2] * ZERO_EIGEN_REL) return unit(vectors[0]);
-  const gapLow = values[1] - values[0], gapHigh = values[2] - values[1];
-  const pairEps = values[2] * ZERO_EIGEN_REL;
-  if (gapLow < pairEps || gapHigh < pairEps) return unit(gapLow < gapHigh ? vectors[2] : vectors[0]);
-  const halfTrace = (values[0] + values[1] + values[2]) / 2;
-  const best = [0, 1, 2].reduce((a, b) => (Math.abs(values[b] - halfTrace) < Math.abs(values[a] - halfTrace) ? b : a));
-  return unit(vectors[best]);
+  return unit(jacobiEigen(cov).vectors[0]);
 }
 
 export function fitCylinder(pts, normals) {
@@ -241,7 +202,7 @@ export function fitCylinder(pts, normals) {
   // plane whose own normal IS the axis. Recovering direction from the normal field
   // rather than from the points is what makes this robust on a partial arc, where
   // the points alone barely constrain it.
-  const direction = axisFromNormals(normals);
+  const direction = ruledSurfaceAxis(normals);
   const [u, v] = basis(direction);
   const c = mean(pts);
   const circle = fitCircle2D(pts.map((p) => { const d = sub(p, c); return [dot(d, u), dot(d, v)]; }));
@@ -293,54 +254,96 @@ export function fitCone(pts, normals) {
   return { type: "cone", apex, direction: axis, halfAngle, ...errors(devs) };
 }
 
+// Search the minor radius r that makes {p_i - r*n_i} as coplanar as possible
+// (see fitTorus for why that particular objective picks out the true r), using
+// a golden-section minimisation. FIXED iteration counts throughout — no
+// data-dependent stopping criterion — because this module's whole contract is
+// pure, reproducible fits (a later stage memoizes by content hash, so a search
+// that iterated a variable number of times depending on floating-point noise
+// would poison that cache even for byte-identical input).
+//
+// The objective, `fitPlane({p_i - r*n_i}).rms`, is not guaranteed unimodal
+// over its whole domain (it can wobble before settling near the true r), so a
+// blind golden-section search over the full range risks converging to a local
+// dip instead of the global minimum. A coarse, evenly-spaced scan finds a
+// bracket around whichever sample is smallest — cheap, and robust to a
+// non-unimodal objective, because it evaluates the entire range rather than
+// trusting a local descent — and golden-section then refines within that
+// bracket, where the objective is well-behaved (essentially quadratic near a
+// true minimum for exact or near-exact data).
+const TORUS_R_COARSE_STEPS = 48;   // scan resolution: bracket-finding, not final precision
+const TORUS_R_REFINE_ITERS = 40;   // golden-section iterations inside the bracket
+
+function torusMinorRadius(pts, normals) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const p of pts) for (let i = 0; i < 3; i++) { if (p[i] < lo[i]) lo[i] = p[i]; if (p[i] > hi[i]) hi[i] = p[i]; }
+  // No candidate minor radius can exceed half the bounding-box diagonal: every
+  // point of {p_i - r*n_i} would already have to reach outside the box the
+  // input itself lives in.
+  const rMax = Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) / 2;
+  if (!(rMax > 0)) return 0;
+  const planarity = (r) => {
+    const derived = pts.map((p, i) => sub(p, scale(normals[i], r)));
+    const pf = fitPlane(derived);
+    return pf ? pf.rms : Infinity;   // a degenerate derived set is an infinitely bad r, not a crash
+  };
+  const samples = [];
+  for (let i = 0; i < TORUS_R_COARSE_STEPS; i++) samples.push((rMax * (i + 1)) / TORUS_R_COARSE_STEPS);
+  let bestI = 0, bestVal = Infinity;
+  for (let i = 0; i < TORUS_R_COARSE_STEPS; i++) {
+    const val = planarity(samples[i]);
+    if (val < bestVal) { bestVal = val; bestI = i; }
+  }
+  let a = bestI > 0 ? samples[bestI - 1] : samples[0] / 2;
+  let b = bestI < TORUS_R_COARSE_STEPS - 1 ? samples[bestI + 1] : Math.min(rMax, samples[bestI] * 1.5);
+  const GOLDEN = (Math.sqrt(5) - 1) / 2;
+  let c = b - GOLDEN*(b-a), d = a + GOLDEN*(b-a);
+  let fc = planarity(c), fd = planarity(d);
+  for (let k = 0; k < TORUS_R_REFINE_ITERS; k++) {
+    if (fc < fd) { b = d; d = c; fd = fc; c = b - GOLDEN*(b-a); fc = planarity(c); }
+    else { a = c; c = d; fc = fd; d = a + GOLDEN*(b-a); fd = planarity(d); }
+  }
+  return (a + b) / 2;
+}
+
 export function fitTorus(pts, normals) {
   if (pts.length < 8 || !normals || normals.length !== pts.length) return null;
-  // A torus normal always lies in the plane containing the axis and the point, so
-  // its covariance is degenerate the same way a cylinder's is — but the axis is
-  // whichever eigenvalue sits at half the trace, not unconditionally the
-  // smallest one; see axisFromNormals for the (verified) reasoning.
-  const axis = axisFromNormals(normals);
-  const [u, v] = basis(axis);
-  // For a torus, the tube cross-section is ITSELF a circle, so the outward
-  // normal at any surface point points directly away from that cross-section's
-  // own centre — i.e. `p - r*n` (for the true minor radius r) collapses every
-  // point back onto the MAIN circle (radius R, centred on the axis), regardless
-  // of how little of the main sweep is covered. That main-circle point's AXIAL
-  // coordinate is therefore CONSTANT (the tube-centre direction is perpendicular
-  // to the axis by construction), which turns "solve for r and that constant"
-  // into a plain 1-D linear regression: dot(p,axis) = centreAxial + r*dot(n,axis).
+  // A torus's tube cross-section is ITSELF a circle, so the outward normal at
+  // any surface point p points directly away from that cross-section's own
+  // centre: for the TRUE minor radius r, `t = p - r*n` collapses every point
+  // back onto the MAIN circle (radius R, centred on the axis) — regardless of
+  // how little of the main sweep OR the tube is covered. Equivalently: `t` is
+  // COPLANAR (all points lie in the plane through the centre, perpendicular to
+  // the axis) exactly when r is correct, and increasingly scattered out of any
+  // plane the more r is wrong in either direction. That gives a single scalar
+  // objective — the planarity residual of {p_i - r*n_i} — whose minimiser IS
+  // the minor radius, and whose minimising plane's normal IS the axis.
   //
-  // This replaces centring on the raw point mean, which a first review round
-  // caught giving the wrong answer on a partial main sweep: the point centroid
-  // only lands ON the axis when the sweep is full, and any off-axis error in it
-  // corrupts every downstream "distance from axis" magnitude (unlike fitCylinder,
-  // whose circle fit works in full 2-D (u,v) coordinates and so self-corrects for
-  // an off-centre pivot; collapsing to a 1-D radial magnitude first, as the
-  // original torus fit did, throws that self-correcting information away).
-  let sx = 0, sy = 0, sxx = 0, sxy = 0;
-  const na = normals.map((n) => dot(n, axis)), pa = pts.map((p) => dot(p, axis));
-  for (let i = 0; i < pts.length; i++) { sx += na[i]; sy += pa[i]; sxx += na[i]*na[i]; sxy += na[i]*pa[i]; }
-  const N = pts.length; sx /= N; sy /= N; sxx /= N; sxy /= N;
-  const denom = sxx - sx*sx;
-  // Denominator is the variance of the normal's axial component — i.e. how much
-  // of the tube is actually covered. Near zero means the tube sweep is too thin
-  // to separate the minor radius from the centre's axial position at all (a
-  // cylinder or a flat annulus in disguise), not something to divide by.
-  if (!(Math.abs(denom) > 1e-9)) return null;
-  const rSigned = (sxy - sx*sy) / denom;
-  const centreAxial = sy - rSigned*sx;
-  const minorRadius = Math.abs(rSigned);
+  // This replaces two earlier, and both wrong, attempts to recover the axis
+  // from the NORMAL FIELD ALONE (a gap-comparison rule, then a half-trace
+  // rule): each was exact in one of {full main sweep, full tube sweep} and
+  // silently wrong in the other, because normals alone don't carry a single
+  // invariant that survives an arbitrary combination of partial main-sweep and
+  // partial tube-sweep coverage. Using POSITIONS AND NORMALS TOGETHER removes
+  // the ambiguity entirely: coplanarity of the derived point set is a property
+  // of the actual 3-D shape, not of how the sweep happened to be sampled.
+  const minorRadius = torusMinorRadius(pts, normals);
   if (!(minorRadius > 0)) return null;
-  const uv = pts.map((p, i) => {
-    const q = sub(p, scale(normals[i], rSigned));
-    return [dot(q, u), dot(q, v)];
-  });
+  const derived = pts.map((p, i) => sub(p, scale(normals[i], minorRadius)));
+  const pf = fitPlane(derived);
+  if (!pf) return null;
+  const axis = pf.normal;
+  const [u, v] = basis(axis);
+  // `pf.normal`/`pf.offset` give the axis and the plane's distance from the
+  // origin; the plane's IN-PLANE position (the centre's u,v coordinates) still
+  // needs a 2-D circle fit, same as fitCylinder's origin recovery.
+  const uv = derived.map((t) => [dot(t, u), dot(t, v)]);
   const circle = fitCircle2D(uv);
   if (!circle || !(circle.radius > minorRadius)) return null;   // degenerate / self-intersecting
   const center = [
-    circle.cu*u[0] + circle.cv*v[0] + centreAxial*axis[0],
-    circle.cu*u[1] + circle.cv*v[1] + centreAxial*axis[1],
-    circle.cu*u[2] + circle.cv*v[2] + centreAxial*axis[2],
+    circle.cu*u[0] + circle.cv*v[0] + pf.offset*axis[0],
+    circle.cu*u[1] + circle.cv*v[1] + pf.offset*axis[1],
+    circle.cu*u[2] + circle.cv*v[2] + pf.offset*axis[2],
   ];
   const devs = pts.map((p) => {
     const d = sub(p, center);
