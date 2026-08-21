@@ -1164,7 +1164,7 @@ git commit -m "feat(describe): deterministic RANSAC mop-up for unclaimed faces"
 - Test: `test/describe-surface-graph.test.js`
 
 **Interfaces:**
-- Consumes: `buildTopology` (Task 1), `segment` (Tasks 3–4).
+- Consumes: `buildTopology` (Task 1), `segment` (Tasks 3–4), and from `fit.js`: `fitPlane`, `fitSphere`, `fitCylinder`, `fitCone`, `fitTorus`. `facePoints(topo, faces)` is the same helper `segment.js` already defines — export it from there rather than writing a third copy (`ransac.js` has one too; fold all three onto one export as part of this task).
 - Produces: `surfaceGraph(topo, patches) → { surfaces, arcs }` where
   `surfaces[i] = { id: "s0", type, fit, faces, area, loops, curvature }` where `curvature` is
   `"convex" | "concave" | null` (null for planes — see controller ruling R10) and `loops` is an
@@ -1350,6 +1350,39 @@ function curvatureOf(topo, patch) {
   if (Math.abs(vote) < 1e-12) return null;
   return vote > 0 ? "convex" : "concave";
 }
+
+// Do two fits describe the same surface? Same primitive type, and parameters agreeing
+// within a relative band — coaxial cylinders of equal radius, coplanar planes of equal
+// normal and offset, and so on. Relative, never absolute: these are millimetre parts but
+// the code must not assume a scale. Compare directions with |dot| so an antiparallel axis
+// (the same line, traversed the other way) still matches.
+const SAME_REL = 1e-3;
+const closeRel = (a, b) => Math.abs(a - b) <= Math.max(Math.abs(a), Math.abs(b), 1) * SAME_REL;
+const sameDir = (a, b) => Math.abs(a[0]*b[0] + a[1]*b[1] + a[2]*b[2]) > 1 - SAME_REL;
+
+function sameSurface(a, b) {
+  if (a.type !== b.type) return false;
+  if (a.type === "plane") return sameDir(a.normal, b.normal) && closeRel(Math.abs(a.offset), Math.abs(b.offset));
+  if (a.type === "sphere") return closeRel(a.radius, b.radius) && closeRel(0, dist(a.center, b.center));
+  if (a.type === "cylinder") {
+    // Coaxial means parallel AND collinear: parallel axes at different offsets are two
+    // different bores of the same size, which must NOT merge.
+    const d = sub(a.axis.origin, b.axis.origin);
+    const along = dot(d, b.axis.direction);
+    const perp = Math.hypot(d[0]-along*b.axis.direction[0], d[1]-along*b.axis.direction[1], d[2]-along*b.axis.direction[2]);
+    return closeRel(a.radius, b.radius) && sameDir(a.axis.direction, b.axis.direction) && perp <= a.radius * SAME_REL;
+  }
+  if (a.type === "cone") return sameDir(a.direction, b.direction) && closeRel(a.halfAngle, b.halfAngle) && closeRel(0, dist(a.apex, b.apex));
+  if (a.type === "torus") return sameDir(a.axis, b.axis) && closeRel(a.majorRadius, b.majorRadius) && closeRel(a.minorRadius, b.minorRadius);
+  return false;
+}
+
+// Re-run one specific fit over a merged patch's points. Not `bestFit`: the merged patch is
+// already classified, and re-classifying could flip its type on a fragment boundary.
+const refitAs = (type, pts, normals) => ({
+  plane: () => fitPlane(pts), sphere: () => fitSphere(pts), cylinder: () => fitCylinder(pts, normals),
+  cone: () => fitCone(pts, normals), torus: () => fitTorus(pts, normals),
+}[type]?.() ?? null);
 
 // Adjacent patches describing the SAME surface, merged before anything is numbered.
 // Segmentation can split one true surface in two — a bore tessellated coarse on one half
