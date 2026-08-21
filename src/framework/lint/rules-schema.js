@@ -104,6 +104,22 @@ function collectPresetBundles(part) {
 
 const defaultKeys = (part) => new Set(Object.keys(part?.defaults ?? {}));
 
+// What a control can actually edit: one finite scalar. Non-finite numbers are out
+// with the rest — a slider cannot show NaN, and neither NaN nor Infinity survives
+// a round trip through JSON or a source rewrite.
+const isEditableValue = (v) =>
+  typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
+
+// Name a value for a finding's message: the reader needs to know WHICH default is
+// wrong and what it is, and `typeof []` ("object") tells them neither.
+const describeValue = (v) => {
+  if (Array.isArray(v)) return "an array";
+  if (v === null) return "a null";
+  if (typeof v === "number") return `a ${Number.isNaN(v) ? "NaN" : String(v)}`;
+  if (v === undefined) return "an undefined";
+  return `a ${typeof v}`;
+};
+
 // Walk one WhenCondition, calling onKey(key) for every param key it reads and
 // onOp(op) for every operator name it uses. allOf/anyOf/not recurse; a bare
 // `{ key: value }` entry counts as reading `key` with no operator to check.
@@ -188,6 +204,32 @@ export const SCHEMA_RULES = [
         .map(({ d, path }) => err("control-key-not-in-defaults",
           `control key "${d.key}" is not in \`defaults\``,
           `Add "${d.key}" to \`defaults\`${suggest(d.key, [...known]) ? `, or correct it to "${suggest(d.key, [...known])}"` : ""} — a control whose key is absent from defaults is silently dead and never reaches the build.`,
+          `${path}.key`));
+    },
+  },
+  {
+    // A control edits ONE value, and the widgets read and write it as a scalar:
+    // a slider over an array renders NaN, a checkbox over an object writes
+    // `true` over it. It is dead in the same silent way control-key-not-in-defaults
+    // is — the part builds, the panel renders, the control does nothing usable —
+    // which is why this is an error rather than a warning.
+    //
+    // Only a key a CONTROL is bound to. `defaults` also seeds `p` for build(), so
+    // parking a table or a point list there for the build to read is legitimate
+    // authoring and none of lint's business.
+    id: "control-default-not-primitive",
+    run: ({ part }) => {
+      // Same guard as control-key-not-in-defaults: bail only when `defaults`
+      // isn't a plain object at all (missing-defaults already reports that).
+      if (!isPlainObject(part?.defaults)) return [];
+      const defaults = part.defaults;
+      return collectDescriptors(part)
+        .filter(({ container }) => !container)
+        .filter(({ d }) => typeof d.key === "string" && Object.hasOwn(defaults, d.key))
+        .filter(({ d }) => !isEditableValue(defaults[d.key]))
+        .map(({ d, path }) => err("control-default-not-primitive",
+          `control "${d.key}" is bound to ${describeValue(defaults[d.key])} default`,
+          `Give "${d.key}" a number, string or boolean default — a control writes one scalar, so it cannot edit this, and a host that saves panel settings back into \`defaults\` cannot write it either.`,
           `${path}.key`));
     },
   },
