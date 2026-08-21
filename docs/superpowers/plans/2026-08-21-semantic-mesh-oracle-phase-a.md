@@ -1400,12 +1400,19 @@ function mergeCoFamily(topo, patches) {
   const merged = patches.map((p) => ({ ...p, faces: [...p.faces] }));
   const owner = new Int32Array(topo.faceArea.length).fill(-1);
   merged.forEach((p, i) => { for (const t of p.faces) owner[t] = i; });
-  const adjacent = (a, b) => merged[a].faces.some((t) =>
-    topo.faceEdges[t].some((ei) => {
-      const e = topo.edges[ei];
-      if (e.triB < 0) return false;
-      return owner[e.triA === t ? e.triB : e.triA] === b;
-    }));
+  // NOTE: adjacency is deliberately NOT required (controller ruling R26). A plane
+  // interrupted by a boss, or a bore crossed by a slot, comes out of segmentation as two
+  // or more DISCONNECTED patches of identical geometry — and growth never routes them
+  // through `unassigned`, so Task 4's mop-up never sees them either. They are one surface;
+  // the fact that a feature crosses it does not make it two. The `loops` array below
+  // preserves the island structure, so anything downstream that genuinely needs the
+  // disjointness can still read it, while every feature rule gets the one surface it
+  // should be reasoning about.
+  //
+  // The risk this accepts: two genuinely independent same-geometry faces — the two feet of
+  // a bracket lying in one plane — also merge. That is the right trade for this oracle.
+  // A hole is a hole whichever foot it sits in, and the alternative silently splits every
+  // interrupted surface, which breaks hole detection outright.
 
   let changed = true;
   while (changed) {
@@ -1413,7 +1420,7 @@ function mergeCoFamily(topo, patches) {
     for (let i = 0; i < merged.length && !changed; i++) {
       if (!merged[i]) continue;
       for (let j = i + 1; j < merged.length && !changed; j++) {
-        if (!merged[j] || !sameSurface(merged[i].fit, merged[j].fit) || !adjacent(i, j)) continue;
+        if (!merged[j] || !sameSurface(merged[i].fit, merged[j].fit)) continue;
         for (const t of merged[j].faces) owner[t] = i;
         merged[i].faces.push(...merged[j].faces);
         merged[i].area += merged[j].area;
