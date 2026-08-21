@@ -132,7 +132,7 @@ export function annulusPlate(rOut, rIn, h, segs = 32) {
     tri(positions, o0, o1, o2); tri(positions, o0, o2, o3);   // outer wall, normal outward
     tri(positions, n1, n0, n3); tri(positions, n1, n3, n2);   // bore wall, normal inward-facing
     tri(positions, o1, o0, n0); tri(positions, o1, n0, n1);   // bottom annulus, normal -Z
-    tri(positions, o3, n3, n2); tri(positions, o3, n2, o2);   // top annulus, normal +Z
+    tri(positions, o3, o2, n2); tri(positions, o3, n2, n3);   // top annulus, normal +Z
   }
   return { positions };
 }
@@ -145,7 +145,7 @@ export function annulusPlate(rOut, rIn, h, segs = 32) {
 ```js
 import { expect, test } from "vitest";
 import { buildTopology } from "../src/framework/oracle/describe/topology.js";
-import { boxMesh, annulusPlate } from "./helpers/mesh-fixtures.js";
+import { boxMesh, cylinderMesh, annulusPlate } from "./helpers/mesh-fixtures.js";
 
 test("a box welds to 8 vertices and 12 triangles", () => {
   const t = buildTopology(boxMesh(10, 20, 5));
@@ -166,10 +166,35 @@ test("every box corner edge is convex at +90 degrees", () => {
   for (const e of convex) expect(e.dihedral).toBeCloseTo(Math.PI / 2, 6);
 });
 
-test("a bore produces concave edges and an outer wall produces convex ones", () => {
+// `.some(...)` would pass against a fixture with half its edges inverted — and did,
+// until a divergence-theorem check caught the top cap winding backwards. Assert EVERY
+// edge in each group, identified by radial distance from the bore axis.
+test("every bore-to-cap edge is concave and every outer-wall-to-cap edge is convex", () => {
   const t = buildTopology(annulusPlate(10, 4, 3, 24));
-  expect(t.edges.some((e) => e.convexity === "concave")).toBe(true);
-  expect(t.edges.some((e) => e.convexity === "convex")).toBe(true);
+  const radial = (e) => {
+    const m = [0, 1].map((k) => {
+      const v = (k ? e.v1 : e.v0) * 3;
+      return [t.verts[v], t.verts[v + 1]];
+    });
+    return (Math.hypot(...m[0]) + Math.hypot(...m[1])) / 2;
+  };
+  const seams = t.edges.filter((e) => e.convexity === "convex" || e.convexity === "concave");
+  const bore = seams.filter((e) => radial(e) < 7);
+  const outer = seams.filter((e) => radial(e) >= 7);
+  expect(bore.length).toBeGreaterThan(0);
+  expect(outer.length).toBeGreaterThan(0);
+  expect(bore.every((e) => e.convexity === "concave")).toBe(true);
+  expect(outer.every((e) => e.convexity === "convex")).toBe(true);
+});
+
+// A closed mesh's area-weighted face normals must sum to zero. Three lines that make a
+// whole class of fixture winding bugs impossible to ship.
+test.each([["box", boxMesh(10, 20, 5)], ["cylinder", cylinderMesh(4, 10, 32)],
+           ["annulus", annulusPlate(10, 4, 3, 24)]])("%s fixture is closed and outward-wound", (_n, mesh) => {
+  const t = buildTopology(mesh);
+  const sum = [0, 0, 0];
+  for (let i = 0; i < t.faceArea.length; i++) for (let a = 0; a < 3; a++) sum[a] += t.faceArea[i] * t.faceNormal[3*i + a];
+  for (const a of sum) expect(Math.abs(a)).toBeLessThan(1e-6);
 });
 
 test("a watertight mesh has no boundary edges", () => {
@@ -301,7 +326,7 @@ export function buildTopology(mesh, opts = {}) {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run test/describe-topology.test.js`
-Expected: PASS, 5 tests.
+Expected: PASS, 7 tests (the closure check is parameterised over three fixtures).
 
 If the convex/concave assertions come out inverted, the fixture winding is backwards, not the formula — check `boxMesh`'s quad order before touching `atan2`.
 
@@ -1130,8 +1155,9 @@ git commit -m "feat(describe): deterministic RANSAC mop-up for unclaimed faces"
 **Interfaces:**
 - Consumes: `buildTopology` (Task 1), `segment` (Tasks 3–4).
 - Produces: `surfaceGraph(topo, patches) → { surfaces, arcs }` where
-  `surfaces[i] = { id: "s0", type, fit, faces, area, loops }` (`loops` is an array of
-  closed vertex-index rings on the surface boundary) and
+  `surfaces[i] = { id: "s0", type, fit, faces, area, loops, curvature }` where `curvature` is
+  `"convex" | "concave" | null` (null for planes — see controller ruling R10) and `loops` is an
+  array of closed vertex-index rings on the surface boundary, and
   `arcs[i] = { between: [idA, idB], convexity, kind: "line"|"circle"|"mixed", radius, length, axis }`.
   Also exports `arcsOf(graph, surfaceId) → arc[]`.
 
@@ -1161,19 +1187,31 @@ test("a box yields twelve convex arcs, all straight", () => {
   expect(g.arcs.every((a) => a.kind === "line")).toBe(true);
 });
 
-test("the washer bore is a cylinder joined to both caps by concave circular arcs", () => {
+// The discriminator (ruling R10): the bore is a CONCAVE cylinder, the outer wall a convex
+// one. This is the attribute every hole rule keys on.
+test("the washer bore is a concave cylinder and its outer wall a convex one", () => {
   const g = graphOf(annulusPlate(10, 4, 3, 48));
   const bore = g.surfaces.find((s) => s.type === "cylinder" && s.fit.radius < 6);
-  const concave = arcsOf(g, bore.id).filter((a) => a.convexity === "concave");
-  expect(concave.length).toBe(2);
-  expect(concave.every((a) => a.kind === "circle")).toBe(true);
-  for (const a of concave) expect(a.radius).toBeCloseTo(4, 1);
+  const wall = g.surfaces.find((s) => s.type === "cylinder" && s.fit.radius > 6);
+  expect(bore.curvature).toBe("concave");
+  expect(wall.curvature).toBe("convex");
 });
 
-test("the washer outer wall joins its caps convexly", () => {
+test("planes carry no curvature at all", () => {
   const g = graphOf(annulusPlate(10, 4, 3, 48));
-  const wall = g.surfaces.find((s) => s.type === "cylinder" && s.fit.radius > 6);
-  expect(arcsOf(g, wall.id).filter((a) => a.convexity === "convex").length).toBe(2);
+  for (const s of g.surfaces.filter((x) => x.type === "plane")) expect(s.curvature).toBeNull();
+});
+
+// And the trap: BOTH rims are convex 90-degree corners. A test that expected the bore's
+// rims to be concave would be asserting something geometrically false.
+test("both the bore rim and the outer rim are convex circular arcs", () => {
+  const g = graphOf(annulusPlate(10, 4, 3, 48));
+  for (const r of [4, 10]) {
+    const cyl = g.surfaces.find((s) => s.type === "cylinder" && Math.abs(s.fit.radius - r) < 2);
+    const rims = arcsOf(g, cyl.id).filter((a) => a.kind === "circle");
+    expect(rims.length).toBe(2);
+    expect(rims.every((a) => a.convexity === "convex")).toBe(true);
+  }
 });
 
 test("every surface reports at least one closed boundary loop", () => {
@@ -1195,11 +1233,23 @@ Expected: FAIL — cannot resolve `describe/surface-graph.js`.
 // shared boundaries between them, each labelled convex or concave and carrying its own
 // geometry.
 //
-// The convexity label is the whole point. "A cylinder meeting two parallel planes" is
-// a boss if the meetings are convex and a hole if they are concave, and no amount of
-// measuring the cylinder tells you which. Every rule downstream keys on this label, so
-// it is derived here once, from the signed dihedrals topology.js already computed, and
-// never recomputed.
+// TWO attributes come out of here, and confusing them is the trap this file exists to
+// close (controller ruling R10, found when Task 1's fixture review contradicted itself).
+//
+// ARC convexity says whether an edge is an outer or an inner corner, and nothing more. It
+// is decided by the interior dihedral measured through the material: under 180° convex,
+// over 180° concave. A through-hole's rim leaves a 90° wedge of material and is CONVEX —
+// exactly like the outer edge of the same plate. A pocket floor or a boss base leaves 270°
+// and is CONCAVE. So arc convexity cannot, on its own, tell a hole from a boss: it is the
+// same label on both.
+//
+// SURFACE curvature is what does tell them apart. A bore is a concave cylinder — its
+// outward normals point toward its own axis — while a shaft or a boss is a convex one,
+// normals pointing away. That sign is a property of the surface, not of any edge, and it
+// survives tessellation density, partial arcs, and whatever the neighbouring faces do.
+//
+// Both are derived here, once, and every feature rule downstream reads them rather than
+// recomputing either.
 //
 // An arc's convexity is the SIGN-MAJORITY of its constituent edges weighted by length,
 // not the first edge's label. A tessellated circular seam has a handful of edges whose
@@ -1249,9 +1299,51 @@ function arcKind(pts) {
   return { kind: "circle", radius: mean, axis: [n[0]/nl, n[1]/nl, n[2]/nl], center: c };
 }
 
+// Does this curved patch bend away from its own centre of curvature, or around it? Take
+// each face's outward normal against the radial vector from the axis (or centre) out to
+// that face: normals pointing outward mean a convex surface — a shaft, a boss, a plate's
+// outer wall. Normals pointing back toward the axis mean a concave one — a bore. Averaged
+// over the patch's faces so one bad facet normal cannot flip the verdict.
+//
+// Planes get null: a plane has no curvature and no side, and forcing it into this
+// vocabulary would invent a distinction the geometry does not carry.
+function curvatureOf(topo, patch) {
+  const fit = patch.fit;
+  const centre = fit.type === "cylinder" ? fit.axis.origin
+               : fit.type === "cone" ? fit.apex
+               : fit.type === "sphere" ? fit.center
+               : fit.type === "torus" ? fit.center : null;
+  if (!centre) return null;
+  const axis = fit.type === "cylinder" ? fit.axis.direction
+             : fit.type === "cone" ? fit.direction
+             : fit.type === "torus" ? fit.axis : null;
+  let vote = 0;
+  for (const t of patch.faces) {
+    const c = [0, 0, 0];
+    for (let k = 0; k < 3; k++) {
+      const v = topo.tris[3*t + k] * 3;
+      for (let a = 0; a < 3; a++) c[a] += topo.verts[v + a] / 3;
+    }
+    let radial = [c[0]-centre[0], c[1]-centre[1], c[2]-centre[2]];
+    if (axis) {
+      // Only the component perpendicular to the axis is radial; the axial part says
+      // nothing about which way the surface curves.
+      const ax = radial[0]*axis[0] + radial[1]*axis[1] + radial[2]*axis[2];
+      radial = [radial[0]-ax*axis[0], radial[1]-ax*axis[1], radial[2]-ax*axis[2]];
+    }
+    const rl = Math.hypot(radial[0], radial[1], radial[2]);
+    if (rl < 1e-12) continue;
+    const n = [topo.faceNormal[3*t], topo.faceNormal[3*t+1], topo.faceNormal[3*t+2]];
+    vote += topo.faceArea[t] * (n[0]*radial[0] + n[1]*radial[1] + n[2]*radial[2]) / rl;
+  }
+  if (Math.abs(vote) < 1e-12) return null;
+  return vote > 0 ? "convex" : "concave";
+}
+
 export function surfaceGraph(topo, patches) {
   const surfaces = patches.map((p, i) => ({
     id: `s${i}`, type: p.fit.type, fit: p.fit, faces: p.faces, area: p.area, loops: [],
+    curvature: curvatureOf(topo, p),
   }));
   const owner = new Int32Array(topo.faceArea.length).fill(-1);
   patches.forEach((p, i) => { for (const t of p.faces) owner[t] = i; });
@@ -1331,7 +1423,7 @@ export function arcsOf(graph, surfaceId) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/describe-surface-graph.test.js`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1352,7 +1444,7 @@ git commit -m "feat(describe): attributed adjacency graph with convexity-labelle
 **Interfaces:**
 - Consumes: `surfaceGraph`, `arcsOf` (Task 5).
 - Produces:
-  - `detectHoles(graph) → feature[]` with `{ id, type: "throughHole"|"blindHole", diameter, depth, axis:{origin,direction}, entryFace, exitFace|null, surfaces, evidence }`
+  - `detectHoles(graph) → feature[]` with `{ id, type: "throughHole"|"blindHole", diameter, depth, axis:{origin,direction}, entryFace, exitFace|null, floorFace|null, surfaces, evidence }` — keys on `surface.curvature === "concave"` per ruling R10, NOT on arc convexity
   - `detectDressups(graph) → feature[]` with `{ id, type: "fillet"|"chamfer", radius|width, angle?, between:[idA,idB], surfaces, evidence }`
   - Feature `id`s are assigned by the caller (Task 12); these return `id: null` and a stable `key` string so the orchestrator can number them deterministically.
 
@@ -1384,10 +1476,21 @@ test("the through hole reports the fixture diameter and depth", () => {
 });
 
 test("the outer wall of a washer is NOT a hole", () => {
-  // Convex arcs to the caps: this is the part's outside, and reading it as a hole
-  // is the single most likely way to get the convexity convention backwards.
+  // The outer wall's rims are convex circular arcs to both caps — IDENTICAL in convexity
+  // to the bore's rims (ruling R10). Only its curvature differs, so this test is the one
+  // that fails if a rule ever regresses to keying on arc convexity.
   const holes = detectHoles(graphOf(annulusPlate(10, 4, 3, 48)));
-  expect(holes.every((h) => h.diameter < 12)).toBe(true);
+  expect(holes.length).toBe(1);
+  expect(holes[0].diameter).toBeLessThan(12);
+});
+
+// The blind-hole branch has no hand-buildable fixture here, so assert the invariant from
+// the other side: a THROUGH hole must report two mouths and no floor. A rule that started
+// mistaking a mouth for a floor would fail this.
+test("a through hole reports an exit face and no floor face", () => {
+  const [hole] = detectHoles(graphOf(annulusPlate(10, 4, 3, 48)));
+  expect(hole.exitFace).not.toBeNull();
+  expect(hole.floorFace).toBeNull();
 });
 
 test("a bare cylinder has no holes at all", () => {
@@ -1416,12 +1519,17 @@ Expected: FAIL — cannot resolve `features/holes.js`.
 ```js
 // Hole rules over the attributed adjacency graph.
 //
-// The rule is short and the convexity label does all the work: a cylinder whose
-// arcs to its neighbours are CONCAVE is material removed from the part, and a
-// cylinder whose arcs are CONVEX is material standing proud of it. Two concave
-// arcs to two roughly parallel planes is a through hole; one concave arc plus a
-// cap surface is a blind hole. Everything else about the cylinder — radius,
-// extent, axis — was already measured by fit.js and is only read here.
+// The primary test is the cylinder's own CURVATURE, not the convexity of its arcs
+// (controller ruling R10). A bore is a concave cylinder — outward normals pointing back
+// toward its axis. A shaft or a boss is a convex one. Arc convexity cannot make this call:
+// a through-hole's rim and a plate's outer edge are both plain 90-degree convex corners,
+// because in both cases the material leaves a 90-degree wedge at the seam.
+//
+// Arc convexity still does the SECOND half of the job, once curvature has established we
+// are looking at a bore: a convex circular arc to a plane is a MOUTH (the bore breaking
+// out through a face), and a concave arc to a plane or cone is a FLOOR (the bore
+// bottoming out). Two mouths on anti-parallel planes is a through hole; one mouth plus a
+// floor is a blind hole. Everything else — radius, extent, axis — fit.js already measured.
 //
 // `id` is deliberately null: feature numbering is the orchestrator's job (Task 12),
 // because ids must be assigned once across ALL feature families in a stable order.
@@ -1433,6 +1541,7 @@ import { arcsOf } from "../surface-graph.js";
 
 // Two planes count as "parallel" (a through hole's two mouths) within this band.
 const PARALLEL_DOT = 0.98;
+// `arcsOf` is imported for the mouth/floor split; curvature comes off the surface itself.
 const round3 = (v) => Math.round(v * 1000) / 1000;
 
 const byId = (graph) => new Map(graph.surfaces.map((s) => [s.id, s]));
@@ -1444,10 +1553,12 @@ export function detectHoles(graph) {
 
   for (const s of graph.surfaces) {
     if (s.type !== "cylinder") continue;
-    const concave = arcsOf(graph, s.id).filter((a) => a.convexity === "concave");
-    if (concave.length === 0) continue;                       // a boss or an outer wall
+    if (s.curvature !== "concave") continue;                  // a boss, a shaft, an outer wall
 
-    const mouths = concave
+    const arcs = arcsOf(graph, s.id);
+    // A mouth is where the bore breaks out through a face: a convex seam to a plane.
+    const mouths = arcs
+      .filter((a) => a.convexity === "convex")
       .map((a) => ({ arc: a, face: surfaces.get(other(a, s.id)) }))
       .filter((m) => m.face && m.face.type === "plane");
     if (mouths.length === 0) continue;
@@ -1460,7 +1571,7 @@ export function detectHoles(graph) {
     // Through: two planar mouths whose normals are anti-parallel to each other and
     // aligned with the bore axis. Blind: one mouth, with the far end closed by a
     // surface the bore also touches (planar floor or conical drill point).
-    let type = null, entryFace = null, exitFace = null;
+    let type = null, entryFace = null, exitFace = null, floorFace = null;
     if (mouths.length >= 2) {
       const [m0, m1] = mouths;
       const d = m0.face.fit.normal[0]*m1.face.fit.normal[0]
@@ -1469,10 +1580,13 @@ export function detectHoles(graph) {
       if (d <= -PARALLEL_DOT) { type = "throughHole"; entryFace = m0.face.id; exitFace = m1.face.id; }
     }
     if (!type) {
-      const floor = arcsOf(graph, s.id)
+      // A floor is the opposite seam: CONCAVE, because the bore bottoming out leaves 270
+      // degrees of material there. Planar for a flat-bottomed bore, conical for a drill point.
+      const floor = arcs
+        .filter((a) => a.convexity === "concave")
         .map((a) => surfaces.get(other(a, s.id)))
         .find((n) => n && n.id !== mouths[0].face.id && (n.type === "plane" || n.type === "cone"));
-      if (floor) { type = "blindHole"; entryFace = mouths[0].face.id; }
+      if (floor) { type = "blindHole"; entryFace = mouths[0].face.id; floorFace = floor.id; }
     }
     if (!type) continue;
 
@@ -1481,11 +1595,11 @@ export function detectHoles(graph) {
       key: `hole:${round3(diameter)}:${round3(origin[0])},${round3(origin[1])},${round3(origin[2])}`,
       type, diameter, depth,
       axis: { origin, direction: dir },
-      entryFace, exitFace,
+      entryFace, exitFace, floorFace,
       surfaces: [s.id],
       // What the rule actually saw. The report carries this so a wrong call can be
       // argued with rather than merely disbelieved.
-      evidence: { concaveArcs: concave.length, planarMouths: mouths.length, fitRms: s.fit.rms },
+      evidence: { curvature: s.curvature, planarMouths: mouths.length, arcs: arcs.length, fitRms: s.fit.rms },
     });
   }
 
@@ -1573,7 +1687,7 @@ export function detectDressups(graph) {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run test/describe-features-holes.test.js`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -1594,7 +1708,7 @@ git commit -m "feat(describe): hole, fillet, and chamfer rules over the adjacenc
 **Interfaces:**
 - Consumes: `surfaceGraph`, `arcsOf` (Task 5).
 - Produces:
-  - `detectPrismatic(graph) → feature[]` — `{ id:null, key, type:"pocket"|"boss"|"extrusion", depth?, direction, floorFace?, wallFaces, profile, surfaces, evidence }`
+  - `detectPrismatic(graph) → feature[]` — `{ id:null, key, type:"pocket"|"boss"|"extrusion", depth?, direction, floorFace?, wallFaces, profile, surfaces, evidence }`; pocket-vs-boss is decided by signed cap displacement against the surrounding plane, NOT by arc convexity (ruling R10)
   - `detectSweeps(graph) → feature[]` — `{ id:null, key, type:"revolve"|"shell", axis?, profile?, thickness?, surfaces, evidence }`
   - `profile` is `{ kind: "circle"|"polygon"|"mixed", radius?, points? }` — enough for the hints layer to propose a sketch, never claimed as exact.
 
@@ -1617,6 +1731,14 @@ test("a plain box is one extrusion, not a pocket or a boss", () => {
   const { g } = ctx(boxMesh(10, 20, 5));
   const f = detectPrismatic(g);
   expect(f.map((x) => x.type)).toEqual(["extrusion"]);
+});
+
+// Guards ruling R10 from the prismatic side: a washer's cap arcs are a MIX of convex
+// (both rims) and concave (nothing) — a rule that counted them to decide pocket-vs-boss
+// would classify by noise. The base extrusion must win regardless.
+test("a washer's base extrusion is not misread as a pocket or a boss", () => {
+  const { g } = ctx(annulusPlate(10, 4, 3, 48));
+  expect(detectPrismatic(g).map((x) => x.type)).toEqual(["extrusion"]);
 });
 
 test("the box extrusion recovers a rectangular profile and its depth", () => {
@@ -1664,12 +1786,16 @@ Expected: FAIL — cannot resolve `features/prismatic.js`.
 ```js
 // Pocket, boss, and extrusion rules.
 //
-// All three are the same observation read at different scopes. A set of side walls
-// sharing one sweep direction, capped at one or both ends, is an extrusion of the
-// capped profile. If those walls face INWARD relative to the cap they bound (concave
-// arcs), the extrusion is material removed — a pocket. If they face outward (convex
-// arcs), it is material added — a boss. If the walls ARE the part's outer envelope,
-// it is the base extrusion.
+// All three are the same observation read at different scopes: a set of side walls sharing
+// one sweep direction, capped at one or both ends, is an extrusion of the capped profile.
+//
+// What separates a POCKET from a BOSS is NOT arc convexity (controller ruling R10). Both
+// leave 270 degrees of material where their walls meet the surrounding face — a pocket
+// floor and a boss base are each concave seams — so the label is identical on both and
+// carries no information. The real distinction is DISPLACEMENT: measure the feature's cap
+// plane against the surrounding base plane along their shared normal. A cap sunk into the
+// material is a pocket; a cap standing proud of it is a boss. If the walls ARE the part's
+// outer envelope, it is the base extrusion and neither.
 //
 // The extrusion direction comes from the wall normals, which all lie perpendicular to
 // it: the same normal-covariance trick fit.js uses for a cylinder axis. Reading it
@@ -1759,11 +1885,19 @@ export function detectPrismatic(graph) {
     }
     const depth = Math.abs(hi - lo);
 
-    // Convexity of the cap's arcs decides added vs removed material.
-    const concave = arcs.filter((a) => a.convexity === "concave").length;
-    const convex = arcs.filter((a) => a.convexity === "convex").length;
+    // Recessed or raised? Compare this cap's plane against the largest parallel plane that
+    // is not itself — the surrounding face. Signed along the cap's own outward normal, a
+    // negative displacement means the cap sits BELOW the surrounding material (a pocket);
+    // positive means it stands above it (a boss).
     const isBase = out.length === 0;
-    const type = isBase ? "extrusion" : concave > convex ? "pocket" : "boss";
+    let type = "extrusion";
+    if (!isBase) {
+      const surround = caps.find((c) => c.id !== cap.id && dot(c.fit.normal, cap.fit.normal) > 0.98);
+      // With co-oriented normals both offsets are measured along the same direction, so
+      // their difference is the signed displacement directly.
+      const displacement = surround ? cap.fit.offset - surround.fit.offset : 0;
+      type = displacement < 0 ? "pocket" : "boss";
+    }
 
     out.push({
       id: null,
@@ -1773,7 +1907,11 @@ export function detectPrismatic(graph) {
       wallFaces: sideWalls.map((w) => w.id),
       profile: profileOf(graph, cap),
       surfaces: [cap.id, ...sideWalls.map((w) => w.id)],
-      evidence: { walls: sideWalls.length, concaveArcs: concave, convexArcs: convex },
+      evidence: {
+        walls: sideWalls.length,
+        concaveArcs: arcs.filter((a) => a.convexity === "concave").length,
+        convexArcs: arcs.filter((a) => a.convexity === "convex").length,
+      },
     });
     claimed.add(cap.id);
     for (const w of sideWalls) claimed.add(w.id);
@@ -1882,7 +2020,7 @@ export function detectSweeps(graph) {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run test/describe-features-prismatic.test.js`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 6: Commit**
 
