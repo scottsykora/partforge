@@ -147,7 +147,7 @@ export function annulusPlate(rOut, rIn, h, segs = 32) {
 ```js
 import { expect, test } from "vitest";
 import { buildTopology } from "../src/framework/oracle/describe/topology.js";
-import { boxMesh, cylinderMesh, annulusPlate } from "./helpers/mesh-fixtures.js";
+import { boxMesh, cylinderMesh, annulusPlate, rotateMesh } from "./helpers/mesh-fixtures.js";
 
 test("a box welds to 8 vertices and 12 triangles", () => {
   const t = buildTopology(boxMesh(10, 20, 5));
@@ -1608,7 +1608,7 @@ import { segment } from "../src/framework/oracle/describe/segment.js";
 import { surfaceGraph } from "../src/framework/oracle/describe/surface-graph.js";
 import { detectHoles } from "../src/framework/oracle/describe/features/holes.js";
 import { detectDressups } from "../src/framework/oracle/describe/features/dressups.js";
-import { annulusPlate, cylinderMesh } from "./helpers/mesh-fixtures.js";
+import { annulusPlate, cylinderMesh, rotateMesh } from "./helpers/mesh-fixtures.js";
 
 const graphOf = (mesh) => { const t = buildTopology(mesh); return surfaceGraph(t, segment(t).patches); };
 
@@ -1649,6 +1649,17 @@ test("a bare cylinder has no holes at all", () => {
 test("a sharp-edged fixture reports no fillets or chamfers", () => {
   expect(detectDressups(graphOf(annulusPlate(10, 4, 3, 48)))).toEqual([]);
 });
+
+// Arbitrary orientation, per the Global Constraints. Hole rules read cylinder curvature
+// and arc convexity, both of which come from normals and cross products — exactly the
+// arithmetic that broke on rotation in Task 3.
+test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, 17, 29, 53)]])(
+  "%s: the washer bore is one through hole of the same diameter", (_n, orient) => {
+    const holes = detectHoles(graphOf(orient(annulusPlate(10, 4, 3, 48))));
+    expect(holes.length).toBe(1);
+    expect(holes[0].type).toBe("throughHole");
+    expect(holes[0].diameter).toBeCloseTo(8, 1);
+  });
 
 test("holes carry a stable key derived from geometry, not from iteration order", () => {
   const a = detectHoles(graphOf(annulusPlate(10, 4, 3, 48)))[0];
@@ -1836,7 +1847,7 @@ export function detectDressups(graph) {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run test/describe-features-holes.test.js`
-Expected: PASS, 7 tests.
+Expected: PASS, 9 tests (one is parameterised over axis-aligned and rotated).
 
 - [ ] **Step 6: Commit**
 
@@ -1916,6 +1927,23 @@ test("a solid box is not reported as a shell", () => {
   const { t, g } = ctx(boxMesh(10, 20, 5));
   expect(detectSweeps(g).some((f) => f.type === "shell")).toBe(false);
 });
+
+// Arbitrary orientation, per the Global Constraints. `sweepDirection` and the revolve
+// axis vote both come out of eigen-decompositions of normal fields, which have no reason
+// to prefer world axes — but the depth fallback compares plane OFFSETS, which do.
+test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, 17, 29, 53)]])(
+  "%s: a box is one extrusion of the same depth", (_n, orient) => {
+    const { g } = ctx(orient(boxMesh(10, 20, 5)));
+    const f = detectPrismatic(g);
+    expect(f.map((x) => x.type)).toEqual(["extrusion"]);
+    expect(f[0].depth).toBeCloseTo(5, 2);
+  });
+
+test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, 17, 29, 53)]])(
+  "%s: the washer is still recognised as axisymmetric", (_n, orient) => {
+    const { t, g } = ctx(orient(annulusPlate(10, 4, 3, 48)));
+    expect(detectSweeps(g).some((f) => f.type === "revolve")).toBe(true);
+  });
 
 test("prismatic features carry stable keys and null ids", () => {
   const { g } = ctx(boxMesh(10, 20, 5));
@@ -2169,7 +2197,7 @@ export function detectSweeps(graph) {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run test/describe-features-prismatic.test.js`
-Expected: PASS, 7 tests.
+Expected: PASS, 11 tests (two are parameterised over axis-aligned and rotated).
 
 - [ ] **Step 6: Commit**
 
