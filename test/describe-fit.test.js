@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { fitPlane, fitSphere, fitCylinder, fitCone, fitTorus } from "../src/framework/oracle/describe/fit.js";
+import { fitPlane, fitSphere, fitCylinder, fitCone, fitTorus, deviationOf } from "../src/framework/oracle/describe/fit.js";
 
 const grid = (f, n = 12) => {
   const out = [];
@@ -274,4 +274,65 @@ test("fitCone recovers half-angle on a narrow arc", () => {
 test("fitPlane returns null on collinear and on coincident points", () => {
   expect(fitPlane([[0,0,0],[1,0,0],[2,0,0],[3,0,0]])).toBeNull();
   expect(fitPlane([[1,2,3],[1,2,3],[1,2,3]])).toBeNull();
+});
+
+// deviationOf is the single point-to-primitive distance every fit's own
+// rms/maxDev is computed from (see fit.js), and the same arithmetic segment.js's
+// region-growing predicate and a later RANSAC consensus stage both call — so its
+// sign convention (positive outside, negative inside, ~0 on the surface) is worth
+// pinning down directly rather than only indirectly through the fits that already
+// exercise it. Each test below builds its "outside"/"inside" probe points FROM the
+// fit's own recovered parameters (normal, axis, center, radius), not from the
+// fixture's nominal geometry — a fitted plane's normal sign is arbitrary (either
+// polarity is an equally valid plane normal) and a fitted sphere's center/radius
+// carry small least-squares error, so anchoring the probes to the fixture instead
+// would make the expected sign, or the expected magnitude, arbitrary too.
+test("deviationOf reads ~0 on the surface, positive outside, negative inside a plane", () => {
+  const fit = fitPlane([[0,0,0],[1,0,0],[0,1,0],[1,1,0],[0.5,0.5,0]]);
+  const onSurface = [0.5, 0.5, 0];
+  // Walk 3mm along the fit's own normal in either direction: regardless of which
+  // polarity the eigensolver happened to pick for `normal`, the point 3mm along
+  // it must read +3 and the point 3mm against it must read -3.
+  const outside = [0.5 + 3*fit.normal[0], 0.5 + 3*fit.normal[1], 3*fit.normal[2]];
+  const inside = [0.5 - 3*fit.normal[0], 0.5 - 3*fit.normal[1], -3*fit.normal[2]];
+  expect(deviationOf(fit, onSurface)).toBeCloseTo(0, 9);
+  expect(deviationOf(fit, outside)).toBeCloseTo(3, 9);
+  expect(deviationOf(fit, inside)).toBeCloseTo(-3, 9);
+});
+
+test("deviationOf reads ~0 on the surface, positive outside, negative inside a cylinder", () => {
+  const pts = [], normals = [];
+  for (let i = 0; i < 64; i++) for (const z of [0, 2, 4, 6]) {
+    const a = 2 * Math.PI * i / 64;
+    const n = [Math.cos(a), Math.sin(a), 0];
+    normals.push(n);
+    pts.push([1 + 2.5 * n[0], 4 + 2.5 * n[1], z]);
+  }
+  const fit = fitCylinder(pts, normals);
+  // [1,0,0] is perpendicular to this fixture's axis (recovered along Z, either
+  // polarity) regardless of the eigensolver's sign choice, so it is a valid
+  // radial direction to probe in.
+  const radial = [1, 0, 0];
+  const onSurface = [fit.axis.origin[0] + fit.radius*radial[0], fit.axis.origin[1], fit.axis.origin[2]];
+  const outside = [fit.axis.origin[0] + (fit.radius+2)*radial[0], fit.axis.origin[1], fit.axis.origin[2]];
+  const inside = [fit.axis.origin[0] + (fit.radius-2)*radial[0], fit.axis.origin[1], fit.axis.origin[2]];
+  expect(deviationOf(fit, onSurface)).toBeCloseTo(0, 6);
+  expect(deviationOf(fit, outside)).toBeCloseTo(2, 6);
+  expect(deviationOf(fit, inside)).toBeCloseTo(-2, 6);
+});
+
+test("deviationOf reads ~0 on the surface, positive outside, negative inside a sphere", () => {
+  const pts = [];
+  for (let i = 0; i < 200; i++) {
+    const th = (i * 2.399963), z = -1 + 2 * (i + 0.5) / 200, r = Math.sqrt(1 - z * z);
+    pts.push([3 + 7 * r * Math.cos(th), -2 + 7 * r * Math.sin(th), 5 + 7 * z]);
+  }
+  const fit = fitSphere(pts);
+  const dir = [1, 0, 0];
+  const onSurface = [fit.center[0] + fit.radius*dir[0], fit.center[1], fit.center[2]];
+  const outside = [fit.center[0] + (fit.radius+2)*dir[0], fit.center[1], fit.center[2]];
+  const inside = [fit.center[0] + (fit.radius-2)*dir[0], fit.center[1], fit.center[2]];
+  expect(deviationOf(fit, onSurface)).toBeCloseTo(0, 4);
+  expect(deviationOf(fit, outside)).toBeCloseTo(2, 4);
+  expect(deviationOf(fit, inside)).toBeCloseTo(-2, 4);
 });

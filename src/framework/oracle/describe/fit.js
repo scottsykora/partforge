@@ -34,6 +34,54 @@ const errors = (devs) => {
   return { rms: Math.sqrt(s / devs.length), maxDev: m };
 };
 
+// SIGNED distance from a point to the surface a completed fit describes:
+// positive outside the surface (further from the solid than the fit claims),
+// negative inside, ~0 on it. Every fit below computes exactly this arithmetic
+// once, inline, over its own residual loop, to produce rms/maxDev — this is
+// that arithmetic factored out into the one place it belongs, rather than a
+// sixth private copy. Two callers outside this file need the identical
+// definition and must never be allowed to drift apart on it: segment.js's
+// region-growing predicate (a candidate face joins a patch only if its
+// deviation from the STANDING fit is small) and Task 4's RANSAC consensus
+// test (a point counts as an inlier under the identical rule). Takes a
+// completed fit's parameters (type plus whatever fields that type carries —
+// normal/offset, center/radius, axis/origin/radius, apex/direction/halfAngle,
+// or center/axis/majorRadius/minorRadius); rms/maxDev are not read.
+export function deviationOf(fit, point) {
+  switch (fit.type) {
+    case "plane":
+      return dot(fit.normal, point) - fit.offset;
+    case "sphere": {
+      const d = sub(point, fit.center);
+      return Math.hypot(d[0], d[1], d[2]) - fit.radius;
+    }
+    case "cylinder": {
+      const d = sub(point, fit.axis.origin), dir = fit.axis.direction;
+      const ax = dot(d, dir);
+      return Math.hypot(d[0]-ax*dir[0], d[1]-ax*dir[1], d[2]-ax*dir[2]) - fit.radius;
+    }
+    case "cone": {
+      const d = sub(point, fit.apex), dir = fit.direction;
+      const ax = dot(d, dir);
+      const rad = Math.hypot(d[0]-ax*dir[0], d[1]-ax*dir[1], d[2]-ax*dir[2]);
+      // Perpendicular (not radial) distance to the cone's slanted surface: the
+      // radial gap at this height, projected onto the surface normal via
+      // cos(halfAngle) — same derivation fitCone's own residual used below,
+      // recomputing tan/cos of halfAngle rather than threading a precomputed
+      // tanA through, since a fit's stored parameters are its only contract.
+      return (rad - ax * Math.tan(fit.halfAngle)) * Math.cos(fit.halfAngle);
+    }
+    case "torus": {
+      const d = sub(point, fit.center), dir = fit.axis;
+      const ax = dot(d, dir);
+      const rad = Math.hypot(d[0]-ax*dir[0], d[1]-ax*dir[1], d[2]-ax*dir[2]);
+      return Math.hypot(rad - fit.majorRadius, ax) - fit.minorRadius;
+    }
+    default:
+      throw new Error(`deviationOf: unknown fit type "${fit.type}"`);
+  }
+}
+
 // Cyclic Jacobi eigendecomposition of a symmetric 3x3, returned smallest-first.
 // Chosen over the analytic cubic because the cubic loses precision badly on nearly
 // degenerate spectra — which is exactly the case here, since a well-fit plane's
@@ -128,7 +176,8 @@ export function fitPlane(pts) {
   const normal = unit(vectors[0]);
   if (normal[0] === 0 && normal[1] === 0 && normal[2] === 0) return null;
   const offset = dot(normal, c);
-  return { type: "plane", normal, offset, ...errors(pts.map((p) => dot(normal, p) - offset)) };
+  const fit = { type: "plane", normal, offset };
+  return { ...fit, ...errors(pts.map((p) => deviationOf(fit, p))) };
 }
 
 export function fitSphere(pts) {
@@ -146,8 +195,8 @@ export function fitSphere(pts) {
   const r2 = x[3] + dot(center, center);
   if (!(r2 > 0)) return null;
   const radius = Math.sqrt(r2);
-  return { type: "sphere", center, radius,
-    ...errors(pts.map((p) => Math.hypot(p[0]-center[0], p[1]-center[1], p[2]-center[2]) - radius)) };
+  const fit = { type: "sphere", center, radius };
+  return { ...fit, ...errors(pts.map((p) => deviationOf(fit, p))) };
 }
 
 // 2D algebraic circle fit — the planar twin of fitSphere, used by the cylinder and
@@ -213,13 +262,9 @@ export function fitCylinder(pts, normals) {
     c[2] + circle.cu*u[2] + circle.cv*v[2],
   ];
   const axials = pts.map((p) => dot(sub(p, origin), direction));
-  const devs = pts.map((p) => {
-    const d = sub(p, origin);
-    const ax = dot(d, direction);
-    return Math.hypot(d[0]-ax*direction[0], d[1]-ax*direction[1], d[2]-ax*direction[2]) - circle.radius;
-  });
-  return { type: "cylinder", axis: { origin, direction }, radius: circle.radius,
-    extent: [Math.min(...axials), Math.max(...axials)], ...errors(devs) };
+  const fit = { type: "cylinder", axis: { origin, direction }, radius: circle.radius,
+    extent: [Math.min(...axials), Math.max(...axials)] };
+  return { ...fit, ...errors(pts.map((p) => deviationOf(fit, p))) };
 }
 
 export function fitCone(pts, normals) {
@@ -244,14 +289,8 @@ export function fitCone(pts, normals) {
   const apex = solve(A, b);
   if (!apex) return null;
   const axis = dot(sub(pts[0], apex), direction) < 0 ? scale(direction, -1) : direction;
-  const tanA = Math.tan(halfAngle);
-  const devs = pts.map((p) => {
-    const d = sub(p, apex);
-    const ax = dot(d, axis);
-    const rad = Math.hypot(d[0]-ax*axis[0], d[1]-ax*axis[1], d[2]-ax*axis[2]);
-    return (rad - ax * tanA) * Math.cos(halfAngle);   // perpendicular distance to the surface
-  });
-  return { type: "cone", apex, direction: axis, halfAngle, ...errors(devs) };
+  const fit = { type: "cone", apex, direction: axis, halfAngle };
+  return { ...fit, ...errors(pts.map((p) => deviationOf(fit, p))) };
 }
 
 // Search the minor radius r that makes {p_i - r*n_i} as coplanar as possible
@@ -345,11 +384,6 @@ export function fitTorus(pts, normals) {
     circle.cu*u[1] + circle.cv*v[1] + pf.offset*axis[1],
     circle.cu*u[2] + circle.cv*v[2] + pf.offset*axis[2],
   ];
-  const devs = pts.map((p) => {
-    const d = sub(p, center);
-    const ax = dot(d, axis);
-    const rad = Math.hypot(d[0]-ax*axis[0], d[1]-ax*axis[1], d[2]-ax*axis[2]);
-    return Math.hypot(rad - circle.radius, ax) - minorRadius;
-  });
-  return { type: "torus", center, axis, majorRadius: circle.radius, minorRadius, ...errors(devs) };
+  const fit = { type: "torus", center, axis, majorRadius: circle.radius, minorRadius };
+  return { ...fit, ...errors(pts.map((p) => deviationOf(fit, p))) };
 }
