@@ -2411,7 +2411,7 @@ export function detectPatterns(features, bounds) {
     if (linear) { patterns.push({ id: `p${patterns.length}`, ...linear, axis: outOfFrame(linear.axis) }); continue; }
 
     const circular = asCircular(members, pts, tol);
-    if (circular) patterns.push({ id: `p${patterns.length}`, ...circular });
+    if (circular) patterns.push({ id: `p${patterns.length}`, ...circular, axis: outOfFrame(circular.axis) });
   }
 
   return { patterns, symmetry: detectSymmetry(features, bounds, tol) };
@@ -2467,7 +2467,14 @@ function asCircular(members, pts, tol) {
   return {
     type: "circular", members: members.map((m) => m.key),
     counts: [pts.length], pitch: [round3(360 / pts.length)],
-    axis: members[0].axis?.direction ?? null, plane: null, confidence: 1,
+    // Frame-LOCAL, like asGrid and asLinear, so the caller's single `outOfFrame` step
+    // handles all three uniformly. A circular pattern's axis is the frame's own third
+    // axis by construction — the drill direction its members share is exactly what
+    // `patternFrame` built the frame around — so in frame coordinates it is [0,0,1].
+    // Returning a world-space direction here instead (say, from a member's own axis)
+    // would be silently inconsistent with its siblings and would double-transform the
+    // moment anyone routed it through the same step.
+    axis: [0, 0, 1], plane: null, confidence: 1,
   };
 }
 
