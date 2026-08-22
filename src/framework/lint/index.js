@@ -17,8 +17,29 @@ import { ANIMATION_RULES } from "./rules-animations.js";
 import { PLACE_RULES } from "./rules-place.js";
 import { IMPORT_RULES } from "./rules-imports.js";
 import { FONT_RULES } from "./rules-fonts.js";
+import { SOURCE_RULES } from "./rules-source.js";
 
-export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES, ...IMPORT_RULES, ...FONT_RULES];
+export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES, ...IMPORT_RULES, ...FONT_RULES, ...SOURCE_RULES];
+
+// A usable sources input, or null. Deliberately forgiving: lintPart's callers
+// include hosted paths handing over user/LLM-authored trees, so a malformed
+// shape means "no source rules", never a throw. Non-string file values are
+// dropped per entry rather than voiding the whole map.
+function normalizeSources(sources) {
+  if (!sources || typeof sources !== "object") return null;
+  const rawFiles = sources.files;
+  if (!rawFiles || typeof rawFiles !== "object") return null;
+  const files = {};
+  let any = false;
+  for (const [path, text] of Object.entries(rawFiles)) {
+    if (typeof text !== "string") continue;
+    files[path] = text;
+    any = true;
+  }
+  if (!any) return null;
+  const entrypoint = typeof sources.entrypoint === "string" ? sources.entrypoint : Object.keys(files)[0];
+  return { files, entrypoint };
+}
 
 // Every rule runs inside a guard. lintPart is called on a user-facing hosted path
 // (partforge-cloud's sandbox), and a linter that takes down the preview it exists to
@@ -74,7 +95,9 @@ export function lintContext(part, params) {
 /**
  * Lint a PartDefinition. Never throws.
  * @param {object} part   the default-exported PartDefinition
- * @param {{params?: object}} [opts]  params layered over part.defaults for the probe pass
+ * @param {{params?: object, sources?: {files?: Record<string, string>, entrypoint?: string}}} [opts]
+ *   `params` are layered over part.defaults for the probe pass; `sources` is the part's own
+ *   source text, which unlocks the source rules (Group 9) — omit it and lint behaves as before.
  * @returns {{ok: boolean, errors: object[], warnings: object[], notes: object[]}}
  */
 export function lintPart(part, opts) {
@@ -82,7 +105,7 @@ export function lintPart(part, opts) {
   // parameter only fires on `undefined` — a caller passing `lintPart(part, null)`
   // (a plausible downstream-harness call) would otherwise throw destructuring
   // `{ params }` out of `null` before this function's body ever runs.
-  const { params } = opts ?? {};
+  const { params, sources } = opts ?? {};
   // lintContext already guards its own internals (see its comment above), but it
   // is user-authored data all the way down — wrap the call itself too, so a
   // failure mode neither of us has thought of still degrades to a report instead
@@ -91,6 +114,7 @@ export function lintPart(part, opts) {
   let ctx;
   try {
     ctx = lintContext(part, params);
+    ctx.sources = normalizeSources(sources);
   } catch (e) {
     return {
       ok: false,

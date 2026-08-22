@@ -104,6 +104,19 @@ function collectPresetBundles(part) {
 
 const defaultKeys = (part) => new Set(Object.keys(part?.defaults ?? {}));
 
+// The keys a real control is bound to — the population whose defaults must be
+// panel-writable. Shared with rules-source.js's control-default-not-literal,
+// which needs the SAME key set control-default-not-primitive uses (unbound
+// non-primitive defaults are legal: they seed `p` for build()).
+export function controlBoundKeys(part) {
+  return new Set(
+    collectDescriptors(part)
+      .filter(({ container }) => !container)
+      .map(({ d }) => d.key)
+      .filter((k) => typeof k === "string"),
+  );
+}
+
 // What a control can actually edit: one finite scalar. Non-finite numbers are out
 // with the rest — a slider cannot show NaN, and neither NaN nor Infinity survives
 // a round trip through JSON or a source rewrite.
