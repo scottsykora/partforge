@@ -3502,7 +3502,16 @@ export function describe(kernel, solid, opts = {}) {
       regions: residualRegions(topo, unassigned),
     },
     score: {
+      // TWO DIFFERENT MEASUREMENTS, and conflating them breaks the report's honesty
+      // property (controller ruling R45). `explainedArea` is how much of the mesh SURFACE
+      // segmentation fitted to some analytic primitive. `explainedVolumeFraction` is how
+      // much of the part's SHAPE the accepted features actually reconstruct. They diverge
+      // hard: a hemisphere dome segments to 1.0 area coverage and reconstructs 0.0 of its
+      // volume, because a sphere is not a candidate-eligible type. Both must be carried —
+      // the low-coverage banner gates on the WORSE of the two, since an agent rebuilding a
+      // part cares whether the shape is accounted for, not whether primitives were fitted.
       explainedArea,
+      explainedVolumeFraction: graded.score.explainedVolumeFraction,
       xorFraction: graded.score.xorFraction,
       xorVolume: graded.score.xorVolume,
     },
