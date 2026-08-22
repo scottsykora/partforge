@@ -27,7 +27,7 @@
 // the verdict makes a hole intermittently read as a boss.
 //
 // Pure leaf. See spec §2.4.
-import { fitPlane, fitSphere, fitCylinder, fitCone, fitTorus } from "./fit.js";
+import { fitPlane, fitSphere, fitCylinder, fitCone, fitTorus, intrinsicScale } from "./fit.js";
 import { facePoints, FIT_TOL_FRAC } from "./segment.js";
 
 const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
@@ -294,14 +294,12 @@ function mergeCoFamily(topo, rawPatches, tol) {
 // segment.js's — surfaceGraph is not handed segment.js's `topo`-derived tol directly,
 // and recomputing it from the identical fraction is simpler than plumbing one more
 // value through every caller for a quantity `topo` already has everything needed to
-// reproduce exactly.
+// reproduce exactly. intrinsicScale(), not a plain world-axis min/max, for the same
+// reason segment.js switched: it must agree with segment.js's own tol on an
+// arbitrarily-rotated input, and a world AABB diagonal does not (see intrinsicScale's
+// comment in fit.js) — this is the twin of that fix, kept in step on purpose.
 function defaultTol(topo) {
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < topo.verts.length; i += 3) for (let a = 0; a < 3; a++) {
-    if (topo.verts[i+a] < lo[a]) lo[a] = topo.verts[i+a];
-    if (topo.verts[i+a] > hi[a]) hi[a] = topo.verts[i+a];
-  }
-  return Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) * FIT_TOL_FRAC;
+  return intrinsicScale(topo.verts) * FIT_TOL_FRAC;
 }
 
 export function surfaceGraph(topo, rawPatches, opts = {}) {

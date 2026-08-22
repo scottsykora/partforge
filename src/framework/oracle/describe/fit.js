@@ -119,6 +119,75 @@ export function jacobiEigen(m) {
   };
 }
 
+// Rotation-invariant characteristic frame of a point set: an orthonormal basis
+// (`axes`) aligned to its OWN principal directions, plus the bounding-box `diagonal`
+// measured in that basis — for TOLERANCE SCALING and DIRECTION QUANTIZATION only,
+// never for a reported bound (describe.js's `bounds()` deliberately stays
+// world-frame; a caller's solid really is embedded in world space and the report
+// must reflect that).
+//
+// `diagonal`: segment.js and surface-graph.js each scale their fit-acceptance band
+// off "the mesh's bbox diagonal", but a plain world-axis min/max is only that
+// diagonal's true value when the mesh happens to be axis-aligned — `buildView`
+// always returns parts that way, which is exactly the blind spot Task 15's rotated
+// round-trip exists to close. Tilt a filleted-box 29 degrees about an oblique axis
+// and its world AABB diagonal inflates ~35% (52.5mm -> 71.0mm) purely from the
+// tilt; the fit tolerance derived from it inflates the same amount, and a wider
+// band changes which small facets at the vertical/top-fillet corner blends clear
+// it. Projecting onto the point cloud's OWN principal axes (via jacobiEigen on its
+// covariance) instead of the world axes gives the same diagonal an axis-aligned
+// mesh already had, but keeps giving it under an arbitrary rotation (54.00028mm
+// either way, measured on the same rotated filleted-box) since the covariance
+// matrix rotates WITH the points instead of being read off wherever the world's
+// X/Y/Z happen to point.
+//
+// `axes`: segment.js's seed order also reads face normals in world XYZ (quantizing
+// each to a Gauss-sphere bucket) to decide which facets seed together and in what
+// order region growth visits them. On a smoothly-varying compound-fillet corner
+// blend — many facets whose normals are close enough to fall in neighboring world
+// buckets — an arbitrary rotation shifts EVERY normal relative to those world-axis
+// bucket boundaries at once, regrouping and reordering seeds and cascading into a
+// different (though still individually valid) segmentation of that same patch.
+// Quantizing in this intrinsic basis instead removes that: the buckets move WITH
+// the geometry instead of staying nailed to the world's axes.
+//
+// Eigenvector SIGN is ambiguous (jacobiEigen doesn't canonicalize it) and axis
+// ORDER can only be trusted where eigenvalues are well separated — callers that
+// need bucketing stability get it because every triangle's normal is projected
+// through the SAME basis, so a sign flip permutes bucket labels without changing
+// which faces land in the same bucket, and a part's three extents (like this
+// box's w/d/h) are separated enough that eigenvalue order is stable under a rigid
+// rotation regardless.
+export function intrinsicFrame(verts) {
+  const n = verts.length / 3;
+  const c = [0, 0, 0];
+  for (let i = 0; i < n; i++) { c[0] += verts[i*3]; c[1] += verts[i*3+1]; c[2] += verts[i*3+2]; }
+  c[0] /= n; c[1] /= n; c[2] /= n;
+  const cov = [[0,0,0],[0,0,0],[0,0,0]];
+  for (let i = 0; i < n; i++) {
+    const x = verts[i*3]-c[0], y = verts[i*3+1]-c[1], z = verts[i*3+2]-c[2];
+    cov[0][0] += x*x; cov[0][1] += x*y; cov[0][2] += x*z;
+    cov[1][1] += y*y; cov[1][2] += y*z; cov[2][2] += z*z;
+  }
+  cov[1][0] = cov[0][1]; cov[2][0] = cov[0][2]; cov[2][1] = cov[1][2];
+  const { vectors: axes } = jacobiEigen(cov);
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < n; i++) {
+    const x = verts[i*3]-c[0], y = verts[i*3+1]-c[1], z = verts[i*3+2]-c[2];
+    for (let a = 0; a < 3; a++) {
+      const proj = x*axes[a][0] + y*axes[a][1] + z*axes[a][2];
+      if (proj < lo[a]) lo[a] = proj;
+      if (proj > hi[a]) hi[a] = proj;
+    }
+  }
+  return { axes, diagonal: Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) };
+}
+
+// Just the diagonal, for callers (surface-graph.js) that don't also need the axes.
+export function intrinsicScale(verts) {
+  return intrinsicFrame(verts).diagonal;
+}
+
 // Dense Gaussian elimination with partial pivoting. n is 3 or 4 here, so the naive
 // implementation is the right one; returns null on a singular system rather than
 // producing Infinities that would look like a successful fit.

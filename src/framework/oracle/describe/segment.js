@@ -16,7 +16,7 @@
 // tolerances lean permissive on purpose.
 //
 // Pure leaf. See spec §2.3.
-import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus, deviationOf } from "./fit.js";
+import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus, deviationOf, intrinsicFrame } from "./fit.js";
 import { ransacPatches } from "./ransac.js";
 
 // Fit acceptance band, as a fraction of the mesh's bbox diagonal. A CAD
@@ -331,11 +331,23 @@ function classifyCandidate(topo, edge, nb, fit, tol) {
 // buckets largest-area-first. Big flat regions get claimed while the fit is
 // best-conditioned, and the fiddly transition strips (fillets, chamfers) are left
 // for last instead of being grown into by accident.
-function seedOrder(topo) {
+// `axes`: the part's OWN principal directions (fit.js's intrinsicFrame), not world
+// XYZ — quantizing a world-frame normal puts the Gauss-sphere bucket boundaries at a
+// fixed place in space, and an arbitrary rotation of the part slides every facet's
+// normal across them at once, reshuffling which facets seed together on any patch
+// whose normal varies quickly enough to have neighbors near a boundary (exactly the
+// compound-fillet corner blends this pass is warned about below). Bucketing in the
+// mesh's own frame moves the boundaries WITH the geometry instead.
+function seedOrder(topo, axes) {
   const buckets = new Map();
   for (let t = 0; t < topo.faceArea.length; t++) {
     if (topo.faceArea[t] <= 0) continue;
-    const n = faceNormalOf(topo, t);
+    const w = faceNormalOf(topo, t);
+    const n = [
+      w[0]*axes[0][0] + w[1]*axes[0][1] + w[2]*axes[0][2],
+      w[0]*axes[1][0] + w[1]*axes[1][1] + w[2]*axes[1][2],
+      w[0]*axes[2][0] + w[1]*axes[2][1] + w[2]*axes[2][2],
+    ];
     const key = `${Math.round(n[0]*24)},${Math.round(n[1]*24)},${Math.round(n[2]*24)}`;
     if (!buckets.has(key)) buckets.set(key, { area: 0, faces: [] });
     const b = buckets.get(key);
@@ -346,17 +358,18 @@ function seedOrder(topo) {
 }
 
 export function segment(topo, opts = {}) {
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < topo.verts.length; i += 3) for (let a = 0; a < 3; a++) {
-    if (topo.verts[i+a] < lo[a]) lo[a] = topo.verts[i+a];
-    if (topo.verts[i+a] > hi[a]) hi[a] = topo.verts[i+a];
-  }
-  const tol = opts.tol ?? Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) * FIT_TOL_FRAC;
+  // intrinsicFrame(), not a plain world-axis min/max: a tilted mesh's AABB diagonal is
+  // NOT the same number as its axis-aligned twin's (see intrinsicFrame's own comment —
+  // a 29-degree tilt inflated one reference part's diagonal ~35%), and this tolerance
+  // must come out identical under any rigid rotation of the same input. The same frame
+  // also drives seedOrder's normal bucketing below, for the same reason.
+  const frame = intrinsicFrame(topo.verts);
+  const tol = opts.tol ?? frame.diagonal * FIT_TOL_FRAC;
 
   const owner = new Int32Array(topo.faceArea.length).fill(-1);
   const patches = [];
 
-  for (const seed of seedOrder(topo)) {
+  for (const seed of seedOrder(topo, frame.axes)) {
     if (owner[seed] >= 0) continue;
     let faces = [seed];
     owner[seed] = patches.length;
