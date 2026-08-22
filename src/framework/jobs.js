@@ -15,6 +15,15 @@ import { verify } from "./oracle/verify.js";
 import { buildView } from "./oracle/build.js";
 import { MATCH_VIEWS, rasterizeMeshMask, rasterizeRingsMask } from "./oracle/silhouette.js";
 import { matchViews } from "./oracle/match.js";
+import { describe as describeMesh, describeMemo } from "./oracle/describe.js";
+import { compactDescribe } from "./oracle/describe/report.js";
+
+// One describe memo for the life of this worker. Deliberately NOT swept on setPart the
+// way solid-cache is: describe is pure in the mesh bytes (spec §4.1), so an edit can
+// never invalidate it, and dropping it on rebind would throw away the single most
+// expensive thing this worker computes for no reason at all. Keyed by content digest, so
+// a genuinely changed file misses correctly.
+const DESCRIBE_MEMO = describeMemo();
 
 // Handle one geometry job, posting results/progress via `post(msg, transfer?)`.
 // Backend-agnostic and part-agnostic: every part specific comes through `part`.
@@ -375,6 +384,28 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const match = scoreMatchTargets(built, msg.matchTargets, onProgress);
       if (match) report.match = match;
       post({ type: "report", ...report }, match?.map((m) => m.delta.data.buffer) ?? []);
+    } else if (msg.type === "describe") {
+      // Semantic description of an IMPORTED mesh — not of the built part. The two are
+      // different questions: `inspect` asks "what did this source build?", `describe`
+      // asks "what is this file?". describe never touches the part's own geometry, which
+      // is why it takes an import name rather than a view.
+      //
+      // Manifold only, and not by choice on this path: mesh imports on OCCT are never
+      // attempted, so a describe job posted to an OCCT worker is a routing bug, not a
+      // fallback opportunity. It surfaces as an ordinary error rather than a reroute.
+      const solid = kernel.import(msg.importName);      // throws on an unknown name
+      // `_importDigest` is the backend's existing underscore side-channel (KERNEL-CONTRACT
+      // "Conformance classes") — the same digest already folded into every import cache key.
+      const digest = kernel._importDigest?.(msg.importName) ?? null;
+      const full = describeMesh(kernel, solid, {
+        name: msg.importName,
+        digest,
+        budget: msg.budget,
+        memo: DESCRIBE_MEMO,
+      });
+      // The compact shape is derived, never memoised separately: one memo entry per
+      // mesh, two views of it, no way for the two to drift.
+      post({ type: "describe-report", report: msg.compact ? compactDescribe(full) : full });
     }
   } catch (err) {
     // `subparts` (generate jobs only) tells the reroute policy which sub-parts the
