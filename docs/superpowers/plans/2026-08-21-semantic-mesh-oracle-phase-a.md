@@ -3285,6 +3285,20 @@ test("an empty solid returns the `empty` error rather than throwing", () => {
   expect(DESCRIBE_ERRORS).toContain("empty");
 });
 
+// The whole pipeline, end to end, at an arbitrary orientation. Every stage below this
+// reads normals, cross products or eigenvectors, and three separate defects in this plan
+// were orientation-dependent while passing an axis-aligned suite. A rigid rotation cannot
+// change what a part IS, so the feature set must be identical and the measurements must
+// match to fit tolerance — only positions and directions may differ.
+test("describe is invariant under rigid rotation of the input", () => {
+  const flat = describeMesh(kernel, plateSolid(), { digest: "inv-a" });
+  const spun = describeMesh(kernel, plateSolid().rotate(29, [0, 0, 0], [1, 2, 3]), { digest: "inv-b" });
+  expect(spun.features.map((f) => f.type).sort()).toEqual(flat.features.map((f) => f.type).sort());
+  const dia = (r) => r.features.filter((f) => f.type === "throughHole").map((f) => f.diameter);
+  expect(dia(spun)).toEqual(dia(flat));
+  expect(spun.score.explainedArea).toBeCloseTo(flat.score.explainedArea, 2);
+});
+
 test("a closed-set error carries the structured diagnostic triple", () => {
   const empty = kernel.cut(kernel.box(1, 1, 1), kernel.box(4, 4, 4).translate([-2, -2, -2]));
   const d = describeMesh(kernel, empty, { name: "scan", digest: "e2" }).diagnostic;
@@ -4046,6 +4060,19 @@ test("noise injection degrades the score but does not throw or lose every featur
   expect(dirty.error).toBeUndefined();
   expect(dirty.score.explainedArea).toBeLessThanOrEqual(clean.score.explainedArea + 1e-9);
   expect(dirty.features.length).toBeGreaterThan(0);
+});
+
+// A reference part at an arbitrary orientation. `buildView` returns parts built
+// axis-aligned, which is exactly the blind spot that hid three defects in this plan —
+// rotating one here exercises the entire stack against geometry no fixture was tuned for.
+test("a rotated reference part round-trips to the same feature set", () => {
+  const flat = describeMesh(kernel, solidOf(filletedBox), { digest: "rt-flat" });
+  const spun = describeMesh(kernel, solidOf(filletedBox).rotate(29, [0, 0, 0], [1, 2, 3]), { digest: "rt-spun" });
+  expect(spun.error).toBeUndefined();
+  expect(spun.features.map((f) => f.type).sort()).toEqual(flat.features.map((f) => f.type).sort());
+  // Coverage must not degrade materially: a rotation changes nothing about the geometry,
+  // so a drop here means some stage is reading world axes it has no business reading.
+  expect(spun.score.explainedArea).toBeGreaterThan(flat.score.explainedArea - 0.02);
 });
 
 test("every accepted feature's confidence is a finite fraction", () => {
