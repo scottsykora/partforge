@@ -15,6 +15,8 @@ import { bootOcctKernel } from "../src/testing/occt.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { measure } from "../src/framework/oracle/measure.js";
 import { verify } from "../src/framework/oracle/verify.js";
+import { describe as describeMesh } from "../src/framework/oracle/describe.js";
+import { compactDescribe } from "../src/framework/oracle/describe/report.js";
 import { renderViews } from "../src/testing/render.js";
 import {
   createPickServer, requestPicks, formatPickResult,
@@ -25,7 +27,7 @@ import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
 
 const die = (msg) => { console.error(msg); process.exit(1); };
-const USAGE = "usage: partforge <lint|measure|render|pick-serve|pick> …";
+const USAGE = "usage: partforge <lint|measure|render|describe|pick-serve|pick> …";
 
 // Crash contract (issue #27): with --json, a thrown error becomes structured
 // stdout JSON; either way the message is matched against ERROR-PATTERNS.md and
@@ -167,6 +169,51 @@ const commands = {
       process.exit(report.ok && vok ? 0 : 1);
     } catch (e) {
       crash("measure", e, !!flags.json);
+    }
+  },
+
+  async describe(args) {
+    const usage = "usage: partforge describe <part-module#importName> [--surfaces] [--json] [--budget N] [--out <file>]";
+    const { values: flags, positionals: [target] } = parse(args, {
+      surfaces: { type: "boolean" },
+      json: { type: "boolean" },
+      budget: { type: "string" },
+      out: { type: "string" },
+    }, usage);
+    if (!target) die(usage);
+    // `part.js#importName` — describe reads a FILE, and a file only reaches the kernel
+    // through a part's `imports` declaration, so the part is how we find it. A bare mesh
+    // path is deliberately not accepted in v1: it would need its own resolver, its own
+    // format sniffing, and its own unit assumptions, all of which the import pipeline
+    // already owns.
+    const [partPath, importName] = target.split("#");
+    if (!importName) die(`describe needs an import name: <part-module>#<importName>\n${usage}`);
+    try {
+      const part = await loadPart(partPath, usage);
+      if (!part.imports?.[importName]) {
+        die(`describe: "${importName}" is not a declared import of ${partPath} ` +
+            `(have: ${Object.keys(part.imports ?? {}).join(", ") || "none"})`);
+      }
+      const kernel = await bootKernel(part);
+      const solid = kernel.import(importName);
+      const report = describeMesh(kernel, solid, {
+        name: importName,
+        digest: kernel._importDigest?.(importName) ?? null,
+        budget: flags.budget ? Number(flags.budget) : undefined,
+      });
+      if (flags.out) {
+        mkdirSync(dirname(resolve(flags.out)), { recursive: true });
+        writeFileSync(flags.out, JSON.stringify(report, null, 2));
+      }
+      if (flags.json) console.log(JSON.stringify(report, null, 2));
+      else printDescribe(report, { surfaces: !!flags.surfaces });
+      if (flags.out) console.log(`\nwrote ${flags.out}`);
+      // A closed-set error exits non-zero; LOW COVERAGE does not. Coverage is a finding
+      // the caller must be able to read, and an exit code that conflated the two would
+      // train an agent to discard exactly the reports it most needs to look at.
+      process.exit(report.error ? 1 : 0);
+    } catch (e) {
+      crash("describe", e, !!flags.json);
     }
   },
 
@@ -377,6 +424,68 @@ function printVerify(v) {
   }
   const f = v.failures.length, w = v.warnings.length;
   console.log(`  result: ${f ? `${f} gate failure(s)` : "all gates passed"}${w ? `, ${w} warning(s)` : ""}`);
+}
+
+// Human/agent-readable summary. Features, patterns, symmetry, score, residual — the
+// compact shape (spec §3.4), because a 24k-triangle part yields hundreds of surfaces and
+// dumping them buries the reader in the noise the oracle exists to remove. `--surfaces`
+// opts back in; `--json` always has everything. Reads the SAME compactDescribe() output
+// a model reads (not a hand-rolled subset), so what a human sees here and what an agent
+// sees over `--json` cannot drift apart.
+function printDescribe(report, { surfaces }) {
+  if (report.error) {
+    console.error(`describe: ${report.error}${report.detail ? ` — ${report.detail}` : ""}`);
+    return;
+  }
+  const c = compactDescribe(report);
+  if (c.warning) console.log(`\n!! ${c.warning}\n`);
+  console.log(`${c.source.name ?? "mesh"} — ${c.source.triangles} triangles, ` +
+              `${c.bounds.size.map((v) => v.toFixed(2)).join(" x ")} mm, ${c.frame.up} up`);
+  console.log(`\nFeatures (${c.features.length}):`);
+  for (const f of c.features) {
+    const dim = f.diameter ?? f.radius ?? f.width ?? f.thickness ?? f.depth;
+    const snap = f.snapped?.diameter?.note ? `  [${f.snapped.diameter.note}]` : "";
+    // `volumeShare`, NOT "confidence" (describe.js/report.js's own naming rule) — it is
+    // the fraction of the PART'S VOLUME this feature accounts for, a measure of size,
+    // not of how sure the description is. A small-but-certain feature (a precise 3mm
+    // hole in a large plate) legitimately reports a small share; labelling this column
+    // "conf" would read backwards for exactly that feature.
+    console.log(`  ${f.id.padEnd(5)} ${f.type.padEnd(14)} ` +
+                `${dim != null ? dim.toFixed(3) : ""}`.padEnd(10) +
+                `share ${f.volumeShare == null ? "n/a" : `${(100 * f.volumeShare).toFixed(1)}%`}${snap}`);
+  }
+  if (c.patterns.length) {
+    console.log(`\nPatterns (${c.patterns.length}):`);
+    for (const p of c.patterns) {
+      console.log(`  ${p.id.padEnd(5)} ${p.type.padEnd(9)} x${p.counts.join("x")} ` +
+                  `pitch ${p.pitch.map((v) => v.toFixed(2)).join(", ")}  [${p.members.length} members]`);
+    }
+  }
+  if (c.symmetry.length) {
+    console.log(`\nSymmetry:`);
+    for (const s of c.symmetry) console.log(`  ${s.type} coverage ${s.coverage}`);
+  }
+  if (surfaces) {
+    console.log(`\nSurfaces (${report.surfaces.length}):`);
+    for (const s of report.surfaces) {
+      console.log(`  ${s.id.padEnd(5)} ${s.type.padEnd(9)} area ${s.area.toFixed(2)}`.padEnd(40) +
+                  `rms ${s.rms.toExponential(2)}`);
+    }
+  }
+  // TWO DIFFERENT NUMBERS, printed as two (score.note's own point, spelled out again for
+  // a reader who only sees the terminal, not the JSON): explainedArea is how much of the
+  // mesh's SURFACE segmentation fitted to some primitive; explainedVolumeFraction is how
+  // much of the part's actual SHAPE the accepted features reconstruct. They can diverge
+  // totally — a dome segments to ~100% area and 0% volume, since a sphere is not a
+  // candidate-eligible feature type — so printing only one (or a blended "xor%") would
+  // hide exactly the gap the LOW COVERAGE banner above exists to catch.
+  console.log(`\nScore: ${(100 * c.score.explainedArea).toFixed(1)}% surface area explained, ` +
+              `${(100 * c.score.explainedVolumeFraction).toFixed(1)}% volume reconstructed ` +
+              `(residual xor ${(100 * c.score.xorFraction).toFixed(2)}% of volume)`);
+  console.log(`Residual: ${(100 * c.residual.areaFraction).toFixed(2)}% of area in ` +
+              `${c.residual.regions.length} region(s)`);
+  const truncated = Object.entries(report.truncated ?? {}).filter(([, v]) => v).map(([k]) => k);
+  if (truncated.length) console.log(`Truncated (caps hit): ${truncated.join(", ")}`);
 }
 
 function printLint(r) {

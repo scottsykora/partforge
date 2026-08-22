@@ -1489,6 +1489,106 @@ build: (k, p, d) => {
 
 **CLI:** `partforge measure|render|lint` work on an importing part exactly as on any other — the `imports` field resolves in the CLI's Node boot the same way `fonts` does, no extra flags.
 
+## Describing an imported mesh
+
+Before you write the parametric rebuild, ask the mesh itself what's in it: `partforge
+describe <part-module>#<importName>` reads an already-declared import (`k.import`'s own
+name, not a bare file path — the `imports` field is how the file gets to a kernel at
+all, so it's how `describe` finds it too) and emits a semantic feature report — holes,
+bosses, pockets, extrusions, patterns, symmetry — rather than a triangle soup. On
+`import-demo.js`, whose `scan` import is a plain 20×14×8mm block:
+
+```
+$ npx partforge describe src/parts/import-demo.js#scan
+
+scan — 12 triangles, 20.00 x 14.00 x 8.00 mm, +Z up
+
+Features (1):
+  f0    extrusion      8.000     share 100.0%
+
+Score: 100.0% surface area explained, 100.0% volume reconstructed (residual xor 0.00% of volume)
+Residual: 0.00% of area in 0 region(s)
+```
+
+**Two report shapes, and which one is authoritative.** `describe()` (`src/framework/
+oracle/describe.js`) returns the FULL report — every surface, every fitted edge, every
+feature at full precision — and that is the archive: `--json` prints it whole, and
+`--out <file>` writes it whole. `compactDescribe()` (`src/framework/oracle/describe/
+report.js`) derives a second, smaller shape from it — features, patterns, symmetry,
+score, residual, and the suggested rebuild, with `surfaces`/`edges` reduced to counts —
+and that is what a model reads, and what the terminal printer above reads too: **the
+same `compactDescribe()` output**, not a hand-rolled subset, so what a human sees in the
+default summary and what an agent gets from a cloud turn cannot drift apart. The full
+report is authoritative for the facts (a fitted surface's rms, an edge's exact radius);
+the compact report is authoritative for what's worth paying attention to.
+
+**Computed once, reused for the session.** `describe` depends on nothing but the mesh's
+own bytes — no part params, no derived state — so unlike `measure`/`verify` it never
+needs to re-run on every parameter edit. The worker keys its memo on the import's
+content digest (`kernel._importDigest(name)`), so re-describing the same file, or asking
+again mid-session while you iterate on the parametric rebuild, is free after the first
+call. The CLI doesn't carry a memo across process invocations — each `partforge
+describe` run is its own process — but within one browser session or one long-running
+tool loop, the mesh is segmented once.
+
+**`--surfaces` and `--json`, and why the default elides.** A hand-modelled block
+segments to six surfaces; a real 24k-triangle CAD export segments to hundreds. Printing
+every one of them by default would bury the two or three that actually matter under
+exactly the noise this oracle exists to remove — so the plain-text summary shows
+features, patterns, symmetry, score, and residual only. Pass `--surfaces` to add the
+surface table back (`s0 plane area … rms …`, one line per fitted patch); pass `--json`
+to get everything, always, structured — the mode an agent should default to over
+scraping the text summary. `--out <file>` writes the full report to disk independently
+of either flag, so you can capture it once and read it multiple ways.
+
+**Low coverage exits zero — it's a finding, not a failure.** A poor segmentation (a
+dome, a free-form scan, anything the four feature detectors can't reconstruct) is
+exactly the situation an agent most needs to see, not one that should make itself
+harder to see. `describe` treats "the shape isn't well explained" and "the command
+failed" as different questions: a `LOW COVERAGE` banner at the top of the summary (and
+`compactDescribe()`'s own `warning` field in `--json` output) is how a poor result
+announces itself, and the process still exits 0. Only a genuine closed-set error — the
+mesh couldn't be read or segmented at all — exits 1. Coverage is gated on the WORSE of
+two numbers, both always printed rather than blended into one: `explainedArea` (how much
+of the mesh's *surface* a fitted primitive accounts for) and `explainedVolumeFraction`
+(how much of the part's actual *shape* the accepted features reconstruct). They can
+diverge totally — a dome segments to ~100% surface area (it fits a sphere cleanly) and
+0% volume (a sphere isn't a candidate-eligible feature type for any detector) — so
+printing only one of them, or an average, would hide precisely the gap the banner exists
+to catch. Each feature's own score is named `volumeShare`, never "confidence": it is the
+fraction of the part's volume that feature accounts for — a measure of *size* — so a
+small-but-certain feature (a precisely-fitted 3mm hole in a large plate) legitimately
+reports a small share. Read a feature's fitted surface `rms`/`maxDev` (under `--surfaces`
+or `--json`) for an actual certainty signal.
+
+**Closed error set.** Anything short of a programming mistake comes back as
+`{error: "<code>", detail, diagnostic}` rather than a thrown exception — a CLI or an
+agent can act on a code far better than on a stack trace — and every code has an
+ERROR-PATTERNS.md entry:
+
+- `not-manifold` — the mesh still has open edges after repair; see
+  [ERROR-PATTERNS.md#describe-not-manifold](ERROR-PATTERNS.md#describe-not-manifold).
+- `too-large` — over the 400,000-triangle segmentation ceiling; see
+  [ERROR-PATTERNS.md#describe-too-large](ERROR-PATTERNS.md#describe-too-large).
+- `empty` — the mesh has zero triangles; see
+  [ERROR-PATTERNS.md#describe-empty](ERROR-PATTERNS.md#describe-empty).
+- `unreadable` — `solid.toMesh()` itself threw; see
+  [ERROR-PATTERNS.md#describe-unreadable](ERROR-PATTERNS.md#describe-unreadable).
+
+A `budget-exceeded` report (the acceptance loop ran out of boolean attempts before the
+residual converged) is not one of these — it's a `warning` on an otherwise-valid report,
+same tier as low coverage, not a reason to exit non-zero; raise `--budget` and re-run.
+See [ERROR-PATTERNS.md#describe-budget-exceeded](ERROR-PATTERNS.md#describe-budget-exceeded).
+
+**The loop this completes.** `describe` exists to feed a specific workflow, the one
+"Importing geometry" above sets up and this closes: `describe` the import to get its
+feature list and a proposed reconstruction (`suggestion` in the full report); write a
+parametric part from that proposal; bind the rebuild's sub-part to the import with
+`reference: "scan"`; and let `verify`'s `ref*` gates (`refXorVolume`, `refVolumeDeltaPct`,
+`refBboxDelta` — "The `reference` field and the deviation gate", above) hold the rebuild
+to the scan on every future `measure`/`verify` run, long after the one-time `describe`
+call that suggested it. `describe` proposes; `verify` keeps you honest.
+
 ---
 
 ## Wiring a part into a runnable app
