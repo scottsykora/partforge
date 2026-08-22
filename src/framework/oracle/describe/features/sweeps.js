@@ -53,6 +53,15 @@
 // against; omit it and this half of the rule is skipped rather than guessing (the
 // revolve rule above needs no mesh access and still runs).
 //
+// `opts.bvh`, if given, is used instead of building one here — the orchestrator
+// (describe.js, Task 12 / ruling R39) builds exactly ONE BVH per describe() call
+// and passes it down, since buildBVH is O(n log n) over the WHOLE mesh regardless
+// of how few rays a caller casts (measured 9.8ms at 10.8k triangles, 48ms at
+// 43k) and this rule's own handful of per-plane rays would otherwise pay that
+// cost again for nothing. Falls back to building its own so every existing
+// `detectSweeps(graph, topo)` call (this file's own tests included) keeps working
+// unchanged.
+//
 // Pure leaf. See spec §2.5.
 import { jacobiEigen } from "../fit.js";
 import { buildBVH } from "../../bvh.js";
@@ -138,7 +147,7 @@ const axisOf = (s) =>
   s.type === "cone" ? s.fit.direction :
   s.type === "torus" ? s.fit.axis : null;
 
-export function detectSweeps(graph, topo) {
+export function detectSweeps(graph, topo, opts = {}) {
   const out = [];
 
   // --- revolve ---------------------------------------------------------------
@@ -182,7 +191,7 @@ export function detectSweeps(graph, topo) {
   if (topo) {
     const planes = graph.surfaces.filter((s) => s.type === "plane");
     if (planes.length >= 3) {
-      const bvh = buildBVH({ positions: topo.verts, indices: topo.tris });
+      const bvh = opts.bvh ?? buildBVH({ positions: topo.verts, indices: topo.tris });
       const readingsBySurface = planes
         .map((s) => ({ s, reading: planeInwardThickness(topo, bvh, s) }))
         .filter((r) => r.reading != null);

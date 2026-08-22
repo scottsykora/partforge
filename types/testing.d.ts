@@ -454,6 +454,177 @@ export function matchViews(
   opts?: { scaleAware?: boolean },
 ): { best: ({ view: string } & MatchScores) | null; views: Record<string, number> };
 
+// --- describe (the semantic mesh oracle) ------------------------------------
+
+/** A raw measurement snapped to intent — never destroys the measurement. */
+export interface Snapped {
+  raw: number;
+  to: number;
+  note: string | null;
+}
+
+/** One fitted surface patch. `fit` is the raw per-type fit record (fit.js). */
+export interface DescribeSurface {
+  id: string;
+  type: string;
+  area: number;
+  triangles: number;
+  rms: number;
+  maxDev: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- shape varies by surface type (plane/cylinder/cone/torus/sphere)
+  fit: Record<string, any>;
+}
+
+/** One fitted edge between two surfaces. */
+export interface DescribeArc {
+  between: [string, string];
+  convexity: "convex" | "concave" | "flat";
+  kind: string;
+  radius: number | null;
+  axis: unknown;
+  length: number;
+}
+
+/**
+ * One recognised feature. Shape varies by `type` (a hole carries `diameter`/
+ * `axis`, a fillet carries `radius`/`between`, …) — the fields every family
+ * shares are pulled out here; the rest is read by `type`.
+ */
+export interface DescribeFeature {
+  id: string;
+  key: string;
+  type: string;
+  /** The marginal xor-volume reduction that admitted this feature, normalised
+   * to the source volume; `null` for a type acceptCandidates never proposes
+   * (fillet, chamfer, pocket, revolve, shell). */
+  confidence: number | null;
+  /** Snapped values for whichever of diameter/depth/radius/width/thickness this feature carries. */
+  snapped: Record<string, Snapped>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- per-type facts (axis, profile, evidence, …)
+  [key: string]: any;
+}
+
+/** A repetition (grid/linear/circular) or a detected mirror plane over the feature list. */
+export interface DescribePattern {
+  id: string;
+  type: "grid" | "linear" | "circular";
+  members: string[];
+  axis: number[] | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- per-type spacing/count facts
+  [key: string]: any;
+}
+
+/** One connected island of mesh area no surface fit claimed. */
+export interface DescribeResidualRegion {
+  triangles: number;
+  centroid: number[];
+  bounds: { min: number[]; max: number[] };
+}
+
+/** One proposed rebuild step, in the order acceptCandidates actually admitted it. */
+export interface DescribeSuggestionStep {
+  op: string;
+  explains: string[];
+  pattern: string | null;
+  score: number;
+  args: Record<string, unknown>;
+}
+
+/** A proposed reconstruction — an interpretation, not a measurement (see `disclaimer`). */
+export interface DescribeSuggestion {
+  disclaimer: string;
+  params: Array<{ name: string; value: number; from: string }>;
+  steps: DescribeSuggestionStep[];
+}
+
+/** Which of the report's capped arrays actually hit their ceiling (`DESCRIBE_LIMITS`). */
+export interface DescribeTruncated {
+  surfaces: boolean;
+  edges: boolean;
+  features: boolean;
+  patterns: boolean;
+  residualRegions: boolean;
+  suggestionSteps: boolean;
+}
+
+export interface DescribeScore {
+  /** Surface coverage from segmentation: fraction of the mesh's area fitted to some surface type. */
+  explainedArea: number;
+  /** Shape coverage from reconstruction: fraction of the part's volume the accepted features rebuild. */
+  explainedVolumeFraction: number;
+  xorFraction: number;
+  xorVolume: number;
+  note: string;
+}
+
+/** A full `describe()` report — everything measured, meant for archival/`--json`. */
+export interface DescribeReport {
+  source: { name: string | null; digest: string | null; triangles: number; watertight: boolean | null; units: "mm" };
+  frame: { up: "+Z"; note: string };
+  bounds: { min: number[]; max: number[]; size: number[] };
+  counts: { surfaces: number; edges: number };
+  surfaces: DescribeSurface[];
+  edges: DescribeArc[];
+  features: DescribeFeature[];
+  patterns: DescribePattern[];
+  symmetry: unknown[];
+  residual: { areaFraction: number; regions: DescribeResidualRegion[] };
+  score: DescribeScore;
+  suggestion: DescribeSuggestion | null;
+  truncated: DescribeTruncated;
+  /** Present only when the acceptance loop hit its boolean budget before converging. */
+  warning?: "budget-exceeded";
+}
+
+/** The model-facing view: capped arrays elided to counts, a coverage banner first when low. */
+export type DescribeCompactReport = Omit<DescribeReport, "surfaces" | "edges"> & {
+  /** Present, and serialized FIRST, only when coverage is below `LOW_COVERAGE`. */
+  warning?: string;
+};
+
+/** A closed-set failure, returned rather than thrown (spec §5's diagnostic triple). */
+export interface DescribeFailure {
+  error: "not-manifold" | "too-large" | "empty" | "budget-exceeded" | "unreadable";
+  detail: string;
+  diagnostic: { cause: string; location: string; correctiveAction: string };
+  source: { name: string | null; digest: string | null; [key: string]: unknown };
+}
+
+/** The closed set of error codes `describe()` can return. */
+export const DESCRIBE_ERRORS: readonly string[];
+
+/** Report array ceilings (`MAX_SURFACES`, `MAX_FEATURES`, …) — a plain-data module, no imports. */
+export const DESCRIBE_LIMITS: {
+  MAX_SURFACES: number;
+  MAX_EDGES: number;
+  MAX_FEATURES: number;
+  MAX_PATTERNS: number;
+  MAX_RESIDUAL_REGIONS: number;
+  MAX_SUGGESTION_STEPS: number;
+};
+
+/** Below this fraction (the worse of `explainedArea`/`explainedVolumeFraction`) `compactDescribe` prepends a warning. */
+export const LOW_COVERAGE: number;
+
+/** A fresh, caller-owned digest memo — scope one per worker, or per test. */
+export function describeMemo(): Map<string, DescribeReport>;
+
+/**
+ * Mesh in, semantic feature report out. `solid` is a LIVE kernel `Solid` — the
+ * kernel has no public mesh->solid constructor, so a caller reads one back via
+ * `kernel.import(name)`. Keyed by `opts.digest` in `opts.memo` (when both are
+ * given): the report depends on nothing but the mesh bytes, so an edit to the
+ * part that produced the mesh can never invalidate it.
+ */
+export function describe(
+  kernel: GeometryKernel,
+  solid: Solid,
+  opts?: { name?: string; digest?: string; budget?: number; memo?: Map<string, DescribeReport> },
+): DescribeReport | DescribeFailure;
+
+/** The full report, reduced to what a model should read: capped arrays elided to counts, low-coverage banner first. */
+export function compactDescribe(full: DescribeReport): DescribeCompactReport;
+
 // --- rendering --------------------------------------------------------------
 
 /** The canonical angle names `renderViews` accepts. */

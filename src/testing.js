@@ -28,3 +28,8 @@ export { minWall } from "./framework/oracle/min-wall.js";
 // the same masks and reproduce a score outside the job loop.
 export { MATCH_VIEWS, rasterizeMeshMask, rasterizeRingsMask } from "./framework/oracle/silhouette.js";
 export { matchMasks, matchViews } from "./framework/oracle/match.js";
+// The semantic mesh oracle. Worker-reachable like the rest of the oracle (the
+// `describe` job runs it); re-exported so a downstream harness can run it directly.
+export { describe, describeMemo, DESCRIBE_ERRORS } from "./framework/oracle/describe.js";
+export { compactDescribe, LOW_COVERAGE } from "./framework/oracle/describe/report.js";
+export { DESCRIBE_LIMITS } from "./framework/oracle/describe/limits.js";
