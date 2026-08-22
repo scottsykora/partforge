@@ -24,6 +24,7 @@ const signature = (f) =>
 
 const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
 const len = (a) => Math.hypot(a[0], a[1], a[2]);
+const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 
 // An orthonormal frame to measure repetition in. NOT the world axes (controller ruling
 // R27): a 2x2 hole grid drilled into a plate sitting at an arbitrary orientation — which is
@@ -224,36 +225,67 @@ function spacing(sorted, tol) {
   return steps.every((s) => Math.abs(s - mean) <= tol) ? mean : null;
 }
 
-// Mirror symmetry about each of the FRAME's mid-planes — same reasoning as the grid
-// search (ruling R27): a symmetric part at an arbitrary orientation has no symmetry plane
-// aligned to world X/Y/Z. The mid-plane is the midpoint of the features' own extent along
-// each frame axis, not the mesh bbox's, so the test does not depend on how much unrelated
-// geometry happens to surround them.
+// Mirror symmetry, tested against candidate planes derived from the DATA rather
+// than from `patternFrame`'s axes -- closing the same ruling-R27 gap `asGrid` had.
+// `patternFrame`'s w axis is data-derived (the shared drill direction), but its u/v
+// are an arbitrary seed-vector choice with no relationship to where a real mirror
+// plane sits; testing only those two as candidate normals meant a part whose true
+// mirror plane wasn't aligned to that arbitrary in-plane pick reported no symmetry
+// at all, the same silent orientation-dependence asGrid had before its rewrite.
 //
-// `coverage` is the matched fraction, so a nearly symmetric part reports 0.94 rather than
-// silently reporting nothing — the agent can then decide whether the part WANTS to be
-// symmetric and the scan is just imperfect.
+// The fix uses the same idea asGrid's rewrite does: derive candidates from the
+// members instead of from an assumed basis. For every PAIR of same-signature
+// features, the perpendicular bisector plane of the segment joining them --
+// normal along the join direction, offset at the midpoint -- is a candidate
+// mirror plane. This set is complete: any true mirror plane of the layout must be
+// the bisector of at least one such pair (a feature and its own reflected
+// partner), whatever the part's orientation. Feature counts here are tens, not
+// mesh-triangle counts, so the O(n^2) candidate set is not a cost concern.
+//
+// `coverage` is the matched fraction, so a nearly symmetric part reports 0.94 rather
+// than silently reporting nothing — the agent can then decide whether the part WANTS
+// to be symmetric and the scan is just imperfect.
 function detectSymmetry(features, bounds, tol) {
   const positioned = features.filter((f) => posOf(f));
   if (positioned.length < 2) return [];
-  const frame = patternFrame(positioned);
-  const local = positioned.map((f) => inFrame(frame, posOf(f)));
-  const out = [];
-  for (let a = 0; a < 3; a++) {
-    const vals = local.map((p) => p[a]);
-    const mid = (Math.min(...vals) + Math.max(...vals)) / 2;
-    let matched = 0;
-    for (let i = 0; i < positioned.length; i++) {
-      const want = [...local[i]];
-      want[a] = 2 * mid - local[i][a];
-      const hit = local.some((q, j) =>
-        signature(positioned[j]) === signature(positioned[i]) && len(sub(q, want)) <= tol);
-      if (hit) matched++;
-    }
-    const coverage = matched / positioned.length;
-    if (coverage > 0.6) {
-      out.push({ type: "mirror", plane: { normal: frame[a], offset: mid }, coverage: round3(coverage) });
+  const pts = positioned.map((f) => posOf(f));
+  const sigs = positioned.map((f) => signature(f));
+
+  const candidates = [];
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      if (sigs[i] !== sigs[j]) continue;
+      const d = sub(pts[j], pts[i]);
+      const dl = len(d);
+      if (dl < tol) continue;                            // coincident, not a mirror pair
+      const n = [d[0]/dl, d[1]/dl, d[2]/dl];
+      const mid = [(pts[i][0]+pts[j][0])/2, (pts[i][1]+pts[j][1])/2, (pts[i][2]+pts[j][2])/2];
+      candidates.push({ n, offset: dot(n, mid) });
     }
   }
-  return out;
+
+  const out = [];
+  for (const cand of candidates) {
+    if (out.some((o) => samePlane(o, cand, tol))) continue;   // already scored this plane
+
+    let matched = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const d2 = 2 * (dot(cand.n, pts[i]) - cand.offset);
+      const want = [pts[i][0]-d2*cand.n[0], pts[i][1]-d2*cand.n[1], pts[i][2]-d2*cand.n[2]];
+      const hit = pts.some((q, j) => sigs[j] === sigs[i] && len(sub(q, want)) <= tol);
+      if (hit) matched++;
+    }
+    const coverage = matched / pts.length;
+    if (coverage > 0.6) out.push({ n: cand.n, offset: cand.offset, coverage: round3(coverage) });
+  }
+
+  return out.map(({ n, offset, coverage }) => ({ type: "mirror", plane: { normal: n, offset }, coverage }));
+}
+
+// Same plane within tolerance: normals parallel up to sign, offsets equal (sign
+// flipped to match the normal's flip, since offset is defined relative to it).
+function samePlane(a, b, tol) {
+  if (len(sub(a.n, b.n)) < 1e-6) return Math.abs(a.offset - b.offset) <= tol;
+  if (len(sub(a.n, [-b.n[0], -b.n[1], -b.n[2]])) < 1e-6) return Math.abs(a.offset + b.offset) <= tol;
+  return false;
 }

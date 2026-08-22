@@ -147,3 +147,47 @@ test("a symmetric hole layout reports a mirror plane", () => {
   expect(mirror).toBeDefined();
   expect(mirror.coverage).toBeCloseTo(1, 6);
 });
+
+// Fix round 1, item 1: detectSymmetry previously tested only patternFrame's own
+// u/v/w axes as candidate mirror normals, two of which (u/v) are an arbitrary seed
+// choice, not derived from the data -- the same ruling-R27 defect asGrid had. This
+// is that gap's regression guard: the same 4-hole symmetric layout, rigidly
+// rotated, must report the SAME two mirror planes with the SAME coverage, and each
+// reported normal must be the un-rotated normal carried through the identical
+// rotation (not just "some" normal -- the actual one).
+test("a rotated symmetric hole layout reports the same mirror planes, correctly rotated", () => {
+  const rot = ([x, y, z]) => {
+    const c = Math.cos(0.7), s = Math.sin(0.7);
+    const c2 = Math.cos(0.4), s2 = Math.sin(0.4);
+    const [y1, z1] = [y*c - z*s, y*s + z*c];
+    return [x*c2 - y1*s2, x*s2 + y1*c2, z1];
+  };
+  const base = [hole(5,5), hole(55,5), hole(5,35), hole(55,35)];
+  const spun = base.map((h) => ({
+    ...h, axis: { origin: rot(h.axis.origin), direction: rot([0,0,1]) },
+  }));
+  const { symmetry } = detectPatterns(spun, { min: rot([0,0,0]), max: rot([60,40,12]) });
+  const mirrors = symmetry.filter((s) => s.type === "mirror");
+  expect(mirrors.length).toBe(2);
+  for (const m of mirrors) expect(m.coverage).toBeCloseTo(1, 6);
+
+  // The unrotated layout's two mirror planes are x=30 (normal (1,0,0)) and y=20
+  // (normal (0,1,0)); rotating the whole part must rotate those normals the same way.
+  const expected = [rot([1, 0, 0]), rot([0, 1, 0])];
+  for (const want of expected) {
+    const hit = mirrors.some((m) => {
+      const n = m.plane.normal;
+      const dotP = n[0]*want[0] + n[1]*want[1] + n[2]*want[2];
+      return Math.abs(Math.abs(dotP) - 1) < 1e-6;   // parallel, either sign
+    });
+    expect(hit).toBe(true);
+  }
+});
+
+// A widened candidate set (every same-signature pair, not just 3 frame axes) must
+// not become credulous: a layout with no mirror symmetry at all must still report
+// none.
+test("an asymmetric hole layout reports no mirror plane", () => {
+  const { symmetry } = detectPatterns([hole(5,5), hole(55,5), hole(5,35), hole(20,12)], bounds);
+  expect(symmetry.filter((s) => s.type === "mirror")).toEqual([]);
+});
