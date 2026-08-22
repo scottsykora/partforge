@@ -15,6 +15,55 @@ const plateSolid = () =>
   kernel.box({ min: [0, 0, 0], max: [60, 40, 12] })
     .cut(kernel.cylinder({ r: 2.65, h: 40 }).translate([30, 20, -14]));
 
+// Round 2 review's CRITICAL finding: toCandidate's polygon-profile branch used to
+// project the WHOLE MESH's vertices for every prismatic candidate, so a part with
+// more than one such feature built every candidate the same full-part-bbox size.
+// acceptCandidates' greedy loop then took whichever one happened to win and
+// silently dropped the rest — no error, no warning, just missing from
+// `volumeShare` and `suggestion.steps`. These two fixtures are the regression
+// cover: a base plate with one step, and with three (deliberately non-touching
+// footprints — two bosses sharing so much as one coordinate merges their
+// coplanar wall surfaces into one, which is a real but separate surface-graph.js
+// nuance, not what this regression is testing).
+const steppedTwoBox = () =>
+  kernel.box({ min: [0, 0, 0], max: [60, 40, 10] })
+    .union(kernel.box({ min: [15, 10, 10], max: [40, 30, 30] }));
+
+const steppedThreeBox = () =>
+  kernel.box({ min: [0, 0, 0], max: [60, 40, 10] })
+    .union(kernel.box({ min: [5, 5, 10], max: [15, 15, 18] }))
+    .union(kernel.box({ min: [25, 18, 10], max: [35, 26, 22] }))
+    .union(kernel.box({ min: [45, 29, 10], max: [55, 37, 16] }));
+
+const ORIENTATIONS = [
+  ["axis-aligned", (s) => s],
+  ["rotated", (s) => s.rotate(29, [0, 0, 0], [1, 2, 3])],
+];
+
+test.each(ORIENTATIONS)(
+  "%s: a two-step part explains BOTH prismatic features, not just one", (name, orient) => {
+    const r = describeMesh(kernel, orient(steppedTwoBox()), { digest: `step2-${name}` });
+    expect(r.error).toBeUndefined();
+    const prismatic = r.features.filter((f) => f.type === "extrusion" || f.type === "boss");
+    expect(prismatic.length).toBe(2);
+    for (const f of prismatic) expect(f.volumeShare).toBeGreaterThan(0);
+    const explained = new Set(r.suggestion.steps.flatMap((s) => s.explains));
+    for (const f of prismatic) expect(explained.has(f.id)).toBe(true);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.99);
+  });
+
+test.each(ORIENTATIONS)(
+  "%s: a three-step part explains EVERY prismatic feature, not just one or two", (name, orient) => {
+    const r = describeMesh(kernel, orient(steppedThreeBox()), { digest: `step3-${name}` });
+    expect(r.error).toBeUndefined();
+    const prismatic = r.features.filter((f) => f.type === "extrusion" || f.type === "boss");
+    expect(prismatic.length).toBe(4); // the base extrusion plus all three steps
+    for (const f of prismatic) expect(f.volumeShare).toBeGreaterThan(0);
+    const explained = new Set(r.suggestion.steps.flatMap((s) => s.explains));
+    for (const f of prismatic) expect(explained.has(f.id)).toBe(true);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.99);
+  });
+
 test("a plate with a bore reports a through hole", () => {
   const r = describeMesh(kernel, plateSolid(), { name: "plate", digest: "d1" });
   expect(r.features.some((f) => f.type === "throughHole")).toBe(true);

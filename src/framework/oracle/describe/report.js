@@ -43,13 +43,27 @@ const cap = (arr, max, flags, name) => {
 // feature type, so accept.js never gets a candidate to build from it at all). Spelled
 // out here, in the data, because the consumer is an LLM that cannot go read accept.js's
 // comments to work out that these are different measurements (fix round 1, IMPORTANT 5).
+//
+// Also covers each feature's own `volumeShare` (describe.js), the SAME underlying
+// accept.js gain measurement applied per-feature rather than summed: how much of the
+// part's volume THAT feature accounts for, not how sure the description is (round 2
+// review, IMPORTANT). A small-but-certain feature legitimately reports a small share —
+// spelled out here for the same reason the area/volume distinction is: the consumer
+// cannot go read accept.js's comments to learn that "small" and "uncertain" are not
+// the same axis.
 const SCORE_NOTE =
   "explainedArea is surface coverage from segmentation (how much of the mesh's area " +
   "was fit by a surface); explainedVolumeFraction is shape coverage from " +
   "reconstruction (how much of the part's volume the accepted features actually " +
   "rebuild). These are different measurements and can diverge totally — a part can " +
   "be ~100% segmented and 0% reconstructed. The LOW COVERAGE banner, if present, " +
-  "reflects whichever of the two is worse.";
+  "reflects whichever of the two is worse. Each feature's own volumeShare is the " +
+  "same reconstruction measurement applied per-feature: the fraction of the part's " +
+  "volume THAT feature accounts for. It is a measure of SIZE, not certainty — a " +
+  "small-but-certain feature (e.g. a precisely-fitted 3mm hole in a large plate) " +
+  "legitimately reports a small volumeShare because it is small, not because it is " +
+  "doubtful. For a genuine fit-quality/certainty signal, read that feature's own " +
+  "fitted surface rms/maxDev instead.";
 
 function buildScore(score) {
   return { ...(score ?? {}), note: SCORE_NOTE };

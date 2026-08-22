@@ -228,7 +228,20 @@ export function detectPrismatic(graph) {
 
     const feature = {
       id: null,
-      key: `${type}:${round3(depth)}:${cap.id}`,
+      // Geometry-derived, not `cap.id` (a segmentation surface id assigned in
+      // triangle-DISCOVERY order — round 2 review: permuting a mesh's own
+      // triangle order, same geometry, moved a boss's key from `boss:15:s1` to
+      // `boss:15:s0`, since it renumbers surfaces). `cap.fit.offset`/`normal`
+      // pin down the cap's own PLANE (offset is stable across permutation:
+      // `orientPlaneOutward`, surface-graph.js, already canonicalises the
+      // normal's sign independent of input order, same as every other reader
+      // of `fit.normal` in this file relies on); `cap.area` breaks the tie
+      // between two same-depth, coplanar caps (two pockets sunk into the same
+      // face). `round3` absorbs the float-associativity noise a permuted
+      // summation order introduces (Task 4's own ruling, R29) — real geometry
+      // never differs at 3-decimal precision, only float dust does.
+      key: `${type}:${round3(depth)}:${round3(cap.fit.offset)}:` +
+        `${cap.fit.normal.map(round3).join(",")}:${round3(cap.area)}`,
       type, depth, direction,
       floorFace: cap.id,
       wallFaces: sideWalls.map((w) => w.id),

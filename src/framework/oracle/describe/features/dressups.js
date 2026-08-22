@@ -71,15 +71,29 @@ const round3 = (v) => Math.round(v * 1000) / 1000;
 const byId = (graph) => new Map(graph.surfaces.map((s) => [s.id, s]));
 const other = (arc, id) => (arc.between[0] === id ? arc.between[1] : arc.between[0]);
 const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-// Surface ids are always `s<n>` (surface-graph.js), so sort on the number, not
-// the string — plain string order puts "s10" before "s2" once a part has ten
-// or more surfaces, which is still deterministic but not what a reader expects
-// and needlessly reorders every time a surface count crosses a power of ten.
-const idNum = (id) => Number(id.slice(1));
-const sortIds = (ids) => [...ids].sort((a, b) => idNum(a) - idNum(b));
 // A primary arc's own reference length: its measured circle radius when curved,
 // or its own run length when straight (a straight arc has no radius to offer).
 const arcExtent = (arc) => arc.radius ?? arc.length;
+
+// A neighbour's own fitted geometry, not its segmentation surface id (round 2
+// review: `s0`/`s1` are assigned in triangle-DISCOVERY order — the same defect
+// prismatic.js's key had — so they renumber under a triangle-order permutation
+// of the same geometry, which must never change what a fillet/chamfer's own
+// key is). Covers every surface type a dress-up's primary neighbour can be;
+// `round3` absorbs the float-associativity noise a permuted summation/fit
+// order introduces (Task 4's own ruling, R29) — real geometry never differs at
+// 3-decimal precision, only float dust does.
+const vec3 = (a) => a.map(round3).join(",");
+function surfaceSignature(s) {
+  if (s.type === "plane") return `plane:${round3(s.fit.offset)}:${vec3(s.fit.normal)}`;
+  if (s.type === "cylinder") return `cylinder:${round3(s.fit.radius)}:${vec3(s.fit.axis.direction)}:${vec3(s.fit.axis.origin)}`;
+  if (s.type === "cone") return `cone:${round3(s.fit.halfAngle)}:${vec3(s.fit.apex)}:${vec3(s.fit.direction)}`;
+  if (s.type === "torus") return `torus:${round3(s.fit.majorRadius)}:${round3(s.fit.minorRadius)}:${vec3(s.fit.center)}`;
+  return `${s.type}:${round3(s.area)}`;   // any future surface type
+}
+// "|", not "-": a signature can itself contain "-" (a negative coordinate), and
+// this only ever needs to be a stable SORT key, never parsed back apart.
+const sortSignatures = (nbrs) => nbrs.map(surfaceSignature).sort().join("|");
 
 export function detectDressups(graph) {
   const surfaces = byId(graph);
@@ -105,7 +119,7 @@ export function detectDressups(graph) {
       if (!fitsAsStrip(radius)) continue;
       out.push({
         id: null,
-        key: `fillet:${round3(radius)}:${sortIds(nbrs.map((n) => n.id)).join("-")}`,
+        key: `fillet:${round3(radius)}:${sortSignatures(nbrs)}`,
         type: "fillet", radius,
         between: nbrs.map((n) => n.id),
         convexity: primary[0].convexity,
@@ -124,7 +138,7 @@ export function detectDressups(graph) {
       if (!fitsAsStrip(width)) continue;
       out.push({
         id: null,
-        key: `chamfer:${round3(width)}:${sortIds(nbrs.map((n) => n.id)).join("-")}`,
+        key: `chamfer:${round3(width)}:${sortSignatures(nbrs)}`,
         type: "chamfer", width, angle: (angles[0] + angles[1]) / 2,
         between: nbrs.map((n) => n.id),
         convexity: primary[0].convexity,
@@ -145,7 +159,7 @@ export function detectDressups(graph) {
       if (!fitsAsStrip(width)) continue;
       out.push({
         id: null,
-        key: `chamfer:${round3(width)}:${sortIds(nbrs.map((n) => n.id)).join("-")}`,
+        key: `chamfer:${round3(width)}:${sortSignatures(nbrs)}`,
         type: "chamfer", width, angle: s.fit.halfAngle,
         between: nbrs.map((n) => n.id),
         convexity: primary[0].convexity,

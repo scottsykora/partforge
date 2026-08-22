@@ -140,6 +140,32 @@ function projectedBounds(positions, axes) {
   return { min: lo, max: hi };
 }
 
+// Vertex positions (flat x,y,z triples, duplicates and all — `projectedBounds` only
+// needs a min/max) belonging to ONE feature's own surfaces, not the whole mesh.
+// Round 2 review's CRITICAL finding: a two-box stepped part (two "extrusion"-family
+// features) fed the WHOLE mesh into `projectedBounds` for both candidates, so both
+// came out identically sized to the full-part bbox — 62500mm3 each against a true
+// 38500mm3 combined — and `acceptCandidates` (which greedily takes the better of two
+// near-duplicate candidates and never revisits) accepted one and silently dropped the
+// other: no error, no warning, just missing from `volumeShare`/`suggestion.steps`. A
+// feature's `wallFaces`/`floorFace` name exactly the surfaces that belong to IT, and
+// each surface already carries its own triangle list (`surface-graph.js`'s `faces`),
+// so this reads the actual footprint each feature bounds rather than the part's.
+function surfaceVertices(topo, surfById, ids) {
+  const out = [];
+  for (const id of ids) {
+    const surf = surfById.get(id);
+    if (!surf) continue;
+    for (const t of surf.faces) {
+      for (let k = 0; k < 3; k++) {
+        const v = topo.tris[3*t + k] * 3;
+        out.push(topo.verts[v], topo.verts[v+1], topo.verts[v+2]);
+      }
+    }
+  }
+  return out;
+}
+
 export function describe(kernel, solid, opts = {}) {
   // A live Solid in, not a mesh. The kernel exposes no public mesh->solid constructor —
   // geometry only enters through `_registerImport` + `import(name)` — and acceptance needs
@@ -225,11 +251,13 @@ export function describe(kernel, solid, opts = {}) {
 
   // Candidates for acceptance, in the order the rules produced them. `featureKey` is what
   // hints.js joins against to collapse a pattern's members into one step. `surfById` and
-  // `mesh.positions` let a prismatic candidate orient itself onto the part's OWN frame
-  // (see toCandidate's own comment) instead of assuming the extrusion runs along world Z.
+  // `topo` let a prismatic candidate orient itself onto THAT FEATURE'S OWN frame and
+  // extent (see toCandidate's own comment) instead of assuming the extrusion runs along
+  // world Z, or — round 2 review's CRITICAL finding — reading the whole mesh's bounds
+  // for every feature and building every candidate the same full-part size.
   const surfById = new Map(graph.surfaces.map((s) => [s.id, s]));
   const candidates = features
-    .map((f) => toCandidate(kernel, f, b, { surfById, positions: mesh.positions }))
+    .map((f) => toCandidate(kernel, f, b, { surfById, topo }))
     .filter(Boolean);
 
   const graded = acceptCandidates(kernel, solid, candidates, { budget: opts.budget });
@@ -248,8 +276,15 @@ export function describe(kernel, solid, opts = {}) {
       rms: s.fit.rms, maxDev: s.fit.maxDev, fit: s.fit,
     })),
     arcs: graph.arcs,
+    // NAMED `volumeShare`, not `confidence` (round 2 review, IMPORTANT): the value
+    // is accept.js's own volume-normalised marginal xor-volume gain — how much of
+    // the PART'S VOLUME this feature accounts for, not how sure the description is.
+    // A "confidence" label reads backwards for exactly the features a rebuilder
+    // most needs to trust: a precise 3mm hole in a large plate is CERTAIN (its fit
+    // rms is tiny) but SMALL, so it legitimately reports a low share — see
+    // `score.note` for the same point stated for a reader who never gets this far.
     features: features.map((f) => ({
-      ...f, confidence: graded.accepted.find((a) => a.candidate.featureKey === f.key)?.gain ?? null,
+      ...f, volumeShare: graded.accepted.find((a) => a.candidate.featureKey === f.key)?.gain ?? null,
     })),
     patterns, symmetry,
     residual: {
@@ -313,9 +348,11 @@ function residualRegions(topo, unassigned) {
 
 // One acceptance candidate per feature. `build` is a thunk so nothing is materialised
 // for a candidate the greedy loop never reaches. `ctx.surfById` (a graph.surfaces
-// lookup) and `ctx.positions` (the mesh's own vertex data) are what let a candidate
-// read the part's OWN frame instead of assuming one; see the extrusion/boss branch's
-// own comment for why that is not optional under an arbitrary input rotation.
+// lookup) and `ctx.topo` (the welded mesh topology, for reading a SPECIFIC feature's
+// own surfaces' vertices via `surfaceVertices` — never the whole mesh's) are what let
+// a candidate read the part's OWN frame and THAT FEATURE'S OWN extent, rather than
+// assuming a frame or reading the whole-mesh bbox for every feature alike; see the
+// extrusion/boss branch's own comment for both failure modes this avoids.
 //
 // kernel.box/kernel.cylinder take OPTIONS OBJECTS ({size:[...]}/{min,max} and {r,h}) —
 // the positional legacy forms are silently accepted by the kernel front-end but resolve
@@ -391,19 +428,20 @@ function toCandidate(kernel, f, b, ctx) {
     // off one of this feature's own wall PLANES: `isSideWallOf` (prismatic.js)
     // guarantees every wall normal is already perpendicular to `direction`, which is
     // exactly one of this box's own true edge directions. Depth and footprint size
-    // then come from the mesh's own vertices projected onto that exact (u, v,
-    // direction) frame — `projectedBounds`, this file's general-frame twin of
-    // mesh.js's `bounds()` — rather than the world-axis bbox `size`/`f.depth` used
-    // above for the (rotation-insensitive) circle case.
+    // then come from THIS FEATURE'S OWN vertices (its `floorFace` cap plus its
+    // `wallFaces`, via `surfaceVertices` — NOT the whole mesh; round 2 review's
+    // CRITICAL finding, see that function's own comment for the two-box repro)
+    // projected onto that exact (u, v, direction) frame — `projectedBounds`, this
+    // file's general-frame twin of mesh.js's `bounds()` — rather than the world-axis
+    // bbox `size`/`f.depth` used above for the (rotation-insensitive) circle case.
     const wallPlane = ctx?.surfById && f.wallFaces
       ? f.wallFaces.map((id) => ctx.surfById.get(id)).find((s) => s?.type === "plane")
       : null;
-    if (!wallPlane || !ctx?.positions) {
-      // No wall plane to read a true in-plane axis from (or no vertex data handed
-      // in) — fall back to the axis-aligned bbox approximation, honest about being
-      // one: still worth proposing, since a low-gain candidate is simply never
-      // accepted (acceptCandidates' own MIN_GAIN_FRACTION gate), never a false
-      // positive.
+    if (!wallPlane || !ctx?.topo) {
+      // No wall plane to read a true in-plane axis from (or no topology handed in)
+      // — fall back to the axis-aligned bbox approximation, honest about being one:
+      // still worth proposing, since a low-gain candidate is simply never accepted
+      // (acceptCandidates' own MIN_GAIN_FRACTION gate), never a false positive.
       return {
         key: f.key, featureKey: f.key, op: "union", explains: [f.id],
         dimension: f.depth, paramName: "height", hintOp: f.type === "boss" ? "union" : "box",
@@ -413,12 +451,14 @@ function toCandidate(kernel, f, b, ctx) {
     }
     const u = orthogonalize(wallPlane.fit.normal, direction);
     const v = cross3(direction, u);
+    const ownSurfaces = [f.floorFace, ...(f.wallFaces ?? [])].filter(Boolean);
     return {
       key: f.key, featureKey: f.key, op: "union", explains: [f.id],
       dimension: f.depth, paramName: "height", hintOp: f.type === "boss" ? "union" : "box",
       hintArgs: { shape: f.profile.kind, depth: f.depth },
       build: () => {
-        const bnd = projectedBounds(ctx.positions, [u, v, direction]);
+        const verts = surfaceVertices(ctx.topo, ctx.surfById, ownSurfaces);
+        const bnd = projectedBounds(verts, [u, v, direction]);
         const [uSize, vSize, depth] = [0, 1, 2].map((i) => bnd.max[i] - bnd.min[i]);
         const local = kernel.box({ min: [0, 0, 0], max: [uSize, vSize, depth] });
         const oriented = orientOnto(local, direction, u);
@@ -430,6 +470,6 @@ function toCandidate(kernel, f, b, ctx) {
   // Fillets, chamfers, pockets, revolves and shells are described but not yet proposed
   // as acceptance candidates: each needs an edge or profile selector the facts layer
   // does not yet carry, and a candidate that cannot be built is worse than none. They
-  // still appear in `features` with a null confidence, which is the honest report.
+  // still appear in `features` with a null volumeShare, which is the honest report.
   return null;
 }

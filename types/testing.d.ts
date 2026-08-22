@@ -495,9 +495,12 @@ export interface DescribeFeature {
   key: string;
   type: string;
   /** The marginal xor-volume reduction that admitted this feature, normalised
-   * to the source volume; `null` for a type acceptCandidates never proposes
-   * (fillet, chamfer, pocket, revolve, shell). */
-  confidence: number | null;
+   * to the source volume — the fraction of the PART'S VOLUME this feature
+   * accounts for, not a certainty rating (see `DescribeScore`'s own note): a
+   * small-but-certain feature legitimately reports a small share. `null` for
+   * a type acceptCandidates never proposes (fillet, chamfer, pocket, revolve,
+   * shell). */
+  volumeShare: number | null;
   /** Snapped values for whichever of diameter/depth/radius/width/thickness this feature carries. */
   snapped: Record<string, Snapped>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- per-type facts (axis, profile, evidence, …)
