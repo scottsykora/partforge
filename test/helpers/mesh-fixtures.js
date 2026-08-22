@@ -274,6 +274,164 @@ export function cupMesh(rOut, rIn, h, dBlind, segs = 48) {
   return { positions };
 }
 
+// Emits two triangles for the coplanar quad a,b,c,d (perimeter order, either
+// winding) with vertices wound so the resulting normal points toward `outward`
+// (only the SIGN of the dot product against it is used, so an exact direction
+// isn't required). Used throughout the box-with-a-hole fixtures below to avoid
+// hand-deriving a cross product's sign per quad, which is exactly the kind of
+// arithmetic a sign error hides in silently — a mis-wound face reads as an
+// ordinary mesh to everything except `topology.js`'s dihedral sign.
+function quadTowards(out, a, b, c, d, outward) {
+  const e1 = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
+  const e2 = [d[0]-a[0], d[1]-a[1], d[2]-a[2]];
+  const n = [e1[1]*e2[2]-e1[2]*e2[1], e1[2]*e2[0]-e1[0]*e2[2], e1[0]*e2[1]-e1[1]*e2[0]];
+  if (n[0]*outward[0] + n[1]*outward[1] + n[2]*outward[2] >= 0) { tri(out, a, b, c); tri(out, a, c, d); }
+  else { tri(out, a, d, c); tri(out, a, c, b); }
+}
+
+// A hollow box: a uniform-wall-thickness shell between an outer box
+// [0,0,0]..[sx,sy,sz] and a concentric inner cavity [wall]..[sx-wall,sy-wall,sz-wall].
+// Outer faces point outward; the cavity faces point the other way, into the empty
+// space they bound — same convention as this file's other inward-facing bore/cavity
+// walls. THE positive-direction fixture for the raycast-based uniform-wall-thickness
+// shell rule in features/sweeps.js: every one of its 12 planes reads the same inward
+// thickness (`wall`), the shape the rule exists to recognise.
+export function hollowBoxMesh(sx, sy, sz, wall) {
+  const positions = [];
+  const o = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]];
+  const i = [[wall,wall,wall],[sx-wall,wall,wall],[sx-wall,sy-wall,wall],[wall,sy-wall,wall],
+             [wall,wall,sz-wall],[sx-wall,wall,sz-wall],[sx-wall,sy-wall,sz-wall],[wall,sy-wall,sz-wall]];
+  const outer = [
+    [o[3],o[2],o[1],o[0],[0,0,-1]], [o[4],o[5],o[6],o[7],[0,0,1]],
+    [o[0],o[1],o[5],o[4],[0,-1,0]], [o[1],o[2],o[6],o[5],[1,0,0]],
+    [o[2],o[3],o[7],o[6],[0,1,0]],  [o[3],o[0],o[4],o[7],[-1,0,0]],
+  ];
+  for (const [a,b,c,d,n] of outer) quadTowards(positions, a, b, c, d, n);
+  const inner = [
+    [i[3],i[2],i[1],i[0],[0,0,1]], [i[4],i[5],i[6],i[7],[0,0,-1]],
+    [i[0],i[1],i[5],i[4],[0,1,0]], [i[1],i[2],i[6],i[5],[-1,0,0]],
+    [i[2],i[3],i[7],i[6],[0,-1,0]], [i[3],i[0],i[4],i[7],[1,0,0]],
+  ];
+  for (const [a,b,c,d,n] of inner) quadTowards(positions, a, b, c, d, n);
+  return { positions };
+}
+
+// An open tray: `hollowBoxMesh`'s shell with the top face (z=sz) removed and the cut
+// closed by a rectangular-annulus RIM at z=sz connecting the outer top edge to the
+// inner top edge — so the cavity is open to the outside, the way a real tray or
+// enclosure base is, rather than a fully sealed shell. THE negative-direction
+// counterpart `hollowBoxMesh` doesn't cover: every plane here is still uniform-
+// thickness (the rule must still fire), but there is no outer top face at all —
+// exactly the topology that defeated the plane-pairing approach this rule replaced
+// (a pairing rule finds no anti-parallel partner for the missing top and reports
+// nothing; a thickness-by-raycast rule doesn't care that a partner face exists,
+// only that the inward distance is small and consistent).
+export function openTrayMesh(sx, sy, sz, wall) {
+  const positions = [];
+  const o = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]];
+  const outer = [
+    [o[3],o[2],o[1],o[0],[0,0,-1]],
+    [o[0],o[1],o[5],o[4],[0,-1,0]], [o[1],o[2],o[6],o[5],[1,0,0]],
+    [o[2],o[3],o[7],o[6],[0,1,0]],  [o[3],o[0],o[4],o[7],[-1,0,0]],
+  ];
+  for (const [a,b,c,d,n] of outer) quadTowards(positions, a, b, c, d, n);
+  const iFloor = [[wall,wall,wall],[sx-wall,wall,wall],[sx-wall,sy-wall,wall],[wall,sy-wall,wall]];
+  const iTop = [[wall,wall,sz],[sx-wall,wall,sz],[sx-wall,sy-wall,sz],[wall,sy-wall,sz]];
+  const i = [...iFloor, ...iTop];
+  const inner = [
+    [i[3],i[2],i[1],i[0],[0,0,1]],
+    [i[0],i[1],i[5],i[4],[0,1,0]], [i[1],i[2],i[6],i[5],[-1,0,0]],
+    [i[2],i[3],i[7],i[6],[0,-1,0]], [i[3],i[0],i[4],i[7],[1,0,0]],
+  ];
+  for (const [a,b,c,d,n] of inner) quadTowards(positions, a, b, c, d, n);
+  const [OA, OB, OC, OD] = [o[4], o[5], o[6], o[7]];
+  const [IA, IB, IC, ID] = iTop;
+  for (const [P, Q, R, S] of [[OA,OB,IB,IA],[OB,OC,IC,IB],[OC,OD,ID,IC],[OD,OA,IA,ID]]) {
+    quadTowards(positions, P, Q, R, S, [0, 0, 1]);
+  }
+  return { positions };
+}
+
+// A plate [0,0,0]..[sx,sy,sz] with one closed rectangular pocket recessed into its
+// top face — the rectangular analogue of `cupMesh`'s circular blind bore. Footprint
+// [px,px+pw] x [py,py+pl], recessed from z=sz down to z=sz-pd; must sit strictly
+// inside the plate's own footprint so the pocket is fully surrounded by material,
+// not cut through an edge. THE wide-shallow-pocket fixture for
+// features/prismatic.js's mouth-vs-floor-vs-own-wall regression: with pw/pl large
+// and pd small, the pocket's own floor (pw*pl) is bigger than its own side walls
+// (perimeter*pd), the opposite proportion from a deep narrow pocket — exactly the
+// case that exposed pass two trying a small SIDE WALL as a candidate cap before
+// ever reaching the real floor.
+export function boxWithPocket(sx, sy, sz, px, py, pw, pl, pd) {
+  const positions = [];
+  const o = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]];
+  const outer = [
+    [o[3],o[2],o[1],o[0],[0,0,-1]],
+    [o[0],o[1],o[5],o[4],[0,-1,0]], [o[1],o[2],o[6],o[5],[1,0,0]],
+    [o[2],o[3],o[7],o[6],[0,1,0]],  [o[3],o[0],o[4],o[7],[-1,0,0]],
+  ];
+  for (const [a,b,c,d,n] of outer) quadTowards(positions, a, b, c, d, n);
+  const [OA, OB, OC, OD] = [o[4], o[5], o[6], o[7]];
+  const IA = [px,py,sz], IB = [px+pw,py,sz], IC = [px+pw,py+pl,sz], ID = [px,py+pl,sz];
+  for (const [P, Q, R, S] of [[OA,OB,IB,IA],[OB,OC,IC,IB],[OC,OD,ID,IC],[OD,OA,IA,ID]]) {
+    quadTowards(positions, P, Q, R, S, [0, 0, 1]);
+  }
+  const fz = sz - pd;
+  const FA = [px,py,fz], FB = [px+pw,py,fz], FC = [px+pw,py+pl,fz], FD = [px,py+pl,fz];
+  // Pocket walls: outward INTO the cavity, away from the surrounding material.
+  quadTowards(positions, IA, IB, FB, FA, [0, 1, 0]);
+  quadTowards(positions, IB, IC, FC, FB, [-1, 0, 0]);
+  quadTowards(positions, IC, ID, FD, FC, [0, -1, 0]);
+  quadTowards(positions, ID, IA, FA, FD, [1, 0, 0]);
+  // Pocket floor: outward +z, up out of the floor into the pocket.
+  quadTowards(positions, FA, FB, FC, FD, [0, 0, 1]);
+  return { positions };
+}
+
+// A plate [0,0,0]..[sx,sy,sz] with one closed rectangular PAD standing proud of its
+// top face — `boxWithPocket`'s raised twin, same footprint/position parameters,
+// `ph` (pad height) in place of `pd` (pocket depth). THE raised-pad fixture for
+// features/prismatic.js's pocket-vs-boss regression: same proportions as the wide-
+// shallow pocket above (wide relative to its own walls), so a type-swap bug that
+// only showed up on one proportion and not the other would slip past a suite that
+// tested just one of this pair.
+export function boxWithPad(sx, sy, sz, px, py, pw, pl, ph) {
+  const positions = [];
+  const o = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]];
+  const outer = [
+    [o[3],o[2],o[1],o[0],[0,0,-1]],
+    [o[0],o[1],o[5],o[4],[0,-1,0]], [o[1],o[2],o[6],o[5],[1,0,0]],
+    [o[2],o[3],o[7],o[6],[0,1,0]],  [o[3],o[0],o[4],o[7],[-1,0,0]],
+  ];
+  for (const [a,b,c,d,n] of outer) quadTowards(positions, a, b, c, d, n);
+  const [OA, OB, OC, OD] = [o[4], o[5], o[6], o[7]];
+  const BA = [px,py,sz], BB = [px+pw,py,sz], BC = [px+pw,py+pl,sz], BD = [px,py+pl,sz];
+  for (const [P, Q, R, S] of [[OA,OB,BB,BA],[OB,OC,BC,BB],[OC,OD,BD,BC],[OD,OA,BA,BD]]) {
+    quadTowards(positions, P, Q, R, S, [0, 0, 1]);
+  }
+  const tz = sz + ph;
+  const TA = [px,py,tz], TB = [px+pw,py,tz], TC = [px+pw,py+pl,tz], TD = [px,py+pl,tz];
+  // Pad side walls: standard convex walls, outward AWAY from the pad's own centre —
+  // the opposite sense of the pocket's walls above.
+  quadTowards(positions, BA, BB, TB, TA, [0, -1, 0]);
+  quadTowards(positions, BB, BC, TC, TB, [1, 0, 0]);
+  quadTowards(positions, BC, BD, TD, TC, [0, 1, 0]);
+  quadTowards(positions, BD, BA, TA, TD, [-1, 0, 0]);
+  // Pad top cap, standard outward +z.
+  quadTowards(positions, TA, TB, TC, TD, [0, 0, 1]);
+  return { positions };
+}
+
+// A cube and an elongated bar — the negative fixtures for the shell rule. Both are
+// plain solid boxMesh() calls under a name that documents WHY each is used where it
+// is: the cube is the false-positive case (perfectly consistent inward-ray readings
+// across all six faces, which is exactly why the shell rule needs a size-relative
+// gate and not just a consistency gate — see features/sweeps.js), and the bar is the
+// large-spread case (three very different pair distances) the old plane-pairing
+// approach already handled and the new raycast approach must keep handling.
+export const cubeMesh = (s) => boxMesh(s, s, s);
+export const barMesh = (sx, sy, sz) => boxMesh(sx, sy, sz);
+
 // Applies an arbitrary rotation (Euler angles in radians, X then Y then Z) to
 // a mesh's flat `positions` array. Exists because EVERY fixture above is
 // axis-aligned and origin-centred, which is not incidental to a real bug this

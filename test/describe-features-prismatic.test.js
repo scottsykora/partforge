@@ -4,12 +4,17 @@ import { segment } from "../src/framework/oracle/describe/segment.js";
 import { surfaceGraph } from "../src/framework/oracle/describe/surface-graph.js";
 import { detectPrismatic } from "../src/framework/oracle/describe/features/prismatic.js";
 import { detectSweeps } from "../src/framework/oracle/describe/features/sweeps.js";
-import { boxMesh, cylinderMesh, annulusPlate, cupMesh, rotateMesh } from "./helpers/mesh-fixtures.js";
+import {
+  boxMesh, cylinderMesh, annulusPlate, cupMesh,
+  boxWithPocket, boxWithPad, hollowBoxMesh, openTrayMesh, cubeMesh, barMesh,
+  rotateMesh,
+} from "./helpers/mesh-fixtures.js";
 
 // Same arbitrary, unremarkable tilt describe-surface-graph.test.js, describe-segment.test.js
 // and describe-ransac.test.js already use. `rotateMesh(mesh, [rx, ry, rz])` takes radians
 // packed in one array (see mesh-fixtures.js).
 const TILT = [(17 * Math.PI) / 180, (29 * Math.PI) / 180, (53 * Math.PI) / 180];
+const ORIENTATIONS = [["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, TILT)]];
 
 const ctx = (mesh) => { const t = buildTopology(mesh); return { t, g: surfaceGraph(t, segment(t).patches) }; };
 
@@ -41,32 +46,27 @@ test("a cylinder is an extrusion with a circular profile", () => {
   // `profile.radius` comes from the cap's boundary ARC (surface-graph.js's `arcKind`),
   // which measures the mean distance of EDGE MIDPOINTS to their own centroid, not the
   // wall's own least-squares vertex fit — deliberately (`profile` is a proposal for a
-  // sketch, not a measurement; see this file's header). On a 48-gon inscribed in a
-  // true radius-4 circle, that midpoint radius is 4*cos(pi/48) = 3.99144, an 0.0086mm
-  // undershoot that exceeds `toBeCloseTo(4, 2)`'s 0.005 tolerance by design of the
-  // tessellation, not a bug. `describe-features-holes.test.js` already uses precision 1
-  // for the identical facet-radius measurement on the same 48-segment fixtures; matched
-  // here rather than tightened, since the fixture's own geometry sets that bound.
-  expect(ex.profile.radius).toBeCloseTo(4, 1);
+  // sketch, not a measurement; see this file's header). On a 48-gon inscribed in a true
+  // radius-4 circle, that midpoint radius is exactly `4*cos(pi/48)`, not merely "close
+  // to 4" — asserting the DERIVABLE quantity (rather than a loosened `toBeCloseTo(4, 1)`,
+  // which would keep passing even if this computation regressed to some other nearby
+  // value) is what makes this a real guard on `arcKind` rather than a tolerance wide
+  // enough to stop checking it.
+  expect(ex.profile.radius).toBeCloseTo(4 * Math.cos(Math.PI / 48), 4);
   expect(ex.depth).toBeCloseTo(10, 2);
 });
 
 test("a washer is recognised as axisymmetric (a revolve candidate)", () => {
-  const { g } = ctx(annulusPlate(10, 4, 3, 48));
-  const rev = detectSweeps(g).find((f) => f.type === "revolve");
+  const { t, g } = ctx(annulusPlate(10, 4, 3, 48));
+  const rev = detectSweeps(g, t).find((f) => f.type === "revolve");
   expect(rev).toBeDefined();
   expect(Math.abs(rev.axis.direction[2])).toBeCloseTo(1, 3);
-});
-
-test("a solid box is not reported as a shell", () => {
-  const { g } = ctx(boxMesh(10, 20, 5));
-  expect(detectSweeps(g).some((f) => f.type === "shell")).toBe(false);
 });
 
 // Arbitrary orientation, per the Global Constraints. `sweepDirection` and the revolve
 // axis vote both come out of eigen-decompositions of normal fields, which have no reason
 // to prefer world axes — but the depth fallback compares plane OFFSETS, which do.
-test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, TILT)]])(
+test.each(ORIENTATIONS)(
   "%s: a box is one extrusion of the same depth", (_n, orient) => {
     const { g } = ctx(orient(boxMesh(10, 20, 5)));
     const f = detectPrismatic(g);
@@ -74,10 +74,10 @@ test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, TILT)]])
     expect(f[0].depth).toBeCloseTo(5, 2);
   });
 
-test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, TILT)]])(
+test.each(ORIENTATIONS)(
   "%s: the washer is still recognised as axisymmetric", (_n, orient) => {
-    const { g } = ctx(orient(annulusPlate(10, 4, 3, 48)));
-    expect(detectSweeps(g).some((f) => f.type === "revolve")).toBe(true);
+    const { t, g } = ctx(orient(annulusPlate(10, 4, 3, 48)));
+    expect(detectSweeps(g, t).some((f) => f.type === "revolve")).toBe(true);
   });
 
 // The mouth-vs-floor ambiguity: `cupMesh`'s blind bore has a wide mouth ANNULUS (the
@@ -87,8 +87,10 @@ test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, TILT)]])
 // misreporting the feature backwards or dropping it. Smallest-first is what fixes that
 // (see this file's header) — this is the regression test for it, using the same
 // fixture describe-features-holes.test.js already uses for the equivalent blind-hole
-// case.
-test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, TILT)]])(
+// case. A DEEP NARROW pocket (small footprint relative to its own wall area) — kept
+// here alongside the wide-shallow cases below so the dominant-convexity fix is a
+// widening of what's detected, not a swap of which proportion works.
+test.each(ORIENTATIONS)(
   "%s: a blind-hole cup is a base extrusion plus one pocket, not a boss or a mouth-first misread",
   (_n, orient) => {
     const { g } = ctx(orient(cupMesh(10, 4, 8, 3, 48)));
@@ -98,9 +100,91 @@ test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, TILT)]])
     expect(pocket.depth).toBeCloseTo(5, 1);
   });
 
+// Fix round 1 (Critical 3): a WIDE SHALLOW pocket (its own floor bigger than its own
+// side walls, the opposite proportion from the deep-narrow case above) was reporting
+// depth 20 instead of 3, with `floorFace` bound to a 24mm^2 SIDE WALL rather than the
+// real 80mm^2 floor — pass two (smallest-cap-first) reached that small wall before the
+// floor, and it passed every check that existed at the time (see prismatic.js's own
+// `dominantConvexityFraction` comment for the exact numbers this fixture exposed).
+// Reproduced here at both orientations, asserting type, depth AND which surface is the
+// floor, so a regression that merely gets the number right by accident is still caught.
+test.each(ORIENTATIONS)(
+  "%s: a wide shallow pocket is one pocket of the right depth, not a swapped side wall",
+  (_n, orient) => {
+    const mesh = orient(boxWithPocket(30, 20, 8, 10, 6, 10, 8, 3));
+    const { g } = ctx(mesh);
+    const f = detectPrismatic(g);
+    expect(f.map((x) => x.type)).toEqual(["extrusion", "pocket"]);
+    const pocket = f.find((x) => x.type === "pocket");
+    expect(pocket.depth).toBeCloseTo(3, 1);
+    // The floor is the pocket's own 10x8=80mm^2 face, not one of its 24 or 30mm^2 walls.
+    const floor = g.surfaces.find((s) => s.id === pocket.floorFace);
+    expect(floor.area).toBeCloseTo(80, 0);
+  });
+
+// The raised twin of the same fixture and same proportions: a coin-flip bug that only
+// showed up on one proportion (or only swapped the type and not the depth) would slip
+// past a suite that tested just the pocket above.
+test.each(ORIENTATIONS)(
+  "%s: a raised pad of the same proportions is one boss, not a pocket", (_n, orient) => {
+    const mesh = orient(boxWithPad(30, 20, 8, 10, 6, 10, 8, 3));
+    const { g } = ctx(mesh);
+    const f = detectPrismatic(g);
+    expect(f.map((x) => x.type)).toEqual(["extrusion", "boss"]);
+    const boss = f.find((x) => x.type === "boss");
+    expect(boss.depth).toBeCloseTo(3, 1);
+    const top = g.surfaces.find((s) => s.id === boss.floorFace);
+    expect(top.area).toBeCloseTo(80, 0);
+  });
+
 test("prismatic features carry stable keys and null ids", () => {
   const { g } = ctx(boxMesh(10, 20, 5));
   const a = detectPrismatic(g)[0], b = detectPrismatic(g)[0];
   expect(a.key).toBe(b.key);
   expect(a.id).toBeNull();
+});
+
+// --- shell (fix round 1: Criticals 1 and 2) ---------------------------------------
+//
+// A first version paired every anti-parallel plane and gated on the SPREAD of the
+// resulting gaps. That was wrong in both directions, reproduced here as permanent
+// negative/positive pairs: a solid CUBE has three anti-parallel pairs that happen to
+// share one gap (its three equal dimensions), which the pairing test could not tell
+// apart from a genuine uniform wall — a false positive. And a genuine hollow box's 12
+// planes pair into not just the 6 correct wall-thickness gaps but also the outer
+// envelope's own 3 gaps and the inner cavity's own 3 gaps, which blows the spread past
+// any reasonable threshold — a false negative on the only shape the rule exists to
+// catch. The raycast-based rule replacing it is proven on both directions below.
+
+test.each(ORIENTATIONS)("%s: a solid cube is not reported as a shell", (_n, orient) => {
+  const { t, g } = ctx(orient(cubeMesh(10)));
+  expect(detectSweeps(g, t).some((f) => f.type === "shell")).toBe(false);
+});
+
+test.each(ORIENTATIONS)("%s: a square bar is not reported as a shell", (_n, orient) => {
+  const { t, g } = ctx(orient(barMesh(10, 10, 30)));
+  expect(detectSweeps(g, t).some((f) => f.type === "shell")).toBe(false);
+});
+
+test.each(ORIENTATIONS)("%s: a solid box is not reported as a shell", (_n, orient) => {
+  const { t, g } = ctx(orient(boxMesh(10, 20, 5)));
+  expect(detectSweeps(g, t).some((f) => f.type === "shell")).toBe(false);
+});
+
+test.each(ORIENTATIONS)("%s: a hollow box is reported as a shell of the right thickness", (_n, orient) => {
+  const { t, g } = ctx(orient(hollowBoxMesh(20, 20, 20, 2)));
+  const shell = detectSweeps(g, t).find((f) => f.type === "shell");
+  expect(shell).toBeDefined();
+  expect(shell.thickness).toBeCloseTo(2, 1);
+});
+
+// The open tray: no anti-parallel partner for the missing top face at all (the old
+// pairing approach could not have found this one even with a perfect spread gate), and
+// one dissenting reading (the rim — its own normal points along the wall's run, not
+// across its thickness) that the rule must tolerate as a minority, not choke on.
+test.each(ORIENTATIONS)("%s: an open tray is reported as a shell of the right thickness", (_n, orient) => {
+  const { t, g } = ctx(orient(openTrayMesh(20, 20, 10, 2)));
+  const shell = detectSweeps(g, t).find((f) => f.type === "shell");
+  expect(shell).toBeDefined();
+  expect(shell.thickness).toBeCloseTo(2, 1);
 });

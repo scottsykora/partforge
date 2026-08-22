@@ -47,10 +47,53 @@ import { jacobiEigen } from "../fit.js";
 // sense, so one constant serves both: "within 0.08 of exactly perpendicular" and
 // "within 0.08 of exactly parallel" are the same tolerance read two ways.
 const PERPENDICULAR_DOT = 0.08;
+// A candidate cap's own boundary arcs must overwhelmingly agree on ONE convexity — see
+// `dominantConvexityFraction`'s own comment for the full reasoning and the fixture
+// numbers this threshold was picked against. 0.9 leaves room for real machining noise
+// (a slightly rounded corner reads as a hair off pure convex/concave) while sitting far
+// below the 100% every genuine cap in this suite measures, and far above the ~64% the
+// one fixture-proven false positive measures.
+const DOMINANT_CONVEXITY_FRAC = 0.9;
 const round3 = (v) => Math.round(v * 1000) / 1000;
 const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 const byId = (graph) => new Map(graph.surfaces.map((s) => [s.id, s]));
 const other = (arc, id) => (arc.between[0] === id ? arc.between[1] : arc.between[0]);
+
+// What fraction of a candidate cap's own TOTAL boundary (by arc length, not arc count —
+// a short corner arc must not outvote a long edge) agrees on its single most common
+// convexity, and which convexity that is.
+//
+// A genuine cap sits at ONE END of a sweep, and every one of its own boundary arcs
+// shares the SAME relationship to its walls: a base extrusion's cap, or a boss's own
+// top, meets every one of its walls at an ordinary OUTWARD corner (all convex); a
+// pocket floor, or a boss's own base, meets every one of its walls at the 270-degree
+// INWARD corner every pocket floor and boss base share (all concave, ruling R10). A
+// surface whose neighbours are a genuine MIX of both is not itself the cap of any
+// single coherent sweep — it is some other feature's surface, caught here only because
+// it happens to border this one.
+//
+// Found empirically, not derived on paper: a wide-shallow pocket's own small SIDE wall
+// (`boxWithPocket(30,20,8, 10,6, 10,8, 3)`'s 8x3=24mm^2 wall) was passing every other
+// check in this file — `sweepDirection`'s covariance trick and the perpendicularity
+// filter both degenerate to trivially-satisfied on axis-aligned geometry once a
+// candidate's neighbours only span two of three orthogonal axes, which a plain
+// perpendicular-vs-direction test cannot tell apart from a genuine cap's walls (both
+// come out 100% "perpendicular"; verified directly by dumping the graph). That wall's
+// own arcs, measured by length: one 8mm CONVEX arc to the pocket's mouth (the
+// surrounding top face) and three arcs totalling 14mm CONCAVE (the floor, 8mm, plus the
+// two neighbouring pocket walls, 3mm each) — the dominant (concave) side is 14/22 =
+// 63.6% of this candidate's own perimeter, nowhere near a majority worth trusting, let
+// alone the genuine floor's own 100% (all four of ITS arcs — to the same four
+// neighbours — are concave). Without this gate the wall was accepted as a "cap" in its
+// own right, reporting a pocket of depth 20 (the plate's own unrelated width) with
+// `floorFace` bound to a 24mm^2 wall instead of the real 80mm^2 floor.
+function dominantConvexityFraction(arcs) {
+  const byKind = { convex: 0, concave: 0, flat: 0 };
+  let total = 0;
+  for (const a of arcs) { byKind[a.convexity] = (byKind[a.convexity] ?? 0) + a.length; total += a.length; }
+  if (!(total > 0)) return 0;
+  return Math.max(byKind.convex, byKind.concave, byKind.flat) / total;
+}
 
 // The direction this feature is swept along, read off its walls rather than its cap
 // (see header). Cylindrical walls hand it over directly and exactly: average their own
@@ -120,6 +163,13 @@ export function detectPrismatic(graph) {
   function tryCap(cap, isBase) {
     if (claimed.has(cap.id)) return null;
     const arcs = arcsOf(graph, cap.id);
+    if (arcs.length === 0) return null;
+    // Reject outright — not "proceed with a filtered subset" — when this candidate's own
+    // boundary does not overwhelmingly agree on one convexity. See
+    // `dominantConvexityFraction`'s own comment: this is what actually distinguishes a
+    // genuine cap from a wall being mistaken for one, since the perpendicularity check
+    // below cannot (both come out 100% "perpendicular" on axis-aligned geometry).
+    if (dominantConvexityFraction(arcs) < DOMINANT_CONVEXITY_FRAC) return null;
     // Only UNCLAIMED neighbours count as this cap's own walls. Without this filter, the
     // base extrusion's OTHER end cap (a plain box's top, once its bottom has already
     // claimed all four side walls) would be re-examined here, find those same walls
