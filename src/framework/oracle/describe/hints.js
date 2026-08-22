@@ -18,18 +18,39 @@
 //
 // Pure leaf. See spec §3.2.
 
-import { snapValue } from "./snap.js";
+import { snapValue, SNAP_TOL_FRAC } from "./snap.js";
 
 const DISCLAIMER =
   "Proposed reconstruction, not measurement. The facts above are authoritative; " +
   "this is one way to rebuild them and may be wrong about intent.";
 
+// A relative-tolerance "same value" test, on the same band snap.js snaps with (never
+// an exact float ==) — used below to tell "the same dimension seen again" apart from
+// "a different dimension that happens to want the same name".
+const ABS_FLOOR = 1e-4;
+const near = (a, b) => Math.abs(a - b) <= Math.max(Math.abs(b) * SNAP_TOL_FRAC, ABS_FLOOR);
+
 export function buildHints(accepted, patterns, bounds) {
   const params = [];
-  const seen = new Set();
+  // name -> raw values already recorded under it, so a same-named, different-valued
+  // collision can be told apart from the same value turning up twice.
+  const valuesByName = new Map();
   const addParam = (name, value, from) => {
-    if (seen.has(name) || !Number.isFinite(value)) return;
-    seen.add(name);
+    if (!Number.isFinite(value)) return;
+    const existing = valuesByName.get(name);
+    if (existing) {
+      // The same value under this name already: not a new parameter (e.g. two
+      // candidates that share a dimension), so skip it rather than duplicate it.
+      if (existing.some((v) => near(v, value))) return;
+      // A DIFFERENT value collided with an already-used name — e.g. two
+      // distinct-diameter, non-pattern holes both falling back to the same generic
+      // paramName. Suffix rather than drop it: a parameter silently missing from the
+      // suggestion is worse than one with an ugly name (fix round 1, MINOR).
+      existing.push(value);
+      params.push({ name: `${name}_${existing.length}`, value: snapValue(value)?.to ?? value, from });
+      return;
+    }
+    valuesByName.set(name, [value]);
     params.push({ name, value: snapValue(value)?.to ?? value, from });
   };
 

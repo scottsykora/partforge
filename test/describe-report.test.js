@@ -12,7 +12,7 @@ const base = {
                snapped: { diameter: { raw: 5.2996, to: 5.3, note: "M5 clearance (close fit)" } } }],
   patterns: [], symmetry: [],
   residual: { areaFraction: 0.012, regions: [] },
-  score: { explainedArea: 0.988, xorFraction: 0.0019 },
+  score: { explainedArea: 0.988, explainedVolumeFraction: 0.99, xorFraction: 0.0019 },
   suggestion: { disclaimer: "x", params: [], steps: [] },
 };
 
@@ -53,7 +53,7 @@ test("the compact report keeps features, patterns, score and residual", () => {
 });
 
 test("low coverage raises a loud banner at the top of the compact report", () => {
-  const poor = { ...base, score: { explainedArea: 0.61, xorFraction: 0.4 } };
+  const poor = { ...base, score: { explainedArea: 0.61, explainedVolumeFraction: 0.5, xorFraction: 0.4 } };
   const c = compactDescribe(buildReport(poor));
   expect(c.warning).toMatch(/LOW COVERAGE/);
   expect(c.warning).toMatch(/incomplete/i);
@@ -65,6 +65,53 @@ test("good coverage carries no banner", () => {
 
 test("LOW_COVERAGE is the documented threshold", () => {
   expect(LOW_COVERAGE).toBe(0.85);
+});
+
+// --- fix round 1 regressions -------------------------------------------------------
+
+test("the banner gates on the WORSE of area and volume coverage (hemisphere case): a " +
+     "surface that segments cleanly but reconstructs to nothing still fires it", () => {
+  // A 2304-triangle hemisphere against the real pipeline: one sphere surface plus one
+  // flat base segments with explainedArea 1.0 (zero unassigned triangles) but sphere
+  // is not a candidate-eligible type for any of the four feature detectors, so
+  // accept.js is handed zero candidates and explainedVolumeFraction is 0.0. Gating on
+  // explainedArea alone let this present as a clean report.
+  const hemisphere = {
+    ...base,
+    features: [],
+    score: { explainedArea: 1.0, explainedVolumeFraction: 0.0, xorFraction: 1.0 },
+  };
+  const c = compactDescribe(buildReport(hemisphere));
+  expect(c.warning).toMatch(/LOW COVERAGE/);
+});
+
+test("the banner serializes FIRST: it precedes every other key in both Object.keys " +
+     "and round-tripped JSON", () => {
+  const poor = { ...base, score: { explainedArea: 0.5, explainedVolumeFraction: 0.4, xorFraction: 0.5 } };
+  const c = compactDescribe(buildReport(poor));
+  expect(Object.keys(c)[0]).toBe("warning");
+  expect(Object.keys(JSON.parse(JSON.stringify(c)))[0]).toBe("warning");
+});
+
+test("counts report pre-cap magnitudes, not the length of the capped array", () => {
+  const many = { ...base, surfaces: Array.from({ length: 500 }, (_, i) => ({ ...base.surfaces[0], id: `s${i}` })) };
+  const c = compactDescribe(buildReport(many));
+  expect(c.counts.surfaces).toBe(500);
+});
+
+test("truncated carries every flag, false, even when there is no suggestion yet", () => {
+  const noSuggestion = { ...base, suggestion: null };
+  const r = buildReport(noSuggestion);
+  expect(r.truncated).toEqual({
+    surfaces: false, edges: false, features: false, patterns: false,
+    residualRegions: false, suggestionSteps: false,
+  });
+});
+
+test("score is self-describing: a note distinguishes area coverage from volume coverage", () => {
+  const r = buildReport(base);
+  expect(r.score.note).toMatch(/explainedArea/);
+  expect(r.score.note).toMatch(/explainedVolumeFraction/);
 });
 
 // --- hints layer -----------------------------------------------------------
@@ -103,4 +150,18 @@ test("hint params are derived from bounds and carry their provenance", () => {
 test("hint step scores are the acceptance gains", () => {
   const h = buildHints(accepted, [], base.bounds);
   expect(h.steps[0].score).toBe(0.94);
+});
+
+test("two distinct-valued candidates sharing a fallback param name both survive, suffixed", () => {
+  // Neither candidate sets `paramName`, so both fall back to `c.key.split(":")[0]`,
+  // which is "hole" for both — but they carry different diameters and are not covered
+  // by a pattern. The second must not be silently dropped (fix round 1, MINOR).
+  const collision = [
+    { candidate: { key: "hole:4:a", featureKey: "hole:4:a", op: "cut", explains: ["f1"], dimension: 4, hintArgs: {} }, gain: 0.5, order: 0 },
+    { candidate: { key: "hole:6:b", featureKey: "hole:6:b", op: "cut", explains: ["f2"], dimension: 6, hintArgs: {} }, gain: 0.3, order: 1 },
+  ];
+  const h = buildHints(collision, [], base.bounds);
+  const holeParams = h.params.filter((p) => p.name === "hole" || p.name === "hole_2");
+  expect(holeParams.length).toBe(2);
+  expect(holeParams.map((p) => p.value).sort((a, b) => a - b)).toEqual([4, 6]);
 });
