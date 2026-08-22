@@ -2073,12 +2073,18 @@ export function detectPrismatic(graph) {
       if (w.type === "cylinder") { lo = Math.min(lo, w.fit.extent[0]); hi = Math.max(hi, w.fit.extent[1]); }
     }
     if (!Number.isFinite(lo)) {
-      // Planar walls: use the opposing cap's offset along the direction.
+      // Planar walls carry no extent, so read the thickness off the opposing cap. Once
+      // R31 has oriented every plane normal outward, this is exact rather than a guess:
+      // two opposing faces of a solid have ANTI-PARALLEL outward normals, and for
+      // `offset = n . p` the separation between them is simply the SUM of the offsets.
+      // (Box spanning z in [0,h]: top n=(0,0,1) offset h, bottom n=(0,0,-1) offset 0, sum
+      // h. Centred box z in [-h/2,h/2]: offsets h/2 and h/2, sum h. Both correct, and
+      // neither depends on where the origin sits.)
       const opposite = caps.find((c) => c.id !== cap.id &&
-        Math.abs(dot(c.fit.normal, cap.fit.normal)) > 0.98);
+        dot(c.fit.normal, cap.fit.normal) < -0.98);
       if (!opposite) continue;
-      lo = 0; hi = Math.abs(cap.fit.offset - (-opposite.fit.offset));
-      if (hi < 1e-9) hi = Math.abs(cap.fit.offset + opposite.fit.offset);
+      lo = 0; hi = cap.fit.offset + opposite.fit.offset;
+      if (!(hi > 0)) continue;   // not a solid pair; no depth to report
     }
     const depth = Math.abs(hi - lo);
 
@@ -2089,9 +2095,13 @@ export function detectPrismatic(graph) {
     const isBase = out.length === 0;
     let type = "extrusion";
     if (!isBase) {
+      // CO-oriented here, deliberately, in contrast to the anti-parallel lookup above: a
+      // pocket floor and the face it is sunk into both point the same way, as do a boss
+      // top and the face it stands on. The opposing-face pair is a different question.
       const surround = caps.find((c) => c.id !== cap.id && dot(c.fit.normal, cap.fit.normal) > 0.98);
-      // With co-oriented normals both offsets are measured along the same direction, so
-      // their difference is the signed displacement directly.
+      // Both offsets are then measured along the same direction, so their difference IS
+      // the signed displacement — negative means sunk into the material, positive proud
+      // of it. This is the whole pocket-vs-boss test, and it is meaningless without R31.
       const displacement = surround ? cap.fit.offset - surround.fit.offset : 0;
       type = displacement < 0 ? "pocket" : "boss";
     }
