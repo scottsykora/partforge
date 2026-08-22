@@ -28,7 +28,7 @@
 //
 // Pure leaf. See spec §2.4.
 import { fitPlane, fitSphere, fitCylinder, fitCone, fitTorus } from "./fit.js";
-import { facePoints } from "./segment.js";
+import { facePoints, FIT_TOL_FRAC } from "./segment.js";
 
 const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
 const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
@@ -131,7 +131,14 @@ const SAME_REL = 1e-3;
 const closeRel = (a, b) => Math.abs(a - b) <= Math.max(Math.abs(a), Math.abs(b), 1) * SAME_REL;
 const sameDir = (a, b) => Math.abs(dot(a, b)) > 1 - SAME_REL;
 
-function sameSurface(a, b) {
+// Exported for direct unit testing only (the module's real contract is
+// `surfaceGraph`/`arcsOf`): the post-merge residual guard in `mergeCoFamily` makes
+// most position mismatches large enough to also fail on refit residual alone, at
+// this file's own tolerance scale, which would otherwise mask a regression in this
+// function's own position checks behind that second, coarser safety net. Testing
+// this directly against fabricated fit-parameter objects (no mesh required)
+// exercises the exact band each branch checks, independent of that backstop.
+export function sameSurface(a, b) {
   if (a.type !== b.type) return false;
   if (a.type === "plane") {
     if (!sameDir(a.normal, b.normal)) return false;
@@ -159,7 +166,25 @@ function sameSurface(a, b) {
     return closeRel(a.radius, b.radius) && sameDir(a.axis.direction, b.axis.direction) && perp <= a.radius * SAME_REL;
   }
   if (a.type === "cone") return sameDir(a.direction, b.direction) && closeRel(a.halfAngle, b.halfAngle) && closeRel(0, dist(a.apex, b.apex));
-  if (a.type === "torus") return sameDir(a.axis, b.axis) && closeRel(a.majorRadius, b.majorRadius) && closeRel(a.minorRadius, b.minorRadius);
+  if (a.type === "torus") {
+    // Same shape (axis direction, both radii) is NOT the same surface without also
+    // checking POSITION — every other branch above gates on it (plane: offset;
+    // sphere/cone: centre/apex distance; cylinder: perpendicular offset from the
+    // axis), and the torus branch originally didn't, which is exactly the kind of
+    // gap this file's header warns about: two unrelated O-ring grooves of the same
+    // size, on the same shaft but at different heights, or two identical grooves at
+    // opposite ends of a part, share axis direction and both radii and would merge
+    // into one impossible surface. Same decomposition as the cylinder branch: split
+    // centre-to-centre into the component ALONG the axis (must be small — two
+    // coaxial grooves at different heights are different grooves) and the
+    // component PERPENDICULAR to it (must be small — two grooves off to the side
+    // of each other, sharing a parallel axis, are different grooves too).
+    const d = sub(a.center, b.center);
+    const along = dot(d, b.axis);
+    const perp = Math.hypot(d[0]-along*b.axis[0], d[1]-along*b.axis[1], d[2]-along*b.axis[2]);
+    return sameDir(a.axis, b.axis) && closeRel(a.majorRadius, b.majorRadius) && closeRel(a.minorRadius, b.minorRadius)
+      && perp <= a.majorRadius * SAME_REL && Math.abs(along) <= a.majorRadius * SAME_REL;
+  }
   return false;
 }
 
@@ -186,9 +211,8 @@ const refitAs = (type, pts, normals) => REFITTERS[type]?.(pts, normals) ?? null;
 // "merge patches into surfaces", the duplicate is a segmentation artefact rather than a
 // feature-rule concern, and fixing it at the source means no downstream rule has to know
 // the artefact exists.
-function mergeCoFamily(topo, rawPatches) {
+function mergeCoFamily(topo, rawPatches, tol) {
   const merged = rawPatches.map((p) => ({ ...p, faces: [...p.faces] }));
-  const originalLength = new Map(rawPatches.map((p) => [p.id, p.faces.length]));
 
   // NOTE: adjacency is deliberately NOT required (controller ruling R26). A plane
   // interrupted by a boss, or a bore crossed by a slot, comes out of segmentation as two
@@ -203,6 +227,20 @@ function mergeCoFamily(topo, rawPatches) {
   // a bracket lying in one plane — also merge. That is the right trade for this oracle.
   // A hole is a hole whichever foot it sits in, and the alternative silently splits every
   // interrupted surface, which breaks hole detection outright.
+  //
+  // `sameSurface` agreeing on FIT PARAMETERS is necessary but never sufficient on its
+  // own — it is a finite list of bands over a finite list of fields, and any gap in it
+  // (the torus branch above was missing a position check entirely until this was found
+  // in review) turns two unrelated patches into one fabricated surface with full
+  // confidence. So every tentative merge below is refit over the ACTUAL COMBINED point
+  // cloud before it is accepted, and rejected if that combined fit is null or its
+  // `maxDev` exceeds the same `tol` region growing itself used to decide these patches
+  // were valid in the first place. This is deliberately a POST hoc check on the real
+  // geometry, not a smarter `sameSurface` — it makes `sameSurface`'s correctness a
+  // PERFORMANCE concern (a gap there costs a merge that should have happened but
+  // didn't) rather than a correctness one (a gap there fabricating a surface that
+  // should never have existed). Any future gap degrades to "failed to merge", which is
+  // the safe direction.
   let changed = true;
   while (changed) {
     changed = false;
@@ -210,27 +248,38 @@ function mergeCoFamily(topo, rawPatches) {
       if (!merged[i]) continue;
       for (let j = i + 1; j < merged.length && !changed; j++) {
         if (!merged[j] || !sameSurface(merged[i].fit, merged[j].fit)) continue;
-        merged[i].faces.push(...merged[j].faces);
-        merged[i].area += merged[j].area;
+        const faces = [...merged[i].faces, ...merged[j].faces];
+        const { pts, normals } = facePoints(topo, faces);
+        const fit = refitAs(merged[i].fit.type, pts, normals);
+        if (!fit || fit.maxDev > tol) continue;   // sameSurface said yes, the geometry says no — don't merge
+        merged[i] = { ...merged[i], faces, fit, area: merged[i].area + merged[j].area };
         merged[j] = null;
         changed = true;   // restart: a merge can make a third patch's fit agree too
       }
     }
   }
 
-  // Refit each merged patch so its parameters describe the WHOLE surface, not
-  // whichever fragment happened to be first — a half-bore's fit is right about
-  // radius but its `extent` covers only half the wall. Untouched patches (the
-  // overwhelming majority — most surfaces never split) skip the refit entirely.
-  return merged.filter(Boolean).map((p) => {
-    if (p.faces.length === originalLength.get(p.id)) return p;
-    const { pts, normals } = facePoints(topo, p.faces);
-    return { ...p, fit: refitAs(p.fit.type, pts, normals) ?? p.fit };
-  });
+  return merged.filter(Boolean);
 }
 
-export function surfaceGraph(topo, rawPatches) {
-  const patches = mergeCoFamily(topo, rawPatches);
+// Same acceptance band region growing itself used (segment.js's own `FIT_TOL_FRAC`,
+// imported rather than restated), scaled to THIS mesh's own bbox diagonal rather than
+// segment.js's — surfaceGraph is not handed segment.js's `topo`-derived tol directly,
+// and recomputing it from the identical fraction is simpler than plumbing one more
+// value through every caller for a quantity `topo` already has everything needed to
+// reproduce exactly.
+function defaultTol(topo) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < topo.verts.length; i += 3) for (let a = 0; a < 3; a++) {
+    if (topo.verts[i+a] < lo[a]) lo[a] = topo.verts[i+a];
+    if (topo.verts[i+a] > hi[a]) hi[a] = topo.verts[i+a];
+  }
+  return Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) * FIT_TOL_FRAC;
+}
+
+export function surfaceGraph(topo, rawPatches, opts = {}) {
+  const tol = opts.tol ?? defaultTol(topo);
+  const patches = mergeCoFamily(topo, rawPatches, tol);
   const surfaces = patches.map((p, i) => ({
     id: `s${i}`, type: p.fit.type, fit: p.fit, faces: p.faces, area: p.area, loops: [],
     curvature: curvatureOf(topo, p),
@@ -270,7 +319,16 @@ export function surfaceGraph(topo, rawPatches) {
       else if (e.convexity === "concave") concaveLen += len;
       mids.push([(p0[0]+p1[0])/2, (p0[1]+p1[1])/2, (p0[2]+p1[2])/2]);
     }
-    const convexity = convexLen === concaveLen ? "flat" : convexLen > concaveLen ? "convex" : "concave";
+    // Never `===` on floats (global constraint — Task 3 shipped exactly this shape of
+    // bug as `dihedral === 0` and it collapsed segmentation on any non-axis-aligned
+    // mesh). `convexLen`/`concaveLen` are sums of real edge lengths accumulated in
+    // whatever order `edges` happens to iterate in, so even a genuine tie (every edge
+    // on this arc flat, or a symmetric mix of convex/concave halves) is not
+    // guaranteed to land on the same last bit both ways — an epsilon relative to the
+    // arc's own total length is the same "relative, scale-free" policy this file
+    // already uses everywhere else (`closeRel`, `CIRCLE_TOL_FRAC`), not a one-off.
+    const convexity = Math.abs(convexLen - concaveLen) <= total * 1e-9 ? "flat"
+      : convexLen > concaveLen ? "convex" : "concave";
     const { kind, radius, axis } = arcKind(mids);
     arcs.push({
       between: [surfaces[a].id, surfaces[b].id],

@@ -1,8 +1,9 @@
 import { expect, test } from "vitest";
 import { buildTopology } from "../src/framework/oracle/describe/topology.js";
-import { segment } from "../src/framework/oracle/describe/segment.js";
-import { surfaceGraph, arcsOf } from "../src/framework/oracle/describe/surface-graph.js";
-import { boxMesh, annulusPlate, rotateMesh } from "./helpers/mesh-fixtures.js";
+import { segment, facePoints } from "../src/framework/oracle/describe/segment.js";
+import { fitTorus } from "../src/framework/oracle/describe/fit.js";
+import { surfaceGraph, arcsOf, sameSurface } from "../src/framework/oracle/describe/surface-graph.js";
+import { boxMesh, annulusPlate, torusMesh, rotateMesh } from "./helpers/mesh-fixtures.js";
 
 // `rotateMesh(mesh, [rx, ry, rz])` takes radians packed in one array (see
 // mesh-fixtures.js) — this tilt matches the one describe-segment.test.js and
@@ -97,4 +98,101 @@ test("co-family patches merge into one surface even when disconnected", () => {
   const bores = g.surfaces.filter((s) => s.type === "cylinder" && s.fit.radius < 6);
   expect(bores.length).toBe(1);
   expect(bores[0].faces.length).toBe(bore.faces.length);
+});
+
+// Fix round 1: `sameSurface`'s torus branch checked axis direction and both radii but
+// never position — the one branch of the five that didn't gate on it (plane: offset;
+// sphere/cone: centre/apex distance; cylinder: perpendicular offset from the axis). Two
+// unrelated same-size grooves on the same axis (two O-ring grooves on one shaft, or
+// identical grooves at opposite ends of a part) would merge into one impossible surface.
+//
+// Direct unit tests of `sameSurface` itself, against fabricated fit-parameter objects
+// (no mesh, no `mergeCoFamily`): `surfaceGraph`'s post-merge residual guard (also added
+// in this fix round) makes a large enough position mismatch ALSO fail on refit residual
+// alone, which would otherwise mask a regression here behind that second, coarser net —
+// the mesh-driven tori tests further below still pass even with this branch's position
+// check deleted entirely (verified directly while writing this fix). Testing the
+// function in isolation is what actually pins the fixed behavior down.
+const torusFit = (center, axis = [0, 0, 1]) => ({ type: "torus", axis, center, majorRadius: 10, minorRadius: 3 });
+
+test("sameSurface's torus branch rejects two coaxial same-size tori at different axial positions", () => {
+  expect(sameSurface(torusFit([0, 0, 0]), torusFit([0, 0, 60]))).toBe(false);
+});
+
+test("sameSurface's torus branch rejects two same-size tori on parallel axes offset sideways", () => {
+  expect(sameSurface(torusFit([0, 0, 0]), torusFit([50, 0, 0]))).toBe(false);
+});
+
+test("sameSurface's torus branch accepts two fits describing the same torus (within noise)", () => {
+  expect(sameSurface(torusFit([0, 0, 0]), torusFit([1e-9, -1e-9, 0]))).toBe(true);
+});
+
+// `torusMesh` is NOT expected to segment into one patch via `segment()`'s own region
+// growing (see its comment in mesh-fixtures.js — a torus's double curvature defeats the
+// witness-corroboration mechanism structurally, an orthogonal, pre-existing limitation).
+// So these tests build each patch's fit directly with `fitTorus` over the whole mesh —
+// the same computation `segment()`'s own `bestFit` would have run, had growth converged —
+// to confirm the end-to-end behaviour (`surfaceGraph`, `sameSurface` AND the residual
+// guard acting together) on real, non-fabricated geometry.
+function torusPatch(topo, faces, id) {
+  const { pts, normals } = facePoints(topo, faces);
+  return { id, faces, fit: fitTorus(pts, normals), area: faces.reduce((a, t) => a + topo.faceArea[t], 0) };
+}
+
+test("two coaxial, same-size tori at different positions along the axis do not merge", () => {
+  const meshA = torusMesh(10, 3, 48, 48, [0, 0, 0]);
+  const meshB = torusMesh(10, 3, 48, 48, [0, 0, 60]);   // same axis and size, 60mm further along it
+  const nA = meshA.positions.length / 9;
+  const topo = buildTopology({ positions: [...meshA.positions, ...meshB.positions] });
+  const facesA = Array.from({ length: nA }, (_, i) => i);
+  const facesB = Array.from({ length: topo.faceArea.length - nA }, (_, i) => nA + i);
+  const g = surfaceGraph(topo, [torusPatch(topo, facesA, "tA"), torusPatch(topo, facesB, "tB")]);
+  expect(g.surfaces.filter((s) => s.type === "torus").length).toBe(2);
+});
+
+test("two coaxial, same-size tori offset sideways from the axis do not merge", () => {
+  const meshA = torusMesh(10, 3, 48, 48, [0, 0, 0]);
+  const meshB = torusMesh(10, 3, 48, 48, [50, 0, 0]);   // same axis direction, shifted off it
+  const nA = meshA.positions.length / 9;
+  const topo = buildTopology({ positions: [...meshA.positions, ...meshB.positions] });
+  const facesA = Array.from({ length: nA }, (_, i) => i);
+  const facesB = Array.from({ length: topo.faceArea.length - nA }, (_, i) => nA + i);
+  const g = surfaceGraph(topo, [torusPatch(topo, facesA, "tA"), torusPatch(topo, facesB, "tB")]);
+  expect(g.surfaces.filter((s) => s.type === "torus").length).toBe(2);
+});
+
+test("one torus split into disconnected fragments merges back into one surface", () => {
+  const topo = buildTopology(torusMesh(10, 3, 48, 48));
+  const all = Array.from({ length: topo.faceArea.length }, (_, i) => i);
+  const full = torusPatch(topo, all, "qT");
+  const half = Math.floor(full.faces.length / 2);
+  const split = [
+    { ...full, id: "qA", faces: full.faces.slice(0, half) },
+    { ...full, id: "qB", faces: full.faces.slice(half) },
+  ];
+  const g = surfaceGraph(topo, split);
+  const tori = g.surfaces.filter((s) => s.type === "torus");
+  expect(tori.length).toBe(1);
+  expect(tori[0].faces.length).toBe(full.faces.length);
+});
+
+// Fix round 1: the post-merge residual guard, tested directly and independent of any
+// particular `sameSurface` gap. Even when two patches' reported fit parameters agree well
+// enough to satisfy `sameSurface`, the merge must still be rejected once the ACTUAL
+// combined point cloud is refit and found not to describe one surface — that is what turns
+// a `sameSurface` gap into "failed to merge" instead of "invented a surface". Forced here
+// directly: two genuinely different, non-coplanar box faces, with one's reported fit
+// overwritten to claim the other's plane. `sameSurface` says yes; the real geometry says
+// no; the guard must still refuse the merge.
+test("a forged sameSurface agreement does not survive the post-merge residual check", () => {
+  const topo = buildTopology(boxMesh(10, 20, 5));
+  const { patches } = segment(topo);
+  const bottom = patches.find((p) => Math.abs(p.fit.normal[2]) > 0.9 && p.fit.offset < 2.5);
+  const side = patches.find((p) => Math.abs(p.fit.normal[0]) > 0.9);
+  const forgedSide = { ...side, fit: { ...bottom.fit } };
+  const others = patches.filter((p) => p !== bottom && p !== side);
+  const g = surfaceGraph(topo, [...others, bottom, forgedSide]);
+  // Had the guard not fired, bottom + forgedSide would have merged into one surface and
+  // the box would report five surfaces instead of six.
+  expect(g.surfaces.length).toBe(6);
 });

@@ -48,6 +48,49 @@ export function annulusPlate(rOut, rIn, h, segs = 32) {
   return { positions };
 }
 
+// A full torus (Z axis, centred at `center`): main-sweep radius R, tube radius r,
+// `segs` facets around the main sweep, `tubeSegs` around the tube. Closed and
+// watertight (both sweeps wrap) — the fixture the torus branch of
+// surface-graph.js's `sameSurface` needed and didn't have (no torus fixture existed
+// anywhere in this file before that gap was found in review).
+//
+// Defaults are finer than the other fixtures' (48 each way, not ~16-32): a torus
+// curves in TWO directions at once, so its chord error is set by the SMALLER of
+// the two radii (the tube, `r`) rather than by the single radius a cylinder or
+// sphere fixture's facet count has to clear — at the coarser densities this file's
+// other shapes use, the tessellation's own sagitta already exceeds segment.js's
+// `FIT_TOL_FRAC` acceptance band before any test logic runs at all (measured
+// directly: 24x12 clears a mere ~0.10mm maxDev against an ~0.011mm budget on a
+// R=10/r=3 torus — 10x over). 48x48 clears the same budget with margin
+// (~0.007mm against ~0.011mm).
+//
+// Note this fixture is NOT expected to segment into one patch via `segment()`'s
+// region growing — that mechanism bootstraps curvature recognition from a mutual
+// witness pair of similarly-curved edges near a seed triangle (see segment.js's
+// `sameFamily`/`familySignature`), which a doubly-curved surface's two very
+// different principal radii structurally defeat (a seed triangle's u-direction
+// and v-direction neighbours never share an implied radius to corroborate each
+// other with). That is a pre-existing, orthogonal limitation of region growing on
+// double curvature, out of scope for this fixture's purpose: exercising
+// surface-graph.js directly with hand-built torus patches (`fitTorus` run once
+// over the whole mesh, the same way segment.js's own `bestFit` would), not
+// proving segment() itself handles tori.
+export function torusMesh(R, r, segs = 48, tubeSegs = 48, center = [0, 0, 0]) {
+  const positions = [];
+  const p = (i, j) => {
+    const u = 2 * Math.PI * i / segs, v = 2 * Math.PI * j / tubeSegs;
+    const rad = R + r * Math.cos(v);
+    return [center[0] + rad * Math.cos(u), center[1] + rad * Math.sin(u), center[2] + r * Math.sin(v)];
+  };
+  for (let i = 0; i < segs; i++) {
+    for (let j = 0; j < tubeSegs; j++) {
+      const a = p(i, j), b = p(i + 1, j), c = p(i + 1, j + 1), d = p(i, j + 1);
+      tri(positions, a, b, c); tri(positions, a, c, d);
+    }
+  }
+  return { positions };
+}
+
 // Applies an arbitrary rotation (Euler angles in radians, X then Y then Z) to
 // a mesh's flat `positions` array. Exists because EVERY fixture above is
 // axis-aligned and origin-centred, which is not incidental to a real bug this

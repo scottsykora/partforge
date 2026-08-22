@@ -23,7 +23,11 @@ import { ransacPatches } from "./ransac.js";
 // tessellation's chord error is bounded and small; this sits an order of magnitude
 // above it so faceting never breaks a surface apart, and well below any real
 // feature size so two genuinely different surfaces never merge.
-const FIT_TOL_FRAC = 3e-4;
+// Exported: surface-graph.js's post-merge residual guard needs the identical
+// fraction, not a second constant that could quietly drift from this one — a
+// merged patch is only trustworthy if it clears the SAME acceptance band region
+// growing itself used to validate its two halves.
+export const FIT_TOL_FRAC = 3e-4;
 // Reserved dial, not currently load-bearing: every seed is a single triangle,
 // three points always define SOME plane exactly (rms/maxDev = 0), so `bestFit`
 // (with MIN_PTS.plane = 3) can only fail on a seed whose points are so close to
