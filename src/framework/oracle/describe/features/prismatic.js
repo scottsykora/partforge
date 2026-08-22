@@ -270,6 +270,39 @@ export function detectPrismatic(graph, topo) {
 
   const allCaps = graph.surfaces.filter((s) => s.type === "plane").sort((a, b) => b.area - a.area);
 
+  // The plane a pocket sinks into or a boss stands on: must be something THIS
+  // feature's OWN walls actually meet, not merely any co-oriented plane anywhere on
+  // the part (fix round 2, CRITICAL — R37 added a perpendicularity requirement for
+  // the WALLS and never required the SURROUND to actually surround anything. The old
+  // `allCaps.find(dot > 0.98)` could match an unrelated co-oriented plane elsewhere
+  // on the part — e.g. a compound-fillet corner's own near-flat micro-facet — with
+  // no adjacency at all, and WHICH unrelated plane won that search was itself
+  // orientation-dependent: the same real boss could report as a pocket depending on
+  // how the part happened to be rotated, which is the worst single thing this
+  // feature can tell a rebuilding agent). Reachable means: walk each of this
+  // feature's own walls' arcs (`arcsOf`) for a co-oriented plane on the other side —
+  // a plane those walls also meet, exactly like a pocket floor or boss base
+  // physically has to. More than one candidate can survive that (two different walls,
+  // or one wall at a compound corner, each bordering their own genuinely-adjacent
+  // co-oriented plane) — broken by shared boundary LENGTH, not first-found: the
+  // plane the walls spend the most edge actually touching is the one surrounding
+  // the feature.
+  function findSurround(cap, islandWalls) {
+    const byLength = new Map(); // surface id -> accumulated shared arc length
+    for (const { w } of islandWalls) {
+      for (const a of arcsOf(graph, w.id)) {
+        const id = other(a, w.id);
+        if (id === cap.id) continue;
+        const s = surfaces.get(id);
+        if (!s || s.type !== "plane" || dot(s.fit.normal, cap.fit.normal) <= 0.98) continue;
+        byLength.set(id, (byLength.get(id) ?? 0) + a.length);
+      }
+    }
+    let best = null, bestLen = -1;
+    for (const [id, len] of byLength) if (len > bestLen) { bestLen = len; best = surfaces.get(id); }
+    return best;
+  }
+
   // Builds ONE feature from one island's own faces plus the wall segments (already
   // scoped to that same island by the caller) that border it. Factored out of `tryCap`
   // so the ordinary single-island case and the multi-island split share exactly one
@@ -298,10 +331,10 @@ export function detectPrismatic(graph, topo) {
         if (!(depth > 0)) return null;   // not a solid pair; no depth to report
       }
     } else {
-      // Recessed or raised? Compare this cap's plane against the largest CO-oriented
-      // plane that is not itself — the surrounding face a pocket sinks into or a boss
-      // stands on.
-      const surround = allCaps.find((c) => c.id !== cap.id && dot(c.fit.normal, cap.fit.normal) > 0.98);
+      // Recessed or raised? Compare this cap's plane against the plane its OWN walls
+      // are actually adjacent to (see `findSurround`'s own comment, above) — the
+      // surrounding face a pocket sinks into or a boss stands on.
+      const surround = findSurround(cap, islandWalls);
       const displacement = surround ? cap.fit.offset - surround.fit.offset : 0;
       type = displacement < 0 ? "pocket" : "boss";
       if (hasCylExtent) depth = hi - lo;
