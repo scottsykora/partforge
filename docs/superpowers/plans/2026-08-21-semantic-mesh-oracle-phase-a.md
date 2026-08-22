@@ -1863,7 +1863,27 @@ git commit -m "feat(describe): hole, fillet, and chamfer rules over the adjacenc
 **Files:**
 - Create: `src/framework/oracle/describe/features/prismatic.js`
 - Create: `src/framework/oracle/describe/features/sweeps.js`
+- Modify: `src/framework/oracle/describe/surface-graph.js` (orient plane normals outward — see below)
 - Test: `test/describe-features-prismatic.test.js`
+
+**REQUIRED FIRST — orient plane normals outward (controller ruling R31).** `fitPlane` returns
+the smallest-eigenvalue eigenvector of the covariance, whose SIGN IS ARBITRARY and unrelated
+to which side the material is on: Task 6 verified that both caps of a washer report an
+identical `(0,0,1)`. The `(normal, offset)` pair is internally consistent — flipping one
+flips the other — but neither carries outward meaning.
+
+Two things break without a fix. This task's pocket-vs-boss rule compares SIGNED displacement
+of a cap plane against its surrounding plane, which is meaningless if the sign is arbitrary.
+And the report emits `surfaces[].fit.normal` to the consuming agent, so an arbitrary sign is
+the report actively lying about which way a face points.
+
+Fix it once, in `surfaceGraph`, where every consumer benefits: for each plane surface, take
+the area-weighted mean of its own faces' outward normals from `topo.faceNormal`, and if the
+fitted normal opposes it, negate BOTH `normal` and `offset`. The mesh's face normals are
+already outward by construction — that is what `topology.js` guarantees and what every
+dihedral sign depends on — so this makes the fitted normal agree with the geometry rather
+than with an eigensolver's sign convention. Add a test asserting a washer's two caps report
+OPPOSITE normals, at both orientations.
 
 **Interfaces:**
 - Consumes: `surfaceGraph`, `arcsOf` (Task 5).
