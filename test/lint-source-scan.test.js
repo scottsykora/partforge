@@ -54,6 +54,12 @@ describe("pickDefaultsFile", () => {
     expect(pickDefaultsFile(only, "a.js").path).toBe("b.js");
     expect(pickDefaultsFile({ "a.js": "x" }, "a.js")).toBeNull();
   });
+  it("falls back to a wholly-unreadable literal so findings can still name the file", () => {
+    const files = { "part.js": "export default { defaults: { a: 13 / 3 } };" };
+    const found = pickDefaultsFile(files, "part.js");
+    expect(found.path).toBe("part.js");
+    expect(found.entries.every((e) => !e.readable)).toBe(true);
+  });
 });
 
 describe("stripNonCode", () => {
@@ -72,5 +78,18 @@ describe("lineOf", () => {
     expect(lineOf("a\nb\nc", 0)).toBe(1);
     expect(lineOf("a\nb\nc", 2)).toBe(2);
     expect(lineOf("a\nb\nc", 4)).toBe(3);
+  });
+});
+
+describe("non-string input never throws", () => {
+  it("guards findDefaultsLiteral, stripNonCode and lineOf", () => {
+    for (const bad of [null, 42]) {
+      expect(() => findDefaultsLiteral(bad)).not.toThrow();
+      expect(findDefaultsLiteral(bad)).toBeNull();
+      expect(() => stripNonCode(bad)).not.toThrow();
+      expect(stripNonCode(bad)).toBe("");
+      expect(() => lineOf(bad, 0)).not.toThrow();
+      expect(lineOf(bad, 0)).toBe(1);
+    }
   });
 });

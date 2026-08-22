@@ -16,6 +16,7 @@
 // `source`, end exclusive, covering `{...}`). String- and comment-aware so a
 // "defaults: {" inside a string or comment can't fool the scan.
 export function findDefaultsLiteral(source) {
+  if (typeof source !== "string") return null;
   let i = 0;
   while (i < source.length) {
     const c = source[i];
@@ -275,10 +276,12 @@ export function defaultsEntriesIn(source) {
 }
 
 // Which file the settings session would write — same preference order as the
-// cloud rewriter's findDefaultsFile/defaultsEntriesOf: entrypoint first, then
-// any file whose literal has a readable entry, falling back to the first
-// literal found anywhere (so a part whose only literal is wholly unreadable
-// still gets its findings reported against the right file).
+// cloud rewriter's findDefaultsFile/readDefaultsEntries: entrypoint first, then
+// any file whose literal has a readable entry. The third tier — falling back
+// to the first literal found anywhere, even wholly unreadable — is a
+// DELIBERATE divergence from cloud's findDefaultsFile, which returns null
+// there: a lint rule still needs to name the right file for a part whose only
+// defaults literal has no readable entry at all.
 export function pickDefaultsFile(files, entrypoint) {
   if (!files || typeof files !== "object") return null;
   const paths = [entrypoint, ...Object.keys(files).filter((p) => p !== entrypoint)]
@@ -298,6 +301,7 @@ export function pickDefaultsFile(files, entrypoint) {
 // spaces — same length, newlines preserved — so a token scan over the result
 // can never match inside a string or comment and lineOf stays accurate.
 export function stripNonCode(source) {
+  if (typeof source !== "string") return "";
   const out = source.split("");
   const blank = (from, to) => {
     for (let i = from; i < to && i < out.length; i++) if (out[i] !== "\n") out[i] = " ";
@@ -315,6 +319,7 @@ export function stripNonCode(source) {
 }
 
 export function lineOf(text, index) {
+  if (typeof text !== "string") return 1;
   let n = 1;
   for (let i = 0; i < index && i < text.length; i++) if (text[i] === "\n") n++;
   return n;
