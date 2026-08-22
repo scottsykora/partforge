@@ -38,10 +38,27 @@ export function detectHoles(graph) {
 
     const arcs = arcsOf(graph, s.id);
     // A mouth is where the bore breaks out through a face: a convex seam to a plane.
-    const mouths = arcs
-      .filter((a) => a.convexity === "convex")
-      .map((a) => ({ arc: a, face: surfaces.get(other(a, s.id)) }))
-      .filter((m) => m.face && m.face.type === "plane");
+    // But the seam can also lead to a CONE first — a countersink or counterbore,
+    // the machining used to chamfer a hole's entrance — in which case the cone is
+    // incidental (it's on the way out, not the exit itself) and the true mouth is
+    // whatever PLANE the cone in turn opens onto one step further out. Round 1
+    // review: a plain through-bore with a 45-degree countersunk entrance reported
+    // ZERO holes before this, because the direct neighbour at that end is a cone,
+    // not a plane, and the old plane-only filter dropped that mouth entirely —
+    // leaving one planar mouth and no concave floor, so neither branch below fired.
+    const mouths = [];
+    for (const a of arcs) {
+      if (a.convexity !== "convex") continue;
+      const nbr = surfaces.get(other(a, s.id));
+      if (!nbr) continue;
+      if (nbr.type === "plane") { mouths.push({ arc: a, face: nbr, via: null }); continue; }
+      if (nbr.type === "cone") {
+        const beyond = arcsOf(graph, nbr.id)
+          .map((a2) => surfaces.get(other(a2, nbr.id)))
+          .find((far) => far && far.id !== s.id && far.type === "plane");
+        if (beyond) mouths.push({ arc: a, face: beyond, via: nbr });
+      }
+    }
     if (mouths.length === 0) continue;
 
     const dir = s.fit.axis.direction;
@@ -87,16 +104,24 @@ export function detectHoles(graph) {
     }
     if (!type) continue;
 
+    // Any cone(s) walked through to resolve a mouth are part of this hole too —
+    // countersink machining, not a separate feature — so they're folded into
+    // `surfaces` (and named in `evidence`) rather than silently dropped.
+    const viaCones = [...new Set(mouths.filter((m) => m.via).map((m) => m.via.id))];
+
     out.push({
       id: null,
       key: `hole:${round3(diameter)}:${round3(origin[0])},${round3(origin[1])},${round3(origin[2])}`,
       type, diameter, depth,
       axis: { origin, direction: dir },
       entryFace, exitFace, floorFace,
-      surfaces: [s.id],
+      surfaces: [s.id, ...viaCones],
       // What the rule actually saw. The report carries this so a wrong call can be
       // argued with rather than merely disbelieved.
-      evidence: { curvature: s.curvature, planarMouths: mouths.length, arcs: arcs.length, fitRms: s.fit.rms },
+      evidence: {
+        curvature: s.curvature, planarMouths: mouths.length, arcs: arcs.length, fitRms: s.fit.rms,
+        countersunk: viaCones.length > 0, viaCones,
+      },
     });
   }
 

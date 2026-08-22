@@ -91,6 +91,136 @@ export function torusMesh(R, r, segs = 48, tubeSegs = 48, center = [0, 0, 0]) {
   return { positions };
 }
 
+// An axis-aligned box with ONE vertical edge (the x=sx,y=0 edge) replaced by a
+// flat 45-degree bevel of size `c`. THE chamfer fixture: a finite straight
+// chamfer necessarily terminates against two more faces (the top and bottom
+// caps here) besides the two it actually blends (the +X and -Y walls) — this
+// is what any real straight chamfer looks like, and is exactly what exposed
+// dressups.js's original `arcs.length !== 2` premise as too strict (round 1
+// review): the bevel plane here has FOUR arcs, not two.
+export function chamferedBox(sx, sy, sz, c) {
+  const v0=[0,0,0], v1=[sx,0,0], v2=[sx,sy,0], v3=[0,sy,0];
+  const v4=[0,0,sz], v5=[sx,0,sz], v6=[sx,sy,sz], v7=[0,sy,sz];
+  const p0=[sx-c,0,0], p1=[sx,c,0], p2=[sx-c,0,sz], p3=[sx,c,sz];
+  const positions = [];
+  tri(positions, v3, v2, p1); tri(positions, v3, p1, p0); tri(positions, v3, p0, v0);   // bottom cap (-Z)
+  tri(positions, v4, p2, p3); tri(positions, v4, p3, v6); tri(positions, v4, v6, v7);   // top cap (+Z)
+  tri(positions, p1, v2, v6); tri(positions, p1, v6, p3);                               // +X wall (reduced)
+  tri(positions, v0, p0, p2); tri(positions, v0, p2, v4);                               // -Y wall (reduced)
+  tri(positions, v2, v3, v7); tri(positions, v2, v7, v6);                               // +Y wall (unaffected)
+  tri(positions, v3, v0, v4); tri(positions, v3, v4, v7);                               // -X wall (unaffected)
+  tri(positions, p0, p1, p3); tri(positions, p0, p3, p2);                               // the 45-degree bevel
+  return { positions };
+}
+
+// `annulusPlate` with the TOP mouth opened into a 45-degree countersink: the
+// straight bore (radius `rIn`) only runs from z=0 to z=h-(rC-rIn); above that
+// it widens conically out to radius `rC` at the top face. THE countersunk-hole
+// fixture — a straight through-bore with one chamfered (conical) entrance,
+// arguably the single most common chamfered feature in real mechanical parts,
+// and the fixture that exposed detectHoles's original mouth filter (plane-only)
+// missing it entirely (round 1 review): the convex arc off the bore's top end
+// lands on a CONE, not a plane, so the through-hole branch never fired.
+export function countersunkPlate(rOut, rIn, rC, h, segs = 96) {
+  const positions = [];
+  const d = rC - rIn;        // countersink depth at 45 degrees (widening rate 1:1)
+  const zc = h - d;          // height where the straight bore ends and the cone begins
+  const p = (rad, i, z) => [rad * Math.cos(2 * Math.PI * i / segs), rad * Math.sin(2 * Math.PI * i / segs), z];
+  for (let i = 0; i < segs; i++) {
+    const o0 = p(rOut,i,0), o1 = p(rOut,i+1,0), o2 = p(rOut,i+1,h), o3 = p(rOut,i,h);
+    const b0 = p(rIn,i,0), b1 = p(rIn,i+1,0), b2 = p(rIn,i+1,zc), b3 = p(rIn,i,zc);
+    const c2 = p(rC,i+1,h), c3 = p(rC,i,h);
+    tri(positions, o0, o1, o2); tri(positions, o0, o2, o3);                             // outer wall
+    tri(positions, b1, b0, b3); tri(positions, b1, b3, b2);                             // straight bore (0..zc)
+    tri(positions, p(rIn,i+1,zc), p(rIn,i,zc), c3); tri(positions, p(rIn,i+1,zc), c3, c2); // countersink cone (zc..h)
+    tri(positions, o1, o0, b0); tri(positions, o1, b0, b1);                             // bottom annulus (plain mouth)
+    tri(positions, o3, o2, c2); tri(positions, o3, c2, c3);                             // top annulus (around the countersink)
+  }
+  return { positions };
+}
+
+// A solid cylinder (radius R, height H) with its TOP rim rounded by a tangent
+// torus fillet of radius r — THE fillet fixture, deliberately the CONVEX-corner
+// case (material fills rho<R, z<H, so the corner being rounded has only 90
+// degrees of material — same family as a box edge). Section-ordered (bottom
+// cap, then wall, then fillet, then top cap, each a contiguous run of
+// triangles) so a caller can slice out exactly the fillet's own faces by index
+// range alone via `filletFaceRange` — needed because this shape is NOT expected
+// to segment cleanly via `segment()`'s own region growing (same structural
+// limitation `torusMesh`'s own comment documents: growth's witness-corroboration
+// bootstrap doesn't handle double curvature), so tests hand-build this patch
+// with `fitTorus` directly, the same pattern describe-surface-graph.test.js's
+// own `torusPatch` helper already uses for the full-torus fixture.
+//
+// A fillet rounding a CONCAVE corner instead (e.g. a boss's BASE) is the torus's
+// OTHER meridian half, whose true outward mesh normal points TOWARD the tube's
+// own local center rather than away from it — verified directly that
+// `fitTorus` (fit.js), which recovers the minor radius via `p - r*n` collapsing
+// onto the main circle, assumes normals point away from center and returns
+// garbage (minor radius off by 10x, maxDev ~1) for the concave-corner half fed
+// its true outward normals. That is a real scope limit of `fitTorus` as
+// written, not something to fix here; this fixture sidesteps it by using the
+// convex-corner half, which is what `fitTorus` supports today.
+export function filletedCylinderTop(R, H, r, segs = 96, tubeSegs = 48) {
+  const positions = [];
+  const rTop = R - r, zWall = H - r;
+  const p = (rad, i, z) => [rad * Math.cos(2 * Math.PI * i / segs), rad * Math.sin(2 * Math.PI * i / segs), z];
+  for (let i = 0; i < segs; i++) tri(positions, [0,0,0], p(R,i+1,0), p(R,i,0));                 // bottom cap (-Z)
+  for (let i = 0; i < segs; i++) {                                                              // wall (radius R, 0..zWall)
+    tri(positions, p(R,i,0), p(R,i+1,0), p(R,i+1,zWall)); tri(positions, p(R,i,0), p(R,i+1,zWall), p(R,i,zWall));
+  }
+  for (let i = 0; i < segs; i++) {                                                              // fillet (torus quarter patch)
+    for (let j = 0; j < tubeSegs; j++) {
+      const phi0 = (Math.PI/2) * j / tubeSegs, phi1 = (Math.PI/2) * (j+1) / tubeSegs;
+      // rho(phi)=rTop+r*sin(phi), z(phi)=zWall+r*cos(phi): at phi=0 this is
+      // (rTop, zWall+r)=(rTop,H), tangent to the top cap; at phi=pi/2 it's
+      // (rTop+r, zWall)=(R,zWall), tangent to the wall.
+      const rho0 = rTop + r*Math.sin(phi0), z0 = zWall + r*Math.cos(phi0);
+      const rho1 = rTop + r*Math.sin(phi1), z1 = zWall + r*Math.cos(phi1);
+      const a = p(rho0,i,z0), b = p(rho0,i+1,z0), c = p(rho1,i+1,z1), d = p(rho1,i,z1);
+      tri(positions, a, c, b); tri(positions, a, d, c);
+    }
+  }
+  for (let i = 0; i < segs; i++) tri(positions, [0,0,H], p(rTop,i,H), p(rTop,i+1,H));            // top cap (+Z, radius rTop)
+  return { positions };
+}
+
+// The face-index range `filletedCylinderTop`'s own fillet (torus) patch occupies,
+// given the same (segs, tubeSegs) — bottom cap is `segs` triangles, wall is
+// `2*segs`, so the fillet starts right after both and runs `2*segs*tubeSegs`
+// triangles long. Lets a caller slice the fillet's faces out for a hand-built
+// `fitTorus` patch without re-deriving this arithmetic at every call site.
+export function filletFaceRange(segs, tubeSegs) {
+  return [3 * segs, 3 * segs + 2 * segs * tubeSegs];
+}
+
+// A blind-hole cup: a solid cylinder (outer radius rOut, height h) with a
+// flat-bottomed cylindrical bore (radius rIn) that stops at z=dBlind rather
+// than breaking through — THE blind-hole fixture. Built by directly reusing
+// `annulusPlate`'s own proven wall/mouth winding (the bore-wall and
+// top-annulus patterns below are copied from it verbatim, just shifted to
+// start at z=dBlind instead of z=0) plus `cylinderMesh`'s own cap windings for
+// the solid bottom and the flat floor — rather than re-derived from scratch,
+// after an earlier from-scratch attempt at this fixture got the bore wall's
+// and the floor's winding backwards (bore came out convex, floor came out on
+// the wrong side) and was caught only by checking the resulting curvature/arc
+// convexity against the plain annulusPlate/cylinderMesh fixtures already known
+// to be correct.
+export function cupMesh(rOut, rIn, h, dBlind, segs = 48) {
+  const positions = [];
+  const p = (rad, i, z) => [rad * Math.cos(2 * Math.PI * i / segs), rad * Math.sin(2 * Math.PI * i / segs), z];
+  for (let i = 0; i < segs; i++) {
+    const o0 = p(rOut,i,0), o1 = p(rOut,i+1,0), o2 = p(rOut,i+1,h), o3 = p(rOut,i,h);
+    const n0 = p(rIn,i,dBlind), n1 = p(rIn,i+1,dBlind), n2 = p(rIn,i+1,h), n3 = p(rIn,i,h);
+    tri(positions, o0, o1, o2); tri(positions, o0, o2, o3);                     // outer wall (full height, convex)
+    tri(positions, [0,0,0], p(rOut,i+1,0), p(rOut,i,0));                       // solid bottom cap (-Z)
+    tri(positions, n1, n0, n3); tri(positions, n1, n3, n2);                     // bore wall (dBlind..h, concave/inward)
+    tri(positions, o3, o2, n2); tri(positions, o3, n2, n3);                     // top annulus (the hole's mouth, +Z)
+    tri(positions, [0,0,dBlind], p(rIn,i,dBlind), p(rIn,i+1,dBlind));           // blind floor (+Z, material below)
+  }
+  return { positions };
+}
+
 // Applies an arbitrary rotation (Euler angles in radians, X then Y then Z) to
 // a mesh's flat `positions` array. Exists because EVERY fixture above is
 // axis-aligned and origin-centred, which is not incidental to a real bug this
