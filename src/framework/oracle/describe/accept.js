@@ -13,9 +13,10 @@
 //
 // HARD BUDGET. Booleans are the cost centre and the candidate list is attacker-shaped
 // (it grows with mesh complexity, not with anything we control). The budget counts
-// boolean operations, and running out DEGRADES INTO RESIDUAL rather than throwing: an
-// over-budget describe returns a partial, honestly-scored report, which is exactly what
-// a caller can act on.
+// CANDIDATE ATTEMPTS, not raw boolean calls — see the loop's own comment below for
+// exactly what one attempt costs in real booleans, which varies by case — and running
+// out DEGRADES INTO RESIDUAL rather than throwing: an over-budget describe returns a
+// partial, honestly-scored report, which is exactly what a caller can act on.
 //
 // CONFIDENCE IS THE GAIN. A feature's confidence is the marginal xor reduction that
 // admitted it, not a separate estimate invented afterwards. That is what makes the
@@ -24,7 +25,11 @@
 //
 // The ONLY kernel-touching file in describe/.
 
-export const DEFAULT_BUDGET = 48;
+// Named for what it actually counts (see the loop's own comment): CANDIDATE ATTEMPTS,
+// not boolean operations. One attempt costs 0-2 real booleans depending on the
+// candidate's op and whether a base body exists yet, so this is a bound on search
+// WORK, not a boolean-op budget a caller could size against a WASM-call cost model.
+export const DEFAULT_ATTEMPT_BUDGET = 48;
 // A candidate must explain at least this fraction of the source volume to be worth a
 // line in the report. Below it, the "feature" is tessellation noise.
 const MIN_GAIN_FRACTION = 1e-4;
@@ -45,10 +50,15 @@ function xorVolume(a, b) {
 }
 
 export function acceptCandidates(kernel, source, candidates, opts = {}) {
-  const budget = opts.budget ?? DEFAULT_BUDGET;
+  const budget = opts.budget ?? DEFAULT_ATTEMPT_BUDGET;
   const sourceVolume = source.volume();
   const accepted = [];
-  let spent = 0;
+  // Counts CANDIDATE ATTEMPTS (one per pass through the `for` loop below), not real
+  // boolean calls — see that loop's own comment for the exact per-attempt cost, which
+  // is 0, 1, or 2 real booleans depending on the candidate's op and whether `current`
+  // is null. Reported back as `budgetSpent` (name kept as-is — see that field's own
+  // comment on why) rather than renamed to `attemptsSpent`.
+  let attempts = 0;
 
   // The single bracket. `describe:accept` is deliberately its own partition name, not a
   // display sub-part's: the cross-partition hash index still lets it ADOPT geometry the
@@ -60,10 +70,25 @@ export function acceptCandidates(kernel, source, candidates, opts = {}) {
     let currentXor = sourceVolume;       // an empty reconstruction differs by the whole part
     const pending = [...candidates];
 
-    while (pending.length && spent < budget) {
+    while (pending.length && attempts < budget) {
       let best = null;
       for (const cand of pending) {
-        if (spent >= budget) break;
+        if (attempts >= budget) break;
+        // Real boolean cost of THIS attempt, not the `attempts` counter below (that
+        // counts the attempt itself, always by 1, regardless of how many WASM
+        // booleans it took) — spelled out here because it is not uniform and a
+        // reader sizing the budget against boolean-call cost needs the real number:
+        //   • op "cut",   current === null → 0 booleans (trial is set to null with
+        //     no kernel call at all — "nothing to cut from yet" — and skipped below)
+        //   • op "union", current === null → 1 boolean (no union call needed either,
+        //     trial IS piece; the only boolean is xorVolume's own intersect below)
+        //   • either op,  current !== null → 2 booleans (the cut/union that builds
+        //     `trial`, plus xorVolume's intersect)
+        // So budget=N bounds attempts, and — once any candidate has been accepted,
+        // which is the common case for a multi-feature part — real boolean work at
+        // roughly 2N, not N. Verified directly: a 4-candidate, 2-op-type search
+        // (1 accepted union then 1 accepted cut) reports `budgetSpent: 9` against
+        // 12 real boolean calls counted by wrapping the kernel.
         let trial;
         try {
           const piece = cand.build();
@@ -76,7 +101,7 @@ export function acceptCandidates(kernel, source, candidates, opts = {}) {
           // not a description of this mesh. Drop it and keep going.
           trial = null;
         }
-        spent++;
+        attempts++;
         if (!trial) continue;
         const xor = xorVolume(trial, source);
         const gain = currentXor - xor;
@@ -106,8 +131,15 @@ export function acceptCandidates(kernel, source, candidates, opts = {}) {
         xorFraction,
         xorVolume: currentXor,
       },
-      budgetSpent: spent,
-      budgetExceeded: spent >= budget && pending.length > 0,
+      // Candidate attempts, not real boolean calls — see `attempts`'s own comment
+      // above and the per-attempt cost breakdown in the loop. Kept as `budgetSpent`
+      // (not renamed to `attemptsSpent`) because it is a documented cross-task
+      // interface field T12's orchestrator consumes by this exact name (SDD
+      // progress ledger, T10→T12 interface row); the field's MEANING is what moved,
+      // not its shape, so a rename here would be a breaking, undocumented surprise
+      // for that consumer rather than a fix.
+      budgetSpent: attempts,
+      budgetExceeded: attempts >= budget && pending.length > 0,
     };
   } finally {
     kernel.endSubPart?.();
