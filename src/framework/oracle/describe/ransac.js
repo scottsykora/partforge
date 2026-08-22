@@ -57,6 +57,21 @@ const BUCKET_PAIR_CAP = 24;
 // total.
 const PAIR_BUDGET = 65536;
 
+// Controller ruling R28: `ransacPatches` measures at roughly O(n^2.7) in its face
+// count — 80ms at 400 faces, 1.8s at 1600, 23.8s at 4000, ~60s around 5,500. That
+// has been safe so far only because its one caller (`segment()`'s mop-up, below)
+// hands it a small RESIDUAL — the faces region growing couldn't already claim, not
+// the whole mesh. A future caller offering an unfiltered face list (the whole
+// candidate surface of a complex mesh) could walk straight into the cliff above
+// with no warning. `maxFaces` is that guardrail: past it, this function degrades —
+// it processes a bounded, deterministic prefix of the pool and reports the rest as
+// unassigned — rather than either refusing to run or silently taking minutes.
+// 2000 is chosen to sit comfortably under the 1600-faces/1.8s point measured above
+// (the worst case inside one bucket-pair/topology-neighbour pass is still bounded
+// by PAIR_BUDGET regardless of pool size, but the per-candidate consensus SCAN is
+// O(pool) per pair, which is where the n^2.7 comes from).
+const DEFAULT_MAX_FACES = 2000;
+
 // Angle band for "this face's own normal is compatible with the fit's local
 // surface normal here", radians (30°) — reuses segment.js's own smoothness
 // ceiling (`SMOOTH_DIHEDRAL_MAX`) rather than inventing a second unrelated
@@ -291,7 +306,22 @@ function candidatePairs(topo, pool) {
 
 export function ransacPatches(topo, faces, tol, opts = {}) {
   const minInliers = opts.minInliers ?? MIN_INLIERS;
-  let pool = [...faces];
+  const maxFaces = opts.maxFaces ?? DEFAULT_MAX_FACES;
+  // Over the cap: split off a deterministic, order-independent prefix to actually
+  // process and defer the rest straight to `unassigned` (folded in below, after the
+  // main loop, alongside whatever the consensus search itself couldn't claim).
+  // Sorted by face INDEX — a property of the mesh, not of the caller's array — so
+  // which faces get processed vs deferred does not depend on the order `faces` was
+  // handed in, the same order-independence the rest of this function already
+  // guarantees (see the canonicalization comments below).
+  let overflow = [];
+  let bounded = faces;
+  if (faces.length > maxFaces) {
+    const sorted = [...faces].sort((a, b) => a - b);
+    bounded = sorted.slice(0, maxFaces);
+    overflow = sorted.slice(maxFaces);
+  }
+  let pool = [...bounded];
   const patches = [];
 
   while (pool.length >= minInliers) {
@@ -349,9 +379,13 @@ export function ransacPatches(topo, faces, tol, opts = {}) {
 
   // Same reasoning for the residual: its CONTENT (which faces went unclaimed)
   // is order-invariant, but `pool` carries whatever relative order the
-  // caller's `faces` had. A plain ascending sort is the canonical form for a
-  // bare list of face indices.
-  pool.sort((a, b) => a - b);
+  // caller's `faces` had. `overflow` (the maxFaces deferral above, empty on
+  // the common in-budget path) folds in here rather than earlier, so a face
+  // the consensus search never even looked at is reported the same way as one
+  // it looked at and couldn't claim — both are just "unassigned" to the
+  // caller. A plain ascending sort is the canonical form for a bare list of
+  // face indices.
+  pool = pool.concat(overflow).sort((a, b) => a - b);
 
   return { patches, unassigned: pool };
 }
