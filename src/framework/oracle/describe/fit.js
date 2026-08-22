@@ -158,6 +158,27 @@ export function jacobiEigen(m) {
 // which faces land in the same bucket, and a part's three extents (like this
 // box's w/d/h) are separated enough that eigenvalue order is stable under a rigid
 // rotation regardless.
+//
+// KNOWN LIMITATION, not yet worked around: separation is doing real work above,
+// and a part whose own extents are close to EQUAL — the degenerate case, not the
+// rare one, since a cube-ish or near-cylindrical-envelope part is an ordinary
+// input — has no well-defined "own" axes for PCA to recover: its (welded) vertex
+// set's covariance is close to a scalar multiple of the identity, jacobiEigen's
+// eigenvectors within that (near-)degenerate eigenspace are numerically
+// arbitrary, not rotation-covariant, and `diagonal` stops being rotation-
+// invariant right along with them. Measured directly on the welded vertex set
+// (`topo.verts`, the same input segment.js/sweeps.js pass in — only the 16
+// corners of a hollow box, not the dense triangle soup, so the symmetry is
+// exact rather than merely approximate): a 20x20x20 hollow-box shell (uniform
+// 2mm wall) reads `intrinsicScale` 34.64mm flat and 53.42mm rotated 29 degrees
+// about [1,2,3] — the SAME divergence this function exists to remove, just
+// re-introduced by the input's own symmetry rather than by reading world axes.
+// An asymmetric box (30x20x14, same wall) has no such trouble: 38.68mm either
+// way, exactly. Any caller near a hard threshold on this scale should keep that
+// in mind for a near-cubic or near-cylindrical part; nothing here detects or
+// flags the degenerate case, and describe-roundtrip.test.js's rotated-shell
+// case is deliberately built asymmetric (not a cube) to stay on the safe side
+// of it rather than accidentally depend on it.
 export function intrinsicFrame(verts) {
   const n = verts.length / 3;
   const c = [0, 0, 0];
@@ -408,12 +429,14 @@ const TORUS_R_REFINE_ITERS = 40;   // golden-section iterations inside the brack
 const TORUS_R_DEADZONE_FRAC = 1 / (TORUS_R_COARSE_STEPS * 4);
 
 function torusMinorRadius(pts, normals) {
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (const p of pts) for (let i = 0; i < 3; i++) { if (p[i] < lo[i]) lo[i] = p[i]; if (p[i] > hi[i]) hi[i] = p[i]; }
   // No candidate minor radius can exceed half the bounding-box diagonal: every
   // point of {p_i - r*n_i} would already have to reach outside the box the
-  // input itself lives in.
-  const rMax = Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) / 2;
+  // input itself lives in. intrinsicScale() (this file, above), not a plain
+  // world-axis min/max — this is only a loose search bound, not a decision
+  // threshold, so a world-frame diagonal was never going to change which radius
+  // wins, but the convention should not have a second, differently-computed copy
+  // sitting a few hundred lines from the one that matters.
+  const rMax = intrinsicScale(pts.flat()) / 2;
   if (!(rMax > 0)) return 0;
   const planarity = (r) => {
     const derived = pts.map((p, i) => sub(p, scale(normals[i], r)));

@@ -63,7 +63,7 @@
 // unchanged.
 //
 // Pure leaf. See spec §2.5.
-import { jacobiEigen } from "../fit.js";
+import { intrinsicScale } from "../fit.js";
 import { buildBVH } from "../../bvh.js";
 
 // "Same axis" band for the revolve vote.
@@ -111,15 +111,6 @@ function faceCentroid(topo, t) {
     c[0] += topo.verts[v]/3; c[1] += topo.verts[v+1]/3; c[2] += topo.verts[v+2]/3;
   }
   return c;
-}
-
-function bboxDiagonal(topo) {
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < topo.verts.length; i += 3) for (let a = 0; a < 3; a++) {
-    if (topo.verts[i+a] < lo[a]) lo[a] = topo.verts[i+a];
-    if (topo.verts[i+a] > hi[a]) hi[a] = topo.verts[i+a];
-  }
-  return Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]);
 }
 
 // This plane surface's own local wall reading: cast a ray from a spread of its own
@@ -205,7 +196,13 @@ export function detectSweeps(graph, topo, opts = {}) {
           ? readingsBySurface.filter((r) => Math.abs(r.reading - median) / median < SHELL_READING_AGREE_FRAC)
           : [];
         const inlierFrac = readingsBySurface.length ? inliers.length / readingsBySurface.length : 0;
-        const diag = bboxDiagonal(topo);
+        // intrinsicScale(), not a plain world-axis min/max: this gate gets MORE
+        // permissive (a smaller relativeThickness) when a naive AABB diagonal
+        // inflates under rotation, which is the identical failure mode fit.js's own
+        // comment documents — here it would make shell detection accept a thicker
+        // wall as "thin" purely because the part is tilted, not because anything
+        // about the wall changed.
+        const diag = intrinsicScale(topo.verts);
         if (median > 0 && inlierFrac >= SHELL_INLIER_FRAC && diag > 0 && median / diag < SHELL_MAX_RELATIVE_THICKNESS) {
           const thickness = medianOf(inliers.map((r) => r.reading));
           out.push({

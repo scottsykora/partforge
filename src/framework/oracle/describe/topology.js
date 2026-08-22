@@ -10,6 +10,7 @@
 // Pure leaf: no kernel, no BVH, no DOM. See docs/superpowers/specs/
 // 2026-08-21-semantic-mesh-oracle-design.md §2.1.
 import { meshTriangles } from "../bvh.js";
+import { intrinsicScale } from "./fit.js";
 
 // Coplanarity band for calling an edge "flat" rather than convex/concave. A
 // tessellated cylinder's wall edges are genuinely convex at a small angle and must
@@ -25,13 +26,14 @@ const norm = (a) => Math.hypot(a[0], a[1], a[2]);
 // Weld tolerance defaults to a fraction of the bbox diagonal rather than an
 // absolute number: a 2mm part and a 2m part both need welding, and an absolute
 // epsilon is wrong for one of them. Callers with a known chord tolerance override.
+// intrinsicScale() (fit.js), not a plain world-axis min/max, for the same reason
+// segment.js's fit tolerance switched: a naive AABB diagonal is not the same number
+// under rotation, so this weld epsilon would silently drift with orientation too —
+// the effect is negligible at this fraction's scale (nanometres either way), but the
+// convention should not have a second, differently-computed copy for the next reader
+// to (wrongly) treat as a template.
 function weldTolerance(triples) {
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (const t of triples) for (const v of t) for (let a = 0; a < 3; a++) {
-    if (v[a] < lo[a]) lo[a] = v[a];
-    if (v[a] > hi[a]) hi[a] = v[a];
-  }
-  return Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) * 1e-7;
+  return intrinsicScale(triples.flat(2)) * 1e-7;
 }
 
 export function buildTopology(mesh, opts = {}) {
