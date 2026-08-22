@@ -601,6 +601,18 @@ between the Manifold preview and the OCCT STEP export.
 
   The same channel carries every other degrade in a build: an `extrude` rim bevel reduced or skipped (`extrude bevel <b> …`), a `roundedBox` rim radius clamped to `round.side`, and the `Shape2D` corner-op clamps in the two entries above. A build result's `warnings` is the complete list of what the part asked for and did not get.
 
+## control-default-not-literal
+
+- **Symptom:** A control works live — the slider moves, the geometry updates — but the user's panel edits are gone when the part is reopened. Nothing throws anywhere.
+- **Cause:** The control's `defaults` entry is written as something other than a plain literal — an expression (`13 / 3`), an array or object, a template literal, a hex/`1_000` spelling. Hosts persist a panel edit by rewriting that value's span in the source, so a value the rewriter cannot read is skipped and the edit is silently lost. The evaluated-object lint cannot see this (`13 / 3` evaluates to an ordinary number); only the source says.
+- **Fix:** Write the computed value as a plain decimal/string/boolean literal, or move the computation into `derive()`. `lintPart(part, { sources })` and the CLI report this as the error `control-default-not-literal` with file and line. Only a **visible** control's default is checked — a statically hidden one (`hidden: true` on the control, group or section) renders no widget, so there is no panel edit to lose, and an expression there is legitimate. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Linting" (Rule catalog → Source rules).
+
+## impure-source-token
+
+- **Symptom:** The preview shows stale geometry after a parameter edit, or a part behaves differently across rebuilds with identical params — often intermittent.
+- **Cause:** The source contains `Math.random`, `Date.now`, `performance.now`, or an argless `new Date()`. A build must be a pure function of `(k, p, d)`; the memoizing kernel hashes inputs, so an impure value silently serves stale geometry (see impure-build-stale-preview, above). The behavioral lint probe catches impurity only when it changes the recorded call sequence between two probe runs; a value stable within one pass escapes it, which is why the source scan warns on the token itself.
+- **Fix:** Replace the impure value with a parameter or a `derive()` output. `new Date(0)` and other argument-carrying forms are deterministic and not flagged; only `.js`/`.mjs` files are scanned, so the same words in a `README.md` are prose. One finding is emitted per (file, token) pair, carrying the occurrence count and the first occurrence's line. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Caching & determinism".
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.
