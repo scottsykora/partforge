@@ -8,6 +8,7 @@ import { detectDressups } from "../src/framework/oracle/describe/features/dressu
 import {
   annulusPlate, cylinderMesh, rotateMesh,
   chamferedBox, countersunkPlate, filletedCylinderTop, filletFaceRange, cupMesh,
+  filletedCylinderBase, filletBaseRange,
 } from "./helpers/mesh-fixtures.js";
 
 // `rotateMesh(mesh, [rx, ry, rz])` takes radians packed in one array (see
@@ -41,6 +42,32 @@ function filletGraph(R, H, r, segs, tubeSegs, orient) {
     mk("wall", range(segs, fs), (pts, n) => fitCylinder(pts, n)),
     mk("fillet", range(fs, fe), (pts, n) => fitTorus(pts, n)),
     mk("top", range(fe, fe + segs), (pts) => fitPlane(pts)),
+  ];
+  return surfaceGraph(topo, patches);
+}
+
+// The CONCAVE-corner twin: a boss's BASE, rounded by a tangent torus fillet, on
+// `filletedCylinderBase` — see its own comment in mesh-fixtures.js for why its true
+// outward mesh normal points toward the tube's own local centre (round-2 review's
+// finding, and the reason `fitTorus`'s minor-radius search now searches negative r
+// too). Same hand-built-patch technique as `filletGraph` above, just with the plate's
+// extra wall/top-annulus patches in between.
+function filletBaseGraph(Rp, Hp, R, Hs, r, segs, tubeSegs, orient) {
+  const mesh = orient(filletedCylinderBase(Rp, Hp, R, Hs, r, segs, tubeSegs));
+  const topo = buildTopology(mesh);
+  const [fs, fe] = filletBaseRange(segs, tubeSegs);
+  const range = (a, b) => Array.from({ length: b - a }, (_, i) => a + i);
+  const mk = (id, faces, fitFn) => {
+    const { pts, normals } = facePoints(topo, faces);
+    return { id, faces, fit: fitFn(pts, normals), area: faces.reduce((a, t) => a + topo.faceArea[t], 0) };
+  };
+  const patches = [
+    mk("bottom", range(0, segs), (pts) => fitPlane(pts)),
+    mk("plateWall", range(segs, 3 * segs), (pts, n) => fitCylinder(pts, n)),
+    mk("plateTop", range(3 * segs, 5 * segs), (pts) => fitPlane(pts)),
+    mk("fillet", range(fs, fe), (pts, n) => fitTorus(pts, n)),
+    mk("shaftWall", range(fe, fe + 2 * segs), (pts, n) => fitCylinder(pts, n)),
+    mk("shaftCap", range(fe + 2 * segs, fe + 3 * segs), (pts) => fitPlane(pts)),
   ];
   return surfaceGraph(topo, patches);
 }
@@ -169,6 +196,33 @@ test.each(ORIENTATIONS)(
     for (const ratio of [0.0625, 0.125, 0.25]) {
       const r = R * ratio;
       const g = filletGraph(R, 12, r, 96, 48, orient);
+      const fillets = detectDressups(g).filter((d) => d.type === "fillet");
+      expect(fillets.length).toBe(1);
+      expect(fillets[0].radius).toBeCloseTo(r, 1);
+    }
+  });
+
+// Round 2: the CONCAVE-corner half of the same fixture family — a boss's BASE
+// rounded by a tangent torus fillet, the shape at a pocket floor or a boss base.
+// Its true outward mesh normal points TOWARD the tube's own local centre, which the
+// original `fitTorus` (positive-r-only search) could not represent at all and
+// silently mis-measured (minor radius off by roughly 10x, no null, no elevated
+// residual — see fit.js's own comment on `torusMinorRadius`). Swept the same way as
+// the convex case, asserting BOTH radii `fitTorus` recovers, not just the one
+// `detectDressups` surfaces as `radius`.
+test.each(ORIENTATIONS)(
+  "%s: a CONCAVE torus fillet (a boss base) is fit with the right minor and major radius across r/R = 0.0625 to 0.25",
+  (_n, orient) => {
+    const R = 8;
+    for (const ratio of [0.0625, 0.125, 0.25]) {
+      const r = R * ratio;
+      const g = filletBaseGraph(20, 5, R, 10, r, 96, 48, orient);
+      const torus = g.surfaces.find((s) => s.type === "torus");
+      expect(torus).toBeDefined();
+      expect(torus.fit.minorRadius).toBeCloseTo(r, 1);
+      expect(torus.fit.majorRadius).toBeCloseTo(R + r, 1);
+      expect(torus.fit.concaveTube).toBe(true);
+      // Not a trade: detectDressups still finds it as a fillet, same as the convex case.
       const fillets = detectDressups(g).filter((d) => d.type === "fillet");
       expect(fillets.length).toBe(1);
       expect(fillets[0].radius).toBeCloseTo(r, 1);

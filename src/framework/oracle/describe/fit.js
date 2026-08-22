@@ -310,8 +310,33 @@ export function fitCone(pts, normals) {
 // trusting a local descent — and golden-section then refines within that
 // bracket, where the objective is well-behaved (essentially quadratic near a
 // true minimum for exact or near-exact data).
+//
+// SIGNED r, searched over BOTH signs (round-2 review, controller ruling — this
+// plan's Task 6 flagged it after finding `fitTorus` silently mis-measured a
+// concave-corner fillet). The coplanarity identity `t = p - r*n` assumes the
+// outward normal `n` points AWAY from the tube cross-section's own centre —
+// true for a torus's convex half (a full closed torus; a fillet rounding a
+// CONVEX corner, e.g. a shaft's top rim). On the CONCAVE half (a fillet
+// rounding an inside corner — a pocket floor, a boss's base) the true outward
+// normal points TOWARD that centre instead, and the correct r for the SAME
+// identity to collapse onto the main circle is NEGATIVE. A positive-only
+// search cannot represent that r at all: it was converging on whichever
+// spurious positive value happened to look locally best and returning it with
+// no null and no elevated residual — a silent wrong answer, not a failure.
+// Searching both signs and keeping the globally better one fixes this without
+// changing anything about the convex case, which already found its optimum on
+// the positive side and still does.
 const TORUS_R_COARSE_STEPS = 48;   // scan resolution: bracket-finding, not final precision
 const TORUS_R_REFINE_ITERS = 40;   // golden-section iterations inside the bracket
+// A thin band around r=0 is excluded from the search on both sides: at r=0 the
+// "derived" set is just the input points themselves, whose planarity reflects
+// the raw patch's own flatness rather than anything about a candidate radius —
+// it can look spuriously good by coincidence and pull the coarse scan's
+// bracket onto a meaningless near-zero radius. A physical tube's true minor
+// radius is never a sliver of the whole patch's own bounding-box diagonal, so
+// excluding a sliver of `rMax` around zero from both signs costs no real
+// coverage.
+const TORUS_R_DEADZONE_FRAC = 1 / (TORUS_R_COARSE_STEPS * 4);
 
 function torusMinorRadius(pts, normals) {
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
@@ -326,23 +351,37 @@ function torusMinorRadius(pts, normals) {
     const pf = fitPlane(derived);
     return pf ? pf.rms : Infinity;   // a degenerate derived set is an infinitely bad r, not a crash
   };
-  const samples = [];
-  for (let i = 0; i < TORUS_R_COARSE_STEPS; i++) samples.push((rMax * (i + 1)) / TORUS_R_COARSE_STEPS);
-  let bestI = 0, bestVal = Infinity;
-  for (let i = 0; i < TORUS_R_COARSE_STEPS; i++) {
-    const val = planarity(samples[i]);
-    if (val < bestVal) { bestVal = val; bestI = i; }
-  }
-  let a = bestI > 0 ? samples[bestI - 1] : samples[0] / 2;
-  let b = bestI < TORUS_R_COARSE_STEPS - 1 ? samples[bestI + 1] : Math.min(rMax, samples[bestI] * 1.5);
+  const deadzone = rMax * TORUS_R_DEADZONE_FRAC;
   const GOLDEN = (Math.sqrt(5) - 1) / 2;
-  let c = b - GOLDEN*(b-a), d = a + GOLDEN*(b-a);
-  let fc = planarity(c), fd = planarity(d);
-  for (let k = 0; k < TORUS_R_REFINE_ITERS; k++) {
-    if (fc < fd) { b = d; d = c; fd = fc; c = b - GOLDEN*(b-a); fc = planarity(c); }
-    else { a = c; c = d; fc = fd; d = a + GOLDEN*(b-a); fd = planarity(d); }
-  }
-  return (a + b) / 2;
+
+  // Coarse-scan-then-golden-section-refine over the magnitude, on one given
+  // sign, exactly as the original single-sided search did — just parameterised
+  // on `sign` so it runs identically for +1 and -1 below.
+  const searchSide = (sign) => {
+    const samples = [];
+    for (let i = 0; i < TORUS_R_COARSE_STEPS; i++) {
+      samples.push(deadzone + ((rMax - deadzone) * (i + 1)) / TORUS_R_COARSE_STEPS);
+    }
+    let bestI = 0, bestVal = Infinity;
+    for (let i = 0; i < TORUS_R_COARSE_STEPS; i++) {
+      const val = planarity(sign * samples[i]);
+      if (val < bestVal) { bestVal = val; bestI = i; }
+    }
+    let a = bestI > 0 ? samples[bestI - 1] : deadzone;
+    let b = bestI < TORUS_R_COARSE_STEPS - 1 ? samples[bestI + 1] : Math.min(rMax, samples[bestI] * 1.5);
+    let c = b - GOLDEN*(b-a), d = a + GOLDEN*(b-a);
+    let fc = planarity(sign*c), fd = planarity(sign*d);
+    for (let k = 0; k < TORUS_R_REFINE_ITERS; k++) {
+      if (fc < fd) { b = d; d = c; fd = fc; c = b - GOLDEN*(b-a); fc = planarity(sign*c); }
+      else { a = c; c = d; fc = fd; d = a + GOLDEN*(b-a); fd = planarity(sign*d); }
+    }
+    const r = sign * (a + b) / 2;
+    return { r, val: planarity(r) };
+  };
+
+  const positive = searchSide(1);
+  const negative = searchSide(-1);
+  return positive.val <= negative.val ? positive.r : negative.r;
 }
 
 export function fitTorus(pts, normals) {
@@ -366,9 +405,22 @@ export function fitTorus(pts, normals) {
   // partial tube-sweep coverage. Using POSITIONS AND NORMALS TOGETHER removes
   // the ambiguity entirely: coplanarity of the derived point set is a property
   // of the actual 3-D shape, not of how the sweep happened to be sampled.
-  const minorRadius = torusMinorRadius(pts, normals);
+  //
+  // `torusMinorRadius` now returns a SIGNED r (see its own comment): positive
+  // for the convex-corner/full-torus case its formula was originally derived
+  // for, negative for the concave-corner case, where the true outward normal
+  // points toward the tube's own centre rather than away from it. The signed
+  // value is what the `derived = p - r*n` identity actually needs to collapse
+  // onto the main circle in EITHER case; `minorRadius` itself is reported
+  // positive, as every other radius in this module is, with the sign carried
+  // separately in `concaveTube` — cheap to keep (the sign is already computed;
+  // discarding it would just be throwing away a fact the fit already knows),
+  // and it independently corroborates the `curvature` surface-graph.js derives
+  // from the mesh's own face normals rather than from this fit's parameters.
+  const signedR = torusMinorRadius(pts, normals);
+  const minorRadius = Math.abs(signedR);
   if (!(minorRadius > 0)) return null;
-  const derived = pts.map((p, i) => sub(p, scale(normals[i], minorRadius)));
+  const derived = pts.map((p, i) => sub(p, scale(normals[i], signedR)));
   const pf = fitPlane(derived);
   if (!pf) return null;
   const axis = pf.normal;
@@ -384,6 +436,6 @@ export function fitTorus(pts, normals) {
     circle.cu*u[1] + circle.cv*v[1] + pf.offset*axis[1],
     circle.cu*u[2] + circle.cv*v[2] + pf.offset*axis[2],
   ];
-  const fit = { type: "torus", center, axis, majorRadius: circle.radius, minorRadius };
+  const fit = { type: "torus", center, axis, majorRadius: circle.radius, minorRadius, concaveTube: signedR < 0 };
   return { ...fit, ...errors(pts.map((p) => deviationOf(fit, p))) };
 }

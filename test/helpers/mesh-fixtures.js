@@ -194,6 +194,59 @@ export function filletFaceRange(segs, tubeSegs) {
   return [3 * segs, 3 * segs + 2 * segs * tubeSegs];
 }
 
+// A plate with a cylindrical boss standing on it, the boss's BASE rounded by a
+// tangent torus fillet — the CONCAVE-corner twin of `filletedCylinderTop`
+// (there, the top rim; here, the base): the corner being rounded has 270
+// degrees of material, the shape you get at a pocket floor or a boss base.
+// Its true outward mesh normal points TOWARD the tube's own local
+// cross-section centre rather than away from it — the case `fitTorus`
+// (fit.js) originally could not fit at all (round-2 review: its minor-radius
+// search sampled only positive r, and the identity this shape needs is
+// negative r; see fitTorus's own comment). Section-ordered (bottom cap, plate
+// wall, plate top annulus, fillet, shaft wall, shaft cap, each a contiguous
+// run) for the same reason `filletedCylinderTop` is: this shape is not
+// expected to segment cleanly via `segment()`'s own region growing (double
+// curvature defeats its witness-corroboration bootstrap, same as
+// `torusMesh`'s own comment covers), so tests hand-build each patch directly
+// via `filletBaseRange` instead.
+export function filletedCylinderBase(Rp, Hp, R, Hs, r, segs = 96, tubeSegs = 48) {
+  const positions = [];
+  const rFlat = R + r, zc = Hp + r;
+  const p = (rad, i, z) => [rad * Math.cos(2 * Math.PI * i / segs), rad * Math.sin(2 * Math.PI * i / segs), z];
+  for (let i = 0; i < segs; i++) tri(positions, [0,0,0], p(Rp,i+1,0), p(Rp,i,0));                // bottom cap (-Z)
+  for (let i = 0; i < segs; i++) {                                                               // plate wall (radius Rp, 0..Hp)
+    tri(positions, p(Rp,i,0), p(Rp,i+1,0), p(Rp,i+1,Hp)); tri(positions, p(Rp,i,0), p(Rp,i+1,Hp), p(Rp,i,Hp));
+  }
+  for (let i = 0; i < segs; i++) {                                                               // plate top annulus (Rp -> rFlat at z=Hp)
+    tri(positions, p(Rp,i+1,Hp), p(Rp,i,Hp), p(rFlat,i,Hp)); tri(positions, p(Rp,i+1,Hp), p(rFlat,i,Hp), p(rFlat,i+1,Hp));
+  }
+  for (let i = 0; i < segs; i++) {                                                               // fillet (torus quarter patch)
+    for (let j = 0; j < tubeSegs; j++) {
+      const phi0 = (Math.PI/2) * j / tubeSegs, phi1 = (Math.PI/2) * (j+1) / tubeSegs;
+      // rho(phi)=rFlat-r*sin(phi), z(phi)=zc-r*cos(phi): at phi=0 this is
+      // (rFlat, zc-r)=(rFlat,Hp), tangent to the plate top; at phi=pi/2 it's
+      // (rFlat-r, zc)=(R,zc), tangent to the shaft wall.
+      const rho0 = rFlat - r*Math.sin(phi0), z0 = zc - r*Math.cos(phi0);
+      const rho1 = rFlat - r*Math.sin(phi1), z1 = zc - r*Math.cos(phi1);
+      const a = p(rho0,i,z0), b = p(rho0,i+1,z0), c = p(rho1,i+1,z1), d = p(rho1,i,z1);
+      tri(positions, a, b, c); tri(positions, a, c, d);
+    }
+  }
+  for (let i = 0; i < segs; i++) {                                                               // shaft wall (radius R, zc..zc+Hs)
+    tri(positions, p(R,i,zc), p(R,i+1,zc), p(R,i+1,zc+Hs)); tri(positions, p(R,i,zc), p(R,i+1,zc+Hs), p(R,i,zc+Hs));
+  }
+  for (let i = 0; i < segs; i++) tri(positions, [0,0,zc+Hs], p(R,i,zc+Hs), p(R,i+1,zc+Hs));      // shaft top cap (+Z, radius R)
+  return { positions };
+}
+
+// The face-index range `filletedCylinderBase`'s own fillet (torus) patch
+// occupies: bottom cap (`segs`), plate wall (`2*segs`), plate top annulus
+// (`2*segs`) all precede it, so it starts after `5*segs` and runs
+// `2*segs*tubeSegs` triangles long. Mirrors `filletFaceRange`.
+export function filletBaseRange(segs, tubeSegs) {
+  return [5 * segs, 5 * segs + 2 * segs * tubeSegs];
+}
+
 // A blind-hole cup: a solid cylinder (outer radius rOut, height h) with a
 // flat-bottomed cylindrical bore (radius rIn) that stops at z=dBlind rather
 // than breaking through — THE blind-hole fixture. Built by directly reusing
