@@ -64,6 +64,110 @@ test.each(ORIENTATIONS)(
     expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.99);
   });
 
+// Round 3 review's finding: `mergeCoFamily` (surface-graph.js) folds two coplanar
+// patches into one SURFACE whenever they fit the same plane, whether or not they
+// touch — deliberately, since a plane genuinely interrupted by another feature must
+// stay one surface. But that means two same-height boss tops on the same plate merge
+// into one cap surface with two disjoint ISLANDS, and treating the whole surface as
+// one feature built a "bridging box" spanning the gap between them — 4-5x too large,
+// correctly rejected by acceptCandidates for negative gain, silently dropping the
+// smaller island's entire volume with no error and no warning (score.explainedVolumeFraction
+// still landed above the 0.85 LOW_COVERAGE threshold, so nothing in the report flagged
+// the loss either). Fixed in `detectPrismatic` (per-island splitting, via face
+// adjacency, not boundary-loop count — an annulus is one island with two loops) and in
+// describe.js's own candidate builder (`faceScope`, so a WALL surface that is itself
+// multi-island — two different steps sharing an x or y coordinate — is also scoped to
+// just the island it actually borders). Every fixture below uses NON-identical step
+// sizes so two same-key features can never collide (see prismatic.js's own key, which
+// now includes each island's centroid for exactly this reason).
+const twoSameHeightBosses = () =>
+  kernel.box({ min: [0, 0, 0], max: [60, 40, 10] })
+    .union(kernel.box({ min: [5, 5, 10], max: [15, 15, 20] }))
+    .union(kernel.box({ min: [30, 20, 10], max: [40, 32, 20] }));
+
+// Control: the SAME two-boss layout, but the second boss is 1mm taller, so its cap
+// does NOT merge with the first's — this already worked before the fix, and stays a
+// regression guard that the fix did not change ordinary (non-merged) behaviour.
+const controlOffsetBosses = () =>
+  kernel.box({ min: [0, 0, 0], max: [60, 40, 10] })
+    .union(kernel.box({ min: [5, 5, 10], max: [15, 15, 20] }))
+    .union(kernel.box({ min: [30, 20, 10], max: [40, 32, 21] }));
+
+const twoSameHeightPockets = () =>
+  kernel.box({ min: [0, 0, 0], max: [60, 40, 20] })
+    .cut(kernel.box({ min: [5, 5, 10], max: [15, 15, 21] }))
+    .cut(kernel.box({ min: [30, 20, 10], max: [40, 32, 21] }));
+
+// The wall-side variant found while building round 2's own regression fixture: two
+// steps whose footprints share an X coordinate (both touch x=25) put both steps' own
+// walls, not just their caps, on the same plane — the identical merge, one level down.
+const sideWallVariant = () =>
+  kernel.box({ min: [0, 0, 0], max: [60, 40, 10] })
+    .union(kernel.box({ min: [5, 5, 10], max: [25, 15, 18] }))
+    .union(kernel.box({ min: [25, 20, 10], max: [45, 30, 22] }));
+
+// The base's own top face, interrupted by two boss footprints cut into it, is ONE
+// connected island (you can walk from any point on the remaining top face to any
+// other without crossing either hole) despite having two boundary loops — the widening
+// this fix must NOT trigger. Must still yield exactly one "extrusion" feature.
+const interruptedBase = () =>
+  kernel.box({ min: [0, 0, 0], max: [60, 40, 10] })
+    .union(kernel.box({ min: [5, 5, 10], max: [15, 15, 15] }))
+    .union(kernel.box({ min: [30, 20, 10], max: [40, 30, 15] }));
+
+test.each(ORIENTATIONS)(
+  "%s: two same-height bosses are reported and explained as THREE features, not two", (name, orient) => {
+    const r = describeMesh(kernel, orient(twoSameHeightBosses()), { digest: `sameh-boss-${name}` });
+    expect(r.error).toBeUndefined();
+    const prismatic = r.features.filter((f) => f.type === "extrusion" || f.type === "boss");
+    expect(prismatic.length).toBe(3);
+    for (const f of prismatic) expect(f.volumeShare).toBeGreaterThan(0);
+    const explained = new Set(r.suggestion.steps.flatMap((s) => s.explains));
+    for (const f of prismatic) expect(explained.has(f.id)).toBe(true);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.99);
+  });
+
+test.each(ORIENTATIONS)(
+  "%s: control — a 1mm height offset already reported three features before this fix", (name, orient) => {
+    const r = describeMesh(kernel, orient(controlOffsetBosses()), { digest: `control-${name}` });
+    expect(r.error).toBeUndefined();
+    const prismatic = r.features.filter((f) => f.type === "extrusion" || f.type === "boss");
+    expect(prismatic.length).toBe(3);
+    for (const f of prismatic) expect(f.volumeShare).toBeGreaterThan(0);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.99);
+  });
+
+test.each(ORIENTATIONS)(
+  "%s: two same-height pockets are reported and explained as THREE features, not two", (name, orient) => {
+    const r = describeMesh(kernel, orient(twoSameHeightPockets()), { digest: `sameh-pocket-${name}` });
+    expect(r.error).toBeUndefined();
+    const prismatic = r.features.filter((f) => f.type === "extrusion" || f.type === "pocket");
+    expect(prismatic.length).toBe(3);
+    for (const f of prismatic) expect(f.volumeShare).toBeGreaterThan(0);
+    const explained = new Set(r.suggestion.steps.flatMap((s) => s.explains));
+    for (const f of prismatic) expect(explained.has(f.id)).toBe(true);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.99);
+  });
+
+test.each(ORIENTATIONS)(
+  "%s: two steps sharing an x coordinate (merged WALLS, not just caps) still explain fully", (name, orient) => {
+    const r = describeMesh(kernel, orient(sideWallVariant()), { digest: `sidewall-${name}` });
+    expect(r.error).toBeUndefined();
+    const prismatic = r.features.filter((f) => f.type === "extrusion" || f.type === "boss");
+    expect(prismatic.length).toBe(3);
+    for (const f of prismatic) expect(f.volumeShare).toBeGreaterThan(0);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.99);
+  });
+
+test.each(ORIENTATIONS)(
+  "%s: an interrupted base plane still yields exactly ONE extrusion, not a split one", (name, orient) => {
+    const r = describeMesh(kernel, orient(interruptedBase()), { digest: `interrupted-${name}` });
+    expect(r.error).toBeUndefined();
+    expect(r.features.filter((f) => f.type === "extrusion").length).toBe(1);
+    expect(r.features.filter((f) => f.type === "boss").length).toBe(2);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.99);
+  });
+
 test("a plate with a bore reports a through hole", () => {
   const r = describeMesh(kernel, plateSolid(), { name: "plate", digest: "d1" });
   expect(r.features.some((f) => f.type === "throughHole")).toBe(true);

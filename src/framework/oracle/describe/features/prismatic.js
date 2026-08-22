@@ -32,9 +32,36 @@
 // backwards (or not at all). Smallest-first means the floor claims the shared wall before
 // its own surrounding mouth gets a chance to.
 //
+// ISLANDS (round 3 review). `mergeCoFamily` (surface-graph.js) folds two patches into one
+// SURFACE whenever they fit the same plane, regardless of whether they touch — a plane
+// interrupted by a boss IS one plane, and requiring adjacency there would re-break every
+// interrupted surface. But that means a cap surface can silently span TWO physically
+// disjoint regions: two same-height boss tops on the same plate merge into one `s<n>`
+// with two unconnected islands, and treating the whole surface as one feature built a
+// candidate spanning the gap between them — a "bridging box" 4-5x too large, rejected by
+// acceptCandidates for negative gain, silently dropping the smaller island's entire volume
+// (round 3 review's own repro: 3000 of 27000mm3, 11.1% of the part, unaccounted for and
+// under the LOW_COVERAGE threshold so nothing flagged it). `loops.length` alone cannot
+// tell "two islands" from "one island with a hole" apart (an annulus is one island, two
+// loops), so `islandsOf` walks actual face ADJACENCY instead — connectivity, not boundary
+// count. A cap with N islands yields N features, not one; a genuinely interrupted single
+// plane (a base with two boss holes cut into it, still one connected blob of material
+// around them) stays one island and still yields exactly one feature, unchanged. The same
+// merge can happen one level down, on a WALL — two different steps whose footprints share
+// one x or y coordinate put both steps' own side walls on the same plane too (found while
+// building this fix's own regression fixture) — so every wall is independently re-scoped
+// to just the island it actually borders (`wallIslandFor`) before it contributes to a
+// feature's depth or geometry. Both helpers need `topo` (the welded mesh topology); omit
+// it and every cap is treated as its own single island, matching this file's behaviour
+// before this fix.
+//
 // The `profile` is explicitly a PROPOSAL, not a measurement — it is the cap's boundary
 // loop reduced to a circle or a polygon. It exists so hints.js can suggest a sketch;
-// nothing in the facts layer depends on it being exact.
+// nothing in the facts layer depends on it being exact. For a multi-island cap it is
+// computed from the WHOLE merged surface's arcs/loops rather than the specific island
+// (splitting `graph.arcs`/`loops` by island would need the same per-edge walk
+// `wallIslandFor` already does, for a field nothing downstream treats as authoritative) —
+// a known, deliberately accepted imprecision in a proposal field, not in a fact.
 //
 // Pure leaf. See spec §2.5.
 import { arcsOf } from "../surface-graph.js";
@@ -138,7 +165,8 @@ function isSideWallOf(w, direction) {
 
 // A cap's boundary reduced to something a sketch could be built from. One loop that is
 // a circle -> circle; a loop whose arcs are all straight -> polygon; anything else ->
-// mixed, and hints.js will decline to propose a sketch for it.
+// mixed, and hints.js will decline to propose a sketch for it. Whole-cap, not
+// per-island — see this file's header for why that is an accepted imprecision here.
 function profileOf(graph, cap) {
   const arcs = arcsOf(graph, cap.id);
   const circles = arcs.filter((a) => a.kind === "circle");
@@ -149,17 +177,185 @@ function profileOf(graph, cap) {
   return { kind: "mixed" };
 }
 
-export function detectPrismatic(graph) {
+// Partitions a surface's own triangles into connected components by face ADJACENCY —
+// the actual test for "one island" vs "two", which boundary-loop count cannot make
+// (an annulus is one island with two loops; two disjoint same-plane patches are two
+// islands each with one). Restricted to `faces`' own membership, exactly like
+// describe.js's `residualRegions` island walk and segment.js's own connectivity
+// passes — the same primitive, reused rather than reinvented.
+function islandsOf(topo, faces) {
+  const inSet = new Set(faces);
+  const seen = new Set();
+  const islands = [];
+  for (const seed of faces) {
+    if (seen.has(seed)) continue;
+    const island = [];
+    const stack = [seed];
+    seen.add(seed);
+    while (stack.length) {
+      const t = stack.pop();
+      island.push(t);
+      for (const ei of topo.faceEdges[t]) {
+        const e = topo.edges[ei];
+        const nb = e.triA === t ? e.triB : e.triA;
+        if (nb >= 0 && inSet.has(nb) && !seen.has(nb)) { seen.add(nb); stack.push(nb); }
+      }
+    }
+    islands.push(island);
+  }
+  return islands;
+}
+
+// The subset of `wallSurf`'s own triangles that actually border `islandFaces` — not
+// the whole wall surface, which (the same merge, one level down) can itself span more
+// than one physical wall. Seeds from triangles with a direct edge into the island, then
+// grows within the wall surface's own face set only, so a wall genuinely shared between
+// two different islands (this file's header) is still fully credited to each of them
+// rather than pulling in the other island's own unrelated geometry.
+function wallIslandFor(topo, wallSurf, islandFaces) {
+  const islandSet = new Set(islandFaces);
+  const wallSet = new Set(wallSurf.faces);
+  const seeds = [];
+  for (const t of wallSurf.faces) {
+    for (const ei of topo.faceEdges[t]) {
+      const e = topo.edges[ei];
+      const nb = e.triA === t ? e.triB : e.triA;
+      if (nb >= 0 && islandSet.has(nb)) { seeds.push(t); break; }
+    }
+  }
+  if (seeds.length === 0) return [];
+  const seen = new Set(seeds);
+  const stack = [...seeds];
+  const out = [];
+  while (stack.length) {
+    const t = stack.pop();
+    out.push(t);
+    for (const ei of topo.faceEdges[t]) {
+      const e = topo.edges[ei];
+      const nb = e.triA === t ? e.triB : e.triA;
+      if (nb >= 0 && wallSet.has(nb) && !seen.has(nb)) { seen.add(nb); stack.push(nb); }
+    }
+  }
+  return out;
+}
+
+// Sum of `topo.faceArea` over a face list — the island-scoped twin of a surface's own
+// (whole-surface) `.area`.
+const facesArea = (topo, faces) => faces.reduce((a, t) => a + topo.faceArea[t], 0);
+
+// Vertex-average centroid of a face list (unweighted; a rough "where in the plane is
+// this" for key disambiguation, not a measurement anything else reads). Two same-size,
+// same-height, same-depth islands (a truly symmetric pair of identical bosses) would
+// otherwise share an identical key — `round3(area)` alone does not separate them, but
+// their positions do.
+function facesCentroid(topo, faces) {
+  const c = [0, 0, 0];
+  let n = 0;
+  for (const t of faces) for (let k = 0; k < 3; k++) {
+    const v = topo.tris[3*t + k] * 3;
+    c[0] += topo.verts[v]; c[1] += topo.verts[v+1]; c[2] += topo.verts[v+2];
+    n++;
+  }
+  return n ? [c[0]/n, c[1]/n, c[2]/n] : [0, 0, 0];
+}
+
+// `topo` is optional (matches sweeps.js's own `opts.bvh` precedent, Task 12 round 1):
+// omit it and every cap is treated as a single island, exactly this file's behaviour
+// before round 3's fix — every existing 1-arg `detectPrismatic(graph)` call (this
+// file's own tests included) keeps working unchanged.
+export function detectPrismatic(graph, topo) {
   const surfaces = byId(graph);
   const claimed = new Set();
   const out = [];
 
   const allCaps = graph.surfaces.filter((s) => s.type === "plane").sort((a, b) => b.area - a.area);
 
+  // Builds ONE feature from one island's own faces plus the wall segments (already
+  // scoped to that same island by the caller) that border it. Factored out of `tryCap`
+  // so the ordinary single-island case and the multi-island split share exactly one
+  // implementation rather than two copies that could drift apart.
+  function buildFeature(cap, isBase, islandFaces, islandWalls, direction, arcs) {
+    // Depth from a cylindrical wall's own axial extent, when there is one.
+    let lo = Infinity, hi = -Infinity;
+    for (const { w } of islandWalls) {
+      if (w.type === "cylinder") { lo = Math.min(lo, w.fit.extent[0]); hi = Math.max(hi, w.fit.extent[1]); }
+    }
+    const hasCylExtent = Number.isFinite(lo);
+
+    let type = "extrusion", depth;
+    if (isBase) {
+      if (hasCylExtent) {
+        depth = hi - lo;
+      } else {
+        // Planar walls carry no extent, so read the thickness off the opposing cap.
+        // Once R31 has oriented every plane normal outward, this is exact rather than a
+        // guess: two opposing faces of a solid have ANTI-PARALLEL outward normals, and
+        // for `offset = n . p` the separation between them is simply the SUM of the
+        // offsets.
+        const opposite = allCaps.find((c) => c.id !== cap.id && dot(c.fit.normal, cap.fit.normal) < -0.98);
+        if (!opposite) return null;
+        depth = cap.fit.offset + opposite.fit.offset;
+        if (!(depth > 0)) return null;   // not a solid pair; no depth to report
+      }
+    } else {
+      // Recessed or raised? Compare this cap's plane against the largest CO-oriented
+      // plane that is not itself — the surrounding face a pocket sinks into or a boss
+      // stands on.
+      const surround = allCaps.find((c) => c.id !== cap.id && dot(c.fit.normal, cap.fit.normal) > 0.98);
+      const displacement = surround ? cap.fit.offset - surround.fit.offset : 0;
+      type = displacement < 0 ? "pocket" : "boss";
+      if (hasCylExtent) depth = hi - lo;
+      else if (surround) depth = displacement;
+      else return null;   // no cylindrical wall and no surrounding plane: nothing to measure
+    }
+    depth = Math.abs(depth);
+
+    const islandArea = topo ? facesArea(topo, islandFaces) : cap.area;
+    const centroid = topo ? facesCentroid(topo, islandFaces) : [0, 0, 0];
+    const faceScope = { [cap.id]: islandFaces };
+    for (const { w, faces } of islandWalls) faceScope[w.id] = faces;
+
+    return {
+      id: null,
+      // Geometry-derived, not `cap.id` (a segmentation surface id assigned in
+      // triangle-DISCOVERY order — round 2 review: permuting a mesh's own triangle
+      // order, same geometry, moved a boss's key). `cap.fit.offset`/`normal` pin
+      // down the cap's own PLANE (canonicalised by `orientPlaneOutward`,
+      // surface-graph.js, independent of input order); the island's own area AND
+      // centroid (round 3 review) separate two same-depth, same-plane islands —
+      // two co-height bosses on the same face, or even two identically-sized ones
+      // at different positions, which area alone cannot tell apart. `round3`
+      // absorbs the float-associativity noise a permuted summation order
+      // introduces (Task 4's own ruling, R29).
+      key: `${type}:${round3(depth)}:${round3(cap.fit.offset)}:` +
+        `${cap.fit.normal.map(round3).join(",")}:${round3(islandArea)}:${centroid.map(round3).join(",")}`,
+      type, depth, direction,
+      floorFace: cap.id,
+      wallFaces: islandWalls.map(({ w }) => w.id),
+      profile: profileOf(graph, cap),
+      surfaces: [cap.id, ...islandWalls.map(({ w }) => w.id)],
+      // Per-surface face lists SCOPED to this specific island — describe.js's
+      // candidate builder reads this (when present) instead of a named surface's
+      // WHOLE face list, which is what let a merged wall or cap silently pull in
+      // a neighbouring island's geometry (round 3 review; describe.js's own
+      // `surfaceVertices` docs the consuming side).
+      faceScope,
+      evidence: {
+        walls: islandWalls.length,
+        // Whole-cap arc counts, shared across every island of the same merged
+        // surface — a diagnostic field, not a measurement anything downstream
+        // depends on being island-exact.
+        concaveArcs: arcs.filter((a) => a.convexity === "concave").length,
+        convexArcs: arcs.filter((a) => a.convexity === "convex").length,
+      },
+    };
+  }
+
   // Attempt one cap as a feature's own defining plane. `isBase` picks which depth
-  // fallback and which type this cap is allowed to resolve to; returns the pushed
-  // feature, or null if this cap does not resolve into one (already claimed, no
-  // unclaimed walls left to it, or no way to measure a depth).
+  // fallback and which type this cap is allowed to resolve to; returns an ARRAY of
+  // pushed features (one per island — almost always exactly one), or null if this cap
+  // does not resolve into any (already claimed, no unclaimed walls left to it, or no
+  // way to measure a depth on any of its islands).
   function tryCap(cap, isBase) {
     if (claimed.has(cap.id)) return null;
     const arcs = arcsOf(graph, cap.id);
@@ -184,89 +380,41 @@ export function detectPrismatic(graph) {
     const sideWalls = walls.filter((w) => isSideWallOf(w, direction));
     if (sideWalls.length === 0) return null;
 
-    // Depth from a cylindrical wall's own axial extent, when there is one.
-    let lo = Infinity, hi = -Infinity;
-    for (const w of sideWalls) {
-      if (w.type === "cylinder") { lo = Math.min(lo, w.fit.extent[0]); hi = Math.max(hi, w.fit.extent[1]); }
-    }
-    const hasCylExtent = Number.isFinite(lo);
+    // ISLANDS — see this file's header for the full reasoning. Almost always exactly
+    // one; `topo`'s absence (a caller that hasn't wired it) is treated the same as
+    // "definitely one island", which is this file's pre-fix behaviour exactly.
+    const capIslands = topo ? islandsOf(topo, cap.faces) : [cap.faces];
 
-    let type = "extrusion", depth;
-    if (isBase) {
-      if (hasCylExtent) {
-        depth = hi - lo;
-      } else {
-        // Planar walls carry no extent, so read the thickness off the opposing cap.
-        // Once R31 has oriented every plane normal outward, this is exact rather than a
-        // guess: two opposing faces of a solid have ANTI-PARALLEL outward normals, and
-        // for `offset = n . p` the separation between them is simply the SUM of the
-        // offsets. (Box spanning z in [0,h]: top n=(0,0,1) offset h, bottom n=(0,0,-1)
-        // offset 0, sum h. Centred box z in [-h/2,h/2]: offsets h/2 and h/2, sum h. Both
-        // correct, neither depending on where the origin sits.)
-        const opposite = allCaps.find((c) => c.id !== cap.id && dot(c.fit.normal, cap.fit.normal) < -0.98);
-        if (!opposite) return null;
-        depth = cap.fit.offset + opposite.fit.offset;
-        if (!(depth > 0)) return null;   // not a solid pair; no depth to report
-      }
-    } else {
-      // Recessed or raised? Compare this cap's plane against the largest CO-oriented
-      // plane that is not itself — the surrounding face a pocket sinks into or a boss
-      // stands on (deliberately co-oriented here, in contrast to the anti-parallel
-      // lookup above: a pocket floor and the face it is sunk into both point the same
-      // way, as do a boss top and the face it stands on). Both offsets are then measured
-      // along the same direction, so their difference IS the signed displacement —
-      // negative means sunk into the material, positive proud of it. This is the whole
-      // pocket-vs-boss test, and it is meaningless without R31.
-      const surround = allCaps.find((c) => c.id !== cap.id && dot(c.fit.normal, cap.fit.normal) > 0.98);
-      const displacement = surround ? cap.fit.offset - surround.fit.offset : 0;
-      type = displacement < 0 ? "pocket" : "boss";
-      if (hasCylExtent) depth = hi - lo;
-      else if (surround) depth = displacement;
-      else return null;   // no cylindrical wall and no surrounding plane: nothing to measure
-    }
-    depth = Math.abs(depth);
+    const features = [];
+    for (const islandFaces of capIslands) {
+      // Re-scope every side wall to just the component actually touching THIS
+      // island — a wall can itself be multi-island (this file's header), and a
+      // wall with nothing bordering this particular island contributes nothing
+      // to it.
+      const islandWalls = sideWalls
+        .map((w) => ({ w, faces: topo ? wallIslandFor(topo, w, islandFaces) : w.faces }))
+        .filter((x) => x.faces.length > 0);
+      if (islandWalls.length === 0) continue;
 
-    const feature = {
-      id: null,
-      // Geometry-derived, not `cap.id` (a segmentation surface id assigned in
-      // triangle-DISCOVERY order — round 2 review: permuting a mesh's own
-      // triangle order, same geometry, moved a boss's key from `boss:15:s1` to
-      // `boss:15:s0`, since it renumbers surfaces). `cap.fit.offset`/`normal`
-      // pin down the cap's own PLANE (offset is stable across permutation:
-      // `orientPlaneOutward`, surface-graph.js, already canonicalises the
-      // normal's sign independent of input order, same as every other reader
-      // of `fit.normal` in this file relies on); `cap.area` breaks the tie
-      // between two same-depth, coplanar caps (two pockets sunk into the same
-      // face). `round3` absorbs the float-associativity noise a permuted
-      // summation order introduces (Task 4's own ruling, R29) — real geometry
-      // never differs at 3-decimal precision, only float dust does.
-      key: `${type}:${round3(depth)}:${round3(cap.fit.offset)}:` +
-        `${cap.fit.normal.map(round3).join(",")}:${round3(cap.area)}`,
-      type, depth, direction,
-      floorFace: cap.id,
-      wallFaces: sideWalls.map((w) => w.id),
-      profile: profileOf(graph, cap),
-      surfaces: [cap.id, ...sideWalls.map((w) => w.id)],
-      evidence: {
-        walls: sideWalls.length,
-        concaveArcs: arcs.filter((a) => a.convexity === "concave").length,
-        convexArcs: arcs.filter((a) => a.convexity === "convex").length,
-      },
-    };
+      const f = buildFeature(cap, isBase, islandFaces, islandWalls, direction, arcs);
+      if (f) features.push(f);
+    }
+    if (features.length === 0) return null;
+
     claimed.add(cap.id);
     for (const w of sideWalls) claimed.add(w.id);
-    return feature;
+    return features;
   }
 
   // Pass one: the single base extrusion, largest cap first.
   for (const cap of allCaps) {
-    const f = tryCap(cap, out.length === 0);
-    if (f) { out.push(f); break; }
+    const feats = tryCap(cap, out.length === 0);
+    if (feats) { out.push(...feats); break; }
   }
   // Pass two: everything left, smallest cap first (see header for why the order flips).
   for (const cap of [...allCaps].sort((a, b) => a.area - b.area)) {
-    const f = tryCap(cap, false);
-    if (f) out.push(f);
+    const feats = tryCap(cap, false);
+    if (feats) out.push(...feats);
   }
 
   return out;

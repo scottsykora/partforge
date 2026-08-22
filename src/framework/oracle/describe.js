@@ -151,12 +151,26 @@ function projectedBounds(positions, axes) {
 // feature's `wallFaces`/`floorFace` name exactly the surfaces that belong to IT, and
 // each surface already carries its own triangle list (`surface-graph.js`'s `faces`),
 // so this reads the actual footprint each feature bounds rather than the part's.
-function surfaceVertices(topo, surfById, ids) {
+//
+// `faceScope` (round 3 review, the SAME defect one level down): `mergeCoFamily`
+// (surface-graph.js) folds two patches into one SURFACE whenever they share a fitted
+// plane, whether or not they touch — so a named surface can itself span more than one
+// physical feature (two same-height boss tops, or two different steps' walls that
+// happen to share an x/y coordinate). Reading that surface's WHOLE `faces` list, as
+// this function did before round 3, pulled in a neighbouring feature's own geometry
+// right back into the candidate this fix in round 2 had just scoped per-feature.
+// `prismatic.js`'s `detectPrismatic` now hands back a `faceScope` map (surface id ->
+// JUST the triangles belonging to that specific feature's own island) precisely so
+// this can read the right subset instead; a feature without one (holes, dressups, or
+// a plain single-island cap with topo unavailable) falls back to the surface's whole
+// list, unchanged.
+function surfaceVertices(topo, surfById, ids, faceScope) {
   const out = [];
   for (const id of ids) {
     const surf = surfById.get(id);
     if (!surf) continue;
-    for (const t of surf.faces) {
+    const faces = faceScope?.[id] ?? surf.faces;
+    for (const t of faces) {
       for (let k = 0; k < 3; k++) {
         const v = topo.tris[3*t + k] * 3;
         out.push(topo.verts[v], topo.verts[v+1], topo.verts[v+2]);
@@ -233,7 +247,7 @@ export function describe(kernel, solid, opts = {}) {
   const raw = [
     ...detectHoles(graph),
     ...detectDressups(graph),
-    ...detectPrismatic(graph),
+    ...detectPrismatic(graph, topo),
     ...detectSweeps(graph, topo, { bvh }),
   ].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
@@ -381,7 +395,19 @@ function toCandidate(kernel, f, b, ctx) {
       },
     };
   }
-  if (f.type === "extrusion" || f.type === "boss") {
+  // Pocket candidates (round 3 review — a widening, not part of the island-merge fix
+  // itself): a pocket's own island (floor + walls) bounds its recessed geometry exactly
+  // the same way a boss's bounds its protruding geometry — `projectedBounds` reads
+  // actual vertex extent, agnostic to which side of the surrounding surface it falls
+  // on — so the SAME box/cylinder construction below works unchanged; only `op` (cut,
+  // not union) and `hintOp` differ. Previously pockets were described but never
+  // proposed as candidates at all (Task 12's original scope note, kept below on the
+  // fillet/chamfer/revolve/shell types that still are), which is why a part with a
+  // pocket used to always read as at least partially unexplained even when perfectly
+  // segmented — not a bug this file introduced, but a gap this fix's own "two
+  // same-height pockets" regression test would otherwise misreport.
+  if (f.type === "extrusion" || f.type === "boss" || f.type === "pocket") {
+    const op = f.type === "pocket" ? "cut" : "union";
     // Oriented onto the part's OWN extrusion frame, not the WORLD-axis-aligned bbox —
     // measured directly against a box+bore fixture rotated 29° about an oblique axis:
     // a bbox-aligned candidate built from the rotated mesh's own (now-larger, tilted)
@@ -412,8 +438,8 @@ function toCandidate(kernel, f, b, ctx) {
         : [b.min[0] + size[0]/2, b.min[1] + size[1]/2, b.min[2]];
       const rot = alignZTo(axisDir);
       return {
-        key: f.key, featureKey: f.key, op: "union", explains: [f.id],
-        dimension: f.depth, paramName: "height", hintOp: f.type === "boss" ? "union" : "box",
+        key: f.key, featureKey: f.key, op, explains: [f.id],
+        dimension: f.depth, paramName: "height", hintOp: f.type === "boss" ? "union" : f.type === "pocket" ? "cut" : "box",
         hintArgs: { shape: "circle", depth: f.depth },
         build: () => {
           const cyl = kernel.cylinder({ r: f.profile.radius, h: f.depth });
@@ -443,8 +469,8 @@ function toCandidate(kernel, f, b, ctx) {
       // still worth proposing, since a low-gain candidate is simply never accepted
       // (acceptCandidates' own MIN_GAIN_FRACTION gate), never a false positive.
       return {
-        key: f.key, featureKey: f.key, op: "union", explains: [f.id],
-        dimension: f.depth, paramName: "height", hintOp: f.type === "boss" ? "union" : "box",
+        key: f.key, featureKey: f.key, op, explains: [f.id],
+        dimension: f.depth, paramName: "height", hintOp: f.type === "boss" ? "union" : f.type === "pocket" ? "cut" : "box",
         hintArgs: { shape: f.profile.kind, depth: f.depth },
         build: () => kernel.box({ min: b.min, max: [b.min[0] + size[0], b.min[1] + size[1], b.min[2] + f.depth] }),
       };
@@ -453,11 +479,11 @@ function toCandidate(kernel, f, b, ctx) {
     const v = cross3(direction, u);
     const ownSurfaces = [f.floorFace, ...(f.wallFaces ?? [])].filter(Boolean);
     return {
-      key: f.key, featureKey: f.key, op: "union", explains: [f.id],
-      dimension: f.depth, paramName: "height", hintOp: f.type === "boss" ? "union" : "box",
+      key: f.key, featureKey: f.key, op, explains: [f.id],
+      dimension: f.depth, paramName: "height", hintOp: f.type === "boss" ? "union" : f.type === "pocket" ? "cut" : "box",
       hintArgs: { shape: f.profile.kind, depth: f.depth },
       build: () => {
-        const verts = surfaceVertices(ctx.topo, ctx.surfById, ownSurfaces);
+        const verts = surfaceVertices(ctx.topo, ctx.surfById, ownSurfaces, f.faceScope);
         const bnd = projectedBounds(verts, [u, v, direction]);
         const [uSize, vSize, depth] = [0, 1, 2].map((i) => bnd.max[i] - bnd.min[i]);
         const local = kernel.box({ min: [0, 0, 0], max: [uSize, vSize, depth] });
@@ -467,9 +493,9 @@ function toCandidate(kernel, f, b, ctx) {
       },
     };
   }
-  // Fillets, chamfers, pockets, revolves and shells are described but not yet proposed
-  // as acceptance candidates: each needs an edge or profile selector the facts layer
-  // does not yet carry, and a candidate that cannot be built is worse than none. They
-  // still appear in `features` with a null volumeShare, which is the honest report.
+  // Fillets, chamfers, revolves and shells are described but not yet proposed as
+  // acceptance candidates: each needs an edge or profile selector the facts layer does
+  // not yet carry, and a candidate that cannot be built is worse than none. They still
+  // appear in `features` with a null volumeShare, which is the honest report.
   return null;
 }
