@@ -3386,6 +3386,7 @@ import { acceptCandidates, DEFAULT_BUDGET } from "./describe/accept.js";
 import { buildReport } from "./describe/report.js";
 import { buildHints } from "./describe/hints.js";
 import { bounds, meshArea } from "./mesh.js";
+import { buildBVH } from "./bvh.js";
 
 export const DESCRIBE_ERRORS = Object.freeze(
   ["not-manifold", "too-large", "empty", "budget-exceeded", "unreadable"]);
@@ -3438,6 +3439,15 @@ export function describe(kernel, solid, opts = {}) {
   const { patches, unassigned } = segment(topo);
   const graph = surfaceGraph(topo, patches);
 
+  // ONE BVH for this call, shared by every stage that needs one (controller ruling R39).
+  // `detectSweeps`'s shell rule raycasts inward from each plane, and `buildBVH` is
+  // O(n log n) over the WHOLE mesh regardless of how few rays are cast — measured at 9.8ms
+  // on 10.8k triangles and 48ms on 43k. Letting each stage build its own would pay that
+  // repeatedly for nothing. This is the same caller-owned-cache pattern `measure.js` uses
+  // to stop min-wall and meshGaps indexing the same mesh twice; see `cachedBVH`'s own
+  // comment for why a caller-owned Map rather than a module-level WeakMap.
+  const bvh = buildBVH({ positions: topo.verts, indices: topo.tris });
+
   // Feature families run in a fixed order and their results are concatenated in that
   // order, then sorted by each rule's own geometry-derived `key`. So f-numbering depends
   // on the MESH, never on iteration order or on which family happened to run first.
@@ -3445,7 +3455,7 @@ export function describe(kernel, solid, opts = {}) {
     ...detectHoles(graph),
     ...detectDressups(graph),
     ...detectPrismatic(graph),
-    ...detectSweeps(graph),
+    ...detectSweeps(graph, { bvh }),
   ].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
   const features = raw.map((f, i) => {
