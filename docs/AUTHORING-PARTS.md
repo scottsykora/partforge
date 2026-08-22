@@ -1575,9 +1575,25 @@ ERROR-PATTERNS.md entry:
 - `unreadable` — `solid.toMesh()` itself threw; see
   [ERROR-PATTERNS.md#describe-unreadable](ERROR-PATTERNS.md#describe-unreadable).
 
+`not-manifold` and `empty` describe real states `describe()` itself checks for and can
+return through any caller that hands it a `Solid` directly, but through the CLI they are
+largely theoretical: `kernel.import()`'s own registration validation rejects an empty or
+a wide-open (non-manifold) mesh *before* a `Solid` ever exists to describe, so
+`partforge describe` on such a file fails earlier, as a generic import error (the
+`crash()` path every other verb shares — `describe: import "x": mesh is not a solid
+after repair…`) rather than as a structured `{error: "not-manifold"}` / `{error:
+"empty"}` report. See
+[ERROR-PATTERNS.md#import-mesh-not-solid](ERROR-PATTERNS.md#import-mesh-not-solid) for
+that failure. `describe-unreadable`'s own ERROR-PATTERNS entry already draws this same
+line for its own code (a `k.import` parse failure is a *different*, separately-thrown
+error, not `describe-unreadable`); this is the general version of that point.
+
 A `budget-exceeded` report (the acceptance loop ran out of boolean attempts before the
 residual converged) is not one of these — it's a `warning` on an otherwise-valid report,
 same tier as low coverage, not a reason to exit non-zero; raise `--budget` and re-run.
+`compactDescribe()` surfaces it exactly where the low-coverage banner lives, and shows
+both together if a report happens to earn both — an exhausted budget is exactly the kind
+of run that also leaves coverage low, and neither warning is allowed to mask the other.
 See [ERROR-PATTERNS.md#describe-budget-exceeded](ERROR-PATTERNS.md#describe-budget-exceeded).
 
 **The loop this completes.** `describe` exists to feed a specific workflow, the one

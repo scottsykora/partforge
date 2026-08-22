@@ -482,6 +482,12 @@ function printDescribe(report, { surfaces }) {
   console.log(`\nScore: ${(100 * c.score.explainedArea).toFixed(1)}% surface area explained, ` +
               `${(100 * c.score.explainedVolumeFraction).toFixed(1)}% volume reconstructed ` +
               `(residual xor ${(100 * c.score.xorFraction).toFixed(2)}% of volume)`);
+  // Surfaces `score.note` verbatim (fix round 2, IMPORTANT 2) — the same explanation the
+  // JSON already carries, not a shorter paraphrase of it, because the abbreviated version
+  // is exactly what loses the size-vs-certainty distinction the note exists to make: a
+  // feature line above prints `share 1.0%` with no inline cue, and a first-time reader of
+  // ONLY the terminal cannot otherwise tell "small, and that's fine" from "barely trusted".
+  if (c.score.note) console.log(`Note: ${c.score.note}`);
   console.log(`Residual: ${(100 * c.residual.areaFraction).toFixed(2)}% of area in ` +
               `${c.residual.regions.length} region(s)`);
   const truncated = Object.entries(report.truncated ?? {}).filter(([, v]) => v).map(([k]) => k);

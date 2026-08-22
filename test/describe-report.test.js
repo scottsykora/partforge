@@ -93,6 +93,37 @@ test("the banner serializes FIRST: it precedes every other key in both Object.ke
   expect(Object.keys(JSON.parse(JSON.stringify(c)))[0]).toBe("warning");
 });
 
+// --- fix round 2, IMPORTANT 1: budget-exceeded was silently dropped ----------------
+//
+// describe.js sets `report.warning = "budget-exceeded"` directly on the object
+// buildReport() returns (not through an input field — buildReport's own shape has no
+// `warning` key), so these tests reproduce that by mutating the built report the same
+// way, rather than adding a `warning` field to `base`/`buildReport`'s input contract.
+
+test("a budget-exceeded report raises its own banner even when coverage is good", () => {
+  const r = buildReport(base); // `base`'s score is 0.988/0.99 — well above LOW_COVERAGE
+  r.warning = "budget-exceeded";
+  const c = compactDescribe(r);
+  expect(c.warning).toMatch(/BUDGET EXCEEDED/);
+  expect(c.warning).not.toMatch(/LOW COVERAGE/);
+});
+
+test("low coverage and budget-exceeded are independent and both show when both fire " +
+     "— neither is allowed to mask the other", () => {
+  const poor = { ...base, score: { explainedArea: 0.61, explainedVolumeFraction: 0.5, xorFraction: 0.4 } };
+  const r = buildReport(poor);
+  r.warning = "budget-exceeded";
+  const c = compactDescribe(r);
+  expect(c.warning).toMatch(/LOW COVERAGE/);
+  expect(c.warning).toMatch(/BUDGET EXCEEDED/);
+});
+
+test("no budget-exceeded warning on a report that never set one", () => {
+  const r = buildReport(base);
+  expect(r.warning).toBeUndefined();
+  expect(compactDescribe(r).warning).toBeUndefined();
+});
+
 test("counts report pre-cap magnitudes, not the length of the capped array", () => {
   const many = { ...base, surfaces: Array.from({ length: 500 }, (_, i) => ({ ...base.surfaces[0], id: `s${i}` })) };
   const c = compactDescribe(buildReport(many));

@@ -168,14 +168,35 @@ export function compactDescribe(full) {
   // face value. (Fix round 1, CRITICAL 2: this used to be assigned after the rest of
   // `out` was built, which put it last in both orders — exactly backwards for a banner
   // whose entire job is to be seen first.)
+  //
+  // Two INDEPENDENT warning sources feed this one field (fix round 2, IMPORTANT 1):
+  // low coverage (computed here, from `score`) and `full.warning === "budget-exceeded"`
+  // (set by describe.js when acceptCandidates ran out of boolean attempts before the
+  // residual converged — see that assignment's own comment). Before this fix
+  // `full.warning` was silently dropped: `compactDescribe` only ever set `out.warning`
+  // from its own LOW_COVERAGE check, so a report that hit BOTH conditions — a real,
+  // documented case, since an exhausted budget is exactly the kind of run that also
+  // leaves coverage low — presented as a clean report in every consumer that reads only
+  // the compact shape (the CLI's default text view among them). Both fire independently
+  // and neither may mask the other, so both are collected and joined rather than one
+  // overwriting the other.
+  const warnings = [];
   if (coverage < LOW_COVERAGE) {
-    out.warning =
+    warnings.push(
       `LOW COVERAGE: only ${(100 * coverage).toFixed(1)}% of this part is explained ` +
       `(the worse of ${(100 * explainedArea).toFixed(1)}% surface area fit and ` +
       `${(100 * explainedVolume).toFixed(1)}% shape reconstructed). Treat the feature ` +
       `list as incomplete — do not assume a feature is absent because it is not ` +
-      `listed. See residual.regions for where the unexplained geometry is.`;
+      `listed. See residual.regions for where the unexplained geometry is.`);
   }
+  if (full.warning === "budget-exceeded") {
+    warnings.push(
+      `BUDGET EXCEEDED: the acceptance loop hit its boolean-attempt budget before the ` +
+      `residual converged. This report is honestly scored, not wrong — but it may be ` +
+      `incomplete for the same reason low coverage would be. Raise --budget and ` +
+      `re-describe, or treat the current feature list as partial.`);
+  }
+  if (warnings.length) out.warning = warnings.join("\n\n");
   out.source = full.source;
   out.frame = full.frame;
   out.bounds = full.bounds;
