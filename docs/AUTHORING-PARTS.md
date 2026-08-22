@@ -2075,14 +2075,22 @@ rewriter cannot read means the user's edit is silently lost on reload — write 
 plain decimal/string/boolean literal, or move the computation into `derive()`)
 (error); `impure-source-token` (the source contains `Math.random`, `Date.now`,
 `performance.now`, or an argless `new Date()` — replace it with a parameter or a
-`derive()` output) (warning). Only a default a control is actually **bound** to is
-checked: an unbound non-primitive default (a lookup table, an array of hole
-positions) is never rewritten by a panel save and stays legal and unflagged.
+`derive()` output) (warning). Only a default a **visible** control is actually
+**bound** to is checked: an unbound non-primitive default (a lookup table, an
+array of hole positions) is never rewritten by a panel save and stays legal and
+unflagged, and so is the default of a statically hidden control (`hidden: true`
+on the control, or on an enclosing group or section) — it renders no widget, so
+there is no panel edit to lose, and `hidden: true` is the documented idiom for an
+internal constant. A `when`-conditioned control is *not* hidden — it can appear,
+so its default is checked.
 `impure-source-token` is warning-tier because the behavioral
 `nondeterministic-build` probe stays the error authority on impurity — the source
 scan is the wider net that also catches an impure value stable within one probe
-pass. It scans code only (comments and string/template *interiors* are blanked
-first), so an impurity token inside a `${…}` interpolation is not seen.
+pass. It scans `.js`/`.mjs` files only (prose in a `README.md` is not a build),
+and code only within them (comments and string/template *interiors* are blanked
+first), so an impurity token inside a `${…}` interpolation is not seen. It emits
+one finding per (file, token) pair, carrying the occurrence count and the first
+occurrence's line, rather than one per occurrence.
 
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.

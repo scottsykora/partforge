@@ -11,6 +11,13 @@
 // Zero dependencies, no AST: this file must stay inside lint's pure import
 // closure (test/lint-purity.test.js) so lintPart keeps running in Node, the
 // browser sandbox iframe, and Deno.
+//
+// KNOWN BLIND SPOT — regex literals are not tokenized: a `/[/*]/` or `/x\/y/`
+// reads as a comment opener and can blank the rest of the file, and a regex
+// containing a quote can likewise derail string skipping.
+// It is parity-correct (the cloud rewriter has the same gap) and fails toward
+// FALSE NEGATIVES — a derailed scan finds no defaults literal and no tokens,
+// so a rule says nothing rather than something wrong.
 
 // Span of the object literal after the first `defaults:` key (indices into
 // `source`, end exclusive, covering `{...}`). String- and comment-aware so a

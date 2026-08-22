@@ -29,7 +29,10 @@ function normalizeSources(sources) {
   if (!sources || typeof sources !== "object") return null;
   const rawFiles = sources.files;
   if (!rawFiles || typeof rawFiles !== "object") return null;
-  const files = {};
+  // Null-prototype so a file literally keyed `__proto__` is KEPT as an own
+  // property: `{}["__proto__"] = text` would set the prototype instead, quietly
+  // dropping that file from the scan while still counting toward `any`.
+  const files = Object.create(null);
   let any = false;
   for (const [path, text] of Object.entries(rawFiles)) {
     if (typeof text !== "string") continue;
@@ -114,7 +117,6 @@ export function lintPart(part, opts) {
   let ctx;
   try {
     ctx = lintContext(part, params);
-    ctx.sources = normalizeSources(sources);
   } catch (e) {
     return {
       ok: false,
@@ -126,6 +128,14 @@ export function lintPart(part, opts) {
       notes: [],
     };
   }
+  // Deliberately its OWN guard, outside the lintContext try above: a malformed
+  // `sources` input means "no source rules", never a broken part. `sources` is
+  // caller-supplied data (a throwing `files`/`entrypoint` getter, a Proxy whose
+  // `ownKeys` trap throws), and folding it into the block above would turn that
+  // into a `lint-context-error` — an id that is NOT in SOURCE_RULE_IDS, so a
+  // host filtering source findings out to keep them non-blocking would instead
+  // refuse to render a part that builds fine.
+  try { ctx.sources = normalizeSources(sources); } catch { ctx.sources = null; }
   const findings = runRules(RULES, ctx);
   // `p` (params merged from `defaults`) failed to build — every rule still ran
   // against the `{}` fallback (each guarded individually by runRules), but the

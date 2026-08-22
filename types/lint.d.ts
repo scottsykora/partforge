@@ -99,9 +99,10 @@ export interface LintContext {
   /**
    * The normalized `opts.sources`, or `null` when none was handed over (or none
    * survived normalization). The source rules return no findings when it is
-   * `null`.
+   * `null`. Optional: `lintContext` builds the context without it, and the
+   * field is assigned separately by `lintPart`.
    */
-  sources: LintSources | null;
+  sources?: LintSources | null;
 }
 
 export interface LintRule {
