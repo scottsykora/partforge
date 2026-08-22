@@ -21,13 +21,31 @@ test("--surfaces includes the surface table", () => {
   expect(out).toMatch(/s0/);
 });
 
-// Fix round 2, IMPORTANT 2: `share NN%` on a feature line had no inline explanation
-// that volumeShare measures SIZE, not certainty — score.note (report.js's SCORE_NOTE)
-// makes that distinction and was already in the JSON, just never printed. Surfaced
-// verbatim, not paraphrased down to something shorter that loses the distinction.
-test("the default summary prints score.note, not just the two coverage numbers", () => {
+// Fix round 2, IMPORTANT 1 (a self-correction on IMPORTANT 2 from the round before):
+// printing the FULL score.note paragraph in the default view measured at 36-43% of a
+// typical run's line count — the single largest visual element in every report, bigger
+// than the feature list, the banners, and the score line combined, burying findings
+// instead of clarifying them. The one thing genuinely missing context was `share`, so
+// the fix is a one-line hint at its point of use (the Features header) instead, with
+// the long paragraph staying JSON-only — `buildScore` (report.js) attaches score.note
+// unconditionally, so nothing is lost there.
+test("the default summary hints what `share` means, right at the Features header", () => {
   const out = run(["describe", "src/parts/import-demo.js#scan"]);
-  expect(out).toMatch(/not certainty/i);
+  expect(out).toMatch(/Features \(1\):\s+share = fraction of part volume/);
+});
+
+test("the default summary does NOT print the full score.note paragraph", () => {
+  const out = run(["describe", "src/parts/import-demo.js#scan"]);
+  // A substring unique to the long paragraph's OTHER half (the area/volume
+  // distinction), not the "not certainty" phrase reused in the short hint above —
+  // this is what actually distinguishes "note dropped" from "note shortened".
+  expect(out).not.toMatch(/diverge totally/);
+});
+
+test("--json still carries the full score.note, unabridged", () => {
+  const r = JSON.parse(run(["describe", "src/parts/import-demo.js#scan", "--json"]));
+  expect(r.score.note).toMatch(/not certainty/i);
+  expect(r.score.note).toMatch(/diverge totally/);
 });
 
 test("--json emits the full report", () => {
@@ -68,4 +86,43 @@ test("a starved --budget makes the budget-exceeded warning appear in the default
 test("--json on the same starved run carries the same warning code the text banner reports", () => {
   const r = JSON.parse(run(["describe", "test/fixtures/describe-washer-part.js#scan", "--budget", "1", "--json"]));
   expect(r.warning).toBe("budget-exceeded");
+});
+
+// --- fix round 2, IMPORTANT 2: volumeShare:null didn't say WHY --------------------
+//
+// Three genuinely different situations used to collapse onto the same `share n/a`:
+// a feature type never proposed as a candidate at all, one proposed but never reached
+// before the search ran out of budget, and one reached, built, and evaluated but never
+// winning a round. All three are exercised here through the real CLI against real
+// meshes, not asserted in the abstract.
+test("`not proposed` and `budget` render distinctly on the washer at a starved budget", () => {
+  const out = run(["describe", "test/fixtures/describe-washer-part.js#scan", "--budget", "1"]);
+  // f1 throughHole: proposed, but the search (budget 1) never reaches it.
+  expect(out).toMatch(/f1\s+throughHole.*share n\/a \(budget\)/);
+  // f2 revolve: never proposed as a candidate at all, at ANY budget — toCandidate
+  // returns null outright for revolve/fillet/chamfer/shell (describe.js's own comment).
+  expect(out).toMatch(/f2\s+revolve.*share n\/a \(not proposed\)/);
+});
+
+test("the same washer feature that was `budget`-starved gets a real share once the " +
+     "budget is generous enough to reach it — proving `budget` really meant starved, " +
+     "not permanently unreconstructable", () => {
+  const out = run(["describe", "test/fixtures/describe-washer-part.js#scan", "--budget", "100"]);
+  expect(out).toMatch(/f1\s+throughHole.*share \d+\.\d%/);
+  // f2 (revolve) is STILL `not proposed` even with budget to spare — confirming that
+  // reason is about the feature TYPE, not the search running out of room.
+  expect(out).toMatch(/f2\s+revolve.*share n\/a \(not proposed\)/);
+});
+
+// `test/fixtures/describe-rejected.stl` (+ its part wrapper): a 300x300x50mm block
+// with a 3mm-diameter through-hole whose volume (~353mm3) sits under accept.js's
+// MIN_GAIN_FRACTION threshold (1e-4 of the ~4.5M mm3 block) — the search reaches this
+// candidate immediately (2 candidates total, default --budget 48), builds and
+// evaluates it, and its gain never wins a round. Genuinely different from both
+// `budget` (never reached) and `not-proposed` (never a candidate at all).
+test("`rejected` renders for a real, proposed, evaluated candidate that never wins a round", () => {
+  const out = run(["describe", "test/fixtures/describe-rejected-part.js#scan"]);
+  expect(out).toMatch(/f1\s+throughHole.*share n\/a \(rejected\)/);
+  // Confirm this is NOT a budget story: plenty of budget was left unused.
+  expect(out).not.toMatch(/BUDGET EXCEEDED/);
 });

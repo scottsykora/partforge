@@ -275,6 +275,9 @@ export function describe(kernel, solid, opts = {}) {
     .filter(Boolean);
 
   const graded = acceptCandidates(kernel, solid, candidates, { budget: opts.budget });
+  // featureKey -> the candidate `toCandidate` proposed for it, if any — what tells a
+  // feature with `volumeShare: null` apart into WHY (fix round 2, IMPORTANT 2, below).
+  const candidateByFeatureKey = new Map(candidates.map((c) => [c.featureKey, c]));
 
   const totalArea = meshArea(mesh.positions, mesh.indices);
   const explainedArea = totalArea > 0
@@ -315,9 +318,25 @@ export function describe(kernel, solid, opts = {}) {
     // them, whereas destructuring one field out at its only egress point here is
     // not. `candidates` (below) is built from the PRE-strip `features` array, so
     // toCandidate still reads every feature's own `faceScope`.
-    features: features.map(({ faceScope: _faceScope, ...f }) => ({
-      ...f, volumeShare: graded.accepted.find((a) => a.candidate.featureKey === f.key)?.gain ?? null,
-    })),
+    // `volumeShare: null` alone does not say WHY (fix round 2, IMPORTANT 2): three
+    // genuinely different situations all used to collapse onto it indistinguishably —
+    // a feature type `toCandidate` never proposes at all (fillet/chamfer/revolve/
+    // shell — see its own trailing comment), one that WAS proposed but the search
+    // never reached before running out of `--budget`, and one that WAS reached and
+    // built but never won a round (accept.js's own MIN_GAIN_FRACTION gate, or simply
+    // never the best candidate that round). A rebuilder needs to tell these apart —
+    // "not modelled by this tool at all" vs. "try a bigger budget" vs. "this genuinely
+    // doesn't fit" are different next actions. `volumeShareReason` names which one, a
+    // closed set of `"not-proposed" | "budget" | "rejected"`, null only when
+    // `volumeShare` itself is non-null (see accept.js's `attempted` Set for exactly
+    // what "rejected" does and doesn't distinguish within itself).
+    features: features.map(({ faceScope: _faceScope, ...f }) => {
+      const accepted = graded.accepted.find((a) => a.candidate.featureKey === f.key);
+      if (accepted) return { ...f, volumeShare: accepted.gain, volumeShareReason: null };
+      const candidate = candidateByFeatureKey.get(f.key);
+      const reason = !candidate ? "not-proposed" : graded.attempted.has(candidate) ? "rejected" : "budget";
+      return { ...f, volumeShare: null, volumeShareReason: reason };
+    }),
     patterns, symmetry,
     residual: {
       areaFraction: totalArea > 0 ? residualArea / totalArea : 0,

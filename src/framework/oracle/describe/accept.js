@@ -59,6 +59,23 @@ export function acceptCandidates(kernel, source, candidates, opts = {}) {
   // is null. Reported back as `budgetSpent` (name kept as-is — see that field's own
   // comment on why) rather than renamed to `attemptsSpent`.
   let attempts = 0;
+  // Every candidate object that reached the loop body at least once — keyed by
+  // reference, not by `cand.key`/`cand.featureKey`, since this file never assumes a
+  // candidate carries either (test/describe-accept.test.js's own fixtures only give
+  // theirs a bare `key`, and other callers may give none at all). This is what lets a
+  // caller (describe.js) tell "budget ran out before this candidate ever got a turn"
+  // apart from "this candidate got a turn — every round it was in — and never won
+  // one" for whatever's left in `pending` at the end (fix round 2, IMPORTANT 2): a
+  // rejected feature and a budget-starved one both report `volumeShare: null` and
+  // are otherwise indistinguishable, which matters to a rebuilder deciding whether to
+  // retry with a bigger `--budget` or accept that a feature genuinely doesn't fit.
+  // NOTE on the one case this collapses: a `cut` candidate attempted while
+  // `current === null` (`"nothing to cut from yet"`, below) is marked attempted here
+  // even though no gain was ever actually computed for it — it consumed a turn and
+  // produced nothing, which reads the same as "tried and didn't fit" from a report's
+  // point of view. It is NOT distinguished as a fourth "waiting on a base" reason;
+  // three reasons (not-proposed/budget/rejected) is what was asked for.
+  const attempted = new Set();
 
   // The single bracket. `describe:accept` is deliberately its own partition name, not a
   // display sub-part's: the cross-partition hash index still lets it ADOPT geometry the
@@ -102,6 +119,7 @@ export function acceptCandidates(kernel, source, candidates, opts = {}) {
           trial = null;
         }
         attempts++;
+        attempted.add(cand);
         if (!trial) continue;
         const xor = xorVolume(trial, source);
         const gain = currentXor - xor;
@@ -140,6 +158,12 @@ export function acceptCandidates(kernel, source, candidates, opts = {}) {
       // for that consumer rather than a fix.
       budgetSpent: attempts,
       budgetExceeded: attempts >= budget && pending.length > 0,
+      // Candidate OBJECTS (not keys) that reached at least one build+evaluate attempt
+      // — see this Set's own declaration comment above for why by-reference and what
+      // it does and doesn't distinguish. Every accepted candidate is trivially a
+      // member too (it can't have been accepted without at least one attempt); the
+      // caller only needs to consult this for candidates NOT in `accepted`.
+      attempted,
     };
   } finally {
     kernel.endSubPart?.();

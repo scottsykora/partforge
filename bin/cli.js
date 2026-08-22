@@ -441,18 +441,31 @@ function printDescribe(report, { surfaces }) {
   if (c.warning) console.log(`\n!! ${c.warning}\n`);
   console.log(`${c.source.name ?? "mesh"} — ${c.source.triangles} triangles, ` +
               `${c.bounds.size.map((v) => v.toFixed(2)).join(" x ")} mm, ${c.frame.up} up`);
-  console.log(`\nFeatures (${c.features.length}):`);
+  // The `share` hint lives HERE, at the point of use, not several lines below beside
+  // Score (fix round 2, IMPORTANT 1 — a prior version printed the full `score.note`
+  // paragraph under Score and it dominated the report: measured at 36-43% of a typical
+  // run's line count, the single largest visual element, bigger than the feature list,
+  // banners, and score line combined — burying findings instead of clarifying them). One
+  // line, next to the column it explains; the full note is still in `--json` unabridged
+  // (`buildScore` in report.js attaches it unconditionally — nothing lost there).
+  console.log(`\nFeatures (${c.features.length}):` +
+              (c.features.length ? `   share = fraction of part volume this feature ` +
+                `accounts for — a size measure, not certainty` : ""));
+  // `volumeShareReason` (fix round 2, IMPORTANT 2): `volumeShare: null` alone doesn't
+  // say whether this feature type is never proposed at all, was proposed but never
+  // reached before the search ran out of budget, or was reached and built but simply
+  // didn't win — three different signals to a rebuilder deciding what to do next. See
+  // describe.js's own comment on the field for the exact three-way split.
+  const REASON_LABEL = { "not-proposed": "not proposed", budget: "budget", rejected: "rejected" };
   for (const f of c.features) {
     const dim = f.diameter ?? f.radius ?? f.width ?? f.thickness ?? f.depth;
     const snap = f.snapped?.diameter?.note ? `  [${f.snapped.diameter.note}]` : "";
-    // `volumeShare`, NOT "confidence" (describe.js/report.js's own naming rule) — it is
-    // the fraction of the PART'S VOLUME this feature accounts for, a measure of size,
-    // not of how sure the description is. A small-but-certain feature (a precise 3mm
-    // hole in a large plate) legitimately reports a small share; labelling this column
-    // "conf" would read backwards for exactly that feature.
+    const share = f.volumeShare != null
+      ? `${(100 * f.volumeShare).toFixed(1)}%`
+      : `n/a (${REASON_LABEL[f.volumeShareReason] ?? f.volumeShareReason ?? "unknown"})`;
     console.log(`  ${f.id.padEnd(5)} ${f.type.padEnd(14)} ` +
                 `${dim != null ? dim.toFixed(3) : ""}`.padEnd(10) +
-                `share ${f.volumeShare == null ? "n/a" : `${(100 * f.volumeShare).toFixed(1)}%`}${snap}`);
+                `share ${share}${snap}`);
   }
   if (c.patterns.length) {
     console.log(`\nPatterns (${c.patterns.length}):`);
@@ -472,22 +485,18 @@ function printDescribe(report, { surfaces }) {
                   `rms ${s.rms.toExponential(2)}`);
     }
   }
-  // TWO DIFFERENT NUMBERS, printed as two (score.note's own point, spelled out again for
-  // a reader who only sees the terminal, not the JSON): explainedArea is how much of the
-  // mesh's SURFACE segmentation fitted to some primitive; explainedVolumeFraction is how
-  // much of the part's actual SHAPE the accepted features reconstruct. They can diverge
+  // TWO DIFFERENT NUMBERS, printed as two: explainedArea is how much of the mesh's
+  // SURFACE segmentation fitted to some primitive; explainedVolumeFraction is how much
+  // of the part's actual SHAPE the accepted features reconstruct. They can diverge
   // totally — a dome segments to ~100% area and 0% volume, since a sphere is not a
   // candidate-eligible feature type — so printing only one (or a blended "xor%") would
-  // hide exactly the gap the LOW COVERAGE banner above exists to catch.
+  // hide exactly the gap the LOW COVERAGE banner above exists to catch. The wording here
+  // ("surface area explained" vs. "volume reconstructed") already carries that
+  // distinction; `score.note`'s full prose (this point, plus the volumeShare aside now
+  // covered at the Features header instead) stays JSON-only — fix round 2, IMPORTANT 1.
   console.log(`\nScore: ${(100 * c.score.explainedArea).toFixed(1)}% surface area explained, ` +
               `${(100 * c.score.explainedVolumeFraction).toFixed(1)}% volume reconstructed ` +
               `(residual xor ${(100 * c.score.xorFraction).toFixed(2)}% of volume)`);
-  // Surfaces `score.note` verbatim (fix round 2, IMPORTANT 2) — the same explanation the
-  // JSON already carries, not a shorter paraphrase of it, because the abbreviated version
-  // is exactly what loses the size-vs-certainty distinction the note exists to make: a
-  // feature line above prints `share 1.0%` with no inline cue, and a first-time reader of
-  // ONLY the terminal cannot otherwise tell "small, and that's fine" from "barely trusted".
-  if (c.score.note) console.log(`Note: ${c.score.note}`);
   console.log(`Residual: ${(100 * c.residual.areaFraction).toFixed(2)}% of area in ` +
               `${c.residual.regions.length} region(s)`);
   const truncated = Object.entries(report.truncated ?? {}).filter(([, v]) => v).map(([k]) => k);

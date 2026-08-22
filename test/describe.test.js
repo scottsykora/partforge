@@ -174,6 +174,57 @@ test("a plate with a bore reports a through hole", () => {
   expect(r.features.some((f) => f.type === "throughHole")).toBe(true);
 });
 
+// --- fix round 2, IMPORTANT 2: volumeShareReason distinguishes null-share cases ---
+//
+// A washer (outer cylinder, bored, with its own rounded rim — the SAME solid
+// test/describe-job.test.js's fixture STL encodes, built directly here since
+// describe() takes a live Solid): three feature types in one part, one per reason.
+const washerSolid = () =>
+  kernel.cylinder({ r: 10, h: 3 }).cut(kernel.cylinder({ r: 4, h: 9 }).translate([0, 0, -3]));
+
+test("a starved budget marks the un-reached candidate `budget`, not `rejected`", () => {
+  const r = describeMesh(kernel, washerSolid(), { digest: "washer-tight", budget: 1 });
+  expect(r.warning).toBe("budget-exceeded");
+  const hole = r.features.find((f) => f.type === "throughHole");
+  expect(hole.volumeShare).toBeNull();
+  expect(hole.volumeShareReason).toBe("budget");
+});
+
+test("a generous budget resolves the SAME feature to a real share — `budget` really " +
+     "meant starved, not permanently unreconstructable", () => {
+  const r = describeMesh(kernel, washerSolid(), { digest: "washer-wide", budget: 100 });
+  expect(r.warning).toBeUndefined();
+  const hole = r.features.find((f) => f.type === "throughHole");
+  expect(hole.volumeShare).toBeGreaterThan(0);
+  expect(hole.volumeShareReason).toBeNull();
+});
+
+test("a feature type toCandidate never proposes reports `not-proposed`, at ANY budget", () => {
+  for (const budget of [1, 100]) {
+    const r = describeMesh(kernel, washerSolid(), { digest: `washer-np-${budget}`, budget });
+    const revolve = r.features.find((f) => f.type === "revolve");
+    expect(revolve.volumeShare).toBeNull();
+    expect(revolve.volumeShareReason).toBe("not-proposed");
+  }
+});
+
+test("a candidate that IS proposed, reached, and evaluated — but never wins — reports " +
+     "`rejected`, distinct from both `budget` and `not-proposed`", () => {
+  // A 300x300x50mm block with a 3mm-diameter through-hole: the hole's own volume
+  // (~353mm3) sits well under accept.js's MIN_GAIN_FRACTION threshold (1e-4 of the
+  // ~4.5M mm3 block), so its candidate is built and evaluated (only 2 candidates
+  // total; the default budget is nowhere close to exhausted) but never the best of a
+  // round.
+  const tinyHoleInBigBlock = kernel.box({ min: [0, 0, 0], max: [300, 300, 50] })
+    .cut(kernel.cylinder({ r: 1.5, h: 60 }).translate([150, 150, -5]));
+  const r = describeMesh(kernel, tinyHoleInBigBlock, { digest: "rejected-fixture" });
+  expect(r.warning).toBeUndefined(); // not a budget story
+  const hole = r.features.find((f) => f.type === "throughHole");
+  expect(hole.volumeShare).toBeNull();
+  expect(hole.volumeShareReason).toBe("rejected");
+});
+
+
 test("the report explains nearly all of the surface area", () => {
   const r = describeMesh(kernel, plateSolid(), { name: "plate", digest: "d2" });
   expect(r.score.explainedArea).toBeGreaterThan(0.9);

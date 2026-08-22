@@ -194,3 +194,43 @@ test("a candidate whose build() throws is dropped, and the remaining candidate i
   expect(r.accepted[0].candidate.key).toBe(working.key);
   expect(r.budgetSpent).toBe(2);
 });
+
+// --- fix round 2, IMPORTANT 2: distinguishing "rejected" from "budget"-starved ------
+//
+// `volumeShare: null` alone doesn't tell a caller (describe.js) WHY a feature has no
+// share — never proposed at all, proposed but the search ran out of budget before
+// reaching it, or reached/built/evaluated and simply never won a round. The `attempted`
+// Set (candidate objects, by reference) is what makes the last two distinguishable:
+// membership means the loop body actually ran for that candidate at least once, whether
+// or not the trial produced a usable gain.
+
+test("a candidate that never wins a round is still marked `attempted`, distinct from " +
+     "one the search never got to", () => {
+  const source = kernel.box({ size: [20, 20, 10] });
+  const exactBox = { key: "exact", op: "union", build: () => kernel.box({ size: [20, 20, 10] }) };
+  // Tiny and placed well outside `source`: its own volume (0.001mm3) sits far under
+  // accept.js's MIN_GAIN_FRACTION threshold (1e-4 of the 4000mm3 source = 0.4mm3), and
+  // since it can only ADD material once unioned onto the already-exact reconstruction,
+  // its gain is strictly negative — never a plausible "best" in any round.
+  const decoy = { key: "decoy", op: "union", build: () => kernel.box({ size: [0.1, 0.1, 0.1] }).translate([500, 500, 500]) };
+
+  const r = acceptCandidates(kernel, source, [exactBox, decoy]); // default budget: 48, never in play
+  expect(r.accepted.map((a) => a.candidate.key)).toEqual(["exact"]);
+  expect(r.budgetExceeded).toBe(false);
+  expect(r.attempted.has(decoy)).toBe(true);   // reached, built, evaluated — just lost
+});
+
+test("a candidate the search never reaches under a tight budget is NOT marked " +
+     "`attempted` — the two null-share cases really are distinguishable", () => {
+  const source = kernel.box({ size: [20, 20, 10] });
+  const exactBox = { key: "exact", op: "union", build: () => kernel.box({ size: [20, 20, 10] }) };
+  const neverReached = { key: "never", op: "union", build: () => kernel.box({ size: [1, 1, 1] }) };
+
+  // budget:1 is exactly enough for `exactBox`'s own attempt; the for-loop's own
+  // `if (attempts >= budget) break` then stops BEFORE `neverReached` ever calls
+  // `.build()` — no trial, no gain, no attempt recorded for it.
+  const r = acceptCandidates(kernel, source, [exactBox, neverReached], { budget: 1 });
+  expect(r.accepted.map((a) => a.candidate.key)).toEqual(["exact"]);
+  expect(r.budgetExceeded).toBe(true);
+  expect(r.attempted.has(neverReached)).toBe(false);
+});

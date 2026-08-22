@@ -1503,7 +1503,7 @@ $ npx partforge describe src/parts/import-demo.js#scan
 
 scan — 12 triangles, 20.00 x 14.00 x 8.00 mm, +Z up
 
-Features (1):
+Features (1):   share = fraction of part volume this feature accounts for — a size measure, not certainty
   f0    extrusion      8.000     share 100.0%
 
 Score: 100.0% surface area explained, 100.0% volume reconstructed (residual xor 0.00% of volume)
@@ -1559,7 +1559,33 @@ to catch. Each feature's own score is named `volumeShare`, never "confidence": i
 fraction of the part's volume that feature accounts for — a measure of *size* — so a
 small-but-certain feature (a precisely-fitted 3mm hole in a large plate) legitimately
 reports a small share. Read a feature's fitted surface `rms`/`maxDev` (under `--surfaces`
-or `--json`) for an actual certainty signal.
+or `--json`) for an actual certainty signal. The one-line hint at the `Features (N):`
+header states the size-not-certainty point at its point of use; the longer explanation
+(`score.note` — both this and the `explainedArea`/`explainedVolumeFraction` distinction
+above, spelled out for a reader who never gets this far) stays `--json`-only, since
+printing it in full under `Score:` used to be the single largest visual element in every
+plain-text run — measured at 36-43% of a typical report's line count, bigger than the
+feature list, the banners, and the score line combined.
+
+**Why a null `volumeShare` isn't always the same story.** A feature can carry
+`volumeShare: null` for three different reasons, distinguished by its sibling field
+`volumeShareReason` (`--surfaces`/`--json`; the text view renders it as `share n/a
+(<reason>)`):
+
+- `"not-proposed"` — this feature TYPE is never turned into an acceptance candidate at
+  all. Fillets, chamfers, revolves and shells fall here today; they're still reported as
+  features, just not yet reconstructable through this pipeline.
+- `"budget"` — a candidate WAS proposed, but the search ran out of `--budget` before
+  reaching it. Raise `--budget` and re-describe; the feature may resolve to a real share
+  once given the chance.
+- `"rejected"` — a candidate was proposed, built, and evaluated, but never won a round
+  (`accept.js`'s `MIN_GAIN_FRACTION` gate, or simply never the best candidate available).
+  Raising `--budget` will not change this outcome — the feature genuinely doesn't fit
+  well enough to explain a meaningful share of the part.
+
+`"budget"` and `"rejected"` are the two that matter most to get right, and the
+distinction is real, not cosmetic: "try a bigger budget" and "this doesn't fit" are
+different next actions for whoever is rebuilding the part.
 
 **Closed error set.** Anything short of a programming mistake comes back as
 `{error: "<code>", detail, diagnostic}` rather than a thrown exception — a CLI or an
