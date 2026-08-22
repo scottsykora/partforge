@@ -1878,6 +1878,16 @@ import { lintPart } from "partforge/lint";
 const { ok, errors, warnings } = lintPart(part, { params });
 ```
 
+`lintPart(part, { sources })` optionally takes the part's own source files
+(`{ files: { path: text }, entrypoint }` — `entrypoint` names the file holding the
+`PartDefinition`, defaulting to the first key) and unlocks a ninth rule group that
+reads the source itself, catching the defects evaluation erases. The CLI passes the
+module's own file automatically, so `partforge lint`/`measure` always run it; a
+programmatic caller that omits `sources` (or hands over a malformed one) just gets
+no findings from that group. Source findings carry `file` and `line` on top of the
+standard shape, and `SOURCE_RULE_IDS` names them — a host that gates rendering on
+lint errors uses it to keep them reported but non-blocking.
+
 `partforge/lint` has **zero runtime dependencies** and never imports a geometry
 kernel or the DOM viewer, so it runs unchanged in Node, a Web Worker, a sandboxed
 iframe, and Deno. A worker also answers `{ type: "lint", params }` with
@@ -2055,6 +2065,24 @@ it is) (error); `font-source-scheme` (`defaults` holds a value for a font
 control that the control's own `allow` list would refuse — at build time it's
 swapped for `defaults[key]`, i.e. itself, so the part boots with no usable
 font; use a source `allow` accepts, or widen `allow`) (warning).
+
+**Source rules** — the ninth group, which runs only when the caller hands over
+`sources` (above) — `control-default-not-literal` (a control's `defaults` entry is
+written as something other than a plain literal: an expression like `13 / 3`, an
+array or object, a template literal, a `0x10`/`1_000` spelling. Hosts persist a
+panel edit by rewriting that value's span in the source, so a spelling the
+rewriter cannot read means the user's edit is silently lost on reload — write a
+plain decimal/string/boolean literal, or move the computation into `derive()`)
+(error); `impure-source-token` (the source contains `Math.random`, `Date.now`,
+`performance.now`, or an argless `new Date()` — replace it with a parameter or a
+`derive()` output) (warning). Only a default a control is actually **bound** to is
+checked: an unbound non-primitive default (a lookup table, an array of hole
+positions) is never rewritten by a panel save and stays legal and unflagged.
+`impure-source-token` is warning-tier because the behavioral
+`nondeterministic-build` probe stays the error authority on impurity — the source
+scan is the wider net that also catches an impure value stable within one probe
+pass. It scans code only (comments and string/template *interiors* are blanked
+first), so an impurity token inside a `${…}` interpolation is not seen.
 
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.

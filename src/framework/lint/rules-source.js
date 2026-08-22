@@ -20,6 +20,10 @@ const describeSource = (raw) => {
 // build() twice and diffs the recorded calls) can miss when the impure value
 // is stable within one probe pass. `new Date()` matches only the ARGLESS
 // form: `new Date(0)` is deterministic and legal.
+//
+// Scope limit (documented in AUTHORING-PARTS.md → Rule catalog → Source rules):
+// stripNonCode blanks whole template interiors, so a token inside a `${…}`
+// interpolation is not seen by this rule.
 const IMPURE_TOKENS = [
   { re: /\bMath\s*\.\s*random\b/g, token: "Math.random" },
   { re: /\bDate\s*\.\s*now\b/g, token: "Date.now" },
