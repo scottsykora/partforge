@@ -53,6 +53,23 @@ test("both the bore rim and the outer rim are convex circular arcs", () => {
   }
 });
 
+// R31: fitPlane's normal sign is an arbitrary eigensolver artifact, unrelated to which
+// side the material is on. Before the fix, both of a washer's caps reported an IDENTICAL
+// (0,0,1) (translated copies of the same ring shape, hence identical PCA covariance) —
+// which is what makes the pocket-vs-boss displacement test in features/prismatic.js
+// meaningless without this fix. `surfaceGraph` must orient each plane's normal against
+// its own faces' outward mesh normals, so two opposing caps come back genuinely opposite.
+test.each([["axis-aligned", (m) => m], ["rotated", (m) => rotateMesh(m, TILT)]])(
+  "%s: a washer's two caps report opposite normals", (_n, orient) => {
+    const g = graphOf(orient(annulusPlate(10, 4, 3, 48)));
+    const caps = g.surfaces.filter((s) => s.type === "plane");
+    expect(caps.length).toBe(2);
+    const d = caps[0].fit.normal[0]*caps[1].fit.normal[0]
+            + caps[0].fit.normal[1]*caps[1].fit.normal[1]
+            + caps[0].fit.normal[2]*caps[1].fit.normal[2];
+    expect(d).toBeLessThan(-0.98);
+  });
+
 test("every surface reports at least one closed boundary loop", () => {
   const g = graphOf(annulusPlate(10, 4, 3, 48));
   for (const s of g.surfaces) expect(s.loops.length).toBeGreaterThanOrEqual(1);

@@ -122,6 +122,33 @@ function curvatureOf(topo, patch) {
   return vote > 0 ? "convex" : "concave";
 }
 
+// `fitPlane`'s normal sign is an artifact of the eigensolver's own convention (whichever
+// way the smallest-eigenvalue eigenvector happened to point), not tied to which side the
+// material is on (controller ruling R31). Task 6 verified this directly: a washer's two
+// caps — translated copies of the same ring shape, hence identical PCA covariance — both
+// come back with fit.normal = (0,0,1), never the physically opposite pair the caps
+// actually have. Left uncorrected, this breaks the pocket-vs-boss rule below (it compares
+// SIGNED cap displacement, meaningless against an arbitrary sign) and makes the report's
+// own `surfaces[].fit.normal` actively misstate which way a face points.
+//
+// Fixed here, once, so every consumer inherits an outward-pointing normal rather than an
+// arbitrary one: average this patch's OWN faces' outward normals — `topo.faceNormal` is
+// outward by construction, exactly what this file's header says every dihedral sign
+// already depends on — and if the fitted normal opposes that average, negate BOTH
+// `normal` and `offset` together. Flipping only one would silently break `offset = dot
+// (normal, pointOnPlane)`, not just leave the direction looking wrong.
+function orientPlaneOutward(topo, patch) {
+  const fit = patch.fit;
+  if (fit.type !== "plane") return fit;
+  const meanN = [0, 0, 0];
+  for (const t of patch.faces) {
+    const a = topo.faceArea[t];
+    meanN[0] += a * topo.faceNormal[3*t]; meanN[1] += a * topo.faceNormal[3*t+1]; meanN[2] += a * topo.faceNormal[3*t+2];
+  }
+  if (dot(meanN, fit.normal) >= 0) return fit;
+  return { ...fit, normal: [-fit.normal[0], -fit.normal[1], -fit.normal[2]], offset: -fit.offset };
+}
+
 // Do two fits describe the same surface? Same primitive type, and parameters agreeing
 // within a relative band — coaxial cylinders of equal radius, coplanar planes of equal
 // normal and offset, and so on. Relative, never absolute: these are millimetre parts but
@@ -280,10 +307,13 @@ function defaultTol(topo) {
 export function surfaceGraph(topo, rawPatches, opts = {}) {
   const tol = opts.tol ?? defaultTol(topo);
   const patches = mergeCoFamily(topo, rawPatches, tol);
-  const surfaces = patches.map((p, i) => ({
-    id: `s${i}`, type: p.fit.type, fit: p.fit, faces: p.faces, area: p.area, loops: [],
-    curvature: curvatureOf(topo, p),
-  }));
+  const surfaces = patches.map((p, i) => {
+    const fit = orientPlaneOutward(topo, p);
+    return {
+      id: `s${i}`, type: fit.type, fit, faces: p.faces, area: p.area, loops: [],
+      curvature: curvatureOf(topo, p),
+    };
+  });
   const owner = new Int32Array(topo.faceArea.length).fill(-1);
   patches.forEach((p, i) => { for (const t of p.faces) owner[t] = i; });
 
