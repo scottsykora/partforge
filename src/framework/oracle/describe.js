@@ -297,7 +297,25 @@ export function describe(kernel, solid, opts = {}) {
     // most needs to trust: a precise 3mm hole in a large plate is CERTAIN (its fit
     // rms is tiny) but SMALL, so it legitimately reports a low share — see
     // `score.note` for the same point stated for a reader who never gets this far.
-    features: features.map((f) => ({
+    // `faceScope` (prismatic.js) is internal plumbing for THIS file's own candidate
+    // builder — a feature's floor/wall surfaces reduced to per-triangle index arrays
+    // — and must never reach a model-facing report (round 4 review, IMPORTANT):
+    // measured at 31% of an entire compact report's bytes for one feature's own
+    // bookkeeping on a 476-triangle fixture, scaling with mesh complexity up to the
+    // 400k-triangle MAX_TRIANGLES ceiling. Stripped HERE, not left for buildReport/
+    // compactDescribe to remember to delete — those two are downstream of every
+    // detector, not just this one, so a future per-triangle field on a different
+    // detector would leak the same way unless every consumer had to opt in
+    // separately. Chose stripping over a side channel (a second detectPrismatic
+    // return value, or a Map keyed by feature key) because `detectPrismatic`'s
+    // return shape is a plain feature array read directly by a dozen existing call
+    // sites (this file's own tests, describe-features-prismatic.test.js,
+    // describe-features-key-stability.test.js) — changing that contract to thread a
+    // second value through is a real, unforced breaking change for every one of
+    // them, whereas destructuring one field out at its only egress point here is
+    // not. `candidates` (below) is built from the PRE-strip `features` array, so
+    // toCandidate still reads every feature's own `faceScope`.
+    features: features.map(({ faceScope: _faceScope, ...f }) => ({
       ...f, volumeShare: graded.accepted.find((a) => a.candidate.featureKey === f.key)?.gain ?? null,
     })),
     patterns, symmetry,

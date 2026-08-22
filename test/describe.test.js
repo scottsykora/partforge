@@ -1,6 +1,7 @@
 import { expect, test, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { describe as describeMesh, describeMemo, DESCRIBE_ERRORS } from "../src/framework/oracle/describe.js";
+import { compactDescribe } from "../src/framework/oracle/describe/report.js";
 
 let kernel;
 beforeAll(async () => { kernel = await bootManifoldKernel(); });
@@ -241,4 +242,65 @@ test("a closed-set error carries the structured diagnostic triple", () => {
 test("the closed error set is exactly the documented five", () => {
   expect([...DESCRIBE_ERRORS].sort()).toEqual(
     ["budget-exceeded", "empty", "not-manifold", "too-large", "unreadable"]);
+});
+
+// Round 4 review's IMPORTANT finding: prismatic.js's `faceScope` — internal plumbing
+// for THIS file's own candidate builder, a feature's floor/wall surfaces reduced to
+// per-triangle index arrays — was spreading straight into `report.features` on every
+// prismatic feature, uncapped and unstripped by either `buildReport` or
+// `compactDescribe`. Measured on a 476-triangle box-plus-cylindrical-boss part: ONE
+// feature's `faceScope` was 1465 of the compact report's 4430 characters (33%) —
+// exactly the bulk `compactDescribe`'s whole job is to elide, smuggled through instead
+// of capped. `describe.js` now strips `faceScope` at its only egress point (building
+// `report.features`), so `candidates`, built from the pre-strip array, still gets it.
+const boxPlusCylBoss = () =>
+  kernel.box({ min: [0, 0, 0], max: [60, 40, 10] })
+    .union(kernel.cylinder({ r: 12, h: 20 }).translate([30, 20, 10]));
+
+// A per-triangle index array reads as a long array of small non-negative integers —
+// nothing legitimate in a report is that shape: bounds/axes/centroids are 3 numbers,
+// pitches and counts are a handful. 50 is comfortably above every genuine array this
+// report ever emits and comfortably below what even a modest mesh's own face list is.
+const RAW_INDEX_ARRAY_BOUND = 50;
+function findRawIndexArrays(value, path, out) {
+  if (Array.isArray(value)) {
+    if (value.length > RAW_INDEX_ARRAY_BOUND && value.every((v) => Number.isInteger(v) && v >= 0)) {
+      out.push({ path, length: value.length });
+    }
+    value.forEach((v, i) => findRawIndexArrays(v, `${path}[${i}]`, out));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [k, v] of Object.entries(value)) findRawIndexArrays(v, `${path}.${k}`, out);
+  }
+}
+
+test("the compact report carries no per-triangle index arrays", () => {
+  const r = describeMesh(kernel, boxPlusCylBoss(), { digest: "leak-check" });
+  const compact = compactDescribe(r);
+  const offenders = [];
+  findRawIndexArrays(compact, "compact", offenders);
+  expect(offenders, JSON.stringify(offenders)).toEqual([]);
+  // Not present at all, not just short — `faceScope` specifically must never reach
+  // a feature a model reads.
+  for (const f of compact.features) expect("faceScope" in f).toBe(false);
+});
+
+test("stripping faceScope from the report does not starve the candidate builder", () => {
+  const r = describeMesh(kernel, boxPlusCylBoss(), { digest: "leak-check-2" });
+  const prismatic = r.features.filter((f) => f.type === "extrusion" || f.type === "boss");
+  expect(prismatic.length).toBe(2);
+  for (const f of prismatic) expect(f.volumeShare).toBeGreaterThan(0);
+  expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.99);
+});
+
+// A concrete ceiling, not just "no huge arrays": a future leak of a DIFFERENT shape
+// (not a bare index array — e.g. an object per triangle) would slip past
+// `findRawIndexArrays` above but would still show up here as a number. Picked well
+// above the current ~2900 chars (headroom for legitimate report growth) and well
+// below the ~4430 chars this exact fixture measured before the fix.
+test("the compact report for a known fixture stays within its size budget", () => {
+  const r = describeMesh(kernel, boxPlusCylBoss(), { digest: "leak-check-3" });
+  const json = JSON.stringify(compactDescribe(r));
+  expect(json.length).toBeLessThan(3500);
 });

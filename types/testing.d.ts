@@ -488,7 +488,12 @@ export interface DescribeArc {
 /**
  * One recognised feature. Shape varies by `type` (a hole carries `diameter`/
  * `axis`, a fillet carries `radius`/`between`, …) — the fields every family
- * shares are pulled out here; the rest is read by `type`.
+ * shares are pulled out here; the rest is read by `type`. Every field here
+ * must be something a rebuilding agent would want (round 4 review) —
+ * `surfaces`/`evidence` are; nothing per-triangle belongs here. describe.js
+ * strips any such internal-plumbing field (`faceScope`, a prismatic
+ * candidate builder's own per-triangle index map) before a feature reaches
+ * this shape, so this catch-all is not a substitute for that discipline.
  */
 export interface DescribeFeature {
   id: string;
@@ -498,8 +503,7 @@ export interface DescribeFeature {
    * to the source volume — the fraction of the PART'S VOLUME this feature
    * accounts for, not a certainty rating (see `DescribeScore`'s own note): a
    * small-but-certain feature legitimately reports a small share. `null` for
-   * a type acceptCandidates never proposes (fillet, chamfer, pocket, revolve,
-   * shell). */
+   * a type acceptCandidates never proposes (fillet, chamfer, revolve, shell). */
   volumeShare: number | null;
   /** Snapped values for whichever of diameter/depth/radius/width/thickness this feature carries. */
   snapped: Record<string, Snapped>;
