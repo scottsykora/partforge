@@ -191,3 +191,76 @@ test("an asymmetric hole layout reports no mirror plane", () => {
   const { symmetry } = detectPatterns([hole(5,5), hole(55,5), hole(5,35), hole(20,12)], bounds);
   expect(symmetry.filter((s) => s.type === "mirror")).toEqual([]);
 });
+
+// Fix round 2, item 1 (CRITICAL): every candidate plane is, by construction, the
+// exact perpendicular bisector of the pair that proposed it -- so that pair always
+// "matches" its own candidate. Scoring naively (matched/n, no gate) has a
+// guaranteed floor before any real evidence: coverage=1 at n=2, 0.67 at n=3, both
+// already above the 0.6 threshold. This is a direct regression guard for the
+// brief's OWN "two unrelated holes produce no pattern" fixture, which the ungated
+// version reported as a perfect coverage=1 mirror plane.
+test("two unrelated holes report no mirror plane (the self-satisfying-bisector regression)", () => {
+  const { symmetry } = detectPatterns([hole(3,3), hole(41,29)], bounds);
+  expect(symmetry.filter((s) => s.type === "mirror")).toEqual([]);
+});
+
+// Deterministic PRNG so the "many trials" negative tests below are reproducible.
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// The self-satisfying-bisector floor is a function of n (2/n at n=2, 0.67 at n=3),
+// so it has to be checked at the sizes where it actually clears the 0.6 threshold,
+// not just spot-checked with one hand-picked layout -- a single fixture at, say,
+// n=4 could pass by luck even with the bug present. 300 independent random,
+// irregular layouts at each of n=2/3/4/5/7 (all above the 0.6-clearing floor at
+// n<=3, and the sizes fix round 2's actual measurement found still slipping
+// through via the on-plane-evidence variant of the bug at n=4): none may report a
+// mirror plane, since these layouts have no designed symmetry.
+test("random irregular layouts at n=2,3,4,5,7 never report a mirror plane", () => {
+  const TRIALS = 300;
+  for (const n of [2, 3, 4, 5, 7]) {
+    const rng = mulberry32(1000 + n);
+    for (let trial = 0; trial < TRIALS; trial++) {
+      const layout = Array.from({ length: n }, () => hole(rng() * 50 + 5, rng() * 30 + 5));
+      const { symmetry } = detectPatterns(layout, bounds);
+      const mirrors = symmetry.filter((s) => s.type === "mirror");
+      if (mirrors.length > 0) {
+        throw new Error(
+          `false-positive mirror at n=${n}, trial ${trial}: ${JSON.stringify(mirrors)}, layout=${JSON.stringify(layout.map((h) => h.axis.origin))}`
+        );
+      }
+    }
+  }
+});
+
+// The result must be a function of the geometry, not of array iteration order: a
+// caller can hand features in any order (the report is memoized downstream), so a
+// shuffled input must produce the identical `symmetry` array -- same planes, same
+// coverage, same output order -- not just an equivalent set.
+test("symmetry detection is independent of input feature order", () => {
+  const rng = mulberry32(42);
+  const shuffle = (arr) => {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+
+  const base = [hole(5,5), hole(55,5), hole(5,35), hole(55,35)];
+  const reference = JSON.stringify(detectPatterns(base, bounds).symmetry);
+  expect(reference).not.toBe("[]"); // sanity: the fixture actually has symmetry to find
+
+  for (let trial = 0; trial < 20; trial++) {
+    const shuffled = shuffle(base);
+    const result = JSON.stringify(detectPatterns(shuffled, bounds).symmetry);
+    expect(result).toBe(reference);
+  }
+});

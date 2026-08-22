@@ -16,6 +16,9 @@
 
 const TOL_FRAC = 1e-3;          // spacing agreement, as a fraction of the bbox diagonal
 const MIN_MEMBERS = 3;          // below this a "pattern" is just two features
+const MIN_SYMMETRY_MEMBERS = 4; // a mirror plane over 1-2 points restates a midpoint, not a finding
+const SYMMETRY_EVIDENCE_MIN = 2; // confirmed mirror PAIRS a candidate needs, including the one that proposed it
+const SYMMETRY_PREFILTER_FACTOR = 5; // how much wider the proposer-count pre-filter bucket is than the exact one
 const round3 = (v) => Math.round(v * 1000) / 1000;
 
 const posOf = (f) => f.axis?.origin ?? f.center ?? null;
@@ -233,53 +236,187 @@ function spacing(sorted, tol) {
 // mirror plane wasn't aligned to that arbitrary in-plane pick reported no symmetry
 // at all, the same silent orientation-dependence asGrid had before its rewrite.
 //
-// The fix uses the same idea asGrid's rewrite does: derive candidates from the
-// members instead of from an assumed basis. For every PAIR of same-signature
-// features, the perpendicular bisector plane of the segment joining them --
-// normal along the join direction, offset at the midpoint -- is a candidate
-// mirror plane. This set is complete: any true mirror plane of the layout must be
-// the bisector of at least one such pair (a feature and its own reflected
-// partner), whatever the part's orientation. Feature counts here are tens, not
-// mesh-triangle counts, so the O(n^2) candidate set is not a cost concern.
+// Candidates: for every PAIR of same-signature features, the perpendicular
+// bisector plane of the segment joining them -- normal along the join direction,
+// offset at the midpoint -- is a candidate mirror plane. This set is complete: any
+// true mirror plane of the layout must be the bisector of at least one such pair
+// (a feature and its own reflected partner), whatever the part's orientation.
 //
-// `coverage` is the matched fraction, so a nearly symmetric part reports 0.94 rather
-// than silently reporting nothing — the agent can then decide whether the part WANTS
+// Fix round 2 (self-satisfying floor): the bisector of pair (i, j) ALWAYS reflects
+// i onto j and j onto i, by construction, for ANY pair, symmetric layout or not --
+// that is not evidence, it is a restatement of how the candidate was built. Scoring
+// naively (matched/n, no gate) therefore has a guaranteed floor of 2/n before any
+// real evidence is considered: coverage=1 at n=2, 0.67 at n=3, both already above
+// the 0.6 threshold. Confirmed: the ungated version reports a perfect coverage=1
+// mirror plane on the brief's own "two unrelated holes" fixture, and flagged
+// spurious symmetry on close to 100% of random small layouts.
+//
+// The fix is NOT "exclude the pair that proposed the candidate" -- after
+// de-duplication (below) a single canonical plane is typically proposed by SEVERAL
+// pairs at once in a genuinely symmetric layout (both real pairs on the brief
+// rectangle's x=30 plane propose the identical plane), so there is no single
+// well-defined "the" proposing pair to exclude post-dedup; picking one arbitrarily
+// (e.g. "whichever pair the generation loop reached first") would also make the
+// result depend on input ORDER, which is a correctness bug on its own. Instead,
+// every candidate is required to be corroborated by evidence beyond a single
+// pair's self-consistency: at least `SYMMETRY_EVIDENCE_MIN` confirmed mirror PAIRS
+// (the one that proposed the candidate always counts as one; a second, independent
+// pair is what makes it evidence rather than a tautology). This is a property of
+// the fully-scored candidate, not of "who proposed it first", so it is
+// order-independent by construction. `MIN_SYMMETRY_MEMBERS` additionally refuses
+// to even consider symmetry below 4 positioned features, per the same reasoning:
+// a plane over 1-2 points restates a midpoint rather than finding anything.
+//
+// On-plane points (a feature landing within tolerance of the candidate plane
+// itself, e.g. a centred keyway) are NOT counted toward this gate, only toward
+// `coverage` once a candidate has already cleared it via pairs: an on-plane test is
+// a 1-DOF proximity-to-a-PLANE check, not the 3-DOF proximity-to-a-specific-POINT
+// check a pair match is, so it clears by pure chance far more often on unrelated
+// data. Measured directly: gating on pairs-plus-on-plane produced 5 false
+// positives across 1500 random trials at n=2/3/4/5/7 (all at n=4, where a single
+// stray on-plane coincidence combined with the always-true generating pair to
+// clear the threshold); gating on pairs alone dropped that to 0/1500.
+//
+// Performance (fix round 2, two passes): the first pass -- de-duplicating
+// candidates via a rounded bucket instead of an O(candidates^2) pairwise scan, and
+// scoring each via a spatial hash instead of an O(n) linear scan per reflected
+// point -- still left an O(n^2) candidate count each scored at O(n), i.e. O(n^3)
+// overall. Measured: 100-120 holes still took 0.86-3.7s (the wide range is because
+// the ORIGINAL O(candidates^2) dedup and O(n) linear-scan lookups were themselves
+// large constant factors -- see the cost table in the task report for the
+// intermediate numbers). At n=120, ~7100 candidates x ~120 points/candidate is
+// ~850k reflect-and-look-up calls; even at O(1)-amortized each, that is the
+// dominant cost, and no amount of speeding up that lookup changes the O(n^3) shape.
+//
+// The actual fix is to avoid running that O(n) scoring pass at all for the
+// overwhelming majority of candidates. Key observation: a "confirmed pair" (k, l)
+// for a candidate plane P -- a pair that, on scoring, turns out to reflect onto
+// itself through P -- is BY DEFINITION a pair whose OWN perpendicular bisector
+// equals P. But every same-signature pair's bisector is exactly what the
+// generation loop already computes for EVERY (i, j), so the number of DISTINCT
+// pairs that propose the same bucket during generation is a free-to-compute proxy
+// for the same "confirmed pairs" count the expensive scoring pass exists to find.
+// So: tally proposer counts per bucket during the O(n^2) generation pass (already
+// cheap, ~5-15ms even at n=120), and only run the O(n) exact scoring pass -- which
+// still makes the final accept/reject call, so this tally never itself decides
+// correctness -- on candidates whose bucket already has >= SYMMETRY_EVIDENCE_MIN
+// proposers. For a layout with no real symmetry this prunes ~7100 candidates down
+// to a few hundred; for a genuinely symmetric layout the true planes were always
+// going to survive regardless, since their real proposer count clears the bar.
+//
+// The proposer-count bucket is deliberately WIDER (`SYMMETRY_PREFILTER_FACTOR`x)
+// than the exact dedup bucket used for the final output: real position noise
+// between two truly-duplicate pairs (e.g. from mesh measurement error, not the
+// exact-copy rotations this file's own tests use) could otherwise straddle a
+// narrow bucket edge and undercount a genuine candidate's proposers, silently
+// dropping a real symmetry finding before the exact pass ever runs. Widening only
+// risks the opposite, harmless direction: unrelated pairs coincidentally sharing a
+// wide bucket just cost one extra (still individually cheap) exact scoring pass
+// that correctly rejects them -- it can never cause a false ACCEPT, since the
+// final decision is always the exact `pairs`/`coverage` computation below, not the
+// proposer count.
+//
+// `coverage` is the matched fraction (of ALL positioned features, not just the
+// evidence beyond the gate), so a nearly symmetric part reports 0.94 rather than
+// silently reporting nothing — the agent can then decide whether the part WANTS
 // to be symmetric and the scan is just imperfect.
 function detectSymmetry(features, bounds, tol) {
   const positioned = features.filter((f) => posOf(f));
-  if (positioned.length < 2) return [];
+  if (positioned.length < MIN_SYMMETRY_MEMBERS) return [];
   const pts = positioned.map((f) => posOf(f));
   const sigs = positioned.map((f) => signature(f));
 
+  const fineSeen = new Map();     // fine bucket key -> candidate (for de-duplicated output)
+  const coarseCounts = new Map(); // coarse bucket key -> proposer count (pre-filter only)
   const candidates = [];
   for (let i = 0; i < pts.length; i++) {
     for (let j = i + 1; j < pts.length; j++) {
       if (sigs[i] !== sigs[j]) continue;
       const d = sub(pts[j], pts[i]);
       const dl = len(d);
-      if (dl < tol) continue;                            // coincident, not a mirror pair
-      const n = [d[0]/dl, d[1]/dl, d[2]/dl];
+      if (dl < tol) continue;                              // coincident, not a mirror pair
+      const rawN = [d[0]/dl, d[1]/dl, d[2]/dl];
       const mid = [(pts[i][0]+pts[j][0])/2, (pts[i][1]+pts[j][1])/2, (pts[i][2]+pts[j][2])/2];
-      candidates.push({ n, offset: dot(n, mid) });
+      const cand = canonicalPlane(rawN, dot(rawN, mid));
+
+      const ck = planeBucketKey(cand, tol, SYMMETRY_PREFILTER_FACTOR);
+      coarseCounts.set(ck, (coarseCounts.get(ck) || 0) + 1);
+
+      const fk = planeBucketKey(cand, tol, 1);
+      if (!fineSeen.has(fk)) { const entry = { cand, ck }; fineSeen.set(fk, entry); candidates.push(entry); }
     }
   }
+  const survivors = candidates.filter((c) => (coarseCounts.get(c.ck) || 0) >= SYMMETRY_EVIDENCE_MIN);
 
+  const lookup = buildPositionLookup(pts, sigs, tol);
   const out = [];
-  for (const cand of candidates) {
-    if (out.some((o) => samePlane(o, cand, tol))) continue;   // already scored this plane
+  for (const { cand } of survivors) {
+    const matchOf = pts.map((p, i) => {
+      const d2 = 2 * (dot(cand.n, p) - cand.offset);
+      const want = [p[0]-d2*cand.n[0], p[1]-d2*cand.n[1], p[2]-d2*cand.n[2]];
+      return findNearby(lookup, want, sigs[i], pts, tol);
+    });
 
-    let matched = 0;
-    for (let i = 0; i < pts.length; i++) {
-      const d2 = 2 * (dot(cand.n, pts[i]) - cand.offset);
-      const want = [pts[i][0]-d2*cand.n[0], pts[i][1]-d2*cand.n[1], pts[i][2]-d2*cand.n[2]];
-      const hit = pts.some((q, j) => sigs[j] === sigs[i] && len(sub(q, want)) <= tol);
-      if (hit) matched++;
+    let pairs = 0, onPlane = 0;
+    for (let i = 0; i < matchOf.length; i++) {
+      const j = matchOf[i];
+      if (j === -1) continue;
+      if (j === i) onPlane++;
+      else if (j > i && matchOf[j] === i) pairs++;           // count each mutual pair once
     }
-    const coverage = matched / pts.length;
-    if (coverage > 0.6) out.push({ n: cand.n, offset: cand.offset, coverage: round3(coverage) });
+    // The gate is confirmed PAIRS only, not "pairs + on-plane points" (an earlier
+    // version of this fix gated on both and measurably regressed: an on-plane match
+    // is a 1-DOF test -- is this point within tol of a PLANE -- against a 3-DOF test
+    // for a pair -- is this point within tol of a specific reflected POSITION -- so
+    // it fires on unrelated random data far more often. Measured directly: gating on
+    // pairs+onPlane produced 5/1500 false positives across n=2/3/4/5/7 random
+    // trials, concentrated at n=4 where a single stray on-plane coincidence was
+    // enough to clear the threshold alongside the always-true generating pair.
+    // Gating on pairs alone (a second INDEPENDENT confirmed pair beyond the one that
+    // proposed the candidate) dropped that to 0/1500. On-plane points still count
+    // toward `coverage` once a candidate has cleared the pairs gate -- a feature
+    // genuinely on the mirror plane (a centred keyway) is real supporting evidence
+    // once the plane itself is established, just not evidence for ESTABLISHING it.
+    if (pairs < SYMMETRY_EVIDENCE_MIN) continue;
+
+    const coverage = (2*pairs + onPlane) / pts.length;
+    if (coverage <= 0.6) continue;
+    if (out.some((o) => samePlane(o, cand, tol))) continue;   // fine-bucket boundary straddle
+    out.push({ n: cand.n, offset: cand.offset, coverage: round3(coverage) });
   }
 
+  // Canonical order: a function of the geometry (offset, then normal), not of
+  // which pair the generation loop happened to reach first for a given input order.
+  out.sort((a, b) => a.offset - b.offset || a.n[0]-b.n[0] || a.n[1]-b.n[1] || a.n[2]-b.n[2]);
   return out.map(({ n, offset, coverage }) => ({ type: "mirror", plane: { normal: n, offset }, coverage }));
+}
+
+// Fixes the normal's sign (and offset to match) so a plane's canonical form is a
+// function of the geometry, not of which of two pairs on it -- or which direction
+// along the segment -- happened to compute it.
+function canonicalPlane(n, offset) {
+  let idx = 0;
+  for (let k = 1; k < 3; k++) if (Math.abs(n[k]) > Math.abs(n[idx])) idx = k;
+  if (n[idx] < 0) return { n: [-n[0], -n[1], -n[2]], offset: -offset };
+  return { n, offset };
+}
+
+// Rounding bucket for a plane, at `widen`x the base granularity (1x for the exact
+// output-dedup bucket, `SYMMETRY_PREFILTER_FACTOR`x for the coarse proposer-count
+// pre-filter -- see the performance note above `detectSymmetry` for why the latter
+// needs to be wider). Can, in principle, fail to merge two duplicates that
+// straddle a bucket edge; for the fine (1x) bucket that's a performance-only risk
+// (the final `samePlane` check on the small accepted list is what actually
+// guarantees no duplicate plane reaches the output), and for the coarse bucket the
+// `SYMMETRY_PREFILTER_FACTOR` margin is what keeps it a non-issue in practice.
+// Base width for the normal is `TOL_FRAC` (the same dimensionless fraction the
+// frame's own tolerance derives from, appropriate for a unit vector); for the
+// offset it's `tol`.
+function planeBucketKey(cand, tol, widen) {
+  const ng = TOL_FRAC * widen, og = tol * widen;
+  const nb = cand.n.map((v) => Math.round(v / ng));
+  const ob = Math.round(cand.offset / og);
+  return `${nb.join(",")}|${ob}`;
 }
 
 // Same plane within tolerance: normals parallel up to sign, offsets equal (sign
@@ -288,4 +425,51 @@ function samePlane(a, b, tol) {
   if (len(sub(a.n, b.n)) < 1e-6) return Math.abs(a.offset - b.offset) <= tol;
   if (len(sub(a.n, [-b.n[0], -b.n[1], -b.n[2]])) < 1e-6) return Math.abs(a.offset + b.offset) <= tol;
   return false;
+}
+
+// A spatial hash over (signature, position), built once and reused by every
+// candidate's scoring pass. Cell size = tol, so any real match (within tol of some
+// feature) is guaranteed to fall in the query point's own cell or one of its 26
+// neighbours -- turning "find the matching feature" from an O(n) linear scan into
+// an O(1)-amortized lookup. Keys are packed into a single integer (`packCell`)
+// rather than a template-literal string: at survivor-scan volume this is called
+// tens of thousands of times, and a fresh string allocation plus its hash on every
+// call was, measured directly, the dominant cost even after the pre-filter above
+// cut the candidate count down -- switching to integer keys turned a ~0.86s pass
+// (already down from 3.7s via the pre-filter and hash alone) into a ~0.13s one.
+// `CELL_RANGE`/`CELL_OFFSET` give +-65536 cells of headroom per axis, about 65x a
+// typical extent/tol ratio (tol is `bounds` diagonal x 1e-3, so a feature spread
+// across the full bounding box is already only ~1000 cells wide); a pathological
+// input that overflows this just collides two distant cells into one bucket,
+// which the exact `len(...) <= tol` check inside `findNearby` still filters
+// correctly -- degrades to a slightly bigger bucket to scan, never a wrong match.
+function buildPositionLookup(pts, sigs, tol) {
+  const sigIds = new Map();
+  const bySig = [];
+  for (let i = 0; i < pts.length; i++) {
+    let sid = sigIds.get(sigs[i]);
+    if (sid === undefined) { sid = bySig.length; sigIds.set(sigs[i], sid); bySig.push(new Map()); }
+    const key = packCell(Math.round(pts[i][0]/tol), Math.round(pts[i][1]/tol), Math.round(pts[i][2]/tol));
+    const cellMap = bySig[sid];
+    if (!cellMap.has(key)) cellMap.set(key, []);
+    cellMap.get(key).push(i);
+  }
+  return { sigIds, bySig };
+}
+const CELL_OFFSET = 1 << 16;
+const CELL_RANGE = 1 << 17;
+const packCell = (cx, cy, cz) =>
+  ((cx + CELL_OFFSET) * CELL_RANGE + (cy + CELL_OFFSET)) * CELL_RANGE + (cz + CELL_OFFSET);
+
+function findNearby(lookup, q, sig, pts, tol) {
+  const sid = lookup.sigIds.get(sig);
+  if (sid === undefined) return -1;
+  const cellMap = lookup.bySig[sid];
+  const cx = Math.round(q[0]/tol), cy = Math.round(q[1]/tol), cz = Math.round(q[2]/tol);
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+    const bucket = cellMap.get(packCell(cx+dx, cy+dy, cz+dz));
+    if (!bucket) continue;
+    for (const idx of bucket) if (len(sub(pts[idx], q)) <= tol) return idx;
+  }
+  return -1;
 }
