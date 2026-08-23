@@ -379,6 +379,17 @@ const EXPECT = {
     expect(r.truncated.surfaces).toBe(true);
     expect(r.score.explainedArea).toBeGreaterThan(0.95);
   },
+  "printables-box.stl": (r) => {
+    // The partial-reconstruction specimen: a real foreign-meshed box small enough to
+    // stay inside every cap and budget, recognized completely, and PARTIALLY rebuilt —
+    // the one corpus number the reconstruction follow-ups are expected to RAISE.
+    expect(r.warning).toBeUndefined();
+    expect(Object.values(r.truncated).every((hit) => hit === false)).toBe(true);
+    expect(r.score.explainedArea).toBeGreaterThan(0.99);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.2);
+    expect(r.features.some((f) => f.type === "pocket")).toBe(true);
+    expect(r.features.some((f) => f.type === "chamfer")).toBe(true);
+  },
   "estop-enclosure-top.stl": (r) => {
     // The complexity specimen: same degradation story at 87k triangles, plus a
     // residual that is localised into regions rather than merely counted.
