@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { liftLoftRings, classifyLoftRings, loftRingsKey, LOFT_SEGS } from "../src/framework/geometry/loft-rings.js";
 import { roundedProfile, regularPolygon, circleProfile } from "../src/framework/geometry/polygon.js";
+import { pointsToContour } from "../src/framework/geometry/profile.js";
 
 const SQ = [[-5, -5], [5, -5], [5, 5], [-5, 5]];
 const fakeShape = (regions) => ({ _shape2d: true, _regions: regions, _hash: "abc123", toContours: () => JSON.parse(JSON.stringify(regions)) });
@@ -52,6 +53,18 @@ test("existing validation survives: <2 rings, missing z, short point list all th
   expect(() => liftLoftRings([{ polygon: SQ, z: 0 }])).toThrow(/at least 2 rings/);
   expect(() => liftLoftRings([{ polygon: SQ }, { polygon: SQ, z: 1 }])).toThrow(/finite z/);
   expect(() => liftLoftRings([{ polygon: [[0, 0], [1, 0]], z: 0 }, { polygon: SQ, z: 1 }])).toThrow(/≥3 points/);
+});
+
+test("an all-line contour ring with only 2 segments throws a loud error", () => {
+  const twoLine = { start: [0, 0], segments: [{ to: [10, 0] }, { to: [0, 0] }] }; // degenerate back-and-forth
+  expect(() => liftLoftRings([{ polygon: twoLine, z: 0 }, { polygon: SQ, z: 1 }]))
+    .toThrow(/ring 0's contour has only 2 line segment/);
+});
+
+test("a 2-arc circle contour ring lifts fine (curved contours may have fewer than 3 segments)", () => {
+  const r = 5;
+  const twoArcCircle = { start: [r, 0], segments: [{ via: [0, r], to: [-r, 0] }, { via: [0, -r], to: [r, 0] }] };
+  expect(() => liftLoftRings([{ polygon: twoArcCircle, z: 0 }, { polygon: twoArcCircle, z: 5 }])).not.toThrow();
 });
 
 test("classify: equal-N point rings → poly-exact", () => {
@@ -218,6 +231,22 @@ test("resolveLoftRings: curve mode carries both pts2d and the baked contour", ()
   expect(mode).toBe("curve");
   expect(resolved[0].pts2d.length).toBe(resolved[1].pts2d.length);
   expect(resolved[0].contour.segments.filter((s) => s.via).length).toBe(4);
+});
+
+test("resolveLoftRings: mixed CW point ring + all-line contour ring both come out CCW (finding 1 fix)", () => {
+  const CW = [[-5, -5], [-5, 5], [5, 5], [5, -5]]; // same square as SQ, wound clockwise
+  const contourSQ = pointsToContour(SQ);           // all-line contour form of the same square
+  const { mode, resolved } = resolveLoftRings([{ polygon: CW, z: 0 }, { polygon: contourSQ, z: 10 }]);
+  expect(mode).toBe("poly-exact");
+  const area = (ring) => ring.reduce((a, [x, y], i) => { const [nx, ny] = ring[(i + 1) % ring.length]; return a + x * ny - nx * y; }, 0) / 2;
+  expect(area(resolved[0].pts2d)).toBeGreaterThan(0); // was CW (negative) pre-fix
+  expect(area(resolved[1].pts2d)).toBeGreaterThan(0);
+});
+
+test("resolveLoftRings: an all-point-list ring set stays untouched even with a CW ring (bit-exactness preserved)", () => {
+  const CW = [[-5, -5], [-5, 5], [5, 5], [5, -5]];
+  const { resolved } = resolveLoftRings([{ polygon: CW, z: 0 }, { polygon: CW, z: 10 }]);
+  expect(resolved[0].pts2d).toEqual(CW); // untouched — legacy self-correction happens downstream in loftMesh
 });
 
 test("resolveLoftRings: resample mode has equal-N pts2d and null contours", () => {

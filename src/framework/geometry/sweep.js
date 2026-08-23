@@ -5,7 +5,7 @@
 // set of 3-D cross-section stations. BOTH backends build from that SAME station list —
 // Manifold hand-meshes it (sweepMesh below, the loft/helix-tube recipe via mesh-build.js),
 // OCCT lofts the same rings ruled (occt-backend.js). So the elbow shape agrees BY
-// CONSTRUCTION, not by tolerance — the same parity mechanism loft's resolveRings uses.
+// CONSTRUCTION, not by tolerance — the same parity mechanism loft's resolveLoftRings uses.
 //
 // Corners: cornerRadius==0 → a SHARP MITER (one station per vertex, in the bisecting
 // plane, stretched by 1/cos(turn/2) so straight walls meet flush). cornerRadius>0 →

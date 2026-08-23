@@ -332,7 +332,10 @@ and the detection rule.
 - a single-region hole-free `Shape2D` — from a 2-D boolean, fillet, or other shape operation
 
 Rings with **identical all-line segment structure** (the same straight-sided shape at different z/scale/rotate) are
-bit-identical on both backends — unchanged legacy behavior, parity by construction. Rings with **identical curve structure**
+bit-identical on both backends — unchanged legacy behavior, parity by construction. When such a ring set mixes a
+point-list ring with a Shape2D/contour-sourced one, start-vertex correspondence is not author-controlled (a Shape2D's
+contour starts wherever its outline begins) — use per-ring `rotate`, or keep every ring the same form, to control twist
+phase. Rings with **identical curve structure**
 (containing arcs/Béziers, the same shape at different z/scale/rotate) loft curve-natively on OCCT (STEP keeps exact arc
 edges), while a Manifold preview facets at fixed LOD. **Structurally different rings** (e.g. a square morphing to a circle,
 or unequal-N point lists) auto-resample to a common vertex count in shared pure-JS code, with seam = the outermost +X-ray
@@ -2606,7 +2609,8 @@ OCCT). Within one sub-part's build there is no per-op backend mixing.
 **Shading intent.** The kernel decides what shades smooth and where edge lines
 draw — spheres, cylinders and fillets are smooth by construction; boolean cut
 seams always shade hard and draw a line; a loft's facets shade flat when its
-rings have fewer than 32 sides (`shading: "smooth"|"faceted"` on `k.loft`
+rings have fewer than 32 sides, unless any ring contains an arc/Bézier segment
+(then it always shades smooth) (`shading: "smooth"|"faceted"` on `k.loft`
 overrides the inference either way). If your part previews smooth but would
 print faceted — or the reverse — set the hint rather than changing facet counts.
 

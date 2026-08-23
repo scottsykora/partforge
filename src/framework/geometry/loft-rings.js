@@ -56,7 +56,13 @@ export function liftLoftRings(rings) {
       poly = JSON.parse(JSON.stringify(regions[0].outer));
     }
     if (!poly && Number.isFinite(r.sides) && Number.isFinite(r.radius)) poly = regularPolygon(r.sides, r.radius);
-    if (isContour(poly)) return { raw: r, contour: bakeContour(poly, r), pts: null, z: r.z };
+    if (isContour(poly)) {
+      const contour = bakeContour(poly, r);
+      const allLines = contour.segments.every((s) => !s.via && !s.c1);
+      if (allLines && contour.segments.length < 3)
+        throw new Error(`loft: ring ${i}'s contour has only ${contour.segments.length} line segment(s) — an all-line contour needs at least 3 to close a polygon (a curved contour, e.g. a circle, may legitimately have fewer)`);
+      return { raw: r, contour, pts: null, z: r.z };
+    }
     if (!isPointList(poly) || poly.length < 3)
       throw new Error(`loft: ring ${i} needs polygon:[[x,y],…] (≥3 points), a curve contour, a Shape2D, or sides+radius shorthand`);
     const pts = bakePts(poly, r);
@@ -82,7 +88,7 @@ export function classifyLoftRings(lifted) {
 export function loftRingsKey(rings) {
   if (!Array.isArray(rings)) return rings;
   return rings.map((r) => (r && typeof r === "object"
-    ? { ...r, polygon: r.polygon && r.polygon._shape2d ? r.polygon._hash : r.polygon }
+    ? { ...r, polygon: r.polygon && r.polygon._shape2d ? "s2d:" + r.polygon._hash : r.polygon }
     : r));
 }
 
@@ -236,7 +242,20 @@ export function resolveLoftRings(rings) {
   const lifted = liftLoftRings(rings);
   const { mode, hasCurve } = classifyLoftRings(lifted);
   let ptRings;
-  if (mode === "poly-exact") ptRings = lifted.map((r) => r.pts ?? matchedTessellation([r, r])[0]);
+  if (mode === "poly-exact") {
+    // Point-list rings keep their legacy un-normalized winding for bit-exactness — UNLESS
+    // the ring set also mixes in a contour/Shape2D-sourced ring (r.pts === null), whose
+    // winding bakeContour already forced CCW. Left alone, a CW point ring paired with a
+    // CCW contour ring cancels the side walls (mixed winding) into an empty solid instead
+    // of erroring or self-correcting (loftMesh's volume<0 latch only catches a FULLY
+    // inverted mesh, not this partial cancellation) — so only in the mixed case do we
+    // also normalize each point ring to CCW here. All-point-list ring sets are untouched.
+    const mixed = lifted.some((r) => r.pts) && lifted.some((r) => !r.pts);
+    ptRings = lifted.map((r) => {
+      if (!r.pts) return matchedTessellation([r, r])[0];
+      return mixed && shoelace(r.pts) < 0 ? [...r.pts].reverse() : r.pts;
+    });
+  }
   else if (mode === "curve") ptRings = matchedTessellation(lifted);
   else ptRings = resampleTessellation(lifted);
   return {

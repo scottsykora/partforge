@@ -3,6 +3,7 @@ import Module from "manifold-3d";
 import { loftMesh } from "../src/framework/geometry/loft.js";
 import { regularPolygon, roundedProfile, circleProfile } from "../src/framework/geometry/polygon.js";
 import { resolveLoftRings } from "../src/framework/geometry/loft-rings.js";
+import { pointsToContour } from "../src/framework/geometry/profile.js";
 
 // Raw-mesh test for the Manifold loft helper, mirroring helix-tube.test.js: boot the raw
 // manifold-3d module and assert the hand-built ring mesh is a valid watertight manifold,
@@ -45,6 +46,15 @@ test("CW-wound rings still produce a positive-volume (outward) solid", () => {
 test("descending-z rings still produce a positive-volume (outward) solid", () => {
   const solid = loftMesh(wasm, [{ polygon: SQ, z: 10 }, { polygon: SQ, z: 0 }]);
   expect(solid.volume()).toBeCloseTo(1000, 5);
+});
+
+test("mixed CW point ring + all-line contour ring lofts to the full box volume, not zero (finding 1 fix)", () => {
+  // Pre-fix: the point ring kept its legacy CW winding while the contour ring was
+  // CCW-normalized by bakeContour, so the side walls had opposite windings and canceled
+  // to an empty solid (volume ≈ 0) instead of erroring or self-correcting.
+  const contourSQ = pointsToContour(SQ); // all-line contour, same square — contour-sourced (r.pts === null)
+  const v = loftMesh(wasm, [{ polygon: CW, z: 0 }, { polygon: contourSQ, z: 10 }]).volume();
+  expect(v).toBeCloseTo(1000, 5); // 10×10 square × height 10
 });
 
 test("self-corrected loft is boolean-safe: subtracting from a blank REMOVES material", () => {
