@@ -5,6 +5,7 @@ import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { buildView } from "../src/framework/oracle/build.js";
 import { describe as describeMesh } from "../src/framework/oracle/describe.js";
 import { parseStl } from "../src/framework/geometry/stl-parse.js";
+import { parse3MF } from "../src/framework/geometry/threemf-parse.js";
 import demo from "../src/parts/demo.js";
 import filletedBox from "../src/parts/filleted-box.js";
 import bracket from "../src/parts/bracket.js";
@@ -347,7 +348,7 @@ test("every accepted feature's volumeShare is a finite fraction", () => {
 // describer that has only ever seen its own kind of mesh — see
 // test/fixtures/third-party/README.md for what's wanted and why none is committed yet.
 const DIR = fileURLToPath(new URL("./fixtures/third-party/", import.meta.url));
-const thirdPartyFiles = readdirSync(DIR).filter((f) => f.endsWith(".stl"));
+const thirdPartyFiles = readdirSync(DIR).filter((f) => f.endsWith(".stl") || f.endsWith(".3mf"));
 
 if (thirdPartyFiles.length === 0) {
   test.skip("third-party corpus is empty — see test/fixtures/third-party/README.md", () => {});
@@ -356,7 +357,8 @@ if (thirdPartyFiles.length === 0) {
     test(`third-party ${file} describes without an error`, () => {
       // Geometry enters the kernel the one way it can: register it as an import, then read
       // it back as a Solid — exactly what the framework's own import pipeline does.
-      const { positions, indices } = parseStl(readFileSync(`${DIR}${file}`));
+      const parse = file.endsWith(".3mf") ? parse3MF : parseStl;
+      const { positions, indices } = parse(readFileSync(`${DIR}${file}`));
       kernel._registerImport({ name: file, digest: file, positions, indices });
       const r = describeMesh(kernel, kernel.import(file), { digest: `tp-${file}` });
       // Deliberately weak: we have no ground truth for these. What we CAN insist on is
