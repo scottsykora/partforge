@@ -1500,7 +1500,8 @@ Before you write the parametric rebuild, ask the mesh itself what's in it: `part
 describe <part-module>#<importName>` reads an already-declared import (`k.import`'s own
 name, not a bare file path — the `imports` field is how the file gets to a kernel at
 all, so it's how `describe` finds it too) and emits a semantic feature report — holes,
-bosses, pockets, extrusions, patterns, symmetry — rather than a triangle soup. On
+bosses, pockets, extrusions, bevel bands, patterns, symmetry — rather than a triangle
+soup. On
 `import-demo.js`, whose `scan` import is a plain 20×14×8mm block:
 
 ```
@@ -1578,8 +1579,8 @@ feature list, the banners, and the score line combined.
 (<reason>)`):
 
 - `"not-proposed"` — this feature TYPE is never turned into an acceptance candidate at
-  all. Fillets, chamfers, revolves and shells fall here today; they're still reported as
-  features, just not yet reconstructable through this pipeline.
+  all. Fillets, chamfers, bevels, revolves and shells fall here today; they're still
+  reported as features, just not yet reconstructable through this pipeline.
 - `"budget"` — a candidate WAS proposed, but the search ran out of `--budget` before
   reaching it. Raise `--budget` and re-describe; the feature may resolve to a real share
   once given the chance.
@@ -1610,6 +1611,30 @@ here is misreported — but a low `explainedVolumeFraction` on a turned or shell
 means **"not yet reconstructable by this tool"**, not "not understood" or "broken." Read the FACTS (features, surfaces, patterns) as the ground
 truth regardless of the volume score; read the volume score as a measure of how much of
 that ground truth also comes with a working, boolean-verified rebuild recipe.
+
+**Bevel bands: a chamfer or blade swept along a curved profile.** A 45° chamfer run
+along a curving outline — or a knife's blade, cut through a plate along a profile
+curve — tessellates into dozens of tiny planar fragments, one per facet, and no single
+plane/cylinder/cone in the vocabulary covers the whole thing. The `bevel` feature
+(`describe/features/bands.js`) groups such a chain by its invariant signature: every
+fragment's normal makes the SAME angle with one reference axis while its azimuth
+follows the curve. Its fields are the rebuild recipe: `angleDeg` (tilt of the cut
+faces from the profile plane — 45 for an ordinary chamfer), `axis` (the profile
+plane's normal), `profile` (a measured POLYLINE of the band's boundary rail, projected
+into the profile plane at `planeOffset` — up to 48 points, unlike the point-count-only
+profiles prismatic features carry), `span` (extent along the axis), `width` (the slant
+width of the cut face), and `convexity`. The one field to read FIRST is `throughCut`:
+`false` means an edge break — rebuild it as a chamfer after the base extrude — while
+`true` means the band crosses (nearly) the part's whole extent along the axis, i.e. a
+boolean CUT along the reported profile through the whole part, the way a box-cutter
+blade's edge is made; rebuild it by extruding the profile into a cutter and
+subtracting, not by chamfering an edge. Fragments a band claims stop being reported as
+the per-facet junk they would otherwise read as (measured on a real box-opener STL:
+48 bosses + 40 pockets collapsed into two honest bevel features — the blade,
+`throughCut: true`, and the outline's edge bevel — and the freed acceptance budget let
+the base extrusion reconstruct at all). Straight single-plane chamfers, countersinks,
+and fillets stay with the dress-up rules; a band needs at least four fragments turning
+through at least 30° of azimuth at one coherent slope.
 
 **Closed error set.** Anything short of a programming mistake comes back as
 `{error: "<code>", detail, diagnostic}` rather than a thrown exception — a CLI or an

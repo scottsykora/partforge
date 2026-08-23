@@ -20,6 +20,7 @@ import { detectHoles } from "./describe/features/holes.js";
 import { detectDressups } from "./describe/features/dressups.js";
 import { detectPrismatic } from "./describe/features/prismatic.js";
 import { detectSweeps } from "./describe/features/sweeps.js";
+import { detectBands } from "./describe/features/bands.js";
 import { detectPatterns } from "./describe/patterns.js";
 import { snapValue, snapHoleDiameter } from "./describe/snap.js";
 import { acceptCandidates, DEFAULT_ATTEMPT_BUDGET } from "./describe/accept.js";
@@ -304,12 +305,35 @@ export function describe(kernel, solid, opts = {}) {
   // Feature families run in a fixed order and their results are concatenated in that
   // order, then sorted by each rule's own geometry-derived `key`. So f-numbering depends
   // on the MESH, never on iteration order or on which family happened to run first.
+  //
+  // Bands SUPPRESS the fragment features their surfaces would otherwise read as: a
+  // bevel swept along a curved profile tessellates into dozens of tiny planes, and
+  // each of those fragments — individually, correctly by its own rule's lights —
+  // reads as a junk chamfer, boss, or pocket (the motivating box-opener STL reported
+  // 48 bosses + 40 pockets for one beveled blade edge, and the flood of junk
+  // candidates exhausted the acceptance budget before the REAL base extrusion was
+  // ever attempted). A feature is dropped when EVERY surface it stands on belongs
+  // to a band, or when the cap that DEFINES it (a boss's or pocket's floor) is a
+  // band fragment — a fragment's "boss" grabs whatever real neighbours it borders
+  // as walls (measured: floor = one 5.7mm² band facet, walls = the part's own top
+  // cap), so the all-surfaces test alone lets exactly the junk this exists to kill
+  // keep standing. A feature that merely BORDERS a band — its own floor intact —
+  // survives both tests. Holes, extrusions, revolves and shells are never
+  // suppressed: they carry structure a band cannot explain.
+  const bands = detectBands(graph, topo);
+  const bandClaimed = new Set();
+  for (const bd of bands) for (const id of bd.surfaces) bandClaimed.add(id);
+  const suppressible = new Set(["boss", "pocket", "chamfer", "fillet"]);
   const raw = [
     ...detectHoles(graph),
     ...detectDressups(graph),
     ...detectPrismatic(graph, topo),
     ...detectSweeps(graph, topo, { bvh }),
-  ].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  ].filter((f) => !(suppressible.has(f.type)
+      && ((f.surfaces?.length && f.surfaces.every((id) => bandClaimed.has(id)))
+        || (f.floorFace && bandClaimed.has(f.floorFace)))))
+    .concat(bands)
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
   const features = raw.map((f, i) => {
     const snapped = {};
@@ -635,9 +659,11 @@ function toCandidate(kernel, f, b, ctx) {
       },
     };
   }
-  // Fillets, chamfers, revolves and shells are described but not yet proposed as
-  // acceptance candidates: each needs an edge or profile selector the facts layer does
-  // not yet carry, and a candidate that cannot be built is worse than none. They still
-  // appear in `features` with a null volumeShare, which is the honest report.
+  // Fillets, chamfers, bevels, revolves and shells are described but not yet proposed
+  // as acceptance candidates: each needs an edge or profile selector the facts layer
+  // does not yet carry (a bevel band's cut solid would be a swept wedge no current
+  // kernel op builds directly), and a candidate that cannot be built is worse than
+  // none. They still appear in `features` with a null volumeShare, which is the
+  // honest report.
   return null;
 }

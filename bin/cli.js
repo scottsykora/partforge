@@ -479,9 +479,15 @@ function printDescribe(report, { surfaces }) {
     const share = f.volumeShare != null
       ? `${(100 * f.volumeShare).toFixed(1)}%`
       : `n/a (${REASON_LABEL[f.volumeShareReason] ?? f.volumeShareReason ?? "unknown"})`;
+    // A bevel's number column (its slant width) says nothing about which KIND it
+    // is — and through-cut vs edge break is the one distinction that changes how
+    // a rebuilder models it (docs "Bevel bands"), so the text view states it.
+    const bevel = f.type === "bevel"
+      ? `  [${f.angleDeg.toFixed(1)}° ${f.throughCut ? "THROUGH-CUT along profile" : "edge bevel"}, ${f.profile?.points?.length ?? 0}-pt profile]`
+      : "";
     console.log(`  ${f.id.padEnd(5)} ${f.type.padEnd(14)} ` +
                 `${dim != null ? dim.toFixed(3) : ""}`.padEnd(10) +
-                `share ${share}${snap}`);
+                `share ${share}${snap}${bevel}`);
   }
   if (c.patterns.length) {
     console.log(`\nPatterns (${c.patterns.length}):`);
