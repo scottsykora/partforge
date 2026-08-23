@@ -7,7 +7,7 @@ import { detectSweeps } from "../src/framework/oracle/describe/features/sweeps.j
 import {
   boxMesh, cylinderMesh, annulusPlate, cupMesh,
   boxWithPocket, boxWithPad, hollowBoxMesh, openTrayMesh, cubeMesh, barMesh,
-  rotateMesh,
+  plateWithDistractor, rotateMesh,
 } from "./helpers/mesh-fixtures.js";
 
 // Same arbitrary, unremarkable tilt describe-surface-graph.test.js, describe-segment.test.js
@@ -135,6 +135,76 @@ test.each(ORIENTATIONS)(
     expect(boss.depth).toBeCloseTo(3, 1);
     const top = g.surfaces.find((s) => s.id === boss.floorFace);
     expect(top.area).toBeCloseTo(80, 0);
+  });
+
+// R57 (CRITICAL, prismatic.js commit d0718e0): the pre-fix pocket/boss rule read
+// `allCaps.find(c => dot(c.fit.normal, cap.fit.normal) > 0.98)` — the largest-area
+// co-oriented plane ANYWHERE on the part, no adjacency check — instead of a plane the
+// feature's own walls actually meet. filletedBox's own compound fillet corners were
+// the bug's original real-world reproduction, but that fixture's own segmentation-order
+// noise (documented in describe-roundtrip.test.js) forced its per-rotation "dominant
+// boss stays a boss" test to be dropped later, and REPLACED with "an ordinary
+// boss-and-pocket plate stays correctly classified across rotation" (same file) —
+// which was verified, by restoring the pre-fix `findSurround` into a scratch copy of
+// this file and running that replacement test against it, to PASS on the broken code.
+// A single-base-plate part never gives the old search a co-oriented plane bigger than
+// the plate's own top face to wrongly latch onto, so it finds the true partner by pure
+// luck of area order — R57 itself was left with no test that could actually fail on
+// it. This test supplies the precondition the old rule needed to get it wrong:
+// `plateWithDistractor`'s own "distractor" pad is co-oriented with both the boss and
+// the pocket but adjacent to neither, and its footprint eats enough of the plate's own
+// top face that what's LEFT of the plate top (474mm^2) is smaller than the
+// distractor's own top (1008mm^2) — so the old rule's largest-first, no-adjacency
+// search reaches the distractor before it ever reaches the boss's or the pocket's own
+// true, adjacent partner (the plate).
+//
+// Verified directly against that scratch copy: at every rotation below (flat, and
+// three mixed tilts running through 29, 90 and 73 degrees — the angles fix round 2's
+// own report named as the worst pre-fix swaps), the boss comes back typed POCKET at
+// depth 87 (its own 13mm cap read against the distractor's 100mm offset) — R57's exact
+// failure mode, a rebuilding agent told to CUT where it should ADD — and the pocket
+// keeps its own type by coincidence (its displacement against the distractor is
+// negative either way) but reports depth 93 instead of 3. Both numbers are bit-
+// identical across every rotation tried: unlike filletedBox's own compound corners,
+// this is a structural defect in WHICH plane wins the search, not a tessellation/
+// segmentation-order artefact, so it does not need rotation to manifest at all — the
+// rotations here prove the FIX itself is not orientation-dependent, not to provoke
+// the bug. `boss`/`pocket` below are picked by their cap's OWN offset (13 / 7mm,
+// rotation-invariant — a plane's offset along its own fitted normal does not change
+// under a rotation about the origin), not by `type`, so the selection cannot itself be
+// fooled by the very type-swap bug this test exists to catch.
+test.each([
+  ["flat", [0, 0, 0]],
+  ["29deg-mixed", [29, 58, 87]],
+  ["90deg-x", [90, 0, 0]],
+  ["73deg-mixed", [73, 37, 11]],
+])(
+  "%s: a boss and a pocket keep their type and depth despite a bigger unrelated " +
+  "co-oriented plane elsewhere on the part",
+  (_label, [rx, ry, rz]) => {
+    const flatMesh = plateWithDistractor(
+      30, 50, 10, 5, 10,   // plate 30x50x10, boss band [0,5], pocket band [5,10]
+      2, 1, 3, 3,          // boss: 3x3 footprint, 3mm proud (own cap offset 13)
+      10, 6, 3, 3,         // pocket: 3x3 footprint, 3mm deep (own cap offset 7)
+      1, 12, 28, 36, 90,   // distractor: 28x36=1008mm^2 footprint (> the plate's own
+                           // 474mm^2 remainder), 90mm proud, own cap offset 100
+    );
+    const mesh = rotateMesh(flatMesh, [rx, ry, rz].map((d) => (d * Math.PI) / 180));
+    const { g } = ctx(mesh);
+    const f = detectPrismatic(g);
+    const surfaceOf = (feat) => g.surfaces.find((s) => s.id === feat.floorFace);
+
+    const boss = f.find((x) => Math.abs(surfaceOf(x).fit.offset - 13) < 0.5);
+    const pocket = f.find((x) => Math.abs(surfaceOf(x).fit.offset - 7) < 0.5);
+    expect(boss).toBeDefined();
+    expect(pocket).toBeDefined();
+    expect(boss.type).toBe("boss");
+    expect(pocket.type).toBe("pocket");
+    // Depth too, not just type: the pre-R57 code's pocket keeps its own type by
+    // coincidence but still reports the wrong number — a type-only assertion would
+    // miss that half of the regression.
+    expect(boss.depth).toBeCloseTo(3, 1);
+    expect(pocket.depth).toBeCloseTo(3, 1);
   });
 
 test("prismatic features carry stable keys and null ids", () => {

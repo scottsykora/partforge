@@ -422,6 +422,125 @@ export function boxWithPad(sx, sy, sz, px, py, pw, pl, ph) {
   return { positions };
 }
 
+// One `boxWithPad`/`boxWithPocket`-style 4-trapezoid ring, generalised from "the whole
+// plate" to an arbitrary Y-band `[y0,y1]` (still the full `[x0,x1]` width) with one
+// rectangular hole `[hx0,hx1]x[hy0,hy1]` strictly inside it. Exists so
+// `plateWithDistractor` can tile a plate-top-minus-THREE-holes face out of three
+// independent single-hole bands stacked in Y, each using the exact same proven
+// technique those two fixtures already rely on, rather than a general n-hole tiler: an
+// n-hole tiler (tried first) has to put its own grid lines whenever any hole's boundary
+// crosses another's span, and every un-subdivided WALL quad on the other side of that
+// same edge (the outer plate wall, or a hole's own side wall — both single flat quads,
+// same as this ring's own OA-OB etc.) then disagrees with it vertex-for-vertex: a
+// T-junction, not the shared edge two triangles need to weld into one watertight mesh
+// (caught by `buildTopology`'s own open-edge count, 56 of them, before this fixture's
+// three-band form was written).
+function bandRing(positions, x0, x1, y0, y1, hx0, hx1, hy0, hy1, z, outward) {
+  const OA=[x0,y0,z], OB=[x1,y0,z], OC=[x1,y1,z], OD=[x0,y1,z];
+  const HA=[hx0,hy0,z], HB=[hx1,hy0,z], HC=[hx1,hy1,z], HD=[hx0,hy1,z];
+  quadTowards(positions, OA, OB, HB, HA, outward);
+  quadTowards(positions, OB, OC, HC, HB, outward);
+  quadTowards(positions, OC, OD, HD, HC, outward);
+  quadTowards(positions, OD, OA, HA, HD, outward);
+}
+
+// A plate with a small boss, a small pocket, and a much larger co-oriented "distractor"
+// pad standing elsewhere on the same plate — THE regression fixture for R57 (CRITICAL,
+// prismatic.js commit d0718e0). The pre-fix pocket/boss rule read
+// `allCaps.find(c => dot(c.fit.normal, cap.fit.normal) > 0.98)` — the largest-by-area
+// co-oriented plane ANYWHERE on the part, with no adjacency check — instead of a plane
+// the feature's own walls actually meet. The boss's and the pocket's own genuine
+// surrounding partner is the plate's own top face; but the distractor's footprint eats
+// most of the plate top's own area, so what is LEFT of the plate top (`sx*sy` minus all
+// three footprints) comes out SMALLER than the distractor's own top (which nothing sits
+// on top of it to shrink). Sorted by area, the old rule's `.find()` reaches the
+// distractor before it ever reaches the plate — even though the boss's and the pocket's
+// own walls are nowhere near it. Compared against the distractor's own far-away offset,
+// a boss standing `bh` proud of the plate reads sunk `distractor top z - boss top z` deep
+// and is reported a POCKET instead of a BOSS — R57's exact failure mode, a rebuilding
+// agent told to CUT where it should ADD. The pocket keeps its own type by coincidence
+// (its displacement against the distractor is negative either way, same as against its
+// true partner) but its reported DEPTH is wrong by orders of magnitude — the failure a
+// type-only assertion would miss, which is why the regression test built on this fixture
+// checks depth too.
+//
+// The plate top is three Y-bands stacked bottom to top — `[0,y1]` (boss), `[y1,y2]`
+// (pocket), `[y2,sy]` (distractor), each its own `bandRing` — so the LEFT/RIGHT outer
+// walls (which every band touches) are built band-by-band too, matching that same
+// three-way split; FRONT/BACK only ever touch one band each (`y=0` only the boss band,
+// `y=sy` only the distractor band) and stay single quads. `dw*dl` is deliberately built
+// to be most of the plate's own total area (the distractor band dominates the other two
+// in height) — see this fixture's own header for why that inequality is the whole
+// point. Every one of the boundary coordinates below (plate edges, band splits, and
+// each footprint's own x0/x1/y0/y1) is chosen distinct from every other, so no two
+// features' side walls ever land on the same infinite plane and get folded into one
+// multi-island surface by `mergeCoFamily` (surface-graph.js) — a real behaviour this
+// file's own `wallIslandFor`/`islandsOf` machinery handles correctly, but orthogonal to
+// the one bug this fixture exists to reproduce, so kept out of the way rather than
+// exercised here.
+export function plateWithDistractor(
+  sx, sy, sz,
+  y1, y2,             // band splits: boss in [0,y1], pocket in [y1,y2], distractor in [y2,sy]
+  bx, by, bs, bh,     // boss: footprint [bx,bx+bs] x [by,by+bs], height bh
+  px, py, ps, pd,     // pocket: footprint [px,px+ps] x [py,py+ps], depth pd
+  dx, dy, dw, dl, dh, // distractor pad: footprint [dx,dx+dw] x [dy,dy+dl], height dh
+) {
+  const positions = [];
+  const o = [[0,0,0],[sx,0,0],[sx,sy,0],[0,sy,0],[0,0,sz],[sx,0,sz],[sx,sy,sz],[0,sy,sz]];
+  const outer = [
+    [o[0],o[1],o[5],o[4],[0,-1,0]], [o[2],o[3],o[7],o[6],[0,1,0]], // front (y=0), back (y=sy)
+  ];
+  for (const [a,b,c,d,n] of outer) quadTowards(positions, a, b, c, d, n);
+  // Bottom, left (x=0), and right (x=sx): one quad per band each, matching the top
+  // face's own three-way split — every one of these faces touches all three bands
+  // (unlike front/back, which only ever touch the outermost one), so each needs the
+  // same y1/y2 subdivision the top bands introduce, or its single long edge would
+  // T-junction against three shorter ones on the other side of it (`bandRing`'s own
+  // comment has the full story; this exact mismatch, on the bottom face specifically,
+  // is what an earlier version of this fixture missed).
+  for (const [ya, yb] of [[0, y1], [y1, y2], [y2, sy]]) {
+    quadTowards(positions, [0,ya,0], [sx,ya,0], [sx,yb,0], [0,yb,0], [0,0,-1]);
+    quadTowards(positions, [0,ya,0], [0,yb,0], [0,yb,sz], [0,ya,sz], [-1,0,0]);
+    quadTowards(positions, [sx,ya,0], [sx,yb,0], [sx,yb,sz], [sx,ya,sz], [1,0,0]);
+  }
+
+  bandRing(positions, 0, sx, 0, y1, bx, bx + bs, by, by + bs, sz, [0, 0, 1]);
+  bandRing(positions, 0, sx, y1, y2, px, px + ps, py, py + ps, sz, [0, 0, 1]);
+  bandRing(positions, 0, sx, y2, sy, dx, dx + dw, dy, dy + dl, sz, [0, 0, 1]);
+
+  // Boss: standard raised pad, `boxWithPad`'s own wall/top pattern.
+  const BA=[bx,by,sz], BB=[bx+bs,by,sz], BC=[bx+bs,by+bs,sz], BD=[bx,by+bs,sz];
+  const bz = sz + bh;
+  const TA=[bx,by,bz], TB=[bx+bs,by,bz], TC=[bx+bs,by+bs,bz], TD=[bx,by+bs,bz];
+  quadTowards(positions, BA, BB, TB, TA, [0,-1,0]);
+  quadTowards(positions, BB, BC, TC, TB, [1,0,0]);
+  quadTowards(positions, BC, BD, TD, TC, [0,1,0]);
+  quadTowards(positions, BD, BA, TA, TD, [-1,0,0]);
+  quadTowards(positions, TA, TB, TC, TD, [0,0,1]);
+
+  // Pocket: standard recessed cavity, `boxWithPocket`'s own wall/floor pattern.
+  const IA=[px,py,sz], IB=[px+ps,py,sz], IC=[px+ps,py+ps,sz], ID=[px,py+ps,sz];
+  const fz = sz - pd;
+  const FA=[px,py,fz], FB=[px+ps,py,fz], FC=[px+ps,py+ps,fz], FD=[px,py+ps,fz];
+  quadTowards(positions, IA, IB, FB, FA, [0,1,0]);
+  quadTowards(positions, IB, IC, FC, FB, [-1,0,0]);
+  quadTowards(positions, IC, ID, FD, FC, [0,-1,0]);
+  quadTowards(positions, ID, IA, FA, FD, [1,0,0]);
+  quadTowards(positions, FA, FB, FC, FD, [0,0,1]);
+
+  // Distractor: another raised pad, same pattern, just much bigger in footprint.
+  const WA=[dx,dy,sz], WB=[dx+dw,dy,sz], WC=[dx+dw,dy+dl,sz], WD=[dx,dy+dl,sz];
+  const dz = sz + dh;
+  const UA=[dx,dy,dz], UB=[dx+dw,dy,dz], UC=[dx+dw,dy+dl,dz], UD=[dx,dy+dl,dz];
+  quadTowards(positions, WA, WB, UB, UA, [0,-1,0]);
+  quadTowards(positions, WB, WC, UC, UB, [1,0,0]);
+  quadTowards(positions, WC, WD, UD, UC, [0,1,0]);
+  quadTowards(positions, WD, WA, UA, UD, [-1,0,0]);
+  quadTowards(positions, UA, UB, UC, UD, [0,0,1]);
+
+  return { positions };
+}
+
 // A cube and an elongated bar — the negative fixtures for the shell rule. Both are
 // plain solid boxMesh() calls under a name that documents WHY each is used where it
 // is: the cube is the false-positive case (perfectly consistent inward-ray readings
