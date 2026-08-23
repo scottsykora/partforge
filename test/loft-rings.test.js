@@ -88,3 +88,43 @@ test("loftRingsKey substitutes a Shape2D with its _hash and is h()-stable", () =
   expect(k1).toContain("abc123");
   expect(k1).not.toContain("_shape2d"); // no live object leaked into the key
 });
+
+import { matchedTessellation } from "../src/framework/geometry/loft-rings.js";
+import { arcGeometry, sampleArc } from "../src/framework/geometry/profile.js";
+
+test("arcGeometry matches sampleArc's implicit circle (90° arc r=2)", () => {
+  const g = arcGeometry([2, 0], [Math.SQRT2, Math.SQRT2], [0, 2]);
+  expect(g.r).toBeCloseTo(2, 9);
+  expect(g.cx).toBeCloseTo(0, 9);
+  expect(g.cy).toBeCloseTo(0, 9);
+  expect(Math.abs(g.dA)).toBeCloseTo(Math.PI / 2, 9);
+});
+
+test("arcGeometry returns null for a collinear triple", () => {
+  expect(arcGeometry([0, 0], [1, 0], [2, 0])).toBeNull();
+});
+
+test("matched tessellation: one rounded square at two scales → equal N, corners exact", () => {
+  const rsq = roundedProfile(SQ, 2);
+  const lifted = liftLoftRings([{ polygon: rsq, z: 0 }, { polygon: rsq, z: 9, scale: 0.5 }]);
+  const [a, b] = matchedTessellation(lifted);
+  expect(a.length).toBe(b.length);
+  // every segment endpoint of the baked contour appears verbatim in the ring
+  for (const seg of lifted[0].contour.segments.slice(0, -1)) {
+    expect(a.some(([x, y]) => Math.hypot(x - seg.to[0], y - seg.to[1]) < 1e-12)).toBe(true);
+  }
+  // ring 1 is exactly ring 0 scaled by 0.5, index-for-index (aligned correspondence)
+  for (let i = 0; i < a.length; i++) {
+    expect(b[i][0]).toBeCloseTo(a[i][0] * 0.5, 9);
+    expect(b[i][1]).toBeCloseTo(a[i][1] * 0.5, 9);
+  }
+});
+
+test("matched tessellation gives each arc the max natural count across rings", () => {
+  // big ring's arcs need more facets than the small ring's; both must get the max
+  const big = roundedProfile([[-50, -50], [50, -50], [50, 50], [-50, 50]], 20);
+  const lifted = liftLoftRings([{ polygon: big, z: 0 }, { polygon: big, z: 9, scale: 0.1 }]);
+  const [a, b] = matchedTessellation(lifted);
+  expect(a.length).toBe(b.length);
+  expect(a.length).toBeGreaterThan(8); // arcs actually sampled, not collapsed to endpoints
+});

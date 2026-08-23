@@ -8,8 +8,8 @@
 //   resample   — structurally different rings: shared arc-length resample, both
 //                backends loft the IDENTICAL rings (parity by construction).
 import { regularPolygon } from "./polygon.js";
-import { pointsToContour, reverseContour, closeContourGap } from "./profile.js";
-import { rotateProfile, scaleProfile, contourIsCCW } from "./contour-ops.js";
+import { pointsToContour, reverseContour, closeContourGap, arcGeometry, sampleBezier } from "./profile.js";
+import { rotateProfile, scaleProfile, contourIsCCW, cubicAt } from "./contour-ops.js";
 
 export const LOFT_SEGS = 64; // fixed pure-JS LOD for curve rings (hull.js precedent)
 
@@ -84,4 +84,57 @@ export function loftRingsKey(rings) {
   return rings.map((r) => (r && typeof r === "object"
     ? { ...r, polygon: r.polygon && r.polygon._shape2d ? r.polygon._hash : r.polygon }
     : r));
+}
+
+// Natural facet count a segment would get at LOFT_SEGS — the per-segment budget the
+// matched sampler levels up to across rings.
+const segNaturalCount = (prev, seg) => {
+  if (seg.c1) return Math.max(1, sampleBezier(prev, seg.c1, seg.c2, seg.to, LOFT_SEGS).length);
+  if (seg.via) {
+    const g = arcGeometry(prev, seg.via, seg.to);
+    return g ? Math.max(2, Math.ceil((LOFT_SEGS * Math.abs(g.dA)) / (2 * Math.PI))) : 1;
+  }
+  return 1;
+};
+
+// Sample one segment with EXACTLY n points (uniform in angle/parameter), last point
+// pinned to seg.to. Fixed counts are what keep corresponding vertices aligned across
+// rings — the adaptive samplers must not be used here.
+const sampleSegN = (prev, seg, n) => {
+  const out = [];
+  if (seg.c1) {
+    for (let s = 1; s <= n; s++) out.push(cubicAt(prev, seg.c1, seg.c2, seg.to, s / n));
+  } else if (seg.via) {
+    const g = arcGeometry(prev, seg.via, seg.to);
+    if (!g) { for (let s = 1; s <= n; s++) out.push([prev[0] + (seg.to[0] - prev[0]) * (s / n), prev[1] + (seg.to[1] - prev[1]) * (s / n)]); }
+    else for (let s = 1; s <= n; s++) {
+      const ang = g.a0 + g.dA * (s / n);
+      out.push([g.cx + g.r * Math.cos(ang), g.cy + g.r * Math.sin(ang)]);
+    }
+  } else {
+    for (let s = 1; s <= n; s++) out.push([prev[0] + (seg.to[0] - prev[0]) * (s / n), prev[1] + (seg.to[1] - prev[1]) * (s / n)]);
+  }
+  out[out.length - 1] = [seg.to[0], seg.to[1]];
+  return out;
+};
+
+// Curve mode: identical signatures guaranteed by classifyLoftRings. Per segment index,
+// every ring samples with the same count (the max natural count), so vertex i lies at
+// the same curve parameter on every ring; the seam is each contour's start.
+export function matchedTessellation(lifted) {
+  const segCount = lifted[0].contour.segments.length;
+  const counts = [];
+  for (let j = 0; j < segCount; j++) {
+    let n = 1, prevs = lifted.map((r) => (j === 0 ? r.contour.start : r.contour.segments[j - 1].to));
+    lifted.forEach((r, k) => { n = Math.max(n, segNaturalCount(prevs[k], r.contour.segments[j])); });
+    counts.push(n);
+  }
+  return lifted.map((r) => {
+    const ring = [[r.contour.start[0], r.contour.start[1]]];
+    let prev = r.contour.start;
+    r.contour.segments.forEach((seg, j) => { for (const p of sampleSegN(prev, seg, counts[j])) ring.push(p); prev = seg.to; });
+    // stored contours close explicitly (last segment lands on start) — drop the closure
+    ring.pop();
+    return ring;
+  });
 }
