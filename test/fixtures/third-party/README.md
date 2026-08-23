@@ -1,9 +1,10 @@
-# Third-party STL corpus (wanted, not yet collected)
+# Third-party STL/3MF corpus
 
-`test/describe-roundtrip.test.js` discovers every `*.stl` file in this directory and
-runs `describe` against it. Right now the directory is empty, so that block of tests
-resolves to a single explanatory skip — not a silent pass, and not a failure. Drop the
-files below in and the coverage appears with no code change.
+`test/describe-roundtrip.test.js` discovers every `*.stl` and `*.3mf` file in this
+directory and runs `describe` against it. Drop a file in (and add its provenance row
+below) and the coverage appears with no code change; were the directory ever emptied,
+that block of tests resolves to a single explanatory skip — not a silent pass, and
+not a failure.
 
 ## Why this exists
 
@@ -19,7 +20,7 @@ green against a describer that has only ever seen its own kind of mesh.
 
 ## What to add
 
-Three permissively-licensed (**CC0** or **CC-BY**) STL files, chosen to span the v1
+Three permissively-licensed (**CC0** or **CC-BY**) files, chosen to span the v1
 feature vocabulary (see `docs/AUTHORING-PARTS.md` and `src/framework/oracle/describe.js`):
 
 1. **A prismatic machined bracket with holes** — flat faces, right-angle bends or ribs,
@@ -49,7 +50,10 @@ without a row here should be treated as not actually added.
 
 | File | Source URL | License | Notes |
 |------|------------|---------|-------|
-| _(none yet)_ | | | |
+| `sovol-sv06-led-mount.3mf` | https://www.printables.com/model/388560-sovol-sv06-led-mounting-bracket | CC0 (Creative Commons — Public Domain; confirmed via the Printables API, license id 7) | "Sovol SV06 LED Mounting Bracket" by ItsDarts. Foreign tessellation, mm units per its 3MF metadata. Prismatic-bracket-with-holes class. |
+| `minecraft-sword-bookmark.stl` | https://www.printables.com/model/1819376-minecraft-sword-bookmark | CC0 (Creative Commons — Public Domain; confirmed via the Printables API, license id 7) | "Minecraft sword bookmark" by grasshopper. Foreign tessellation, 288 tris. A single flat extrusion with an arbitrary polygon footprint: describe recognizes it fully (explainedArea 1.0, zero residual) while the volume score stays 0 — the cleanest live specimen of the v1 box/cylinder-footprint reconstruction limit. |
+| `printables-box.stl` | https://www.printables.com/model/101839-box | CC0 (Creative Commons — Public Domain; confirmed via the Printables API, license id 7) | "Box" by johny haky. Foreign tessellation, 1370 tris. The partial-reconstruction specimen: full area coverage, no truncation, and a ~24% volume score from a real extrusion/boss/pocket/chamfer mix — the number the reconstruction follow-ups are expected to raise. Also the corpus's genuinely foreign-meshed enclosure. |
+| `estop-enclosure-top.stl` | https://www.partforge.ai/parts/two-color-emergency-stop-enclosure-9b5c7fcf0d60 | Own work (repo owner's partforge-cloud export) | Shelled-enclosure class by geometry, but partforge's OWN tessellation (Manifold export) — a complexity fixture, not a foreign-mesher specimen. A genuinely foreign-meshed enclosure is still wanted. |
 
 ## Adding a file
 
@@ -58,3 +62,9 @@ without a row here should be treated as not actually added.
 2. Add a row to the table above with the direct source URL and the exact licence.
 3. Run `npx vitest run test/describe-roundtrip.test.js` — a `third-party <file> describes
    without an error` test appears automatically, with no change to the test file.
+
+A cautionary tale for step 1: the first candidate corpus included a Printables model
+whose page *looked* free but whose licence — per the Printables API — was their
+"Standard Digital File License", which does not permit redistribution. It was dropped
+before commit. When in doubt, query the API directly:
+`curl -s https://api.printables.com/graphql/ -H 'content-type: application/json' --data '{"query":"query($id: ID!){ print(id:$id){ name license{ name } } }","variables":{"id":"<model-id>"}}'`

@@ -5,6 +5,8 @@ import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { buildView } from "../src/framework/oracle/build.js";
 import { describe as describeMesh } from "../src/framework/oracle/describe.js";
 import { parseStl } from "../src/framework/geometry/stl-parse.js";
+import { parse3MF } from "../src/framework/geometry/threemf-parse.js";
+import { compactDescribe, LOW_COVERAGE } from "../src/framework/oracle/describe/report.js";
 import demo from "../src/parts/demo.js";
 import filletedBox from "../src/parts/filleted-box.js";
 import bracket from "../src/parts/bracket.js";
@@ -347,7 +349,56 @@ test("every accepted feature's volumeShare is a finite fraction", () => {
 // describer that has only ever seen its own kind of mesh — see
 // test/fixtures/third-party/README.md for what's wanted and why none is committed yet.
 const DIR = fileURLToPath(new URL("./fixtures/third-party/", import.meta.url));
-const thirdPartyFiles = readdirSync(DIR).filter((f) => f.endsWith(".stl"));
+const thirdPartyFiles = readdirSync(DIR).filter((f) => f.endsWith(".stl") || f.endsWith(".3mf"));
+
+// Per-file pins: what we measured each committed specimen to produce, firm about the
+// story each file was added to tell (the provenance table in the README names it).
+// describe is pure in the mesh bytes, so for fixed fixture bytes these are golden
+// values, not flaky thresholds. They are EXPECTED to break when the describer
+// improves — fragmentation merging should shrink the boss counts, footprint-general
+// reconstruction should lift the volume scores — and updating the pin to the better
+// number is the point of having it. A new file with no entry here still gets the
+// generic never-throws contract below.
+const EXPECT = {
+  "minecraft-sword-bookmark.stl": (r) => {
+    // The recognition-vs-reconstruction specimen: one flat extrusion, recognized
+    // completely (full area, zero residual, nothing truncated) while the volume score
+    // stays honestly near zero — its footprint is an arbitrary polygon, and v1
+    // reconstruction only rebuilds box/cylinder footprints.
+    expect(r.features.filter((f) => f.type === "extrusion")).toHaveLength(1);
+    expect(r.score.explainedArea).toBeGreaterThan(0.99);
+    expect(r.score.explainedVolumeFraction).toBeLessThan(0.1);
+    expect(r.residual.regions).toHaveLength(0);
+    expect(Object.values(r.truncated).every((hit) => hit === false)).toBe(true);
+  },
+  "sovol-sv06-led-mount.3mf": (r) => {
+    // The honest-degradation specimen: a real 53k-triangle download blows the
+    // acceptance budget and the surface cap, and the report SAYS so instead of
+    // quietly narrowing its claims.
+    expect(r.warning).toBe("budget-exceeded");
+    expect(r.truncated.surfaces).toBe(true);
+    expect(r.score.explainedArea).toBeGreaterThan(0.95);
+  },
+  "printables-box.stl": (r) => {
+    // The partial-reconstruction specimen: a real foreign-meshed box small enough to
+    // stay inside every cap and budget, recognized completely, and PARTIALLY rebuilt —
+    // the one corpus number the reconstruction follow-ups are expected to RAISE.
+    expect(r.warning).toBeUndefined();
+    expect(Object.values(r.truncated).every((hit) => hit === false)).toBe(true);
+    expect(r.score.explainedArea).toBeGreaterThan(0.99);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.2);
+    expect(r.features.some((f) => f.type === "pocket")).toBe(true);
+    expect(r.features.some((f) => f.type === "chamfer")).toBe(true);
+  },
+  "estop-enclosure-top.stl": (r) => {
+    // The complexity specimen: same degradation story at 87k triangles, plus a
+    // residual that is localised into regions rather than merely counted.
+    expect(r.warning).toBe("budget-exceeded");
+    expect(r.truncated.surfaces).toBe(true);
+    expect(r.score.explainedArea).toBeGreaterThan(0.95);
+    expect(r.residual.regions.length).toBeGreaterThan(0);
+  },
+};
 
 if (thirdPartyFiles.length === 0) {
   test.skip("third-party corpus is empty — see test/fixtures/third-party/README.md", () => {});
@@ -356,16 +407,24 @@ if (thirdPartyFiles.length === 0) {
     test(`third-party ${file} describes without an error`, () => {
       // Geometry enters the kernel the one way it can: register it as an import, then read
       // it back as a Solid — exactly what the framework's own import pipeline does.
-      const { positions, indices } = parseStl(readFileSync(`${DIR}${file}`));
+      const parse = file.endsWith(".3mf") ? parse3MF : parseStl;
+      const { positions, indices } = parse(readFileSync(`${DIR}${file}`));
       kernel._registerImport({ name: file, digest: file, positions, indices });
       const r = describeMesh(kernel, kernel.import(file), { digest: `tp-${file}` });
-      // Deliberately weak: we have no ground truth for these. What we CAN insist on is
-      // that the describer never throws, never claims coverage it cannot back, and always
-      // localises what it could not explain.
+      // The floor every file gets, known or not: the describer never throws, never
+      // claims coverage it cannot back, and always localises what it could not explain.
       expect(r.error).toBeUndefined();
       expect(r.score.explainedArea).toBeGreaterThan(0);
       expect(r.score.explainedArea).toBeLessThanOrEqual(1 + 1e-9);
       expect(r.residual.regions.every((g) => g.triangles > 0)).toBe(true);
+      // The low-coverage banner is R45's contract, held against REAL files: whenever
+      // the worse of the two coverage scores is low, the compact report must lead with
+      // the warning — an agent reading it truncated still sees the caveat first.
+      const worse = Math.min(r.score.explainedArea, r.score.explainedVolumeFraction);
+      if (worse < LOW_COVERAGE) {
+        expect(compactDescribe(r).warning.startsWith("LOW COVERAGE")).toBe(true);
+      }
+      EXPECT[file]?.(r);
     });
   }
 }
