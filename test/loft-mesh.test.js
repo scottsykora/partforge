@@ -1,7 +1,8 @@
 import { beforeAll, expect, test } from "vitest";
 import Module from "manifold-3d";
 import { loftMesh } from "../src/framework/geometry/loft.js";
-import { regularPolygon, roundedProfile } from "../src/framework/geometry/polygon.js";
+import { regularPolygon, roundedProfile, circleProfile } from "../src/framework/geometry/polygon.js";
+import { resolveLoftRings } from "../src/framework/geometry/loft-rings.js";
 
 // Raw-mesh test for the Manifold loft helper, mirroring helix-tube.test.js: boot the raw
 // manifold-3d module and assert the hand-built ring mesh is a valid watertight manifold,
@@ -60,11 +61,51 @@ test("closed:true builds a capless loop (topological loop: genus 1 vs the open l
   expect(loftMesh(wasm, rings, { closed: true }).genus()).toBe(1);  // last ring stitched to first → loop
 });
 
-// The arc-ring guard lives in resolveRings (shared by both backends), so one focused test
-// covers loft.js:21 for OCCT and Manifold alike: an arc profile (roundedProfile) is not a
-// point array and must be rejected up front — arc rings are extrude/prism-only in v1.
-test("an arc profile (roundedProfile) is rejected as a loft ring with a clear error", () => {
-  const arcRing = roundedProfile(SQ, 2); // true-arc contour, not a plain point array
-  expect(() => loftMesh(wasm, [{ polygon: arcRing, z: 0 }, { polygon: SQ, z: 10 }]))
-    .toThrow(/arc profile.*not supported/);
+// L-hexagon: non-convex, area 4·1 + 1·2 = 6. Centroid-fan caps would self-overlap here;
+// the triangulated caps must produce the exact prism volume.
+const L = [[0, 0], [4, 0], [4, 1], [1, 1], [1, 3], [0, 3]];
+
+test("non-convex (L-shaped) rings loft to the exact prism volume (triangulated caps)", () => {
+  const v = loftMesh(wasm, [{ polygon: L, z: 0 }, { polygon: L, z: 10 }]).volume();
+  expect(v).toBeCloseTo(60, 5);
+});
+
+test("CW non-convex rings still self-correct to a positive-volume solid", () => {
+  const LCW = [...L].reverse();
+  expect(loftMesh(wasm, [{ polygon: LCW, z: 0 }, { polygon: LCW, z: 10 }]).volume()).toBeCloseTo(60, 5);
+});
+
+test("an arc-contour ring (roundedProfile) now lofts — volume ≈ rounded-square prism", () => {
+  const rsq = roundedProfile(SQ, 2);
+  const v = loftMesh(wasm, [{ polygon: rsq, z: 0 }, { polygon: rsq, z: 10 }]).volume();
+  // exact area 10² − (4−π)·2² = 96.5663…; inscribed-facet deficit at LOFT_SEGS is < 0.03/ring
+  expect(v).toBeGreaterThan(963);
+  expect(v).toBeLessThan(965.7);
+});
+
+test("unequal-N point rings auto-resample instead of throwing (square → octagon)", () => {
+  const oct = regularPolygon(8, 5);
+  expect(() => loftMesh(wasm, [{ polygon: SQ, z: 0 }, { polygon: oct, z: 10 }])).not.toThrow();
+  const v = loftMesh(wasm, [{ polygon: SQ, z: 0 }, { polygon: oct, z: 10 }]).volume();
+  expect(v).toBeGreaterThan(0);
+  expect(loftMesh(wasm, [{ polygon: SQ, z: 0 }, { polygon: oct, z: 10 }]).genus()).toBe(0);
+});
+
+test("square → circle morph is watertight, genus 0, volume between the two prisms", () => {
+  const rings = [{ polygon: SQ, z: 0 }, { polygon: circleProfile(4), z: 10 }];
+  const m = loftMesh(wasm, rings);
+  expect(m.genus()).toBe(0);
+  const v = m.volume();
+  expect(v).toBeGreaterThan(Math.PI * 16 * 10 * 0.9); // > cylinder-ish lower bound
+  expect(v).toBeLessThan(100 * 10);                   // < square prism
+});
+
+test("resample-mode Manifold volume tracks the shared-ring prismatoid (parity anchor)", () => {
+  const rings = [{ polygon: SQ, z: 0 }, { polygon: circleProfile(4), z: 10 }];
+  const { resolved } = resolveLoftRings(rings);
+  const sh = (ring) => ring.reduce((a, [x, y], i) => { const [nx, ny] = ring[(i + 1) % ring.length]; return a + x * ny - nx * y; }, 0) / 2;
+  const mid = resolved[0].pts2d.map((p, i) => [(p[0] + resolved[1].pts2d[i][0]) / 2, (p[1] + resolved[1].pts2d[i][1]) / 2]);
+  const expected = (10 / 6) * (sh(resolved[0].pts2d) + 4 * sh(mid) + sh(resolved[1].pts2d));
+  const v = loftMesh(wasm, rings).volume();
+  expect(Math.abs(v - expected) / expected).toBeLessThan(0.005);
 });

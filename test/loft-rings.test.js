@@ -202,6 +202,30 @@ test("resample: a true arc contour (roundedProfile) resamples against a point ri
   for (const [cx, cy] of SQ) expect(b.some(([x, y]) => x === cx && y === cy)).toBe(true); // square corners still snap
 });
 
+import { resolveLoftRings } from "../src/framework/geometry/loft-rings.js";
+
+test("resolveLoftRings: poly-exact resolved pts2d are byte-identical to the legacy bake", () => {
+  const { mode, resolved } = resolveLoftRings([{ polygon: SQ, z: 0, scale: 2, rotate: 90 }, { polygon: SQ, z: 10 }]);
+  expect(mode).toBe("poly-exact");
+  expect(resolved[1].pts2d).toEqual(SQ); // identity transform: caller's numbers verbatim
+  expect(resolved[0].z).toBe(0);
+});
+
+test("resolveLoftRings: curve mode carries both pts2d and the baked contour", () => {
+  const rsq = roundedProfile(SQ, 2);
+  const { mode, resolved } = resolveLoftRings([{ polygon: rsq, z: 0 }, { polygon: rsq, z: 9, scale: 0.5 }]);
+  expect(mode).toBe("curve");
+  expect(resolved[0].pts2d.length).toBe(resolved[1].pts2d.length);
+  expect(resolved[0].contour.segments.filter((s) => s.via).length).toBe(4);
+});
+
+test("resolveLoftRings: resample mode has equal-N pts2d and null contours", () => {
+  const { mode, resolved } = resolveLoftRings([{ polygon: SQ, z: 0 }, { polygon: circleProfile(4), z: 9 }]);
+  expect(mode).toBe("resample");
+  expect(resolved[0].pts2d.length).toBe(resolved[1].pts2d.length);
+  expect(resolved[0].contour).toBeNull();
+});
+
 test("resample: corner snapping respects contest rule (closer corner wins via snapshot)", () => {
   // Construct a contested case: two corners competing for one sample position.
   // Use a simple 2-ring loft where the resampled ring passes between two corners.

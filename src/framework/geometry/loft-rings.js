@@ -228,3 +228,19 @@ export function resampleTessellation(lifted) {
     return resampleRing(rings[i], N, corners);
   });
 }
+
+// Orchestrates lift -> classify -> tessellate into the single shape both backends consume:
+// resolved[i] = { pts2d, z, contour } — pts2d for Manifold's hand-mesh, contour (curve mode
+// only) for OCCT's native wire loft. See docs/superpowers/plans/2026-08-23-shape2d-loft-design.md.
+export function resolveLoftRings(rings) {
+  const lifted = liftLoftRings(rings);
+  const { mode, hasCurve } = classifyLoftRings(lifted);
+  let ptRings;
+  if (mode === "poly-exact") ptRings = lifted.map((r) => r.pts ?? matchedTessellation([r, r])[0]);
+  else if (mode === "curve") ptRings = matchedTessellation(lifted);
+  else ptRings = resampleTessellation(lifted);
+  return {
+    mode, hasCurve,
+    resolved: lifted.map((r, i) => ({ pts2d: ptRings[i], z: r.z, contour: mode === "curve" ? r.contour : null })),
+  };
+}

@@ -1,79 +1,50 @@
-// Backend-shared loft support. resolveRings() validates the declarative ring specs and
-// applies each ring's in-plane transform ONCE, so both backends build the identical set
-// of placed cross-sections (Manifold hand-meshes them; OCCT turns each into a wire and
-// calls native loft). loftMesh() is the Manifold path — the helix-tube ring recipe
-// generalized to arbitrary polygon rings via the mesh-build.js helpers.
-import { regularPolygon } from "./polygon.js";
-import { isArcContour } from "./profile.js";
-import { sideQuads, fanCap, manifoldFromMesh, reverseWinding } from "./mesh-build.js";
+// Backend-shared loft support: resolveLoftRings (loft-rings.js) validates and
+// tessellates the declarative ring specs; loftMesh() is the Manifold path — stacked
+// rings stitched with side quads and closed with TRIANGULATED caps (wasm.triangulate),
+// so non-convex Shape2D rings cap correctly (the old centroid fan was star-convex-only).
+import { resolveLoftRings } from "./loft-rings.js";
+import { sideQuads, manifoldFromMesh, reverseWinding } from "./mesh-build.js";
 
-// A ring: { polygon:[[x,y],…] | (sides,radius), z, rotate?:deg, scale?:number|[sx,sy] }.
-// Returns [{ pts2d:[[x,y],…], z }] with scale-then-rotate(Z) baked into pts2d. Throws
-// on malformed input and on rings whose vertex counts differ (straight quad stitching
-// needs a shared N — no re-sampling), so an LLM gets a loud, specific error.
-export function resolveRings(rings) {
-  if (!Array.isArray(rings) || rings.length < 2)
-    throw new Error("loft: rings must be an array of at least 2 rings");
-  const out = rings.map((r, i) => {
-    if (!r || typeof r !== "object") throw new Error(`loft: ring ${i} must be an object { polygon|sides+radius, z }`);
-    if (!Number.isFinite(r.z)) throw new Error(`loft: ring ${i} needs a finite z`);
-    let pts = r.polygon;
-    if (isArcContour(pts)) // arc profiles (roundedProfile) are extrude/prism-only in v1
-      throw new Error(`loft: ring ${i} is an arc profile — loft rings must be a point array (arc rings are not supported yet; use prism/extrude for true STEP arcs)`);
-    if (!pts && Number.isFinite(r.sides) && Number.isFinite(r.radius)) pts = regularPolygon(r.sides, r.radius);
-    if (!Array.isArray(pts) || pts.length < 3)
-      throw new Error(`loft: ring ${i} needs polygon:[[x,y],…] (≥3 points) or sides+radius shorthand`);
-    const s = r.scale ?? 1;
-    const [sx, sy] = Array.isArray(s) ? s : [s, s];
-    const rot = ((r.rotate ?? 0) * Math.PI) / 180, cos = Math.cos(rot), sin = Math.sin(rot);
-    const pts2d = pts.map(([x, y]) => {
-      const X = x * sx, Y = y * sy;                 // scale in-plane, then rotate about Z
-      return [X * cos - Y * sin, X * sin + Y * cos];
-    });
-    return { pts2d, z: r.z };
-  });
-  const N = out[0].pts2d.length;
-  for (const r of out) if (r.pts2d.length !== N)
-    throw new Error("loft: every ring must have the same number of points (straight quad stitching, no re-sampling)");
-  return out;
+const shoelace = (ring) => ring.reduce((a, [x, y], i) => {
+  const [nx, ny] = ring[(i + 1) % ring.length];
+  return a + x * ny - nx * y;
+}, 0) / 2;
+
+// Triangulated end cap. Winding must stay CONSISTENT with the side walls: a CCW ring's
+// top cap faces +Z and its bottom cap −Z; a CW ring (legacy point lists — walls come
+// out inverted and the whole-mesh volume check below flips everything at once) gets
+// both caps inverted too, so the mesh is orientable either way.
+function triCap(wasm, Tr, ringStart, pts2d, bottom) {
+  const ccw = shoelace(pts2d) >= 0;
+  const ring = ccw ? pts2d : [...pts2d].reverse();
+  const tris = wasm.triangulate([ring], 1e-9);
+  const remap = (i) => ringStart + (ccw ? i : pts2d.length - 1 - i);
+  const flip = bottom !== !ccw; // XOR: see winding table in the test file
+  for (const t of tris) {
+    const a = remap(t[0]), b = remap(t[1]), c = remap(t[2]);
+    if (flip) Tr.push(a, c, b); else Tr.push(a, b, c);
+  }
 }
 
-const centroid = (pts2d, z) => {
-  let cx = 0, cy = 0;
-  for (const [x, y] of pts2d) { cx += x; cy += y; }
-  return [cx / pts2d.length, cy / pts2d.length, z];
-};
-
-// Manifold path: stack the resolved rings, stitch side quads, and (unless closed) fan a
-// cap over each end from its centroid. Caps assume star-convex-from-centroid rings, which
-// covers regular n-gons and every polygon.js helper. Returns a raw Manifold (caller T()s).
-//
-// NOTE on `ruled`: the OCCT backend's native loft honours `ruled:false` (a smooth C2 blend
-// between rings); this hand-mesh always emits faceted straight walls between consecutive
-// rings and ignores `ruled`. So `ruled:false` previews faceted here and only exports the
-// true smooth surface via the OCCT (STEP) path — documented on the loft doc row.
 export function loftMesh(wasm, rings, { closed = false } = {}) {
-  const resolved = resolveRings(rings);
+  const { resolved } = Array.isArray(rings) ? resolveLoftRings(rings) : rings;
   const N = resolved[0].pts2d.length;
   const V = [];
   for (const { pts2d, z } of resolved) for (const [x, y] of pts2d) V.push(x, y, z);
   const Tr = [];
   sideQuads(Tr, resolved.length, N, closed);
   if (!closed) {
-    const first = resolved[0], lastR = resolved[resolved.length - 1];
-    fanCap(V, Tr, 0, N, centroid(first.pts2d, first.z), true);                    // bottom faces −Z
-    fanCap(V, Tr, (resolved.length - 1) * N, N, centroid(lastR.pts2d, lastR.z), false); // top faces +Z
+    triCap(wasm, Tr, 0, resolved[0].pts2d, true);
+    triCap(wasm, Tr, (resolved.length - 1) * N, resolved[resolved.length - 1].pts2d, false);
   }
   let out = manifoldFromMesh(wasm, V, Tr);
-  // The mesh helpers wind for CCW rings ordered along +Z. CW-wound rings or descending-z
-  // rings invert every face, yielding a negative-volume solid that ofMesh imports without
-  // complaint but that behaves BACKWARDS under booleans (cut adds material). Detect the
-  // inversion and rebuild with reversed winding so loft is winding/z-order agnostic — this
-  // matches OCCT, whose native loft always returns a positively-oriented solid.
-  if (out.volume() < 0) {
+  if (out.volume() < 0) {          // CW rings / descending z: rebuild outward (unchanged)
     out.delete?.();
     reverseWinding(Tr);
     out = manifoldFromMesh(wasm, V, Tr);
   }
   return out;
 }
+
+// Transitional shim for occt-backend.js (removed in the OCCT task).
+export const resolveRings = (rings) => resolveLoftRings(rings).resolved;
