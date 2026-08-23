@@ -8,8 +8,8 @@
 //   resample   — structurally different rings: shared arc-length resample, both
 //                backends loft the IDENTICAL rings (parity by construction).
 import { regularPolygon } from "./polygon.js";
-import { pointsToContour, reverseContour, closeContourGap, arcGeometry, sampleBezier } from "./profile.js";
-import { rotateProfile, scaleProfile, contourIsCCW, cubicAt } from "./contour-ops.js";
+import { pointsToContour, reverseContour, closeContourGap, arcGeometry, sampleBezier, tessellateContour } from "./profile.js";
+import { rotateProfile, scaleProfile, contourIsCCW, cubicAt, profileCorners } from "./contour-ops.js";
 
 export const LOFT_SEGS = 64; // fixed pure-JS LOD for curve rings (hull.js precedent)
 
@@ -136,5 +136,92 @@ export function matchedTessellation(lifted) {
     // stored contours close explicitly (last segment lands on start) — drop the closure
     ring.pop();
     return ring;
+  });
+}
+
+const shoelace = (ring) => ring.reduce((a, [x, y], i) => {
+  const [nx, ny] = ring[(i + 1) % ring.length];
+  return a + x * ny - nx * y;
+}, 0) / 2;
+
+// Deterministic seam: the outermost crossing of the +X ray from the ring's centroid.
+// Returns { edge, t } — a parametric position on the ring's edge list. Falls back to
+// all crossings of the full horizontal line, then to vertex 0, so it is total.
+const seamOf = (ring) => {
+  let cx = 0, cy = 0;
+  for (const [x, y] of ring) { cx += x; cy += y; }
+  cx /= ring.length; cy /= ring.length;
+  let best = null;
+  for (let pass = 0; pass < 2 && !best; pass++) {
+    for (let i = 0; i < ring.length; i++) {
+      const [px, py] = ring[i], [qx, qy] = ring[(i + 1) % ring.length];
+      if ((py <= cy) === (qy <= cy)) continue;            // half-open: each crossing once
+      const t = (cy - py) / (qy - py);
+      const x = px + t * (qx - px);
+      if (pass === 0 && x <= cx) continue;                // pass 0: +X ray only
+      if (!best || x > best.x) best = { edge: i, t, x };
+    }
+  }
+  return best ?? { edge: 0, t: 0, x: ring[0][0] };
+};
+
+// Arc-length resample one CCW ring to N points starting at its seam, then snap each
+// sharp corner onto its nearest sample (closest corner wins a contested sample).
+const resampleRing = (ring, N, corners) => {
+  const seam = seamOf(ring);
+  const pts = [];
+  // unroll the ring into an open polyline starting exactly at the seam point
+  const start = [ring[seam.edge][0] + seam.t * (ring[(seam.edge + 1) % ring.length][0] - ring[seam.edge][0]),
+                 ring[seam.edge][1] + seam.t * (ring[(seam.edge + 1) % ring.length][1] - ring[seam.edge][1])];
+  pts.push(start);
+  for (let k = 1; k <= ring.length; k++) {
+    const i = (seam.edge + k) % ring.length;
+    pts.push([ring[i][0], ring[i][1]]);
+  }
+  // pts is now start → all vertices → start's edge-begin; close it back to start
+  pts.push([start[0], start[1]]);
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const L = cum[cum.length - 1];
+  const out = [];
+  let seg = 0;
+  for (let k = 0; k < N; k++) {
+    const target = (k * L) / N;
+    while (seg < cum.length - 2 && cum[seg + 1] < target) seg++;
+    const span = cum[seg + 1] - cum[seg] || 1;
+    const t = (target - cum[seg]) / span;
+    out.push([pts[seg][0] + t * (pts[seg + 1][0] - pts[seg][0]), pts[seg][1] + t * (pts[seg + 1][1] - pts[seg][1])]);
+  }
+  // corner snapping: a sharp corner within one sample-spacing of a sample replaces it
+  const spacing = L / N;
+  const owner = new Map(); // sample index -> snap distance
+  for (const c of corners) {
+    let bi = -1, bd = Infinity;
+    for (let i = 0; i < out.length; i++) {
+      const d = Math.hypot(out[i][0] - c[0], out[i][1] - c[1]);
+      if (d < bd) { bd = d; bi = i; }
+    }
+    if (bd < spacing && (!owner.has(bi) || bd < owner.get(bi))) {
+      out[bi] = [c[0], c[1]];
+      owner.set(bi, bd);
+    }
+  }
+  return out;
+};
+
+// Resample mode: every ring tessellated at the fixed LOD, resampled to a common N.
+export function resampleTessellation(lifted) {
+  const rings = lifted.map((r) => {
+    let ring = r.pts ?? tessellateContour(r.contour, LOFT_SEGS);
+    // tessellateContour of a contour returns an explicitly closed ring — drop the closure
+    if (ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1])
+      ring = ring.slice(0, -1);
+    if (shoelace(ring) < 0) ring = [...ring].reverse();
+    return ring;
+  });
+  const N = Math.max(...rings.map((r) => r.length));
+  return lifted.map((r, i) => {
+    const corners = profileCorners(r.contour).map((c) => c.point);
+    return resampleRing(rings[i], N, corners);
   });
 }

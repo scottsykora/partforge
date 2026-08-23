@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { liftLoftRings, classifyLoftRings, loftRingsKey, LOFT_SEGS } from "../src/framework/geometry/loft-rings.js";
-import { roundedProfile, regularPolygon } from "../src/framework/geometry/polygon.js";
+import { roundedProfile, regularPolygon, circleProfile } from "../src/framework/geometry/polygon.js";
 
 const SQ = [[-5, -5], [5, -5], [5, 5], [-5, 5]];
 const fakeShape = (regions) => ({ _shape2d: true, _regions: regions, _hash: "abc123", toContours: () => JSON.parse(JSON.stringify(regions)) });
@@ -148,4 +148,43 @@ test("matched tessellation: cubic (Bézier) contour at two scales → equal N, c
     expect(b[i][0]).toBeCloseTo(a[i][0] * 0.5, 9);
     expect(b[i][1]).toBeCloseTo(a[i][1] * 0.5, 9);
   }
+});
+
+import { resampleTessellation } from "../src/framework/geometry/loft-rings.js";
+
+test("resample: square → circle rings come out equal-N, CCW, seam on the +X axis", () => {
+  const lifted = liftLoftRings([{ polygon: SQ, z: 0 }, { polygon: circleProfile(4), z: 9 }]);
+  const [sq, ci] = resampleTessellation(lifted);
+  expect(sq.length).toBe(ci.length);
+  // seams: first sample of each ring sits on its +X ray from centroid (y ≈ 0 for both)
+  expect(sq[0][1]).toBeCloseTo(0, 9);
+  expect(sq[0][0]).toBeCloseTo(5, 9);          // square crosses +X at x = 5
+  expect(ci[0][1]).toBeCloseTo(0, 6);
+  // CCW: shoelace positive
+  const area = (ring) => ring.reduce((a, [x, y], i) => { const [nx, ny] = ring[(i + 1) % ring.length]; return a + x * ny - nx * y; }, 0) / 2;
+  expect(area(sq)).toBeGreaterThan(0);
+  expect(area(ci)).toBeGreaterThan(0);
+});
+
+test("resample: the square's four corners survive exactly (corner snapping)", () => {
+  const lifted = liftLoftRings([{ polygon: SQ, z: 0 }, { polygon: circleProfile(4), z: 9 }]);
+  const [sq] = resampleTessellation(lifted);
+  for (const [cx, cy] of SQ)
+    expect(sq.some(([x, y]) => x === cx && y === cy)).toBe(true);
+});
+
+test("resample: N is the max ring vertex count", () => {
+  const oct = regularPolygon(8, 5);
+  const lifted = liftLoftRings([{ polygon: SQ, z: 0 }, { polygon: oct, z: 9 }]);
+  const rings = resampleTessellation(lifted);
+  expect(rings[0].length).toBe(8);
+  expect(rings[1].length).toBe(8);
+});
+
+test("resample: CW input ring is normalized CCW before resampling", () => {
+  const CW = [[-5, -5], [-5, 5], [5, 5], [5, -5]];
+  const lifted = liftLoftRings([{ polygon: CW, z: 0 }, { polygon: circleProfile(4), z: 9 }]);
+  const [sq] = resampleTessellation(lifted);
+  const area = (ring) => ring.reduce((a, [x, y], i) => { const [nx, ny] = ring[(i + 1) % ring.length]; return a + x * ny - nx * y; }, 0) / 2;
+  expect(area(sq)).toBeGreaterThan(0);
 });
