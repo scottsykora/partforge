@@ -198,9 +198,23 @@ test("a rotated reference part round-trips to a comparable feature set", () => {
 // ill-conditioned at its compound corners, independent of exactly how correctly the
 // tolerance scale is computed. Removed the per-rotation dominant-feature assertion
 // that stood here rather than keep chasing whichever tolerance value makes it pass
-// today; the ordinary boss-and-pocket-plate test below is the fix's real, stable
-// regression coverage, and the count-based rotation test above still exercises
-// filletedBox itself (coarser, tolerant of exactly this kind of attribution noise).
+// today; the count-based rotation test above still exercises filletedBox itself
+// (coarser, tolerant of exactly this kind of attribution noise).
+//
+// REPLACEMENT COVERAGE, stated explicitly rather than left implicit (fix round 5 —
+// a removed test must never be silent): `"an ordinary boss-and-pocket plate stays
+// correctly classified across rotation"`, below, covers the SAME regression (R57 —
+// the CRITICAL no-adjacency-check bug this whole comment block documents) on a part
+// this fix's own correctness does not require filletedBox's compound corners for.
+// The specific assertions that catch a type-swap regression, by name: for each
+// rotation tried, `r.features.find(f => f.type === "boss")` and the matching
+// `.find(f => f.type === "pocket")` must each find a real feature (`toBeDefined()`)
+// — if the old bug's failure mode reappeared here (a boss's plane matching an
+// unrelated co-oriented surface and getting typed "pocket", or vice versa), one of
+// these two `.find()` calls would return `undefined`, since the SAME underlying
+// feature cannot satisfy both filters at once — and `boss.depth`/`pocket.depth`
+// each `toBeCloseTo(3, 1)` catches a subtler failure: the RIGHT type reported with
+// the WRONG (mismatched-surround) depth, which a type-only check would miss.
 
 // An ordinary part — a plate with a boss and a pocket at the same offset magnitude,
 // side by side — as a ground-truth sanity check independent of filletedBox's compound

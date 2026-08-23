@@ -19,15 +19,38 @@
 import { fitPlane, fitCylinder, fitCone, fitSphere, fitTorus, deviationOf, intrinsicFrame } from "./fit.js";
 import { ransacPatches } from "./ransac.js";
 
-// Fit acceptance band, as a fraction of the mesh's bbox diagonal. A CAD
-// tessellation's chord error is bounded and small; this sits an order of magnitude
-// above it so faceting never breaks a surface apart, and well below any real
-// feature size so two genuinely different surfaces never merge.
+// Fit acceptance band, as a fraction of the mesh's own characteristic length
+// (`intrinsicFrame`'s `diagonal`, fit.js). A CAD tessellation's chord error is
+// bounded and small; this sits an order of magnitude above it so faceting never
+// breaks a surface apart, and well below any real feature size so two genuinely
+// different surfaces never merge.
 // Exported: surface-graph.js's post-merge residual guard needs the identical
 // fraction, not a second constant that could quietly drift from this one — a
 // merged patch is only trustworthy if it clears the SAME acceptance band region
 // growing itself used to validate its two halves.
-export const FIT_TOL_FRAC = 3e-4;
+//
+// The value below (fix round 5) is a ONE-TIME DELIBERATE RETUNE, not an
+// invariant, and is documented as such rather than left as `3e-4` unexplained.
+// This constant was originally tuned against `diagonal` computed as a
+// bounding-box extent (a max-extent measure); `diagonal` is now a radius of
+// gyration (`2 * sqrt(trace/n)`, an RMS measure — fit.js's `intrinsicFrame`),
+// which reads SMALLER on the same mesh, and fit.js deliberately does not
+// compensate for that itself (that function's own comment explains why: the
+// ratio between the two measures is shape-dependent, so no single constant
+// folded into the primitive could keep every part's effective tolerance
+// unchanged; `filletedBox` alone needed a 9% different correction than the
+// reference shape this value IS calibrated against). Measured on that
+// reference shape (a 30x20x14mm hollow box, already correct — asymmetric, no
+// PCA degeneracy — under the OLD bbox-diagonal formula): old diagonal
+// 38.678159mm, new (bare radius-of-gyration) diagonal 35.552778mm, ratio
+// 1.0879082239773115. `3e-4 * 1.0879082239773115 = 3.263725e-4` is the value
+// that reproduces the SAME effective millimetre tolerance on THAT shape as the
+// original `3e-4` did against the old, larger `diagonal` — carrying the old
+// tuning forward onto the new scale, not preserving it everywhere in general.
+// Other shapes will see a real, expected, previously-reported shift (see
+// task-15-report.md, fix rounds 3-4) — this is a documented starting point for
+// the constant, not a claim that segmentation is now unchanged.
+export const FIT_TOL_FRAC = 3.263725e-4;
 // Reserved dial, not currently load-bearing: every seed is a single triangle,
 // three points always define SOME plane exactly (rms/maxDev = 0), so `bestFit`
 // (with MIN_PTS.plane = 3) can only fail on a seed whose points are so close to

@@ -83,13 +83,22 @@ const SHELL_READING_AGREE_FRAC = 0.1;
 // non-cube solid's 66.7%.
 const SHELL_INLIER_FRAC = 0.85;
 // The agreed thickness must be small relative to the part's own size, or "consistent"
-// is just describing a solid. Measured: `boxMesh(10,10,10)` (a solid cube) reads a
-// perfectly consistent 10mm from all six faces — 10 / (10*sqrt(3)) = 57.7% of its own
-// bbox diagonal. `hollowBoxMesh(20,20,20,2)` reads 2 / (20*sqrt(3)) = 5.8%;
-// `openTrayMesh(20,20,10,2)` reads 2 / 30 = 6.7% (bbox diagonal
-// sqrt(20^2+20^2+10^2) = 30). Set at 25%, comfortably below the cube's 57.7% and
-// well above either genuine shell's own reading.
-const SHELL_MAX_RELATIVE_THICKNESS = 0.25;
+// is just describing a solid. Originally measured against a world/PCA bbox diagonal:
+// `boxMesh(10,10,10)` (a solid cube) reads a perfectly consistent 10mm from all six
+// faces — 10 / (10*sqrt(3)) = 57.7% of its own bbox diagonal. `hollowBoxMesh(20,20,20,2)`
+// reads 2 / (20*sqrt(3)) = 5.8%; `openTrayMesh(20,20,10,2)` reads 2 / 30 = 6.7% (bbox
+// diagonal sqrt(20^2+20^2+10^2) = 30). Set at 25% against those numbers, comfortably
+// below the cube's 57.7% and well above either genuine shell's own reading.
+//
+// Retuned (fix round 5, ONE-TIME DELIBERATE, not an invariant — see `FIT_TOL_FRAC`'s
+// comment in segment.js for the full reasoning, which applies identically here):
+// `diag` (this file, below) is `intrinsicFrame`'s `diagonal`, now a bare radius of
+// gyration with no calibration folded in, reading smaller than the bbox-diagonal
+// figures above on the same mesh. `0.25 * 1.0879082239773115 = 0.271977` carries this
+// constant's original tuning forward onto the new scale, measured on the same
+// reference shape `FIT_TOL_FRAC` uses; it is not a claim that every part's shell
+// gate is unchanged.
+const SHELL_MAX_RELATIVE_THICKNESS = 0.271977;
 // Sample budget per plane surface — a handful of its own faces, not every one (that is
 // min-wall.js's job, at whole-mesh scale, with its own much larger budget). Once a
 // surface is already known to be one plane, a few widely-spread samples are enough to

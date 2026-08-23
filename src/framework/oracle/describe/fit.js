@@ -138,37 +138,23 @@ export function jacobiEigen(m) {
 // covariance `cov` already being built for `axes`) is invariant under ANY
 // rotation by construction — a similarity transform preserves trace — so this
 // needs no eigen-decomposition and has NO degenerate case to worry about, unlike
-// the bbox-diagonal version it replaces. The `2x` is a calibration, not an
-// arbitrary fudge: worked out exactly for a box's own 8 corners, uniformly
-// weighted, each axis's coordinate is either 0 or its own extent L, so
-// Var = L^2/4 per axis (E[x] = L/2, E[x^2] = L^2/2) and
-// trace(cov)/n = (Lx^2+Ly^2+Lz^2)/4 — i.e. `2 * sqrt(trace/n)` recovers a
-// SOLID box's own true diagonal exactly, for its 8 corners alone.
+// the bbox-diagonal version it replaces.
 //
-// RESCALE (fix round 4 — the `2x` alone was not enough): a real mesh is never
-// just 8 corners, and the calibration target that actually matters is not the
-// idealized solid-corner case, it is "does an ALREADY-CORRECT part's effective
-// tolerance stay the SAME as under the old formula" — the old PCA-bbox diagonal
-// was already right (not degenerate, no orientation dependence) on any
-// asymmetric part, so switching formulas must not silently retune segmentation
-// on those parts as a side effect of fixing the ones that were wrong. Measured
-// directly on this suite's own asymmetric reference shape — a 30x20x14mm
-// hollow box's welded 16-corner set (8 outer + 8 inner, the shape
-// describe-roundtrip.test.js's shell test and fit round 1's filleted-box fix
-// were built and verified against) — the OLD PCA-bbox diagonal read 38.678mm
-// there and the bare `2*sqrt(trace/n)` reads 35.553mm: a real 8.8% gap, because
-// 16 points spread between an outer and inner shell is not the pure 8-corner
-// case the `2x` above was derived for. `RESCALE = 38.678/35.553 = 1.08791`
-// closes that gap on this reference shape to within float noise, so every
-// downstream tolerance (`FIT_TOL_FRAC`, `SHELL_MAX_RELATIVE_THICKNESS`,
-// `weldTolerance`'s `1e-7`, `torusMinorRadius`'s `rMax` — none of which were
-// touched individually) keeps its PRESENT effective millimetre value on parts
-// that were already correct, baked into `diagonal` itself once here rather than
-// as four separate, driftable constant edits. A genuinely near-cubic or
-// near-cylindrical part — where the OLD formula was itself unstable, and
-// therefore wrong regardless of this rescale — is expected to still come out
-// different: that difference is the fix working, not a miscalibration.
-const RESCALE = 1.0879082239773115; // 38.678 (old, asymmetric ref) / 35.553 (new, same)
+// This function returns EXACTLY that quantity, no calibration folded in (fix
+// round 5 — a round 4 version multiplied the result by a constant measured on
+// one fixture, so that shape's effective tolerance matched the old bbox-diagonal
+// formula's; withdrawn on review, because the ratio between a bounding-box
+// diagonal and a radius of gyration is SHAPE-DEPENDENT — measured directly, the
+// reference fixture needed 1.08791 and filletedBox's own true ratio was 1.18510,
+// ~9% apart, driven by vertex DENSITY and DISTRIBUTION (3631 fillet vertices vs.
+// 16 sparse corners), not by anything the reference shape's own number could
+// capture for a different mesh. No single constant here can make "effective
+// tolerance unchanged" true in general, so this function does not claim to: it
+// is a geometry primitive, and a geometry primitive should return the quantity
+// it claims to return. Any one-time recalibration needed to keep a SPECIFIC
+// downstream constant's effective value close to its pre-Task-15 tuning belongs
+// at that constant, documented as a deliberate retune — see `FIT_TOL_FRAC`
+// (segment.js) for the one this codebase actually carries.
 //
 // HISTORY, kept because the mistake is instructive: an earlier version of this
 // function measured `diagonal` as a bounding-box extent projected onto `axes`
@@ -217,7 +203,7 @@ export function intrinsicFrame(verts) {
   }
   cov[1][0] = cov[0][1]; cov[2][0] = cov[0][2]; cov[2][1] = cov[1][2];
   const { vectors: axes } = jacobiEigen(cov);
-  return { axes, diagonal: 2 * Math.sqrt(trace / n) * RESCALE };
+  return { axes, diagonal: 2 * Math.sqrt(trace / n) };
 }
 
 // Just the diagonal, for callers (surface-graph.js) that don't also need the axes.

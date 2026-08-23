@@ -23,17 +23,26 @@ const cross = (a, b) => [a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1]
 const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
 const norm = (a) => Math.hypot(a[0], a[1], a[2]);
 
-// Weld tolerance defaults to a fraction of the bbox diagonal rather than an
-// absolute number: a 2mm part and a 2m part both need welding, and an absolute
-// epsilon is wrong for one of them. Callers with a known chord tolerance override.
-// intrinsicScale() (fit.js), not a plain world-axis min/max, for the same reason
-// segment.js's fit tolerance switched: a naive AABB diagonal is not the same number
-// under rotation, so this weld epsilon would silently drift with orientation too —
-// the effect is negligible at this fraction's scale (nanometres either way), but the
-// convention should not have a second, differently-computed copy for the next reader
-// to (wrongly) treat as a template.
+// Weld tolerance defaults to a fraction of the mesh's own characteristic length
+// rather than an absolute number: a 2mm part and a 2m part both need welding, and an
+// absolute epsilon is wrong for one of them. Callers with a known chord tolerance
+// override. intrinsicScale() (fit.js), not a plain world-axis min/max, for the same
+// reason segment.js's fit tolerance switched: a naive AABB diagonal is not the same
+// number under rotation, so this weld epsilon would silently drift with orientation
+// too — the effect is negligible at this fraction's scale (nanometres either way),
+// but the convention should not have a second, differently-computed copy for the
+// next reader to (wrongly) treat as a template.
+//
+// The `1e-7` fraction is retuned the same one-time, deliberate way `FIT_TOL_FRAC`
+// (segment.js) is, and for the identical reason: `intrinsicScale` now returns a bare
+// radius of gyration (no calibration folded in — fit.js's `intrinsicFrame`), smaller
+// than the bbox-diagonal figure this fraction was original tuned against.
+// `1e-7 * 1.0879082239773115 = 1.0879082e-7` carries that tuning forward onto the new
+// scale on the same reference shape `FIT_TOL_FRAC`'s comment measures — practically
+// inconsequential at this magnitude (nanometres either way), kept consistent with the
+// other retuned constants so a future reader has one pattern to copy, not two.
 function weldTolerance(triples) {
-  return intrinsicScale(triples.flat(2)) * 1e-7;
+  return intrinsicScale(triples.flat(2)) * 1.0879082e-7;
 }
 
 export function buildTopology(mesh, opts = {}) {
