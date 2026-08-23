@@ -69,12 +69,14 @@ export function acceptCandidates(kernel, source, candidates, opts = {}) {
   // rejected feature and a budget-starved one both report `volumeShare: null` and
   // are otherwise indistinguishable, which matters to a rebuilder deciding whether to
   // retry with a bigger `--budget` or accept that a feature genuinely doesn't fit.
-  // NOTE on the one case this collapses: a `cut` candidate attempted while
-  // `current === null` (`"nothing to cut from yet"`, below) is marked attempted here
-  // even though no gain was ever actually computed for it — it consumed a turn and
-  // produced nothing, which reads the same as "tried and didn't fit" from a report's
-  // point of view. It is NOT distinguished as a fourth "waiting on a base" reason;
-  // three reasons (not-proposed/budget/rejected) is what was asked for.
+  // NOTE on the one case this deliberately does NOT collapse (round 3 CRITICAL fix): a
+  // `cut` candidate that gets a turn while `current === null` (`"nothing to cut from
+  // yet"`, below) never has a gain computed for it, so it is NOT added here — only a
+  // candidate that actually ran a boolean (a real gain measurement) or whose `.build()`
+  // genuinely threw counts as attempted. Earlier this Set included the no-base-yet case
+  // too, which made a starved `--budget` report `"rejected"` for a feature the search
+  // simply never reached with a base to cut from — provably wrong, since raising the
+  // budget alone (no code change) turned that same feature into a real, positive share.
   const attempted = new Set();
 
   // The single bracket. `describe:accept` is deliberately its own partition name, not a
@@ -107,19 +109,34 @@ export function acceptCandidates(kernel, source, candidates, opts = {}) {
         // (1 accepted union then 1 accepted cut) reports `budgetSpent: 9` against
         // 12 real boolean calls counted by wrapping the kernel.
         let trial;
+        let noBaseYet = false;               // "nothing to cut from yet" — no gain measured
         try {
           const piece = cand.build();
-          trial = current === null
-            ? (cand.op === "cut" ? null : piece)      // nothing to cut from yet
-            : cand.op === "cut" ? current.cut(piece)
-            : current.union(piece);
+          if (current === null && cand.op === "cut") {
+            trial = null;
+            noBaseYet = true;
+          } else {
+            trial = current === null ? piece
+              : cand.op === "cut" ? current.cut(piece)
+              : current.union(piece);
+          }
         } catch {
           // A candidate whose geometry will not build is not an error — it is simply
           // not a description of this mesh. Drop it and keep going.
           trial = null;
         }
         attempts++;
-        attempted.add(cand);
+        // Only count this as a real attempt (accept.js's own contract with describe.js
+        // — see the Set's declaration comment) when a gain was actually measured or the
+        // candidate's own geometry genuinely failed to build. `noBaseYet` is neither: no
+        // boolean ever ran and no verdict was reached, so leaving it out of `attempted`
+        // is what lets describe.js report `"budget"` instead of `"rejected"` for a cut
+        // candidate that only ever got a turn before any base body existed — round 3's
+        // CRITICAL finding: with the old blanket `attempted.add(cand)` above, THIS is
+        // exactly the case that reported `"rejected"` (`--budget 2`, the washer fixture)
+        // for a feature that becomes a real 19% share at `--budget 3` — the search never
+        // rejected it, it just never got there.
+        if (!noBaseYet) attempted.add(cand);
         if (!trial) continue;
         const xor = xorVolume(trial, source);
         const gain = currentXor - xor;

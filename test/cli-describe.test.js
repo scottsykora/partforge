@@ -104,6 +104,28 @@ test("`not proposed` and `budget` render distinctly on the washer at a starved b
   expect(out).toMatch(/f2\s+revolve.*share n\/a \(not proposed\)/);
 });
 
+// Fix round 3, CRITICAL: `--budget 1` alone couldn't catch this — with only one
+// candidate attempt total, the loop never even reaches the state (`current !== null`,
+// i.e. some OTHER candidate already accepted this round) that the bug depends on.
+// `--budget 2` is the smallest budget where f0 (the union candidate establishing a
+// base body) gets accepted in round 1 and f1 (the cut candidate) then gets a real turn
+// in round 2 but still runs out of budget before a gain is ever measured for it — the
+// exact "nothing to cut from yet, and no budget left after that" case accept.js's
+// `noBaseYet` guard exists for. Before that guard, this candidate was wrongly marked
+// `attempted` the moment it burned its only turn with no base to cut from, so
+// describe.js reported `"rejected"` — a permanent, budget-proof verdict — even though
+// `--budget 3` (below) shows the very same feature resolving to a real 19% share.
+test("`--budget 2` reports the un-reached washer hole as `budget`, not the stronger " +
+     "(and false) `rejected` — raising the budget one more step changes the outcome, " +
+     "which `rejected` must never do", () => {
+  const outStarved = run(["describe", "test/fixtures/describe-washer-part.js#scan", "--budget", "2"]);
+  expect(outStarved).toMatch(/f1\s+throughHole.*share n\/a \(budget\)/);
+  expect(outStarved).not.toMatch(/f1\s+throughHole.*share n\/a \(rejected\)/);
+
+  const outResolved = run(["describe", "test/fixtures/describe-washer-part.js#scan", "--budget", "3"]);
+  expect(outResolved).toMatch(/f1\s+throughHole.*share \d+\.\d%/);
+});
+
 test("the same washer feature that was `budget`-starved gets a real share once the " +
      "budget is generous enough to reach it — proving `budget` really meant starved, " +
      "not permanently unreconstructable", () => {

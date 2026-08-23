@@ -396,7 +396,26 @@ function detectSymmetry(features, bounds, tol) {
 // along the segment -- happened to compute it.
 function canonicalPlane(n, offset) {
   let idx = 0;
-  for (let k = 1; k < 3; k++) if (Math.abs(n[k]) > Math.abs(n[idx])) idx = k;
+  // `+ TOL_FRAC` (round 3 IMPORTANT fix), not a bare `>`: a true mirror plane at ~45deg
+  // to the frame has two normal components equal in magnitude, so two independently
+  // -computed proposing pairs for the SAME plane can land on opposite sides of this
+  // comparison from float noise alone -- one picks idx=0, the other idx=1, and each
+  // then sign-fixes against a DIFFERENT component, canonicalizing to opposite-sign
+  // normals that never merge in samePlane/planeBucketKey (the same plane reported
+  // twice, each half failing SYMMETRY_EVIDENCE_MIN alone instead of confirming each
+  // other). Reproduced directly against a real meshed 2x2-hole plate rotated exactly
+  // 45deg about Z: 2 mirror planes at 0/15/30/60/90deg, only 1 at 45deg, with
+  // Manifold's own tessellation noise on the surviving/orphaned proposers' normal
+  // components measured up to ~2e-8 apart -- large enough that the file's other
+  // candidate tie-break (`+ 1e-9`, an earlier draft of this fix) still let the idx pick
+  // flip and did not actually merge the two proposers. `TOL_FRAC` is already this
+  // file's own established noise floor for a unit-vector component (see
+  // `planeBucketKey`'s own comment: "the same dimensionless fraction the frame's own
+  // tolerance derives from, appropriate for a unit vector"), five orders of magnitude
+  // above the noise actually measured, so reusing it here needs no new magic number
+  // and cannot mask a genuinely distinct pair of components (real designs practically
+  // never differ by less than TOL_FRAC on a plane normal component without meaning it).
+  for (let k = 1; k < 3; k++) if (Math.abs(n[k]) > Math.abs(n[idx]) + TOL_FRAC) idx = k;
   if (n[idx] < 0) return { n: [-n[0], -n[1], -n[2]], offset: -offset };
   return { n, offset };
 }

@@ -45,14 +45,29 @@ test("filleted-box.js reports fillets", () => {
   expect(r.features.some((f) => f.type === "fillet")).toBe(true);
 });
 
-test("bracket.js round-trips without an error and with localised residual", () => {
+test("bracket.js round-trips without an error", () => {
   const r = describeMesh(kernel, solidOf(bracket), { digest: "rt-br" });
   expect(r.error).toBeUndefined();
-  // Whatever it cannot explain must be LOCATED, not merely counted — an agent can act
-  // on "290 triangles, here" and cannot act on "1.2%".
+});
+
+// Round 3 IMPORTANT fix: this used to run the same `for (const region of
+// r.residual.regions)` body against bracket.js, whose own residual is fully
+// explained (`regions.length === 0`) — the loop body never ran, so the assertions
+// inside it could never fail. A mutation test proved it directly: forcing
+// describe.js's `residualRegions` to always return `regions: []` still passed all
+// 274 describe tests, meaning spec honesty principle 5 ("residual is localised,
+// not merely counted") had no guard anywhere in the suite. filleted-box.js is the
+// re-point: its fillets leave real, unexplained tessellation at the corners, so it
+// reliably produces regions (20, as of this writing) the loop actually iterates.
+test("filleted-box.js's residual is LOCALISED, not merely counted — every region " +
+     "carries a real triangle count, a finite centroid, and finite bounds", () => {
+  const r = describeMesh(kernel, solidOf(filletedBox), { digest: "rt-fb-residual" });
+  expect(r.residual.regions.length).toBeGreaterThan(0);
   for (const region of r.residual.regions) {
     expect(region.triangles).toBeGreaterThan(0);
     expect(region.centroid.every(Number.isFinite)).toBe(true);
+    expect(region.bounds.min.every(Number.isFinite)).toBe(true);
+    expect(region.bounds.max.every(Number.isFinite)).toBe(true);
   }
 });
 
@@ -308,12 +323,20 @@ test("a rotated shelled part's shell gate does not get more permissive under rot
   expect(spunShell.evidence.relativeThickness).toBeCloseTo(flatShell.evidence.relativeThickness, 2);
 });
 
-test("every accepted feature's confidence is a finite fraction", () => {
+// Round 3 IMPORTANT fix: this used to read `f.confidence`, a field describe.js
+// renamed to `volumeShare` back in fix round 2 (see describe.js's own comment on
+// why "confidence" reads backwards for the value). Every feature's `confidence`
+// has been `undefined` ever since, so `if (f.confidence == null) continue` skipped
+// every iteration on every run — a guard that can never fail is not a test. Demo.js
+// has exactly one feature (a single extrusion) and it is always accepted, so this
+// asserts a real, non-null `volumeShare` exists and is checked, not skipped.
+test("every accepted feature's volumeShare is a finite fraction", () => {
   const r = describeMesh(kernel, solidOf(demo), { digest: "rt-conf" });
-  for (const f of r.features) {
-    if (f.confidence == null) continue;
-    expect(Number.isFinite(f.confidence)).toBe(true);
-    expect(f.confidence).toBeGreaterThan(0);
+  const accepted = r.features.filter((f) => f.volumeShareReason == null);
+  expect(accepted.length).toBeGreaterThan(0);
+  for (const f of accepted) {
+    expect(Number.isFinite(f.volumeShare)).toBe(true);
+    expect(f.volumeShare).toBeGreaterThan(0);
   }
 });
 

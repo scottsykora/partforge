@@ -186,8 +186,11 @@ export function compactDescribe(full) {
       `LOW COVERAGE: only ${(100 * coverage).toFixed(1)}% of this part is explained ` +
       `(the worse of ${(100 * explainedArea).toFixed(1)}% surface area fit and ` +
       `${(100 * explainedVolume).toFixed(1)}% shape reconstructed). Treat the feature ` +
-      `list as incomplete — do not assume a feature is absent because it is not ` +
-      `listed. See residual.regions for where the unexplained geometry is.`);
+      `list as incomplete in BOTH directions — do not assume a feature is absent ` +
+      `because it is not listed, AND do not assume every listed feature is real: a ` +
+      `low-coverage segmentation can also type tessellation fragments (e.g. noise at ` +
+      `fillet corners) as their own small bosses/pockets. See residual.regions for ` +
+      `where the unexplained geometry is.`);
   }
   if (full.warning === "budget-exceeded") {
     warnings.push(

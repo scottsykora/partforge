@@ -1587,6 +1587,24 @@ feature list, the banners, and the score line combined.
 distinction is real, not cosmetic: "try a bigger budget" and "this doesn't fit" are
 different next actions for whoever is rebuilding the part.
 
+**What `describe` reconstructs today, and what it doesn't.** The FACTS layer — surfaces,
+arcs, holes, dress-ups, sweeps, patterns, symmetry — covers the tool's full detection
+vocabulary; a feature can be *reported* there regardless of shape. The RECONSTRUCTION
+score (`explainedVolumeFraction`, and every accepted feature's own `volumeShare`) is
+narrower: `toCandidate` only proposes box and cylinder footprints as acceptance
+candidates today, so it currently reconstructs prismatic parts built from roughly fewer
+than eight box/cylinder features well, and does not yet reconstruct round bosses,
+revolves, fillets, chamfers, or shells — those are detected and reported (with
+`volumeShareReason: "not-proposed"`) but never turned into a candidate that could win
+volume back. Measured directly on this repo's own reference parts: `demo.js`
+reconstructs 65.7% of its volume, `filleted-box.js` 36.2%, `bracket.js` 23.6%, a plain
+tube 0.0%, and a hollow box 1.9%. The low-coverage banner fires on every one of these, so
+nothing here is misreported — but a low `explainedVolumeFraction` on a turned or
+feature-dense part means **"not yet reconstructable by this tool"**, not "not
+understood" or "broken." Read the FACTS (features, surfaces, patterns) as the ground
+truth regardless of the volume score; read the volume score as a measure of how much of
+that ground truth also comes with a working, boolean-verified rebuild recipe.
+
 **Closed error set.** Anything short of a programming mistake comes back as
 `{error: "<code>", detail, diagnostic}` rather than a thrown exception — a CLI or an
 agent can act on a code far better than on a stack trace — and every code has an

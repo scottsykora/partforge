@@ -355,3 +355,45 @@ test("the compact report for a known fixture stays within its size budget", () =
   const json = JSON.stringify(compactDescribe(r));
   expect(json.length).toBeLessThan(3500);
 });
+
+// --- fix round 3, IMPORTANT 2: a genuine mirror plane must not disappear at 45deg ---
+//
+// patterns.js's canonicalPlane picked its sign-defining normal component with a bare
+// `>`; when a plane's normal has two components equal in magnitude — exactly the case
+// at a 45deg rotation — two independently-computed proposing pairs for the SAME plane
+// can disagree on which component is "larger" purely from float noise, canonicalizing
+// to opposite-sign normals that then bucket separately and each fail
+// SYMMETRY_EVIDENCE_MIN alone. This needs REAL, independent noise across proposers to
+// reproduce — a synthetic fixture built from one shared rotation function never
+// disagrees with itself (every proposer's normal comes out bit-identical) — so this
+// builds an actual plate through the Manifold kernel and runs the whole describeMesh()
+// pipeline, the same path measure/verify report through. Traced directly: at this
+// exact rotation, two proposing pairs for the SAME plane come out normal
+// (0.7071067699044177, -0.7071067924686772, 0) and (0.7071067824204295,
+// -0.7071067799526655, 0) — about 2.5e-8 apart on the component that decides the sign
+// flip, comfortably clearing a too-small epsilon (an earlier draft of this fix tried
+// a bare `1e-9`, which still let this exact pair flip) but well inside the
+// TOL_FRAC-based margin the shipped fix uses.
+const holeGridPlate = (angleDeg) => {
+  let s = kernel.box({ min: [0, 0, 0], max: [60, 40, 12] });
+  for (const [x, y] of [[15, 10], [45, 10], [15, 30], [45, 30]]) {
+    s = s.cut(kernel.cylinder({ r: 3, h: 40 }).translate([x, y, -14]));
+  }
+  return angleDeg ? s.rotateZ(angleDeg) : s;
+};
+
+test("a real meshed 2x2-hole plate rotated exactly 45deg about Z still reports both " +
+     "mirror planes", () => {
+  const r = describeMesh(kernel, holeGridPlate(45), { digest: "symmetry-45" });
+  const mirrors = (r.symmetry ?? []).filter((s) => s.type === "mirror");
+  expect(mirrors.length).toBe(2);
+});
+
+// The same plate at angles with no equal-magnitude-component tie must keep reporting
+// both planes too — this is a 45deg-specific bug, not a general regression.
+test.each([0, 15, 30, 60, 90])(
+  "the same hole-grid plate at %ideg (no 45deg tie) reports both mirror planes", (angle) => {
+    const r = describeMesh(kernel, holeGridPlate(angle), { digest: `symmetry-${angle}` });
+    const mirrors = (r.symmetry ?? []).filter((s) => s.type === "mirror");
+    expect(mirrors.length).toBe(2);
+  });
