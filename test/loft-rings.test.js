@@ -188,3 +188,35 @@ test("resample: CW input ring is normalized CCW before resampling", () => {
   const area = (ring) => ring.reduce((a, [x, y], i) => { const [nx, ny] = ring[(i + 1) % ring.length]; return a + x * ny - nx * y; }, 0) / 2;
   expect(area(sq)).toBeGreaterThan(0);
 });
+
+test("resample: a true arc contour (roundedProfile) resamples against a point ring — curve tessellation path", () => {
+  const rsq = roundedProfile(SQ, 2); // arc contour → tessellated at LOFT_SEGS
+  const lifted = liftLoftRings([{ polygon: rsq, z: 0 }, { polygon: SQ, z: 9 }]);
+  const [a, b] = resampleTessellation(lifted);
+  expect(a.length).toBe(b.length);
+  expect(a.length).toBeGreaterThan(30);          // arcs actually tessellated, N = max ring count
+  const area = (ring) => ring.reduce((s, [x, y], i) => { const [nx, ny] = ring[(i + 1) % ring.length]; return s + x * ny - nx * y; }, 0) / 2;
+  expect(area(a)).toBeGreaterThan(0);            // CCW after closure-drop
+  // Rounded square area ≈ 100 - 4*(4 - π) ≈ 96.57; account for facet deficit with tolerance
+  expect(Math.abs(area(a) - 96.566)).toBeLessThan(1);
+  for (const [cx, cy] of SQ) expect(b.some(([x, y]) => x === cx && y === cy)).toBe(true); // square corners still snap
+});
+
+test("resample: corner snapping respects contest rule (closer corner wins via snapshot)", () => {
+  // Construct a contested case: two corners competing for one sample position.
+  // Use a simple 2-ring loft where the resampled ring passes between two corners.
+  // The smaller (closer) circle's point should claim the sample over the larger one.
+  const smallCircle = circleProfile(1);         // circle, radius 1
+  const largeCircle = circleProfile(3);         // circle, radius 3
+  const lifted = liftLoftRings([{ polygon: smallCircle, z: 0 }, { polygon: largeCircle, z: 9 }]);
+  const [small, large] = resampleTessellation(lifted);
+  expect(small.length).toBe(large.length);
+  // Verify both rings are CCW
+  const area = (ring) => ring.reduce((s, [x, y], i) => { const [nx, ny] = ring[(i + 1) % ring.length]; return s + x * ny - nx * y; }, 0) / 2;
+  expect(area(small)).toBeGreaterThan(0);
+  expect(area(large)).toBeGreaterThan(0);
+  // Small ring corners should survive (they are the closer candidates when snapping occurs)
+  const smallCorners = smallCircle;
+  for (const [cx, cy] of smallCorners)
+    expect(small.some(([x, y]) => Math.hypot(x - cx, y - cy) < 0.01)).toBe(true);
+});

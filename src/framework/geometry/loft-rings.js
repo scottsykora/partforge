@@ -193,12 +193,15 @@ const resampleRing = (ring, N, corners) => {
     out.push([pts[seg][0] + t * (pts[seg + 1][0] - pts[seg][0]), pts[seg][1] + t * (pts[seg + 1][1] - pts[seg][1])]);
   }
   // corner snapping: a sharp corner within one sample-spacing of a sample replaces it
+  // Snapshot the original sample positions before snapping, so distance calculations
+  // measure against original positions, not mutated ones (contest rule: closer corner wins)
   const spacing = L / N;
+  const orig = out.map((p) => [p[0], p[1]]);
   const owner = new Map(); // sample index -> snap distance
   for (const c of corners) {
     let bi = -1, bd = Infinity;
-    for (let i = 0; i < out.length; i++) {
-      const d = Math.hypot(out[i][0] - c[0], out[i][1] - c[1]);
+    for (let i = 0; i < orig.length; i++) {
+      const d = Math.hypot(orig[i][0] - c[0], orig[i][1] - c[1]);
       if (d < bd) { bd = d; bi = i; }
     }
     if (bd < spacing && (!owner.has(bi) || bd < owner.get(bi))) {
