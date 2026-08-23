@@ -27,7 +27,8 @@ reference part - stepped timeline, camera cues, pose-only tracks), `screw.js`
 `text-smoke.js` (worker text-render CI fixture), `mixed-smoke.js` (the
 split-backend CI fixture — a shelled sub-part beside a plain one, exercising
 per-sub-part routing), and `import-demo.js` (the `imports`/`k.import`
-reference part - STL ghost + deviation gate + import-in-boolean).
+reference part - STL ghost + deviation gate + import-in-boolean + the `probes`
+block, part-declared measurements reported by measure/inspect).
 
 ## Node version
 

@@ -88,6 +88,8 @@ export default {
     },
   },
   views: { <name>: { label, default?, animations? } },  // view tabs; a view may own animations (below)
+  probes?,                                 // { name: (k, p, d) => Solid | plain JSON } — measurements reported by
+                                           // measure/inspect, never rendered or exported (see "Probes" below)
 };
 ```
 
@@ -1520,6 +1522,76 @@ keeps only the seams:
   `meshTriangles`, `parseStl`, `parse3MF`); those exports are part of its contract.
 
 
+## Probes: measuring geometry into the report
+
+A `probes` block turns the measure report into an instrument panel. Each probe is
+a pure `(k, p, d)` function with **build's exact contract** — same kernel handle,
+same resolved params and derived values — but its result lands in the **report**
+instead of the scene:
+
+```js
+probes: {
+  // A Solid anywhere in the return value is measured into a fact object:
+  // { empty, bbox, bounds, centerOfMass, volume, surfaceArea, triangleCount,
+  //   watertight, holes }
+  slabX12: (k, p, d) => buildBody(k, p, d)
+    .intersect(k.box({ min: [12, -25, -4], max: [13, 25, 4] })),
+
+  // The paired form — the localizing workhorse when a rebuild drifts from its
+  // imported reference: the same thin slab through both solids, side by side.
+  slabPair: (k, p, d) => ({
+    mine: buildBody(k, p, d).intersect(k.box({ min: [12, -25, -4], max: [13, 25, 4] })),
+    ref:  k.import("scan").intersect(k.box({ min: [12, -25, -4], max: [13, 25, 4] })),
+  }),
+
+  // Plain JSON passes through verbatim — compute any number the solid queries
+  // can reach (volume/boundingBox booleans, arc fits, whatever).
+  xor: (k, p, d) => {
+    const mine = buildBody(k, p, d), ref = k.import("scan");
+    return mine.volume() + ref.volume() - 2 * mine.intersect(ref).volume();
+  },
+}
+```
+
+**Where they show up.** `npx partforge measure` prints a `probes:` section and
+includes `probes: { name: value }` in `--json`; the worker's `inspect` job carries
+the same key, so any host reporting measure output (e.g. an agent's check loop)
+sees probe values on every edit with no extra wiring. Probes are **part-level,
+not per-view**: every measured view reports them, so they never disappear because
+the "wrong" tab was measured.
+
+**What they replace.** Before probes, getting a cross-section's numbers out of
+the pipeline meant authoring throwaway `exportable: false` sub-parts and fishing
+their facts out of the sub-part list — polluting views, the control panel's
+mental model, and the overlap check. Probes are invisible to the viewer, the
+exporter, the assembly checks, and `verify` gates; they exist only in the report.
+
+**Failure is contained.** A probe that throws reports `{ error: "…" }` in its
+own slot — it never crashes the measurement and never flips the report's `ok`.
+An empty boolean result (a slab that misses the part) reports
+`{ empty: true, volume: 0 }` rather than degenerate infinite bounds — "no
+material here" is a first-class answer for a localizing probe. Lint covers
+probes with the same pass as builds: a throwing probe is `probe-throws`, a
+malformed block is `invalid-probes`, and unknown ops / bad options / impurity
+are caught exactly as in `build`.
+
+**Driving geometry from a live measurement.** Probes get numbers *out*. To feed
+a measurement *into* geometry, remember that `build` already holds a real
+kernel: `k.import("scan").boundingBox()` (and `.volume()`, and booleans between
+solids) work live inside any build, so a sub-part can size itself off another
+solid directly — no probe needed. Keep it pure: the measurement is deterministic
+for a given import + params, which is exactly what the geometry cache assumes.
+To set parameter **defaults** from a reference (the "rebuild this STL" flow),
+declare a probe that reads the value, run `measure`, and bake the reported
+number into `defaults` — the probe then keeps watching it on every regen, so a
+swapped import shows up as a probe delta instead of silently stale defaults.
+
+**Cost.** Probes run on every `measure`/`inspect` (including quick checks — the
+agent loop is exactly who reads them), so keep them proportionate: a handful of
+thin-slab booleans is cheap; a dense sweep of whole-part XORs is not. `verify`'s
+per-case re-measures skip probes entirely (no gate reads them). The reference
+part for probes is [`src/parts/import-demo.js`](../src/parts/import-demo.js).
+
 ## Wiring a part into a runnable app
 
 Three tiny glue files per part (copy from the demo). The worker statically imports
@@ -1953,8 +2025,9 @@ previously didn't; that's the fix working as intended, not a regression.
 ### Rule catalog
 
 **Definition shape** — `missing-meta-title`, `missing-defaults`, `no-buildable-parts`,
-`missing-views`, `part-view-unknown` (all errors); `view-unused`,
-`default-view-ambiguous` (warnings).
+`missing-views`, `part-view-unknown`, `invalid-probes` (all errors); `view-unused`,
+`default-view-ambiguous` (warnings). `invalid-probes` fires when a declared
+`probes` block isn't an object of functions (see "Probes" above).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,
 `control-key-not-in-defaults`, `control-default-not-primitive`,
@@ -2033,10 +2106,12 @@ internals (`hidden: true`). Grouping controls organizes them but does not
 reduce the count — the check recurses into groups — so a group alone doesn't
 bring a section back under budget.
 
-**Kernel API**, found by executing `build()` against a geometry-free probe —
+**Kernel API**, found by executing `build()` — and every declared probe, which
+shares build's `(k, p, d)` contract — against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,
-`derive-throws`, `manifold-backend-uses-occt-op`, `build-runaway` (errors);
-`nondeterministic-build` (warning, from diffing two probe runs).
+`probe-throws`, `derive-throws`, `manifold-backend-uses-occt-op`,
+`build-runaway` (errors); `nondeterministic-build` (warning, from diffing two
+probe runs).
 
 **Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
 `verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,

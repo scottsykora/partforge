@@ -1,6 +1,7 @@
 import { buildView } from "./build.js";
 import { cachedBVH } from "./bvh.js";
 import { assemblyOverlaps } from "../assembly.js";
+import { resolveParams } from "../part-model.js";
 import { meshGaps, pairKey, CONTACT_EPS, GAP_THRESHOLD } from "./gaps.js";
 import { bounds, meshArea, meshCentroid } from "./mesh.js";
 import { minWall, DIAGNOSTIC_SAMPLES } from "./min-wall.js";
@@ -11,6 +12,80 @@ const unionBounds = (list) => list.reduce(
   (acc, b) => ({ min: acc.min.map((v, i) => Math.min(v, b.min[i])), max: acc.max.map((v, i) => Math.max(v, b.max[i])) }),
   { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] },
 );
+
+// ── probes ──────────────────────────────────────────────────────────────────
+// Part-declared measurements: `probes: { name: (k, p, d) => Solid | JSON }`,
+// pure functions with build's exact contract but whose result lands in the
+// REPORT instead of the scene. The instrument a rebuild-against-reference
+// workflow needs — before this, getting a cross-section's numbers out of the
+// pipeline meant authoring throwaway `exportable: false` sub-parts and fishing
+// their facts out of the sub-part list (the "Probes" feedback report).
+// A Solid anywhere in the return value (duck-typed on volume+toMesh, the two
+// queries the facts need) is replaced by a fact object; scalars/arrays/objects
+// pass through; a throw becomes `{ error }` — probes are instrumentation, so
+// they never crash the measurement and never gate `ok`.
+
+const isSolid = (v) => v !== null && typeof v === "object"
+  && typeof v.volume === "function" && typeof v.toMesh === "function";
+
+function solidProbeFacts(solid) {
+  const mesh = solid.toMesh();
+  // Empty = the probe's boolean found nothing (a slab that misses the part).
+  // A first-class answer, not degenerate infinite bounds: "the reference has no
+  // material here" is exactly what a localizing probe is asked.
+  const empty = typeof solid.isEmpty === "function" ? solid.isEmpty() : mesh.triangles === 0;
+  if (empty) {
+    return { empty: true, bbox: null, bounds: null, centerOfMass: null,
+      volume: 0, surfaceArea: 0, triangleCount: 0, watertight: null, holes: null };
+  }
+  const b = bounds(mesh.positions);
+  return {
+    empty: false,
+    bbox: size(b),
+    bounds: { min: b.min, max: b.max },
+    centerOfMass: meshCentroid(mesh.positions, mesh.indices),
+    volume: solid.volume(),
+    surfaceArea: meshArea(mesh.positions, mesh.indices),
+    triangleCount: mesh.triangles,
+    // Mirrors the sub-part fact: answered by isEmpty where the backend has it
+    // (and this branch already means it said false), null where it can't say.
+    watertight: typeof solid.isEmpty === "function" ? true : null,
+    holes: typeof solid.genus === "function" ? solid.genus() : null,
+  };
+}
+
+// Bounded so a self-referential or absurdly deep return value can't hang the
+// report; past the cap the value is summarized rather than walked.
+const MAX_PROBE_VALUE_DEPTH = 4;
+function resolveProbeValue(v, depth = 0) {
+  if (isSolid(v)) return solidProbeFacts(v);
+  if (v === null || typeof v !== "object") {
+    return typeof v === "function" ? { error: "probe returned a function — return a Solid or plain JSON" } : v;
+  }
+  if (depth >= MAX_PROBE_VALUE_DEPTH) return { error: `probe value deeper than ${MAX_PROBE_VALUE_DEPTH} levels` };
+  if (Array.isArray(v)) return v.map((x) => resolveProbeValue(x, depth + 1));
+  return Object.fromEntries(Object.entries(v).map(([key, x]) => [key, resolveProbeValue(x, depth + 1)]));
+}
+
+// Evaluate every declared probe with resolved (p, d). Reads all solid facts
+// eagerly, so the caller may free the kernel's objects afterwards. Never
+// throws: each probe's failure is its own `{ error }` entry.
+function evaluateProbes(kernel, part, params) {
+  const { p, d } = resolveParams(part, params);
+  // Oracle-owned cache round, same reasoning as buildView's: probe geometry must
+  // not evict what the viewer is showing, and the next round evicts this one.
+  kernel.beginSubPart?.("oracle:probes");
+  try {
+    return Object.fromEntries(Object.entries(part.probes).map(([name, fn]) => {
+      try {
+        if (typeof fn !== "function") throw new Error("probe must be a function (k, p, d)");
+        return [name, resolveProbeValue(fn(kernel, p, d))];
+      } catch (e) {
+        return [name, { error: e?.message || String(e) }];
+      }
+    }));
+  } finally { kernel.endSubPart?.(); }
+}
 
 // Headless geometric report for one view of a part (Manifold-only). Reads exact
 // solid facts (volume/genus/emptiness) and mesh facts (bbox/area/triangles), plus
@@ -100,6 +175,15 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     };
   });
 
+  // Declared probes, evaluated regardless of view (they are part-level facts —
+  // per-view probes were exactly the annoyance this replaces) and before
+  // assemblyOverlaps/cleanup below frees the kernel's objects. `opts.probes:
+  // false` skips them: verify's per-case re-measures pass it because no gate
+  // reads probe values, so re-running their booleans per case buys nothing.
+  const probes = opts.probes !== false && part.probes && Object.keys(part.probes).length
+    ? evaluateProbes(kernel, part, params)
+    : undefined;
+
   // Pair surface distances from the meshes already built — no kernel dependency,
   // so this reads on OCCT too. nearMisses = the issue-#29 signal: pairs that
   // *almost* touch; overlapping pairs are excluded by name (a fully-contained
@@ -155,6 +239,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     overlaps,
     gaps,
     nearMisses,
+    // Present only when the part declares probes AND this run evaluated them —
+    // a probe error stays inside its own entry and never reaches `ok` below.
+    ...(probes ? { probes } : {}),
     ok: subparts.every((s) => s.watertight !== false) && overlaps.length === 0,
   };
 }

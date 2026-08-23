@@ -161,3 +161,26 @@ test("a rule that throws degrades to an internal-rule-error warning", async () =
   expect(out[0].message).toContain("boom");
   expect(out[0].message).toContain("kaboom");
 });
+
+// `probes` shape — optional, but when present must be an object of functions.
+test("a non-object probes block is an error", () => {
+  const part = goodPart();
+  part.probes = "slab";
+  const r = lintPart(part);
+  expect(ids(r.errors)).toContain("invalid-probes");
+});
+
+test("a probe entry that is not a function is an error located at the entry", () => {
+  const part = goodPart();
+  part.probes = { good: (k) => k.box({ size: [1, 1, 1] }), bad: 42 };
+  const r = lintPart(part);
+  const f = r.errors.find((x) => x.rule === "invalid-probes");
+  expect(f).toBeTruthy();
+  expect(f.path).toBe("probes.bad");
+});
+
+test("a well-formed probes block produces no findings", () => {
+  const part = goodPart();
+  part.probes = { slab: (k, p) => k.box({ size: [p.h, 1, 1] }) };
+  expect(ids(lintPart(part).errors)).toEqual([]);
+});
