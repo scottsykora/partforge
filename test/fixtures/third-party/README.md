@@ -51,6 +51,7 @@ without a row here should be treated as not actually added.
 | File | Source URL | License | Notes |
 |------|------------|---------|-------|
 | `sovol-sv06-led-mount.3mf` | https://www.printables.com/model/388560-sovol-sv06-led-mounting-bracket | CC0 (Creative Commons — Public Domain; confirmed via the Printables API, license id 7) | "Sovol SV06 LED Mounting Bracket" by ItsDarts. Foreign tessellation, mm units per its 3MF metadata. Prismatic-bracket-with-holes class. |
+| `minecraft-sword-bookmark.stl` | https://www.printables.com/model/1819376-minecraft-sword-bookmark | CC0 (Creative Commons — Public Domain; confirmed via the Printables API, license id 7) | "Minecraft sword bookmark" by grasshopper. Foreign tessellation, 288 tris. A single flat extrusion with an arbitrary polygon footprint: describe recognizes it fully (explainedArea 1.0, zero residual) while the volume score stays 0 — the cleanest live specimen of the v1 box/cylinder-footprint reconstruction limit. |
 | `estop-enclosure-top.stl` | https://www.partforge.ai/parts/two-color-emergency-stop-enclosure-9b5c7fcf0d60 | Own work (repo owner's partforge-cloud export) | Shelled-enclosure class by geometry, but partforge's OWN tessellation (Manifold export) — a complexity fixture, not a foreign-mesher specimen. A genuinely foreign-meshed enclosure is still wanted. |
 
 ## Adding a file
