@@ -17,9 +17,11 @@ test("the entry exports the oracle surface", async () => {
   for (const name of [
     "measure", "verify", "buildView", "buildBVH", "minWall",
     "assemblyGaps", "meshGaps", "meshVolume", "bboxSize",
+    // The helpers the CLOSED oracle package consumes through this entry — its
+    // peer-dependency contract. Removing one of these breaks that package's
+    // install, not just a local import.
+    "bounds", "meshArea", "meshTriangles", "parseStl", "parse3MF",
     "MATCH_VIEWS", "rasterizeMeshMask", "rasterizeRingsMask", "matchMasks", "matchViews",
-    "describe", "describeMemo", "DESCRIBE_ERRORS",
-    "compactDescribe", "LOW_COVERAGE", "DESCRIBE_LIMITS",
   ]) expect(oracle[name], name).toBeDefined();
 });
 
