@@ -128,3 +128,24 @@ test("matched tessellation gives each arc the max natural count across rings", (
   expect(a.length).toBe(b.length);
   expect(a.length).toBeGreaterThan(8); // arcs actually sampled, not collapsed to endpoints
 });
+
+test("matched tessellation: cubic (Bézier) contour at two scales → equal N, cubics sampled, exact scaling", () => {
+  // Hand-built cubic contour (blob-like shape with 4 cubic segments)
+  const blob = { start: [4, 0], segments: [
+    { to: [0, 4], c1: [4, 2.2], c2: [2.2, 4] },
+    { to: [-4, 0], c1: [-2.2, 4], c2: [-4, 2.2] },
+    { to: [0, -4], c1: [-4, -2.2], c2: [-2.2, -4] },
+    { to: [4, 0], c1: [2.2, -4], c2: [4, -2.2] },
+  ] };
+  const lifted = liftLoftRings([{ polygon: blob, z: 0 }, { polygon: blob, z: 9, scale: 0.5 }]);
+  const [a, b] = matchedTessellation(lifted);
+  // (1) equal ring lengths
+  expect(a.length).toBe(b.length);
+  // (2) more points than segment endpoints alone (cubics actually sampled)
+  expect(a.length).toBeGreaterThan(4);
+  // (3) index-for-index exact 0.5 scaling (cubics are affine-invariant)
+  for (let i = 0; i < a.length; i++) {
+    expect(b[i][0]).toBeCloseTo(a[i][0] * 0.5, 9);
+    expect(b[i][1]).toBeCloseTo(a[i][1] * 0.5, 9);
+  }
+});
