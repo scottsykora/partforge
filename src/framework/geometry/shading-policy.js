@@ -36,18 +36,17 @@ export const SMOOTH_SIDES_MIN = 32;
 
 export const cosDeg = (deg) => Math.cos((deg * Math.PI) / 180);
 
-// Loft shading inference. An explicit `shading` hint wins; `ruled:false` asks
-// OCCT for a smoothly blended surface, so the Manifold preview of the same part
-// must shade smooth too; otherwise low-side-count rings are intentional facets.
-export function loftShadingPolicy(rings, { shading, ruled } = {}) {
+// Loft shading inference over RESOLVED rings (resolveLoftRings' result). An explicit
+// `shading` hint wins; `ruled:false` must preview smooth (it exports smooth via OCCT);
+// any curved ring segment (arc/cubic) is smooth-surface intent; otherwise low
+// resolved side counts are intentional facets.
+export function loftShadingPolicy(resolvedLoft, { shading, ruled } = {}) {
   if (shading === "smooth") return SMOOTH;
   if (shading === "faceted") return FACETED;
   if (shading != null) throw new Error('loft: shading must be "smooth" | "faceted"');
   if (ruled === false) return SMOOTH;
+  if (resolvedLoft?.hasCurve) return SMOOTH;
   let maxSides = 0;
-  if (Array.isArray(rings)) for (const r of rings) {
-    const n = Array.isArray(r?.polygon) ? r.polygon.length : (Number.isFinite(r?.sides) ? r.sides : 0);
-    if (n > maxSides) maxSides = n;
-  }
+  for (const r of resolvedLoft?.resolved ?? []) if (r.pts2d.length > maxSides) maxSides = r.pts2d.length;
   return maxSides >= SMOOTH_SIDES_MIN ? SMOOTH : FACETED;
 }

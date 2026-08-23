@@ -135,3 +135,49 @@ test("label() on a union of differently-shaded lofts inherits the majority polic
   expect(m.edges.length).toBe(0); // FACETED's majority weight wins — same-surface lines fully suppressed
   expect(m.features).toEqual(["Body"]);
 });
+
+// wallTris' cap test (face normal ~vertical) assumes an UNTAPERED loft, where the
+// walls really are exactly vertical (fz≈0). This ring's top is scaled 0.6, so the
+// walls are genuinely slanted and fz is nowhere near 0 there — the face-normal test
+// would misclassify every wall triangle as a cap. Classify by z instead: a cap's
+// three corners all sit on the SAME ring (identical z); a wall triangle always
+// spans two adjacent rings (mixed z), regardless of taper.
+function wallTrisByZ(m) {
+  let flat = 0, total = 0;
+  const P = m.positions, N = m.normals;
+  for (let t = 0; t * 9 < P.length; t++) {
+    const o = t * 9;
+    const z0 = P[o + 2], z1 = P[o + 5], z2 = P[o + 8];
+    if (z0 === z1 && z1 === z2) continue; // cap: all three corners on one ring
+    const ux = P[o + 3] - P[o], uy = P[o + 4] - P[o + 1], uz = P[o + 5] - P[o + 2];
+    const vx = P[o + 6] - P[o], vy = P[o + 7] - P[o + 1], vz = P[o + 8] - P[o + 2];
+    let fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx;
+    const L = Math.hypot(fx, fy, fz) || 1;
+    fx /= L; fy /= L; fz /= L;
+    total++;
+    let allFlat = true;
+    for (let c = 0; c < 3; c++) {
+      const n = o + c * 3;
+      if (N[n] * fx + N[n + 1] * fy + N[n + 2] * fz < 0.9999) allFlat = false;
+    }
+    if (allFlat) flat++;
+  }
+  return { flat, total };
+}
+
+test("a Shape2D rounded-square loft previews with smoothed arc walls", () => {
+  const rsq = k.shape2d([[-10, -10], [10, -10], [10, 10], [-10, 10]]).fillet(4);
+  const m = k.loft({ rings: [{ polygon: rsq, z: 0 }, { polygon: rsq, z: 12, scale: 0.6 }] }).toMesh();
+  const { flat, total } = wallTrisByZ(m);
+  expect(total).toBeGreaterThan(0);
+  expect(flat).toBeLessThan(total); // some walls smoothed — FACETED would flat-shade all
+});
+
+test("Shape2D rings cache-key by content: same shape twice hits, different fillet misses", () => {
+  const mk = (r) => k.loft({ rings: [
+    { polygon: k.shape2d([[-10, -10], [10, -10], [10, 10], [-10, 10]]).fillet(r), z: 0 },
+    { polygon: k.shape2d([[-10, -10], [10, -10], [10, 10], [-10, 10]]).fillet(r), z: 12 },
+  ] });
+  expect(mk(4)._hash).toBe(mk(4)._hash);
+  expect(mk(4)._hash).not.toBe(mk(3)._hash);
+});

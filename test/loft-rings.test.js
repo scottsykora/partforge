@@ -203,6 +203,7 @@ test("resample: a true arc contour (roundedProfile) resamples against a point ri
 });
 
 import { resolveLoftRings } from "../src/framework/geometry/loft-rings.js";
+import { loftShadingPolicy, SMOOTH, FACETED } from "../src/framework/geometry/shading-policy.js";
 
 test("resolveLoftRings: poly-exact resolved pts2d are byte-identical to the legacy bake", () => {
   const { mode, resolved } = resolveLoftRings([{ polygon: SQ, z: 0, scale: 2, rotate: 90 }, { polygon: SQ, z: 10 }]);
@@ -243,4 +244,21 @@ test("resample: corner snapping respects contest rule (closer corner wins via sn
   const smallCorners = smallCircle;
   for (const [cx, cy] of smallCorners)
     expect(small.some(([x, y]) => Math.hypot(x - cx, y - cy) < 0.01)).toBe(true);
+});
+
+test("shading: any curved ring segment ⇒ SMOOTH", () => {
+  const rl = resolveLoftRings([{ polygon: roundedProfile(SQ, 2), z: 0 }, { polygon: roundedProfile(SQ, 2), z: 9 }]);
+  expect(loftShadingPolicy(rl, {})).toBe(SMOOTH);
+});
+
+test("shading: low-count all-line rings stay FACETED; 32+ resolved sides shade SMOOTH", () => {
+  expect(loftShadingPolicy(resolveLoftRings([{ sides: 6, radius: 8, z: 0 }, { sides: 6, radius: 8, z: 9 }]), {})).toBe(FACETED);
+  expect(loftShadingPolicy(resolveLoftRings([{ sides: 48, radius: 8, z: 0 }, { sides: 48, radius: 8, z: 9 }]), {})).toBe(SMOOTH);
+});
+
+test("shading: explicit hint and ruled:false still win", () => {
+  const rl = resolveLoftRings([{ sides: 6, radius: 8, z: 0 }, { sides: 6, radius: 8, z: 9 }]);
+  expect(loftShadingPolicy(rl, { shading: "smooth" })).toBe(SMOOTH);
+  expect(loftShadingPolicy(rl, { ruled: false })).toBe(SMOOTH);
+  expect(() => loftShadingPolicy(rl, { shading: "flat" })).toThrow(/smooth.*faceted/);
 });

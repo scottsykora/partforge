@@ -1,5 +1,6 @@
 import { helixTube } from "./helix-tube.js";
 import { loftMesh } from "./loft.js";
+import { resolveLoftRings, loftRingsKey } from "./loft-rings.js";
 import { sweepMesh } from "./sweep.js";
 import { roundedBoxRings } from "./rounded-solids.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
@@ -609,12 +610,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // the rings, or forced by `shading`) registers under it for the crease pass
     // and lives exactly as long as the cache pins the solid.
     loft: (rings, opts = {}) => {
-      const key = h("loft", rings, opts);
+      const key = h("loft", loftRingsKey(rings), opts);
       return cache.lookup(key, () => {
-        const raw = T(loftMesh(wasm, rings, opts));
+        const rl = resolveLoftRings(rings);        // resolve once: mesh + shading share it
+        const raw = T(loftMesh(wasm, rl, opts));
         const m = T(raw.asOriginal());
         const id = m.originalID();
-        oidPolicies.set(id, loftShadingPolicy(rings, opts));
+        oidPolicies.set(id, loftShadingPolicy(rl, opts));
         return { value: wrap(m, key), pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
       });
     },
