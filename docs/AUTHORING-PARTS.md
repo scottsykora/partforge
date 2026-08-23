@@ -1596,17 +1596,18 @@ different next actions for whoever is rebuilding the part.
 arcs, holes, dress-ups, sweeps, patterns, symmetry — covers the tool's full detection
 vocabulary; a feature can be *reported* there regardless of shape. The RECONSTRUCTION
 score (`explainedVolumeFraction`, and every accepted feature's own `volumeShare`) is
-narrower: `toCandidate` only proposes box and cylinder footprints as acceptance
-candidates today, so it currently reconstructs prismatic parts built from roughly fewer
-than eight box/cylinder features well, and does not yet reconstruct round bosses,
+narrower: `toCandidate` proposes prismatic candidates from each feature's own measured
+footprint — the cap's boundary loops extruded directly, arbitrary polygon outlines and
+interior holes included, alongside the circle/cylinder path — so ordinary prismatic
+parts now reconstruct well regardless of footprint shape. It does not yet reconstruct
 revolves, fillets, chamfers, or shells — those are detected and reported (with
 `volumeShareReason: "not-proposed"`) but never turned into a candidate that could win
 volume back. Measured directly on this repo's own reference parts: `demo.js`
-reconstructs 65.7% of its volume, `filleted-box.js` 36.2%, `bracket.js` 23.6%, a plain
-tube 0.0%, and a hollow box 1.9%. The low-coverage banner fires on every one of these, so
-nothing here is misreported — but a low `explainedVolumeFraction` on a turned or
-feature-dense part means **"not yet reconstructable by this tool"**, not "not
-understood" or "broken." Read the FACTS (features, surfaces, patterns) as the ground
+reconstructs 100% of its volume, `filleted-box.js` 94.9%, `bracket.js` 100%; a plain
+tube and a hollow box still score ~0%, because curved-wall extrusions and shells remain
+unproposed. The low-coverage banner fires wherever the worse score is low, so nothing
+here is misreported — but a low `explainedVolumeFraction` on a turned or shelled part
+means **"not yet reconstructable by this tool"**, not "not understood" or "broken." Read the FACTS (features, surfaces, patterns) as the ground
 truth regardless of the volume score; read the volume score as a measure of how much of
 that ground truth also comes with a working, boolean-verified rebuild recipe.
 

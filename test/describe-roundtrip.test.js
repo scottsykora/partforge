@@ -361,13 +361,14 @@ const thirdPartyFiles = readdirSync(DIR).filter((f) => f.endsWith(".stl") || f.e
 // generic never-throws contract below.
 const EXPECT = {
   "minecraft-sword-bookmark.stl": (r) => {
-    // The recognition-vs-reconstruction specimen: one flat extrusion, recognized
-    // completely (full area, zero residual, nothing truncated) while the volume score
-    // stays honestly near zero — its footprint is an arbitrary polygon, and v1
-    // reconstruction only rebuilds box/cylinder footprints.
+    // The full-roundtrip specimen: one flat extrusion, recognized completely AND
+    // rebuilt completely — polygon-footprint reconstruction extrudes the cap's own
+    // measured boundary loop, where the earlier bounding-box candidate was mostly
+    // air and scored 0. (This pin sat at explainedVolumeFraction < 0.1 until that
+    // change; flipping it to the better number is the pin working as designed.)
     expect(r.features.filter((f) => f.type === "extrusion")).toHaveLength(1);
     expect(r.score.explainedArea).toBeGreaterThan(0.99);
-    expect(r.score.explainedVolumeFraction).toBeLessThan(0.1);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.99);
     expect(r.residual.regions).toHaveLength(0);
     expect(Object.values(r.truncated).every((hit) => hit === false)).toBe(true);
   },
@@ -386,7 +387,7 @@ const EXPECT = {
     expect(r.warning).toBeUndefined();
     expect(Object.values(r.truncated).every((hit) => hit === false)).toBe(true);
     expect(r.score.explainedArea).toBeGreaterThan(0.99);
-    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.2);
+    expect(r.score.explainedVolumeFraction).toBeGreaterThan(0.6); // 0.24 before polygon-footprint reconstruction
     expect(r.features.some((f) => f.type === "pocket")).toBe(true);
     expect(r.features.some((f) => f.type === "chamfer")).toBe(true);
   },
