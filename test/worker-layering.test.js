@@ -77,3 +77,26 @@ test("the worker import closure reaches nothing under src/testing/", () => {
       : "").toBe(false);
   }
 });
+
+test("the worker's EAGER import closure loads no oracle pipeline module", () => {
+  // The oracle is worker-reachable but not worker-boot code: measure/verify/build,
+  // silhouette/match, and the describe stack together are the largest JS payload in
+  // the worker bundle, and only the `inspect` and `describe` jobs run them. jobs.js
+  // therefore loads each family with a literal dynamic import() on first use —
+  // partforge's own Vite config and partforge-cloud both build workers as ES modules,
+  // so those imports split into chunks that a user who never runs an oracle job never
+  // downloads or parses. This walk sees only STATIC imports (eager: true), so it
+  // fails the moment someone hoists an oracle import back to the top of jobs.js.
+  //
+  // Two allowed exceptions, both tiny pure leaves the linter shares (rules-verify.js
+  // reads the DFM profile table and the assertion grammar — data, not pipeline).
+  const ORACLE_EAGER_OK = new Set(["dfm-profiles.js", "assert-dsl.js"]);
+  const { files, importer } = walk(ENTRY, "eager worker walk", { eager: true });
+  for (const file of files) {
+    if (!file.includes("/src/framework/oracle/")) continue;
+    const base = file.split("/").pop();
+    expect(ORACLE_EAGER_OK.has(base), ORACLE_EAGER_OK.has(base)
+      ? ""
+      : `oracle modules load lazily (first inspect/describe job), never at worker boot:\n  ${chainTo(file, importer, ROOT)}`).toBe(true);
+  }
+});
