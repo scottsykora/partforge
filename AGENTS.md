@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`scottsykora/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has thirteen: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has fourteen: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -26,8 +26,10 @@ reference part - stepped timeline, camera cues, pose-only tracks), `screw.js`
 (the `k.screwSweep` reference part - a periodic ISO thread plus a hex head),
 `text-smoke.js` (worker text-render CI fixture), `mixed-smoke.js` (the
 split-backend CI fixture — a shelled sub-part beside a plain one, exercising
-per-sub-part routing), and `import-demo.js` (the `imports`/`k.import`
-reference part - STL ghost + deviation gate + import-in-boolean).
+per-sub-part routing), `import-demo.js` (the `imports`/`k.import`
+reference part - STL ghost + deviation gate + import-in-boolean), and
+`lofted-bottle.js` (the Shape2D-loft reference part - curve-mode body from a
+reused rounded-square ring, resample-mode square-to-circle shoulder).
 
 ## Node version
 
