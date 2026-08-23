@@ -45,6 +45,3 @@ export function loftMesh(wasm, rings, { closed = false } = {}) {
   }
   return out;
 }
-
-// Transitional shim for occt-backend.js (removed in the OCCT task).
-export const resolveRings = (rings) => resolveLoftRings(rings).resolved;
