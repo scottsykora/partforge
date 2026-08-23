@@ -120,88 +120,82 @@ export function jacobiEigen(m) {
 }
 
 // Rotation-invariant characteristic frame of a point set: an orthonormal basis
-// (`axes`) aligned to its OWN principal directions, plus the bounding-box `diagonal`
-// measured in that basis — for TOLERANCE SCALING and DIRECTION QUANTIZATION only,
-// never for a reported bound (describe.js's `bounds()` deliberately stays
-// world-frame; a caller's solid really is embedded in world space and the report
-// must reflect that).
+// (`axes`) aligned to its OWN principal directions, plus a rotation-invariant
+// characteristic length `diagonal` — for TOLERANCE SCALING and DIRECTION
+// QUANTIZATION only, never for a reported bound (describe.js's `bounds()`
+// deliberately stays world-frame; a caller's solid really is embedded in world
+// space and the report must reflect that).
 //
-// `diagonal`: segment.js and surface-graph.js each scale their fit-acceptance band
-// off "the mesh's bbox diagonal", but a plain world-axis min/max is only that
-// diagonal's true value when the mesh happens to be axis-aligned — `buildView`
-// always returns parts that way, which is exactly the blind spot Task 15's rotated
-// round-trip exists to close. Tilt a filleted-box 29 degrees about an oblique axis
-// and its world AABB diagonal inflates ~35% (52.5mm -> 71.0mm) purely from the
-// tilt; the fit tolerance derived from it inflates the same amount, and a wider
-// band changes which small facets at the vertical/top-fillet corner blends clear
-// it. Projecting onto the point cloud's OWN principal axes (via jacobiEigen on its
-// covariance) instead of the world axes gives the same diagonal an axis-aligned
-// mesh already had, but keeps giving it under an arbitrary rotation (54.00028mm
-// either way, measured on the same rotated filleted-box) since the covariance
-// matrix rotates WITH the points instead of being read off wherever the world's
-// X/Y/Z happen to point.
+// `diagonal` (fix round 3, CRITICAL — this replaces a PCA-bbox version of this
+// same function that was itself orientation-dependent on exactly the shapes it
+// most needed to cover; see the history below). segment.js and surface-graph.js
+// each scale their fit-acceptance band off "the mesh's own diagonal", and
+// sweeps.js's shell gate divides by it directly — read off the wrong quantity,
+// tilting a part changes the accept/reject boundary for reasons that have
+// nothing to do with the part's geometry. Computed here as `2 * sqrt(trace /
+// n)`, twice the radius of gyration about the centroid: `trace` (the sum of
+// squared distances from the centroid, accumulated below alongside the
+// covariance `cov` already being built for `axes`) is invariant under ANY
+// rotation by construction — a similarity transform preserves trace — so this
+// needs no eigen-decomposition and has NO degenerate case to worry about, unlike
+// the bbox-diagonal version it replaces. The `2x` is a calibration, not an
+// arbitrary fudge: worked out exactly for a box's own 8 corners, uniformly
+// weighted, each axis's coordinate is either 0 or its own extent L, so
+// Var = L^2/4 per axis (E[x] = L/2, E[x^2] = L^2/2) and
+// trace(cov)/n = (Lx^2+Ly^2+Lz^2)/4 — i.e. `2 * sqrt(trace/n)` recovers the
+// box's OWN true diagonal exactly on that reference shape, so every constant
+// downstream (`FIT_TOL_FRAC`, `SHELL_MAX_RELATIVE_THICKNESS`, `weldTolerance`'s
+// `1e-7`, `torusMinorRadius`'s `rMax`) keeps its present effective value there
+// rather than being silently retuned.
 //
-// `axes`: segment.js's seed order also reads face normals in world XYZ (quantizing
-// each to a Gauss-sphere bucket) to decide which facets seed together and in what
-// order region growth visits them. On a smoothly-varying compound-fillet corner
-// blend — many facets whose normals are close enough to fall in neighboring world
-// buckets — an arbitrary rotation shifts EVERY normal relative to those world-axis
-// bucket boundaries at once, regrouping and reordering seeds and cascading into a
-// different (though still individually valid) segmentation of that same patch.
-// Quantizing in this intrinsic basis instead removes that: the buckets move WITH
-// the geometry instead of staying nailed to the world's axes.
+// HISTORY, kept because the mistake is instructive: an earlier version of this
+// function measured `diagonal` as a bounding-box extent projected onto `axes`
+// (the PCA basis below) instead of trace. That was a real improvement over a
+// plain world-axis bbox diagonal for an ASYMMETRIC part (fixed a genuine ~35%
+// inflation under rotation on a 40x30x16 filleted box), but for a shape whose
+// three extents are close to equal — a cube or near-cube, an ORDINARY part, not
+// a rare one — PCA's eigenvalues are (near-)degenerate, its eigenvectors within
+// that eigenspace are numerically arbitrary, and a cube's bounding-box diagonal
+// genuinely DOES differ depending on which specific direction you measure along
+// (`s` along a face normal, `s*sqrt(3)` along a body diagonal) even though the
+// covariance — equal eigenvalues — cannot distinguish those directions at all.
+// Measured directly: an exact 20mm cube swung 34.64mm -> 57.03mm (65% relative)
+// across six rotations; even a barely-asymmetric 20x20x20.5 near-cube swung
+// 28%. A scale introduced specifically to make tolerances rotation-invariant,
+// which is itself orientation-dependent on cubes and blocks, is worse than the
+// world-axis version it replaced — it reads as safe. Trace has no such failure
+// mode: it sums squared distances from the centroid, which does not care what
+// direction anything points in.
 //
-// Eigenvector SIGN is ambiguous (jacobiEigen doesn't canonicalize it) and axis
-// ORDER can only be trusted where eigenvalues are well separated — callers that
-// need bucketing stability get it because every triangle's normal is projected
-// through the SAME basis, so a sign flip permutes bucket labels without changing
-// which faces land in the same bucket, and a part's three extents (like this
-// box's w/d/h) are separated enough that eigenvalue order is stable under a rigid
-// rotation regardless.
-//
-// KNOWN LIMITATION, not yet worked around: separation is doing real work above,
-// and a part whose own extents are close to EQUAL — the degenerate case, not the
-// rare one, since a cube-ish or near-cylindrical-envelope part is an ordinary
-// input — has no well-defined "own" axes for PCA to recover: its (welded) vertex
-// set's covariance is close to a scalar multiple of the identity, jacobiEigen's
-// eigenvectors within that (near-)degenerate eigenspace are numerically
-// arbitrary, not rotation-covariant, and `diagonal` stops being rotation-
-// invariant right along with them. Measured directly on the welded vertex set
-// (`topo.verts`, the same input segment.js/sweeps.js pass in — only the 16
-// corners of a hollow box, not the dense triangle soup, so the symmetry is
-// exact rather than merely approximate): a 20x20x20 hollow-box shell (uniform
-// 2mm wall) reads `intrinsicScale` 34.64mm flat and 53.42mm rotated 29 degrees
-// about [1,2,3] — the SAME divergence this function exists to remove, just
-// re-introduced by the input's own symmetry rather than by reading world axes.
-// An asymmetric box (30x20x14, same wall) has no such trouble: 38.68mm either
-// way, exactly. Any caller near a hard threshold on this scale should keep that
-// in mind for a near-cubic or near-cylindrical part; nothing here detects or
-// flags the degenerate case, and describe-roundtrip.test.js's rotated-shell
-// case is deliberately built asymmetric (not a cube) to stay on the safe side
-// of it rather than accidentally depend on it.
+// `axes`: still PCA (`jacobiEigen` on the covariance), still used for
+// DIRECTION-dependent work only — segment.js's seed order reads face normals in
+// world XYZ to decide which facets seed together, quantizing in this intrinsic
+// basis instead moves the quantization grid WITH the geometry instead of
+// leaving it nailed to the world's axes. Eigenvector SIGN is ambiguous
+// (jacobiEigen doesn't canonicalize it) and axis ORDER can only be trusted where
+// eigenvalues are well separated — bucketing stability survives a sign flip (it
+// only permutes bucket labels) and a part's three extents being separated is
+// what makes axis order stable under rotation. The degeneracy problem above is
+// specifically an AXES problem, not (any longer) a SCALE problem: `axes` keeps
+// its documented near-cubic/near-cylindrical caveat — an arbitrary, rotation-
+// dependent basis on a cube — for any caller that reads actual directions out
+// of it (segment.js's bucketing does); `diagonal` no longer inherits it.
 export function intrinsicFrame(verts) {
   const n = verts.length / 3;
   const c = [0, 0, 0];
   for (let i = 0; i < n; i++) { c[0] += verts[i*3]; c[1] += verts[i*3+1]; c[2] += verts[i*3+2]; }
   c[0] /= n; c[1] /= n; c[2] /= n;
   const cov = [[0,0,0],[0,0,0],[0,0,0]];
+  let trace = 0;
   for (let i = 0; i < n; i++) {
     const x = verts[i*3]-c[0], y = verts[i*3+1]-c[1], z = verts[i*3+2]-c[2];
     cov[0][0] += x*x; cov[0][1] += x*y; cov[0][2] += x*z;
     cov[1][1] += y*y; cov[1][2] += y*z; cov[2][2] += z*z;
+    trace += x*x + y*y + z*z;
   }
   cov[1][0] = cov[0][1]; cov[2][0] = cov[0][2]; cov[2][1] = cov[1][2];
   const { vectors: axes } = jacobiEigen(cov);
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < n; i++) {
-    const x = verts[i*3]-c[0], y = verts[i*3+1]-c[1], z = verts[i*3+2]-c[2];
-    for (let a = 0; a < 3; a++) {
-      const proj = x*axes[a][0] + y*axes[a][1] + z*axes[a][2];
-      if (proj < lo[a]) lo[a] = proj;
-      if (proj > hi[a]) hi[a] = proj;
-    }
-  }
-  return { axes, diagonal: Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) };
+  return { axes, diagonal: 2 * Math.sqrt(trace / n) };
 }
 
 // Just the diagonal, for callers (surface-graph.js) that don't also need the axes.

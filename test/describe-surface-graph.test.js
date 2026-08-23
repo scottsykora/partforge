@@ -178,8 +178,21 @@ test("two coaxial, same-size tori offset sideways from the axis do not merge", (
   expect(g.surfaces.filter((s) => s.type === "torus").length).toBe(2);
 });
 
+// 64 segments, not this file's usual 48 (fix round 3 of Task 15's own suite):
+// `defaultTol` used to scale off a PCA-projected bounding-box extent, which
+// over-estimated a mesh's true "size" enough to comfortably cover `fitTorus`'s own
+// ~0.0067mm chord-driven residual on a 48-segment torus at this R=10/r=3 scale.
+// Switched to a genuinely rotation-invariant `2 * sqrt(trace/n)` (a smaller,
+// correctly-scaled number on a dense, well-distributed mesh like this one, not just
+// on the near-cubic case that motivated the switch), which tightened the default
+// tolerance below that same residual — a real, disclosed side effect of the fix
+// (task-15-report.md), not something to paper over by loosening `FIT_TOL_FRAC`
+// itself. 64 segments' finer tessellation halves the chord error (measured:
+// 0.0038mm, comfortably under the new ~0.0063mm default), which is what this test
+// actually needs — not a looser tolerance, a fit good enough to test the MERGE
+// logic against rather than against its own facet-driven residual.
 test("one torus split into disconnected fragments merges back into one surface", () => {
-  const topo = buildTopology(torusMesh(10, 3, 48, 48));
+  const topo = buildTopology(torusMesh(10, 3, 64, 64));
   const all = Array.from({ length: topo.faceArea.length }, (_, i) => i);
   const full = torusPatch(topo, all, "qT");
   const half = Math.floor(full.faces.length / 2);
