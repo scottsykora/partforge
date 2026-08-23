@@ -482,6 +482,18 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 - **Fix:** pass `shading: "faceted"` to `k.loft` (or drop the smooth-implying
   option) per [AUTHORING-PARTS.md](AUTHORING-PARTS.md) shading-intent note.
 
+## loft-ring-multi-region-shape2d
+
+- **Symptom:** `Error: loft: ring 0 is a Shape2D with 2 regions — a loft ring must be a single closed outline`
+- **Cause:** the Shape2D handed to a loft ring holds several disjoint outlines (usually the result of a union that never overlapped).
+- **Fix:** loft each region as its own solid and union the lofts, or rebuild the profile so the outlines actually merge into one. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Geometry: the kernel / `Solid` API" (`loft` rings).
+
+## loft-ring-has-holes
+
+- **Symptom:** `Error: loft: ring 0 has holes — loft rings must be hole-free outlines`
+- **Cause:** the ring Shape2D has an inner contour (a `.cut()` inside the outline). Lofting hole tunnels needs its own correspondence and is not supported.
+- **Fix:** loft the outer outline, then `.cut()` a second loft (or an extrusion) of the hole profile from the solid. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Geometry: the kernel / `Solid` API" (`loft` rings).
+
 ## duplicate-preset-name-throws
 
 - **Symptom:** `duplicate preset name across sections:` thrown from verify/measure, naming the repeated preset (e.g. `duplicate preset name across sections: "Compact"`).
