@@ -28,9 +28,20 @@ test("curve mode: rounded-square rings loft as EXACT B-rep — analytic prism vo
   expect(v).toBeCloseTo(exact, 3);                 // curve-exact, not faceted
 });
 
-test("curve mode: STEP export keeps true CIRCLE edges", async () => {
+test("curve mode: scaled rings loft without ThruSections re-matching — exact frustum volume + true CIRCLE edges", async () => {
+  // The ThruSections-twisting risk this task exists to retire only shows up with a
+  // ring-to-ring SCALE mismatch (two identical rings have a trivial seam match).
+  // A ruled loft between two similar rounded-square sections is, section-by-section,
+  // an exact scaled copy with factor f(t) = 1 - t(1-s), so the volume has a closed
+  // form: V = h * A0 * (1 + s + s^2) / 3. A twisted/re-matched loft cannot land on
+  // this value; only a correct curve-exact one can (OCCT is exact for these conical
+  // arc patches). Do NOT loosen this tolerance if it fails — that would mean the
+  // ThruSections risk is real and curve mode needs the scale restriction instead.
   const rsq = roundedProfile(SQ, 2);
   const solid = k.loft({ rings: [{ polygon: rsq, z: 0 }, { polygon: rsq, z: 10, scale: 0.5 }] });
+  const A0 = 100 - (4 - Math.PI) * 4; // 96.56637061…
+  const exact = 10 * A0 * (1 + 0.5 + 0.25) / 3; // 563.3038285…
+  expect(solid.volume()).toBeCloseTo(exact, 3);
   const step = await k.toSTEP([{ name: "loft", solid }]);
   const text = typeof step === "string" ? step : new TextDecoder().decode(step);
   expect(text).toMatch(/CIRCLE/);

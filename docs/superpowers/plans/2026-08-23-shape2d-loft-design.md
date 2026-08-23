@@ -48,6 +48,8 @@ The signatures pick one of three modes for the whole loft:
    the original curve wires** — `contourDrawing(bakedContour)` emits true CIRCLE /
    B-spline edges, so STEP stays curve-exact. Parity **within tolerance** (the
    `hull`/`screwSweep` class): the mesh facets what the B-rep keeps exact.
+   [Verified on OCCT: scaled curve-mode rings loft without wire re-matching — exact
+   frustum volume and true CIRCLE STEP edges; no scale restriction needed.]
 
 3. **`resample`** — signatures differ (a rounded square lofted to a circle, unequal-N
    point lists). Each ring is tessellated at a fixed pure-JS LOD (`LOFT_SEGS = 64`,
