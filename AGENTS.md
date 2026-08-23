@@ -54,6 +54,7 @@ The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
 npx partforge lint    src/parts/<part>.js          # static checks, no kernel boot; exits non-zero on errors
 npx partforge measure src/parts/<part>.js [view]   # bbox/volume/holes/watertight + verify gate; exits non-zero on failure
 npx partforge render  src/parts/<part>.js [view]   # canonical-angle PNGs -> render/
+npx partforge describe <part>.js#<importName> [--budget N] [--json]  # imported mesh -> semantic feature report, for rebuilding an STL parametrically
 npx partforge pick-serve                           # request-a-pick: agent asks user to click geometry
 ```
 
@@ -131,11 +132,14 @@ the installed package, so let the publish finish before bumping the dep there.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/framework/oracle/`** - the geometric oracle: `measure.js`, `verify.js`,
   `build.js`, `gaps.js`, `min-wall.js`, `bvh.js`, `mesh.js`, `assert-dsl.js`,
-  `dfm-profiles.js`, `cases.js`. Despite reading like test code this is shared
-  runtime: the browser worker runs it for the `inspect` job, and `lint` reads
-  its DFM profiles and assertion grammar. It is therefore DOM-free, `three`-free
-  and `node:`-free, same as the rest of the worker graph
-  (`test/worker-layering.test.js` enforces that).
+  `dfm-profiles.js`, `cases.js`, `describe.js` (+ `describe/`) - reads an imported
+  triangle mesh and emits a semantic feature report (holes, extrusions, patterns,
+  symmetry, fillets/chamfers, a volume-reconstruction score) so an agent can rebuild
+  an STL parametrically; see `docs/AUTHORING-PARTS.md` for what it does and does not
+  cover. Despite reading like test code this is shared runtime: the browser worker
+  runs it for the `inspect` job, and `lint` reads its DFM profiles and assertion
+  grammar. It is therefore DOM-free, `three`-free and `node:`-free, same as the rest
+  of the worker graph (`test/worker-layering.test.js` enforces that).
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these

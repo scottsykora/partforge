@@ -601,6 +601,36 @@ between the Manifold preview and the OCCT STEP export.
 
   The same channel carries every other degrade in a build: an `extrude` rim bevel reduced or skipped (`extrude bevel <b> …`), a `roundedBox` rim radius clamped to `round.side`, and the `Shape2D` corner-op clamps in the two entries above. A build result's `warnings` is the complete list of what the part asked for and did not get.
 
+## describe-not-manifold
+
+- **Symptom:** `describe` returns `{"error": "not-manifold"}`.
+- **Cause:** The mesh still has open edges after vertex-merge and winding repair, so it does not bound a solid and acceptance cannot diff against it.
+- **Fix:** Repair the mesh before describing it — Meshmixer, `meshlabserver`, or the slicer's own repair. `describe` will not repair geometry it was asked to report on; silently sealing a hole would make the report a description of a mesh the user does not have.
+
+## describe-too-large
+
+- **Symptom:** `{"error": "too-large"}` naming a triangle count.
+- **Cause:** Above 400,000 triangles the segmentation pass stops being usable in an interactive loop.
+- **Fix:** Decimate first. A CAD-exported STL re-exported at a coarser chord tolerance loses nothing the describer uses; the feature vocabulary reads surfaces, not facets.
+
+## describe-empty
+
+- **Symptom:** `{"error": "empty"}`.
+- **Cause:** The mesh has zero triangles — usually an import that resolved to an empty file, or a `k.import` name that registered as an error entry.
+- **Fix:** Check the `imports` source actually resolves. See [import-unknown-name](#import-unknown-name).
+
+## describe-budget-exceeded
+
+- **Symptom:** The report carries `warning: "budget-exceeded"` and `score.xorFraction` is higher than expected.
+- **Cause:** The acceptance loop hit its boolean budget before the residual converged. The report is partial but honestly scored — not wrong, just incomplete.
+- **Fix:** Raise `--budget`, or accept the partial description. A part needing far more than the default is usually one where a residual region is being attacked by many near-identical candidates; check `residual.regions` first.
+
+## describe-unreadable
+
+- **Symptom:** `{"error": "unreadable"}`.
+- **Cause:** `solid.toMesh()` threw rather than returning geometry — a corrupt or otherwise unrepresentable solid.
+- **Fix:** Confirm the source file parses cleanly upstream (`k.import` itself throws separately for an unparseable STL/3MF/STEP — see [import-unknown-name](#import-unknown-name)); re-export the file if the kernel cannot read back what it just built. STL is assumed to be in millimetres (the format carries no unit metadata) — see the import section of AUTHORING-PARTS.md.
+
 ## control-default-not-literal
 
 - **Symptom:** A control works live — the slider moves, the geometry updates — but the user's panel edits are gone when the part is reopened. Nothing throws anywhere.
