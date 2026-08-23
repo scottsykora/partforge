@@ -313,7 +313,7 @@ and the detection rule.
 | `k.box({ size, center? })` · `k.box({ min, max })` | `{size:[x,y,z]}` = centered X/Y, base at z=0 (`center:true` also centers Z); `{min,max}` = explicit `[x,y,z]` corners |
 | `k.prism({ points, h, twist?, scaleTop? })` | extrude a 2-D polygon (or an **arc profile** from `roundedProfile`) from z=0; optional `twist` (degrees over the height) and `scaleTop` (uniform top taper: 1 straight, <1 taper in, 0 → point/cone) |
 | `k.extrude({ profile, h, twist?, scaleTop? })` | extrude a **polygon-with-holes** region from z=0 in one op — `profile` is `{ outer, holes? }` where each contour is a points array **or an arc profile** (`roundedProfile`, for true STEP fillets), or a bare points array / arc profile for outer-only; same `twist`/`scaleTop` as `prism` (both backends) |
-| `k.loft({ rings, ruled?, closed?, shading? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). A ring's `polygon` may be a point list, `sides`+`radius`, a curve contour, or a single-region hole-free `Shape2D` (multi-region / holed shapes throw). Rings with identical segment structure loft curve-natively on OCCT (STEP keeps true arcs); structurally different rings auto-resample to a common vertex count with a deterministic seam and share the same faceted STEP at sampling LOD on both backends. `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls. `shading?: "smooth" \| "faceted"` overrides facet/smooth shading inference (default: <32-side rings shade as flat facets, drawing no same-surface lines at all — not even their own cap rims — though cut seams against other solids still draw; ≥32 sides shade smooth) |
+| `k.loft({ rings, ruled?, closed?, shading? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). A ring's `polygon` may be a point list, `sides`+`radius`, a curve contour, or a single-region hole-free `Shape2D` (multi-region / holed shapes throw). Identical all-line rings are bit-identical on both backends (unchanged legacy). Identical curve-structure rings loft curve-natively on OCCT (STEP keeps true arcs) and facet at fixed LOD on Manifold; structurally different rings auto-resample to a common vertex count with a deterministic seam and share the same faceted STEP at sampling LOD on both backends. `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls. `shading?: "smooth" \| "faceted"` overrides facet/smooth shading inference (default: <32-side rings shade as flat facets, drawing no same-surface lines at all — not even their own cap rims — though cut seams against other solids still draw; ≥32 sides shade smooth) |
 | `k.sweep({ profile, path, cornerRadius?, closed?, ruled?, smooth? })` | sweep a fixed 2-D profile along a 3-D polyline path — sharp mitered corners (or `cornerRadius` fillets), capped ends (both backends). `closed:true` capless loops and `smooth:true` (OCCT-native swept B-rep, STEP-exact / preview-faceted) are backend-specific, like loft's `closed`/`ruled:false`. `closed:true` loops must be **planar** — RMF frame-transport holonomy can seam-twist a non-planar closed loop where the last station rejoins the first, so only planar closed loops are supported/tested |
 | `k.sphere({ r\|d })` | sphere centred at the origin; bare `k.sphere(r)` also stays valid |
 | `k.roundedBox({ size, center?, round })` | box with rounded edges — `round` = number (all edges) or `{ side?, top?, bottom? }` (vertical edges / rims); built as one hand-meshed ring stack (no booleans at all, cheaper than `fillet`'s cutters); `side` must be 0 or ≥ the rim radii (between clamps with a warning); with `side > 0`, `top + bottom` must be strictly `< h` |
@@ -324,19 +324,20 @@ and the detection rule.
 | `k.screwSweep({ profile, pitch, turns, lefthand? })` | screw-motion sweep of an **axial** lathe profile `[[r, z], …]` (same convention as `k.revolve`) — threads, worms, helical ridges. `h = pitch · turns`. The profile's axial extent must not exceed `pitch`; a profile spanning exactly `pitch` must be **periodic** (first radius == last radius) and yields a complete threaded body with no boolean (both backends) |
 | `k.union(solids[])` | boolean union |
 
-**`loft` rings** — each ring is `{ polygon:[[x,y],…] | sides+radius | Contour | Shape2D, z, rotate?, scale? }`
+**`loft` rings** — each ring is `{ polygon:[[x,y],…] | sides+radius | {start,segments} | Shape2D, z, rotate?, scale? }`
 (`rotate` is degrees about Z, `scale` is a number or `[sx,sy]`). A ring's `polygon` may be:
 - a point list `[[x,y],…]` — plain polygon
 - `{sides, radius}` — shorthand for a regular polygon
 - a curve contour `{start:[x,y], segments:[...]}` — from `roundedProfile` (true CIRCLE/CUBIC edges in STEP)
 - a single-region hole-free `Shape2D` — from a 2-D boolean, fillet, or other shape operation
 
-Rings with **identical segment structure** (the same shape at different z/scale/rotate) loft curve-natively on OCCT
-(STEP keeps exact arc edges), while a Manifold preview facets at fixed LOD. **Structurally different rings** (e.g.
-a square morphing to a circle, or unequal-N point lists) auto-resample to a common vertex count in shared pure-JS
-code, with seam = the outermost +X-ray crossing from each ring's centroid; use per-ring `rotate` to tune the
-twist phase. Every backend then lofts the identical resampled point rings — parity by construction on both —
-and STEP is faceted at the sampling LOD.
+Rings with **identical all-line segment structure** (the same straight-sided shape at different z/scale/rotate) are
+bit-identical on both backends — unchanged legacy behavior, parity by construction. Rings with **identical curve structure**
+(containing arcs/Béziers, the same shape at different z/scale/rotate) loft curve-natively on OCCT (STEP keeps exact arc
+edges), while a Manifold preview facets at fixed LOD. **Structurally different rings** (e.g. a square morphing to a circle,
+or unequal-N point lists) auto-resample to a common vertex count in shared pure-JS code, with seam = the outermost +X-ray
+crossing from each ring's centroid; use per-ring `rotate` to tune the twist phase. Every backend then lofts the identical
+resampled point rings — parity by construction on both — and STEP is faceted at the sampling LOD.
 
 Author rings CCW and ordered by ascending `z` (the `regularPolygon` / `polygon.js` helpers are already CCW);
 loft self-corrects a fully-inverted result so CW-wound or descending-z rings still export a valid outward solid.
