@@ -14,22 +14,9 @@ export { viewSubParts } from "./framework/part-model.js";
 export { resolveDerived } from "./framework/derive.js";
 export { relevantParamKeys, RELEVANT_ALL } from "./framework/param-deps.js";
 export { assemblyOverlaps } from "./framework/assembly.js";
-export { assemblyGaps, meshGaps } from "./framework/oracle/gaps.js";
 export { bootOcctKernel } from "./testing/occt.js";
-export { meshVolume, bboxSize } from "./framework/oracle/mesh.js";
-export { buildView } from "./framework/oracle/build.js";
-export { measure } from "./framework/oracle/measure.js";
 export { renderViews, RENDER_VIEWS } from "./testing/render.js";
-export { verify } from "./framework/oracle/verify.js";
-export { buildBVH } from "./framework/oracle/bvh.js";
-export { minWall } from "./framework/oracle/min-wall.js";
-// Silhouette match scoring — also worker-reachable (the `inspect` job scores
-// `matchTargets` with exactly these), re-exported so a downstream harness can build
-// the same masks and reproduce a score outside the job loop.
-export { MATCH_VIEWS, rasterizeMeshMask, rasterizeRingsMask } from "./framework/oracle/silhouette.js";
-export { matchMasks, matchViews } from "./framework/oracle/match.js";
-// The semantic mesh oracle. Worker-reachable like the rest of the oracle (the
-// `describe` job runs it); re-exported so a downstream harness can run it directly.
-export { describe, describeMemo, DESCRIBE_ERRORS } from "./framework/oracle/describe.js";
-export { compactDescribe, LOW_COVERAGE } from "./framework/oracle/describe/report.js";
-export { DESCRIBE_LIMITS } from "./framework/oracle/describe/limits.js";
+// The whole oracle surface (measure/verify/buildView, gaps/BVH/min-wall, silhouette
+// match scoring, and the semantic mesh oracle) comes through partforge/oracle — one
+// list of names, two doors. See src/oracle.js for what each group is.
+export * from "./oracle.js";

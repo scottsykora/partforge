@@ -10,20 +10,32 @@ import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
-import { measure } from "./oracle/measure.js";
-import { verify } from "./oracle/verify.js";
-import { buildView } from "./oracle/build.js";
-import { MATCH_VIEWS, rasterizeMeshMask, rasterizeRingsMask } from "./oracle/silhouette.js";
-import { matchViews } from "./oracle/match.js";
-import { describe as describeMesh, describeMemo } from "./oracle/describe.js";
-import { compactDescribe } from "./oracle/describe/report.js";
 
-// One describe memo for the life of this worker. Deliberately NOT swept on setPart the
-// way solid-cache is: describe is pure in the mesh bytes (spec §4.1), so an edit can
-// never invalidate it, and dropping it on rebind would throw away the single most
-// expensive thing this worker computes for no reason at all. Keyed by content digest, so
-// a genuinely changed file misses correctly.
-const DESCRIBE_MEMO = describeMemo();
+// The oracle loads LAZILY, per job family, never at worker boot. It is the largest
+// JS payload in the worker's graph (measure/verify/build, silhouette/match, and the
+// describe stack), and only the `inspect` and `describe` jobs run any of it — the
+// generate/export hot path touches none. Each family below is a literal dynamic
+// import(), which Vite splits into its own chunk under `worker.format: "es"` (this
+// repo's config and partforge-cloud's both), so a user who never runs an oracle job
+// never downloads or parses one. The module loader caches the namespace after the
+// first await, so repeat jobs pay a resolved-promise tick, not a re-fetch.
+// test/worker-layering.test.js's eager-closure guard holds this in place.
+const loadInspect = () => Promise.all([
+  import("./oracle/build.js"),
+  import("./oracle/measure.js"),
+  import("./oracle/verify.js"),
+]);
+const loadDescribe = () => Promise.all([
+  import("./oracle/describe.js"),
+  import("./oracle/describe/report.js"),
+]);
+
+// One describe memo for the life of this worker, created alongside the stack's first
+// load. Deliberately NOT swept on setPart the way solid-cache is: describe is pure in
+// the mesh bytes (spec §4.1), so an edit can never invalidate it, and dropping it on
+// rebind would throw away the single most expensive thing this worker computes for no
+// reason at all. Keyed by content digest, so a genuinely changed file misses correctly.
+let DESCRIBE_MEMO = null;
 
 // Handle one geometry job, posting results/progress via `post(msg, transfer?)`.
 // Backend-agnostic and part-agnostic: every part specific comes through `part`.
@@ -47,7 +59,7 @@ const bufferOf = (data) => (ArrayBuffer.isView(data) ? data.buffer : data);
 // cannot cost the others their scores (or the caller their geometry report).
 //   {kind: "profile", rings: [[[x,y], ...], ...]}  — millimetres, so it carries scale
 //   {kind: "image",   mask: {data, width, height}} — a photo, so it carries none
-function referenceMask(target) {
+function referenceMask(target, rasterizeRingsMask) {
   if (target?.kind === "profile") return Array.isArray(target.rings) ? rasterizeRingsMask(target.rings) : null;
   if (target?.kind === "image") {
     const m = target.mask;
@@ -70,9 +82,15 @@ function referenceMask(target) {
 //
 // The six mesh masks are rasterized ONCE and shared across every target — the targets
 // are the cheap side of this (a couple of reference masks), the part is not.
-function scoreMatchTargets(built, targets, onProgress) {
+async function scoreMatchTargets(built, targets, onProgress) {
   if (!targets?.length) return null;
   try {
+    // Loaded here, past the early return: an inspect with no matchTargets — the
+    // common case — never pays for the rasterizer.
+    const [{ MATCH_VIEWS, rasterizeMeshMask, rasterizeRingsMask }, { matchViews }] = await Promise.all([
+      import("./oracle/silhouette.js"),
+      import("./oracle/match.js"),
+    ]);
     const meshes = built.map((b) => b.mesh);
     const viewMasks = {};
     for (const view of MATCH_VIEWS) viewMasks[view] = rasterizeMeshMask(meshes, view);
@@ -80,7 +98,7 @@ function scoreMatchTargets(built, targets, onProgress) {
     const out = [];
     for (const target of targets) {
       try {
-        const reference = referenceMask(target);
+        const reference = referenceMask(target, rasterizeRingsMask);
         if (!reference) continue;
         // scaleAware is the CALLER's promise that both sides are in millimetres, and
         // this is the caller: rings are mm and the mesh masks carry mmPerPx, so a
@@ -365,6 +383,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // unrecognized value must never quietly buy less checking than the caller
       // asked for.
       const quick = msg.checks === "quick";
+      const [{ buildView }, { measure }, { verify }] = await loadInspect();
       const view = msg.view ?? Object.keys(part.views)[0];
       const built = buildView(kernel, part, view, msg.params ?? {});
       const measured = measure(kernel, part, view, msg.params ?? {},
@@ -375,13 +394,18 @@ export async function handle(kernel, part, msg, post, opts = {}) {
           // The defaulted view, not msg.view: the seed below was measured on it, and
           // verify's seed reuse is only sound when both name the same view.
           view,
+          // This job's own (lazily-imported) measure, not verify's static fallback:
+          // the two are different module instances once measure.js loads through a
+          // dynamic import, and the seeding test's call-count mock only sees this
+          // one. One binding for the whole inspect keeps that countable — and true.
+          measureFn: measure,
           quick,
           seed: { params: msg.params ?? {}, result: measured },
         }),
       };
       // `match` is present only when the caller asked for it AND something scored, so
       // an inspect with no `matchTargets` answers on exactly the shape it always has.
-      const match = scoreMatchTargets(built, msg.matchTargets, onProgress);
+      const match = await scoreMatchTargets(built, msg.matchTargets, onProgress);
       if (match) report.match = match;
       post({ type: "report", ...report }, match?.map((m) => m.delta.data.buffer) ?? []);
     } else if (msg.type === "describe") {
@@ -393,10 +417,12 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // Manifold only, and not by choice on this path: mesh imports on OCCT are never
       // attempted, so a describe job posted to an OCCT worker is a routing bug, not a
       // fallback opportunity. It surfaces as an ordinary error rather than a reroute.
+      const [{ describe: describeMesh, describeMemo }, { compactDescribe }] = await loadDescribe();
       const solid = kernel.import(msg.importName);      // throws on an unknown name
       // `_importDigest` is the backend's existing underscore side-channel (KERNEL-CONTRACT
       // "Conformance classes") — the same digest already folded into every import cache key.
       const digest = kernel._importDigest?.(msg.importName) ?? null;
+      DESCRIBE_MEMO ??= describeMemo();
       const full = describeMesh(kernel, solid, {
         name: msg.importName,
         digest,
