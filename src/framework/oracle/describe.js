@@ -180,6 +180,66 @@ function surfaceVertices(topo, surfById, ids, faceScope) {
   return out;
 }
 
+// A deterministic unit vector perpendicular to `w`: orthogonalize the world axis
+// with the smallest |component| along `w`. Deterministic matters — describe is memoed
+// by content digest, so a candidate's frame must be a pure function of the mesh.
+const perpTo = (w) => {
+  const ax = Math.abs(w[0]) <= Math.abs(w[1]) && Math.abs(w[0]) <= Math.abs(w[2]) ? [1, 0, 0]
+    : Math.abs(w[1]) <= Math.abs(w[2]) ? [0, 1, 0] : [0, 0, 1];
+  return orthogonalize(ax, w);
+};
+
+// The cap's own measured boundary loops as ABSOLUTE (u,v) coordinates in the cap's
+// plane — the real footprint, where the box branch below can only offer the
+// footprint's bounding rectangle (mostly air on an L-bracket or a sword-shaped
+// bookmark, so the candidate loses on xor-gain and the feature reconstructs
+// nothing). `surface-graph.js` already chained these loops per surface; a merged
+// surface's list can carry OTHER islands' rims too (mergeCoFamily joins co-planar
+// patches that never touch), so when the feature carries a `faceScope` the loops are
+// filtered to those whose every vertex belongs to this island's own triangles.
+// The largest-area survivor is the outer contour; the rest are holes (an annular
+// cap's second loop — exactly the signal the hole/pocket rules already read).
+// Winding is normalized to CCW for both, the orientation `kernel.extrude` expects
+// of a contour. Returns null when no loop survives — callers fall back to the
+// bounding-box candidate, honest about being one.
+function footprintLoops(topo, cap, scopeFaces, u, v, claimedVerts) {
+  let allowed = null;
+  if (scopeFaces) {
+    allowed = new Set();
+    for (const t of scopeFaces) for (let c = 0; c < 3; c++) allowed.add(topo.tris[3 * t + c]);
+  }
+  const loops = [];
+  for (const loop of cap.loops ?? []) {
+    if (loop.length < 3) continue;
+    if (allowed && !loop.every((vi) => allowed.has(vi))) continue;
+    const pts = loop.map((vi) => {
+      const pnt = [topo.verts[3 * vi], topo.verts[3 * vi + 1], topo.verts[3 * vi + 2]];
+      return [dot3(pnt, u), dot3(pnt, v)];
+    });
+    let a2 = 0; // shoelace, signed — sign is the winding, magnitude ranks outer vs holes
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], q = pts[(i + 1) % pts.length];
+      a2 += a[0] * q[1] - a[1] * q[0];
+    }
+    loops.push({ pts, vis: loop, area: Math.abs(a2) / 2, ccw: a2 > 0 });
+  }
+  if (!loops.length) return null;
+  loops.sort((a, b) => b.area - a.area);
+  const ccw = (l) => (l.ccw ? l.pts : [...l.pts].reverse());
+  // An interior loop whose rim another feature CLAIMS (a detected hole's bore — the
+  // rim ring is shared between the cap and the bore wall, so every loop vertex sits
+  // in the bore surface's own vertex set) is left OUT of the footprint: that hole's
+  // own cut candidate owns it. Without this, an annular cap rebuilt hole-included
+  // leaves the hole feature nothing to explain — measured on the washer fixture,
+  // whose through-hole's volumeShare went to null the moment footprints landed,
+  // exactly the double-explanation this guard prevents. A parametric author would
+  // decompose it the same way: base profile, then a bore with its own diameter.
+  // Unclaimed interior loops (a square cutout no hole rule recognizes) stay in the
+  // footprint — better an honest hole in the prism than 12.5% unexplained volume.
+  const unclaimed = (l) => !claimedVerts || !l.vis.every((vi) => claimedVerts.has(vi));
+  return { outer: ccw(loops[0]), holes: loops.slice(1).filter(unclaimed).map(ccw) };
+}
+
 export function describe(kernel, solid, opts = {}) {
   // A live Solid in, not a mesh. The kernel exposes no public mesh->solid constructor —
   // geometry only enters through `_registerImport` + `import(name)` — and acceptance needs
@@ -270,8 +330,21 @@ export function describe(kernel, solid, opts = {}) {
   // world Z, or — round 2 review's CRITICAL finding — reading the whole mesh's bounds
   // for every feature and building every candidate the same full-part size.
   const surfById = new Map(graph.surfaces.map((s) => [s.id, s]));
+  // Every vertex belonging to a surface some HOLE feature claims — the set
+  // footprintLoops consults so a footprint never re-explains a rim a hole's own cut
+  // candidate owns (see its comment for the washer measurement that forced this).
+  const claimedVerts = new Set();
+  for (const f of features) {
+    if (f.type !== "throughHole" && f.type !== "blindHole") continue;
+    for (const id of f.surfaces ?? []) {
+      const surf = surfById.get(id);
+      for (const t of surf?.faces ?? []) {
+        for (let c = 0; c < 3; c++) claimedVerts.add(topo.tris[3 * t + c]);
+      }
+    }
+  }
   const candidates = features
-    .map((f) => toCandidate(kernel, f, b, { surfById, topo }))
+    .map((f) => toCandidate(kernel, f, b, { surfById, topo, claimedVerts }))
     .filter(Boolean);
 
   const graded = acceptCandidates(kernel, solid, candidates, { budget: opts.budget });
@@ -497,6 +570,38 @@ function toCandidate(kernel, f, b, ctx) {
     // projected onto that exact (u, v, direction) frame — `projectedBounds`, this
     // file's general-frame twin of mesh.js's `bounds()` — rather than the world-axis
     // bbox `size`/`f.depth` used above for the (rotation-insensitive) circle case.
+    // Loop-based candidate first: the cap's own measured boundary loops ARE the
+    // footprint (footprintLoops above), so when they are available the candidate is
+    // the real prism — outer contour extruded, hole contours honoured — rather than
+    // either rectangle below. The frame's in-plane axis is arbitrary (perpTo): the
+    // loop coordinates are absolute projections onto (u, v), so any orthonormal pair
+    // perpendicular to `direction` reproduces the same world-space solid after
+    // orientOnto. Depth still comes from THIS FEATURE'S OWN vertices projected onto
+    // `direction` (the same projectedBounds discipline as the box branch, round 2
+    // review's CRITICAL finding). A candidate whose loops were mis-chained or span a
+    // merged surface's other island simply scores a poor xor-gain and is rejected —
+    // the same honesty the box fallback has always leaned on.
+    const cap = ctx?.surfById?.get(f.floorFace);
+    if (cap?.loops?.length && ctx?.topo) {
+      const u = perpTo(direction);
+      const v = cross3(direction, u);
+      const fp = footprintLoops(ctx.topo, cap, f.faceScope?.[f.floorFace], u, v, ctx.claimedVerts);
+      if (fp) {
+        const ownSurfaces = [f.floorFace, ...(f.wallFaces ?? [])].filter(Boolean);
+        return {
+          key: f.key, featureKey: f.key, op, explains: [f.id],
+          dimension: f.depth, paramName: "height", hintOp: f.type === "boss" ? "union" : f.type === "pocket" ? "cut" : "box",
+          hintArgs: { shape: f.profile.kind, depth: f.depth },
+          build: () => {
+            const verts = surfaceVertices(ctx.topo, ctx.surfById, ownSurfaces, f.faceScope);
+            const bnd = projectedBounds(verts, [u, v, direction]);
+            const local = kernel.extrude({ profile: { outer: fp.outer, holes: fp.holes }, h: bnd.max[2] - bnd.min[2] });
+            const oriented = orientOnto(local, direction, u);
+            return oriented.translate(scale3(direction, bnd.min[2]));
+          },
+        };
+      }
+    }
     const wallPlane = ctx?.surfById && f.wallFaces
       ? f.wallFaces.map((id) => ctx.surfById.get(id)).find((s) => s?.type === "plane")
       : null;
