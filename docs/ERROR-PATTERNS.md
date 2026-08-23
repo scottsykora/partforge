@@ -601,6 +601,12 @@ between the Manifold preview and the OCCT STEP export.
 
   The same channel carries every other degrade in a build: an `extrude` rim bevel reduced or skipped (`extrude bevel <b> …`), a `roundedBox` rim radius clamped to `round.side`, and the `Shape2D` corner-op clamps in the two entries above. A build result's `warnings` is the complete list of what the part asked for and did not get.
 
+## describe-oracle-unavailable
+
+- **Symptom:** A `describe` job answers `{"error": "oracle-unavailable"}`, or `partforge describe` exits with "describe needs the mesh-oracle package".
+- **Cause:** The semantic mesh oracle is a separate, closed package (`@pixiteapps/partforge-oracle`), and this app or shell doesn't have it: the worker was started without `runWorker(part, { loadOracle })`, or the CLI could not import the package.
+- **Fix:** Install the oracle package from the private registry and inject it — `runWorker(part, { loadOracle: () => import("@pixiteapps/partforge-oracle") })` in the app's worker file, or plain `npm install` for the CLI. In the oracle package's own repo, set `PARTFORGE_ORACLE` to a local path instead. Every other job (generate, export, inspect) works without it.
+
 ## describe-not-manifold
 
 - **Symptom:** `describe` returns `{"error": "not-manifold"}`.

@@ -12,23 +12,29 @@ import { safeName } from "./safe-name.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
 
 // The oracle loads LAZILY, per job family, never at worker boot. It is the largest
-// JS payload in the worker's graph (measure/verify/build, silhouette/match, and the
-// describe stack), and only the `inspect` and `describe` jobs run any of it — the
-// generate/export hot path touches none. Each family below is a literal dynamic
-// import(), which Vite splits into its own chunk under `worker.format: "es"` (this
-// repo's config and partforge-cloud's both), so a user who never runs an oracle job
-// never downloads or parses one. The module loader caches the namespace after the
-// first await, so repeat jobs pay a resolved-promise tick, not a re-fetch.
+// JS payload in the worker's graph (measure/verify/build and silhouette/match), and
+// only the `inspect` job runs any of it — the generate/export hot path touches none.
+// Each family below is a literal dynamic import(), which Vite splits into its own
+// chunk under `worker.format: "es"` (this repo's config and partforge-cloud's both),
+// so a user who never runs an oracle job never downloads or parses one. The module
+// loader caches the namespace after the first await, so repeat jobs pay a
+// resolved-promise tick, not a re-fetch.
 // test/worker-layering.test.js's eager-closure guard holds this in place.
 const loadInspect = () => Promise.all([
   import("./oracle/build.js"),
   import("./oracle/measure.js"),
   import("./oracle/verify.js"),
 ]);
-const loadDescribe = () => Promise.all([
-  import("./oracle/describe.js"),
-  import("./oracle/describe/report.js"),
-]);
+
+// The DESCRIBE stack is not part of this package at all: the semantic mesh oracle
+// lives in a separate, closed package, and this open framework never names it. A
+// host that has it INJECTS a loader — `runWorker(part, { loadOracle })`, threaded
+// here as `opts.loadOracle`, resolving to the oracle package's barrel (describe,
+// describeMemo, compactDescribe). Injection rather than a bare import specifier is
+// deliberate: a literal `import("@scope/pkg")` in open source would fail every
+// downstream Vite build where the package isn't installed, while an injected thunk
+// is simply absent — and an absent oracle answers the job with the structured
+// `oracle-unavailable` report below instead of stalling or throwing.
 
 // One describe memo for the life of this worker, created alongside the stack's first
 // load. Deliberately NOT swept on setPart the way solid-cache is: describe is pure in
@@ -417,7 +423,24 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // Manifold only, and not by choice on this path: mesh imports on OCCT are never
       // attempted, so a describe job posted to an OCCT worker is a routing bug, not a
       // fallback opportunity. It surfaces as an ordinary error rather than a reroute.
-      const [{ describe: describeMesh, describeMemo }, { compactDescribe }] = await loadDescribe();
+      if (!opts.loadOracle) {
+        // Same closed-set, returned-not-thrown error contract describe itself keeps
+        // (its errors are findings, not crashes) — shaped as the structured triple the
+        // whole repo emits, so a caller can act on the code. ERROR-PATTERNS.md#describe-
+        // oracle-unavailable carries the fix.
+        post({ type: "describe-report", report: {
+          error: "oracle-unavailable",
+          detail: "this app was built without the mesh oracle package",
+          diagnostic: {
+            cause: "the describe job needs the closed oracle package, and no loadOracle loader was injected into runWorker",
+            location: `describe "${msg.importName}"`,
+            correctiveAction: "install the oracle package and pass runWorker(part, { loadOracle: () => import(...) }); see ERROR-PATTERNS.md#describe-oracle-unavailable",
+          },
+          source: { name: msg.importName, digest: null },
+        } });
+        return;
+      }
+      const { describe: describeMesh, describeMemo, compactDescribe } = await opts.loadOracle();
       const solid = kernel.import(msg.importName);      // throws on an unknown name
       // `_importDigest` is the backend's existing underscore side-channel (KERNEL-CONTRACT
       // "Conformance classes") — the same digest already folded into every import cache key.

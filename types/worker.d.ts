@@ -17,5 +17,13 @@ export interface WorkerHandle {
   setPart(newPart: PartDefinition): void;
 }
 
-/** Run the worker job loop for `part`. Call once, at worker module top level. */
-export function runWorker(part: PartDefinition): WorkerHandle;
+/**
+ * Run the worker job loop for `part`. Call once, at worker module top level.
+ * `opts.loadOracle` injects the closed semantic-mesh-oracle package (a thunk
+ * resolving its barrel: `describe`, `describeMemo`, `compactDescribe`); omitted,
+ * describe jobs answer with a structured `oracle-unavailable` report.
+ */
+export function runWorker(
+  part: PartDefinition,
+  opts?: { loadOracle?: () => Promise<{ describe: Function; describeMemo: () => Map<string, unknown>; compactDescribe: Function }> },
+): WorkerHandle;
