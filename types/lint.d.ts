@@ -29,6 +29,16 @@ export interface Finding {
    * `""` for findings about the definition as a whole. For navigation only.
    */
   path: string;
+  /**
+   * Present on source-rule findings: the tree path of the file the finding was
+   * read from, as keyed in `sources.files`.
+   */
+  file?: string;
+  /**
+   * Present on source-rule findings: the 1-indexed line of the offending source
+   * within `file`.
+   */
+  line?: number;
   /** A stable ERROR-PATTERNS.md entry id, when one applies. */
   pattern?: string;
 }
@@ -43,14 +53,31 @@ export interface LintReport {
 }
 
 /**
+ * The part's own source text, keyed by tree path — `entrypoint` names the file
+ * holding the `PartDefinition` (the first key when omitted). Handing this over
+ * unlocks the source rules, which read the text the evaluated definition has
+ * already erased.
+ */
+export interface LintSources {
+  files: Record<string, string>;
+  entrypoint?: string;
+}
+
+/**
  * Lint a PartDefinition. NEVER throws — a rule that throws yields an
  * `internal-rule-error` warning and the run continues.
  *
  * @param part - the default-exported PartDefinition (deliberately `unknown`:
  *   lint's whole job is to be handed something that may not be one).
- * @param opts - `params` are layered over `part.defaults` for the probe pass.
+ * @param opts - `params` are layered over `part.defaults` for the probe pass;
+ *   `sources` is the part's own source text. Omitting `sources` (or handing
+ *   over a malformed one) makes the source rules a silent no-op — they are
+ *   never a reason for lint to fail.
  */
-export function lintPart(part: unknown, opts?: { params?: ResolvedParams } | null): LintReport;
+export function lintPart(
+  part: unknown,
+  opts?: { params?: ResolvedParams; sources?: LintSources } | null,
+): LintReport;
 
 /** The shared context a rule reads. */
 export interface LintContext {
@@ -69,6 +96,13 @@ export interface LintContext {
   probeAgain(): unknown;
   /** `verify.expect` resolved once per lint pass. */
   resolveExpectOnce(): unknown;
+  /**
+   * The normalized `opts.sources`, or `null` when none was handed over (or none
+   * survived normalization). The source rules return no findings when it is
+   * `null`. Optional: `lintContext` builds the context without it, and the
+   * field is assigned separately by `lintPart`.
+   */
+  sources?: LintSources | null;
 }
 
 export interface LintRule {
@@ -81,5 +115,13 @@ export interface LintRule {
  * documented rule catalog.
  */
 export const RULES: LintRule[];
+
+/**
+ * The ids of the rules that read SOURCE rather than the evaluated part. A host
+ * that gates rendering on lint errors uses this to keep source findings
+ * REPORTED but non-blocking: a persistence defect is not a reason to refuse to
+ * render a part that builds.
+ */
+export const SOURCE_RULE_IDS: ReadonlySet<string>;
 
 export type { PartDefinition };

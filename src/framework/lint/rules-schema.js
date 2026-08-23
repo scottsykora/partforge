@@ -21,28 +21,34 @@ const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArr
 // Every (descriptor, path, allowed-fields) triple that owns a parameter key, across
 // all four section kinds. A feature's own `sliders` are collected too, since each
 // slider is a full control descriptor in its own right.
+// Each record also carries `inHidden`: whether a STATICALLY hidden container
+// (a section, group or feature written `hidden: true`) encloses the descriptor.
+// It is read only by controlBoundKeys({ excludeHidden }); every other rule
+// ignores it, so their populations are unchanged. `when` is deliberately not
+// hiddenness — a `when`-conditioned node can still appear.
 function collectDescriptors(part) {
   const out = [];
   sections(part).forEach((sec, si) => {
+    const secHidden = sec?.hidden === true;
     // The authored shape: children in `controls`, recursively. Field lists are
     // the authored ones (authorFieldsFor) — the legacy lists stay untouched so
     // `when` on a legacy descriptor still warns. A section routes to one shape
     // or the other (desugar's winner-takes-all), so `return` before the legacy
     // loops below rather than falling through to them.
-    function walkAuthored(list, base) {
+    function walkAuthored(list, base, inHidden) {
       arr(list).forEach((entry, i) => {
         if (!entry) return;
         const path = `${base}[${i}]`;
         if (entry.type === "group") {
-          out.push({ d: entry, path, fields: GROUP_FIELDS, container: true, authored: true });
-          walkAuthored(entry.controls, `${path}.controls`);
+          out.push({ d: entry, path, fields: GROUP_FIELDS, container: true, authored: true, inHidden });
+          walkAuthored(entry.controls, `${path}.controls`, inHidden || entry.hidden === true);
         } else if (entry.type === "preset") {
-          out.push({ d: entry, path, fields: PRESET_FIELDS, container: true, authored: true });
+          out.push({ d: entry, path, fields: PRESET_FIELDS, container: true, authored: true, inHidden });
         } else {
           // A typo'd type (e.g. "grup") fails both branches above and lands
           // here — authorFieldsFor falls back to AUTHOR_COMMON, and
           // unknown-control-type (below) is what actually diagnoses it.
-          out.push({ d: entry, path, fields: authorFieldsFor(entry.type ?? "slider"), authored: true });
+          out.push({ d: entry, path, fields: authorFieldsFor(entry.type ?? "slider"), authored: true, inHidden });
         }
       });
     }
@@ -52,27 +58,27 @@ function collectDescriptors(part) {
       // that case (a deliberate scope choice), and pushing every section
       // unconditionally would produce findings with nothing to say. `when`-only
       // rules just need it present when relevant.
-      if (sec?.when !== undefined) out.push({ d: sec, path: `parameters[${si}]`, fields: SECTION_FIELDS, container: true });
-      walkAuthored(sec.controls, `parameters[${si}].controls`);
+      if (sec?.when !== undefined) out.push({ d: sec, path: `parameters[${si}]`, fields: SECTION_FIELDS, container: true, inHidden: secHidden });
+      walkAuthored(sec.controls, `parameters[${si}].controls`, secHidden);
       return;
     }
 
     arr(sec?.advanced).forEach((d, i) => {
-      if (d) out.push({ d, path: `parameters[${si}].advanced[${i}]`, fields: fieldsFor("slider") });
+      if (d) out.push({ d, path: `parameters[${si}].advanced[${i}]`, fields: fieldsFor("slider"), inHidden: secHidden });
     });
     arr(sec?.features).forEach((f, i) => {
       if (!f) return;
-      out.push({ d: f, path: `parameters[${si}].features[${i}]`, fields: FEATURE_FIELDS });
+      out.push({ d: f, path: `parameters[${si}].features[${i}]`, fields: FEATURE_FIELDS, inHidden: secHidden });
       arr(f.sliders).forEach((s, j) => {
         // Tag with the owning feature's key so slider-range-excludes-default can
         // recognise the demo.js flange_d pattern below: a slider sharing its key
         // with the feature is not an independent parameter, it's the feature's own
         // magnitude, and `defaults[key] === 0` there means "off", not "out of range".
-        if (s) out.push({ d: s, path: `parameters[${si}].features[${i}].sliders[${j}]`, fields: fieldsFor("slider"), featureKey: f.key });
+        if (s) out.push({ d: s, path: `parameters[${si}].features[${i}].sliders[${j}]`, fields: fieldsFor("slider"), featureKey: f.key, inHidden: secHidden || f.hidden === true });
       });
     });
     arr(sec?.toggles).forEach((t, i) => {
-      if (t) out.push({ d: t, path: `parameters[${si}].toggles[${i}]`, fields: fieldsFor("checkbox") });
+      if (t) out.push({ d: t, path: `parameters[${si}].toggles[${i}]`, fields: fieldsFor("checkbox"), inHidden: secHidden });
     });
   });
   return out;
@@ -103,6 +109,44 @@ function collectPresetBundles(part) {
 }
 
 const defaultKeys = (part) => new Set(Object.keys(part?.defaults ?? {}));
+
+// The keys a real control is bound to — the population whose defaults must be
+// panel-writable. Shared with rules-source.js's control-default-not-literal,
+// which needs the SAME key set control-default-not-primitive uses (unbound
+// non-primitive defaults are legal: they seed `p` for build()).
+//
+// `excludeHidden` drops descriptors a STATICALLY hidden container encloses, and
+// those written `hidden: true` themselves. Only the source rule wants it: a
+// hidden control renders no widget, so no panel edit of it can ever be lost,
+// and `hidden: true` is the documented idiom for an internal constant — exactly
+// where an author legitimately writes an expression. `control-default-not-primitive`
+// leaves it off, because a hidden control's key still seeds `p` and so still
+// has to be a scalar.
+export function controlBoundKeys(part, { excludeHidden = false } = {}) {
+  return new Set(
+    collectDescriptors(part)
+      .filter(({ container }) => !container)
+      .filter(({ d, inHidden }) => !excludeHidden || !(inHidden === true || d.hidden === true))
+      .map(({ d }) => d.key)
+      .filter((k) => typeof k === "string"),
+  );
+}
+
+// What a control can actually edit: one finite scalar. Non-finite numbers are out
+// with the rest — a slider cannot show NaN, and neither NaN nor Infinity survives
+// a round trip through JSON or a source rewrite.
+const isEditableValue = (v) =>
+  typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
+
+// Name a value for a finding's message: the reader needs to know WHICH default is
+// wrong and what it is, and `typeof []` ("object") tells them neither.
+const describeValue = (v) => {
+  if (Array.isArray(v)) return "an array";
+  if (v === null) return "a null";
+  if (typeof v === "number") return `a ${Number.isNaN(v) ? "NaN" : String(v)}`;
+  if (v === undefined) return "an undefined";
+  return `a ${typeof v}`;
+};
 
 // Walk one WhenCondition, calling onKey(key) for every param key it reads and
 // onOp(op) for every operator name it uses. allOf/anyOf/not recurse; a bare
@@ -188,6 +232,32 @@ export const SCHEMA_RULES = [
         .map(({ d, path }) => err("control-key-not-in-defaults",
           `control key "${d.key}" is not in \`defaults\``,
           `Add "${d.key}" to \`defaults\`${suggest(d.key, [...known]) ? `, or correct it to "${suggest(d.key, [...known])}"` : ""} — a control whose key is absent from defaults is silently dead and never reaches the build.`,
+          `${path}.key`));
+    },
+  },
+  {
+    // A control edits ONE value, and the widgets read and write it as a scalar:
+    // a slider over an array renders NaN, a checkbox over an object writes
+    // `true` over it. It is dead in the same silent way control-key-not-in-defaults
+    // is — the part builds, the panel renders, the control does nothing usable —
+    // which is why this is an error rather than a warning.
+    //
+    // Only a key a CONTROL is bound to. `defaults` also seeds `p` for build(), so
+    // parking a table or a point list there for the build to read is legitimate
+    // authoring and none of lint's business.
+    id: "control-default-not-primitive",
+    run: ({ part }) => {
+      // Same guard as control-key-not-in-defaults: bail only when `defaults`
+      // isn't a plain object at all (missing-defaults already reports that).
+      if (!isPlainObject(part?.defaults)) return [];
+      const defaults = part.defaults;
+      return collectDescriptors(part)
+        .filter(({ container }) => !container)
+        .filter(({ d }) => typeof d.key === "string" && Object.hasOwn(defaults, d.key))
+        .filter(({ d }) => !isEditableValue(defaults[d.key]))
+        .map(({ d, path }) => err("control-default-not-primitive",
+          `control "${d.key}" is bound to ${describeValue(defaults[d.key])} default`,
+          `Give "${d.key}" a number, string or boolean default — a control writes one scalar, so it cannot edit this, and a host that saves panel settings back into \`defaults\` cannot write it either.`,
           `${path}.key`));
     },
   },

@@ -6,8 +6,8 @@
 import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { resolve, dirname } from "node:path";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { resolve, dirname, basename } from "node:path";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { detectBackend } from "../src/framework/backend-select.js";
 import { fontsFor } from "../src/framework/fonts.js";
 import { viewAnimations, evaluate, cueAt } from "../src/framework/animation.js";
@@ -79,6 +79,21 @@ async function loadPart(partPath, usage) {
   return part;
 }
 
+// The source rules (group 9) read the part's TEXT, which `loadPart` never sees —
+// it imports the module, and evaluation is exactly what erases the defects those
+// rules exist for (`13 / 3` is just a number by then). The entry module's own file
+// is all we hand over: following relative imports is a deliberate non-goal, and a
+// missing/unreadable file simply leaves `sources` off, which turns the group into
+// a no-op rather than failing the command.
+const readSources = (partPath) => {
+  try {
+    const path = basename(partPath);
+    return { files: { [path]: readFileSync(resolve(process.cwd(), partPath), "utf8") }, entrypoint: path };
+  } catch {
+    return undefined;
+  }
+};
+
 // Pass the part's declared fonts through, mirroring the worker path (jobs.js) —
 // otherwise a part using a named font builds in the browser but dies headlessly
 // with `text2d: unknown font …`. A function-form `fonts` is resolved against
@@ -104,7 +119,8 @@ const commands = {
     try {
       const part = await loadPart(partPath, usage);
       const params = flags.params ? JSON.parse(flags.params) : undefined;
-      const report = lintPart(part, { params });
+      const sources = readSources(partPath);
+      const report = lintPart(part, { params, sources });
       if (!flags.json) printLint(report);
       if (flags.out) {
         mkdirSync(dirname(resolve(flags.out)), { recursive: true });
@@ -133,7 +149,7 @@ const commands = {
       // milliseconds with a precise message rather than after a WASM boot and a
       // downstream error that doesn't name the cause. Warnings never gate measure.
       if (!flags["no-lint"]) {
-        const lint = lintPart(part);
+        const lint = lintPart(part, { sources: readSources(partPath) });
         if (!lint.ok) {
           if (flags.json) console.log(JSON.stringify({ ok: false, lint }, null, 2));
           else printLint(lint);
@@ -509,7 +525,11 @@ function printLint(r) {
   console.log("lint:");
   for (const f of all) {
     const icon = f.severity === "error" ? "✗" : f.severity === "warning" ? "⚠" : "·";
-    console.log(`  ${icon} ${f.rule}${f.path ? `  ${f.path}` : ""}`);
+    // A source-rule finding carries file+line — the only location a reader can
+    // open. Print it alongside the accessor path (which is `""` for a finding
+    // about a token anywhere in the file) rather than instead of it.
+    const at = f.file ? `  ${f.file}:${f.line ?? "?"}` : "";
+    console.log(`  ${icon} ${f.rule}${f.path ? `  ${f.path}` : ""}${at}`);
     console.log(`      ${f.message}`);
     console.log(`      hint: ${f.hint}${f.pattern ? ` (ERROR-PATTERNS.md#${f.pattern})` : ""}`);
   }

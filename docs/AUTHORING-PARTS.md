@@ -609,7 +609,12 @@ parameters: [
 ```
 
 Every control `key` must exist in `defaults`, or the control is silently dead —
-`control-key-not-in-defaults` is an error for exactly that reason.
+`control-key-not-in-defaults` is an error for exactly that reason. Its value there must
+be a **number, string or boolean** — a control writes one scalar, so a control bound to
+an array, an object, `null` or `NaN` is dead in the same silent way
+(`control-default-not-primitive`), and a host that saves panel settings back into
+`defaults` cannot write that value either. A non-primitive `defaults` entry that no
+control is bound to is fine: `defaults` also seeds `p` for `build()`.
 
 **Ids.** A section, a group and a preset may carry an `id`; the renderer keys its
 element, state and disclosure maps on ids, so they must be unique across the whole
@@ -2033,6 +2038,16 @@ import { lintPart } from "partforge/lint";
 const { ok, errors, warnings } = lintPart(part, { params });
 ```
 
+`lintPart(part, { sources })` optionally takes the part's own source files
+(`{ files: { path: text }, entrypoint }` — `entrypoint` names the file holding the
+`PartDefinition`, defaulting to the first key) and unlocks a ninth rule group that
+reads the source itself, catching the defects evaluation erases. The CLI passes the
+module's own file automatically, so `partforge lint`/`measure` always run it; a
+programmatic caller that omits `sources` (or hands over a malformed one) just gets
+no findings from that group. Source findings carry `file` and `line` on top of the
+standard shape, and `SOURCE_RULE_IDS` names them — a host that gates rendering on
+lint errors uses it to keep them reported but non-blocking.
+
 `partforge/lint` has **zero runtime dependencies** and never imports a geometry
 kernel or the DOM viewer, so it runs unchanged in Node, a Web Worker, a sandboxed
 iframe, and Deno. A worker also answers `{ type: "lint", params }` with
@@ -2056,7 +2071,8 @@ about the definition as a whole use `""`.
 behave as authored — whether or not that shows up as a thrown exception. Some error
 findings do correspond to a runtime throw (`build-throws`, `verify-expect-throws`),
 but others catch **silent** wrongness: `missing-meta-title`, `part-view-unknown`,
-`control-key-not-in-defaults`, `preset-key-not-in-defaults`, and
+`control-key-not-in-defaults`, `control-default-not-primitive`,
+`preset-key-not-in-defaults`, and
 `verify-unknown-subpart` all fire on parts that build, measure, and verify cleanly —
 a dead control that's silently unreachable, a view that renders nothing, or a
 `verify` expectation that's silently dropped so its gate never runs. That's still an
@@ -2073,7 +2089,8 @@ previously didn't; that's the fix working as intended, not a regression.
 `default-view-ambiguous` (warnings).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,
-`control-key-not-in-defaults`, `preset-key-not-in-defaults`, `mixed-section-shape`,
+`control-key-not-in-defaults`, `control-default-not-primitive`,
+`preset-key-not-in-defaults`, `mixed-section-shape`,
 `duplicate-preset-name`, `duplicate-node-id`, `select-options-missing`,
 `select-default-not-in-options`, `log-scale-needs-positive-min`,
 `when-key-not-in-defaults`, `when-unknown-operator`, `unknown-control-type` (errors);
@@ -2208,6 +2225,32 @@ it is) (error); `font-source-scheme` (`defaults` holds a value for a font
 control that the control's own `allow` list would refuse — at build time it's
 swapped for `defaults[key]`, i.e. itself, so the part boots with no usable
 font; use a source `allow` accepts, or widen `allow`) (warning).
+
+**Source rules** — the ninth group, which runs only when the caller hands over
+`sources` (above) — `control-default-not-literal` (a control's `defaults` entry is
+written as something other than a plain literal: an expression like `13 / 3`, an
+array or object, a template literal, a `0x10`/`1_000` spelling. Hosts persist a
+panel edit by rewriting that value's span in the source, so a spelling the
+rewriter cannot read means the user's edit is silently lost on reload — write a
+plain decimal/string/boolean literal, or move the computation into `derive()`)
+(error); `impure-source-token` (the source contains `Math.random`, `Date.now`,
+`performance.now`, or an argless `new Date()` — replace it with a parameter or a
+`derive()` output) (warning). Only a default a **visible** control is actually
+**bound** to is checked: an unbound non-primitive default (a lookup table, an
+array of hole positions) is never rewritten by a panel save and stays legal and
+unflagged, and so is the default of a statically hidden control (`hidden: true`
+on the control, or on an enclosing group or section) — it renders no widget, so
+there is no panel edit to lose, and `hidden: true` is the documented idiom for an
+internal constant. A `when`-conditioned control is *not* hidden — it can appear,
+so its default is checked.
+`impure-source-token` is warning-tier because the behavioral
+`nondeterministic-build` probe stays the error authority on impurity — the source
+scan is the wider net that also catches an impure value stable within one probe
+pass. It scans `.js`/`.mjs` files only (prose in a `README.md` is not a build),
+and code only within them (comments and string/template *interiors* are blanked
+first), so an impurity token inside a `${…}` interpolation is not seen. It emits
+one finding per (file, token) pair, carrying the occurrence count and the first
+occurrence's line, rather than one per occurrence.
 
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.

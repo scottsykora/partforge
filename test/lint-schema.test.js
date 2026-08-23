@@ -195,3 +195,34 @@ test("an explicit empty defaults still gets its control keys checked", () => {
   const r = lintPart(part);
   expect(ids(r.errors)).toContain("control-key-not-in-defaults");
 });
+
+// A control can only edit a primitive: the widgets read and write one value, and a
+// host that persists panel edits back into the part's source has to be able to
+// write that value as a literal. An array or object default under a control is
+// therefore dead in exactly the way control-key-not-in-defaults is — the part
+// builds, the panel renders, and the control does nothing anyone can use.
+test("a control over a non-primitive default is an error", () => {
+  const part = goodPart();
+  part.defaults.od = [4, 8];
+  const r = lintPart(part);
+  expect(ids(r.errors)).toContain("control-default-not-primitive");
+  expect(find(r, "control-default-not-primitive").path).toBe("parameters[0].advanced[0].key");
+  expect(find(r, "control-default-not-primitive").message).toMatch(/array/);
+});
+
+test("null and NaN defaults under a control are errors too", () => {
+  for (const [value, word] of [[null, "null"], [Number.NaN, "NaN"], [undefined, "undefined"]]) {
+    const part = goodPart();
+    part.defaults.od = value;
+    expect(ids(lintPart(part).errors), `${word} should be reported`).toContain("control-default-not-primitive");
+  }
+});
+
+test("a non-primitive default with no control is left alone", () => {
+  // `defaults` also seeds `p` for build(), so a part may legitimately park data
+  // there that no control edits. Only an unusable CONTROL is provably broken.
+  const part = goodPart();
+  part.defaults.profile = [[0, 0], [1, 1]];
+  const r = lintPart(part);
+  expect(ids(r.errors)).not.toContain("control-default-not-primitive");
+});
