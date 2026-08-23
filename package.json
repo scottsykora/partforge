@@ -1,6 +1,6 @@
 {
   "name": "partforge",
-  "version": "0.78.0",
+  "version": "0.79.0",
   "description": "Turn a declarative part definition into a parametric-CAD web app (three.js + Manifold/Replicad). Requires a Vite-based consumer.",
   "type": "module",
   "license": "MIT",
@@ -45,6 +45,10 @@
       "types": "./types/derive.d.ts",
       "default": "./src/framework/derive.js"
     },
+    "./oracle": {
+      "types": "./types/oracle.d.ts",
+      "default": "./src/oracle.js"
+    },
     "./testing": {
       "types": "./types/testing.d.ts",
       "default": "./src/testing.js"
@@ -65,6 +69,9 @@
       ],
       "derive": [
         "./types/derive.d.ts"
+      ],
+      "oracle": [
+        "./types/oracle.d.ts"
       ],
       "testing": [
         "./types/testing.d.ts"

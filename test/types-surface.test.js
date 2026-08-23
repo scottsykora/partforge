@@ -51,6 +51,7 @@ const RUNTIME = {
   "./geometry": () => import("../src/framework/geometry/polygon.js"),
   "./lint": () => import("../src/lint.js"),
   "./derive": () => import("../src/framework/derive.js"),
+  "./oracle": () => import("../src/oracle.js"),
   "./testing": () => import("../src/testing.js"),
 };
 
