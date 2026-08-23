@@ -158,3 +158,71 @@ test("a supplied build is what gets measured, not a rebuild of the part", () => 
   const r = measure(k, boxPart, "v", {}, { built });
   expect(r.subparts.map((s) => s.name)).toEqual(["tube"]);
 });
+
+// `probes` — part-declared measurements (docs/superpowers/plans/2026-08-23-part-probes.md).
+// A probe is a pure (k, p, d) function like build, but its result lands in the
+// measure REPORT instead of the scene: a Solid anywhere in the return value is
+// replaced by a fact object, plain JSON passes through, a throw becomes { error }.
+const body = (kk, p) => kk.box({ min: [0, 0, 0], max: [p.w, 20, 5] });
+const probedPart = {
+  meta: { title: "Probed", units: "mm" },
+  defaults: { w: 10 },
+  parts: { block: { views: ["v", "w2"], build: body } },
+  views: { v: { label: "V" }, w2: { label: "W" } },
+  probes: {
+    slab: (kk, p, d) => body(kk, p).intersect(kk.box({ min: [2, -5, -5], max: [3, 25, 10] })),
+    numbers: (kk, p) => ({ width: p.w, halfVol: body(kk, p).volume() / 2, nested: { s: body(kk, p) } }),
+    missing: (kk, p) => body(kk, p).intersect(kk.box({ min: [50, 50, 50], max: [51, 51, 51] })),
+    boom: () => { throw new Error("probe exploded"); },
+  },
+};
+
+test("a probe returning a Solid reports standard facts", () => {
+  const r = measure(k, probedPart, "v");
+  const s = r.probes.slab;
+  expect(s.empty).toBe(false);
+  expect(s.volume).toBeCloseTo(100, 0);        // 1 × 20 × 5 slab of the block
+  expect(s.bbox[0]).toBeCloseTo(1, 1);
+  expect(s.bbox[1]).toBeCloseTo(20, 1);
+  expect(s.bbox[2]).toBeCloseTo(5, 1);
+  expect(s.bounds.min[0]).toBeCloseTo(2, 1);
+  expect(s.watertight).toBe(true);
+  expect(s.holes).toBe(0);
+  expect(s.triangleCount).toBeGreaterThan(0);
+});
+
+test("plain probe values pass through, with Solids replaced anywhere in the shape", () => {
+  const r = measure(k, probedPart, "v");
+  expect(r.probes.numbers.width).toBe(10);
+  expect(r.probes.numbers.halfVol).toBeCloseTo(500, 0);
+  expect(r.probes.numbers.nested.s.volume).toBeCloseTo(1000, 0);
+});
+
+test("probes see the caller's params, not just the defaults", () => {
+  const r = measure(k, probedPart, "v", { w: 20 });
+  expect(r.probes.numbers.width).toBe(20);
+  expect(r.probes.numbers.halfVol).toBeCloseTo(1000, 0);
+});
+
+test("an empty probe result reports empty: true rather than infinite bounds", () => {
+  const m = measure(k, probedPart, "v").probes.missing;
+  expect(m.empty).toBe(true);
+  expect(m.volume).toBe(0);
+  expect(m.bbox).toBe(null);
+});
+
+test("a probe that throws reports { error } and never crashes or gates the measurement", () => {
+  const r = measure(k, probedPart, "v");
+  expect(r.probes.boom.error).toContain("probe exploded");
+  expect(r.ok).toBe(true);
+});
+
+test("probes are part-level: every view reports them", () => {
+  const r = measure(k, probedPart, "w2");
+  expect(r.probes.slab.volume).toBeCloseTo(100, 0);
+});
+
+test("no probes block, no probes key; opts.probes: false skips evaluation", () => {
+  expect(measure(k, boxPart, "v").probes).toBeUndefined();
+  expect(measure(k, probedPart, "v", {}, { probes: false }).probes).toBeUndefined();
+});

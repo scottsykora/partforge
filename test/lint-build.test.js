@@ -119,3 +119,31 @@ test("params override defaults for the probe pass", () => {
   expect(ids(lintPart(part).errors)).not.toContain("build-throws");
   expect(ids(lintPart(part, { params: { mode: "explode" } }).errors)).toContain("build-throws");
 });
+
+// `probes` — same (k, p, d) contract as build, so the same probe pass covers them.
+test("a throwing probe is an error located at the probe", () => {
+  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }),
+    { probes: { slab: () => { throw new Error("bad slab maths"); } } }));
+  expect(ids(r.errors)).toContain("probe-throws");
+  expect(find(r, "probe-throws").message).toContain("bad slab maths");
+  expect(find(r, "probe-throws").path).toBe("probes.slab");
+});
+
+test("an unknown kernel op inside a probe is caught like one inside a build", () => {
+  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }),
+    { probes: { slab: (k) => k.cylindre({ r: 5, h: 10 }) } }));
+  expect(ids(r.errors)).toContain("unknown-kernel-op");
+});
+
+test("an impure probe is flagged nondeterministic", () => {
+  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }),
+    { probes: { jitter: (k) => k.cylinder({ r: Math.random() * 5 + 1, h: 10 }) } }));
+  expect(ids(r.warnings)).toContain("nondeterministic-build");
+});
+
+test("a pure probe raises no build findings", () => {
+  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }),
+    { probes: { slab: (k, p, d) => k.box({ size: [1, 1, 1] }).volume() } }));
+  expect(ids(r.errors)).toEqual([]);
+  expect(ids(r.warnings)).toEqual([]);
+});

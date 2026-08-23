@@ -41,6 +41,25 @@ export const SHAPE_RULES = [
     },
   },
   {
+    // `probes` is optional; when present it must be an object of (k, p, d)
+    // functions — same contract as build, but the result lands in the measure
+    // report instead of the scene (see AUTHORING-PARTS.md "Probes").
+    id: "invalid-probes",
+    run: ({ part }) => {
+      if (part?.probes === undefined) return [];
+      if (!isPlainObject(part.probes)) {
+        return [err("invalid-probes", "`probes` must be an object mapping names to functions",
+          "Declare probes as `probes: { name: (k, p, d) => Solid | plain JSON }` — each is measured into the report by `partforge measure` and the inspect job.",
+          "probes")];
+      }
+      return Object.entries(part.probes)
+        .filter(([, fn]) => typeof fn !== "function")
+        .map(([name]) => err("invalid-probes", `probe "${name}" is not a function`,
+          "Every entry in `probes` must be a `(k, p, d)` function returning a Solid (measured into facts) or plain JSON (reported verbatim).",
+          `probes.${name}`));
+    },
+  },
+  {
     id: "missing-views",
     run: ({ part }) => (isPlainObject(part?.views) && Object.keys(part.views).length > 0 ? [] : [
       err("missing-views", "the part has no `views` map",

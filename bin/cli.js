@@ -438,6 +438,34 @@ function printMeasure(r) {
   console.log(`  near-misses: ${r.nearMisses.length
     ? r.nearMisses.map((g) => `${g.a}×${g.b} (${g.distance.toFixed(2)}mm at [${g.at.map((n) => n.toFixed(1)).join(", ")}])`).join(", ")
     : "none"}`);
+  if (r.probes) {
+    // Solid-fact probes get the sub-part line treatment (in mm³ — probes are
+    // localization instruments, a slab's volume in cm³ rounds to noise), one
+    // level deep too so the common paired shape ({ mine, ref }) reads as lines
+    // rather than a JSON wall; anything else prints as JSON; a failed probe
+    // prints its error where the reader is.
+    const isFacts = (v) => v && typeof v === "object" && "empty" in v && "volume" in v;
+    const factsLine = (v) => (v.empty
+      ? `empty (no material in the probed region)`
+      : `bbox ${v.bbox.map((n) => n.toFixed(2)).join("×")}  ` +
+        `bounds [${v.bounds.min.map((n) => n.toFixed(2)).join(", ")}]…[${v.bounds.max.map((n) => n.toFixed(2)).join(", ")}]  ` +
+        `vol ${v.volume.toFixed(2)}mm³`);
+    console.log(`  probes:`);
+    for (const [name, v] of Object.entries(r.probes)) {
+      if (v && typeof v === "object" && typeof v.error === "string") {
+        console.log(`    ${name}  ERROR: ${v.error}`);
+      } else if (isFacts(v)) {
+        console.log(`    ${name}  ${factsLine(v)}`);
+      } else if (v && typeof v === "object" && !Array.isArray(v) && Object.values(v).some(isFacts)) {
+        console.log(`    ${name}:`);
+        for (const [key, sub] of Object.entries(v)) {
+          console.log(`      ${key}  ${isFacts(sub) ? factsLine(sub) : JSON.stringify(sub)}`);
+        }
+      } else {
+        console.log(`    ${name}  ${JSON.stringify(v)}`);
+      }
+    }
+  }
 }
 
 function printVerify(v) {

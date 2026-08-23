@@ -1,5 +1,7 @@
 // Reference part for docs/AUTHORING-PARTS.md's "Importing geometry" section —
-// the worked example for BOTH import uses in one part:
+// and for its "Probes" section (the `probes` block below measures the import
+// live into the measure report) — the worked example for BOTH import uses in
+// one part:
 //   • reference — `ref` is a translucent ghost of the imported scan (never
 //     exported); `body` is a parametric rebuild of the same block, bound to
 //     the scan via `reference: "scan"` and held to it by the three ref*
@@ -108,6 +110,25 @@ export default {
   // socket never touches `body` (see `mountOffsetX`). "reference" is the
   // ghost-overlay view, browsed by hand or with an explicit view argument.
   views: { assembly: { label: "Assembly" }, reference: { label: "Reference overlay" } },
+  // Probes — measurements that land in the `measure` report instead of the
+  // scene (docs/AUTHORING-PARTS.md "Probes"). Pure (k, p, d) functions like
+  // build; never rendered, never exported, reported for every view.
+  probes: {
+    // Paired 1 mm cross-sections of the rebuild and the scan at the same X
+    // station — the localizing instrument for the deviation gate above: when
+    // refXorVolume creeps up, slide the slab along X to find WHERE the two
+    // solids disagree instead of guessing from one whole-part number.
+    midSlab: (k, p) => {
+      const slab = () => k.box({ min: [9.5, -50, -50], max: [10.5, 50, 50] });
+      return {
+        body: k.box({ min: [0, 0, 0], max: [p.scanW, p.scanD, p.scanH] }).intersect(slab()),
+        scan: k.import("scan").intersect(slab()),
+      };
+    },
+    // A live reading straight off the import — the numbers `defaults` were
+    // measured from. Plain JSON passes through the report verbatim.
+    scanBounds: (k) => k.import("scan").boundingBox(),
+  },
   verify: {
     process: "fdm-pla",
     expect: {

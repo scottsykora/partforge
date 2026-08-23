@@ -51,6 +51,16 @@ export const BUILD_RULES = [
         `parts.${subpart}.build`)),
   },
   {
+    // Same class of fault as build-throws, located at the probe. A throwing
+    // probe degrades at runtime to `{ error }` in the measure report rather
+    // than crashing anything — this rule is what makes it loud anyway.
+    id: "probe-throws",
+    run: ({ probe }) => probe().probeThrows.map(({ probe: name, message }) =>
+      err("probe-throws", `probe "${name}" threw during a geometry-free run: ${message}`,
+        "Fix the error in the probe function. This was raised with no kernel attached, so it is a fault in the probe's own logic (bad arithmetic, a missing param, a null dereference) rather than a geometry failure — at runtime it would report `{ error }` instead of a measurement.",
+        `probes.${name}`)),
+  },
+  {
     id: "manifold-backend-uses-occt-op",
     run: ({ part, probe }) => {
       if (part?.meta?.backend !== "manifold") return [];
@@ -75,9 +85,9 @@ export const BUILD_RULES = [
     id: "nondeterministic-build",
     run: ({ probe, probeAgain }) => {
       const a = probe();
-      if (a.runaway || a.throws.length > 0) return []; // an aborted build can't be compared
+      if (a.runaway || a.throws.length > 0 || a.probeThrows.length > 0) return []; // an aborted run can't be compared
       const b = probeAgain();
-      if (b.runaway || b.throws.length > 0) return [];
+      if (b.runaway || b.throws.length > 0 || b.probeThrows.length > 0) return [];
       if (JSON.stringify(a.calls) === JSON.stringify(b.calls)) return [];
       return [warn("nondeterministic-build",
         "two builds with identical parameters produced different kernel calls",
