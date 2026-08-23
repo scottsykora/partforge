@@ -137,17 +137,26 @@ the installed package, so let the publish finish before bumping the dep there.
   symmetry, fillets/chamfers, a volume-reconstruction score) so an agent can rebuild
   an STL parametrically; see `docs/AUTHORING-PARTS.md` for what it does and does not
   cover. Despite reading like test code this is shared runtime: the browser worker
-  runs it for the `inspect` job, and `lint` reads its DFM profiles and assertion
-  grammar. It is therefore DOM-free, `three`-free and `node:`-free, same as the rest
-  of the worker graph (`test/worker-layering.test.js` enforces that).
+  runs it for the `inspect` and `describe` jobs, and `lint` reads its DFM profiles
+  and assertion grammar. It is therefore DOM-free, `three`-free and `node:`-free,
+  same as the rest of the worker graph (`test/worker-layering.test.js` enforces
+  that). The worker loads it LAZILY, per job family (`jobs.js`'s dynamic imports —
+  the generate/export hot path touches none of it), so a worker that never runs an
+  oracle job never parses it; the same test's eager-closure guard enforces that too.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these
   from `src/framework/`.
+- **`src/oracle.js`** - the published `partforge/oracle` entry point: the whole
+  oracle surface (`measure`, `verify`, `buildView`, gaps/BVH/min-wall, silhouette
+  match scoring, `describe`) with a browser-safe import closure
+  (`test/oracle-entry.test.js` enforces it). The seam to import the oracle through
+  without dragging in the Node-only harness.
 - **`src/testing.js`** - the published `partforge/testing` entry point. A barrel
-  over both of the above (`createManifoldKernel`, `measure`, `verify`,
-  `assemblyOverlaps`, `bootOcctKernel`, `renderViews`, ...); downstream sees one
-  surface and not the split.
+  over the Node harness plus a re-export of all of `partforge/oracle`
+  (`createManifoldKernel`, `measure`, `verify`, `assemblyOverlaps`,
+  `bootOcctKernel`, `renderViews`, ...); downstream sees one surface and not the
+  split.
 - **`bin/cli.js`** - the `partforge` CLI dispatch.
 
 **`docs/AUTHORING-PARTS.md` is the authoritative guide** - read it before

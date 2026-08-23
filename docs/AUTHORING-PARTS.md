@@ -1948,7 +1948,11 @@ access. It's harmless to leave in when partforge is a normal install.)
 ## Testing a part
 
 Tests run under **Node 24** (`nvm use` first; the default shell Node is too old) via
-`npx vitest run`. Build geometry directly off your part with a Manifold kernel:
+`npx vitest run`. The oracle half of this surface — `measure`, `verify`,
+`describe`, gaps, match scoring — is also published on its own as
+`partforge/oracle` (browser-safe import closure); `partforge/testing` re-exports
+it, so either import works. Build geometry directly off your part with a Manifold
+kernel:
 
 ```js
 import { bootManifoldKernel, resolveDerived } from "partforge/testing";
