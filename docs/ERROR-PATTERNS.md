@@ -478,8 +478,10 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 - **Symptom:** an intentionally faceted loft (low-side-count rings) previews
   smooth-shaded, but exports/prints show flat facets.
 - **Cause:** the loft's shading policy resolved to smooth — a `shading:
-  "smooth"` hint, `ruled: false`, rings with 32+ sides, or any ring containing
-  an arc/bezier segment (curved rings always shade smooth).
+  "smooth"` hint, `ruled: false`, rings with 32+ sides, or (for curve/resample
+  rings) the smooth-shaded section came from a smoothly tessellated contour
+  span — arcs/Béziers shade smooth per SECTOR, while sharp corners and
+  silhouette-kink rings flat-shade with a dividing line.
 - **Fix:** pass `shading: "faceted"` to `k.loft` (or drop the smooth-implying
   option) per [AUTHORING-PARTS.md](AUTHORING-PARTS.md) shading-intent note.
 

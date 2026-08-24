@@ -389,11 +389,20 @@ are present:
   filtered out; Manifold ships policy-gated sharp/seam segments.
 
 `loft` accepts `shading?: "smooth" | "faceted"` to override facet-vs-smooth
-inference: by default, rings with fewer than 32 sides shade as intentional flat
-facets with no same-surface edge lines, while rings with 32+ sides (and
-`ruled: false` lofts) shade smooth. `shading: "smooth"` forces smooth shading;
-`shading: "faceted"` forces facets; any other non-nullish value throws.
-Thresholds live in `src/framework/geometry/shading-policy.js`.
+inference. Point-list (poly-exact) lofts infer as before: rings with fewer than
+32 sides shade as intentional flat facets with no same-surface edge lines, while
+rings with 32+ sides (and `ruled: false` lofts) shade smooth. Curve and resample
+lofts shade by **tessellation provenance** instead of a single whole-solid
+policy: the walls partition into shading sectors split at sharp contour joints
+(and at snapped corners in a resample morph), and into band groups split at
+silhouette-kink rings (wall direction bending more than the 5° tangent bar —
+the same bar at which a B-rep loft's real ring edges draw lines). Sector and
+band-group boundaries flat-shade and draw dividing lines regardless of bend
+angle; only sectors whose facets come from smoothly tessellated curve spans
+shade smooth inside. `shading: "smooth"` forces whole-solid smooth shading;
+`shading: "faceted"` forces facets — either hint bypasses sectoring entirely;
+any other non-nullish value throws. Thresholds live in
+`src/framework/geometry/shading-policy.js`.
 
 Known limitation: the OCCT backend ignores `shading` — a loft forced to OCCT
 via `meta.backend` draws its facet corner edges as B-rep feature lines. The
@@ -404,7 +413,11 @@ collapses it to a single shading surface that inherits the majority policy of
 its registered constituent surfaces, weighted by triangle count. A constituent
 with no registered policy of its own (e.g. a plain boolean tool) still votes,
 as SMOOTH — the policy it actually renders with — and an exact tie resolves to
-the no-lines (faceted) policy.
+the no-lines (faceted) policy. Two exceptions preserve their surface partition
+through labeling instead of collapsing: fillet/chamfer blend bands (base +
+blend re-stamp as two surfaces), and provenance-sectored lofts (every sector
+and band-group run re-stamps 1:1) — in both cases all the resulting surfaces
+carry the one label, so hover/pick still reads a single feature.
 
 **Selectors** (`fillet`/`chamfer` `edges` selector, `shell` `open` face selector) are
 declarative objects, criteria AND-combined:
