@@ -291,3 +291,42 @@ test("shading: explicit hint and ruled:false still win", () => {
   expect(loftShadingPolicy(rl, { ruled: false })).toBe(SMOOTH);
   expect(() => loftShadingPolicy(rl, { shading: "flat" })).toThrow(/smooth.*faceted/);
 });
+
+// ── Shading provenance (sector detection) ───────────────────────────────────
+// A "D" profile: straight chord + semicircular arc, meeting at two sharp 90°
+// joints — the minimal contour with both a flat span and a smooth span.
+const dProfile = { start: [-4, 0], segments: [
+  { to: [4, 0] },                    // chord (line)
+  { to: [-4, 0], via: [0, 4] },      // semicircle back over the top (arc)
+] };
+
+test("curve-mode shading provenance: D-profile splits into a flat sector and a smooth sector", () => {
+  const { mode, shading } = resolveLoftRings([{ polygon: dProfile, z: 0 }, { polygon: dProfile, z: 8, scale: 0.5 }]);
+  expect(mode).toBe("curve");
+  const { sectorOf, sectorSmooth } = shading;
+  expect(sectorSmooth.length).toBe(2);
+  // column 0 is the chord (seg 0 has 1 sample); its sector is flat
+  expect(sectorSmooth[sectorOf[0]]).toBe(false);
+  // a mid-arc column belongs to the smooth sector
+  expect(sectorSmooth[sectorOf[Math.floor(sectorOf.length / 2)]]).toBe(true);
+  // exactly the two sectors appear, split at the two sharp joints
+  expect(new Set(sectorOf).size).toBe(2);
+});
+
+test("curve-mode shading provenance: a tangent-only contour (rounded square) is ONE smooth sector", () => {
+  const { shading } = resolveLoftRings([{ polygon: rsq, z: 0 }, { polygon: rsq, z: 8, scale: 0.5 }]);
+  expect(new Set(shading.sectorOf).size).toBe(1);
+  expect(shading.sectorSmooth).toEqual([true]);
+});
+
+test("resample-mode shading provenance: square→circle sectors split at the snapped corners", () => {
+  const { mode, shading } = resolveLoftRings([{ polygon: SQ, z: 0 }, { polygon: circleProfile(4), z: 8 }]);
+  expect(mode).toBe("resample");
+  expect(new Set(shading.sectorOf).size).toBe(4);          // one sector per square corner span
+  expect(shading.sectorSmooth.every((s) => s === true)).toBe(true); // gentle interior turns on both rings
+});
+
+test("poly-exact rings carry no shading provenance (legacy single-surface path)", () => {
+  const { shading } = resolveLoftRings([{ polygon: SQ, z: 0 }, { polygon: SQ, z: 8 }]);
+  expect(shading).toBeNull();
+});

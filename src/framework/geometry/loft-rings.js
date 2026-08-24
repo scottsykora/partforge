@@ -10,6 +10,7 @@
 import { regularPolygon } from "./polygon.js";
 import { pointsToContour, reverseContour, closeContourGap, arcGeometry, sampleBezier, tessellateContour } from "./profile.js";
 import { rotateProfile, scaleProfile, contourIsCCW, cubicAt, profileCorners } from "./contour-ops.js";
+import { SMOOTH_SIDES_MIN } from "./shading-policy.js";
 
 export const LOFT_SEGS = 64; // fixed pure-JS LOD for curve rings (hull.js precedent)
 
@@ -128,6 +129,12 @@ const sampleSegN = (prev, seg, n) => {
 // every ring samples with the same count (the max natural count), so vertex i lies at
 // the same curve parameter on every ring; the seam is each contour's start.
 export function matchedTessellation(lifted) {
+  return matchedTessellationDetail(lifted).rings;
+}
+
+// Detail form: also reports the shared per-segment sample counts, which the shading
+// provenance below needs to map contour joints onto sample indices.
+function matchedTessellationDetail(lifted) {
   const segCount = lifted[0].contour.segments.length;
   const counts = [];
   for (let j = 0; j < segCount; j++) {
@@ -135,7 +142,7 @@ export function matchedTessellation(lifted) {
     lifted.forEach((r, k) => { n = Math.max(n, segNaturalCount(prevs[k], r.contour.segments[j])); });
     counts.push(n);
   }
-  return lifted.map((r) => {
+  const rings = lifted.map((r) => {
     const ring = [[r.contour.start[0], r.contour.start[1]]];
     let prev = r.contour.start;
     r.contour.segments.forEach((seg, j) => { for (const p of sampleSegN(prev, seg, counts[j])) ring.push(p); prev = seg.to; });
@@ -143,6 +150,7 @@ export function matchedTessellation(lifted) {
     ring.pop();
     return ring;
   });
+  return { rings, counts };
 }
 
 const shoelace = (ring) => ring.reduce((a, [x, y], i) => {
@@ -203,8 +211,9 @@ const resampleRing = (ring, N, corners) => {
   // measure against original positions, not mutated ones (contest rule: closer corner wins)
   const spacing = L / N;
   const orig = out.map((p) => [p[0], p[1]]);
-  const owner = new Map(); // sample index -> snap distance
-  for (const c of corners) {
+  const owner = new Map();   // sample index -> snap distance
+  const ownerOf = new Map(); // corner list index -> sample index it won
+  corners.forEach((c, ci) => {
     let bi = -1, bd = Infinity;
     for (let i = 0; i < orig.length; i++) {
       const d = Math.hypot(orig[i][0] - c[0], orig[i][1] - c[1]);
@@ -213,14 +222,22 @@ const resampleRing = (ring, N, corners) => {
     if (bd < spacing && (!owner.has(bi) || bd < owner.get(bi))) {
       out[bi] = [c[0], c[1]];
       owner.set(bi, bd);
+      for (const [k, v] of ownerOf) if (v === bi) ownerOf.delete(k); // evicted corner loses the sample
+      ownerOf.set(ci, bi);
     }
-  }
-  return out;
+  });
+  return { out, ownerOf };
 };
 
 // Resample mode: every ring tessellated at the fixed LOD, resampled to a common N.
 export function resampleTessellation(lifted) {
-  const rings = lifted.map((r) => {
+  return resampleTessellationDetail(lifted).rings;
+}
+
+// Detail form: also reports each ring's snapped-corner sample indices, which the
+// shading provenance below uses as sector boundaries.
+function resampleTessellationDetail(lifted) {
+  const source = lifted.map((r) => {
     let ring = r.pts ?? tessellateContour(r.contour, LOFT_SEGS);
     // tessellateContour of a contour returns an explicitly closed ring — drop the closure
     if (ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1])
@@ -228,12 +245,94 @@ export function resampleTessellation(lifted) {
     if (shoelace(ring) < 0) ring = [...ring].reverse();
     return ring;
   });
-  const N = Math.max(...rings.map((r) => r.length));
-  return lifted.map((r, i) => {
-    const corners = profileCorners(r.contour).map((c) => c.point);
-    return resampleRing(rings[i], N, corners);
+  const N = Math.max(...source.map((r) => r.length));
+  const rings = [], snapped = [];
+  lifted.forEach((r, i) => {
+    const corners = profileCorners(r.contour);
+    const res = resampleRing(source[i], N, corners.map((c) => c.point));
+    rings.push(res.out);
+    // Only SHARP corners become sector boundaries (see sharpTurn below): a
+    // polygonized circle's 7.5°-per-vertex "corners" all snap, but must not
+    // shatter the ring into per-facet sectors.
+    const sharpSet = new Set();
+    corners.forEach((c, ci) => { if (sharpTurn(c) && res.ownerOf.has(ci)) sharpSet.add(res.ownerOf.get(ci)); });
+    snapped.push(sharpSet);
   });
+  return { rings, snapped };
 }
+
+// ── Shading provenance ──────────────────────────────────────────────────────
+// Column j is the wall strip between samples j and j+1 (wrapping). A sector is a
+// maximal run of columns between sharp contour features — sharp joints in curve
+// mode, snapped corners in resample mode — so the mesh builder (loft.js) can give
+// each sector its own shading surface. sectorSmooth[k] says whether sector k's
+// facets approximate a smooth curve (its shading policy creases gently and draws
+// no facet wireframe) or are flat/faceted geometry.
+
+// A joint is SHARP (a sector boundary) only when it turns more than a smooth
+// tessellation ever produces per facet — the same 360/SMOOTH_SIDES_MIN bar as the
+// legacy "≥32 sides reads smooth" rule. profileCorners' own 1° bar is author-intent
+// (corner ops); reusing it here would shatter a polygonized circle into sectors.
+const SHARP_TURN_DEG = 360 / SMOOTH_SIDES_MIN;
+const sharpTurn = (corner) => Math.abs(180 - corner.interiorAngleDeg) > SHARP_TURN_DEG;
+
+const sectorsFromBoundaries = (N, boundarySet) => {
+  const B = [...boundarySet].sort((a, b) => a - b);
+  const sectorOf = new Array(N).fill(0);
+  if (B.length > 1) {
+    for (let k = 0; k < B.length; k++) {
+      const from = B[k], to = B[(k + 1) % B.length];
+      for (let j = from; j !== to; j = (j + 1) % N) sectorOf[j] = k;
+    }
+  }
+  return sectorOf;
+};
+
+// Curve mode: sector boundaries at sharp joints (profileCorners, unioned across all
+// rings — structurally identical contours can still disagree on which joints bend).
+// A sector is smooth when any column in it samples a curved (arc/cubic) segment.
+const curveShading = (lifted, counts) => {
+  const N = counts.reduce((a, b) => a + b, 0);
+  const jointSample = [0]; // joint j (start of segment j) lands at this sample index
+  for (let j = 1; j < counts.length; j++) jointSample.push(jointSample[j - 1] + counts[j - 1]);
+  const sharp = new Set();
+  for (const r of lifted) for (const c of profileCorners(r.contour)) if (sharpTurn(c)) sharp.add(jointSample[c.index]);
+  const sectorOf = sectorsFromBoundaries(N, sharp);
+  const segSmooth = lifted[0].contour.segments.map((s) => !!(s.via || s.c1));
+  const K = Math.max(...sectorOf) + 1;
+  const sectorSmooth = new Array(K).fill(false);
+  let seg = 0;
+  for (let j = 0; j < N; j++) {
+    while (seg < counts.length - 1 && j >= jointSample[seg + 1]) seg++;
+    if (segSmooth[seg]) sectorSmooth[sectorOf[j]] = true;
+  }
+  return { sectorOf, sectorSmooth };
+};
+
+// Resample mode: sector boundaries at the union of every ring's snapped corners. A
+// sector is smooth when every interior sample on every ring turns gently — the same
+// bar as the legacy "≥ SMOOTH_SIDES_MIN sides reads smooth" rule (360/32 per facet).
+const resampleShading = (rings, snappedSets) => {
+  const N = rings[0].length;
+  const boundaries = new Set();
+  for (const s of snappedSets) for (const i of s) boundaries.add(i);
+  const sectorOf = sectorsFromBoundaries(N, boundaries);
+  const K = Math.max(...sectorOf) + 1;
+  const limit = (2 * Math.PI) / SMOOTH_SIDES_MIN;
+  const sectorSmooth = new Array(K).fill(true);
+  for (const ring of rings)
+    for (let i = 0; i < N; i++) {
+      if (boundaries.has(i)) continue; // corners split sectors; they are not interior turns
+      const p = ring[(i - 1 + N) % N], q = ring[i], r2 = ring[(i + 1) % N];
+      const ux = q[0] - p[0], uy = q[1] - p[1], vx = r2[0] - q[0], vy = r2[1] - q[1];
+      const turn = Math.abs(Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy));
+      if (turn > limit) { // the kink sits AT sample i — both adjacent columns' sectors go faceted
+        sectorSmooth[sectorOf[i]] = false;
+        sectorSmooth[sectorOf[(i - 1 + N) % N]] = false;
+      }
+    }
+  return { sectorOf, sectorSmooth };
+};
 
 // Orchestrates lift -> classify -> tessellate into the single shape both backends consume:
 // resolved[i] = { pts2d, z, contour } — pts2d for Manifold's hand-mesh, contour (curve mode
@@ -241,7 +340,7 @@ export function resampleTessellation(lifted) {
 export function resolveLoftRings(rings) {
   const lifted = liftLoftRings(rings);
   const { mode, hasCurve } = classifyLoftRings(lifted);
-  let ptRings;
+  let ptRings, shading = null;
   if (mode === "poly-exact") {
     // Point-list rings keep their legacy un-normalized winding for bit-exactness — UNLESS
     // the ring set also mixes in a contour/Shape2D-sourced ring (r.pts === null), whose
@@ -256,10 +355,17 @@ export function resolveLoftRings(rings) {
       return mixed && shoelace(r.pts) < 0 ? [...r.pts].reverse() : r.pts;
     });
   }
-  else if (mode === "curve") ptRings = matchedTessellation(lifted);
-  else ptRings = resampleTessellation(lifted);
+  else if (mode === "curve") {
+    const d = matchedTessellationDetail(lifted);
+    ptRings = d.rings;
+    shading = curveShading(lifted, d.counts);
+  } else {
+    const d = resampleTessellationDetail(lifted);
+    ptRings = d.rings;
+    shading = resampleShading(d.rings, d.snapped);
+  }
   return {
-    mode, hasCurve,
+    mode, hasCurve, shading,
     resolved: lifted.map((r, i) => ({ pts2d: ptRings[i], z: r.z, contour: mode === "curve" ? r.contour : null })),
   };
 }
