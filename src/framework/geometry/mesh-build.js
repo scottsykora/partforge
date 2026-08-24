@@ -51,3 +51,19 @@ export function manifoldFromMesh(wasm, V, Tr) {
   mesh.delete?.(); // input mesh is consumed by ofMesh; free it (caller tracks `out`)
   return out;
 }
+
+// Same import, but with the triangles partitioned into runs carrying pre-reserved
+// original IDs (Manifold.reserveIDs), so downstream shading (creased-normals) can
+// treat each run as its own surface with its own policy — and the partition
+// survives every boolean, exactly like mesh-fillet's blend bands. `runIndex` is in
+// triVert units (3 × triangle count, MeshGL convention), first entry 0, last Tr.length.
+export function manifoldFromMeshRuns(wasm, V, Tr, runIndex, runOriginalID) {
+  const mesh = new wasm.Mesh({
+    numProp: 3, vertProperties: Float32Array.from(V), triVerts: Uint32Array.from(Tr),
+    runIndex: Uint32Array.from(runIndex), runOriginalID: Uint32Array.from(runOriginalID),
+  });
+  mesh.merge();
+  const out = wasm.Manifold.ofMesh(mesh);
+  mesh.delete?.();
+  return out;
+}

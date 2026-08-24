@@ -181,3 +181,34 @@ test("Shape2D rings cache-key by content: same shape twice hits, different fille
   expect(mk(4)._hash).toBe(mk(4)._hash);
   expect(mk(4)._hash).not.toBe(mk(3)._hash);
 });
+
+// ── Provenance-sectored lofts through the kernel ────────────────────────────
+// The belly-kink body (lofted-bottle's shape): ~10° silhouette kink at z=31.5,
+// far under SMOOTH's 35° crease — only the sector/band-group runs can draw its
+// dividing ring line. The kernel must register the run policies (so the crease
+// pass sees them) and label() must preserve the runs rather than folding them
+// into one surface.
+test("a belly-kink Shape2D loft draws its dividing ring line through the kernel", () => {
+  const rsq = k.shape2d([[-10, -10], [10, -10], [10, 10], [-10, 10]]).fillet(3);
+  const solid = k.loft({ rings: [
+    { polygon: rsq, z: 0 }, { polygon: rsq, z: 31.5, scale: 1.15 }, { polygon: rsq, z: 70 },
+  ] });
+  const m = solid.toMesh();
+  let atKink = 0;
+  for (let i = 0; i < m.edges.length; i += 6)
+    if (Math.abs(m.edges[i + 2] - 31.5) < 1e-3 && Math.abs(m.edges[i + 5] - 31.5) < 1e-3) atKink++;
+  expect(atKink).toBeGreaterThan(0);
+});
+
+test("label() preserves a sectored loft's dividing line (no fold into one surface)", () => {
+  const rsq = k.shape2d([[-10, -10], [10, -10], [10, 10], [-10, 10]]).fillet(3);
+  const solid = k.loft({ rings: [
+    { polygon: rsq, z: 0 }, { polygon: rsq, z: 31.5, scale: 1.15 }, { polygon: rsq, z: 70 },
+  ] }).label("Body");
+  const m = solid.toMesh();
+  let atKink = 0;
+  for (let i = 0; i < m.edges.length; i += 6)
+    if (Math.abs(m.edges[i + 2] - 31.5) < 1e-3 && Math.abs(m.edges[i + 5] - 31.5) < 1e-3) atKink++;
+  expect(atKink).toBeGreaterThan(0);
+  expect(m.features).toEqual(["Body"]);              // all runs collapse to ONE feature entry
+});

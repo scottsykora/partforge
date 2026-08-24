@@ -17,6 +17,13 @@ export const FACETED = Object.freeze({ creaseAngle: 10, sameSurfaceLines: false 
 // stay invisible while real mitre crossings still draw.
 export const BLEND = Object.freeze({ creaseAngle: 35, sameSurfaceLines: true, boundaryLines: true });
 
+// Loft sector policies: identical crease/line behavior to SMOOTH/FACETED, plus the
+// `sector` marker label() uses to preserve a sectored loft's runs 1:1 when it
+// re-stamps original IDs (a plain asOriginal would fold the sectors into one
+// surface and erase every provenance crease and dividing line).
+export const LOFT_SECTOR_SMOOTH = Object.freeze({ ...SMOOTH, sector: true });
+export const LOFT_SECTOR_FACETED = Object.freeze({ ...FACETED, sector: true });
+
 export const COPLANAR_ANGLE = 5;  // deg — cut seams bending less than this are coplanar: no line
 export const TANGENT_ANGLE = 5;   // deg — B-rep edges whose faces agree within this are tangent: no line
 export const MIN_EDGE = 0.01;     // mm — drop shorter segments (degenerate slivers, pole edges)
