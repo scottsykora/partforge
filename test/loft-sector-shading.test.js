@@ -109,3 +109,24 @@ test("an explicit shading hint bypasses sectoring entirely", () => {
   expect(pol.size).toBe(0);
   expect(oids.size).toBe(1);
 });
+
+test("a duplicated ring (zero-length bands) does not fake a kink line", () => {
+  // straight silhouette (linear scale ramp) with ring 1 duplicated: the degenerate
+  // band must not read as a >5° kink — no dividing line at the duplicate's z
+  const rings = [
+    { polygon: rsq, z: 0 },
+    { polygon: rsq, z: 20, scale: 1.02 },
+    { polygon: rsq, z: 20, scale: 1.02 },
+    { polygon: rsq, z: 40, scale: 1.04 },
+  ];
+  const { out } = shade(rings);
+  expect(edgesAtZ(out.edges, 20)).toBe(0);
+});
+
+test("closed loop: the wrap band's kink at ring 0 partitions the loop into runs", () => {
+  // an ascending closed loop always bends violently across the wrap — ring 0 (and
+  // ring R-1) must count as kinks so the band groups split there
+  const rings = [0, 1, 2, 3].map((i) => ({ polygon: rsq, z: i * 10 }));
+  const { oids } = shade(rings, { closed: true });
+  expect(oids.size).toBeGreaterThanOrEqual(2);
+});

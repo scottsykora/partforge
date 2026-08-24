@@ -279,6 +279,12 @@ const sharpTurn = (corner) => Math.abs(180 - corner.interiorAngleDeg) > SHARP_TU
 const sectorsFromBoundaries = (N, boundarySet) => {
   const B = [...boundarySet].sort((a, b) => a - b);
   const sectorOf = new Array(N).fill(0);
+  // Known limitation: a SINGLE sharp joint on an otherwise smooth ring (a teardrop
+  // cusp) cannot be expressed — one boundary yields one sector, so both sides of
+  // the cusp share a run and it shades per the sector policy (smooth if any curve).
+  // Splitting the ring artificially would draw a fake dividing line at the split
+  // (smooth facets bend > the 5° cross-run bar at LOFT_SEGS). Add a second corner,
+  // or force `shading: "faceted"`, to make a lone cusp read.
   if (B.length > 1) {
     for (let k = 0; k < B.length; k++) {
       const from = B[k], to = B[(k + 1) % B.length];

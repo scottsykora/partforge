@@ -42,16 +42,21 @@ function triCap(wasm, Tr, ringStart, pts2d, bottom) {
 // vertex column — author-placed silhouette features, not tessellation of a smooth
 // sweep. Matches the bar at which the B-rep backend's real loft edges draw lines,
 // so the Manifold preview and an OCCT export agree on which rings read as features.
-function kinkRingsOf(resolved) {
+function kinkRingsOf(resolved, closed = false) {
   const R = resolved.length, N = resolved[0].pts2d.length;
   const cosKink = cosDeg(TANGENT_ANGLE);
   const kinks = new Set();
-  for (let k = 1; k < R - 1; k++) {
-    const A = resolved[k - 1], B = resolved[k], C = resolved[k + 1];
+  // open lofts bend only at interior rings; a closed loop also bends across the
+  // wrap, so rings 0 and R-1 are checked there too (their neighbors wrap modulo R)
+  for (let k = closed ? 0 : 1; k < (closed ? R : R - 1); k++) {
+    const A = resolved[(k - 1 + R) % R], B = resolved[k], C = resolved[(k + 1) % R];
     for (let i = 0; i < N; i++) {
       const ux = B.pts2d[i][0] - A.pts2d[i][0], uy = B.pts2d[i][1] - A.pts2d[i][1], uz = B.z - A.z;
       const vx = C.pts2d[i][0] - B.pts2d[i][0], vy = C.pts2d[i][1] - B.pts2d[i][1], vz = C.z - B.z;
-      const lu = Math.hypot(ux, uy, uz) || 1, lv = Math.hypot(vx, vy, vz) || 1;
+      const lu = Math.hypot(ux, uy, uz), lv = Math.hypot(vx, vy, vz);
+      // a zero-length band (duplicated ring) has no direction — it cannot bend;
+      // without this skip the 0-dot always reads as a >5° kink and splits runs
+      if (lu < 1e-9 || lv < 1e-9) continue;
       if ((ux * vx + uy * vy + uz * vz) / (lu * lv) < cosKink) { kinks.add(k); break; }
     }
   }
@@ -126,7 +131,7 @@ export function loftMesh(wasm, rings, opts = {}, runPolicies = null) {
   const { resolved, shading } = rl;
   const { closed = false, shading: hint } = opts;
   if (shading && hint == null) {
-    const kinks = kinkRingsOf(resolved);
+    const kinks = kinkRingsOf(resolved, closed);
     const K = Math.max(...shading.sectorOf) + 1;
     // Partition only when there is a boundary to express; a single smooth sector
     // with no kinks keeps the legacy single-surface path (and its policy inference).
