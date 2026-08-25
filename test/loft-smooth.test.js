@@ -96,3 +96,27 @@ test("validation errors are exact (frozen by the spec)", () => {
   expect(() => smoothLoftRings(SECTIONS, { samples: 4 }))
     .toThrow("loftSmooth: samples must be 8…2048");
 });
+
+test("every control section appears as an actual output ring (knot-aligned stations)", () => {
+  const uneven = [
+    { polygon: ngon(8, 10), z: 0 },
+    { polygon: ngon(8, 12), z: 7 },    // uneven span lengths on purpose
+    { polygon: ngon(8, 10), z: 30 },
+  ];
+  const rings = smoothLoftRings(uneven, { stations: 10, samples: 32 });
+  expect(rings.length).toBe(10);
+  for (const s of uneven) {
+    const ring = rings.find((r) => Math.abs(r.z - s.z) < 1e-9);
+    expect(ring, `no output ring at control z=${s.z}`).toBeTruthy();
+    const want = resampleClosedSpline(s.polygon, 32);
+    ring.polygon.forEach((p, j) => {
+      expect(p[0]).toBeCloseTo(want[j][0], 6);
+      expect(p[1]).toBeCloseTo(want[j][1], 6);
+    });
+  }
+});
+
+test("stations below the section count is raised to the section count", () => {
+  const five = [0, 5, 10, 15, 20].map((z) => ({ polygon: ngon(8, 10), z }));
+  expect(smoothLoftRings(five, { stations: 2, samples: 16 }).length).toBe(5);
+});

@@ -103,7 +103,8 @@ export function resampleClosedSpline(pts, n) {
  * @param {Array} sections  loft-style ring specs ({polygon|sides+radius, z, rotate?, scale?});
  *                          vertex counts may differ between sections.
  * @param {{stations?: number|"controls", samples?: number}} opts
- *   stations — output ring count along the spine (default 8 per span + 1, ≥ 2).
+ *   stations — output ring count along the spine (default 8 per span + 1, ≥ 2;
+ *     raised to the section count when lower; every control knot is always emitted).
  *     The string "controls" skips cross-station interpolation entirely and emits
  *     one ring per control section at its own z — the B-rep path, where the
  *     backend's native smooth loft (`ruled: false`) does the skinning through
@@ -156,13 +157,33 @@ export function smoothLoftRings(sections, { stations, samples } = {}) {
     return resolved[i].z;
   };
 
-  // 3. Evaluate S stations uniformly in knot space. z uses the same segment/knots
-  //    as every vertex, evaluated once per station (1-D Barry–Goldman via crPoint
-  //    with the value in the x slot).
-  const out = [];
+  // 3. Station parameter list: every control knot is always emitted, plus interior
+  //    stations distributed per span proportionally to knot length (largest-
+  //    remainder apportionment; ties to the lower index — deterministic), so each
+  //    control section appears as an actual output ring, not just a point the
+  //    underlying spline passes through. `stations` below the section count is
+  //    raised to it (the knots alone already cost n rings).
   const tEnd = knots[n - 1];
-  for (let s = 0; s < S; s++) {
-    const t = (s / (S - 1)) * tEnd;
+  const S2 = Math.max(S, n);
+  const extra = S2 - n;
+  const spans = [];
+  for (let i = 0; i < n - 1; i++) spans.push(knots[i + 1] - knots[i]);
+  const exact = spans.map((len) => (extra * len) / tEnd);
+  const alloc = exact.map(Math.floor);
+  let left = extra - alloc.reduce((a, b) => a + b, 0);
+  const order = exact.map((e, i) => [e - alloc[i], i]).sort((p, q) => q[0] - p[0] || p[1] - q[1]);
+  for (let j = 0; j < left; j++) alloc[order[j][1]]++;
+  const ts = [];
+  for (let i = 0; i < n - 1; i++) {
+    ts.push(knots[i]);
+    for (let m = 1; m <= alloc[i]; m++) ts.push(knots[i] + (spans[i] * m) / (alloc[i] + 1));
+  }
+  ts.push(tEnd);
+
+  // 4. Evaluate the stations. z uses the same segment/knots as every vertex,
+  //    evaluated once per station (1-D Barry–Goldman via crPoint).
+  const out = [];
+  for (const t of ts) {
     let seg = 0; // segment index: t ∈ [knots[seg], knots[seg+1]]
     while (seg < n - 2 && t > knots[seg + 1]) seg++;
     const t0 = knotAt(seg - 1), t1 = knots[seg], t2 = knots[seg + 1], t3 = knotAt(seg + 2);
