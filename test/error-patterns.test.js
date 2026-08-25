@@ -59,6 +59,12 @@ const BASELINE_IDS = [
   "roundall-skipped",
   "control-default-not-literal",
   "impure-source-token",
+  "loftsmooth-corner-count-mismatch",
+  "loftsmooth-closed-needs-manifold",
+  "loftsmooth-looks-faceted",
+  "loftsmooth-zero-perimeter-arc",
+  "loftsmooth-stations-out-of-range",
+  "loftsmooth-samples-out-of-range",
 ];
 
 const entries = parsePatterns(doc);

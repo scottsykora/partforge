@@ -398,9 +398,9 @@ export interface LoftSmoothSection {
 export interface LoftSmoothOptions {
   /** Sparse control sections; vertex counts may differ between sections. */
   sections: LoftSmoothSection[];
-  /** Output ring count along the spine (default 8 per span + 1; closed: 8 per section). */
+  /** Output ring count along the spine (default 8 per span + 1; closed: 8 per section; capped at 1024). */
   stations?: number;
-  /** Output vertex count around each ring (default max(64, largest section)). */
+  /** Output vertex count around each ring (default max(64, largest section), capped at 2048). */
   samples?: number;
   shading?: "smooth" | "faceted";
   /** Capless loop — Manifold only, ≥3 sections. */
