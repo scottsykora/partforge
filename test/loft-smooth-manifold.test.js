@@ -61,6 +61,23 @@ test("sharp tags change the surface: tagged square prism differs from the untagg
   expect(smooth.genus()).toBe(0);
 });
 
+test("propeller sharpTE toggle changes the built solid's volume (creased vs smeared trailing edge)", () => {
+  // The tag touches one vertex per airfoil section out of ~24, on a small
+  // fraction of the assembly's surface — measured relative volume delta is
+  // ~1.8e-5 (deterministic), well below the 1e-4 headline sharp-corner effect
+  // the square-prism test above sees. Threshold is set with margin under the
+  // measured signal, not against a rounder guess.
+  const on = propeller.parts.propeller.build(k, propeller.defaults);
+  const off = propeller.parts.propeller.build(k, { ...propeller.defaults, sharpTE: 0 });
+  expect(on.volume()).toBeGreaterThan(0);
+  expect(off.volume()).toBeGreaterThan(0);
+  expect(Math.abs(on.volume() / off.volume() - 1)).toBeGreaterThan(1e-6);
+  // Both a single through-hole for the shaft bore — the crease is local to the
+  // trailing edge and doesn't change the assembly's topology.
+  expect(on.genus()).toBe(1);
+  expect(off.genus()).toBe(1);
+});
+
 test("closed:true builds a capless genus-1 loop (the loft-mesh precedent, smoothed)", () => {
   const sections = [];
   for (let i = 0; i < 6; i++) sections.push({ sides: 8, radius: 8 + i, z: i * 3 });

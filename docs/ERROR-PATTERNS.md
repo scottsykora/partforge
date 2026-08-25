@@ -515,6 +515,12 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 - **Cause:** `samples` governs curve-*fit* resolution — how many cubic-Bézier spans the emitted ring is cut into — not a facet count, on **either** backend. A B-rep kernel lofts each span as one exact curve edge, so STEP is curve-exact around every ring regardless of `samples`; too few spans just means the fit follows the control sections less faithfully (a visible corner or fast bend flattens). A mesh kernel doesn't facet one triangle per span either — `k.loft`'s curve mode adaptively subdivides each span by curvature at the shared `LOFT_SEGS = 64` budget (`loft-rings.js`'s `segNaturalCount`/`sampleBezier`), so around-ring facet density comes from that curve LOD, and rises with `samples` only because more spans means more things to subdivide, not proportionally.
 - **Fix:** raise `samples` (default `max(64, largest section)`, clamp ≤ 2048). If the banding runs along the spine instead, raise `stations`. See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
 
+## loftsmooth-zero-perimeter-arc
+
+- **Symptom:** `loftSmooth: a control section has zero perimeter`
+- **Cause:** two sharp-tagged vertices (or two contour corners) in the same section are numerically coincident, so the arc between them has zero length — e.g. tagging *both* ends of a closed NACA trailing edge, whose closure coefficient already brings them to the same point (or the same point after a per-section `rotate`). This also fires for the v1 meaning of the message: a genuinely degenerate section.
+- **Fix:** tag only one of the coincident vertices as the corner (see `src/parts/propeller.js`'s `sharpTE` comment for why a second tag there would create exactly this zero-length arc). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md)'s `k.loftSmooth` row.
+
 ## duplicate-preset-name-throws
 
 - **Symptom:** `duplicate preset name across sections:` thrown from verify/measure, naming the repeated preset (e.g. `duplicate preset name across sections: "Compact"`).

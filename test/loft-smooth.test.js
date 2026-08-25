@@ -250,19 +250,85 @@ test("fitBezierRing is C1 at smooth joints, tangent-broken at corners", () => {
   for (const i of [2, 6, 10, 14]) expect(cross(tangentPair(cornered, i))).toBeLessThan(1e-9);
 });
 
-test("emitted cubics lie on the CR curve (midpoints match a dense resample)", () => {
+// Independent re-derivation of the Catmull-Rom curve fitBezierRing inverts
+// (spec §7) — a local copy of crPoint's Barry–Goldman pyramid and the
+// centripetal knot construction (max(sqrt(dist),1e-6) steps), deliberately
+// duplicated rather than imported: this checks invertSpan's math against a
+// second, independent implementation, not against itself.
+const knotStep = (a, b) => Math.max(Math.sqrt(Math.hypot(b[0] - a[0], b[1] - a[1])), 1e-6);
+function crEval(p0, p1, p2, p3, u) {
+  const t0 = 0, t1 = knotStep(p0, p1), t2 = t1 + knotStep(p1, p2), t3 = t2 + knotStep(p2, p3);
+  const t = t1 + (t2 - t1) * u;
+  const lerpP = (a, b, ta, tb) => {
+    const w = tb === ta ? 0 : (t - ta) / (tb - ta);
+    return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w];
+  };
+  const a1 = lerpP(p0, p1, t0, t1), a2 = lerpP(p1, p2, t1, t2), a3 = lerpP(p2, p3, t2, t3);
+  const b1 = lerpP(a1, a2, t0, t2), b2 = lerpP(a2, a3, t1, t3);
+  return lerpP(b1, b2, t1, t2);
+}
+const US = [0.1, 0.25, 0.5, 0.75, 0.9];
+const reflectPtLocal = (p, q) => [2 * p[0] - q[0], 2 * p[1] - q[1]];
+
+// Cyclic arc slice matching loft-smooth.js's private arcPoints: corner j to
+// corner j+1 (wrapping), both endpoints included.
+function arcSlice(pts, corners, j) {
+  const N = pts.length, m = corners.length;
+  const a = corners[j], b = corners[(j + 1) % m];
+  const out = [];
+  for (let k = a; ; k = (k + 1) % N) {
+    out.push(pts[k]);
+    if (k === b && out.length > 1) break;
+  }
+  return out;
+}
+
+test("fitBezierRing's emitted cubics match an independent CR re-derivation to 1e-9 (corner-free ring)", () => {
   const ctrl = [[10, 0], [3, 9], [-8, 5], [-9, -6], [4, -11]];
   const pts = resampleClosedSpline(ctrl, 16);
+  const V = pts.length;
   const c = fitBezierRing(pts);
-  // Each cubic's midpoint must sit between its endpoints at a plausible CR position:
-  // compare against a 16x denser resample of the same base ring, nearest-point distance.
-  const dense = resampleClosedSpline(ctrl, 256);
-  c.segments.forEach((s, i) => {
-    const p0 = i === 0 ? c.start : c.segments[i - 1].to;
-    const mid = bezAt(p0, s, 0.5);
-    const d = Math.min(...dense.map(([x, y]) => Math.hypot(x - mid[0], y - mid[1])));
-    expect(d).toBeLessThan(0.15); // on-curve to well under a facet width at r≈10
-  });
+  for (let i = 0; i < V; i++) {
+    // Same closed periodic window the emitter used: pts[i-1..i+2] (mod V).
+    const w0 = pts[(i - 1 + V) % V], w1 = pts[i], w2 = pts[(i + 1) % V], w3 = pts[(i + 2) % V];
+    const from = i === 0 ? c.start : c.segments[i - 1].to;
+    const seg = c.segments[i];
+    for (const u of US) {
+      const want = crEval(w0, w1, w2, w3, u);
+      const got = bezAt(from, seg, u);
+      expect(Math.hypot(got[0] - want[0], got[1] - want[1])).toBeLessThanOrEqual(1e-9);
+    }
+  }
+});
+
+test("fitBezierRing's emitted cubics match an independent CR re-derivation to 1e-9 (cornered ring)", () => {
+  const sq = [[10, 10], [-10, 10], [-10, -10], [10, -10]];
+  const pts = [];
+  for (let j = 0; j < 4; j++) {
+    const a = sq[j], b = sq[(j + 1) % 4];
+    for (let s = 0; s < 4; s++) pts.push([a[0] + (b[0] - a[0]) * (s / 4), a[1] + (b[1] - a[1]) * (s / 4)]);
+  }
+  const corners = [0, 4, 8, 12];
+  const c = fitBezierRing(pts, corners);
+  let idx = 0;
+  for (let j = 0; j < corners.length; j++) {
+    // Same per-arc window the emitter used: reflection phantoms at the arc ends.
+    const arc = arcSlice(pts, corners, j);
+    const A = arc.length;
+    const ctrl = [reflectPtLocal(arc[0], arc[1]), ...arc, reflectPtLocal(arc[A - 1], arc[A - 2])];
+    for (let i = 1; i < A; i++) {
+      const w0 = ctrl[i - 1], w1 = ctrl[i], w2 = ctrl[i + 1], w3 = ctrl[i + 2];
+      const from = idx === 0 ? c.start : c.segments[idx - 1].to;
+      const seg = c.segments[idx];
+      for (const u of US) {
+        const want = crEval(w0, w1, w2, w3, u);
+        const got = bezAt(from, seg, u);
+        expect(Math.hypot(got[0] - want[0], got[1] - want[1])).toBeLessThanOrEqual(1e-9);
+      }
+      idx++;
+    }
+  }
+  expect(idx).toBe(c.segments.length); // covered every emitted segment, in order
 });
 
 test("closed:true emits a periodic station list — every control ring once, no ring-0 repeat", () => {
