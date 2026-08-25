@@ -23,6 +23,9 @@ export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
   "loft", "sweep", "helixSweptTube", "screwSweep", "union", "shape2d", "text2d", "hull", "hullChain", "toSTEP",
   "roundedCylinder", "torus", "roundedBox", "import",
+  // SPIKE (throwaway candidate, unversioned — see the loftSmooth note in
+  // KERNEL-CONTRACT.md): spline-smoothed loft, a kernel-front compound default.
+  "loftSmooth",
 ];
 
 // Backend-optional kernel ops: the sub-part cache brackets + WASM lifetime hooks.
@@ -147,6 +150,7 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(o:{profile:number[][],degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z; legacy (points,opts) accepted for now (see file header)
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(o:{profile:number[][],pitch:number,turns:number,lefthand?:boolean}) => Solid} screwSweep   screw-motion sweep of an axial [[r,z]] profile — threads; options-only
+ * @property {(o:{sections:object[],stations?:number,samples?:number,shading?:string}) => Solid} loftSmooth   SPIKE: Catmull-Rom-densified loft of sparse control sections; options-only
  * @property {(solids:Solid[]) => Solid} union
  * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|{start:number[],segments:object[]}|Shape2D) => Shape2D} shape2d   2-D boolean value; one shared contour-storage implementation on both backends
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hull   convex hull of all inputs → a convex Shape2D (faceted; pure-JS monotone chain)

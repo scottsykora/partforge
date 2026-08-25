@@ -25,6 +25,7 @@ import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
 import { convexHull, hullPoints } from "./hull.js";
 import { latheRoundedRect, torusContour } from "./rounded-solids.js";
 import { screwCrossSection } from "./screw-profile.js";
+import { smoothLoftRings } from "./loft-smooth.js";
 
 export function finishKernel(k) {
   // Compound default: bored-through cylinder (tool overshoots 2 mm each end for
@@ -54,6 +55,22 @@ export function finishKernel(k) {
       h: pitch * turns,
       twist: (lefthand ? -360 : 360) * turns,
     });
+
+  // SPIKE compound default (throwaway candidate): spline-smoothed loft. On a mesh
+  // kernel the shared Catmull-Rom densifier expands the sparse control sections in
+  // both directions and plain loft stitches them. On a B-rep kernel that strategy
+  // is both slow and fragile (native loft through dozens of dense wires aborted at
+  // 48×128 in the spike), so it gets only the around-ring reconciliation and its
+  // OWN smooth skin across stations (`ruled: false` — exact B-spline surfaces, and
+  // ~10× faster). Parity is therefore screwSweep's tolerance class, not sweep's
+  // by-construction class: measured ~1–2% volume divergence on the spike blade.
+  // B-rep detection: `toSTEP` exists here only on a B-rep backend — the stub for
+  // mesh kernels is assigned later in this function.
+  const brepLoft = typeof k.toSTEP === "function";
+  k.loftSmooth ??= ({ sections, stations, samples, shading = "smooth" }) =>
+    brepLoft
+      ? k.loft({ rings: smoothLoftRings(sections, { stations: "controls", samples }), ruled: false })
+      : k.loft({ rings: smoothLoftRings(sections, { stations, samples }), shading });
 
   for (const [op, { toArgs, check }] of Object.entries(KERNEL_OP_SPECS)) {
     const raw = k[op];

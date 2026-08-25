@@ -302,6 +302,16 @@ includes a `Shape2D` input agrees only within the tessellation tolerance of that
 backend's curve faceting — the same class of parity as the 2-D boolean ops above, not
 a waiver of `CONTRACT_VERSION` (still 1; this op is additive).
 
+> **SPIKE — `loftSmooth` (experimental, unversioned).** `loftSmooth({sections,
+> stations?, samples?, shading?})` is a throwaway-candidate compound default
+> (`kernel-front.js` + `loft-smooth.js`): sparse loft-style control sections are
+> densified by a shared Catmull-Rom interpolator (centripetal around each ring,
+> shared-knot across stations) and fed to `loft`, so both backends stitch the
+> identical station list — `sweep`'s by-construction parity class. It is **not**
+> yet part of the versioned contract: its name, options and semantics may change
+> or the op may be removed without a `CONTRACT_VERSION` bump. Do not depend on it
+> outside the propeller spike part.
+
 **Backend-divergent options** (a portable part must treat these as declared here):
 `loft` `closed: true` (capless loop) and `sweep` `closed: true` are supported **only by
 mesh backends** (Manifold); B-rep kernels throw a plain `Error` naming the limitation
