@@ -381,20 +381,31 @@ export interface ScrewSweepOptions {
   lefthand?: boolean;
 }
 
-/** k.loftSmooth — spline-interpolated loft of sparse control sections. */
-/** A `loftSmooth` control section — a `LoftRing` restricted to point-array polygons (curve contours and `Shape2D` are not accepted, for now). */
-export interface LoftSmoothSection extends Omit<LoftRing, "polygon"> {
-  polygon?: PointsContour;
+/** One `k.loftSmooth` control section. Point arrays may tag true corners with
+ *  `sharp`; curve contours and Shape2D outlines carry corners implicitly. */
+export interface LoftSmoothSection {
+  polygon?: Contour | Shape2D;
+  sides?: number;
+  radius?: number;
+  z: number;
+  /** Degrees about Z. */
+  rotate?: number;
+  scale?: number | Point2;
+  /** Corner indices into a point-array polygon. */
+  sharp?: number[];
 }
 
+/** k.loftSmooth — spline-interpolated loft of sparse control sections. */
 export interface LoftSmoothOptions {
   /** Sparse control sections; vertex counts may differ between sections. */
   sections: LoftSmoothSection[];
-  /** Output ring count along the spine (default 8 per span + 1). */
+  /** Output ring count along the spine (default 8 per span + 1; closed: 8 per section). */
   stations?: number;
   /** Output vertex count around each ring (default max(64, largest section)). */
   samples?: number;
   shading?: "smooth" | "faceted";
+  /** Capless loop — Manifold only, ≥3 sections. */
+  closed?: boolean;
 }
 
 export interface RoundedCylinderOptions {

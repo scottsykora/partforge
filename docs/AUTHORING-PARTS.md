@@ -324,7 +324,7 @@ and the detection rule.
 | `k.revolve({ profile, degrees? })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove). **Not for threads** — the profile is always circular and rides a frenet frame that rolls with the helix, tilting a tooth off-axis. For threads use `k.screwSweep` |
 | `k.screwSweep({ profile, pitch, turns, lefthand? })` | screw-motion sweep of an **axial** lathe profile `[[r, z], …]` (same convention as `k.revolve`) — threads, worms, helical ridges. `h = pitch · turns`. The profile's axial extent must not exceed `pitch`; a profile spanning exactly `pitch` must be **periodic** (first radius == last radius) and yields a complete threaded body with no boolean (both backends) |
-| `k.loftSmooth({ sections, stations?, samples?, shading? })` | smooth organic loft: ≥2 sparse control sections (same ring spec as `k.loft`; vertex counts may differ, **point rings only**) interpolated with splines on both backends — the "here are 5 airfoil sections, make it smooth" op. The surface passes through every section exactly. Corners round at the `samples` LOD (sharp tags are future work); see the propeller reference part |
+| `k.loftSmooth({ sections, stations?, samples?, shading?, closed? })` | smooth organic loft: ≥2 sparse control sections — point rings, `sides`+`radius`, curve contours, or `Shape2D`, vertex/corner counts may differ per section — interpolated with splines on both backends — the "here are 5 airfoil sections, make it smooth" op. The surface passes through every section exactly. A point section may tag `sharp: [indices]` to keep those vertices true corners instead of letting the spline round them off; a curve/`Shape2D` section gets its corners implicitly from its own non-smooth joints. All sections need the same corner count. `closed: true` closes the loft into a loop (Manifold-only, like `k.loft`). See the propeller reference part (`sharpTE` toggle) |
 | `k.union(solids[])` | boolean union |
 
 **`loft` rings** — each ring is `{ polygon:[[x,y],…] | sides+radius | {start,segments} | Shape2D, z, rotate?, scale? }`
@@ -365,8 +365,36 @@ const blade = k.loftSmooth({ sections });
 ```
 
 Raise `samples` if the cross-section shows facets, `stations` if banding runs
-along the spine. Sections must be point rings — vertex order and the vertex-0
-seam are how corresponding points line up across sections.
+along the spine. Vertex order and the vertex-0 seam are how corresponding
+points line up across sections (or corner 0, when sections are tagged —
+below).
+
+Tag a true corner (e.g. an airfoil trailing edge that shouldn't be smeared
+into a smooth curve) with `sharp`, an index list into that section's points —
+every other section needs the same *count* of corners, tagged or implicit:
+
+```js
+// src/parts/propeller.js's sharpTE toggle: vertex 0 of each airfoil section
+// is the trailing edge (upper and lower surfaces meet there); tagging it
+// keeps that meeting point a crease instead of letting the spline round it.
+const sections = airfoilSections.map((s) => ({ ...s, sharp: [0] }));
+```
+
+A section can also be a curve contour instead of a point ring — its corners
+come for free from wherever the contour itself isn't smooth (a line/arc
+joint, say), so it needs no `sharp` of its own (and rejects one if given):
+
+```js
+// a half-round "D" profile: one line segment + one arc — 2 implicit corners
+// (the line/arc joints), so it can loft alongside a point section tagged
+// with exactly 2 sharp indices.
+const D = { start: [0, -8], segments: [{ to: [0, 8] }, { to: [0, -8], via: [8, 0] }] };
+k.loftSmooth({ sections: [{ polygon: D, z: 0 }, { polygon: D, z: 10 }] });
+```
+
+Pass `closed: true` to close the loft into a loop instead of capping both
+ends (Manifold-only, same restriction as `k.loft`'s `closed`; a part that
+needs STEP export can't use it).
 
 **`sweep`** takes the same CCW `polygon.js` outline as its `profile` and a plain `[[x,y,z],…]` point list as its
 `path`; the profile stays perpendicular to the path (a rotation-minimizing frame), with sharp mitered corners by
