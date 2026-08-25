@@ -59,8 +59,10 @@ const BASELINE_IDS = [
   "roundall-skipped",
   "control-default-not-literal",
   "impure-source-token",
-  "loftsmooth-sections-point-arrays",
   "loftsmooth-looks-faceted",
+  "loftsmooth-corner-count-mismatch",
+  "loftsmooth-closed-needs-manifold",
+  "loftsmooth-zero-perimeter-arc",
   "loftsmooth-stations-out-of-range",
   "loftsmooth-samples-out-of-range",
 ];

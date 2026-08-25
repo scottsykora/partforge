@@ -1,8 +1,9 @@
 // The k.loftSmooth reference part: a boat propeller — bored hub + N airfoil
 // blades, each blade a spline-interpolated loft of 5 sparse control sections.
 // The "Surface" section keeps the didactic A/B: untick **Smooth** to see the raw
-// k.loft of the same control sections. Spec:
+// k.loft of the same control sections. Specs:
 // docs/superpowers/specs/2026-08-24-loft-smooth-design.md
+// docs/superpowers/specs/2026-08-25-loft-smooth-v2-design.md
 
 // NACA-4-ish airfoil contour, closed and CCW, centered near the quarter chord so
 // per-ring `rotate` twists about a sensible pitch axis. `n` points per surface;
@@ -35,6 +36,16 @@ const bladeSections = (p) =>
       p.camber,
       p.sectionPts,
     ),
+    // The trailing edge is the ring's two end vertices (upper TE vertex 0, lower
+    // TE the last) — this NACA closure (coefficient -0.1036) already brings them
+    // together at the same point, so the "gap" between them is a genuine zero-
+    // length edge, not a blunt base. Tagging vertex 0 as the single corner keeps
+    // that meeting point a crease instead of letting the CR spline round it off;
+    // a *second* tag at the last vertex would mark a zero-length arc between two
+    // coincident corners, which — after the per-section pitch `rotate` below
+    // collapses their sub-epsilon separation to bit-identical floats — the
+    // resampler rejects as a zero-perimeter section.
+    ...(p.sharpTE && p.smooth ? { sharp: [0] } : {}),
     z: p.span * t,
     rotate: p.twistRoot + (p.twistTip - p.twistRoot) * t,
   }));
@@ -67,10 +78,12 @@ export default {
     {
       id: "surface",
       title: "Surface",
-      description: "**Smooth** interpolates the 5 sparse control sections with `loftSmooth`; off shows the raw `k.loft` of the same sections. **Stations/Samples** are the densifier resolution; **Section points** is how sparse the control sections are.",
+      description: "**Smooth** interpolates the 5 sparse control sections with `loftSmooth`; off shows the raw `k.loft` of the same sections. **Sharp trailing edge** tags the TE vertex as a crease instead of letting the spline smear it. **Stations/Samples** are the densifier resolution; **Section points** is how sparse the control sections are.",
       controls: [
         { key: "smooth", type: "checkbox", label: "Smooth (loftSmooth)",
           description: "A/B toggle: spline-densified vs raw loft of identical control sections." },
+        { key: "sharpTE", type: "checkbox", label: "Sharp trailing edge", when: { smooth: 1 },
+          description: "Tags the trailing-edge vertex as a true corner — the spline interpolates it with a crease instead of smearing it round." },
         { key: "stations", label: "Stations", min: 5, max: 128, step: 1, when: { smooth: 1 } },
         { key: "samples", label: "Samples / ring", min: 16, max: 512, step: 4, when: { smooth: 1 } },
         { key: "sectionPts", label: "Section points", min: 6, max: 40, step: 1,
@@ -81,7 +94,7 @@ export default {
   defaults: {
     blades: 3, span: 70, rootChord: 26, tipChord: 16, twistRoot: 62, twistTip: 30,
     thickness: 12, camber: 6, hubD: 30, hubH: 26, boreD: 8,
-    smooth: 1, stations: 48, samples: 128, sectionPts: 12,
+    smooth: 1, sharpTE: 1, stations: 48, samples: 128, sectionPts: 12,
   },
   parts: {
     propeller: {
