@@ -42,3 +42,46 @@ test("parity anchor: propeller reference part volume (shared literal with the OC
   expect(v).toBeGreaterThan(PARITY_CM3 * 0.98);
   expect(v).toBeLessThan(PARITY_CM3 * 1.02);
 });
+
+test("sharp tags change the surface: tagged square prism differs from the untagged fit, both watertight", () => {
+  const sq = (r) => [[r, r], [-r, r], [-r, -r], [r, -r]];
+  const sections = (sharp) => [
+    { polygon: sq(10), ...(sharp ? { sharp: [0, 1, 2, 3] } : {}), z: 0 },
+    { polygon: sq(10), ...(sharp ? { sharp: [0, 1, 2, 3] } : {}), z: 20 },
+  ];
+  const tagged = k.loftSmooth({ sections: sections(true), stations: 5, samples: 32 });
+  const smooth = k.loftSmooth({ sections: sections(false), stations: 5, samples: 32 });
+  // Tagged corners keep the true square (400 mm² cross-section) exactly. The
+  // untagged CR does NOT round the corners off here — a closed spline through
+  // only 4 sparse right-angle controls overshoots outward instead — so the
+  // comparison below is magnitude-only by design, not directional.
+  expect(tagged.volume()).toBeCloseTo(400 * 20, -2); // within ~50 mm³ of the exact prism
+  expect(Math.abs(tagged.volume() / smooth.volume() - 1)).toBeGreaterThan(0.001);
+  expect(tagged.genus()).toBe(0);
+  expect(smooth.genus()).toBe(0);
+});
+
+test("propeller sharpTE toggle changes the built solid's volume (creased vs smeared trailing edge)", () => {
+  // The tag touches one vertex per airfoil section out of ~24, on a small
+  // fraction of the assembly's surface — measured relative volume delta is
+  // ~1.8e-5 (deterministic), well below the 1e-4 headline sharp-corner effect
+  // the square-prism test above sees. Threshold is set with margin under the
+  // measured signal, not against a rounder guess.
+  const on = propeller.parts.propeller.build(k, propeller.defaults);
+  const off = propeller.parts.propeller.build(k, { ...propeller.defaults, sharpTE: 0 });
+  expect(on.volume()).toBeGreaterThan(0);
+  expect(off.volume()).toBeGreaterThan(0);
+  expect(Math.abs(on.volume() / off.volume() - 1)).toBeGreaterThan(1e-6);
+  // Both a single through-hole for the shaft bore — the crease is local to the
+  // trailing edge and doesn't change the assembly's topology.
+  expect(on.genus()).toBe(1);
+  expect(off.genus()).toBe(1);
+});
+
+test("closed:true builds a capless genus-1 loop (the loft-mesh precedent, smoothed)", () => {
+  const sections = [];
+  for (let i = 0; i < 6; i++) sections.push({ sides: 8, radius: 8 + i, z: i * 3 });
+  const s = k.loftSmooth({ sections, closed: true, samples: 24 });
+  expect(s.genus()).toBe(1);
+  expect(s.volume()).toBeGreaterThan(0);
+});

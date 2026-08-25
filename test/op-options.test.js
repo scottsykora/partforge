@@ -119,6 +119,10 @@ test("options-only compound ops validate keys and pass the object through", () =
     .toThrow("screwSweep: pitch must be > 0");
   expect(() => KERNEL_OP_SPECS.screwSweep.check({ ...screw, turns: 0 }))
     .toThrow("screwSweep: turns must be > 0");
+  const smooth = { sections: [{ sides: 6, radius: 5, z: 0 }, { sides: 6, radius: 3, z: 8 }], closed: false };
+  expect(KERNEL_OP_SPECS.loftSmooth.toArgs(smooth)).toEqual([smooth]);
+  expect(() => KERNEL_OP_SPECS.loftSmooth.toArgs({ ...smooth, loop: true }))
+    .toThrow('loftSmooth: unknown option "loop"');
 });
 
 test("box: center mixed with min/max gets its own message", () => {

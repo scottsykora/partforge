@@ -280,7 +280,7 @@ export const KERNEL_OP_SPECS = {
     },
   },
   // loftSmooth: range checks live in loft-smooth.js, next to the defaults they guard.
-  loftSmooth: { toArgs: passThrough("loftSmooth", ["sections", "stations", "samples", "shading"], ["sections"]) },
+  loftSmooth: { toArgs: passThrough("loftSmooth", ["sections", "stations", "samples", "shading", "closed"], ["sections"]) },
   roundedBox:      { toArgs: roundedBoxArgs },
   roundedCylinder: { toArgs: roundedCylinderArgs },
   torus:           { toArgs: torusArgs },
