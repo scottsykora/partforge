@@ -86,3 +86,19 @@ test("closed:true builds a capless genus-1 loop (the loft-mesh precedent, smooth
   expect(s.genus()).toBe(1);
   expect(s.volume()).toBeGreaterThan(0);
 });
+
+test("lefthand mirrors the blades: same volume and topology, opposite chirality", () => {
+  const right = propeller.parts.propeller.build(k, propeller.defaults);
+  const left = propeller.parts.propeller.build(k, { ...propeller.defaults, lefthand: 1 });
+  // A mirror preserves volume (the emitted rings are exact mirrors — CR and the
+  // arc-length resample are affine-equivariant) and the bore keeps genus 1.
+  expect(left.volume() / right.volume()).toBeCloseTo(1, 3);
+  expect(left.genus()).toBe(1);
+  // Chirality probe: a box over the +Y half of blade 1's radial reach (x ≥ 16
+  // clears the r=15 hub). Mirroring y→−y moves the twisted blade's material
+  // across the y=0 plane, so the trapped volumes must differ between hands.
+  const box = () => k.box({ min: [16, 2, -40], max: [90, 90, 40] });
+  const vR = right.intersect(box()).volume();
+  const vL = left.intersect(box()).volume();
+  expect(Math.abs(vL / vR - 1)).toBeGreaterThan(0.02);
+});
