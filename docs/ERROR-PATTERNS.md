@@ -521,6 +521,18 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 - **Cause:** two sharp-tagged vertices (or two contour corners) in the same section are numerically coincident, so the arc between them has zero length — e.g. tagging *both* ends of a closed NACA trailing edge, whose closure coefficient already brings them to the same point (or the same point after a per-section `rotate`). This also fires for the v1 meaning of the message: a genuinely degenerate section.
 - **Fix:** tag only one of the coincident vertices as the corner (see `src/parts/propeller.js`'s `sharpTE` comment for why a second tag there would create exactly this zero-length arc). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md)'s `k.loftSmooth` row.
 
+## loftsmooth-stations-out-of-range
+
+- **Symptom:** `loftSmooth: stations must be 2…1024 (or "controls")` — an explicit `stations` was rejected.
+- **Cause:** `stations` is clamped to 2…1024 (a preview/export density guard); a non-integer, non-finite, or out-of-range value throws. The default (8 per span + 1 open, 8 per section closed) caps itself at 1024, so omitting the option never trips this.
+- **Fix:** pass an integer in 2…1024, or omit `stations` for the capped default. More rings than 1024 along the spine is a density smell — the surface is already spline-smooth between stations; raise `samples` instead if the banding is around the ring. See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
+
+## loftsmooth-samples-out-of-range
+
+- **Symptom:** `loftSmooth: samples must be 8…2048` — possibly without ever passing `samples`.
+- **Cause:** `samples` is clamped to 8…2048. The default is `max(64, largest section)`, so a control section with more than 2048 points pushes the DEFAULT out of range — the throw then names an option the caller never passed.
+- **Fix:** pass a `samples` value in 8…2048, and thin any control section above ~2048 points — `loftSmooth` interpolates a smooth outline through the points, so sections that dense defeat the sparse-sections design (pass the dense rings straight to `k.loft` instead). See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
+
 ## duplicate-preset-name-throws
 
 - **Symptom:** `duplicate preset name across sections:` thrown from verify/measure, naming the repeated preset (e.g. `duplicate preset name across sections: "Compact"`).
