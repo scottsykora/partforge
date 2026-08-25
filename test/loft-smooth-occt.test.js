@@ -29,12 +29,13 @@ test("high density stays fast — the control-wire path, not the dense-wire path
   const t0 = Date.now();
   const s = k.loftSmooth({ sections: BULGE, stations: 48, samples: 128 });
   expect(s.volume()).toBeGreaterThan(0);
-  expect(Date.now() - t0).toBeLessThan(5000);   // spike measured ~0.2 s; dense wires ABORTED here
+  expect(Date.now() - t0).toBeLessThan(5000);   // hard contract: dense wires ABORTED here
+  expect(Date.now() - t0).toBeLessThan(1000);   // tripwire: probe measured 261 ms at 5 controls × 128 spans
 });
 
 test("STEP export of a loftSmooth solid succeeds", async () => {
   const step = await k.toSTEP([{ name: "bulge", solid: k.loftSmooth({ sections: BULGE }) }]);
-  expect(step.byteLength).toBeGreaterThan(1000);
+  expect(step.byteLength).toBeGreaterThan(10000); // probe: 162 KB at 24 spans
 });
 
 test("parity anchor: propeller reference part volume (shared literal with the Manifold file)", () => {
@@ -43,3 +44,22 @@ test("parity anchor: propeller reference part volume (shared literal with the Ma
   expect(v).toBeGreaterThan(PARITY_CM3 * 0.98);
   expect(v).toBeLessThan(PARITY_CM3 * 1.02);
 }, 60_000);
+
+test("closed:true throws the frozen Manifold-only error on the B-rep path", () => {
+  const sections = [];
+  for (let i = 0; i < 4; i++) sections.push({ sides: 8, radius: 8 + i, z: i * 3 });
+  expect(() => k.loftSmooth({ sections, closed: true }))
+    .toThrow("loftSmooth: closed:true loops are only supported on the Manifold backend");
+});
+
+test("sharp-tagged sections loft as curve wires with a real corner (square prism volume is exact-ish)", () => {
+  const sq = (r) => [[r, r], [-r, r], [-r, -r], [r, -r]];
+  const s = k.loftSmooth({
+    sections: [
+      { polygon: sq(10), sharp: [0, 1, 2, 3], z: 0 },
+      { polygon: sq(10), sharp: [0, 1, 2, 3], z: 20 },
+    ],
+    samples: 32,
+  });
+  expect(s.volume()).toBeCloseTo(400 * 20, -2);
+});
