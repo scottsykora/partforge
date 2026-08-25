@@ -512,7 +512,7 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 ## loftsmooth-looks-faceted
 
 - **Symptom:** a `loftSmooth` solid shows flat facets around the cross-section, in preview or in STEP, even though nothing errored.
-- **Cause:** `samples` is the around-ring vertex budget on **both** backends. On a mesh kernel it is the literal facet count. On a B-rep kernel the ring is an exact Bézier fit (not faceted), but a `samples` too low to resolve a tight corner or a fast-changing curve still under-samples the *fit* and can look faceted at a glance.
+- **Cause:** `samples` governs curve-*fit* resolution — how many cubic-Bézier spans the emitted ring is cut into — not a facet count, on **either** backend. A B-rep kernel lofts each span as one exact curve edge, so STEP is curve-exact around every ring regardless of `samples`; too few spans just means the fit follows the control sections less faithfully (a visible corner or fast bend flattens). A mesh kernel doesn't facet one triangle per span either — `k.loft`'s curve mode adaptively subdivides each span by curvature at the shared `LOFT_SEGS = 64` budget (`loft-rings.js`'s `segNaturalCount`/`sampleBezier`), so around-ring facet density comes from that curve LOD, and rises with `samples` only because more spans means more things to subdivide, not proportionally.
 - **Fix:** raise `samples` (default `max(64, largest section)`, clamp ≤ 2048). If the banding runs along the spine instead, raise `stations`. See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
 
 ## duplicate-preset-name-throws
