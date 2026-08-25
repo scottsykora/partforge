@@ -8,4 +8,8 @@ import { mount } from "./framework/index.js";
 window.__pfRuntime = mount(part, {
   createWorker: (name) =>
     new Worker(new URL("./propeller-worker.js", import.meta.url), { type: "module", name }),
+  onAnnotationSend: (payload) => {
+    window.__pfLastAnnotation = payload;
+    console.log("annotation payload", payload);
+  },
 });

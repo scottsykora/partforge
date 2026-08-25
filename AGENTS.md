@@ -64,7 +64,7 @@ npx partforge pick-serve                           # request-a-pick: agent asks 
 ```
 
 CI (`.github/workflows/ci.yml`) runs `npm test` then the smoke check against
-four apps (demo, planter, filleted-box, text-smoke). Playwright's Chromium is
+the app list in ci.yml (demo through propeller). Playwright's Chromium is
 required for the smoke check only: `npm i -D playwright && npx playwright
 install chromium`.
 
