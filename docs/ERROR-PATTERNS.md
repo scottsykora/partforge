@@ -497,6 +497,20 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 - **Cause:** the ring Shape2D has an inner contour (a `.cut()` inside the outline). Lofting hole tunnels needs its own correspondence and is not supported.
 - **Fix:** loft the outer outline, then `.cut()` a second loft (or an extrusion) of the hole profile from the solid. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Geometry: the kernel / `Solid` API" (`loft` rings).
 
+## loftsmooth-sections-point-arrays
+
+- **Symptom:** `loftSmooth: section 0 is an arc profile — control sections must be point arrays (for now)` — a `loftSmooth` section was a curve contour (`roundedProfile`, `pathProfile`).
+- **Cause:** v1 interpolates through *points*; accepting a curve section would silently replace the authored curve with a nearby spline, so it is rejected (spec: `docs/superpowers/specs/2026-08-24-loft-smooth-design.md`, "The op").
+- **Fix:** pass the section as a plain `[[x,y],…]` point ring (sample the curve yourself at the density you mean), or use `k.loft` with curve rings if you want the exact curve swept without spline interpolation. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md)'s `k.loftSmooth` row.
+
+A `Shape2D` section is not a curve contour, so it doesn't hit this message — it instead fails validation as a non-point-array with `loftSmooth: section ${i} needs polygon:[[x,y],…] (≥3 points) or sides+radius shorthand`, which greps to this same entry.
+
+## loftsmooth-looks-faceted
+
+- **Symptom:** a `loftSmooth` solid shows flat facets around the cross-section, in preview or in STEP, even though nothing errored.
+- **Cause:** `samples` is the around-ring LOD on **both** backends — the B-rep skin is smooth *across stations* only, so STEP is faceted around the ring at the `samples` count.
+- **Fix:** raise `samples` (default `max(64, largest section)`, clamp ≤ 2048). If the banding runs along the spine instead, raise `stations`. See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
+
 ## duplicate-preset-name-throws
 
 - **Symptom:** `duplicate preset name across sections:` thrown from verify/measure, naming the repeated preset (e.g. `duplicate preset name across sections: "Compact"`).

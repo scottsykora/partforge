@@ -279,6 +279,8 @@ export const KERNEL_OP_SPECS = {
       if (!(o.turns > 0)) throw new Error("screwSweep: turns must be > 0");
     },
   },
+  // loftSmooth: range checks live in loft-smooth.js, next to the defaults they guard.
+  loftSmooth: { toArgs: passThrough("loftSmooth", ["sections", "stations", "samples", "shading"], ["sections"]) },
   roundedBox:      { toArgs: roundedBoxArgs },
   roundedCylinder: { toArgs: roundedCylinderArgs },
   torus:           { toArgs: torusArgs },

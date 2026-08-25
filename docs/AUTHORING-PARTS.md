@@ -324,6 +324,7 @@ and the detection rule.
 | `k.revolve({ profile, degrees? })` | revolve a lathe profile `[[r,z],…]` (r ≥ 0) around the Z axis (full or partial) |
 | `k.helixSweptTube({ pathR, profileR, pitch, turns, z0, lefthand })` | circle swept along a helix (e.g. a rope groove). **Not for threads** — the profile is always circular and rides a frenet frame that rolls with the helix, tilting a tooth off-axis. For threads use `k.screwSweep` |
 | `k.screwSweep({ profile, pitch, turns, lefthand? })` | screw-motion sweep of an **axial** lathe profile `[[r, z], …]` (same convention as `k.revolve`) — threads, worms, helical ridges. `h = pitch · turns`. The profile's axial extent must not exceed `pitch`; a profile spanning exactly `pitch` must be **periodic** (first radius == last radius) and yields a complete threaded body with no boolean (both backends) |
+| `k.loftSmooth({ sections, stations?, samples?, shading? })` | smooth organic loft: ≥2 sparse control sections (same ring spec as `k.loft`; vertex counts may differ, **point rings only**) interpolated with splines on both backends — the "here are 5 airfoil sections, make it smooth" op. The surface passes through every section exactly. Corners round at the `samples` LOD (sharp tags are future work); see the propeller reference part |
 | `k.union(solids[])` | boolean union |
 
 **`loft` rings** — each ring is `{ polygon:[[x,y],…] | sides+radius | {start,segments} | Shape2D, z, rotate?, scale? }`
@@ -348,6 +349,24 @@ Author rings CCW and ordered by ascending `z` (the `regularPolygon` / `polygon.j
 loft self-corrects a fully-inverted result so CW-wound or descending-z rings still export a valid outward solid.
 Multi-region or holed `Shape2D` throws — loft each region as its own solid and union the lofts, or cut holes from
 the lofted solid after it closes.
+
+**Smooth organic lofts.** When the silhouette should be a smooth curve rather
+than faceted stations, don't densify rings by hand — hand `k.loftSmooth` the
+few sections you can reason about and let it interpolate (both backends;
+`k.loft` stays the right tool for deliberate facets and exact station control):
+
+```js
+const sections = [0, 0.3, 0.6, 0.85, 1].map((t) => ({
+  polygon: airfoil(chord(t)),        // plain [[x,y],…] point rings; counts may differ
+  z: span * t,
+  rotate: pitch(t),                  // authored twist sweeps correctly — vertex j
+}));                                 // is the same material line on every section
+const blade = k.loftSmooth({ sections });
+```
+
+Raise `samples` if the cross-section shows facets, `stations` if banding runs
+along the spine. Sections must be point rings — vertex order and the vertex-0
+seam are how corresponding points line up across sections.
 
 **`sweep`** takes the same CCW `polygon.js` outline as its `profile` and a plain `[[x,y,z],…]` point list as its
 `path`; the profile stays perpendicular to the path (a rotation-minimizing frame), with sharp mitered corners by
