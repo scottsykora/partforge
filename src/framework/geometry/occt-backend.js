@@ -428,6 +428,10 @@ export function createOcctKernel(replicad) {
   // lofts the same resolved point rings the Manifold backend stitches, so parity is by
   // construction (ThruSections' own wire-matching never gets to pick a different seam).
   // closed:true loops are Manifold-only (replicad loft is open).
+  // ThruSections can hand back a NEGATIVELY-oriented solid for some all-cubic wires
+  // even though every input wire is CCW (arc and line wires never trigger this), so a
+  // volume latch restores the positive orientation — the OCCT twin of loftMesh's
+  // whole-mesh volume<0 rebuild on the Manifold side.
   const loftOp = (rings, { ruled = true, closed = false } = {}) => {
     if (closed) throw new Error("loft: closed:true loops are only supported on the Manifold backend");
     const key = h("loft", loftRingsKey(rings), ruled);
@@ -435,7 +439,9 @@ export function createOcctKernel(replicad) {
       const { mode, resolved } = resolveLoftRings(rings);
       const wires = resolved.map(({ pts2d, contour, z }) =>
         (mode === "curve" ? contourDrawing(contour) : contourDrawing(pts2d)).sketchOnPlane("XY", z).wire);
-      return wrap(loft(wires, { ruled }), [], key);
+      const solid = loft(wires, { ruled });
+      if (measureVolume(solid) < 0) solid.wrapped.Reverse();
+      return wrap(solid, [], key);
     });
   };
 
