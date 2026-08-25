@@ -497,18 +497,22 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 - **Cause:** the ring Shape2D has an inner contour (a `.cut()` inside the outline). Lofting hole tunnels needs its own correspondence and is not supported.
 - **Fix:** loft the outer outline, then `.cut()` a second loft (or an extrusion) of the hole profile from the solid. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Geometry: the kernel / `Solid` API" (`loft` rings).
 
-## loftsmooth-sections-point-arrays
+## loftsmooth-corner-count-mismatch
 
-- **Symptom:** `loftSmooth: section 0 is an arc profile — control sections must be point arrays (for now)` — a `loftSmooth` section was a curve contour (`roundedProfile`, `pathProfile`).
-- **Cause:** v1 interpolates through *points*; accepting a curve section would silently replace the authored curve with a nearby spline, so it is rejected (spec: `docs/superpowers/specs/2026-08-24-loft-smooth-design.md`, "The op").
-- **Fix:** pass the section as a plain `[[x,y],…]` point ring (sample the curve yourself at the density you mean), or use `k.loft` with curve rings if you want the exact curve swept without spline interpolation. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md)'s `k.loftSmooth` row.
+- **Symptom:** `loftSmooth: every section must have the same corner count — section 1 has 0, section 0 has 2`
+- **Cause:** one section carries a `sharp` list (or is a curve contour with corner joints) and another doesn't — every control section must resolve to the same corner count `m` (tagged or implicit), so correspondence across sections is unambiguous.
+- **Fix:** tag the same corners on every section (or none) — a curve section's corners come from its own line/arc joints, so match that count with `sharp` on the point sections it lofts alongside. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md)'s `k.loftSmooth` row.
 
-A `Shape2D` section is not a curve contour, so it doesn't hit this message — it instead fails validation as a non-point-array with `loftSmooth: section ${i} needs polygon:[[x,y],…] (≥3 points) or sides+radius shorthand`, which greps to this same entry.
+## loftsmooth-closed-needs-manifold
+
+- **Symptom:** `loftSmooth: closed:true loops are only supported on the Manifold backend`
+- **Cause:** the part routed to OCCT — STEP export, or an explicit `meta.backend: "occt"` — and `closed: true` loft loops aren't supported there, same restriction as `k.loft`'s `closed`.
+- **Fix:** drop `closed` for a part (or sub-part) that needs STEP export, or keep it mesh-only (no STEP, no `meta.backend: "occt"`). See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
 
 ## loftsmooth-looks-faceted
 
 - **Symptom:** a `loftSmooth` solid shows flat facets around the cross-section, in preview or in STEP, even though nothing errored.
-- **Cause:** `samples` is the around-ring LOD on **both** backends — the B-rep skin is smooth *across stations* only, so STEP is faceted around the ring at the `samples` count.
+- **Cause:** `samples` is the around-ring vertex budget on **both** backends. On a mesh kernel it is the literal facet count. On a B-rep kernel the ring is an exact Bézier fit (not faceted), but a `samples` too low to resolve a tight corner or a fast-changing curve still under-samples the *fit* and can look faceted at a glance.
 - **Fix:** raise `samples` (default `max(64, largest section)`, clamp ≤ 2048). If the banding runs along the spine instead, raise `stations`. See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
 
 ## duplicate-preset-name-throws
