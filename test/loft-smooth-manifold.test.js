@@ -20,6 +20,7 @@ const BULGE = [
 
 test("loftSmooth of a 3-section bulge is a positive watertight solid in the expected band", () => {
   const s = k.loftSmooth({ sections: BULGE });
+  expect(s.genus()).toBe(0);        // watertight simple solid — no handles, no holes
   const v = s.volume();
   // Bounded by the r=10 and r=14 cylinders (24-gon area factor ≈ 0.9886·πr²).
   expect(v).toBeGreaterThan(Math.PI * 10 * 10 * 30 * 0.95);

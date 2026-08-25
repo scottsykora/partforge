@@ -104,8 +104,9 @@ export function resampleClosedSpline(pts, n) {
  * @param {Array} sections  loft-style ring specs ({polygon|sides+radius, z, rotate?, scale?});
  *                          vertex counts may differ between sections.
  * @param {{stations?: number|"controls", samples?: number}} opts
- *   stations — output ring count along the spine (default 8 per span + 1, ≥ 2;
- *     raised to the section count when lower; every control knot is always emitted).
+ *   stations — output ring count along the spine (default 8 per span + 1, capped
+ *     at 1024, ≥ 2; raised to the section count when lower; every control knot is
+ *     always emitted).
  *     The string "controls" skips cross-station interpolation entirely and emits
  *     one ring per control section at its own z — the B-rep path, where the
  *     backend's native smooth loft (`ruled: false`) does the skinning through
@@ -116,7 +117,9 @@ export function resampleClosedSpline(pts, n) {
 export function smoothLoftRings(sections, { stations, samples } = {}) {
   const resolved = resolveSections(sections);
   const n = resolved.length;
-  const S = stations ?? (n - 1) * 8 + 1;
+  // The default caps at the clamp ceiling: at 129+ sections the raw (n−1)·8+1
+  // would trip the range check on an option the caller never passed.
+  const S = stations ?? Math.min((n - 1) * 8 + 1, 1024);
   const V = samples ?? Math.max(64, ...resolved.map((r) => r.pts2d.length));
   if (stations !== "controls" && !(Number.isFinite(S) && S >= 2 && S <= 1024))
     throw new Error('loftSmooth: stations must be 2…1024 (or "controls")');

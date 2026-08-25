@@ -382,9 +382,13 @@ export interface ScrewSweepOptions {
 
 /** k.loftSmooth — spline-interpolated loft of sparse control sections. */
 export interface LoftSmoothOptions {
-  /** Sparse control sections; vertex counts may differ between sections. */
+  /**
+   * Sparse control sections; vertex counts may differ between sections.
+   * Point rings only (v1): `polygon` must be a plain `[[x,y],…]` array — curve
+   * contours and Shape2D sections are rejected at runtime.
+   */
   sections: LoftRing[];
-  /** Output ring count along the spine (default 8 per span + 1). */
+  /** Output ring count along the spine (default 8 per span + 1, capped at 1024). */
   stations?: number;
   /** Output vertex count around each ring (default max(64, largest section)). */
   samples?: number;
