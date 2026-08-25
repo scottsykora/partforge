@@ -89,7 +89,7 @@ test("revolve/loft/sweep normalize", () => {
 
 test("KERNEL_OP_SPECS carries the semantic checks (both calling forms)", () => {
   expect(Object.keys(KERNEL_OP_SPECS).sort()).toEqual(
-    // loftSmooth is the SPIKE op (throwaway candidate — see KERNEL-CONTRACT.md).
+    // loftSmooth: the spline-interpolated loft compound op (see KERNEL-CONTRACT.md).
     ["boredCylinder", "box", "cylinder", "extrude", "helixSweptTube", "loft", "loftSmooth", "prism", "revolve", "roundedBox", "roundedCylinder", "screwSweep", "sphere", "sweep", "torus"]);
   expect(() => KERNEL_OP_SPECS.prism.check(TRI, 5, { scaleTop: -1 })).toThrow("prism: scaleTop must be ≥ 0");
   expect(() => KERNEL_OP_SPECS.extrude.check(TRI, 5, { scaleTop: -1 })).toThrow("extrude: scaleTop must be ≥ 0");
