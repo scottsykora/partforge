@@ -1,4 +1,5 @@
-// SPIKE — throwaway candidate (see the loftSmooth note in docs/KERNEL-CONTRACT.md).
+// The k.loftSmooth densifier (see the loftSmooth row in docs/KERNEL-CONTRACT.md and
+// docs/superpowers/specs/2026-08-24-loft-smooth-design.md).
 // Shared spline densifier behind k.loftSmooth: sparse control sections in, a dense
 // ring list for k.loft out. Pure JS and backend-free, so both backends receive the
 // IDENTICAL densified station list — parity by construction, the sweep/screwSweep

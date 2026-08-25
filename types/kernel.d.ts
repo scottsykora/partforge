@@ -380,7 +380,7 @@ export interface ScrewSweepOptions {
   lefthand?: boolean;
 }
 
-/** SPIKE (throwaway candidate — see the loftSmooth note in KERNEL-CONTRACT.md). */
+/** k.loftSmooth — spline-interpolated loft of sparse control sections. */
 export interface LoftSmoothOptions {
   /** Sparse control sections; vertex counts may differ between sections. */
   sections: LoftRing[];
@@ -471,7 +471,7 @@ export interface GeometryKernel {
   helixSweptTube(o: HelixSweptTubeOptions): Solid;
   /** Sweep an axial lathe profile by screw motion — threads. */
   screwSweep(o: ScrewSweepOptions): Solid;
-  /** SPIKE: Catmull-Rom-densified loft of sparse control sections. */
+  /** Spline-interpolated loft of sparse control sections. */
   loftSmooth(o: LoftSmoothOptions): Solid;
   /** Rim round-overs via one lathe revolve; curve-exact in STEP. */
   roundedCylinder(o: RoundedCylinderOptions): Solid;

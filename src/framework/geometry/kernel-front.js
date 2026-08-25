@@ -56,7 +56,7 @@ export function finishKernel(k) {
       twist: (lefthand ? -360 : 360) * turns,
     });
 
-  // SPIKE compound default (throwaway candidate): spline-smoothed loft. On a mesh
+  // spline-smoothed loft. On a mesh
   // kernel the shared Catmull-Rom densifier expands the sparse control sections in
   // both directions and plain loft stitches them. On a B-rep kernel that strategy
   // is both slow and fragile (native loft through dozens of dense wires aborted at
