@@ -3,7 +3,7 @@
 // section counts reconciled, centripetal no-overshoot, determinism, frozen errors.
 // Spec: docs/superpowers/specs/2026-08-24-loft-smooth-design.md
 import { expect, test } from "vitest";
-import { smoothLoftRings, resampleClosedSpline } from "../src/framework/geometry/loft-smooth.js";
+import { smoothLoftRings, resampleClosedSpline, resampleOpenArc } from "../src/framework/geometry/loft-smooth.js";
 
 const ngon = (m, r) => Array.from({ length: m }, (_, i) =>
   [r * Math.cos((2 * Math.PI * i) / m), r * Math.sin((2 * Math.PI * i) / m)]);
@@ -90,7 +90,7 @@ test("validation errors are exact (frozen by the spec)", () => {
   expect(() => smoothLoftRings([{ polygon: ngon(8, 5) }, { polygon: ngon(8, 5), z: 5 }], {}))
     .toThrow("loftSmooth: section 0 needs a finite z");
   expect(() => smoothLoftRings([{ polygon: [[0, 0], [1, 0]], z: 0 }, { polygon: ngon(8, 5), z: 5 }], {}))
-    .toThrow("loftSmooth: section 0 needs polygon:[[x,y],…] (≥3 points) or sides+radius shorthand");
+    .toThrow("loftSmooth: section 0 needs polygon:[[x,y],…] (≥3 points), a curve contour, a Shape2D, or sides+radius shorthand");
   expect(() => smoothLoftRings(SECTIONS, { stations: 1.5 }))
     .toThrow('loftSmooth: stations must be 2…1024 (or "controls")');
   expect(() => smoothLoftRings(SECTIONS, { samples: 4 }))
@@ -119,4 +119,87 @@ test("every control section appears as an actual output ring (knot-aligned stati
 test("stations below the section count is raised to the section count", () => {
   const five = [0, 5, 10, 15, 20].map((z) => ({ polygon: ngon(8, 10), z }));
   expect(smoothLoftRings(five, { stations: 2, samples: 16 }).length).toBe(5);
+});
+
+test("resampleOpenArc interpolates its endpoints exactly and is monotone in count", () => {
+  const arc = [[0, 0], [4, 3], [8, 3], [12, 0]];
+  const out = resampleOpenArc(arc, 6);
+  expect(out.length).toBe(7);
+  expect(out[0]).toEqual([0, 0]);
+  expect(out[6]).toEqual([12, 0]);
+});
+
+test("sharp tags survive reconciliation: tagged vertices appear at the same index in every ring", () => {
+  // Two squares with all four corners tagged — corners must sit at identical shared indices.
+  const sq = (r) => [[r, r], [-r, r], [-r, -r], [r, -r]];
+  const rings = smoothLoftRings(
+    [{ polygon: sq(10), sharp: [0, 1, 2, 3], z: 0 }, { polygon: sq(6), sharp: [0, 1, 2, 3], z: 10 }],
+    { stations: 5, samples: 32 });
+  for (const r of rings) {
+    expect(r.polygon.length).toBe(32);
+    // 4 equal arcs of a square → corners at 0, 8, 16, 24; corner positions lie on the square's diagonals
+    for (const idx of [0, 8, 16, 24]) {
+      const [x, y] = r.polygon[idx];
+      expect(Math.abs(Math.abs(x) - Math.abs(y))).toBeLessThan(1e-6);
+    }
+  }
+});
+
+test("sharp corners are interpolated exactly at control stations", () => {
+  const sq = (r) => [[r, r], [-r, r], [-r, -r], [r, -r]];
+  const rings = smoothLoftRings(
+    [{ polygon: sq(10), sharp: [0, 1, 2, 3], z: 0 }, { polygon: sq(10), sharp: [0, 1, 2, 3], z: 10 }],
+    { stations: 2, samples: 16 });
+  expect(rings[0].polygon[0][0]).toBeCloseTo(10, 9);
+  expect(rings[0].polygon[0][1]).toBeCloseTo(10, 9);
+});
+
+test("corner 0 anchors the seam: a rotated sharp list still puts corner 0 at vertex 0", () => {
+  const sq = [[10, 10], [-10, 10], [-10, -10], [10, -10]];
+  const rings = smoothLoftRings(
+    [{ polygon: sq, sharp: [2, 3], z: 0 }, { polygon: sq, sharp: [2, 3], z: 10 }],
+    { stations: 2, samples: 16 });
+  expect(rings[0].polygon[0]).toEqual([-10, -10]); // vertex at sharp index 2 leads the ring
+});
+
+test("curve contour sections are accepted; their corners are implicit", () => {
+  // A half-round "D": one line segment (2 implicit corners) + one arc.
+  const D = { start: [0, -8], segments: [{ to: [0, 8] }, { to: [0, -8], via: [8, 0] }] };
+  const rings = smoothLoftRings([{ polygon: D, z: 0 }, { polygon: D, z: 10 }], { stations: 2, samples: 24 });
+  expect(rings.length).toBe(2);
+  expect(rings[0].polygon.length).toBe(24);
+});
+
+test("point and curve sections mix when their corner counts match", () => {
+  // The D-contour has 2 implicit corners (line↔arc joints); the point section
+  // tags 2 of its own — correspondence works across forms.
+  const D = { start: [0, -8], segments: [{ to: [0, 8] }, { to: [0, -8], via: [8, 0] }] };
+  const lens = [[0, -8], [0, 8], [4, 6], [7, 0], [4, -6]];
+  const rings = smoothLoftRings(
+    [{ polygon: D, z: 0 }, { polygon: lens, sharp: [0, 1], z: 10 }],
+    { stations: 4, samples: 24 });
+  expect(rings.length).toBe(4);
+  expect(rings.every((r) => r.polygon.length === 24)).toBe(true);
+});
+
+test("corner-count mismatch and sharp-validation errors are exact (frozen by the spec)", () => {
+  const sq = [[10, 10], [-10, 10], [-10, -10], [10, -10]];
+  const D = { start: [0, -8], segments: [{ to: [0, 8] }, { to: [0, -8], via: [8, 0] }] };
+  expect(() => smoothLoftRings([{ polygon: sq, sharp: [0], z: 0 }, { polygon: sq, z: 10 }], {}))
+    .toThrow("loftSmooth: every section must have the same corner count — section 1 has 0, section 0 has 1");
+  expect(() => smoothLoftRings([{ polygon: D, sharp: [0], z: 0 }, { polygon: D, z: 10 }], {}))
+    .toThrow("loftSmooth: section 0 is a curve contour — its corners are implicit; sharp is only for point sections");
+  expect(() => smoothLoftRings([{ polygon: sq, sharp: [4], z: 0 }, { polygon: sq, sharp: [0], z: 10 }], {}))
+    .toThrow("loftSmooth: section 0 sharp indices must be integers in 0…3");
+  expect(() => smoothLoftRings([{ polygon: sq, sharp: [1.5], z: 0 }, { polygon: sq, sharp: [0], z: 10 }], {}))
+    .toThrow("loftSmooth: section 0 sharp indices must be integers in 0…3");
+});
+
+test("samples below the corner count is raised to it", () => {
+  const oct = [[10, 0], [7, 7], [0, 10], [-7, 7], [-10, 0], [-7, -7], [0, -10], [7, -7]];
+  // 8 corners, samples clamped-in at 8 → raised to 8 (1 span per arc)
+  const rings = smoothLoftRings(
+    [{ polygon: oct, sharp: [0, 1, 2, 3, 4, 5, 6, 7], z: 0 }, { polygon: oct, sharp: [0, 1, 2, 3, 4, 5, 6, 7], z: 5 }],
+    { stations: 2, samples: 8 });
+  expect(rings[0].polygon.length).toBe(8);
 });
