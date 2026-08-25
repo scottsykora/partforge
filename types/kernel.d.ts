@@ -323,7 +323,8 @@ export interface ExtrudeOptions {
 }
 
 export interface LoftRing {
-  polygon?: PointsContour;
+  /** Points, a curve contour, or a single-region hole-free `Shape2D` outline. */
+  polygon?: Contour | Shape2D;
   sides?: number;
   radius?: number;
   z: number;
