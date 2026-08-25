@@ -10,7 +10,7 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing.js";
 import { resolveLoftRings } from "../src/framework/geometry/loft-rings.js";
-import { roundedProfile, circleProfile } from "../src/framework/geometry/polygon.js";
+import { roundedProfile, circleProfile, pathProfile } from "../src/framework/geometry/polygon.js";
 
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); }, 120_000);
@@ -45,6 +45,27 @@ test("curve mode: scaled rings loft without ThruSections re-matching — exact f
   const step = await k.toSTEP([{ name: "loft", solid }]);
   const text = typeof step === "string" ? step : new TextDecoder().decode(step);
   expect(text).toMatch(/CIRCLE/);
+});
+
+test("curve mode: all-cubic contour rings loft POSITIVE — ThruSections inversion latch", () => {
+  // ThruSections hands back a NEGATIVELY-oriented solid for some all-cubic wires even
+  // though the input wires are CCW (arcs and lines never do this) — the loftOp latch
+  // must flip it. Identical rings make the true volume exactly area × h, and Manifold's
+  // curve-mode volume IS shoelace(pts2d) × h for identical rings (matched tessellation,
+  // straight walls), so anchoring on that value is the cross-backend parity assertion.
+  const blob = () => pathProfile([12, 0])
+    .cubicTo([12, 5], [6, 8], [0, 8])
+    .cubicTo([-5, 8], [-9, 4], [-9, 0])
+    .cubicTo([-9, -3], [-5, -6], [0, -6])
+    .cubicTo([6, -6], [12, -4], [12, 0])
+    .close();
+  const rings = [0, 20, 40].map((z) => ({ polygon: blob(), z }));
+  const { mode, resolved } = resolveLoftRings(rings);
+  expect(mode).toBe("curve");
+  const v = k.loft({ rings }).volume();
+  expect(v).toBeGreaterThan(0);
+  const manifoldAnchor = shoelace(resolved[0].pts2d) * 40;
+  expect(Math.abs(v - manifoldAnchor) / v).toBeLessThan(0.005); // 0.03% in practice
 });
 
 test("resample mode: volume tracks the prismatoid of the shared resolved rings (parity anchor)", () => {
