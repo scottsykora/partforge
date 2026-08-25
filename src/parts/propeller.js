@@ -1,10 +1,8 @@
-// SPIKE — THROWAWAY. The look-and-feel exerciser for k.loftSmooth (spline-densified
-// loft; see the loftSmooth note in docs/KERNEL-CONTRACT.md). A boat-propeller-ish
-// part: a bored hub plus N blades, each blade lofted from 5 sparse airfoil control
-// sections. The "Spike" section is the live A/B: untick **Smooth** to see the raw
-// k.loft of the same control sections (the chunky baseline), and drag
-// **Stations**/**Samples** to find the density floor. Delete this part (and its
-// glue files) when the spike's constants graduate into a spec.
+// The k.loftSmooth reference part: a boat propeller — bored hub + N airfoil
+// blades, each blade a spline-interpolated loft of 5 sparse control sections.
+// The "Surface" section keeps the didactic A/B: untick **Smooth** to see the raw
+// k.loft of the same control sections. Spec:
+// docs/superpowers/specs/2026-08-24-loft-smooth-design.md
 
 // NACA-4-ish airfoil contour, closed and CCW, centered near the quarter chord so
 // per-ring `rotate` twists about a sensible pitch axis. `n` points per surface;
@@ -42,7 +40,7 @@ const bladeSections = (p) =>
   }));
 
 export default {
-  meta: { title: "Propeller (loftSmooth spike)", units: "mm", background: 0x15181d },
+  meta: { title: "Propeller", units: "mm", background: 0x15181d },
   parameters: [
     {
       id: "prop",
@@ -67,9 +65,9 @@ export default {
       ],
     },
     {
-      id: "spike",
-      title: "Spike",
-      description: "THROWAWAY A/B controls. **Smooth** off = raw `k.loft` of the same 5 control sections (the chunky baseline). **Stations/Samples** are `loftSmooth`'s densifier resolution; **Section points** is how sparse the *control* sections are.",
+      id: "surface",
+      title: "Surface",
+      description: "**Smooth** interpolates the 5 sparse control sections with `loftSmooth`; off shows the raw `k.loft` of the same sections. **Stations/Samples** are the densifier resolution; **Section points** is how sparse the control sections are.",
       controls: [
         { key: "smooth", type: "checkbox", label: "Smooth (loftSmooth)",
           description: "A/B toggle: spline-densified vs raw loft of identical control sections." },
