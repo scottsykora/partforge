@@ -53,6 +53,26 @@ export function normalizeProfile(profile) {
   return { outer, holes };
 }
 
+// Solve the circle through (p0, via, p1) and the CCW-normalized sweep from p0 to p1
+// that passes through `via`. Returns null for a collinear triple (callers emit a
+// straight segment). Shared by sampleArc and loft-rings' fixed-count arc sampler.
+export function arcGeometry(p0, via, p1) {
+  const [ax, ay] = p0, [bx, by] = via, [cx0, cy0] = p1;
+  const d = 2 * (ax * (by - cy0) + bx * (cy0 - ay) + cx0 * (ay - by));
+  if (Math.abs(d) < 1e-12) return null;
+  const sa = ax * ax + ay * ay, sb = bx * bx + by * by, sc = cx0 * cx0 + cy0 * cy0;
+  const cx = (sa * (by - cy0) + sb * (cy0 - ay) + sc * (ay - by)) / d;
+  const cy = (sa * (cx0 - bx) + sb * (ax - cx0) + sc * (bx - ax)) / d;
+  const r = Math.hypot(ax - cx, ay - cy);
+  const a0 = Math.atan2(ay - cy, ax - cx);
+  const av = Math.atan2(by - cy, bx - cx);
+  const a1 = Math.atan2(cy0 - cy, cx0 - cx);
+  const twoPi = 2 * Math.PI;
+  const ccw = (x) => { let v = x % twoPi; if (v < 0) v += twoPi; return v; };
+  const dCCW = ccw(a1 - a0), vCCW = ccw(av - a0);
+  return { cx, cy, r, a0, dA: vCCW <= dCCW ? dCCW : dCCW - twoPi };
+}
+
 // Sample the circular arc through (p0, via, p1) — the three-point form roundedProfile
 // emits — into a point list p1…pN (EXCLUDING the start p0, which the ring already holds;
 // the last point is exactly p1). The circle is recovered from the circumcircle of the
@@ -63,27 +83,15 @@ export function normalizeProfile(profile) {
 // triple falls back to a single straight segment to p1 — the same "plain line" the OCCT
 // side gets when roundedProfile emits no `via`.
 export function sampleArc(p0, via, p1, segs) {
-  const [ax, ay] = p0, [bx, by] = via, [cx, cy] = p1;
-  const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
-  if (Math.abs(d) < 1e-12) return [[cx, cy]];            // collinear → straight line
-  const sa = ax * ax + ay * ay, sb = bx * bx + by * by, sc = cx * cx + cy * cy;
-  const ux = (sa * (by - cy) + sb * (cy - ay) + sc * (ay - by)) / d;
-  const uy = (sa * (cx - bx) + sb * (ax - cx) + sc * (bx - ax)) / d;
-  const rr = Math.hypot(ax - ux, ay - uy);
-  const a0 = Math.atan2(ay - uy, ax - ux);
-  const av = Math.atan2(by - uy, bx - ux);
-  const a1 = Math.atan2(cy - uy, cx - ux);
-  const twoPi = 2 * Math.PI;
-  const ccw = (x) => { let v = x % twoPi; if (v < 0) v += twoPi; return v; };
-  const dCCW = ccw(a1 - a0), vCCW = ccw(av - a0);
-  const dA = vCCW <= dCCW ? dCCW : dCCW - twoPi;          // pick the sweep containing `via`
-  const steps = Math.max(2, Math.ceil((segs * Math.abs(dA)) / twoPi));
+  const g = arcGeometry(p0, via, p1);
+  if (!g) return [[p1[0], p1[1]]];                        // collinear → straight line
+  const steps = Math.max(2, Math.ceil((segs * Math.abs(g.dA)) / (2 * Math.PI)));
   const out = [];
   for (let s = 1; s <= steps; s++) {
-    const ang = a0 + dA * (s / steps);
-    out.push([ux + rr * Math.cos(ang), uy + rr * Math.sin(ang)]);
+    const ang = g.a0 + g.dA * (s / steps);
+    out.push([g.cx + g.r * Math.cos(ang), g.cy + g.r * Math.sin(ang)]);
   }
-  out[out.length - 1] = [cx, cy];                        // pin the exact endpoint
+  out[out.length - 1] = [p1[0], p1[1]];                   // pin the exact endpoint
   return out;
 }
 

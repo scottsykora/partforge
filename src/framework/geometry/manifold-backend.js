@@ -1,5 +1,6 @@
 import { helixTube } from "./helix-tube.js";
 import { loftMesh } from "./loft.js";
+import { resolveLoftRings, loftRingsKey } from "./loft-rings.js";
 import { sweepMesh } from "./sweep.js";
 import { roundedBoxRings } from "./rounded-solids.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
@@ -434,6 +435,34 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         const g0 = m.getMesh();
         const isBlend = (oid) => !!oidPolicies.get(oid)?.boundaryLines;
         const oids0 = new Set(g0.runOriginalID);
+        // Sector-aware re-stamp: a provenance-sectored loft (the `sector` policy
+        // marker) must keep every run's identity — folding them (either the plain
+        // asOriginal below or the blend path's two-group stamp) would erase the
+        // sector creases and dividing lines the runs exist to draw. Re-stamp every
+        // distinct id 1:1 onto fresh reserved ids: each keeps its policy (blend
+        // runs riding along keep BLEND), all map to the one label string, and the
+        // fresh ids give the same reuse-under-another-label guarantee as
+        // asOriginal(). Unregistered ids (plain boolean tools) stay unregistered —
+        // they shade SMOOTH by default exactly as before.
+        if ([...oids0].some((oid) => !!oidPolicies.get(oid)?.sector)) {
+          const olds = [...oids0];
+          const base2 = Manifold.reserveIDs(olds.length);
+          const mapId = new Map(olds.map((o2, i2) => [o2, base2 + i2]));
+          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o2) => mapId.get(o2));
+          const o = T(new Manifold(g0));
+          g0.delete?.();
+          const setIds = [];
+          for (const [oldId, newId] of mapId) {
+            featureLabels.set(newId, name);
+            const pol = oidPolicies.get(oldId);
+            if (pol !== undefined) oidPolicies.set(newId, pol);
+            setIds.push(newId);
+          }
+          return { value: wrap(o, lh), pin: o, dispose: () => {
+            for (const id2 of setIds) { featureLabels.delete(id2); oidPolicies.delete(id2); }
+            o.delete?.();
+          } };
+        }
         if ([...oids0].some(isBlend)) {
           const baseId = Manifold.reserveIDs(2), blendId = baseId + 1;
           // base-group policy: the same triangle-weighted majority vote as the plain
@@ -605,16 +634,29 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // Ring loft: hand-meshed via the shared ring-mesh helpers (helix-tube recipe).
     // Cached atomically; the hash folds every ring's points/z/rotate/scale and the
     // opts (including `shading`, so toggling the hint is a fresh cache node).
-    // asOriginal() stamps a stable originalID; the shading policy (inferred from
-    // the rings, or forced by `shading`) registers under it for the crease pass
-    // and lives exactly as long as the cache pins the solid.
+    // Sectored lofts (curve/resample rings with sharp features or silhouette kinks)
+    // come back already stamped with reserved per-run original IDs, whose policies
+    // loftMesh reports through the out-param — register them all and never
+    // asOriginal() (it would fold the runs into one surface and erase every
+    // provenance crease). Unsectored lofts keep the legacy single-surface path:
+    // asOriginal() + one inferred policy. Either way the registrations live
+    // exactly as long as the cache pins the solid.
     loft: (rings, opts = {}) => {
-      const key = h("loft", rings, opts);
+      const key = h("loft", loftRingsKey(rings), opts);
       return cache.lookup(key, () => {
-        const raw = T(loftMesh(wasm, rings, opts));
+        const rl = resolveLoftRings(rings);        // resolve once: mesh + shading share it
+        const runPol = new Map();
+        const raw = T(loftMesh(wasm, rl, opts, runPol));
+        if (runPol.size > 0) {
+          for (const [oid, pol] of runPol) oidPolicies.set(oid, pol);
+          return { value: wrap(raw, key), pin: raw, dispose: () => {
+            for (const oid of runPol.keys()) oidPolicies.delete(oid);
+            raw.delete?.();
+          } };
+        }
         const m = T(raw.asOriginal());
         const id = m.originalID();
-        oidPolicies.set(id, loftShadingPolicy(rings, opts));
+        oidPolicies.set(id, loftShadingPolicy(rl, opts));
         return { value: wrap(m, key), pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
       });
     },

@@ -17,6 +17,13 @@ export const FACETED = Object.freeze({ creaseAngle: 10, sameSurfaceLines: false 
 // stay invisible while real mitre crossings still draw.
 export const BLEND = Object.freeze({ creaseAngle: 35, sameSurfaceLines: true, boundaryLines: true });
 
+// Loft sector policies: identical crease/line behavior to SMOOTH/FACETED, plus the
+// `sector` marker label() uses to preserve a sectored loft's runs 1:1 when it
+// re-stamps original IDs (a plain asOriginal would fold the sectors into one
+// surface and erase every provenance crease and dividing line).
+export const LOFT_SECTOR_SMOOTH = Object.freeze({ ...SMOOTH, sector: true });
+export const LOFT_SECTOR_FACETED = Object.freeze({ ...FACETED, sector: true });
+
 export const COPLANAR_ANGLE = 5;  // deg — cut seams bending less than this are coplanar: no line
 export const TANGENT_ANGLE = 5;   // deg — B-rep edges whose faces agree within this are tangent: no line
 export const MIN_EDGE = 0.01;     // mm — drop shorter segments (degenerate slivers, pole edges)
@@ -36,18 +43,17 @@ export const SMOOTH_SIDES_MIN = 32;
 
 export const cosDeg = (deg) => Math.cos((deg * Math.PI) / 180);
 
-// Loft shading inference. An explicit `shading` hint wins; `ruled:false` asks
-// OCCT for a smoothly blended surface, so the Manifold preview of the same part
-// must shade smooth too; otherwise low-side-count rings are intentional facets.
-export function loftShadingPolicy(rings, { shading, ruled } = {}) {
+// Loft shading inference over RESOLVED rings (resolveLoftRings' result). An explicit
+// `shading` hint wins; `ruled:false` must preview smooth (it exports smooth via OCCT);
+// any curved ring segment (arc/cubic) is smooth-surface intent; otherwise low
+// resolved side counts are intentional facets.
+export function loftShadingPolicy(resolvedLoft, { shading, ruled } = {}) {
   if (shading === "smooth") return SMOOTH;
   if (shading === "faceted") return FACETED;
   if (shading != null) throw new Error('loft: shading must be "smooth" | "faceted"');
   if (ruled === false) return SMOOTH;
+  if (resolvedLoft?.hasCurve) return SMOOTH;
   let maxSides = 0;
-  if (Array.isArray(rings)) for (const r of rings) {
-    const n = Array.isArray(r?.polygon) ? r.polygon.length : (Number.isFinite(r?.sides) ? r.sides : 0);
-    if (n > maxSides) maxSides = n;
-  }
+  for (const r of resolvedLoft?.resolved ?? []) if (r.pts2d.length > maxSides) maxSides = r.pts2d.length;
   return maxSides >= SMOOTH_SIDES_MIN ? SMOOTH : FACETED;
 }

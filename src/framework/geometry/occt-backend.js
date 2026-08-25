@@ -23,7 +23,7 @@ import { finishKernel } from "./kernel-front.js";
 import { createOcctRepair } from "./occt-repair.js";
 import { occtRoundAll } from "./occt-roundall.js";
 import { classifyFaceGroups } from "./feature-attribution.js";
-import { resolveRings } from "./loft.js";
+import { resolveLoftRings, loftRingsKey } from "./loft-rings.js";
 import { resolveSweepStations } from "./sweep.js";
 import { normalizeProfile } from "./profile.js";
 import { roundedRectContour } from "./rounded-solids.js";
@@ -423,13 +423,18 @@ export function createOcctKernel(replicad) {
     });
   };
 
-  // ring loft: each ring becomes a closed polygon wire placed at its z (native loft closes
-  // the ends for closed wires). closed:true loops are Manifold-only (replicad loft is open).
+  // ring loft: mode "curve" (structurally identical curve rings) lofts the ORIGINAL
+  // baked contours as true arc/spline wires — STEP stays curve-exact; every other mode
+  // lofts the same resolved point rings the Manifold backend stitches, so parity is by
+  // construction (ThruSections' own wire-matching never gets to pick a different seam).
+  // closed:true loops are Manifold-only (replicad loft is open).
   const loftOp = (rings, { ruled = true, closed = false } = {}) => {
     if (closed) throw new Error("loft: closed:true loops are only supported on the Manifold backend");
-    const key = h("loft", rings, ruled);
+    const key = h("loft", loftRingsKey(rings), ruled);
     return cached(key, () => {
-      const wires = resolveRings(rings).map(({ pts2d, z }) => contourDrawing(pts2d).sketchOnPlane("XY", z).wire);
+      const { mode, resolved } = resolveLoftRings(rings);
+      const wires = resolved.map(({ pts2d, contour, z }) =>
+        (mode === "curve" ? contourDrawing(contour) : contourDrawing(pts2d)).sketchOnPlane("XY", z).wire);
       return wrap(loft(wires, { ruled }), [], key);
     });
   };

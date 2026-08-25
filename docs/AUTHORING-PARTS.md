@@ -315,7 +315,7 @@ and the detection rule.
 | `k.box({ size, center? })` · `k.box({ min, max })` | `{size:[x,y,z]}` = centered X/Y, base at z=0 (`center:true` also centers Z); `{min,max}` = explicit `[x,y,z]` corners |
 | `k.prism({ points, h, twist?, scaleTop? })` | extrude a 2-D polygon (or an **arc profile** from `roundedProfile`) from z=0; optional `twist` (degrees over the height) and `scaleTop` (uniform top taper: 1 straight, <1 taper in, 0 → point/cone) |
 | `k.extrude({ profile, h, twist?, scaleTop? })` | extrude a **polygon-with-holes** region from z=0 in one op — `profile` is `{ outer, holes? }` where each contour is a points array **or an arc profile** (`roundedProfile`, for true STEP fillets), or a bare points array / arc profile for outer-only; same `twist`/`scaleTop` as `prism` (both backends) |
-| `k.loft({ rings, ruled?, closed?, shading? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls. `shading?: "smooth" \| "faceted"` overrides facet/smooth shading inference (default: <32-side rings shade as flat facets, drawing no same-surface lines at all — not even their own cap rims — though cut seams against other solids still draw; ≥32 sides shade smooth) |
+| `k.loft({ rings, ruled?, closed?, shading? })` | stack polygon cross-sections into a solid — ruled walls between consecutive rings, capped ends (both backends; `closed:true` capless loops are Manifold-only). A ring's `polygon` may be a point list, `sides`+`radius`, a curve contour, or a single-region hole-free `Shape2D` (multi-region / holed shapes throw). Identical all-line rings are bit-identical on both backends (unchanged legacy). Identical curve-structure rings loft curve-natively on OCCT (STEP keeps true arcs) and facet at fixed LOD on Manifold; structurally different rings auto-resample to a common vertex count with a deterministic seam and share the same faceted STEP at sampling LOD on both backends. `ruled:false` (smooth C2 blend) is honoured only by OCCT/STEP export; the Manifold preview always shows faceted straight walls. `shading?: "smooth" \| "faceted"` overrides facet/smooth shading inference (point-ring default: <32-side rings shade as flat facets, drawing no same-surface lines at all — not even their own cap rims — though cut seams against other solids still draw; ≥32 sides shade smooth. Curve/resample rings shade by tessellation provenance — smooth only along smooth contour spans, with dividing lines at sharp corners and silhouette-kink rings; see the shading-intent note) |
 | `k.sweep({ profile, path, cornerRadius?, closed?, ruled?, smooth? })` | sweep a fixed 2-D profile along a 3-D polyline path — sharp mitered corners (or `cornerRadius` fillets), capped ends (both backends). `closed:true` capless loops and `smooth:true` (OCCT-native swept B-rep, STEP-exact / preview-faceted) are backend-specific, like loft's `closed`/`ruled:false`. `closed:true` loops must be **planar** — RMF frame-transport holonomy can seam-twist a non-planar closed loop where the last station rejoins the first, so only planar closed loops are supported/tested |
 | `k.sphere({ r\|d })` | sphere centred at the origin; bare `k.sphere(r)` also stays valid |
 | `k.roundedBox({ size, center?, round })` | box with rounded edges — `round` = number (all edges) or `{ side?, top?, bottom? }` (vertical edges / rims); built as one hand-meshed ring stack (no booleans at all, cheaper than `fillet`'s cutters); `side` must be 0 or ≥ the rim radii (between clamps with a warning); with `side > 0`, `top + bottom` must be strictly `< h` |
@@ -326,16 +326,32 @@ and the detection rule.
 | `k.screwSweep({ profile, pitch, turns, lefthand? })` | screw-motion sweep of an **axial** lathe profile `[[r, z], …]` (same convention as `k.revolve`) — threads, worms, helical ridges. `h = pitch · turns`. The profile's axial extent must not exceed `pitch`; a profile spanning exactly `pitch` must be **periodic** (first radius == last radius) and yields a complete threaded body with no boolean (both backends) |
 | `k.union(solids[])` | boolean union |
 
-**`loft` rings** — each ring is `{ polygon:[[x,y],…] | sides+radius, z, rotate?, scale? }`
-(all rings must share the same vertex count; `rotate` is degrees about Z, `scale` is a
-number or `[sx,sy]`). Author rings CCW and ordered by ascending `z` (the `regularPolygon`
-/ `polygon.js` helpers are already CCW); loft self-corrects a fully-inverted result so
-CW-wound or descending-z rings still export a valid outward solid. (Arc profiles from
-`roundedProfile` are **not** accepted as loft rings yet — a ring must be a point array;
-use `prism`/`extrude` for true-arc STEP export.) **`sweep`** takes the same CCW
-`polygon.js` outline as its `profile` and a plain `[[x,y,z],…]` point list as its
-`path`; the profile stays perpendicular to the path (a rotation-minimizing frame), with
-sharp mitered corners by default or `cornerRadius` fillets. Worked snippets:
+**`loft` rings** — each ring is `{ polygon:[[x,y],…] | sides+radius | {start,segments} | Shape2D, z, rotate?, scale? }`
+(`rotate` is degrees about Z, `scale` is a number or `[sx,sy]`). A ring's `polygon` may be:
+- a point list `[[x,y],…]` — plain polygon
+- `{sides, radius}` — shorthand for a regular polygon
+- a curve contour `{start:[x,y], segments:[...]}` — from `roundedProfile` (true CIRCLE/CUBIC edges in STEP)
+- a single-region hole-free `Shape2D` — from a 2-D boolean, fillet, or other shape operation
+
+Rings with **identical all-line segment structure** (the same straight-sided shape at different z/scale/rotate) are
+bit-identical on both backends — unchanged legacy behavior, parity by construction. When such a ring set mixes a
+point-list ring with a Shape2D/contour-sourced one, start-vertex correspondence is not author-controlled (a Shape2D's
+contour starts wherever its outline begins) — use per-ring `rotate`, or keep every ring the same form, to control twist
+phase. Rings with **identical curve structure**
+(containing arcs/Béziers, the same shape at different z/scale/rotate) loft curve-natively on OCCT (STEP keeps exact arc
+edges), while a Manifold preview facets at fixed LOD. **Structurally different rings** (e.g. a square morphing to a circle,
+or unequal-N point lists) auto-resample to a common vertex count in shared pure-JS code, with seam = the outermost +X-ray
+crossing from each ring's centroid; use per-ring `rotate` to tune the twist phase. Every backend then lofts the identical
+resampled point rings — parity by construction on both — and STEP is faceted at the sampling LOD.
+
+Author rings CCW and ordered by ascending `z` (the `regularPolygon` / `polygon.js` helpers are already CCW);
+loft self-corrects a fully-inverted result so CW-wound or descending-z rings still export a valid outward solid.
+Multi-region or holed `Shape2D` throws — loft each region as its own solid and union the lofts, or cut holes from
+the lofted solid after it closes.
+
+**`sweep`** takes the same CCW `polygon.js` outline as its `profile` and a plain `[[x,y,z],…]` point list as its
+`path`; the profile stays perpendicular to the path (a rotation-minimizing frame), with sharp mitered corners by
+default or `cornerRadius` fillets. Worked snippets:
 
 ```js
 // a square tube (extrude a region with a hole) — one op, no boolean cut
@@ -2530,10 +2546,15 @@ OCCT). Within one sub-part's build there is no per-op backend mixing.
 
 **Shading intent.** The kernel decides what shades smooth and where edge lines
 draw — spheres, cylinders and fillets are smooth by construction; boolean cut
-seams always shade hard and draw a line; a loft's facets shade flat when its
-rings have fewer than 32 sides (`shading: "smooth"|"faceted"` on `k.loft`
-overrides the inference either way). If your part previews smooth but would
-print faceted — or the reverse — set the hint rather than changing facet counts.
+seams always shade hard and draw a line; a point-ring loft's facets shade flat
+when its rings have fewer than 32 sides. A curve or resample loft shades by
+**tessellation provenance**: only wall sections that came from a smoothly
+tessellated contour span (an arc/Bézier run) shade smooth, sharp contour
+corners and silhouette-kink rings (an abrupt direction change up the stack,
+like a belly break) flat-shade and draw a dividing line, and a morph's snapped
+corners do the same. `shading: "smooth"|"faceted"` on `k.loft` overrides all of
+this either way. If your part previews smooth but would print faceted — or the
+reverse — set the hint rather than changing facet counts.
 
 > `partforge measure` reports `watertight`/`holes` as `n/a` for OCCT-run parts
 > (Manifold-only topology); `render` works on both. Filleted parts now measure on

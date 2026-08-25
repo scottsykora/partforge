@@ -180,9 +180,11 @@ test("loft of a scaled top ring is a frustum (analytic prismatoid volume)", () =
   expect(v).toBeCloseTo((10 / 3) * (100 + 25 + 50), -1); // 583.3 mm³
 });
 
-test("loft rejects mismatched vertex counts (shared validation with Manifold)", () => {
-  expect(() => k.loft({ rings: [{ polygon: LSQ, z: 0 }, { polygon: [[0, 0], [5, 0], [5, 5], [0, 5], [0, 2]], z: 5 }] }))
-    .toThrow(/same number of points/);
+test("loft with mismatched vertex counts now auto-resamples (shared resolveLoftRings with Manifold)", () => {
+  // Shape2D-loft feature: unequal-N point rings no longer throw — resolveLoftRings
+  // resamples both rings to a shared N before either backend touches them.
+  const v = k.loft({ rings: [{ polygon: LSQ, z: 0 }, { polygon: [[0, 0], [5, 0], [5, 5], [0, 5], [0, 2]], z: 5 }] }).volume();
+  expect(v).toBeGreaterThan(0);
 });
 
 test("loft closed:true loops are Manifold-only — OCCT throws a clear error", () => {

@@ -220,10 +220,13 @@ test("a scaled top ring makes a frustum (analytic prismatoid volume)", () => {
   expect(v).toBeCloseTo((10 / 3) * (100 + 25 + 50), -1); // base 10×10, top 5×5: 583.3 mm³
 });
 
-test("loft rejects fewer than 2 rings, a missing z, and mismatched vertex counts", () => {
+test("loft rejects fewer than 2 rings and a missing z; mismatched vertex counts now auto-resample", () => {
   expect(() => k.loft({ rings: [{ polygon: LSQ, z: 0 }] })).toThrow(/at least 2/);
   expect(() => k.loft({ rings: [{ polygon: LSQ }, { polygon: LSQ, z: 5 }] })).toThrow(/finite z/);
-  expect(() => k.loft({ rings: [{ polygon: LSQ, z: 0 }, { polygon: regularPolygon(6, 5), z: 5 }] })).toThrow(/same number of points/);
+  // Shape2D-loft feature: unequal-N point rings no longer throw — resolveLoftRings resamples
+  // both rings to a shared N (see docs/superpowers/plans/2026-08-23-shape2d-loft-design.md).
+  const v = k.loft({ rings: [{ polygon: LSQ, z: 0 }, { polygon: regularPolygon(6, 5), z: 5 }] }).volume();
+  expect(v).toBeGreaterThan(0);
 });
 
 test("loft is a single atomic cache node, and its hash folds every ring's transform", () => {
