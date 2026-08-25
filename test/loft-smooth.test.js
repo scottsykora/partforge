@@ -264,3 +264,31 @@ test("emitted cubics lie on the CR curve (midpoints match a dense resample)", ()
     expect(d).toBeLessThan(0.15); // on-curve to well under a facet width at r≈10
   });
 });
+
+test("closed:true emits a periodic station list — every control ring once, no ring-0 repeat", () => {
+  const four = [10, 13, 11, 14].map((r, i) => ({ polygon: ngon(8, r), z: i * 5 }));
+  const rings = smoothLoftRings(four, { stations: 12, samples: 16, closed: true });
+  expect(rings.length).toBe(12);
+  const first = verts(rings[0]), last = verts(rings[rings.length - 1]);
+  expect(last).not.toEqual(first); // the wrap-back station is interior, not a duplicate of ring 0
+  // control station 0 is emitted exactly
+  const want = resampleClosedSpline(ngon(8, 10), 16);
+  first.forEach((p, j) => {
+    expect(p[0]).toBeCloseTo(want[j][0], 9);
+    expect(p[1]).toBeCloseTo(want[j][1], 9);
+  });
+});
+
+test("closed default station count is n*8", () => {
+  const four = [10, 13, 11, 14].map((r, i) => ({ polygon: ngon(8, r), z: i * 5 }));
+  expect(smoothLoftRings(four, { samples: 16, closed: true }).length).toBe(32);
+});
+
+test("closed validation errors are exact (frozen by the spec)", () => {
+  const two = [{ polygon: ngon(8, 10), z: 0 }, { polygon: ngon(8, 12), z: 5 }];
+  expect(() => smoothLoftRings(two, { closed: true }))
+    .toThrow("loftSmooth: closed:true needs at least 3 control sections");
+  const four = [10, 13, 11, 14].map((r, i) => ({ polygon: ngon(8, r), z: i * 5 }));
+  expect(() => smoothLoftRings(four, { stations: "controls", closed: true }))
+    .toThrow('loftSmooth: closed:true cannot combine with stations:"controls"');
+});

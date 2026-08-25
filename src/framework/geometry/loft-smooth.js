@@ -301,20 +301,26 @@ function reconcile(resolved, V) {
  *                          vertex counts may differ between sections. Point arrays may
  *                          carry sharp:[indices]; curve contours/Shape2D sections carry
  *                          corners implicitly.
- * @param {{stations?: number|"controls", samples?: number}} opts
- *   stations — output ring count along the spine (default 8 per span + 1, ≥ 2;
- *     raised to the section count when lower; every control knot is always emitted).
- *     The string "controls" skips cross-station interpolation entirely and emits
- *     one ring per control section at its own z — the B-rep path, where the
- *     backend's native smooth loft (`ruled: false`) does the skinning through
- *     exact wires and only the around-ring reconciliation is needed;
- *   samples  — output vertex count around each ring (default max(64, largest section)).
+ * @param {{stations?: number|"controls", samples?: number, closed?: boolean}} opts
+ *   stations — output ring count along the spine (default 8 per span + 1 open,
+ *     8 per section closed; ≥ 2; raised to the section count when lower; every
+ *     control knot is always emitted). The string "controls" skips cross-station
+ *     interpolation entirely and emits one ring per control section at its own z
+ *     — the B-rep path, where the backend's native smooth loft (`ruled: false`)
+ *     does the skinning through exact wires and only the around-ring
+ *     reconciliation is needed; incompatible with closed:true;
+ *   samples  — output vertex count around each ring (default max(64, largest section));
+ *   closed   — periodic spine: the spline wraps from the last control section back
+ *     to the first (no duplicate ring at the wrap point), needs ≥ 3 sections.
  * @returns {Array<{polygon: {start, segments}, z: number}>}
  */
-export function smoothLoftRings(sections, { stations, samples } = {}) {
+export function smoothLoftRings(sections, { stations, samples, closed = false } = {}) {
   const resolved = resolveSections(sections);
   const n = resolved.length;
-  const S = stations ?? (n - 1) * 8 + 1;
+  if (closed && stations === "controls")
+    throw new Error('loftSmooth: closed:true cannot combine with stations:"controls"');
+  if (closed && n < 3) throw new Error("loftSmooth: closed:true needs at least 3 control sections");
+  const S = stations ?? (closed ? n * 8 : (n - 1) * 8 + 1);
   const V = samples ?? Math.max(64, ...resolved.map((r) => r.pts2d.length));
   if (stations !== "controls" && !(Number.isFinite(S) && S >= 2 && S <= 1024))
     throw new Error('loftSmooth: stations must be 2…1024 (or "controls")');
@@ -339,21 +345,33 @@ export function smoothLoftRings(sections, { stations, samples } = {}) {
   for (let i = 1; i < n; i++)
     knots.push(knots[i - 1] + Math.max(Math.hypot(
       spine[i][0] - spine[i - 1][0], spine[i][1] - spine[i - 1][1], spine[i][2] - spine[i - 1][2]), 1e-6));
+  if (closed)
+    knots.push(knots[n - 1] + Math.max(Math.hypot(
+      spine[0][0] - spine[n - 1][0], spine[0][1] - spine[n - 1][1], spine[0][2] - spine[n - 1][2]), 1e-6));
 
-  // Reflection phantoms clamp the ends: the curve passes through ring 0 and ring
-  // n−1 exactly, with a natural-looking end tangent.
+  // Reflection phantoms clamp the ends (open mode): the curve passes through
+  // ring 0 and ring n−1 exactly, with a natural-looking end tangent. Closed mode
+  // instead wraps every accessor modulo n — no phantoms, no clamping.
   const reflect = (a, b) => [2 * a[0] - b[0], 2 * a[1] - b[1]];
-  const knotAt = (i) => { // phantom knots mirror the end spacing
+  const wrap = (i) => ((i % n) + n) % n;
+  const knotAt = (i) => { // phantom/periodic knots mirror the end spacing
+    if (closed) {
+      if (i < 0) return knots[0] - (knots[n] - knots[n - 1]);
+      if (i > n) return knots[n] + (knots[1] - knots[0]);
+      return knots[i];
+    }
     if (i < 0) return knots[0] - (knots[1] - knots[0]);
     if (i >= n) return knots[n - 1] + (knots[n - 1] - knots[n - 2]);
     return knots[i];
   };
   const ptAt = (j, i) => {
+    if (closed) return rings[wrap(i)][j];
     if (i < 0) return reflect(rings[0][j], rings[1][j]);
     if (i >= n) return reflect(rings[n - 1][j], rings[n - 2][j]);
     return rings[i][j];
   };
   const zCtrl = (i) => {
+    if (closed) return resolved[wrap(i)].z;
     if (i < 0) return 2 * resolved[0].z - resolved[1].z;
     if (i >= n) return 2 * resolved[n - 1].z - resolved[n - 2].z;
     return resolved[i].z;
@@ -364,31 +382,34 @@ export function smoothLoftRings(sections, { stations, samples } = {}) {
   //    remainder apportionment; ties to the lower index — deterministic), so each
   //    control section appears as an actual output ring, not just a point the
   //    underlying spline passes through. `stations` below the section count is
-  //    raised to it (the knots alone already cost n rings).
-  const tEnd = knots[n - 1];
+  //    raised to it (the knots alone already cost n rings). Closed mode has one
+  //    more span than open mode (the wrap chord back to control 0) and never
+  //    re-emits the final knot — it would duplicate ring 0.
+  const spanCount = closed ? n : n - 1;
+  const tEnd = knots[closed ? n : n - 1];
   const S2 = Math.max(S, n);
   const extra = S2 - n;
   const spans = [];
-  for (let i = 0; i < n - 1; i++) spans.push(knots[i + 1] - knots[i]);
+  for (let i = 0; i < spanCount; i++) spans.push(knots[i + 1] - knots[i]);
   const exact = spans.map((len) => (extra * len) / tEnd);
   const alloc = exact.map(Math.floor);
   let left = extra - alloc.reduce((a, b) => a + b, 0);
   const order = exact.map((e, i) => [e - alloc[i], i]).sort((p, q) => q[0] - p[0] || p[1] - q[1]);
   for (let j = 0; j < left; j++) alloc[order[j][1]]++;
   const ts = [];
-  for (let i = 0; i < n - 1; i++) {
+  for (let i = 0; i < spanCount; i++) {
     ts.push(knots[i]);
     for (let m = 1; m <= alloc[i]; m++) ts.push(knots[i] + (spans[i] * m) / (alloc[i] + 1));
   }
-  ts.push(tEnd);
+  if (!closed) ts.push(tEnd);
 
   // 4. Evaluate the stations. z uses the same segment/knots as every vertex,
   //    evaluated once per station (1-D Barry–Goldman via crPoint).
   const out = [];
   for (const t of ts) {
     let seg = 0; // segment index: t ∈ [knots[seg], knots[seg+1]]
-    while (seg < n - 2 && t > knots[seg + 1]) seg++;
-    const t0 = knotAt(seg - 1), t1 = knots[seg], t2 = knots[seg + 1], t3 = knotAt(seg + 2);
+    while (seg < (closed ? n - 1 : n - 2) && t > knots[seg + 1]) seg++;
+    const t0 = knotAt(seg - 1), t1 = knots[seg], t2 = knotAt(seg + 1), t3 = knotAt(seg + 2);
     const z1d = (a, b, c, d) =>
       crPoint([a, 0], [b, 0], [c, 0], [d, 0], t0, t1, t2, t3, t)[0];
     const z = z1d(zCtrl(seg - 1), zCtrl(seg), zCtrl(seg + 1), zCtrl(seg + 2));

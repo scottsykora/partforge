@@ -78,10 +78,12 @@ export function finishKernel(k) {
   // loft's own curve-ring shading policy decides (corners crease, curves stay
   // smooth) rather than this composition forcing "smooth".
   const brepLoft = typeof k.toSTEP === "function";
-  k.loftSmooth ??= ({ sections, stations, samples, shading }) =>
-    brepLoft
+  k.loftSmooth ??= ({ sections, stations, samples, shading, closed = false }) => {
+    if (brepLoft && closed) throw new Error("loftSmooth: closed:true loops are only supported on the Manifold backend");
+    return brepLoft
       ? k.loft({ rings: smoothLoftRings(sections, { stations: "controls", samples }), ruled: false })
-      : k.loft({ rings: smoothLoftRings(sections, { stations, samples }), ...(shading ? { shading } : {}) });
+      : k.loft({ rings: smoothLoftRings(sections, { stations, samples, closed }), ...(shading ? { shading } : {}), closed });
+  };
 
   for (const [op, { toArgs, check }] of Object.entries(KERNEL_OP_SPECS)) {
     const raw = k[op];
