@@ -303,8 +303,8 @@ function reconcile(resolved, V) {
  *                          corners implicitly.
  * @param {{stations?: number|"controls", samples?: number, closed?: boolean}} opts
  *   stations — output ring count along the spine (default 8 per span + 1 open,
- *     8 per section closed, capped at 1024; ≥ 2; raised to the section count
- *     when lower; every control knot is always emitted). The string "controls" skips cross-station
+ *     8 per section closed, capped at 1024; ≥ 2; raised to the section count when
+ *     lower; every control knot is always emitted). The string "controls" skips cross-station
  *     interpolation entirely and emits one ring per control section at its own z
  *     — the B-rep path, where the backend's native smooth loft (`ruled: false`)
  *     does the skinning through exact wires and only the around-ring
@@ -321,7 +321,7 @@ export function smoothLoftRings(sections, { stations, samples, closed = false } 
   if (closed && stations === "controls")
     throw new Error('loftSmooth: closed:true cannot combine with stations:"controls"');
   if (closed && n < 3) throw new Error("loftSmooth: closed:true needs at least 3 control sections");
-  // Defaults cap at the clamp ceilings: at 129+ sections the raw 8-per-span
+  // The defaults cap at the clamp ceilings: at 129+ sections the raw 8-per-span
   // stations (and at a 2049+-point section the raw largest-section samples)
   // would trip the range check on an option the caller never passed.
   const S = stations ?? Math.min(closed ? n * 8 : (n - 1) * 8 + 1, 1024);

@@ -101,17 +101,30 @@ test("validation errors are exact (frozen by the spec)", () => {
     .toThrow('loftSmooth: stations must be 2…1024 (or "controls")');
   expect(() => smoothLoftRings(SECTIONS, { samples: 4 }))
     .toThrow("loftSmooth: samples must be 8…2048");
+  expect(() => smoothLoftRings([{ polygon: [[5, 5], [5, 5], [5, 5]], z: 0 }, { polygon: ngon(8, 5), z: 5 }], {}))
+    .toThrow("loftSmooth: a control section has zero perimeter");
 });
 
-test("default stations clamps to 1024 for very many sections", () => {
-  // 129 sections: the raw open default (n−1)·8+1 = 1025 would trip the range
-  // check on an option the caller never passed — the default caps at the ceiling.
-  const many = Array.from({ length: 129 }, (_, i) => ({ polygon: ngon(3, 10), z: i }));
+test("equal spans: the largest-remainder tie-break gives the leftover station to the lower-index span", () => {
+  // Two equal spans and stations: 4 leave ONE leftover interior station with both
+  // spans tied at remainder 0.5 — the deterministic tie-break must place it in
+  // span 0, never span 1.
+  const even = [0, 10, 20].map((z) => ({ polygon: ngon(8, 10), z }));
+  const rings = smoothLoftRings(even, { stations: 4, samples: 16 });
+  expect(rings.length).toBe(4);
+  const zs = rings.map((r) => r.z);
+  expect(zs.filter((z) => z > 1e-9 && z < 10 - 1e-9).length).toBe(1);
+  expect(zs.filter((z) => z > 10 + 1e-9 && z < 20 - 1e-9).length).toBe(0);
+});
+
+test("default stations clamps to 1024 for very many sections; explicit out-of-range still throws", () => {
+  // At 129 sections the un-clamped default (n−1)·8+1 = 1025 would reject an
+  // option the caller never passed.
+  const many = Array.from({ length: 129 }, (_, i) => ({ polygon: ngon(6, 10), z: i }));
   expect(smoothLoftRings(many, { samples: 8 }).length).toBe(1024);
   // Closed spine: raw default n·8 = 1032 — same cap.
   expect(smoothLoftRings(many, { samples: 8, closed: true }).length).toBe(1024);
-  // Explicit out-of-range still throws.
-  expect(() => smoothLoftRings(SECTIONS, { stations: 1025 }))
+  expect(() => smoothLoftRings(many, { stations: 1025 }))
     .toThrow('loftSmooth: stations must be 2…1024 (or "controls")');
 });
 

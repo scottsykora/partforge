@@ -524,14 +524,14 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 ## loftsmooth-stations-out-of-range
 
 - **Symptom:** `loftSmooth: stations must be 2…1024 (or "controls")` — an explicit `stations` was rejected.
-- **Cause:** `stations` is clamped to 2…1024 (a preview/export density guard); a non-finite or out-of-range value throws. The default (8 per span + 1 open, 8 per section closed) caps itself at 1024, so omitting the option never trips this — not even at 129+ control sections.
-- **Fix:** pass a value in 2…1024, or omit `stations` for the capped default. More than 1024 rings along the spine is a density smell — the surface is already spline-smooth between stations; if the banding is around the ring, raise `samples` instead. See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
+- **Cause:** `stations` is clamped to 2…1024 (a preview/export density guard); a non-integer, non-finite, or out-of-range value throws. The default (8 per span + 1 open, 8 per section closed) caps itself at 1024, so omitting the option never trips this.
+- **Fix:** pass an integer in 2…1024, or omit `stations` for the capped default. More rings than 1024 along the spine is a density smell — the surface is already spline-smooth between stations; raise `samples` instead if the banding is around the ring. See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
 
 ## loftsmooth-samples-out-of-range
 
 - **Symptom:** `loftSmooth: samples must be 8…2048` — an explicit `samples` was rejected.
 - **Cause:** `samples` is clamped to 8…2048. The default `max(64, largest section)` caps itself at 2048, so omitting the option never trips this — even when a control section has more than 2048 points.
-- **Fix:** pass a value in 8…2048 — and thin any control section above ~2048 points: `loftSmooth` interpolates a smooth outline through sparse control points, so sections that dense defeat the design (pass dense rings straight to `k.loft` instead). See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
+- **Fix:** pass a `samples` value in 8…2048, or omit it for the capped default — and thin any control section above ~2048 points: `loftSmooth` interpolates a smooth outline through sparse control points, so sections that dense defeat the sparse-sections design (pass the dense rings straight to `k.loft` instead). See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
 
 ## duplicate-preset-name-throws
 
