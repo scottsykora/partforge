@@ -323,7 +323,8 @@ export interface ExtrudeOptions {
 }
 
 export interface LoftRing {
-  polygon?: PointsContour;
+  /** Points, a curve contour, or a single-region hole-free `Shape2D` outline. */
+  polygon?: Contour | Shape2D;
   sides?: number;
   radius?: number;
   z: number;
@@ -381,9 +382,14 @@ export interface ScrewSweepOptions {
 }
 
 /** k.loftSmooth — spline-interpolated loft of sparse control sections. */
+/** A `loftSmooth` control section — a `LoftRing` restricted to point-array polygons (curve contours and `Shape2D` are not accepted, for now). */
+export interface LoftSmoothSection extends Omit<LoftRing, "polygon"> {
+  polygon?: PointsContour;
+}
+
 export interface LoftSmoothOptions {
   /** Sparse control sections; vertex counts may differ between sections. */
-  sections: LoftRing[];
+  sections: LoftSmoothSection[];
   /** Output ring count along the spine (default 8 per span + 1). */
   stations?: number;
   /** Output vertex count around each ring (default max(64, largest section)). */
