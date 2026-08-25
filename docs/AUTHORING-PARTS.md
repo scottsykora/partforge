@@ -88,6 +88,8 @@ export default {
     },
   },
   views: { <name>: { label, default?, animations? } },  // view tabs; a view may own animations (below)
+  probes?,                                 // { name: (k, p, d) => Solid | plain JSON } — measurements reported by
+                                           // measure/inspect, never rendered or exported (see "Probes" below)
 };
 ```
 
@@ -1512,166 +1514,99 @@ build: (k, p, d) => {
 
 ## Describing an imported mesh
 
-Before you write the parametric rebuild, ask the mesh itself what's in it: `partforge
-describe <part-module>#<importName>` reads an already-declared import (`k.import`'s own
-name, not a bare file path — the `imports` field is how the file gets to a kernel at
-all, so it's how `describe` finds it too) and emits a semantic feature report — holes,
-bosses, pockets, extrusions, patterns, symmetry — rather than a triangle soup. On
-`import-demo.js`, whose `scan` import is a plain 20×14×8mm block:
+`npx partforge describe <part-module>#<importName>` reads an already-declared import
+and emits a semantic feature report — holes, bosses, pockets, extrusions, patterns,
+symmetry — rather than a triangle soup, so an agent can rebuild an STL parametrically.
 
+The engine behind it — the semantic mesh oracle — is **not part of this package**: it
+ships as a separate, closed package (`@pixiteapps/partforge-oracle`) whose docs carry
+the full report contract (the two report shapes, feature vocabulary, `volumeShare`
+semantics, coverage scores, budget behavior, and the closed error set). This repo
+keeps only the seams:
+
+- **CLI** — `partforge describe` resolves the oracle package at call time and prints
+  an install pointer when it is absent (`PARTFORGE_ORACLE` overrides the module
+  specifier, which is how the oracle's own repo points this CLI at its working tree).
+- **Worker** — the `describe` job runs whatever `runWorker(part, { loadOracle })`
+  injected; without a loader it answers a structured
+  `{error: "oracle-unavailable"}` report (see
+  [ERROR-PATTERNS.md#describe-oracle-unavailable](ERROR-PATTERNS.md#describe-oracle-unavailable)),
+  never a stall. The loader resolves the oracle barrel: `describe`, `describeMemo`,
+  `compactDescribe`.
+- **Helpers** — the oracle package peer-depends on this one and consumes
+  `partforge/oracle`'s mesh/BVH helpers and file parsers (`bounds`, `meshArea`,
+  `meshTriangles`, `parseStl`, `parse3MF`); those exports are part of its contract.
+
+
+## Probes: measuring geometry into the report
+
+A `probes` block turns the measure report into an instrument panel. Each probe is
+a pure `(k, p, d)` function with **build's exact contract** — same kernel handle,
+same resolved params and derived values — but its result lands in the **report**
+instead of the scene:
+
+```js
+probes: {
+  // A Solid anywhere in the return value is measured into a fact object:
+  // { empty, bbox, bounds, centerOfMass, volume, surfaceArea, triangleCount,
+  //   watertight, holes }
+  slabX12: (k, p, d) => buildBody(k, p, d)
+    .intersect(k.box({ min: [12, -25, -4], max: [13, 25, 4] })),
+
+  // The paired form — the localizing workhorse when a rebuild drifts from its
+  // imported reference: the same thin slab through both solids, side by side.
+  slabPair: (k, p, d) => ({
+    mine: buildBody(k, p, d).intersect(k.box({ min: [12, -25, -4], max: [13, 25, 4] })),
+    ref:  k.import("scan").intersect(k.box({ min: [12, -25, -4], max: [13, 25, 4] })),
+  }),
+
+  // Plain JSON passes through verbatim — compute any number the solid queries
+  // can reach (volume/boundingBox booleans, arc fits, whatever).
+  xor: (k, p, d) => {
+    const mine = buildBody(k, p, d), ref = k.import("scan");
+    return mine.volume() + ref.volume() - 2 * mine.intersect(ref).volume();
+  },
+}
 ```
-$ npx partforge describe src/parts/import-demo.js#scan
 
-scan — 12 triangles, 20.00 x 14.00 x 8.00 mm, +Z up
+**Where they show up.** `npx partforge measure` prints a `probes:` section and
+includes `probes: { name: value }` in `--json`; the worker's `inspect` job carries
+the same key, so any host reporting measure output (e.g. an agent's check loop)
+sees probe values on every edit with no extra wiring. Probes are **part-level,
+not per-view**: every measured view reports them, so they never disappear because
+the "wrong" tab was measured.
 
-Features (1):   share = fraction of part volume this feature accounts for — a size measure, not certainty
-  f0    extrusion      8.000     share 100.0%
+**What they replace.** Before probes, getting a cross-section's numbers out of
+the pipeline meant authoring throwaway `exportable: false` sub-parts and fishing
+their facts out of the sub-part list — polluting views, the control panel's
+mental model, and the overlap check. Probes are invisible to the viewer, the
+exporter, the assembly checks, and `verify` gates; they exist only in the report.
 
-Score: 100.0% surface area explained, 100.0% volume reconstructed (residual xor 0.00% of volume)
-Residual: 0.00% of area in 0 region(s)
-```
+**Failure is contained.** A probe that throws reports `{ error: "…" }` in its
+own slot — it never crashes the measurement and never flips the report's `ok`.
+An empty boolean result (a slab that misses the part) reports
+`{ empty: true, volume: 0 }` rather than degenerate infinite bounds — "no
+material here" is a first-class answer for a localizing probe. Lint covers
+probes with the same pass as builds: a throwing probe is `probe-throws`, a
+malformed block is `invalid-probes`, and unknown ops / bad options / impurity
+are caught exactly as in `build`.
 
-**Two report shapes, and which one is authoritative.** `describe()` (`src/framework/
-oracle/describe.js`) returns the FULL report — every surface, every fitted edge, every
-feature at full precision — and that is the archive: `--json` prints it whole, and
-`--out <file>` writes it whole. `compactDescribe()` (`src/framework/oracle/describe/
-report.js`) derives a second, smaller shape from it — features, patterns, symmetry,
-score, residual, and the suggested rebuild, with `surfaces`/`edges` reduced to counts —
-and that is what a model reads, and what the terminal printer above reads too: **the
-same `compactDescribe()` output**, not a hand-rolled subset, so what a human sees in the
-default summary and what an agent gets from a cloud turn cannot drift apart. The full
-report is authoritative for the facts (a fitted surface's rms, an edge's exact radius);
-the compact report is authoritative for what's worth paying attention to.
+**Driving geometry from a live measurement.** Probes get numbers *out*. To feed
+a measurement *into* geometry, remember that `build` already holds a real
+kernel: `k.import("scan").boundingBox()` (and `.volume()`, and booleans between
+solids) work live inside any build, so a sub-part can size itself off another
+solid directly — no probe needed. Keep it pure: the measurement is deterministic
+for a given import + params, which is exactly what the geometry cache assumes.
+To set parameter **defaults** from a reference (the "rebuild this STL" flow),
+declare a probe that reads the value, run `measure`, and bake the reported
+number into `defaults` — the probe then keeps watching it on every regen, so a
+swapped import shows up as a probe delta instead of silently stale defaults.
 
-**Computed once, reused for the session.** `describe` depends on nothing but the mesh's
-own bytes — no part params, no derived state — so unlike `measure`/`verify` it never
-needs to re-run on every parameter edit. The worker keys its memo on the import's
-content digest (`kernel._importDigest(name)`), so re-describing the same file, or asking
-again mid-session while you iterate on the parametric rebuild, is free after the first
-call. The CLI doesn't carry a memo across process invocations — each `partforge
-describe` run is its own process — but within one browser session or one long-running
-tool loop, the mesh is segmented once.
-
-**`--surfaces` and `--json`, and why the default elides.** A hand-modelled block
-segments to six surfaces; a real 24k-triangle CAD export segments to hundreds. Printing
-every one of them by default would bury the two or three that actually matter under
-exactly the noise this oracle exists to remove — so the plain-text summary shows
-features, patterns, symmetry, score, and residual only. Pass `--surfaces` to add the
-surface table back (`s0 plane area … rms …`, one line per fitted patch); pass `--json`
-to get everything, always, structured — the mode an agent should default to over
-scraping the text summary. `--out <file>` writes the full report to disk independently
-of either flag, so you can capture it once and read it multiple ways.
-
-**Low coverage exits zero — it's a finding, not a failure.** A poor segmentation (a
-dome, a free-form scan, anything the four feature detectors can't reconstruct) is
-exactly the situation an agent most needs to see, not one that should make itself
-harder to see. `describe` treats "the shape isn't well explained" and "the command
-failed" as different questions: a `LOW COVERAGE` banner at the top of the summary (and
-`compactDescribe()`'s own `warning` field in `--json` output) is how a poor result
-announces itself, and the process still exits 0. Only a genuine closed-set error — the
-mesh couldn't be read or segmented at all — exits 1. Coverage is gated on the WORSE of
-two numbers, both always printed rather than blended into one: `explainedArea` (how much
-of the mesh's *surface* a fitted primitive accounts for) and `explainedVolumeFraction`
-(how much of the part's actual *shape* the accepted features reconstruct). They can
-diverge totally — a dome segments to ~100% surface area (it fits a sphere cleanly) and
-0% volume (a sphere isn't a candidate-eligible feature type for any detector) — so
-printing only one of them, or an average, would hide precisely the gap the banner exists
-to catch. Each feature's own score is named `volumeShare`, never "confidence": it is the
-fraction of the part's volume that feature accounts for — a measure of *size* — so a
-small-but-certain feature (a precisely-fitted 3mm hole in a large plate) legitimately
-reports a small share. Read a feature's fitted surface `rms`/`maxDev` (under `--surfaces`
-or `--json`) for an actual certainty signal. The one-line hint at the `Features (N):`
-header states the size-not-certainty point at its point of use; the longer explanation
-(`score.note` — both this and the `explainedArea`/`explainedVolumeFraction` distinction
-above, spelled out for a reader who never gets this far) stays `--json`-only, since
-printing it in full under `Score:` used to be the single largest visual element in every
-plain-text run — measured at 36-43% of a typical report's line count, bigger than the
-feature list, the banners, and the score line combined.
-
-**Why a null `volumeShare` isn't always the same story.** A feature can carry
-`volumeShare: null` for three different reasons, distinguished by its sibling field
-`volumeShareReason` (`--surfaces`/`--json`; the text view renders it as `share n/a
-(<reason>)`):
-
-- `"not-proposed"` — this feature TYPE is never turned into an acceptance candidate at
-  all. Fillets, chamfers, revolves and shells fall here today; they're still reported as
-  features, just not yet reconstructable through this pipeline.
-- `"budget"` — a candidate WAS proposed, but the search ran out of `--budget` before
-  reaching it. Raise `--budget` and re-describe; the feature may resolve to a real share
-  once given the chance.
-- `"rejected"` — a candidate was proposed, built, and evaluated, but never won a round
-  (`accept.js`'s `MIN_GAIN_FRACTION` gate, or simply never the best candidate available).
-  Raising `--budget` will not change this outcome — the feature genuinely doesn't fit
-  well enough to explain a meaningful share of the part.
-
-`"budget"` and `"rejected"` are the two that matter most to get right, and the
-distinction is real, not cosmetic: "try a bigger budget" and "this doesn't fit" are
-different next actions for whoever is rebuilding the part.
-
-**What `describe` reconstructs today, and what it doesn't.** The FACTS layer — surfaces,
-arcs, holes, dress-ups, sweeps, patterns, symmetry — covers the tool's full detection
-vocabulary; a feature can be *reported* there regardless of shape. The RECONSTRUCTION
-score (`explainedVolumeFraction`, and every accepted feature's own `volumeShare`) is
-narrower: `toCandidate` proposes prismatic candidates from each feature's own measured
-footprint — the cap's boundary loops extruded directly, arbitrary polygon outlines and
-interior holes included, alongside the circle/cylinder path — so ordinary prismatic
-parts now reconstruct well regardless of footprint shape. It does not yet reconstruct
-revolves, fillets, chamfers, or shells — those are detected and reported (with
-`volumeShareReason: "not-proposed"`) but never turned into a candidate that could win
-volume back. Measured directly on this repo's own reference parts: `demo.js`
-reconstructs 100% of its volume, `filleted-box.js` 94.9%, `bracket.js` 100%; a plain
-tube and a hollow box still score ~0%, because curved-wall extrusions and shells remain
-unproposed. The low-coverage banner fires wherever the worse score is low, so nothing
-here is misreported — but a low `explainedVolumeFraction` on a turned or shelled part
-means **"not yet reconstructable by this tool"**, not "not understood" or "broken." Read the FACTS (features, surfaces, patterns) as the ground
-truth regardless of the volume score; read the volume score as a measure of how much of
-that ground truth also comes with a working, boolean-verified rebuild recipe.
-
-**Closed error set.** Anything short of a programming mistake comes back as
-`{error: "<code>", detail, diagnostic}` rather than a thrown exception — a CLI or an
-agent can act on a code far better than on a stack trace — and every code has an
-ERROR-PATTERNS.md entry:
-
-- `not-manifold` — the mesh still has open edges after repair; see
-  [ERROR-PATTERNS.md#describe-not-manifold](ERROR-PATTERNS.md#describe-not-manifold).
-- `too-large` — over the 400,000-triangle segmentation ceiling; see
-  [ERROR-PATTERNS.md#describe-too-large](ERROR-PATTERNS.md#describe-too-large).
-- `empty` — the mesh has zero triangles; see
-  [ERROR-PATTERNS.md#describe-empty](ERROR-PATTERNS.md#describe-empty).
-- `unreadable` — `solid.toMesh()` itself threw; see
-  [ERROR-PATTERNS.md#describe-unreadable](ERROR-PATTERNS.md#describe-unreadable).
-
-`not-manifold` and `empty` describe real states `describe()` itself checks for and can
-return through any caller that hands it a `Solid` directly, but through the CLI they are
-largely theoretical: `kernel.import()`'s own registration validation rejects an empty or
-a wide-open (non-manifold) mesh *before* a `Solid` ever exists to describe, so
-`partforge describe` on such a file fails earlier, as a generic import error (the
-`crash()` path every other verb shares — `describe: import "x": mesh is not a solid
-after repair…`) rather than as a structured `{error: "not-manifold"}` / `{error:
-"empty"}` report. See
-[ERROR-PATTERNS.md#import-mesh-not-solid](ERROR-PATTERNS.md#import-mesh-not-solid) for
-that failure. `describe-unreadable`'s own ERROR-PATTERNS entry already draws this same
-line for its own code (a `k.import` parse failure is a *different*, separately-thrown
-error, not `describe-unreadable`); this is the general version of that point.
-
-A `budget-exceeded` report (the acceptance loop ran out of boolean attempts before the
-residual converged) is not one of these — it's a `warning` on an otherwise-valid report,
-same tier as low coverage, not a reason to exit non-zero; raise `--budget` and re-run.
-`compactDescribe()` surfaces it exactly where the low-coverage banner lives, and shows
-both together if a report happens to earn both — an exhausted budget is exactly the kind
-of run that also leaves coverage low, and neither warning is allowed to mask the other.
-See [ERROR-PATTERNS.md#describe-budget-exceeded](ERROR-PATTERNS.md#describe-budget-exceeded).
-
-**The loop this completes.** `describe` exists to feed a specific workflow, the one
-"Importing geometry" above sets up and this closes: `describe` the import to get its
-feature list and a proposed reconstruction (`suggestion` in the full report); write a
-parametric part from that proposal; bind the rebuild's sub-part to the import with
-`reference: "scan"`; and let `verify`'s `ref*` gates (`refXorVolume`, `refVolumeDeltaPct`,
-`refBboxDelta` — "The `reference` field and the deviation gate", above) hold the rebuild
-to the scan on every future `measure`/`verify` run, long after the one-time `describe`
-call that suggested it. `describe` proposes; `verify` keeps you honest.
-
----
+**Cost.** Probes run on every `measure`/`inspect` (including quick checks — the
+agent loop is exactly who reads them), so keep them proportionate: a handful of
+thin-slab booleans is cheap; a dense sweep of whole-part XORs is not. `verify`'s
+per-case re-measures skip probes entirely (no gate reads them). The reference
+part for probes is [`src/parts/import-demo.js`](../src/parts/import-demo.js).
 
 ## Wiring a part into a runnable app
 
@@ -2106,8 +2041,9 @@ previously didn't; that's the fix working as intended, not a regression.
 ### Rule catalog
 
 **Definition shape** — `missing-meta-title`, `missing-defaults`, `no-buildable-parts`,
-`missing-views`, `part-view-unknown` (all errors); `view-unused`,
-`default-view-ambiguous` (warnings).
+`missing-views`, `part-view-unknown`, `invalid-probes` (all errors); `view-unused`,
+`default-view-ambiguous` (warnings). `invalid-probes` fires when a declared
+`probes` block isn't an object of functions (see "Probes" above).
 
 **Parameter schema** — `features-requires-sliders`, `features-requires-on`,
 `control-key-not-in-defaults`, `control-default-not-primitive`,
@@ -2186,10 +2122,12 @@ internals (`hidden: true`). Grouping controls organizes them but does not
 reduce the count — the check recurses into groups — so a group alone doesn't
 bring a section back under budget.
 
-**Kernel API**, found by executing `build()` against a geometry-free probe —
+**Kernel API**, found by executing `build()` — and every declared probe, which
+shares build's `(k, p, d)` contract — against a geometry-free probe —
 `unknown-kernel-op`, `unknown-solid-op`, `invalid-op-options`, `build-throws`,
-`derive-throws`, `manifold-backend-uses-occt-op`, `build-runaway` (errors);
-`nondeterministic-build` (warning, from diffing two probe runs).
+`probe-throws`, `derive-throws`, `manifold-backend-uses-occt-op`,
+`build-runaway` (errors); `nondeterministic-build` (warning, from diffing two
+probe runs).
 
 **Verify block** — `verify-unknown-metric`, `verify-unknown-subpart`,
 `verify-bad-expr`, `verify-bad-pair-check`, `verify-unknown-process`,

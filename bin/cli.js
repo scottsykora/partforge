@@ -15,8 +15,6 @@ import { bootOcctKernel } from "../src/testing/occt.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { measure } from "../src/framework/oracle/measure.js";
 import { verify } from "../src/framework/oracle/verify.js";
-import { describe as describeMesh } from "../src/framework/oracle/describe.js";
-import { compactDescribe } from "../src/framework/oracle/describe/report.js";
 import { renderViews } from "../src/testing/render.js";
 import {
   createPickServer, requestPicks, formatPickResult,
@@ -27,6 +25,25 @@ import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
 
 const die = (msg) => { console.error(msg); process.exit(1); };
+
+// The semantic mesh oracle (`describe`) lives in a separate, closed package — this
+// CLI names it only here, and resolves it at CALL time so every other verb works
+// without it installed. PARTFORGE_ORACLE overrides the specifier (a path or module
+// name) — how the oracle package's own repo points this CLI at its working tree.
+const ORACLE_PACKAGE = "@pixiteapps/partforge-oracle";
+async function loadOracle() {
+  const spec = process.env.PARTFORGE_ORACLE ?? ORACLE_PACKAGE;
+  const target = spec.startsWith(".") || spec.startsWith("/")
+    ? pathToFileURL(resolve(process.cwd(), spec)).href
+    : spec;
+  try {
+    return await import(target);
+  } catch (e) {
+    die(`describe needs the mesh-oracle package (${ORACLE_PACKAGE}), which is not installed.\n` +
+        `Install it from the private registry (or set PARTFORGE_ORACLE to a local path) and retry.\n` +
+        `(import of ${spec} failed: ${e?.message ?? e})`);
+  }
+}
 const USAGE = "usage: partforge <lint|measure|render|describe|pick-serve|pick> …";
 
 // Crash contract (issue #27): with --json, a thrown error becomes structured
@@ -210,6 +227,7 @@ const commands = {
         die(`describe: "${importName}" is not a declared import of ${partPath} ` +
             `(have: ${Object.keys(part.imports ?? {}).join(", ") || "none"})`);
       }
+      const { describe: describeMesh, compactDescribe } = await loadOracle();
       const kernel = await bootKernel(part);
       const solid = kernel.import(importName);
       const report = describeMesh(kernel, solid, {
@@ -222,7 +240,7 @@ const commands = {
         writeFileSync(flags.out, JSON.stringify(report, null, 2));
       }
       if (flags.json) console.log(JSON.stringify(report, null, 2));
-      else printDescribe(report, { surfaces: !!flags.surfaces });
+      else printDescribe(report, { surfaces: !!flags.surfaces }, compactDescribe);
       if (flags.out) console.log(`\nwrote ${flags.out}`);
       // A closed-set error exits non-zero; LOW COVERAGE does not. Coverage is a finding
       // the caller must be able to read, and an exit code that conflated the two would
@@ -420,6 +438,34 @@ function printMeasure(r) {
   console.log(`  near-misses: ${r.nearMisses.length
     ? r.nearMisses.map((g) => `${g.a}×${g.b} (${g.distance.toFixed(2)}mm at [${g.at.map((n) => n.toFixed(1)).join(", ")}])`).join(", ")
     : "none"}`);
+  if (r.probes) {
+    // Solid-fact probes get the sub-part line treatment (in mm³ — probes are
+    // localization instruments, a slab's volume in cm³ rounds to noise), one
+    // level deep too so the common paired shape ({ mine, ref }) reads as lines
+    // rather than a JSON wall; anything else prints as JSON; a failed probe
+    // prints its error where the reader is.
+    const isFacts = (v) => v && typeof v === "object" && "empty" in v && "volume" in v;
+    const factsLine = (v) => (v.empty
+      ? `empty (no material in the probed region)`
+      : `bbox ${v.bbox.map((n) => n.toFixed(2)).join("×")}  ` +
+        `bounds [${v.bounds.min.map((n) => n.toFixed(2)).join(", ")}]…[${v.bounds.max.map((n) => n.toFixed(2)).join(", ")}]  ` +
+        `vol ${v.volume.toFixed(2)}mm³`);
+    console.log(`  probes:`);
+    for (const [name, v] of Object.entries(r.probes)) {
+      if (v && typeof v === "object" && typeof v.error === "string") {
+        console.log(`    ${name}  ERROR: ${v.error}`);
+      } else if (isFacts(v)) {
+        console.log(`    ${name}  ${factsLine(v)}`);
+      } else if (v && typeof v === "object" && !Array.isArray(v) && Object.values(v).some(isFacts)) {
+        console.log(`    ${name}:`);
+        for (const [key, sub] of Object.entries(v)) {
+          console.log(`      ${key}  ${isFacts(sub) ? factsLine(sub) : JSON.stringify(sub)}`);
+        }
+      } else {
+        console.log(`    ${name}  ${JSON.stringify(v)}`);
+      }
+    }
+  }
 }
 
 function printVerify(v) {
@@ -448,7 +494,7 @@ function printVerify(v) {
 // opts back in; `--json` always has everything. Reads the SAME compactDescribe() output
 // a model reads (not a hand-rolled subset), so what a human sees here and what an agent
 // sees over `--json` cannot drift apart.
-function printDescribe(report, { surfaces }) {
+function printDescribe(report, { surfaces }, compactDescribe) {
   if (report.error) {
     console.error(`describe: ${report.error}${report.detail ? ` — ${report.detail}` : ""}`);
     return;

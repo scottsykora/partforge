@@ -27,7 +27,8 @@ reference part - stepped timeline, camera cues, pose-only tracks), `screw.js`
 `text-smoke.js` (worker text-render CI fixture), `mixed-smoke.js` (the
 split-backend CI fixture — a shelled sub-part beside a plain one, exercising
 per-sub-part routing), `import-demo.js` (the `imports`/`k.import`
-reference part - STL ghost + deviation gate + import-in-boolean), and
+reference part - STL ghost + deviation gate + import-in-boolean + the `probes`
+block, part-declared measurements reported by measure/inspect), and
 `lofted-bottle.js` (the Shape2D-loft reference part - curve-mode body from a
 reused rounded-square ring, resample-mode square-to-circle shoulder).
 
@@ -134,26 +135,30 @@ the installed package, so let the publish finish before bumping the dep there.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/framework/oracle/`** - the geometric oracle: `measure.js`, `verify.js`,
   `build.js`, `gaps.js`, `min-wall.js`, `bvh.js`, `mesh.js`, `assert-dsl.js`,
-  `dfm-profiles.js`, `cases.js`, `describe.js` (+ `describe/`) - reads an imported
-  triangle mesh and emits a semantic feature report (holes, extrusions, patterns,
-  symmetry, fillets/chamfers, a volume-reconstruction score) so an agent can rebuild
-  an STL parametrically; see `docs/AUTHORING-PARTS.md` for what it does and does not
-  cover. Despite reading like test code this is shared runtime: the browser worker
-  runs it for the `inspect` and `describe` jobs, and `lint` reads its DFM profiles
-  and assertion grammar. It is therefore DOM-free, `three`-free and `node:`-free,
-  same as the rest of the worker graph (`test/worker-layering.test.js` enforces
-  that). The worker loads it LAZILY, per job family (`jobs.js`'s dynamic imports —
-  the generate/export hot path touches none of it), so a worker that never runs an
-  oracle job never parses it; the same test's eager-closure guard enforces that too.
+  `dfm-profiles.js`, `cases.js`. Despite reading like test code this is shared
+  runtime: the browser worker runs it for the `inspect` job, and `lint` reads its
+  DFM profiles and assertion grammar. It is therefore DOM-free, `three`-free and
+  `node:`-free, same as the rest of the worker graph
+  (`test/worker-layering.test.js` enforces that). The worker loads it LAZILY, per
+  job family (`jobs.js`'s dynamic imports — the generate/export hot path touches
+  none of it); the same test's eager-closure guard enforces that too.
+  The SEMANTIC MESH ORACLE (`describe` — imported-mesh -> feature report) is NOT
+  in this repo: it lives in the closed `pixiteapps/partforge-oracle` package,
+  which peer-depends on this one. This repo keeps only the seams — the `describe`
+  job runs an injected loader (`runWorker(part, { loadOracle })`, answering
+  `oracle-unavailable` without one) and the CLI's describe verb resolves the
+  package at call time (`PARTFORGE_ORACLE` overrides the specifier). Never add a
+  literal import of the oracle package here: apps without it must keep building.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these
   from `src/framework/`.
-- **`src/oracle.js`** - the published `partforge/oracle` entry point: the whole
+- **`src/oracle.js`** - the published `partforge/oracle` entry point: the open
   oracle surface (`measure`, `verify`, `buildView`, gaps/BVH/min-wall, silhouette
-  match scoring, `describe`) with a browser-safe import closure
-  (`test/oracle-entry.test.js` enforces it). The seam to import the oracle through
-  without dragging in the Node-only harness.
+  match scoring, plus the mesh helpers and file parsers the closed oracle package
+  consumes) with a browser-safe import closure (`test/oracle-entry.test.js`
+  enforces it, and pins the closed package's peer contract). The seam to import
+  the oracle through without dragging in the Node-only harness.
 - **`src/testing.js`** - the published `partforge/testing` entry point. A barrel
   over the Node harness plus a re-export of all of `partforge/oracle`
   (`createManifoldKernel`, `measure`, `verify`, `assemblyOverlaps`,

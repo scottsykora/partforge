@@ -155,21 +155,34 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
 }
 
 /**
- * Execute every sub-part's build() against a validating probe.
- * Never throws: a build error becomes an entry in `throws`, a runaway sets `runaway`.
+ * Execute every sub-part's build() — and every declared probe (`part.probes`,
+ * same (k, p, d) contract, see oracle/measure.js) — against a validating probe.
+ * Never throws: a build error becomes an entry in `throws` (probe entries land
+ * in `probeThrows`), a runaway sets `runaway`.
  */
 export function runValidatingProbe(part, p, d, { maxOps = MAX_PROBE_OPS } = {}) {
   const probe = createValidatingProbe({ maxOps });
   const throws = [];
+  const probeThrows = [];
   let runaway = false;
+  const run = (fn, onThrow) => {
+    try {
+      fn(probe.kernel, p, d);
+    } catch (e) {
+      if (e instanceof ProbeRunawayError) { runaway = true; return false; }
+      onThrow(e?.message || String(e));
+    }
+    return true;
+  };
   for (const [name, sp] of Object.entries(part?.parts ?? {})) {
     if (typeof sp?.build !== "function") continue; // no-buildable-parts already reports this
-    try {
-      sp.build(probe.kernel, p, d);
-    } catch (e) {
-      if (e instanceof ProbeRunawayError) { runaway = true; break; }
-      throws.push({ subpart: name, message: e?.message || String(e) });
+    if (!run(sp.build, (m) => throws.push({ subpart: name, message: m }))) break;
+  }
+  if (!runaway) {
+    for (const [name, fn] of Object.entries(part?.probes ?? {})) {
+      if (typeof fn !== "function") continue; // invalid-probes already reports this
+      if (!run(fn, (m) => probeThrows.push({ probe: name, message: m }))) break;
     }
   }
-  return { calls: probe.calls, issues: probe.issues, used: probe.used, solidUsed: probe.solidUsed, throws, runaway };
+  return { calls: probe.calls, issues: probe.issues, used: probe.used, solidUsed: probe.solidUsed, throws, probeThrows, runaway };
 }

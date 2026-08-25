@@ -36,7 +36,10 @@ async function occtKernel() {
   return createOcctKernel(replicad);
 }
 
-export function runWorker(part) {
+// `opts.loadOracle` — the injection seam for the closed mesh-oracle package (see
+// jobs.js's describe branch): a thunk resolving to the oracle barrel. Apps without
+// the package simply omit it and describe jobs answer `oracle-unavailable`.
+export function runWorker(part, opts = {}) {
   const backend = self.name === "occt" ? "occt" : "manifold";
   let manifold = null; // { preview, print }
   let occt = null;
@@ -99,7 +102,7 @@ export function runWorker(part) {
           const kernel = await kernelFor(job.data);
           // handle() declares each message's transferables (the big binary buffers).
           const post = (m, transfer = []) => postMessage(m, transfer);
-          if (job.epoch === null) { await handle(kernel, job.part, job.data, post, { importMeshes }); continue; }
+          if (job.epoch === null) { await handle(kernel, job.part, job.data, post, { importMeshes, loadOracle: opts.loadOracle }); continue; }
           const isStale = () => job.epoch !== epoch;
           // Post gate. The boundary check cannot catch a generate that goes stale during
           // its FINAL sub-part — there is no boundary after it — nor a single-sub-part
@@ -108,7 +111,7 @@ export function runWorker(part) {
           // contract simple: a `meshes` post is current as of the moment it is posted.
           const gated = (m, transfer = []) =>
             (m.type === "meshes" && isStale() ? post({ type: "superseded" }) : post(m, transfer));
-          await handle(kernel, job.part, job.data, gated, { isStale, importMeshes });
+          await handle(kernel, job.part, job.data, gated, { isStale, importMeshes, loadOracle: opts.loadOracle });
         } catch (err) {
           // Same shape jobs.js posts for a failed build, so hosts need no new branch.
           // Carry the job's jobId when it has one (capture/export are correlated by it):

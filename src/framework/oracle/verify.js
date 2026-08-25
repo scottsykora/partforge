@@ -266,7 +266,10 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     const key = signature(params);
     if (memo.has(key)) return memo.get(key);
     if (quick) return null;   // a case the seed does not cover — reported, never built
-    memo.set(key, measureFn(kernel, part, view, params, { minWall: needMinWall }));
+    // `probes: false` — no gate reads probe values, so re-running their booleans
+    // for every case buys nothing. (A seed measured WITH probes is a superset in
+    // the same way a min-wall seed is: the extra key is simply never read here.)
+    memo.set(key, measureFn(kernel, part, view, params, { minWall: needMinWall, probes: false }));
     return memo.get(key);
   };
 
