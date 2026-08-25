@@ -56,14 +56,14 @@ export function finishKernel(k) {
       twist: (lefthand ? -360 : 360) * turns,
     });
 
-  // spline-smoothed loft. On a mesh
+  // Compound default: spline-smoothed loft. On a mesh
   // kernel the shared Catmull-Rom densifier expands the sparse control sections in
   // both directions and plain loft stitches them. On a B-rep kernel that strategy
   // is both slow and fragile (native loft through dozens of dense wires aborted at
   // 48×128 in the spike), so it gets only the around-ring reconciliation and its
   // OWN smooth skin across stations (`ruled: false` — exact B-spline surfaces, and
   // ~10× faster). Parity is therefore screwSweep's tolerance class, not sweep's
-  // by-construction class: measured ~1–2% volume divergence on the spike blade.
+  // by-construction class: measured ~0.4% volume divergence on the propeller reference part.
   // B-rep detection: `toSTEP` exists here only on a B-rep backend — the stub for
   // mesh kernels is assigned later in this function.
   const brepLoft = typeof k.toSTEP === "function";
