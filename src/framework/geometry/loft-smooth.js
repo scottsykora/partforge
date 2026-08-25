@@ -309,7 +309,8 @@ function reconcile(resolved, V) {
  *     — the B-rep path, where the backend's native smooth loft (`ruled: false`)
  *     does the skinning through exact wires and only the around-ring
  *     reconciliation is needed; incompatible with closed:true;
- *   samples  — output vertex count around each ring (default max(64, largest section));
+ *   samples  — output vertex count around each ring (default max(64, largest
+ *     section), capped at 2048);
  *   closed   — periodic spine: the spline wraps from the last control section back
  *     to the first (no duplicate ring at the wrap point), needs ≥ 3 sections.
  * @returns {Array<{polygon: {start, segments}, z: number}>}
@@ -320,10 +321,11 @@ export function smoothLoftRings(sections, { stations, samples, closed = false } 
   if (closed && stations === "controls")
     throw new Error('loftSmooth: closed:true cannot combine with stations:"controls"');
   if (closed && n < 3) throw new Error("loftSmooth: closed:true needs at least 3 control sections");
-  // The default caps at the clamp ceiling: at 129+ sections the raw formula
+  // The defaults cap at the clamp ceilings: at 129+ sections the raw 8-per-span
+  // stations (and at a 2049+-point section the raw largest-section samples)
   // would trip the range check on an option the caller never passed.
   const S = stations ?? Math.min(closed ? n * 8 : (n - 1) * 8 + 1, 1024);
-  const V = samples ?? Math.max(64, ...resolved.map((r) => r.pts2d.length));
+  const V = samples ?? Math.min(Math.max(64, ...resolved.map((r) => r.pts2d.length)), 2048);
   if (stations !== "controls" && !(Number.isFinite(S) && S >= 2 && S <= 1024))
     throw new Error('loftSmooth: stations must be 2…1024 (or "controls")');
   if (!(Number.isFinite(V) && V >= 8 && V <= 2048)) throw new Error("loftSmooth: samples must be 8…2048");

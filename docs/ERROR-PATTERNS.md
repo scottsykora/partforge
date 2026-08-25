@@ -529,9 +529,9 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 
 ## loftsmooth-samples-out-of-range
 
-- **Symptom:** `loftSmooth: samples must be 8…2048` — possibly without ever passing `samples`.
-- **Cause:** `samples` is clamped to 8…2048. The default is `max(64, largest section)`, so a control section with more than 2048 points pushes the DEFAULT out of range — the throw then names an option the caller never passed.
-- **Fix:** pass a `samples` value in 8…2048, and thin any control section above ~2048 points — `loftSmooth` interpolates a smooth outline through the points, so sections that dense defeat the sparse-sections design (pass the dense rings straight to `k.loft` instead). See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
+- **Symptom:** `loftSmooth: samples must be 8…2048` — an explicit `samples` was rejected.
+- **Cause:** `samples` is clamped to 8…2048. The default `max(64, largest section)` caps itself at 2048, so omitting the option never trips this — even when a control section has more than 2048 points.
+- **Fix:** pass a `samples` value in 8…2048, or omit it for the capped default — and thin any control section above ~2048 points: `loftSmooth` interpolates a smooth outline through sparse control points, so sections that dense defeat the sparse-sections design (pass the dense rings straight to `k.loft` instead). See the `loftSmooth` row in [KERNEL-CONTRACT.md](KERNEL-CONTRACT.md).
 
 ## duplicate-preset-name-throws
 

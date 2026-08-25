@@ -122,8 +122,24 @@ test("default stations clamps to 1024 for very many sections; explicit out-of-ra
   // option the caller never passed.
   const many = Array.from({ length: 129 }, (_, i) => ({ polygon: ngon(6, 10), z: i }));
   expect(smoothLoftRings(many, { samples: 8 }).length).toBe(1024);
+  // Closed spine: raw default n·8 = 1032 — same cap.
+  expect(smoothLoftRings(many, { samples: 8, closed: true }).length).toBe(1024);
   expect(() => smoothLoftRings(many, { stations: 1025 }))
     .toThrow('loftSmooth: stations must be 2…1024 (or "controls")');
+});
+
+test("default samples clamps to 2048 for a giant control section", () => {
+  // A 2049-point section: the raw default max(64, largest section) = 2049 would
+  // trip the range check on an option the caller never passed — same cap shape.
+  const giant = [
+    { polygon: ngon(2049, 10), z: 0 },
+    { polygon: ngon(8, 10), z: 10 },
+  ];
+  const rings = smoothLoftRings(giant, { stations: 2 });
+  for (const r of rings) expect(verts(r).length).toBe(2048);
+  // Explicit out-of-range still throws.
+  expect(() => smoothLoftRings(SECTIONS, { samples: 2049 }))
+    .toThrow("loftSmooth: samples must be 8…2048");
 });
 
 test("every control section appears as an actual output ring (knot-aligned stations)", () => {
