@@ -16,6 +16,13 @@
 //     planar — which the k.loft ring format requires.
 // End stations are clamped with reflection phantoms, so the surface interpolates
 // the first and last control sections exactly.
+//
+// Output rings are now all-cubic contour IR ({start, segments:[{to,c1,c2}…]}),
+// not point arrays: each ring's smooth CR outline is fitted back to one exact
+// cubic Bézier span per vertex (fitBezierRing — a CR span IS a cubic, so the
+// 4-point inversion has no approximation error), explicitly closed. k.loft's
+// curve mode then lofts them as exact wires on OCCT and matched per-segment
+// samples on Manifold.
 import { isArcContour, sampleArc, sampleBezier, closeContourGap } from "./profile.js";
 import { profileCorners } from "./contour-ops.js";
 import { LOFT_SEGS } from "./loft-rings.js";
@@ -200,6 +207,47 @@ export function resampleOpenArc(pts, spans) {
   return out;
 }
 
+// Exact 4-point inversion: a CR span is a cubic, so sampling it at u = 0, 1/3,
+// 2/3, 1 and inverting the Bernstein matrix reproduces it with no approximation
+// (spec §3). Endpoints are written from the actual ring vertices so the contour
+// interpolates them bit-exactly.
+function invertSpan(S0, S1, S2, S3) {
+  return {
+    to: [S3[0], S3[1]],
+    c1: [(-5 * S0[0] + 18 * S1[0] - 9 * S2[0] + 2 * S3[0]) / 6, (-5 * S0[1] + 18 * S1[1] - 9 * S2[1] + 2 * S3[1]) / 6],
+    c2: [(2 * S0[0] - 9 * S1[0] + 18 * S2[0] - 5 * S3[0]) / 6, (2 * S0[1] - 9 * S1[1] + 18 * S2[1] - 5 * S3[1]) / 6],
+  };
+}
+
+// Fit the ring's smooth outline (closed periodic CR, or corner-clamped open CR
+// arcs) back to an all-cubic contour IR — one segment per vertex, explicitly
+// closed. `corners` are sorted output vertex indices with corner 0 at index 0.
+export function fitBezierRing(pts, corners = []) {
+  const V = pts.length;
+  const segments = [];
+  const emitSpan = (p0, p1, p2, p3) => {
+    const t0 = 0;
+    const t1 = t0 + Math.max(Math.sqrt(dist(p0, p1)), 1e-6);
+    const t2 = t1 + Math.max(Math.sqrt(dist(p1, p2)), 1e-6);
+    const t3 = t2 + Math.max(Math.sqrt(dist(p2, p3)), 1e-6);
+    const at = (u) => crPoint(p0, p1, p2, p3, t0, t1, t2, t3, t1 + (t2 - t1) * u);
+    segments.push(invertSpan([p1[0], p1[1]], at(1 / 3), at(2 / 3), [p2[0], p2[1]]));
+  };
+  if (corners.length === 0) {
+    for (let i = 0; i < V; i++)
+      emitSpan(pts[(i - 1 + V) % V], pts[i], pts[(i + 1) % V], pts[(i + 2) % V]);
+  } else {
+    for (let j = 0; j < corners.length; j++) {
+      const arc = arcPoints(pts, corners, j);
+      const A = arc.length;
+      const ctrl = [reflectPt(arc[0], arc[1]), ...arc, reflectPt(arc[A - 1], arc[A - 2])];
+      for (let i = 1; i < A; i++) emitSpan(ctrl[i - 1], ctrl[i], ctrl[i + 1], ctrl[i + 2]);
+    }
+  }
+  segments[segments.length - 1].to = [pts[0][0], pts[0][1]]; // exact explicit closure
+  return { start: [pts[0][0], pts[0][1]], segments };
+}
+
 // Cyclic slice of a ring from corner j to corner j+1, both endpoints included.
 function arcPoints(pts, corners, j) {
   const N = pts.length, m = corners.length;
@@ -261,7 +309,7 @@ function reconcile(resolved, V) {
  *     backend's native smooth loft (`ruled: false`) does the skinning through
  *     exact wires and only the around-ring reconciliation is needed;
  *   samples  — output vertex count around each ring (default max(64, largest section)).
- * @returns {Array<{polygon: number[][], z: number}>}
+ * @returns {Array<{polygon: {start, segments}, z: number}>}
  */
 export function smoothLoftRings(sections, { stations, samples } = {}) {
   const resolved = resolveSections(sections);
@@ -275,10 +323,10 @@ export function smoothLoftRings(sections, { stations, samples } = {}) {
   // 1. Reconcile every section to a shared vertex count on its smooth closed
   //    outline — around each corner-delimited arc when corners are present,
   //    or the whole closed spline (v1-identical) when m = 0.
-  const { rings } = reconcile(resolved, V);
+  const { rings, corners } = reconcile(resolved, V);
   const VOut = rings[0].length; // V raised to the corner count when larger
   if (stations === "controls")
-    return resolved.map((r, i) => ({ polygon: rings[i], z: r.z }));
+    return resolved.map((r, i) => ({ polygon: fitBezierRing(rings[i], corners), z: r.z }));
 
   // 2. Shared across-station knots from the centroid spine (chord length in
   //    centroid-xy + z space). Shared knots ⇒ planar output rings (see header).
@@ -347,7 +395,7 @@ export function smoothLoftRings(sections, { stations, samples } = {}) {
     const polygon = [];
     for (let j = 0; j < VOut; j++)
       polygon.push(crPoint(ptAt(j, seg - 1), ptAt(j, seg), ptAt(j, seg + 1), ptAt(j, seg + 2), t0, t1, t2, t3, t));
-    out.push({ polygon, z });
+    out.push({ polygon: fitBezierRing(polygon, corners), z });
   }
   return out;
 }

@@ -56,21 +56,32 @@ export function finishKernel(k) {
       twist: (lefthand ? -360 : 360) * turns,
     });
 
-  // Compound default: spline-smoothed loft. On a mesh
-  // kernel the shared Catmull-Rom densifier expands the sparse control sections in
-  // both directions and plain loft stitches them. On a B-rep kernel that strategy
-  // is both slow and fragile (native loft through dozens of dense wires aborted at
-  // 48×128 in the spike), so it gets only the around-ring reconciliation and its
-  // OWN smooth skin across stations (`ruled: false` — exact B-spline surfaces, and
-  // ~10× faster). Parity is therefore screwSweep's tolerance class, not sweep's
-  // by-construction class: measured ~0.4% volume divergence on the propeller reference part.
+  // Compound default: spline-smoothed loft. The shared Catmull-Rom densifier
+  // (loft-smooth.js) now emits all-cubic curve rings on BOTH paths — every ring
+  // is contour IR ({start, segments:[{to,c1,c2}…]}), fitted exactly from the CR
+  // spline (a CR span IS a cubic; 4-point inversion has no approximation error).
+  // On a mesh kernel it expands the sparse control sections in both directions
+  // and plain loft stitches the curve rings (matched per-segment samples). On a
+  // B-rep kernel, dense *point* wires broke OCCT (v1 spike: 23 s at 32×96, WASM
+  // abort at 48×128) — that fragility is exactly why `stations:"controls"`
+  // exists, skipping cross-station interpolation and handing the backend only
+  // the around-ring reconciliation. Curve wires don't share that fragility:
+  // OCCT's ThruSections handles many-span cubic-Bézier wires in milliseconds
+  // (`ruled: false` — exact B-spline surfaces), probed at 74–261 ms for
+  // 24–128 spans on the propeller reference part. Parity is therefore
+  // screwSweep's tolerance class, not sweep's by-construction class: measured
+  // ~0.4% volume divergence there.
   // B-rep detection: `toSTEP` exists here only on a B-rep backend — the stub for
   // mesh kernels is assigned later in this function.
+  // The guarded shading spread keeps an undefined key out of loft's option
+  // validation; a caller-supplied hint still passes through, and otherwise
+  // loft's own curve-ring shading policy decides (corners crease, curves stay
+  // smooth) rather than this composition forcing "smooth".
   const brepLoft = typeof k.toSTEP === "function";
-  k.loftSmooth ??= ({ sections, stations, samples, shading = "smooth" }) =>
+  k.loftSmooth ??= ({ sections, stations, samples, shading }) =>
     brepLoft
       ? k.loft({ rings: smoothLoftRings(sections, { stations: "controls", samples }), ruled: false })
-      : k.loft({ rings: smoothLoftRings(sections, { stations, samples }), shading });
+      : k.loft({ rings: smoothLoftRings(sections, { stations, samples }), ...(shading ? { shading } : {}) });
 
   for (const [op, { toArgs, check }] of Object.entries(KERNEL_OP_SPECS)) {
     const raw = k[op];
