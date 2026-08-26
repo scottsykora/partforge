@@ -18,12 +18,28 @@ export interface WorkerHandle {
 }
 
 /**
+ * A host-registered job handler (`runWorker`'s `opts.jobs`): receives the live
+ * kernel, the part current when the message arrived, the message itself, the
+ * poster for results (`post(msg, transferables?)`), and a context with `isStale`
+ * (set for jobs that can be superseded by a rebind). A throw is posted as the
+ * ordinary `{type: "error", message, jobId}`.
+ */
+export type HostJob = (
+  kernel: unknown,
+  part: PartDefinition,
+  msg: { type: string; jobId?: number; [key: string]: unknown },
+  post: (msg: object, transfer?: Transferable[]) => void,
+  ctx: { isStale?: () => boolean },
+) => void | Promise<void>;
+
+/**
  * Run the worker job loop for `part`. Call once, at worker module top level.
- * `opts.loadOracle` injects the closed semantic-mesh-oracle package (a thunk
- * resolving its barrel: `describe`, `describeMemo`, `compactDescribe`); omitted,
- * describe jobs answer with a structured `oracle-unavailable` report.
+ * `opts.jobs` registers host job types by message `type`: a message no built-in
+ * job claims is handed to the matching handler; built-ins are not overridable and
+ * a type with no handler is ignored. This is how a host adds capabilities the open
+ * framework does not ship.
  */
 export function runWorker(
   part: PartDefinition,
-  opts?: { loadOracle?: () => Promise<{ describe: Function; describeMemo: () => Map<string, unknown>; compactDescribe: Function }> },
+  opts?: { jobs?: Record<string, HostJob> },
 ): WorkerHandle;
