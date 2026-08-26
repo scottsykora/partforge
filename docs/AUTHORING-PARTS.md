@@ -1770,7 +1770,7 @@ framing offscreen at a resolution independent of the window size and devicePixel
 for gallery/preview images, where grabbing the live canvas would be capped at the viewer
 pane's pixel size:
 
-- `runtime.captureCurrent({ size = 2048, hideGrid = true, quality = 0.9 } = {}) → string | null` —
+- `runtime.captureCurrent({ size = 2048, hideGrid = true, quality = 0.9, recenter = false } = {}) → string | null` —
   one offscreen render from the live camera's pose (position, up, and orbit target — not a
   canonical pose) with the live viewport's aspect ratio, `size` px on the long edge
   (clamped into `[256, maxTextureSize]`). Renders with 4× MSAA and the same
@@ -1783,6 +1783,16 @@ pane's pixel size:
   in the scene, so a dimensioned capture needs no special handling — enable measure
   mode (`runtime.measure.setEnabled(true)`) and call `captureCurrent()`; the dims are
   just part of the rendered frame.
+  `recenter: true` centres the part: the capture becomes the largest centred
+  sub-window of the current framing that still holds every visible vertex (equal
+  margins on both axes, rendered at the full `size` resolution through a view
+  offset, so it is a pixel-exact crop of what the user framed — same
+  perspective, no re-encode). The extent is the projection of the actual mesh
+  vertices, not a bounding box, so it is exact at any angle. The framing is
+  kept as-is when the geometry runs past any frame edge (a user who zoomed in
+  past the part's silhouette cropped it on purpose), when it is already centred,
+  or when measurement dimensions are pinned (their labels sit beside the part and
+  could otherwise be cut off).
 - `runtime.captureViews(viewNames) → [{ view, dataUrl }]` — the canonical-angle
   counterpart (fixed poses, framed to the visible assembly, 1024², grid hidden). Sized
   for feeding a vision model, not for display; use `captureCurrent` for showcase images.

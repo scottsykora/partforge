@@ -255,3 +255,69 @@ describe("captureViewsFromScene hidden objects", () => {
     expect(dim.visible).toBe(false);
   });
 });
+
+// `recenter: true` asks captureCurrentFromScene to render the largest centred
+// sub-window that keeps the whole visible geometry — through the SAME camera the
+// render uses, so the extent is exact — and to leave the framing alone when the
+// geometry runs off the frame. The renderer is faked; the frame math itself is
+// covered in capture-frame.test.js.
+describe("captureCurrentFromScene recenter", () => {
+  function meshAt(x) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(
+      [x - 2, -1, 0, x + 2, -1, 0, x + 2, 1, 0, x - 2, 1, 0], 3));
+    return new THREE.Mesh(geo);
+  }
+  // Camera 10 down +Z, 90° fov, square frame: (x, y, 0) → NDC (x/10, y/10).
+  function setup(meshes) {
+    const liveCamera = new THREE.PerspectiveCamera(90, 1);
+    liveCamera.position.set(0, 0, 10);
+    const fakeRenderer = { renderOffscreen: vi.fn(() => "data:image/jpeg;base64,AAAA") };
+    return {
+      renderer: fakeRenderer, liveCamera, target: [0, 0, 0], grid: { visible: true },
+      maxTextureSize: 8192, meshes,
+    };
+  }
+
+  it("renders an offset sub-window when the whole part is in view but off-centre", () => {
+    const deps = setup([meshAt(3)]);
+    const out = captureCurrentFromScene({ size: 1000, recenter: true }, deps);
+    expect(out).toMatch(/^data:image\/jpeg/);
+    const [pose, opts] = deps.renderer.renderOffscreen.mock.calls[0];
+    expect(pose.position).toEqual([0, 0, 10]);
+    // Extent x 0.55..0.75 → centre 0.65 → crop x 0.3, width 0.7 → 700×1000.
+    expect(opts).toMatchObject({ width: 700, height: 1000, fov: 90, quality: 0.9 });
+    expect(opts.viewOffset.fullWidth).toBeCloseTo(1000, 5);
+    expect(opts.viewOffset.fullHeight).toBeCloseTo(1000, 5);
+    expect(opts.viewOffset.x).toBeCloseTo(300, 5);
+    expect(opts.viewOffset.y).toBeCloseTo(0, 5);
+  });
+
+  it("keeps the user's framing when the part runs off the frame", () => {
+    const deps = setup([meshAt(9)]);
+    captureCurrentFromScene({ size: 1000, recenter: true }, deps);
+    const [, opts] = deps.renderer.renderOffscreen.mock.calls[0];
+    expect(opts).toMatchObject({ width: 1000, height: 1000 });
+    expect(opts.viewOffset).toBeUndefined();
+  });
+
+  it("keeps the framing when already centred, and without recenter at all", () => {
+    const centred = setup([meshAt(0)]);
+    captureCurrentFromScene({ size: 1000, recenter: true }, centred);
+    expect(centred.renderer.renderOffscreen.mock.calls[0][1].viewOffset).toBeUndefined();
+
+    const off = setup([meshAt(3)]);
+    captureCurrentFromScene({ size: 1000 }, off);
+    expect(off.renderer.renderOffscreen.mock.calls[0][1]).toMatchObject({ width: 1000, height: 1000 });
+    expect(off.renderer.renderOffscreen.mock.calls[0][1].viewOffset).toBeUndefined();
+  });
+
+  it("still never touches the live camera", () => {
+    const deps = setup([meshAt(3)]);
+    const before = deps.liveCamera.position.toArray();
+    captureCurrentFromScene({ size: 1000, recenter: true }, deps);
+    expect(deps.liveCamera.position.toArray()).toEqual(before);
+    expect(deps.liveCamera.view).toBeNull(); // no view offset leaked onto the live camera
+    expect(deps.grid.visible).toBe(true);
+  });
+});
