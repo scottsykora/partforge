@@ -61,3 +61,21 @@ test("an injected loader is what the describe job runs", async () => {
   expect(typeof seen.digest).toBe("string");
   expect(seen.memo).toBeInstanceOf(Map);
 });
+
+test("a region on the describe message is answered with the oracle's region view", async () => {
+  const seen = {};
+  const stub = {
+    describe: (k, solid, opts) => ({ stub: true, source: { name: opts.name } }),
+    describeMemo: () => new Map(),
+    compactDescribe: (full) => ({ ...full, compacted: true }),
+    regionDescribe: (full, region) => { seen.region = region; return { ...full, regioned: true }; },
+  };
+  const region = { min: [0, 0, 0], max: [5, 5, 5] };
+  const out = await run(
+    { type: "describe", importName: "scan", compact: true, region },
+    { loadOracle: async () => stub },
+  );
+  expect(out.report.regioned).toBe(true);
+  expect(out.report.compacted).toBeUndefined();
+  expect(seen.region).toEqual(region);
+});

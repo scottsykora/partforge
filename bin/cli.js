@@ -206,13 +206,19 @@ const commands = {
   },
 
   async describe(args) {
-    const usage = "usage: partforge describe <part-module#importName> [--surfaces] [--json] [--budget N] [--out <file>]";
+    const usage = "usage: partforge describe <part-module#importName> [--json] [--verbose] " +
+      "[--region x0,y0,z0,x1,y1,z1] [--surfaces] [--budget N] [--out <file>]";
     const { values: flags, positionals: [target] } = parse(args, {
       surfaces: { type: "boolean" },
       json: { type: "boolean" },
+      verbose: { type: "boolean" },
+      region: { type: "string" },
       budget: { type: "string" },
       out: { type: "string" },
     }, usage);
+    // Parsed before the kernel boots: a malformed box should fail in milliseconds,
+    // not after a 30-second describe.
+    const region = flags.region ? parseRegion(flags.region, usage) : null;
     if (!target) die(usage);
     // `part.js#importName` — describe reads a FILE, and a file only reaches the kernel
     // through a part's `imports` declaration, so the part is how we find it. A bare mesh
@@ -227,7 +233,7 @@ const commands = {
         die(`describe: "${importName}" is not a declared import of ${partPath} ` +
             `(have: ${Object.keys(part.imports ?? {}).join(", ") || "none"})`);
       }
-      const { describe: describeMesh, compactDescribe } = await loadOracle();
+      const { describe: describeMesh, compactDescribe, regionDescribe } = await loadOracle();
       const kernel = await bootKernel(part);
       const solid = kernel.import(importName);
       const report = describeMesh(kernel, solid, {
@@ -235,11 +241,22 @@ const commands = {
         digest: kernel._importDigest?.(importName) ?? null,
         budget: flags.budget ? Number(flags.budget) : undefined,
       });
+      // What `--json` prints and `--out` writes. BRIEF BY DEFAULT: the compact report
+      // is what a model should read first (the cloud worker sends the same shape), so
+      // it is what the agent-facing mode emits; `--verbose` is the full archive with
+      // every surface and edge; `--region` is the detail view of one box of the part,
+      // and is always structured — a region is asked for by an agent that has read the
+      // compact report, not browsed at a terminal, so there is no text rendering of it.
+      // A closed-set error report goes out as-is in every mode.
+      const emitted = report.error ? report
+        : region ? regionDescribe(report, region)
+        : flags.verbose ? report
+        : compactDescribe(report);
       if (flags.out) {
         mkdirSync(dirname(resolve(flags.out)), { recursive: true });
-        writeFileSync(flags.out, JSON.stringify(report, null, 2));
+        writeFileSync(flags.out, JSON.stringify(emitted, null, 2));
       }
-      if (flags.json) console.log(JSON.stringify(report, null, 2));
+      if (flags.json || region) console.log(JSON.stringify(emitted, null, 2));
       else printDescribe(report, { surfaces: !!flags.surfaces }, compactDescribe);
       if (flags.out) console.log(`\nwrote ${flags.out}`);
       // A closed-set error exits non-zero; LOW COVERAGE does not. Coverage is a finding
@@ -488,12 +505,23 @@ function printVerify(v) {
   console.log(`  result: ${f ? `${f} gate failure(s)` : "all gates passed"}${w ? `, ${w} warning(s)` : ""}`);
 }
 
-// Human/agent-readable summary. Features, patterns, symmetry, score, residual — the
-// compact shape (spec §3.4), because a 24k-triangle part yields hundreds of surfaces and
-// dumping them buries the reader in the noise the oracle exists to remove. `--surfaces`
-// opts back in; `--json` always has everything. Reads the SAME compactDescribe() output
-// a model reads (not a hand-rolled subset), so what a human sees here and what an agent
-// sees over `--json` cannot drift apart.
+// `--region x0,y0,z0,x1,y1,z1`: an axis-aligned box in the report's own frame, mm — the
+// numbers an agent copies straight from a feature's or residual region's `bounds`.
+function parseRegion(text, usage) {
+  const n = text.split(",").map((s) => Number(s.trim()));
+  if (n.length !== 6 || n.some((v) => !Number.isFinite(v)) || [0, 1, 2].some((i) => n[i] > n[i + 3])) {
+    die(`--region wants six numbers x0,y0,z0,x1,y1,z1 (report frame, mm) with each min <= max; ` +
+        `got "${text}"\n${usage}`);
+  }
+  return { min: n.slice(0, 3), max: n.slice(3) };
+}
+
+// Human-readable summary. Features, patterns, symmetry, score, residual — the compact
+// shape (spec §3.4), because a 24k-triangle part yields hundreds of surfaces and dumping
+// them buries the reader in the noise the oracle exists to remove. `--surfaces` opts
+// back in; `--verbose` (with `--json`/`--out`) has everything. Reads the SAME
+// compactDescribe() output a model reads over `--json` (not a hand-rolled subset), so
+// what a human sees here and what an agent sees cannot drift apart.
 function printDescribe(report, { surfaces }, compactDescribe) {
   if (report.error) {
     console.error(`describe: ${report.error}${report.detail ? ` — ${report.detail}` : ""}`);

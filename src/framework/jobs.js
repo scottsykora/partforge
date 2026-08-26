@@ -440,7 +440,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         } });
         return;
       }
-      const { describe: describeMesh, describeMemo, compactDescribe } = await opts.loadOracle();
+      const { describe: describeMesh, describeMemo, compactDescribe, regionDescribe } = await opts.loadOracle();
       const solid = kernel.import(msg.importName);      // throws on an unknown name
       // `_importDigest` is the backend's existing underscore side-channel (KERNEL-CONTRACT
       // "Conformance classes") — the same digest already folded into every import cache key.
@@ -452,9 +452,16 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         budget: msg.budget,
         memo: DESCRIBE_MEMO,
       });
-      // The compact shape is derived, never memoised separately: one memo entry per
-      // mesh, two views of it, no way for the two to drift.
-      post({ type: "describe-report", report: msg.compact ? compactDescribe(full) : full });
+      // The compact and region shapes are derived, never memoised separately: one memo
+      // entry per mesh, three views of it, no way for them to drift. `region` — an
+      // axis-aligned `{min, max}` box in the report frame — is the detail view of one
+      // area, for a caller that has the compact report and wants to look closer; a
+      // malformed box is the oracle's TypeError, surfaced through the ordinary error
+      // path below.
+      const report = msg.region ? regionDescribe(full, msg.region)
+        : msg.compact ? compactDescribe(full)
+        : full;
+      post({ type: "describe-report", report });
     }
   } catch (err) {
     // `subparts` (generate jobs only) tells the reroute policy which sub-parts the

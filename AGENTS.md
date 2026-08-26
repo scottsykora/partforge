@@ -59,7 +59,7 @@ The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
 npx partforge lint    src/parts/<part>.js          # static checks, no kernel boot; exits non-zero on errors
 npx partforge measure src/parts/<part>.js [view]   # bbox/volume/holes/watertight + verify gate; exits non-zero on failure
 npx partforge render  src/parts/<part>.js [view]   # canonical-angle PNGs -> render/
-npx partforge describe <part>.js#<importName> [--budget N] [--json]  # imported mesh -> semantic feature report, for rebuilding an STL parametrically
+npx partforge describe <part>.js#<importName> [--json] [--verbose] [--region x0,y0,z0,x1,y1,z1] [--budget N]  # imported mesh -> semantic feature report (compact by default; --verbose for every surface/edge; --region for detail on one box)
 npx partforge pick-serve                           # request-a-pick: agent asks user to click geometry
 ```
 
