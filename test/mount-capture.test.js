@@ -25,6 +25,25 @@ describe("mount handle captureViews", () => {
     expect(out).toBe("data:image/jpeg;base64,AAAA");
   });
 
+  it("passes recenter through to viewer.captureCurrent when no dimensions are pinned", () => {
+    const viewer = { captureCanonicalViews: vi.fn(), captureCurrent: vi.fn(() => "d") };
+    const measure = { isEnabled: () => true, setEnabled: () => {}, clearPins: () => {}, pinCount: () => 0 };
+    const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer, measure });
+    handle.captureCurrent({ size: 2048, recenter: true });
+    expect(viewer.captureCurrent).toHaveBeenCalledWith({ size: 2048, recenter: true });
+    // No measure wired at all: same pass-through.
+    makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer }).captureCurrent({ recenter: true });
+    expect(viewer.captureCurrent).toHaveBeenLastCalledWith({ recenter: true });
+  });
+
+  it("withholds recenter while measurement dimensions are on screen", () => {
+    const viewer = { captureCanonicalViews: vi.fn(), captureCurrent: vi.fn(() => "d") };
+    const measure = { isEnabled: () => true, setEnabled: () => {}, clearPins: () => {}, pinCount: () => 2 };
+    const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer, measure });
+    handle.captureCurrent({ size: 2048, recenter: true });
+    expect(viewer.captureCurrent).toHaveBeenCalledWith({ size: 2048, recenter: false });
+  });
+
   it("delegates setActive to viewer.setActive", () => {
     const viewer = { captureCanonicalViews: vi.fn(), setActive: vi.fn() };
     const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer });

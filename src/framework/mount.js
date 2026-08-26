@@ -75,7 +75,15 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // Offscreen render of a named view (default when omitted, or on an unknown name).
     captureView,
     captureViews: (viewNames) => viewer.captureCanonicalViews(viewNames),
-    captureCurrent: (opts) => viewer.captureCurrent(opts),
+    // `recenter` reads the sub-part geometry only, so with measurement pins on
+    // screen the dimension labels — which sit beside the part, not on it —
+    // could land outside the centred window. A dimensioned capture therefore
+    // keeps the user's exact framing; a host wanting both re-frames first.
+    captureCurrent: (opts) => viewer.captureCurrent(
+      opts?.recenter && (measure ?? NOOP_MEASURE).isEnabled() && (measure ?? NOOP_MEASURE).pinCount() > 0
+        ? { ...opts, recenter: false }
+        : opts,
+    ),
     // Park/unpark the viewer: stops the render loop and frees the drawing
     // buffer and the cached capture target. For an embedder that hides the
     // canvas without unmounting it — `visibility: hidden`, an off-screen tab —

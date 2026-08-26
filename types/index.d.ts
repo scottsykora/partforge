@@ -146,6 +146,14 @@ export interface CaptureCurrentOptions {
   hideGrid?: boolean;
   /** JPEG quality, 0..1. */
   quality?: number;
+  /**
+   * Centre the visible geometry: render the largest centred sub-window of the
+   * current framing that still holds every visible vertex (equal margins, full
+   * `size` resolution). When the geometry runs past a frame edge — the user
+   * zoomed in on purpose — or dimensions are pinned, the framing is kept as-is.
+   * Default false.
+   */
+  recenter?: boolean;
 }
 
 export interface CaptureViewOptions {

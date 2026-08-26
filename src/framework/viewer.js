@@ -9,6 +9,7 @@ import { createCameraTween } from "./camera-tween.js";
 import { orbitPose } from "./camera-orbit.js";
 import { orthoFrustum, perspectiveDistance } from "./projection.js";
 import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
+import { makeCaptureCamera, recenteredView } from "./capture-frame.js";
 import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
 
 // three renders into a render target in the LINEAR working colour space: as of r184
@@ -98,9 +99,17 @@ export function thumbnailBackground(background = THUMBNAIL_BG) {
 // context: pose comes from the live camera (never a canonical pose), the output
 // long edge is `size` clamped into [256, maxTextureSize], and the short edge
 // follows the live camera's aspect so the capture matches what the user framed.
+//
+// `recenter: true` (opt-in; the default keeps the exact viewport framing) renders
+// the largest centred sub-window that still holds every visible vertex — a
+// showcase image with the part in the middle and equal margins — and leaves the
+// framing alone when the geometry runs off the frame, since a user who zoomed
+// past the part's edge framed that crop on purpose. The extent is projected
+// through the same camera the render uses (capture-frame.js), so it is exact;
+// `meshes` are the visible sub-part meshes it reads.
 export function captureCurrentFromScene(
-  { size = 2048, hideGrid = true, quality = 0.9 } = {},
-  { renderer, liveCamera, target, grid, maxTextureSize, projection = "perspective", orthoHalfH },
+  { size = 2048, hideGrid = true, quality = 0.9, recenter = false } = {},
+  { renderer, liveCamera, target, grid, maxTextureSize, projection = "perspective", orthoHalfH, meshes },
 ) {
   const MIN_SIZE = 256;
   // WebGL2 guarantees MAX_TEXTURE_SIZE >= 2048; only trust a larger reported cap.
@@ -115,17 +124,20 @@ export function captureCurrentFromScene(
     || 1;
   const width = aspect >= 1 ? long : Math.max(1, Math.round(long * aspect));
   const height = aspect >= 1 ? Math.max(1, Math.round(long / aspect)) : long;
+  const pose = { position: liveCamera.position.toArray(), up: liveCamera.up.toArray(), target };
+  // fov is meaningless under an ortho camera; orthoHalfH replaces it. The
+  // CANONICAL capture path deliberately never passes either — agent-facing
+  // renders stay perspective regardless of what the user is looking at.
+  const fov = liveCamera.fov ?? 45;
+  // Null means "keep the viewport framing": part cropped by the viewport,
+  // already centred, or nothing to measure.
+  const frame = (recenter && recenteredView(pose, { aspect, fov, projection, orthoHalfH, meshes, long }))
+    || { width, height };
   const before = liveCamera.position.clone();
   const gridWasVisible = grid?.visible;
   if (grid && hideGrid) grid.visible = false;
   try {
-    return renderer.renderOffscreen(
-      { position: liveCamera.position.toArray(), up: liveCamera.up.toArray(), target },
-      // fov is meaningless under an ortho camera; orthoHalfH replaces it. The
-      // CANONICAL capture path deliberately never passes either — agent-facing
-      // renders stay perspective regardless of what the user is looking at.
-      { width, height, fov: liveCamera.fov ?? 45, quality, projection, orthoHalfH },
-    );
+    return renderer.renderOffscreen(pose, { ...frame, fov, quality, projection, orthoHalfH });
   } finally {
     if (grid && hideGrid) grid.visible = gridWasVisible;
     liveCamera.position.copy(before); // belt-and-suspenders: never leak camera state
@@ -822,9 +834,15 @@ export function createViewer(container, part) {
   // the mask silently no-ops and every cap floods its whole plane with hatch —
   // no error, live view unaffected, wrong only in the capture.
   const RT_OPTIONS = { samples: 4, stencilBuffer: true };
-  function renderOffscreen({ position, up, target },
+  //
+  // `viewOffset` ({ fullWidth, fullHeight, x, y }) renders the width×height
+  // output as that sub-window of a larger virtual frame — the recentred
+  // showcase capture (captureCurrentFromScene). The camera's aspect is then the
+  // VIRTUAL frame's, so the projection is exactly the un-offset one and the
+  // output is a pixel-exact crop of what the user framed.
+  function renderOffscreen(pose,
                            { width = _rtSize, height = _rtSize, fov = 45, quality = 0.9,
-                             projection = "perspective", orthoHalfH = 1 } = {},
+                             projection = "perspective", orthoHalfH = 1, viewOffset } = {},
                            renderScene = scene) {
     const cachedSize = width === _rtSize && height === _rtSize;
     const rt = cachedSize
@@ -832,15 +850,13 @@ export function createViewer(container, part) {
       : new THREE.WebGLRenderTarget(width, height, RT_OPTIONS);
     _capLights = _capLights ?? createCaptureLights();
     // Canonical captures never pass `projection`, so agent-facing renders and
-    // the CLI stay perspective no matter what the user is looking at.
-    const cam = projection === "orthographic"
-      ? new THREE.OrthographicCamera(
-          -orthoHalfH * (width / height), orthoHalfH * (width / height),
-          orthoHalfH, -orthoHalfH, 0.1, 1000)
-      : new THREE.PerspectiveCamera(fov, width / height, 0.1, 1000);
-    cam.position.set(position[0], position[1], position[2]);
-    cam.up.set(up[0], up[1], up[2]);
-    cam.lookAt(target[0], target[1], target[2]);
+    // the CLI stay perspective no matter what the user is looking at. Built
+    // through the same helper the recentring math projects through, so the two
+    // can never disagree about where a vertex lands.
+    const aspect = viewOffset ? viewOffset.fullWidth / viewOffset.fullHeight : width / height;
+    const cam = makeCaptureCamera(pose, { aspect, fov, projection, orthoHalfH });
+    if (viewOffset) cam.setViewOffset(viewOffset.fullWidth, viewOffset.fullHeight, viewOffset.x, viewOffset.y, width, height);
+    const { position, up, target } = pose;
     const buf = new Uint8Array(width * height * 4);
     // Swap the world-fixed key/fill for the camera-relative pair, for this one render
     // only. A DirectionalLight aims at its `target`, whose matrixWorld only updates
@@ -923,6 +939,9 @@ export function createViewer(container, part) {
       target: controls.target.toArray(),
       grid,
       maxTextureSize: renderer.capabilities?.maxTextureSize,
+      // For `recenter`: the geometry that is actually in the picture. Sub-part
+      // meshes only — dimension labels and section caps are overlays on them.
+      meshes: Object.values(subMesh).filter((m) => m.visible),
       projection: projectionMode,
       // Divided by zoom, because OrbitControls dollies an ortho camera with
       // `zoom` and leaves the frustum alone: the raw frustum is the un-dollied
