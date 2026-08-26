@@ -1559,30 +1559,26 @@ build: (k, p, d) => {
 
 **CLI:** `partforge measure|render|lint` work on an importing part exactly as on any other — the `imports` field resolves in the CLI's Node boot the same way `fonts` does, no extra flags.
 
-## Describing an imported mesh
+## Host jobs: extending the worker
 
-`npx partforge describe <part-module>#<importName>` reads an already-declared import
-and emits a semantic feature report — holes, bosses, pockets, extrusions, patterns,
-symmetry — rather than a triangle soup, so an agent can rebuild an STL parametrically.
+The worker's job loop handles a closed set of message types (`generate`, the exports,
+`inspect`, …). A host app can add its own: `runWorker(part, { jobs: { <type>:
+handler } })`. A message whose `type` matches no built-in is handed to the matching
+handler as `handler(kernel, part, msg, post, { isStale })` — the live kernel (so the
+handler can `kernel.import(name)` a declared import, or read `kernel._importDigest`),
+the part current when the message arrived, the message, and the poster for results
+(`post(msg, transferables?)`). A throw is posted as the ordinary `{type: "error",
+message, jobId}`; built-in types cannot be overridden; a type with no handler is
+ignored.
 
-The engine behind it — the semantic mesh oracle — is **not part of this package**: it
-ships as a separate, closed package (`@pixiteapps/partforge-oracle`) whose docs carry
-the full report contract (the two report shapes, feature vocabulary, `volumeShare`
-semantics, coverage scores, budget behavior, and the closed error set). This repo
-keeps only the seams:
-
-- **CLI** — `partforge describe` resolves the oracle package at call time and prints
-  an install pointer when it is absent (`PARTFORGE_ORACLE` overrides the module
-  specifier, which is how the oracle's own repo points this CLI at its working tree).
-- **Worker** — the `describe` job runs whatever `runWorker(part, { loadOracle })`
-  injected; without a loader it answers a structured
-  `{error: "oracle-unavailable"}` report (see
-  [ERROR-PATTERNS.md#describe-oracle-unavailable](ERROR-PATTERNS.md#describe-oracle-unavailable)),
-  never a stall. The loader resolves the oracle barrel: `describe`, `describeMemo`,
-  `compactDescribe`.
-- **Helpers** — the oracle package peer-depends on this one and consumes
-  `partforge/oracle`'s mesh/BVH helpers and file parsers (`bounds`, `meshArea`,
-  `meshTriangles`, `parseStl`, `parse3MF`); those exports are part of its contract.
+This is the seam through which a host adds a capability this open framework does not
+ship. The semantic mesh oracle — imported mesh → feature report, for rebuilding an
+STL parametrically — is one: it is a separate, closed package with its own CLI, and
+the app that installs it registers its job here. This repo carries nothing
+oracle-shaped: no verb, no message types, no error codes. The one direction that
+does exist is the oracle peer-depending on this package for `partforge/oracle`'s
+mesh/BVH helpers and file parsers (`bounds`, `meshArea`, `meshTriangles`, `parseStl`,
+`parse3MF`); those exports are part of its contract.
 
 
 ## Probes: measuring geometry into the report
@@ -1947,8 +1943,8 @@ access. It's harmless to leave in when partforge is a normal install.)
 ## Testing a part
 
 Tests run under **Node 24** (`nvm use` first; the default shell Node is too old) via
-`npx vitest run`. The oracle half of this surface — `measure`, `verify`,
-`describe`, gaps, match scoring — is also published on its own as
+`npx vitest run`. The oracle half of this surface — `measure`, `verify`, gaps,
+match scoring — is also published on its own as
 `partforge/oracle` (browser-safe import closure); `partforge/testing` re-exports
 it, so either import works. Build geometry directly off your part with a Manifold
 kernel:

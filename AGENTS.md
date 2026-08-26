@@ -59,7 +59,6 @@ The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
 npx partforge lint    src/parts/<part>.js          # static checks, no kernel boot; exits non-zero on errors
 npx partforge measure src/parts/<part>.js [view]   # bbox/volume/holes/watertight + verify gate; exits non-zero on failure
 npx partforge render  src/parts/<part>.js [view]   # canonical-angle PNGs -> render/
-npx partforge describe <part>.js#<importName> [--budget N] [--json]  # imported mesh -> semantic feature report, for rebuilding an STL parametrically
 npx partforge pick-serve                           # request-a-pick: agent asks user to click geometry
 ```
 
@@ -144,13 +143,13 @@ the installed package, so let the publish finish before bumping the dep there.
   (`test/worker-layering.test.js` enforces that). The worker loads it LAZILY, per
   job family (`jobs.js`'s dynamic imports — the generate/export hot path touches
   none of it); the same test's eager-closure guard enforces that too.
-  The SEMANTIC MESH ORACLE (`describe` — imported-mesh -> feature report) is NOT
-  in this repo: it lives in the closed `pixiteapps/partforge-oracle` package,
-  which peer-depends on this one. This repo keeps only the seams — the `describe`
-  job runs an injected loader (`runWorker(part, { loadOracle })`, answering
-  `oracle-unavailable` without one) and the CLI's describe verb resolves the
-  package at call time (`PARTFORGE_ORACLE` overrides the specifier). Never add a
-  literal import of the oracle package here: apps without it must keep building.
+  The SEMANTIC MESH ORACLE (imported-mesh -> feature report) is NOT in this repo
+  and this repo has no verb, job or import for it: it is a separate closed
+  package that peer-depends on this one (it consumes `partforge/oracle`'s mesh
+  helpers and parsers) and ships its own CLI. A host that installs it registers
+  its worker job through the generic seam `runWorker(part, { jobs })` (jobs.js's
+  HOST JOBS comment). Never add anything oracle-shaped here — no package name, no
+  message types, no error codes: apps without it must keep building.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these

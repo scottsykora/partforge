@@ -9,11 +9,11 @@
 // test/oracle-entry.test.js walks the closure and holds that, so the entry stays
 // importable from a worker, a browser, or Node alike.
 //
-// The SEMANTIC MESH ORACLE (`describe`) is NOT here: it lives in its own closed
-// package, which peer-depends on this one and consumes exactly this entry — the
-// mesh/BVH helpers and file parsers below are exported for it. The framework
-// reaches it only through injection (`runWorker(part, { loadOracle })`, jobs.js)
-// and the CLI resolves it at call time; neither ever bundles it.
+// The SEMANTIC MESH ORACLE (imported mesh -> feature report) is NOT here, and this
+// framework has no verb, job or import for it: it is its own closed package, which
+// peer-depends on this one and consumes exactly this entry — the mesh/BVH helpers
+// and file parsers below are exported for it. A host that installs it registers its
+// job through the generic `runWorker(part, { jobs })` seam (jobs.js).
 export { assemblyGaps, meshGaps } from "./framework/oracle/gaps.js";
 export { meshVolume, bboxSize, bounds, meshArea } from "./framework/oracle/mesh.js";
 export { buildView } from "./framework/oracle/build.js";

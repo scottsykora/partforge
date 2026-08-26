@@ -26,22 +26,16 @@ const loadInspect = () => Promise.all([
   import("./oracle/verify.js"),
 ]);
 
-// The DESCRIBE stack is not part of this package at all: the semantic mesh oracle
-// lives in a separate, closed package, and this open framework never names it. A
-// host that has it INJECTS a loader — `runWorker(part, { loadOracle })`, threaded
-// here as `opts.loadOracle`, resolving to the oracle package's barrel (describe,
-// describeMemo, compactDescribe). Injection rather than a bare import specifier is
-// deliberate: a literal `import("@scope/pkg")` in open source would fail every
-// downstream Vite build where the package isn't installed, while an injected thunk
-// is simply absent — and an absent oracle answers the job with the structured
-// `oracle-unavailable` report below instead of stalling or throwing.
-
-// One describe memo for the life of this worker, created alongside the stack's first
-// load. Deliberately NOT swept on setPart the way solid-cache is: describe is pure in
-// the mesh bytes (spec §4.1), so an edit can never invalidate it, and dropping it on
-// rebind would throw away the single most expensive thing this worker computes for no
-// reason at all. Keyed by content digest, so a genuinely changed file misses correctly.
-let DESCRIBE_MEMO = null;
+// HOST JOBS — the extension seam. A host registers its own job types with
+// `runWorker(part, { jobs: { <type>: handler } })`, threaded here as `opts.jobs`, and
+// a message whose type matches no built-in below is handed to that handler with the
+// live kernel, the current part, the message and the poster. This is how a host adds
+// a capability the open framework does not ship — partforge-cloud's semantic
+// mesh-oracle describe job lives entirely in its own closed package and arrives here
+// as one of these — without this repo naming it, importing it, or knowing its message
+// shapes. Built-ins win a name clash (a host cannot redefine `generate`); a type with
+// no handler at all is ignored, as unknown types always were. A handler's throw is
+// posted as the ordinary `{type: "error"}` any failed job posts.
 
 // Handle one geometry job, posting results/progress via `post(msg, transfer?)`.
 // Backend-agnostic and part-agnostic: every part specific comes through `part`.
@@ -414,47 +408,8 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const match = await scoreMatchTargets(built, msg.matchTargets, onProgress);
       if (match) report.match = match;
       post({ type: "report", ...report }, match?.map((m) => m.delta.data.buffer) ?? []);
-    } else if (msg.type === "describe") {
-      // Semantic description of an IMPORTED mesh — not of the built part. The two are
-      // different questions: `inspect` asks "what did this source build?", `describe`
-      // asks "what is this file?". describe never touches the part's own geometry, which
-      // is why it takes an import name rather than a view.
-      //
-      // Manifold only, and not by choice on this path: mesh imports on OCCT are never
-      // attempted, so a describe job posted to an OCCT worker is a routing bug, not a
-      // fallback opportunity. It surfaces as an ordinary error rather than a reroute.
-      if (!opts.loadOracle) {
-        // Same closed-set, returned-not-thrown error contract describe itself keeps
-        // (its errors are findings, not crashes) — shaped as the structured triple the
-        // whole repo emits, so a caller can act on the code. ERROR-PATTERNS.md#describe-
-        // oracle-unavailable carries the fix.
-        post({ type: "describe-report", report: {
-          error: "oracle-unavailable",
-          detail: "this app was built without the mesh oracle package",
-          diagnostic: {
-            cause: "the describe job needs the closed oracle package, and no loadOracle loader was injected into runWorker",
-            location: `describe "${msg.importName}"`,
-            correctiveAction: "install the oracle package and pass runWorker(part, { loadOracle: () => import(...) }); see ERROR-PATTERNS.md#describe-oracle-unavailable",
-          },
-          source: { name: msg.importName, digest: null },
-        } });
-        return;
-      }
-      const { describe: describeMesh, describeMemo, compactDescribe } = await opts.loadOracle();
-      const solid = kernel.import(msg.importName);      // throws on an unknown name
-      // `_importDigest` is the backend's existing underscore side-channel (KERNEL-CONTRACT
-      // "Conformance classes") — the same digest already folded into every import cache key.
-      const digest = kernel._importDigest?.(msg.importName) ?? null;
-      DESCRIBE_MEMO ??= describeMemo();
-      const full = describeMesh(kernel, solid, {
-        name: msg.importName,
-        digest,
-        budget: msg.budget,
-        memo: DESCRIBE_MEMO,
-      });
-      // The compact shape is derived, never memoised separately: one memo entry per
-      // mesh, two views of it, no way for the two to drift.
-      post({ type: "describe-report", report: msg.compact ? compactDescribe(full) : full });
+    } else if (opts.jobs && Object.hasOwn(opts.jobs, msg.type)) {
+      await opts.jobs[msg.type](kernel, part, msg, post, { isStale: opts.isStale });
     }
   } catch (err) {
     // `subparts` (generate jobs only) tells the reroute policy which sub-parts the
