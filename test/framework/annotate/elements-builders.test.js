@@ -13,27 +13,34 @@ test("rectFromDrag: any corner order yields the same box", () => {
   expect(a.rot).toBe(0);
 });
 
-test("magnetic square snap inside 12%, none outside, force always", () => {
-  // 0.40 × 0.37 → ratio 0.925 > 0.88 → snaps
-  const near = rectFromDrag(0, 0, 0.40, 0.37);
+test("distance-based square magnet: cursor near the diagonal snaps, far stays, force always", () => {
+  const SNAP = { snapDistance: 0.02 };
+  // 0.40 × 0.38: corner is |w−h|/√2 ≈ 0.014 from the diagonal → snaps to 0.40²
+  const near = rectFromDrag(0, 0, 0.40, 0.38, SNAP);
   expect(near.snapped).toBe(true);
   expect(near.params.w).toBeCloseTo(0.40);
   expect(near.params.h).toBeCloseTo(0.40);
-  // 0.40 × 0.30 → ratio 0.75 → no snap
-  const far = rectFromDrag(0, 0, 0.40, 0.30);
+  // 0.40 × 0.36: ≈ 0.028 off the diagonal → no snap
+  const far = rectFromDrag(0, 0, 0.40, 0.36, SNAP);
   expect(far.snapped).toBe(false);
-  expect(far.params.h).toBeCloseTo(0.30);
+  expect(far.params.h).toBeCloseTo(0.36);
+  // the SAME 5% aspect error snaps on a small box but not a big one — the
+  // magnet scales with cursor distance, not aspect ratio
+  expect(rectFromDrag(0, 0, 0.20, 0.19, SNAP).snapped).toBe(true);   // 0.007 off
+  expect(rectFromDrag(0, 0, 0.80, 0.76, SNAP).snapped).toBe(false);  // 0.028 off
+  // no snapDistance → no magnet at all
+  expect(rectFromDrag(0, 0, 0.40, 0.399).snapped).toBe(false);
   // force wins from any aspect
   const forced = rectFromDrag(0, 0, 0.40, 0.10, { force: true });
   expect(forced.snapped).toBe(true);
   expect(forced.params.h).toBeCloseTo(0.40);
 });
 
-test("ellipseFromDrag fills the box; circle snap mirrors the rect rule", () => {
+test("ellipseFromDrag fills the box; circle magnet mirrors the rect rule", () => {
   const e = ellipseFromDrag(0.2, 0.2, 0.6, 0.4).params;
   expect(e.cx).toBeCloseTo(0.4); expect(e.cy).toBeCloseTo(0.3);
   expect(e.rx).toBeCloseTo(0.2); expect(e.ry).toBeCloseTo(0.1);
-  const circle = ellipseFromDrag(0, 0, 0.4, 0.38);
+  const circle = ellipseFromDrag(0, 0, 0.4, 0.38, { snapDistance: 0.02 });
   expect(circle.snapped).toBe(true);
   expect(circle.params.rx).toBe(circle.params.ry);
 });

@@ -2,7 +2,7 @@
 import { expect, test } from "vitest";
 import {
   createElementStore, mergeGaps, inGaps, visibleFraction,
-  INK_COLORS, DEFAULT_STROKE_WIDTH, SNAP_RATIO, MIN_VISIBLE,
+  INK_COLORS, DEFAULT_STROKE_WIDTH, MIN_VISIBLE,
 } from "../../../src/framework/annotate/elements.js";
 
 const line = (over = {}) => ({
@@ -13,7 +13,6 @@ const line = (over = {}) => ({
 test("constants are pinned to the spec", () => {
   expect(INK_COLORS).toEqual({ red: "#d92d20", blue: "#1570ef", green: "#079455" });
   expect(DEFAULT_STROKE_WIDTH).toBe(0.004);
-  expect(SNAP_RATIO).toBe(0.12);
   expect(MIN_VISIBLE).toBe(0.02);
 });
 

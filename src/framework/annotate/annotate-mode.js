@@ -39,7 +39,10 @@ const SEND_MAX_EDGE = 2048;
 const HANDLE_PX = 8;
 const ROTATE_BAND_PX = 22;
 const ERASER_PX = 16;
-const LINE_SNAP_PX = 8; // cursor-to-snapped-line distance for the 0/45/90° magnet
+// One cursor-distance magnet for every snap: the line's 0/45/90° snap, the
+// rect/ellipse 1:1 snap while drawing, and the hand-tool resize snaps all
+// engage when the cursor is within this many CSS pixels of the snapped shape.
+const SNAP_PX = 8;
 const MIN_DRAG_PX = 6; // sub-6px shape drags commit nothing
 const FREEHAND_MIN_DIST = 0.003; // stage units (~ink.js's old thinning at aspect 1)
 
@@ -89,19 +92,16 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
   // ---- draw-tool preview + overlay label helpers ------------------------
   function buildPreview(kind, x0, y0, x, y, event) {
     if (kind === "rect") {
-      const { params } = rectFromDrag(x0, y0, x, y, { force: event.shiftKey });
+      const { params } = rectFromDrag(x0, y0, x, y, { force: event.shiftKey, snapDistance: stageUnits(SNAP_PX, rectOf()) });
       return { type: "rect", color, width: DEFAULT_STROKE_WIDTH, params, gaps: [] };
     }
     if (kind === "ellipse") {
-      const { params } = ellipseFromDrag(x0, y0, x, y, { force: event.shiftKey });
+      const { params } = ellipseFromDrag(x0, y0, x, y, { force: event.shiftKey, snapDistance: stageUnits(SNAP_PX, rectOf()) });
       return { type: "ellipse", color, width: DEFAULT_STROKE_WIDTH, params, gaps: [] };
     }
-    // Snap threshold in cursor pixels, not degrees: the line snaps when the
-    // pointer is within LINE_SNAP_PX of the snapped line, so long lines snap
-    // only when genuinely near-flat while short ones stay forgiving.
     const { params } = lineFromDrag(x0, y0, x, y, {
       force: event.shiftKey,
-      snapDistance: stageUnits(LINE_SNAP_PX, rectOf()),
+      snapDistance: stageUnits(SNAP_PX, rectOf()),
     });
     return { type: "line", color, width: DEFAULT_STROKE_WIDTH, params, gaps: [] };
   }
@@ -328,12 +328,12 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
         return;
       }
       case "hand-resize-rect": {
-        resizeRectFromAnchor(gesture.el, gesture.anchor[0], gesture.anchor[1], gesture.rot, x, y, { force: event.shiftKey });
+        resizeRectFromAnchor(gesture.el, gesture.anchor[0], gesture.anchor[1], gesture.rot, x, y, { force: event.shiftKey, snapDistance: stageUnits(SNAP_PX, rectOf()) });
         store.touch(gesture.el);
         return;
       }
       case "hand-resize-ellipse": {
-        resizeEllipseHandle(gesture.el, gesture.handleId, x, y, { force: event.shiftKey });
+        resizeEllipseHandle(gesture.el, gesture.handleId, x, y, { force: event.shiftKey, snapDistance: stageUnits(SNAP_PX, rectOf()) });
         store.touch(gesture.el);
         return;
       }

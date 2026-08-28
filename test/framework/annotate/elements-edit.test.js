@@ -52,9 +52,13 @@ test("anchored rect resize keeps the opposite corner fixed, snaps near 1:1", () 
   expect(rect.params.h).toBeCloseTo(0.3);
   expect(rect.params.cx).toBeCloseTo(0.55);
   expect(rect.params.cy).toBeCloseTo(0.55);
-  // near-square drag snaps
-  resizeRectFromAnchor(rect, ax, ay, 0, 0.72, 0.81, {}); // 0.42 × 0.41
+  // near-square drag snaps when the corner sits within snapDistance of the
+  // diagonal (|0.42 − 0.41|/√2 ≈ 0.007)
+  resizeRectFromAnchor(rect, ax, ay, 0, 0.72, 0.81, { snapDistance: 0.02 });
   expect(rect.params.w).toBe(rect.params.h);
+  // same drag with no magnet stays free
+  resizeRectFromAnchor(rect, ax, ay, 0, 0.72, 0.81, {});
+  expect(rect.params.w).not.toBe(rect.params.h);
 });
 
 test("ellipse handles: r keeps a circle; rx edits one axis; near-1:1 re-snaps", () => {
@@ -66,7 +70,7 @@ test("ellipse handles: r keeps a circle; rx edits one axis; near-1:1 re-snaps", 
   resizeEllipseHandle(oval, "rx", 0.9, 0.5, {});
   expect(oval.params.rx).toBeCloseTo(0.4);
   expect(oval.params.ry).toBeCloseTo(0.2);
-  resizeEllipseHandle(oval, "rx", 0.71, 0.5, {}); // rx 0.21 vs ry 0.2 → snap circle
+  resizeEllipseHandle(oval, "rx", 0.71, 0.5, { snapDistance: 0.02 }); // |rx−ry| = 0.01 → snap circle
   expect(oval.params.rx).toBe(oval.params.ry);
 });
 

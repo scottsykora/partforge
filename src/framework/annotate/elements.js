@@ -7,8 +7,6 @@
 export const INK_COLORS = { red: "#d92d20", blue: "#1570ef", green: "#079455" };
 // Stroke width as a fraction of the viewport short edge (unchanged from ink.js).
 export const DEFAULT_STROKE_WIDTH = 0.004;
-// rect→square / ellipse→circle magnetic snap when aspect is within this of 1:1.
-export const SNAP_RATIO = 0.12;
 // An element erased below this visible fraction is dropped entirely.
 export const MIN_VISIBLE = 0.02;
 
@@ -176,9 +174,14 @@ export function centerOf(el) {
 // ---- draw-gesture builders -------------------------------------------------
 const MIN_EXTENT = 0.002; // stage units; degenerate drags stay visible as slivers
 
-function snappedBox(x0, y0, x, y, force) {
+// Square/circle magnet, measured in cursor DISTANCE like the line snap: the
+// perpendicular distance from the dragged corner to the box diagonal is
+// |w − h|/√2, so the drag snaps to 1:1 when the cursor sits within
+// `snapDistance` (stage units) of where the square's corner would be. A big
+// box snaps only when genuinely near-square; a small one stays forgiving.
+function snappedBox(x0, y0, x, y, force, snapDistance) {
   let w = Math.abs(x - x0), h = Math.abs(y - y0);
-  const near = Math.min(w, h) / Math.max(w, h, MIN_EXTENT) > 1 - SNAP_RATIO;
+  const near = snapDistance > 0 && Math.abs(w - h) / Math.SQRT2 <= snapDistance;
   const snapped = force || near;
   if (snapped) w = h = Math.max(w, h);
   w = Math.max(w, MIN_EXTENT); h = Math.max(h, MIN_EXTENT);
@@ -192,13 +195,13 @@ function snappedBox(x0, y0, x, y, force) {
   return { cx, cy, w, h, snapped };
 }
 
-export function rectFromDrag(x0, y0, x, y, { force = false } = {}) {
-  const { cx, cy, w, h, snapped } = snappedBox(x0, y0, x, y, force);
+export function rectFromDrag(x0, y0, x, y, { force = false, snapDistance = 0 } = {}) {
+  const { cx, cy, w, h, snapped } = snappedBox(x0, y0, x, y, force, snapDistance);
   return { params: { cx, cy, w, h, rot: 0 }, snapped };
 }
 
-export function ellipseFromDrag(x0, y0, x, y, { force = false } = {}) {
-  const { cx, cy, w, h, snapped } = snappedBox(x0, y0, x, y, force);
+export function ellipseFromDrag(x0, y0, x, y, { force = false, snapDistance = 0 } = {}) {
+  const { cx, cy, w, h, snapped } = snappedBox(x0, y0, x, y, force, snapDistance);
   return { params: { cx, cy, rx: w / 2, ry: h / 2, rot: 0 }, snapped };
 }
 
@@ -274,11 +277,12 @@ export function rectAnchorFor(el, handle) {
 
 const MIN_EDIT_EXTENT = 0.002;
 
-export function resizeRectFromAnchor(el, ax, ay, rot, x, y, { force = false } = {}) {
+export function resizeRectFromAnchor(el, ax, ay, rot, x, y, { force = false, snapDistance = 0 } = {}) {
   const p = el.params;
   let [dx, dy] = invRot2(x - ax, y - ay, rot);
   const w = Math.abs(dx), h = Math.abs(dy);
-  const near = Math.min(w, h) / Math.max(w, h, MIN_EDIT_EXTENT) > 1 - SNAP_RATIO;
+  // same cursor-distance magnet as snappedBox, in the rect's local frame
+  const near = snapDistance > 0 && Math.abs(w - h) / Math.SQRT2 <= snapDistance;
   if (force || near) {
     const m = Math.max(w, h);
     dx = Math.sign(dx || 1) * m;
@@ -291,7 +295,7 @@ export function resizeRectFromAnchor(el, ax, ay, rot, x, y, { force = false } = 
   p.cy = ay + oy;
 }
 
-export function resizeEllipseHandle(el, handleId, x, y, { force = false } = {}) {
+export function resizeEllipseHandle(el, handleId, x, y, { force = false, snapDistance = 0 } = {}) {
   const p = el.params;
   const [lx, ly] = invRot2(x - p.cx, y - p.cy, p.rot || 0);
   if (handleId === "r") {
@@ -300,7 +304,9 @@ export function resizeEllipseHandle(el, handleId, x, y, { force = false } = {}) 
   }
   if (handleId === "rx") p.rx = Math.max(MIN_EDIT_EXTENT, Math.abs(lx));
   else p.ry = Math.max(MIN_EDIT_EXTENT, Math.abs(ly));
-  const near = Math.min(p.rx, p.ry) / Math.max(p.rx, p.ry) > 1 - SNAP_RATIO;
+  // circle magnet by cursor distance: the dragged radius handle sits |rx − ry|
+  // from where the circle's rim would be
+  const near = snapDistance > 0 && Math.abs(p.rx - p.ry) <= snapDistance;
   if (force || near) p.rx = p.ry = handleId === "rx" ? p.rx : p.ry;
 }
 

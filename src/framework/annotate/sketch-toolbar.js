@@ -33,8 +33,8 @@ const CLOSE_ICON = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" 
 const TOOLS = [
   { tool: "pen", icon: PEN_ICON, label: "Pen", hint: "drag to draw" },
   { tool: "line", icon: LINE_ICON, label: "Line", hint: "drag endpoint to endpoint · snaps to 0/45/90° · shift forces" },
-  { tool: "rect", icon: RECT_ICON, label: "Rectangle", hint: "drag corner to corner · snaps to square near 1:1 · shift forces" },
-  { tool: "ellipse", icon: ELLIPSE_ICON, label: "Ellipse", hint: "drag corner to corner · snaps to circle near 1:1 · shift forces" },
+  { tool: "rect", icon: RECT_ICON, label: "Rectangle", hint: "drag corner to corner · snaps to square · shift forces" },
+  { tool: "ellipse", icon: ELLIPSE_ICON, label: "Ellipse", hint: "drag corner to corner · snaps to circle · shift forces" },
   { tool: "hand", icon: HAND_ICON, label: "Move", hint: "drag a shape to move it · handles resize · just outside rotates" },
   { tool: "eraser", icon: ERASER_ICON, label: "Eraser", hint: "scrub to erase" },
 ];
