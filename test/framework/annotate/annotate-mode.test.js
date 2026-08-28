@@ -331,8 +331,10 @@ test("canUndo tracks the store's history", () => {
 // only reaches this mode via a capture-phase listener on the document. These
 // tests dispatch on `document`, bubbles+cancelable like a real keydown, and
 // read `defaultPrevented` to prove whether the mode itself consumed the
-// event — the thing that determines whether the chrome's own bubble-phase
-// Escape handler (which exits the whole mode) still gets to run.
+// event. The mode now owns Escape-driven exit outright (mid-gesture, Escape
+// cancels only the gesture; with none in flight, it exits the mode) and
+// always consumes the keystroke when enabled, so downstream chrome never
+// sees a sketch-mode Escape.
 const escapeKey = () => new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
 
 test("Escape cancels a hand-tool drag by undoing it, without exiting the mode", () => {
@@ -380,15 +382,25 @@ test("Escape during a pen stroke rolls back the partial stroke, leaving no stray
   expect(mode.canUndo()).toBe(false); // the snapshot taken at pointerdown was popped, not left behind
 });
 
-test("Escape with no in-flight gesture is NOT consumed; mode exit stays the chrome's job", () => {
+test("Escape with no in-flight gesture exits the mode and IS consumed", () => {
   const { mode, canvas } = fixture();
   mode.setEnabled(true);
   drag(canvas, [60, 45], [110, 70]); // pen stroke commits normally; no gesture left in flight
+  expect(mode.strokeCount()).toBe(1); // committed normally: nothing to cancel
   const evt = escapeKey();
   document.dispatchEvent(evt);
-  expect(evt.defaultPrevented).toBe(false); // nothing to cancel: the mode does not touch this Escape
-  expect(mode.isEnabled()).toBe(true); // this mode never exits itself on Escape — the chrome does
-  expect(mode.strokeCount()).toBe(1); // nothing rolled back: there was no gesture to cancel
+  // Sketch mode owns exit now: while it's on, the toolbar replaces #viewbar
+  // (mount.js) so the pencil toggle that used to hold the chrome's own
+  // Escape handler is hidden and unreachable. This document-capture listener
+  // is the only reliable keyboard path left, so it exits the mode itself and
+  // consumes the event — downstream chrome (cutaway/measure Escape handlers)
+  // must never also see a sketch-mode Escape.
+  expect(evt.defaultPrevented).toBe(true);
+  expect(mode.isEnabled()).toBe(false);
+  // setEnabled(false) resets the store (spec: ink never survives an exit),
+  // so the stroke is gone too — that's the existing exit contract, not
+  // something this Escape path rolled back.
+  expect(mode.strokeCount()).toBe(0);
 });
 
 test("detach disposes the canvas and is idempotent", () => {

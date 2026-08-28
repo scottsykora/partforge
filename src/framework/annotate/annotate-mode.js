@@ -386,10 +386,11 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     syncCursorClasses();
   };
 
-  // Escape cancels an in-flight gesture. Hand edits, the eraser, and pen all
-  // snapshot and mutate the store at pointerdown, so they roll back via
-  // store.undo(); a draw-tool preview never touches the store (that only
-  // happens at pointerup), so dropping the gesture is enough there.
+  // Escape cancels an in-flight gesture, or — with none in flight — exits the
+  // mode outright. Hand edits, the eraser, and pen all snapshot and mutate
+  // the store at pointerdown, so they roll back via store.undo(); a draw-tool
+  // preview never touches the store (that only happens at pointerup), so
+  // dropping the gesture is enough there.
   //
   // The ink canvas (.pf-ink-canvas) is never focusable — it has no tabindex
   // and is never document.activeElement — so a keydown listener on
@@ -397,21 +398,34 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
   // keystrokes land wherever focus actually is and reach us only via
   // capture, which is why this listens on the canvas's ownerDocument in the
   // CAPTURE phase: document is the outermost node, so this runs before any
-  // phase happens anywhere else in the tree, including the chrome's own
-  // bubble-phase Escape handler (annotate-controls.js, listening on
-  // viewer.domElement/buttons) which exits the whole mode.
+  // phase happens anywhere else in the tree.
   //
-  // When a gesture IS in flight, this consumes the event
-  // (preventDefault + stopPropagation, the latter during capture halting
-  // capture/target/bubble entirely) so the chrome never sees it and the mode
-  // stays open with only the gesture rolled back. When there is NO gesture,
-  // this must NOT consume the event — mode exit stays the chrome's job.
+  // This mode now OWNS Escape-driven exit, rather than deferring to the
+  // chrome (annotate-controls.js's bubble-phase handler on
+  // viewer.domElement/button). While sketch mode is on, the sketch toolbar
+  // replaces #viewbar at the top of the stage (sketch-toolbar.js / mount.js),
+  // so the pencil toggle that used to hold that Escape handler is hidden and
+  // unreachable — focus has nowhere to land that bubbles through it. This
+  // document-capture listener is the only reliable keyboard path left, so it
+  // has to do the exiting itself: when there is no gesture, and the mode is
+  // enabled, Escape exits the mode. Either way (gesture cancelled, or mode
+  // exited) the event is consumed here (preventDefault + stopPropagation, the
+  // latter during capture halting capture/target/bubble entirely) so it can
+  // never also reach downstream chrome that treats Escape as ITS exit key
+  // (cutaway, measure) — a single Escape press must resolve to exactly one
+  // effect.
   const onEscapeCapture = (event) => {
-    if (event.key !== "Escape" || !gesture) return;
-    if (gesture.mutatesStore) store.undo();
-    gesture = null;
-    syncScene();
-    syncCursorClasses();
+    if (event.key !== "Escape") return;
+    if (gesture) {
+      if (gesture.mutatesStore) store.undo();
+      gesture = null;
+      syncScene();
+      syncCursorClasses();
+    } else {
+      // This listener is only attached while enabled (see setEnabled below),
+      // so reaching here with no gesture means: exit the mode.
+      setEnabled(false);
+    }
     event.preventDefault();
     event.stopPropagation();
   };

@@ -16,7 +16,7 @@ function fakeMode(over = {}) {
     isEnabled: () => enabled,
     _setEnabled(on) { enabled = on; modeCbs.forEach((cb) => cb()); },
     strokeCount: () => 0, canUndo: () => false,
-    undo: vi.fn(), clear: vi.fn(), send: vi.fn(),
+    undo: vi.fn(), clear: vi.fn(), send: vi.fn(), setEnabled: vi.fn(),
     onToolChange: (cb) => { toolCbs.add(cb); return () => toolCbs.delete(cb); },
     onInkChange: (cb) => { inkCbs.add(cb); return () => inkCbs.delete(cb); },
     onModeChange: (cb) => { modeCbs.add(cb); return () => modeCbs.delete(cb); },
@@ -57,6 +57,30 @@ test("send: 'viewbar' renders a Send button, 'host' renders none", () => {
   expect(withSend.element.querySelector('[data-action="send"]')).not.toBeNull();
   const hostOwned = attachSketchToolbar(fakeMode(), { stage: stage(), send: "host" });
   expect(hostOwned.element.querySelector('[data-action="send"]')).toBeNull();
+});
+
+// The close button is the toolbar's own exit affordance — the in-UI escape
+// hatch now that #viewbar (and its pencil toggle) is hidden for the duration
+// of sketch mode. It must survive both `send` variants and always sit last,
+// after Send when Send exists at all.
+test("close button exists and is last in both send variants", () => {
+  const withSend = attachSketchToolbar(fakeMode(), { stage: stage() });
+  const closeInWithSend = withSend.element.querySelector('[data-action="close"]');
+  expect(closeInWithSend).not.toBeNull();
+  expect(withSend.element.lastElementChild).toBe(closeInWithSend);
+
+  const hostOwned = attachSketchToolbar(fakeMode(), { stage: stage(), send: "host" });
+  const closeInHostOwned = hostOwned.element.querySelector('[data-action="close"]');
+  expect(closeInHostOwned).not.toBeNull();
+  expect(hostOwned.element.lastElementChild).toBe(closeInHostOwned);
+});
+
+test("clicking close exits the mode", () => {
+  const mode = fakeMode();
+  const { element } = attachSketchToolbar(mode, { stage: stage() });
+  mode._setEnabled(true);
+  element.querySelector('[data-action="close"]').click();
+  expect(mode.setEnabled).toHaveBeenCalledWith(false);
 });
 
 test("hint line follows the tool", () => {
