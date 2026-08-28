@@ -84,3 +84,12 @@ test("clear snapshots so undo brings everything back", () => {
   store.undo();
   expect(store.count()).toBe(1);
 });
+
+test("reset empties items and the undo stack without snapshotting", () => {
+  const store = createElementStore();
+  store.snapshot();
+  store.add(line());
+  store.reset();
+  expect(store.isEmpty()).toBe(true);
+  expect(store.canUndo()).toBe(false); // the undo stack itself is gone, not just replayed
+});

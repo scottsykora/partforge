@@ -66,6 +66,15 @@ export function createElementStore() {
       items = [];
       notify();
     },
+    // Exit-mode discard: unlike clear(), this takes no snapshot and drops the
+    // undo history outright — annotate-mode.js's setEnabled(false) uses this
+    // (never clear()) because ink must not survive a mode exit AND a
+    // re-entered mode must not carry a phantom "undo" back to stale strokes.
+    reset() {
+      items = [];
+      undoStack.length = 0;
+      notify();
+    },
     onChange(cb) { listeners.add(cb); return () => listeners.delete(cb); },
   };
 }

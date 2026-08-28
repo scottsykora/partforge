@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
-// Orchestrator: pointer → ink, enter/exit lifecycle, payload assembly, and the
-// send-abort-on-null-capture contract.
+// Orchestrator: pointer -> tool state machine -> elements, enter/exit
+// lifecycle, payload v3 assembly, and the send-abort-on-null-capture contract.
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import * as THREE from "three";
 import { createAnnotateMode, ANNOTATION_VERSION } from "../../../src/framework/annotate/annotate-mode.js";
 
 afterEach(() => { document.body.innerHTML = ""; });
 
-const RECT = { left: 10, top: 20, width: 200, height: 100 };
+const RECT = { left: 10, top: 20, width: 200, height: 100 }; // aspect = 2
 
 function fakeCanvas() {
   const element = document.createElement("canvas");
@@ -17,7 +17,7 @@ function fakeCanvas() {
     element,
     show: vi.fn(),
     hide: vi.fn(),
-    setStrokes: vi.fn(),
+    setScene: vi.fn(),
     toDataUrl: vi.fn(() => "data:image/png;base64,INK"),
     size: () => ({ width: 400, height: 200, dpr: 2 }),
     dispose: vi.fn(),
@@ -53,20 +53,22 @@ function fixture(over = {}) {
   return { stage, canvas, viewer, onSend, mode };
 }
 
-function pointer(type, clientX, clientY) {
-  const e = new MouseEvent(type, { clientX, clientY, bubbles: true });
-  return e;
+function pointer(type, clientX, clientY, opts = {}) {
+  return new MouseEvent(type, { clientX, clientY, bubbles: true, ...opts });
 }
 
-function drawStroke(canvas, from = [60, 45], to = [110, 70]) {
+// stage-space conversion: RECT height 100 -> stage x = (clientX-10)/100, y = (clientY-20)/100
+const drag = (canvas, from, to) => {
   canvas.element.dispatchEvent(pointer("pointerdown", from[0], from[1]));
   canvas.element.dispatchEvent(pointer("pointermove", to[0], to[1]));
   canvas.element.dispatchEvent(pointer("pointerup", to[0], to[1]));
-}
+};
+
+const lastScene = (canvas) => canvas.setScene.mock.calls.at(-1)[0];
 
 // Real THREE camera instances, not object literals — the anchors pass in
-// send() raycasts through every stroke point regardless of whether any mesh
-// is present to hit, and THREE.Raycaster#setFromCamera unprojects through
+// send() raycasts through every element regardless of whether any mesh is
+// present to hit, and THREE.Raycaster#setFromCamera unprojects through
 // camera.matrixWorld / camera.projectionMatrixInverse, which only a real
 // camera instance carries (both are populated by the constructor).
 function perspectiveCamera() {
@@ -83,24 +85,19 @@ function orthographicCamera() {
   return camera;
 }
 
-// Draws one stroke under either projection and returns the payload the onSend
-// spy received. Reuses fixture()/fakeViewer() above (which already knows how
-// to override viewer.camera) rather than a second, parallel stub viewer.
+// Draws one freehand element (default pen tool) under either projection and
+// returns the payload the onSend spy received.
 function sendOneStroke({ ortho }) {
   const camera = ortho ? orthographicCamera() : perspectiveCamera();
   const { canvas, onSend, mode } = fixture({ viewer: { camera } });
   mode.setEnabled(true);
-  drawStroke(canvas);
+  drag(canvas, [60, 45], [110, 70]);
   mode.send();
   return { payload: onSend.mock.calls[0][0] };
 }
 
 // Same as sendOneStroke, but with a sub-mesh parented under a group, so
-// cameraBlock()'s `parts` frame (near annotate-mode.js:103-104) actually
-// populates instead of returning null — the stub viewer's default
-// `_subMeshes: {}` has no parent to invert, which is the "no meshes" path the
-// other tests exercise. This is the frame that survives a model rebuild, so
-// its projection/fov/orthoHeight must agree with `world`, not just `world`'s.
+// cameraBlock()'s `parts` frame actually populates instead of returning null.
 function sendOneStrokeWithParts({ ortho }) {
   const camera = ortho ? orthographicCamera() : perspectiveCamera();
   const geo = new THREE.BufferGeometry();
@@ -110,59 +107,130 @@ function sendOneStrokeWithParts({ ortho }) {
   new THREE.Group().add(mesh); // mesh.parent now has an (identity) matrixWorld to invert
   const { canvas, onSend, mode } = fixture({ viewer: { camera, _subMeshes: { body: mesh } } });
   mode.setEnabled(true);
-  drawStroke(canvas);
+  drag(canvas, [60, 45], [110, 70]);
   mode.send();
   return { payload: onSend.mock.calls[0][0] };
 }
 
-test("enable shows the canvas; drawing normalizes against the canvas rect", () => {
-  const { canvas, mode } = fixture();
+test("pen is the default tool; a drag commits a freehand element", () => {
+  const { mode, canvas } = fixture();
   mode.setEnabled(true);
   expect(canvas.show).toHaveBeenCalled();
-  drawStroke(canvas, [60, 45], [110, 70]); // rect left=10 top=20 w=200 h=100
+  expect(mode.tool()).toBe("pen");
+  drag(canvas, [60, 45], [110, 70]);
   expect(mode.strokeCount()).toBe(1);
-  const strokes = canvas.setStrokes.mock.calls.at(-1)[0];
-  expect(strokes[0].points[0]).toEqual([0.25, 0.25]);
-  expect(strokes[0].points.at(-1)).toEqual([0.5, 0.5]);
 });
 
-test("exit discards ink and hides the canvas", () => {
-  const { canvas, mode } = fixture();
+test("rect tool commits center-based params in stage space", () => {
+  const { mode, canvas } = fixture();
   mode.setEnabled(true);
-  drawStroke(canvas);
-  mode.setEnabled(false);
+  mode.setTool("rect");
+  drag(canvas, [30, 40], [110, 90]); // stage (0.2,0.2) -> (1.0,0.7)
+  const scene = lastScene(canvas);
+  expect(scene.elements[0].type).toBe("rect");
+  expect(scene.elements[0].params.cx).toBeCloseTo(0.6);
+  expect(scene.elements[0].params.cy).toBeCloseTo(0.45);
+  expect(scene.elements[0].params.w).toBeCloseTo(0.8);
+  expect(scene.elements[0].params.h).toBeCloseTo(0.5);
+});
+
+test("sub-MIN_DRAG_PX shape drags commit nothing", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  mode.setTool("rect");
+  drag(canvas, [60, 45], [62, 46]); // ~2.2px — under the 6px floor
   expect(mode.strokeCount()).toBe(0);
-  expect(canvas.hide).toHaveBeenCalled();
 });
 
-test("send assembles the payload, calls onSend, exits, and clears", () => {
-  const { canvas, viewer, onSend, mode } = fixture();
+test("color selection applies to subsequent elements", () => {
+  const { mode, canvas } = fixture();
   mode.setEnabled(true);
-  drawStroke(canvas);
+  mode.setColor("green");
+  drag(canvas, [60, 45], [110, 70]);
+  expect(lastScene(canvas).elements[0].color).toBe("green");
+});
+
+test("eraser drag adds gaps; undo restores them away", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  mode.setTool("line");
+  drag(canvas, [10, 70], [210, 70]); // full-width line at y=0.5
+  mode.setTool("eraser");
+  drag(canvas, [110, 60], [110, 80]); // brush through the middle
+  const gapped = lastScene(canvas).elements[0];
+  expect(gapped.gaps.length).toBe(1);
+  mode.undo();
+  expect(lastScene(canvas).elements[0].gaps).toEqual([]);
+});
+
+test("hand tool moves an element by its outline", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  mode.setTool("line");
+  drag(canvas, [10, 70], [210, 70]);
+  mode.setTool("hand");
+  drag(canvas, [110, 70], [110, 90]); // grab the middle, pull down 0.2 stage
+  const moved = lastScene(canvas).elements[0];
+  expect(moved.params.y1).toBeCloseTo(0.7);
+  expect(moved.params.y2).toBeCloseTo(0.7);
+});
+
+test("hand tool resizes a rect from a corner handle", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  mode.setTool("rect");
+  drag(canvas, [30, 40], [110, 90]); // cx 0.6 cy 0.45 w 0.8 h 0.5
+  mode.setTool("hand");
+  // bottom-right corner is at cx+w/2, cy+h/2 = (1.0, 0.7) stage -> client (110,90)
+  drag(canvas, [110, 90], [130, 90]); // drag the corner right by 0.2 stage
+  const resized = lastScene(canvas).elements[0];
+  expect(resized.params.w).toBeCloseTo(1.0);
+});
+
+test("send payload is v3: elements with params, erased, description, anchors", () => {
+  const { mode, canvas, onSend } = fixture();
+  mode.setEnabled(true);
+  mode.setTool("rect");
+  drag(canvas, [30, 40], [110, 90]);
   expect(mode.send()).toBe(true);
-  expect(onSend).toHaveBeenCalledTimes(1);
   const payload = onSend.mock.calls[0][0];
-  expect(payload.version).toBe(ANNOTATION_VERSION);
-  expect(payload.strokes).toHaveLength(1);
-  expect(payload.images).toEqual({ drawing: "data:image/png;base64,INK", model: "data:image/jpeg;base64,MODEL" });
-  // v2: the world frame also names its projection and carries orthoHeight
-  // (null under perspective) alongside fov.
-  expect(payload.camera.world).toEqual({
-    pos: [0, 0, 10], target: [0, 0, 0], up: [0, 1, 0],
-    projection: "perspective", fov: 45, orthoHeight: null,
-  });
-  expect(payload.camera.parts).toBe(null); // no meshes in the stub viewer
-  expect(payload.viewport).toEqual({ width: 200, height: 100, dpr: 2 });
-  expect(payload.context).toEqual({ view: "main", params: { size: 42 } });
-  // anchors: one open stroke → t = 0 / 0.5 / 1, all misses (empty scene)
-  expect(payload.anchors.map((a) => a.t)).toEqual([0, 0.5, 1]);
-  expect(payload.anchors.every((a) => a.hit === null)).toBe(true);
-  expect(payload.anchors[0].stroke).toBe(0);
-  // capture size follows the ink bitmap's long edge, under the 2048 bound
-  expect(viewer.captureCurrent).toHaveBeenCalledWith({ size: 400 });
-  // sent → mode exits and ink clears
+  expect(payload.version).toBe(3);
+  expect(payload.strokes).toBeUndefined();
+  const [rect] = payload.elements;
+  expect(rect.type).toBe("rect");
+  expect(rect.color).toEqual({ name: "red", hex: "#d92d20" });
+  expect(rect.erased).toEqual([]);
+  expect(rect.visibleFraction).toBe(1);
+  expect(rect.description).toContain("rect · c");
+  const center = rect.anchors.find((a) => a.at === "center");
+  // anchors are normalized per axis 0..1 (screen frame, as v2)
+  expect(center.screen[0]).toBeCloseTo(0.3); // stage 0.6 / aspect 2
+  expect(center.screen[1]).toBeCloseTo(0.45);
+  expect(center).toHaveProperty("hit");
+  expect(payload.images).toEqual({ drawing: expect.any(String), model: "data:image/jpeg;base64,MODEL" });
+  // sent -> mode exits and elements clear
   expect(mode.isEnabled()).toBe(false);
   expect(mode.strokeCount()).toBe(0);
+});
+
+test("a circle-shaped ellipse is flagged and collapses to a single radius", () => {
+  const { mode, canvas, onSend } = fixture();
+  mode.setEnabled(true);
+  mode.setTool("ellipse");
+  drag(canvas, [30, 30], [50, 50]); // stage (0.2,0.1) -> (0.4,0.3): near-square drag snaps to a circle
+  mode.send();
+  const [el] = onSend.mock.calls[0][0].elements;
+  expect(el.params.circle).toBe(true);
+  expect(el.params).toHaveProperty("r");
+  expect(el.params).not.toHaveProperty("rx");
+});
+
+test("capture size follows the ink bitmap's long edge, under the 2048 bound", () => {
+  const { canvas, viewer, mode } = fixture();
+  mode.setEnabled(true);
+  drag(canvas, [60, 45], [110, 70]);
+  mode.send();
+  expect(viewer.captureCurrent).toHaveBeenCalledWith({ size: 400 });
 });
 
 test("both pictures are bounded to the same long edge", () => {
@@ -173,26 +241,26 @@ test("both pictures are bounded to the same long edge", () => {
   big.size = () => ({ width: 5120, height: 2560, dpr: 2 });
   const { viewer, onSend, mode } = fixture({ opts: { createCanvas: () => big } });
   mode.setEnabled(true);
-  drawStroke(big);
+  drag(big, [60, 45], [110, 70]);
   expect(mode.send()).toBe(true);
   expect(viewer.captureCurrent).toHaveBeenCalledWith({ size: 2048 });
   expect(big.toDataUrl).toHaveBeenCalledWith({ maxEdge: 2048 });
   expect(onSend).toHaveBeenCalledTimes(1);
 });
 
-test("send aborts (ink intact, still enabled) when captureCurrent returns null", () => {
+test("send aborts (elements intact, still enabled) when captureCurrent returns null", () => {
   const { canvas, onSend, mode } = fixture({
     viewer: { captureCurrent: vi.fn(() => null) },
   });
   mode.setEnabled(true);
-  drawStroke(canvas);
+  drag(canvas, [60, 45], [110, 70]);
   expect(mode.send()).toBe(false);
   expect(onSend).not.toHaveBeenCalled();
   expect(mode.isEnabled()).toBe(true);
   expect(mode.strokeCount()).toBe(1);
 });
 
-test("send with no ink is a no-op", () => {
+test("send with no elements is a no-op", () => {
   const { onSend, mode } = fixture();
   mode.setEnabled(true);
   expect(mode.send()).toBe(false);
@@ -205,10 +273,92 @@ test("payload params are a snapshot, not the live object", () => {
     opts: { getContext: () => ({ view: "main", params }) },
   });
   mode.setEnabled(true);
-  drawStroke(canvas);
+  drag(canvas, [60, 45], [110, 70]);
   mode.send();
   params.size = 2;
   expect(onSend.mock.calls[0][0].context.params.size).toBe(1);
+});
+
+test("setEnabled(false) discards elements and hides the canvas", () => {
+  const { canvas, mode } = fixture();
+  mode.setEnabled(true);
+  drag(canvas, [60, 45], [110, 70]);
+  mode.setEnabled(false);
+  expect(mode.strokeCount()).toBe(0);
+  expect(canvas.hide).toHaveBeenCalled();
+});
+
+test("escape-like cancel: setEnabled(false) mid-gesture discards everything", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  canvas.element.dispatchEvent(pointer("pointerdown", 60, 45));
+  mode.setEnabled(false);
+  mode.setEnabled(true);
+  expect(mode.strokeCount()).toBe(0);
+});
+
+test("tool and color persist across an enable/disable cycle", () => {
+  const { mode } = fixture();
+  mode.setEnabled(true);
+  mode.setTool("rect");
+  mode.setColor("blue");
+  mode.setEnabled(false);
+  mode.setEnabled(true);
+  expect(mode.tool()).toBe("rect");
+  expect(mode.color()).toBe("blue");
+});
+
+test("onToolChange fires for tool and color changes", () => {
+  const { mode } = fixture();
+  let calls = 0;
+  mode.onToolChange(() => { calls += 1; });
+  mode.setTool("rect");
+  mode.setColor("blue");
+  mode.setTool("rect"); // no-op: unchanged
+  expect(calls).toBe(2);
+});
+
+test("canUndo tracks the store's history", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  expect(mode.canUndo()).toBe(false);
+  drag(canvas, [60, 45], [110, 70]);
+  expect(mode.canUndo()).toBe(true);
+});
+
+test("Escape cancels a hand-tool drag by undoing it", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  mode.setTool("line");
+  drag(canvas, [10, 70], [210, 70]); // y = 0.5 both ends
+  mode.setTool("hand");
+  canvas.element.dispatchEvent(pointer("pointerdown", 110, 70));
+  canvas.element.dispatchEvent(pointer("pointermove", 110, 90));
+  canvas.element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  const el = lastScene(canvas).elements[0];
+  expect(el.params.y1).toBeCloseTo(0.5);
+  expect(el.params.y2).toBeCloseTo(0.5);
+});
+
+test("Escape during a shape drag drops the preview without committing", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  mode.setTool("rect");
+  canvas.element.dispatchEvent(pointer("pointerdown", 30, 40));
+  canvas.element.dispatchEvent(pointer("pointermove", 110, 90));
+  canvas.element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  expect(mode.strokeCount()).toBe(0);
+  canvas.element.dispatchEvent(pointer("pointerup", 110, 90));
+  expect(mode.strokeCount()).toBe(0); // gesture already cancelled: pointerup is a no-op
+});
+
+test("Escape with no in-flight gesture is a no-op (mode exit stays the chrome's job)", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  drag(canvas, [60, 45], [110, 70]);
+  canvas.element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  expect(mode.isEnabled()).toBe(true);
+  expect(mode.strokeCount()).toBe(1);
 });
 
 test("detach disposes the canvas and is idempotent", () => {
@@ -228,12 +378,21 @@ test("detach while enabled leaves the state machine honest", () => {
   expect(canvas.dispose).toHaveBeenCalledTimes(1);
 });
 
+test("onModeChange fires on enable and disable", () => {
+  const { mode } = fixture();
+  const cb = vi.fn();
+  mode.onModeChange(cb);
+  mode.setEnabled(true);
+  mode.setEnabled(false);
+  expect(cb).toHaveBeenCalledTimes(2);
+});
+
 describe("camera block under each projection", () => {
-  it("is version 2 and reports a perspective camera by name", () => {
+  it("is version 3 and reports a perspective camera by name", () => {
     // A consumer reconstructing the camera must be told which projection it is
     // looking at — an fov-shaped hole is how that fails silently.
     const { payload } = sendOneStroke({ ortho: false });
-    expect(payload.version).toBe(2);
+    expect(payload.version).toBe(ANNOTATION_VERSION);
     expect(payload.camera.world.projection).toBe("perspective");
     expect(payload.camera.world.fov).toBe(45);
     expect(payload.camera.world.orthoHeight).toBeNull();
