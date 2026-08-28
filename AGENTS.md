@@ -105,7 +105,7 @@ the installed package, so let the publish finish before bumping the dep there.
   sketch mode: typed drawing elements - pen/line/rect/ellipse with three ink
   colors, a hand tool for move/resize/rotate, and an interval eraser that
   subtracts parameter spans so shapes stay parametric - sent to the host via
-  `onAnnotationSend` as a v3 semantic payload; `elements.js` is the pure
+  `onAnnotationSend` as a v3 semantic payload, whose anchors carry parts-frame pick rays (`partforge/oracle`'s `annotationRay`/`rayPlane` reconstruct and intersect them); `elements.js` is the pure
   element model, `ink-canvas.js` the overlay renderer, `annotate-mode.js` the
   orchestrator, `sketch-toolbar.js` the top-centre toolbar that replaces the
   viewbar while the mode is on, `annotate-controls.js` the viewbar pencil

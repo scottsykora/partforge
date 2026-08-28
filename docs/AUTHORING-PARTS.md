@@ -1838,6 +1838,30 @@ each type's own vocabulary ("erased top edge", "erased arc 36°–126°"); each
 anchor of a gapped element carries the `run` index of the visible fragment it
 sits on.
 
+**Reconstructing rays from a sketch payload.** Every anchor also carries
+`ray: { origin, dir }` — a pick ray in the **parts frame** (mm origin, unit
+direction), computed from the live camera at send time and rounded to 4
+decimals; it is omitted when `camera.parts` is `null` (no meshes at send
+time — the same condition under which no `hit` can exist). Unlike `hit`,
+the ray is present even where the stroke crosses empty space, so any anchor
+can be projected onto a construction plane. For screen points that have no
+anchor (a circle's rim, a grid over a region), `partforge/oracle` exports
+`annotationRay(payload, screenOrAnchor, { frame? })` — the same ray,
+reconstructed from the payload's camera block (perspective and orthographic
+both) — and `rayPlane(ray, plane)` intersects either kind of ray with
+`{ point, normal }` or the shorthand origin planes `"xy" | "yz" | "zx"`,
+returning `{ point, t }` in mm or `null` on a parallel / behind-origin miss
+(the same miss semantics as `hit: null`). End to end:
+
+```js
+import { annotationRay, rayPlane } from "partforge/oracle";
+const anchor = payload.elements.find((e) => e.id === "e3")
+  .anchors.find((a) => a.at === "center");
+const hit = rayPlane(anchor.ray ?? annotationRay(payload, anchor), "xy");
+// → boss where the sketched circle's center points, on the z=0 plane:
+//   k.prism({ points: circleProfile(r_mm, [hit.point[0], hit.point[1]]), h })
+```
+
 **The markup convention (`demo.html` is the canonical copy-me page):** `<body>` carries
 `class="pf-shell"`, the flex row that lays the viewer column next to the rail. `#app`
 (`class="pf-stage"`) *is* that viewer column, and now contains the floating chrome
