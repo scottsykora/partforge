@@ -39,6 +39,7 @@ const SEND_MAX_EDGE = 2048;
 const HANDLE_PX = 8;
 const ROTATE_BAND_PX = 22;
 const ERASER_PX = 16;
+const LINE_SNAP_PX = 8; // cursor-to-snapped-line distance for the 0/45/90° magnet
 const MIN_DRAG_PX = 6; // sub-6px shape drags commit nothing
 const FREEHAND_MIN_DIST = 0.003; // stage units (~ink.js's old thinning at aspect 1)
 
@@ -95,7 +96,13 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       const { params } = ellipseFromDrag(x0, y0, x, y, { force: event.shiftKey });
       return { type: "ellipse", color, width: DEFAULT_STROKE_WIDTH, params, gaps: [] };
     }
-    const { params } = lineFromDrag(x0, y0, x, y, { snap45: event.shiftKey });
+    // Snap threshold in cursor pixels, not degrees: the line snaps when the
+    // pointer is within LINE_SNAP_PX of the snapped line, so long lines snap
+    // only when genuinely near-flat while short ones stay forgiving.
+    const { params } = lineFromDrag(x0, y0, x, y, {
+      force: event.shiftKey,
+      snapDistance: stageUnits(LINE_SNAP_PX, rectOf()),
+    });
     return { type: "line", color, width: DEFAULT_STROKE_WIDTH, params, gaps: [] };
   }
 

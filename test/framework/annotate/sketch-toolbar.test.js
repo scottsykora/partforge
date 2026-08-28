@@ -90,7 +90,7 @@ test("hint line follows the tool", () => {
   const hint = element.parentElement.querySelector(".pf-sketch-hint");
   expect(hint.textContent).toBe("drag to draw");
   element.querySelector('[data-tool="eraser"]').click();
-  expect(hint.textContent).toBe("scrub to erase — shapes remember themselves");
+  expect(hint.textContent).toBe("scrub to erase");
 });
 
 test("detach removes the DOM and survives double-detach", () => {

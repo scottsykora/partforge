@@ -202,15 +202,24 @@ export function ellipseFromDrag(x0, y0, x, y, { force = false } = {}) {
   return { params: { cx, cy, rx: w / 2, ry: h / 2, rot: 0 }, snapped };
 }
 
-export function lineFromDrag(x0, y0, x, y, { snap45 = false } = {}) {
+// Magnetic 0/45/90° snap, measured in DISTANCE rather than angle: the drag
+// snaps when the cursor sits within `snapDistance` (stage units — the caller
+// converts its pixel threshold) of the nearest snapped line through the start
+// point. Distance-based snapping self-scales the way angle-based cannot: a
+// long line snaps only when it is genuinely close to flat, a short one stays
+// forgiving. `force` (shift) snaps from any angle; length is preserved.
+export function lineFromDrag(x0, y0, x, y, { force = false, snapDistance = 0 } = {}) {
   let x2 = x, y2 = y;
-  if (snap45) {
-    const len = Math.hypot(x - x0, y - y0);
-    const a = Math.round(Math.atan2(y - y0, x - x0) / (Math.PI / 4)) * (Math.PI / 4);
-    x2 = x0 + len * Math.cos(a);
-    y2 = y0 + len * Math.sin(a);
+  const len = Math.hypot(x - x0, y - y0);
+  const a = Math.atan2(y - y0, x - x0);
+  const nearest = Math.round(a / (Math.PI / 4)) * (Math.PI / 4);
+  const perpDistance = len * Math.abs(Math.sin(a - nearest));
+  const snapped = force || (snapDistance > 0 && perpDistance <= snapDistance);
+  if (snapped) {
+    x2 = x0 + len * Math.cos(nearest);
+    y2 = y0 + len * Math.sin(nearest);
   }
-  return { params: { x1: x0, y1: y0, x2, y2 } };
+  return { params: { x1: x0, y1: y0, x2, y2 }, snapped };
 }
 
 // Freehand point thinning (the ink.js minDistance contract, Euclidean in
