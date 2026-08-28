@@ -163,3 +163,52 @@ export function centerOf(el) {
   }
   return [(minX + maxX) / 2, (minY + maxY) / 2];
 }
+
+// ---- draw-gesture builders -------------------------------------------------
+const MIN_EXTENT = 0.002; // stage units; degenerate drags stay visible as slivers
+
+function snappedBox(x0, y0, x, y, force) {
+  let w = Math.abs(x - x0), h = Math.abs(y - y0);
+  const near = Math.min(w, h) / Math.max(w, h, MIN_EXTENT) > 1 - SNAP_RATIO;
+  const snapped = force || near;
+  if (snapped) w = h = Math.max(w, h);
+  w = Math.max(w, MIN_EXTENT); h = Math.max(h, MIN_EXTENT);
+  // Center = drag origin + half the (possibly snapped) extent, signed by drag
+  // direction. This is corner-order independent — equivalent to (min+max)/2
+  // of the two corners when w/h are unchanged by snapping — and when
+  // snapping grows w/h past the raw drag delta, it hangs the box off the
+  // origin corner in the direction the user dragged.
+  const cx = x0 + Math.sign(x - x0 || 1) * w / 2;
+  const cy = y0 + Math.sign(y - y0 || 1) * h / 2;
+  return { cx, cy, w, h, snapped };
+}
+
+export function rectFromDrag(x0, y0, x, y, { force = false } = {}) {
+  const { cx, cy, w, h, snapped } = snappedBox(x0, y0, x, y, force);
+  return { params: { cx, cy, w, h, rot: 0 }, snapped };
+}
+
+export function ellipseFromDrag(x0, y0, x, y, { force = false } = {}) {
+  const { cx, cy, w, h, snapped } = snappedBox(x0, y0, x, y, force);
+  return { params: { cx, cy, rx: w / 2, ry: h / 2, rot: 0 }, snapped };
+}
+
+export function lineFromDrag(x0, y0, x, y, { snap45 = false } = {}) {
+  let x2 = x, y2 = y;
+  if (snap45) {
+    const len = Math.hypot(x - x0, y - y0);
+    const a = Math.round(Math.atan2(y - y0, x - x0) / (Math.PI / 4)) * (Math.PI / 4);
+    x2 = x0 + len * Math.cos(a);
+    y2 = y0 + len * Math.sin(a);
+  }
+  return { params: { x1: x0, y1: y0, x2, y2 } };
+}
+
+// Freehand point thinning (the ink.js minDistance contract, Euclidean in
+// stage space — stage space is already aspect-uniform).
+export function appendThinned(points, x, y, minDistance) {
+  const last = points[points.length - 1];
+  if (Math.hypot(x - last[0], y - last[1]) < minDistance) return false;
+  points.push([x, y]);
+  return true;
+}
