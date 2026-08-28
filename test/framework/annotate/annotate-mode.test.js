@@ -326,7 +326,16 @@ test("canUndo tracks the store's history", () => {
   expect(mode.canUndo()).toBe(true);
 });
 
-test("Escape cancels a hand-tool drag by undoing it", () => {
+// The ink canvas is never focusable (no tabindex), so a real Escape keystroke
+// never lands on canvas.element — it lands wherever focus actually is and
+// only reaches this mode via a capture-phase listener on the document. These
+// tests dispatch on `document`, bubbles+cancelable like a real keydown, and
+// read `defaultPrevented` to prove whether the mode itself consumed the
+// event — the thing that determines whether the chrome's own bubble-phase
+// Escape handler (which exits the whole mode) still gets to run.
+const escapeKey = () => new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+
+test("Escape cancels a hand-tool drag by undoing it, without exiting the mode", () => {
   const { mode, canvas } = fixture();
   mode.setEnabled(true);
   mode.setTool("line");
@@ -334,10 +343,13 @@ test("Escape cancels a hand-tool drag by undoing it", () => {
   mode.setTool("hand");
   canvas.element.dispatchEvent(pointer("pointerdown", 110, 70));
   canvas.element.dispatchEvent(pointer("pointermove", 110, 90));
-  canvas.element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  const evt = escapeKey();
+  document.dispatchEvent(evt);
+  expect(evt.defaultPrevented).toBe(true); // a gesture was in flight: the mode consumed it
   const el = lastScene(canvas).elements[0];
   expect(el.params.y1).toBeCloseTo(0.5);
   expect(el.params.y2).toBeCloseTo(0.5);
+  expect(mode.isEnabled()).toBe(true); // only the gesture was cancelled, not the whole sketch
 });
 
 test("Escape during a shape drag drops the preview without committing", () => {
@@ -346,19 +358,37 @@ test("Escape during a shape drag drops the preview without committing", () => {
   mode.setTool("rect");
   canvas.element.dispatchEvent(pointer("pointerdown", 30, 40));
   canvas.element.dispatchEvent(pointer("pointermove", 110, 90));
-  canvas.element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  const evt = escapeKey();
+  document.dispatchEvent(evt);
+  expect(evt.defaultPrevented).toBe(true);
   expect(mode.strokeCount()).toBe(0);
+  expect(mode.isEnabled()).toBe(true);
   canvas.element.dispatchEvent(pointer("pointerup", 110, 90));
   expect(mode.strokeCount()).toBe(0); // gesture already cancelled: pointerup is a no-op
 });
 
-test("Escape with no in-flight gesture is a no-op (mode exit stays the chrome's job)", () => {
+test("Escape during a pen stroke rolls back the partial stroke, leaving no stray snapshot", () => {
   const { mode, canvas } = fixture();
   mode.setEnabled(true);
-  drag(canvas, [60, 45], [110, 70]);
-  canvas.element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  expect(mode.isEnabled()).toBe(true);
-  expect(mode.strokeCount()).toBe(1);
+  expect(mode.canUndo()).toBe(false);
+  canvas.element.dispatchEvent(pointer("pointerdown", 60, 45));
+  canvas.element.dispatchEvent(pointer("pointermove", 110, 70));
+  const evt = escapeKey();
+  document.dispatchEvent(evt);
+  expect(evt.defaultPrevented).toBe(true);
+  expect(mode.strokeCount()).toBe(0); // rolled back to its pre-gesture value
+  expect(mode.canUndo()).toBe(false); // the snapshot taken at pointerdown was popped, not left behind
+});
+
+test("Escape with no in-flight gesture is NOT consumed; mode exit stays the chrome's job", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  drag(canvas, [60, 45], [110, 70]); // pen stroke commits normally; no gesture left in flight
+  const evt = escapeKey();
+  document.dispatchEvent(evt);
+  expect(evt.defaultPrevented).toBe(false); // nothing to cancel: the mode does not touch this Escape
+  expect(mode.isEnabled()).toBe(true); // this mode never exits itself on Escape — the chrome does
+  expect(mode.strokeCount()).toBe(1); // nothing rolled back: there was no gesture to cancel
 });
 
 test("detach disposes the canvas and is idempotent", () => {

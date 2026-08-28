@@ -243,7 +243,10 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       store.snapshot();
       const el = { type: "freehand", color, width: DEFAULT_STROKE_WIDTH, params: { points: [[x, y]] }, gaps: [] };
       store.add(el);
-      return { kind: "pen", el };
+      // Pen snapshots and mutates at pointerdown exactly like a hand edit —
+      // the in-progress points ARE the committed element the whole time —
+      // so Escape must roll it back the same way, not just drop it.
+      return { kind: "pen", el, mutatesStore: true };
     }
     if (tool === "line" || tool === "rect" || tool === "ellipse") {
       return { kind: tool, x0: x, y0: y, preview: buildPreview(tool, x, y, x, y, event) };
@@ -358,18 +361,36 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     syncScene();
   };
 
-  // Escape on the canvas element cancels an in-flight gesture. Hand edits and
-  // the eraser already snapshotted+mutated the store at pointerdown, so they
-  // roll back via store.undo(); a draw-tool preview never touched the store
-  // (that only happens at pointerup), so dropping the gesture is enough. With
-  // no gesture, do nothing here — mode exit stays the chrome's Escape
-  // (annotate-controls.js), which listens on a different element.
-  const onKeyDown = (event) => {
+  // Escape cancels an in-flight gesture. Hand edits, the eraser, and pen all
+  // snapshot and mutate the store at pointerdown, so they roll back via
+  // store.undo(); a draw-tool preview never touches the store (that only
+  // happens at pointerup), so dropping the gesture is enough there.
+  //
+  // The ink canvas (.pf-ink-canvas) is never focusable — it has no tabindex
+  // and is never document.activeElement — so a keydown listener on
+  // canvas.element itself can never fire from a real keystroke. Real Escape
+  // keystrokes land wherever focus actually is and reach us only via
+  // capture, which is why this listens on the canvas's ownerDocument in the
+  // CAPTURE phase: document is the outermost node, so this runs before any
+  // phase happens anywhere else in the tree, including the chrome's own
+  // bubble-phase Escape handler (annotate-controls.js, listening on
+  // viewer.domElement/buttons) which exits the whole mode.
+  //
+  // When a gesture IS in flight, this consumes the event
+  // (preventDefault + stopPropagation, the latter during capture halting
+  // capture/target/bubble entirely) so the chrome never sees it and the mode
+  // stays open with only the gesture rolled back. When there is NO gesture,
+  // this must NOT consume the event — mode exit stays the chrome's job.
+  const onEscapeCapture = (event) => {
     if (event.key !== "Escape" || !gesture) return;
     if (gesture.mutatesStore) store.undo();
     gesture = null;
     syncScene();
+    event.preventDefault();
+    event.stopPropagation();
   };
+
+  let escapeDoc = null; // the document currently holding the capture-phase Escape listener
 
   function ensureCanvas() {
     if (canvas) return;
@@ -378,7 +399,6 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     canvas.element.addEventListener("pointermove", onPointerMove);
     canvas.element.addEventListener("pointerup", onPointerEnd);
     canvas.element.addEventListener("pointercancel", onPointerEnd);
-    canvas.element.addEventListener("keydown", onKeyDown);
   }
 
   function setEnabled(on) {
@@ -387,12 +407,16 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     if (on) {
       ensureCanvas();
       canvas.show();
+      escapeDoc = canvas.element.ownerDocument;
+      escapeDoc?.addEventListener("keydown", onEscapeCapture, true);
     } else {
       gesture = null;
       hoverProbe = null;
       pointerPos = null;
       store.reset(); // spec: ink never survives an exit; tool/color do
       canvas?.hide();
+      escapeDoc?.removeEventListener("keydown", onEscapeCapture, true);
+      escapeDoc = null;
     }
     notifyMode();
   }
@@ -522,7 +546,6 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       canvas.element.removeEventListener("pointermove", onPointerMove);
       canvas.element.removeEventListener("pointerup", onPointerEnd);
       canvas.element.removeEventListener("pointercancel", onPointerEnd);
-      canvas.element.removeEventListener("keydown", onKeyDown);
       canvas.dispose();
     },
   };
