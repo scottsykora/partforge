@@ -278,7 +278,7 @@ button.action:disabled { opacity: .5; cursor: default; }
 /* keyboard focus ring shared across the panel's interactive controls */
 .seg button:focus-visible, select.preset:focus-visible, .dl-row button:focus-visible,
 button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible, #viewbar button:focus-visible,
-.pf-viewcube-toggle:focus-visible, .pf-float-rail-toggle:focus-visible {
+.pf-viewcube-toggle:focus-visible, .pf-float-rail-toggle:focus-visible, .pf-sketch-toolbar button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
@@ -355,6 +355,47 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
+
+/* Sketch-mode toolbar: the #viewbar pill idiom, top-centre, owning the mode
+   while the viewbar itself is hidden (mount toggles both). */
+.pf-sketch-toolbar {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px; padding: 4px;
+  background: var(--pf-surface); border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-pill); box-shadow: var(--pf-shadow-float);
+  z-index: 20; max-width: calc(100% - 16px); flex-wrap: wrap; justify-content: center;
+}
+.pf-sketch-toolbar[hidden] { display: none; }
+.pf-sketch-toolbar .sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--pf-border); }
+.pf-sketch-toolbar button {
+  width: 34px; height: 34px; border: 0; border-radius: var(--pf-radius-control);
+  background: transparent; color: var(--pf-muted-2); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.pf-sketch-toolbar button[data-action="send"] { width: auto; min-width: 56px; padding: 0 10px; }
+.pf-sketch-toolbar button:hover { color: var(--pf-text-2); background: var(--pf-surface-2); }
+.pf-sketch-toolbar button:disabled { opacity: .35; cursor: default; background: transparent; color: var(--pf-muted); }
+.pf-sketch-toolbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
+.pf-sketch-toolbar .pf-swatch { width: 26px; height: 26px; margin: 4px 1px; border-radius: 50%; }
+.pf-sketch-toolbar .pf-swatch::before {
+  content: ""; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--sw); box-shadow: 0 0 0 2px color-mix(in oklab, var(--sw) 25%, transparent);
+}
+.pf-sketch-toolbar .pf-swatch.on { background: var(--pf-surface-2); }
+.pf-sketch-toolbar .pf-swatch.on::before { box-shadow: 0 0 0 2.5px var(--pf-bg), 0 0 0 4.5px var(--sw); }
+.pf-sketch-hint {
+  position: absolute; top: 58px; left: 50%; transform: translateX(-50%);
+  font-family: var(--pf-mono); font-size: 10px; letter-spacing: .04em;
+  color: var(--pf-hint); z-index: 19; pointer-events: none; white-space: nowrap;
+}
+.pf-sketch-hint[hidden] { display: none; }
+/* hand-tool cursors on the ink canvas */
+.pf-ink-canvas.hand { cursor: default; }
+.pf-ink-canvas.hand.over { cursor: grab; }
+.pf-ink-canvas.hand.handle { cursor: crosshair; }
+.pf-ink-canvas.hand.rotate { cursor: none; }
+.pf-ink-canvas.hand.dragging { cursor: grabbing; }
+.pf-ink-canvas.erasing { cursor: none; }
 
 /* ---- the rail toggle: a bare floating icon at the stage's top right --------
    APPEARANCE only (placement lives in chrome.css, per the split at the top of

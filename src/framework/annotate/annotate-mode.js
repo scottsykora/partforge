@@ -235,6 +235,29 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     if (sameProbe(hoverProbe, next)) return;
     hoverProbe = next;
     syncScene();
+    syncCursorClasses();
+  }
+
+  // ---- ink-canvas cursor classes -----------------------------------------
+  // Chrome-only (no geometry here): sketch-toolbar.css keys off these to draw
+  // the hand tool's grab/handle/rotate/grabbing states and the eraser's blank
+  // cursor. `dragging` is deliberately narrower than "any hand gesture in
+  // flight" — it means specifically a translate (hand-move); a resize/
+  // endpoint/rotate gesture leaves whatever handle/rotate class was already
+  // set by the hover that started it, because updateHover() is only called
+  // between gestures (see onPointerMove) and hoverProbe is never cleared when
+  // a gesture begins or ends.
+  function syncCursorClasses() {
+    if (!canvas) return;
+    const cl = canvas.element.classList;
+    cl.toggle("hand", tool === "hand");
+    cl.toggle("erasing", tool === "eraser");
+    const dragging = gesture?.kind === "hand-move";
+    cl.toggle("dragging", dragging);
+    const kind = tool === "hand" && !dragging ? hoverProbe?.kind : null;
+    cl.toggle("over", kind === "outline");
+    cl.toggle("handle", kind === "handle");
+    cl.toggle("rotate", kind === "rotate");
   }
 
   // ---- pointer routing ---------------------------------------------------
@@ -332,6 +355,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     gesture = next;
     canvas.element.setPointerCapture?.(event.pointerId);
     syncScene();
+    syncCursorClasses();
   };
 
   const onPointerMove = (event) => {
@@ -359,6 +383,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     }
     gesture = null;
     syncScene();
+    syncCursorClasses();
   };
 
   // Escape cancels an in-flight gesture. Hand edits, the eraser, and pen all
@@ -386,6 +411,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     if (gesture.mutatesStore) store.undo();
     gesture = null;
     syncScene();
+    syncCursorClasses();
     event.preventDefault();
     event.stopPropagation();
   };
@@ -418,6 +444,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       escapeDoc?.removeEventListener("keydown", onEscapeCapture, true);
       escapeDoc = null;
     }
+    syncCursorClasses();
     notifyMode();
   }
 
@@ -519,6 +546,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       gesture = null;
       hoverProbe = null;
       syncScene();
+      syncCursorClasses();
       notifyTool();
     },
     tool: () => tool,

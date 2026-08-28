@@ -408,6 +408,30 @@ test("detach while enabled leaves the state machine honest", () => {
   expect(canvas.dispose).toHaveBeenCalledTimes(1);
 });
 
+test("ink-canvas cursor classes follow tool, hover, and drag state", () => {
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  mode.setTool("line");
+  drag(canvas, [10, 70], [210, 70]); // a line at y=0.5, full width
+  mode.setTool("hand");
+  expect(canvas.element.classList.contains("hand")).toBe(true);
+  // hover the outline (no gesture): "over"
+  canvas.element.dispatchEvent(pointer("pointermove", 110, 70));
+  expect(canvas.element.classList.contains("over")).toBe(true);
+  expect(canvas.element.classList.contains("dragging")).toBe(false);
+  // grab it and drag: "dragging" replaces "over"
+  canvas.element.dispatchEvent(pointer("pointerdown", 110, 70));
+  canvas.element.dispatchEvent(pointer("pointermove", 110, 90));
+  expect(canvas.element.classList.contains("dragging")).toBe(true);
+  expect(canvas.element.classList.contains("over")).toBe(false);
+  canvas.element.dispatchEvent(pointer("pointerup", 110, 90));
+  expect(canvas.element.classList.contains("dragging")).toBe(false);
+  // eraser tool: "erasing", no "hand"
+  mode.setTool("eraser");
+  expect(canvas.element.classList.contains("erasing")).toBe(true);
+  expect(canvas.element.classList.contains("hand")).toBe(false);
+});
+
 test("onModeChange fires on enable and disable", () => {
   const { mode } = fixture();
   const cb = vi.fn();
