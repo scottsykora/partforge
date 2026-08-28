@@ -169,8 +169,11 @@ function drawLabel(ctx, target, label, chrome, dpr) {
   const padY = 3 * dpr;
   const boxW = (metrics?.width || 0) + padX * 2;
   const boxH = 10 * dpr + padY * 2;
-  const bx = x + 8 * dpr;
-  const by = y - 3 * dpr - boxH;
+  // Offset the plate clear of the pointer: the label anchors at the dragged
+  // corner/handle, i.e. under the cursor, so 16px right + 12px up keeps it
+  // outside both the arrow cursor's body and the crosshair's arms.
+  const bx = x + 16 * dpr;
+  const by = y - 12 * dpr - boxH;
   ctx.fillStyle = chrome.surface;
   ctx.fillRect(bx, by, boxW, boxH);
   ctx.fillStyle = chrome.accent;
