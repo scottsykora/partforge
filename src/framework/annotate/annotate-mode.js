@@ -23,6 +23,25 @@ import { raycastViewer } from "../selection/raycast.js";
 // `strokes`/`anchors[].stroke` off the old shape must be told loudly, hence
 // the version bump rather than an additive field.
 export const ANNOTATION_VERSION = 3;
+// Self-describing coordinate legend, shipped verbatim in every payload as
+// `frames`. Three frames coexist in the payload (params are stage-space,
+// anchor screens are per-axis normalized, descriptions are viewport
+// percentages) — this block is what stops a consumer from conflating them.
+// Keys mirror the payload paths they describe.
+const FRAME_LEGEND = Object.freeze({
+  "elements[].params":
+    "stage space: y 0..1 top-down, x 0..aspect (see viewport.aspect); sizes and radii in the same units; rot in radians (rotDeg is the same angle in degrees)",
+  "elements[].anchors[].screen":
+    "[x, y], each normalized 0..1 across the full viewport (x = stage x / aspect)",
+  "elements[].description":
+    "positions and sizes as % of viewport width/height, radii as % of the short edge, angles in degrees",
+  "elements[].erased":
+    "[start, end] spans 0..1 in the element's own domain — line/freehand: fraction along the path; rect: perimeter clockwise from the top-left corner; ellipse: fraction of a full turn from 3 o'clock, screen-clockwise, before rotation",
+  "elements[].anchors[].hit":
+    "pointLocal is millimetres in the named sub-part's local frame; null means the anchor points at empty space",
+  camera:
+    "pos/target in millimetres — world replays against this exact build, parts is pinned to the CAD geometry and survives rebuilds",
+});
 // Long-edge bound on BOTH pictures in the payload. The ink canvas is stage
 // sized × devicePixelRatio, so an unbounded send on a large hi-DPI display
 // hands the host a multi-megabyte pair of base64 strings — slow to encode,
@@ -479,20 +498,24 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     const { pos, target } = viewer.getCameraState();
     const cam = viewer.camera;
     const ortho = !!cam.isOrthographicCamera;
+    // 4 decimals ≈ 0.1 µm at mm scale — far below anything a sketch encodes,
+    // and it keeps float dust (1e-16 up-vector components) out of what an LLM
+    // reads.
+    const r4 = (v) => v.map((q) => +q.toFixed(4));
     const world = {
-      pos,
-      target,
-      up: cam.up.toArray(),
+      pos: r4(pos),
+      target: r4(target),
+      up: r4(cam.up.toArray()),
       projection: ortho ? "orthographic" : "perspective",
-      fov: ortho ? null : cam.fov,
-      orthoHeight: ortho ? Math.abs(cam.top - cam.bottom) / Math.max(cam.zoom, 1e-6) : null,
+      fov: ortho ? null : +cam.fov.toFixed(4),
+      orthoHeight: ortho ? +(Math.abs(cam.top - cam.bottom) / Math.max(cam.zoom, 1e-6)).toFixed(4) : null,
     };
     const parent = Object.values(viewer._subMeshes ?? {})[0]?.parent ?? null;
     if (!parent) return { world, parts: null };
     parent.updateWorldMatrix(true, false);
     const inv = parent.matrixWorld.clone().invert();
-    const map = (v) => new THREE.Vector3(v[0], v[1], v[2]).applyMatrix4(inv).toArray();
-    const up = new THREE.Vector3(world.up[0], world.up[1], world.up[2]).transformDirection(inv).toArray();
+    const map = (v) => r4(new THREE.Vector3(v[0], v[1], v[2]).applyMatrix4(inv).toArray());
+    const up = r4(new THREE.Vector3(world.up[0], world.up[1], world.up[2]).transformDirection(inv).toArray());
     return {
       world,
       parts: {
@@ -523,32 +546,49 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     const round4 = (v) => +v.toFixed(4);
     const roundParams = (p) => Object.fromEntries(Object.entries(p).map(([k, v]) =>
       [k, Array.isArray(v) ? v.map((q) => q.map(round4)) : round4(v)]));
-    const elements = store.list().map((el) => ({
+    // rot ships in both units: radians (`rot`, the internal representation)
+    // and degrees folded to (-180, 180] (`rotDeg`, matching the description).
+    const withRotDeg = (p) => {
+      if (!("rot" in p)) return p;
+      let d = (p.rot * 180) / Math.PI % 360;
+      if (d > 180) d -= 360;
+      if (d <= -180) d += 360;
+      return { ...p, rotDeg: +d.toFixed(2) };
+    };
+    const elements = store.list().map((el, i) => ({
+      id: `e${i + 1}`, // stable within this payload — how a reply names an element
       type: el.type,
       color: { name: el.color, hex: INK_COLORS[el.color] },
       width: el.width,
-      params: el.type === "ellipse" && el.params.rx === el.params.ry
+      params: withRotDeg(el.type === "ellipse" && el.params.rx === el.params.ry
         ? { cx: round4(el.params.cx), cy: round4(el.params.cy), r: round4(el.params.rx), rot: round4(el.params.rot || 0), circle: true }
         : el.type === "rect"
           ? { ...roundParams(el.params), square: el.params.w === el.params.h }
-          : roundParams(el.params),
+          : roundParams(el.params)),
       erased: el.gaps.map(([a, b]) => [round4(a), round4(b)]),
       visibleFraction: +visibleFraction(el).toFixed(3),
       description: `${el.color} ${describeElement(el, aspect)}`,
-      anchors: elementAnchors(el).map(({ at, x, y }) => {
+      anchors: elementAnchors(el).map(({ at, run, x, y }) => {
         const screen = [x / aspect, y]; // per-axis normalized, the v2 screen frame
         const hit = raycastViewer(viewer,
           rect.left + screen[0] * rect.width, rect.top + screen[1] * rect.height);
-        return { at, screen: screen.map(round4), hit: hit ? { subPart: hit.subPart, pointLocal: hit.pointLocal } : null };
+        return {
+          at,
+          ...(run !== undefined ? { run } : {}), // center anchors span all runs
+          screen: screen.map(round4),
+          hit: hit ? { subPart: hit.subPart, pointLocal: hit.pointLocal } : null,
+        };
       }),
     }));
     const { view, params } = getContext();
     onSend?.({
       version: ANNOTATION_VERSION,
+      summary: `${elements.length} annotation${elements.length === 1 ? "" : "s"}: ${elements.map((e) => e.description).join("; ")}`,
+      frames: FRAME_LEGEND,
       elements,
       images: { drawing: canvas.toDataUrl({ maxEdge: SEND_MAX_EDGE }), model },
       camera: cameraBlock(),
-      viewport: { width: rect.width, height: rect.height, dpr },
+      viewport: { width: rect.width, height: rect.height, aspect: round4(aspect), dpr },
       context: { view, params: { ...params } },
     });
     setEnabled(false); // sent: exit and discard

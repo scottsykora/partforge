@@ -197,16 +197,30 @@ test("send payload is v3: elements with params, erased, description, anchors", (
   expect(payload.version).toBe(3);
   expect(payload.strokes).toBeUndefined();
   const [rect] = payload.elements;
+  expect(rect.id).toBe("e1");
   expect(rect.type).toBe("rect");
   expect(rect.color).toEqual({ name: "red", hex: "#d92d20" });
   expect(rect.erased).toEqual([]);
   expect(rect.visibleFraction).toBe(1);
   expect(rect.description).toContain("rect · c");
+  expect(rect.params.rotDeg).toBe(0); // degrees alongside the radian rot
+  // top-level orientation for an LLM: summary + the coordinate-frame legend
+  expect(payload.summary).toBe(`1 annotation: ${rect.description}`);
+  expect(payload.frames["elements[].params"]).toContain("stage space");
+  expect(payload.frames["elements[].erased"]).toContain("perimeter clockwise");
+  expect(payload.viewport.aspect).toBe(2);
   const center = rect.anchors.find((a) => a.at === "center");
   // anchors are normalized per axis 0..1 (screen frame, as v2)
   expect(center.screen[0]).toBeCloseTo(0.3); // stage 0.6 / aspect 2
   expect(center.screen[1]).toBeCloseTo(0.45);
   expect(center).toHaveProperty("hit");
+  // run anchors carry their run index; the whole-shape center does not
+  expect(rect.anchors.find((a) => a.at === "start").run).toBe(0);
+  expect(center.run).toBeUndefined();
+  // camera numbers are rounded to 4 decimals (no float dust for the LLM)
+  for (const v of [...payload.camera.world.pos, ...payload.camera.world.up]) {
+    expect(v).toBe(+v.toFixed(4));
+  }
   expect(payload.images).toEqual({ drawing: expect.any(String), model: "data:image/jpeg;base64,MODEL" });
   // sent -> mode exits and elements clear
   expect(mode.isEnabled()).toBe(false);

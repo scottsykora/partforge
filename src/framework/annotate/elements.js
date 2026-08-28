@@ -393,10 +393,35 @@ function rotNote(rot) {
   return d ? ` · rot ${d}°` : "";
 }
 
+// Where an erased span sits, in each type's own vocabulary: rects name the
+// edges the gap crosses (the t-domain walks the perimeter clockwise from the
+// top-left corner), ellipses give the arc in degrees (t=0 at 3 o'clock,
+// increasing screen-clockwise, before rotation), open paths give a % range
+// along their length. Raw t-spans stay in the payload's `erased`; this is the
+// human/LLM-readable rendering of the same data.
+const RECT_EDGES = ["top", "right", "bottom", "left"];
+export function describeGap(el, [a, b]) {
+  if (el.type === "ellipse") {
+    return `arc ${Math.round(a * 360)}°–${Math.round(b * 360)}°`;
+  }
+  if (el.type === "rect") {
+    const { w, h } = el.params;
+    const per = 2 * (w + h) || 1;
+    const ends = [w / per, (w + h) / per, (2 * w + h) / per, 1];
+    const edges = RECT_EDGES.filter((_, i) =>
+      a < ends[i] - GAP_TOUCH && b > (i ? ends[i - 1] : 0) + GAP_TOUCH);
+    return edges.length === 1 ? `${edges[0]} edge` : `${edges.join("–")} edges`;
+  }
+  return `${Math.round(a * 100)}%–${Math.round(b * 100)}%`;
+}
+
+const GAP_NOTE_MAX = 3; // heavy freehand scrubbing can leave dozens of gaps
 function gapNote(el) {
   if (!el.gaps.length) return "";
   const pct = Math.round(visibleFraction(el) * 100);
-  return ` · ${pct}% visible · ${el.gaps.length} gap${el.gaps.length > 1 ? "s" : ""}`;
+  const noted = el.gaps.slice(0, GAP_NOTE_MAX).map((g) => describeGap(el, g));
+  const more = el.gaps.length - noted.length;
+  return ` · ${pct}% visible · erased ${noted.join(", ")}${more > 0 ? ` +${more} more` : ""}`;
 }
 
 export function describeElement(el, aspect) {
@@ -422,12 +447,15 @@ export function describeElement(el, aspect) {
 
 export function elementAnchors(el) {
   const out = [];
-  for (const run of visibleRuns(el)) {
+  // `run` disambiguates anchors on a gapped element: a twice-erased circle has
+  // three visible fragments, each with its own start/mid/end. The center
+  // anchor belongs to the whole shape, not a fragment, so it carries no run.
+  visibleRuns(el).forEach((run, i) => {
     const mid = run[Math.floor(run.length / 2)];
-    out.push({ at: "start", x: run[0].x, y: run[0].y });
-    out.push({ at: "mid", x: mid.x, y: mid.y });
-    out.push({ at: "end", x: run[run.length - 1].x, y: run[run.length - 1].y });
-  }
+    out.push({ at: "start", run: i, x: run[0].x, y: run[0].y });
+    out.push({ at: "mid", run: i, x: mid.x, y: mid.y });
+    out.push({ at: "end", run: i, x: run[run.length - 1].x, y: run[run.length - 1].y });
+  });
   if (el.type === "rect" || el.type === "ellipse") {
     const [x, y] = centerOf(el);
     out.push({ at: "center", x, y });

@@ -1827,6 +1827,16 @@ rebuilt). `ANNOTATION_VERSION` is **3**: both frames carry
 (v1 had `fov` only, and predates the projection toggle; v3 replaced the
 payload's `strokes` array with `elements` — typed pen/line/rect/ellipse
 shapes rather than raw ink paths — a change orthogonal to this camera block.)
+The payload is self-describing for LLM consumers: a top-level `summary` joins
+every element's plain-language `description`, and `frames` is a legend mapping
+each payload path to its coordinate convention (element `params` are
+stage-space, anchor `screen`s are per-axis normalized 0..1, descriptions are
+viewport percentages — `viewport.aspect` bridges them). Each element carries an
+`id` (`"e1"`, `"e2"`, …) for unambiguous reference in replies, `rotDeg`
+alongside the radian `rot`, and erased spans rendered into the description in
+each type's own vocabulary ("erased top edge", "erased arc 36°–126°"); each
+anchor of a gapped element carries the `run` index of the visible fragment it
+sits on.
 
 **The markup convention (`demo.html` is the canonical copy-me page):** `<body>` carries
 `class="pf-shell"`, the flex row that lays the viewer column next to the rail. `#app`
