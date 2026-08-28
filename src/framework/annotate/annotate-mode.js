@@ -8,7 +8,7 @@
 // within a session — cheap continuity, no spec reason to reset them.
 import * as THREE from "three";
 import {
-  createElementStore, DEFAULT_STROKE_WIDTH, INK_COLORS, MIN_VISIBLE,
+  createElementStore, DEFAULT_STROKE_WIDTH, INK_COLORS,
   rectFromDrag, ellipseFromDrag, lineFromDrag, appendThinned,
   probe, handlesOf, centerOf, translateElement, rectAnchorFor,
   resizeRectFromAnchor, resizeEllipseHandle, applyRotation,
@@ -180,7 +180,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
         case "line": case "rect": case "ellipse":
           return drawPreviewOverlay();
         case "eraser":
-          return pointerPos ? { eraser: { x: pointerPos[0], y: pointerPos[1] } } : {};
+          return pointerPos ? { eraser: { x: pointerPos[0], y: pointerPos[1], r: stageUnits(ERASER_PX, rectOf()) } } : {};
         case "hand-move": case "hand-endpoint": case "hand-resize-rect": case "hand-resize-ellipse":
           return handEditOverlay();
         case "hand-rotate":
@@ -195,7 +195,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       if (hoverProbe.kind === "rotate" && pointerPos) overlay.rotateGlyph = { x: pointerPos[0], y: pointerPos[1] };
       return overlay;
     }
-    if (tool === "eraser" && pointerPos) return { eraser: { x: pointerPos[0], y: pointerPos[1] } };
+    if (tool === "eraser" && pointerPos) return { eraser: { x: pointerPos[0], y: pointerPos[1], r: stageUnits(ERASER_PX, rectOf()) } };
     return {};
   }
 
@@ -416,6 +416,15 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
   // effect.
   const onEscapeCapture = (event) => {
     if (event.key !== "Escape") return;
+    // A host composer (partforge-cloud shows one during sketch, to gather
+    // notes alongside the drawing) can be focused while sketch mode is still
+    // enabled. Escape there is the user editing text, not a request to leave
+    // sketch mode — since exiting calls store.reset() and discards the whole
+    // drawing irrecoverably, this guard must not act or consume the event,
+    // so it falls through to the field's own (or the browser's) handling.
+    const target = event.target;
+    const tag = target?.tagName;
+    if (target?.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (gesture) {
       if (gesture.mutatesStore) store.undo();
       gesture = null;

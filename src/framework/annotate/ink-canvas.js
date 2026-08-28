@@ -112,13 +112,20 @@ function drawGlow(ctx, target, glowEl, accent) {
   ctx.restore();
 }
 
-function drawHandles(ctx, target, handlesEl, chrome) {
+// Handles/labels/glyph geometry and the chrome stroke widths below are
+// specified as CSS pixels, but the bitmap they draw into is device pixels
+// (CSS size × dpr, see resize()) — the same distinction the ink strokes
+// already get for free via el.width being a fraction of the (dpr-scaled)
+// short edge. Every literal constant here is multiplied by `dpr` (the
+// current bitmap dpr, threaded in from draw()) so this chrome renders at its
+// intended CSS size instead of shrinking to half that on a dpr-2 display.
+function drawHandles(ctx, target, handlesEl, chrome, dpr) {
   if (!handlesEl) return;
   const toPx = mapper(target);
-  const HS = 7;
+  const HS = 7 * dpr;
   ctx.fillStyle = chrome.surface;
   ctx.strokeStyle = chrome.accent;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.5 * dpr;
   for (const h of handlesOf(handlesEl)) {
     const [x, y] = toPx(h);
     ctx.fillRect(x - HS / 2, y - HS / 2, HS, HS);
@@ -126,12 +133,12 @@ function drawHandles(ctx, target, handlesEl, chrome) {
   }
 }
 
-function drawGuide(ctx, target, guide, chrome) {
+function drawGuide(ctx, target, guide, chrome, dpr) {
   if (!guide) return;
   const toPx = mapper(target);
   ctx.strokeStyle = chrome.accent;
-  ctx.lineWidth = 1;
-  ctx.setLineDash([4, 3]);
+  ctx.lineWidth = 1 * dpr;
+  ctx.setLineDash([4 * dpr, 3 * dpr]);
   if (guide.kind === "rect") {
     // w/h are stage-space extents, not a stroke width — map them with the
     // same factor as points (target.height), not the short-edge convention
@@ -141,44 +148,45 @@ function drawGuide(ctx, target, guide, chrome) {
     ctx.strokeRect(x, y, x2 - x, y2 - y);
   } else if (guide.kind === "cross") {
     const [x, y] = toPx({ x: guide.cx, y: guide.cy });
+    const arm = 5 * dpr;
     ctx.beginPath();
-    ctx.moveTo(x - 5, y);
-    ctx.lineTo(x + 5, y);
-    ctx.moveTo(x, y - 5);
-    ctx.lineTo(x, y + 5);
+    ctx.moveTo(x - arm, y);
+    ctx.lineTo(x + arm, y);
+    ctx.moveTo(x, y - arm);
+    ctx.lineTo(x, y + arm);
     ctx.stroke();
   }
   ctx.setLineDash([]);
 }
 
-function drawLabel(ctx, target, label, chrome) {
+function drawLabel(ctx, target, label, chrome, dpr) {
   if (!label) return;
   const toPx = mapper(target);
   const [x, y] = toPx(label);
-  ctx.font = "10px monospace";
+  ctx.font = `${10 * dpr}px monospace`;
   const metrics = ctx.measureText(label.text);
-  const padX = 4;
-  const padY = 3;
+  const padX = 4 * dpr;
+  const padY = 3 * dpr;
   const boxW = (metrics?.width || 0) + padX * 2;
-  const boxH = 10 + padY * 2;
-  const bx = x + 8;
-  const by = y - 3 - boxH;
+  const boxH = 10 * dpr + padY * 2;
+  const bx = x + 8 * dpr;
+  const by = y - 3 * dpr - boxH;
   ctx.fillStyle = chrome.surface;
   ctx.fillRect(bx, by, boxW, boxH);
   ctx.fillStyle = chrome.accent;
   ctx.fillText(label.text, bx + padX, by + boxH - padY);
 }
 
-function drawRotateGlyph(ctx, target, rotateGlyph, chrome) {
+function drawRotateGlyph(ctx, target, rotateGlyph, chrome, dpr) {
   if (!rotateGlyph) return;
   const toPx = mapper(target);
   const [x, y] = toPx(rotateGlyph);
-  const r = 8;
+  const r = 8 * dpr;
   const start = -0.15 * Math.PI;
   const end = 1.15 * Math.PI;
   ctx.strokeStyle = chrome.text;
   ctx.fillStyle = chrome.text;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.5 * dpr;
   ctx.beginPath();
   ctx.arc(x, y, r, start, end);
   ctx.stroke();
@@ -186,22 +194,30 @@ function drawRotateGlyph(ctx, target, rotateGlyph, chrome) {
   const ay = y + r * Math.sin(end);
   ctx.beginPath();
   ctx.moveTo(ax, ay);
-  ctx.lineTo(ax - 4, ay - 2);
-  ctx.lineTo(ax - 2, ay + 4);
+  ctx.lineTo(ax - 4 * dpr, ay - 2 * dpr);
+  ctx.lineTo(ax - 2 * dpr, ay + 4 * dpr);
   ctx.closePath();
   ctx.fill();
 }
 
-function drawEraser(ctx, target, eraser, chrome) {
+// The eraser ring's RADIUS is not a fixed pixel constant here — the mode
+// passes it through in STAGE units (overlay.eraser.r, computed from the
+// mode's own ERASER_PX brush size via stageUnits()) so the ring always
+// matches the true brush footprint, and it maps with the same target.height
+// factor mapper() uses for positions (which already bakes in dpr, since
+// target.height is the dpr-scaled bitmap height). Only the ring's stroke
+// WIDTH is a fixed chrome constant, so only that is dpr-scaled directly.
+function drawEraser(ctx, target, eraser, chrome, dpr) {
   if (!eraser) return;
   const toPx = mapper(target);
   const [x, y] = toPx(eraser);
+  const r = eraser.r * target.height;
   ctx.save();
   ctx.globalAlpha = 0.7;
   ctx.strokeStyle = chrome.text;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.5 * dpr;
   ctx.beginPath();
-  ctx.arc(x, y, 16, 0, Math.PI * 2);
+  ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
@@ -216,6 +232,12 @@ export function createInkCanvas(stage, {
   stage.appendChild(canvas);
   const ctx = getContext2d(canvas);
   let scene = { elements: [], overlay: {} };
+  // The bitmap's current dpr, set by resize()/size() below and read by draw()
+  // to scale the overlay chrome's fixed-CSS-pixel constants (handles, label,
+  // rotate glyph, chrome line widths) up to device pixels. Defaults to 1 so a
+  // draw() before the first resize() (there isn't one on this path, but
+  // belt-and-suspenders) doesn't under/over-scale.
+  let currentDpr = 1;
 
   // Live draw order: glow -> all halos -> all cores -> handles -> guide ->
   // label -> rotate glyph -> eraser ring. Glow renders before the elements'
@@ -225,20 +247,22 @@ export function createInkCanvas(stage, {
     if (!ctx) return;
     const overlay = scene.overlay || {};
     const chrome = chromeColors(canvas);
+    const dpr = currentDpr;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawGlow(ctx, canvas, overlay.glowEl, chrome.accent);
     strokePass(canvas, ctx, scene.elements, HALO_RATIO, () => HALO_COLOR);
     strokePass(canvas, ctx, scene.elements, 1, (el) => INK_COLORS[el.color]);
-    drawHandles(ctx, canvas, overlay.handlesEl, chrome);
-    drawGuide(ctx, canvas, overlay.guide, chrome);
-    drawLabel(ctx, canvas, overlay.label, chrome);
-    drawRotateGlyph(ctx, canvas, overlay.rotateGlyph, chrome);
-    drawEraser(ctx, canvas, overlay.eraser, chrome);
+    drawHandles(ctx, canvas, overlay.handlesEl, chrome, dpr);
+    drawGuide(ctx, canvas, overlay.guide, chrome, dpr);
+    drawLabel(ctx, canvas, overlay.label, chrome, dpr);
+    drawRotateGlyph(ctx, canvas, overlay.rotateGlyph, chrome, dpr);
+    drawEraser(ctx, canvas, overlay.eraser, chrome, dpr);
   }
 
   function resize() {
     const rect = stage.getBoundingClientRect();
     const dpr = globalThis.devicePixelRatio || 1;
+    currentDpr = dpr;
     const width = Math.max(1, Math.round(rect.width * dpr));
     const height = Math.max(1, Math.round(rect.height * dpr));
     if (canvas.width !== width || canvas.height !== height) {

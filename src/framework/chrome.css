@@ -469,8 +469,10 @@
 
 /* ---- annotation ink layer: a transparent 2D canvas over the viewer --------
    Shown only while annotation mode is on. It deliberately owns pointer events
-   while visible — that is what freezes orbit/pan/zoom during drawing. Below
-   the viewbar (z 15) so Undo/Clear/Send stay clickable. */
+   while visible — that is what freezes orbit/pan/zoom during drawing. #viewbar
+   itself is hidden for the duration (mount.js toggles both), replaced by
+   .pf-sketch-toolbar (app.css, z 20) which now holds Undo/Clear/Send; this
+   layer sits below that at z 10 so the toolbar stays clickable over it. */
 .pf-ink-canvas {
   position: absolute;
   inset: 0;

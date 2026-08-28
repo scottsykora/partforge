@@ -403,6 +403,25 @@ test("Escape with no in-flight gesture exits the mode and IS consumed", () => {
   expect(mode.strokeCount()).toBe(0);
 });
 
+test("Escape typed into a host composer field does not exit the mode or touch the drawing", () => {
+  // partforge-cloud shows its own composer (an <input>/<textarea>) over the
+  // stage while sketch mode is enabled. A user typing a note there and
+  // pressing Escape to, say, clear the field must not also reach this
+  // mode's document-capture listener as an exit request — setEnabled(false)
+  // calls store.reset(), which would discard the whole drawing.
+  const { mode, canvas } = fixture();
+  mode.setEnabled(true);
+  drag(canvas, [60, 45], [110, 70]); // one committed stroke, no gesture in flight
+  expect(mode.strokeCount()).toBe(1);
+  const input = document.createElement("input");
+  document.body.appendChild(input);
+  const evt = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  input.dispatchEvent(evt);
+  expect(evt.defaultPrevented).toBe(false); // guard returned without consuming
+  expect(mode.isEnabled()).toBe(true); // still in sketch mode
+  expect(mode.strokeCount()).toBe(1); // drawing untouched
+});
+
 test("detach disposes the canvas and is idempotent", () => {
   const { canvas, mode } = fixture();
   mode.setEnabled(true);
