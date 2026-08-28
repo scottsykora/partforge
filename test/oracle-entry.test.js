@@ -22,6 +22,8 @@ test("the entry exports the oracle surface", async () => {
     // install, not just a local import.
     "bounds", "meshArea", "meshTriangles", "parseStl", "parse3MF",
     "MATCH_VIEWS", "rasterizeMeshMask", "rasterizeRingsMask", "matchMasks", "matchViews",
+    // Sketch-payload ray reconstruction (annotation-ray.js)
+    "annotationRay", "rayPlane",
   ]) expect(oracle[name], name).toBeDefined();
 });
 

@@ -19,4 +19,7 @@ export {
   // silhouette match scoring
   MATCH_VIEWS, rasterizeMeshMask, rasterizeRingsMask, matchMasks, matchViews,
   type SilhouetteMask, type MatchScores, type MatchDelta,
+  // sketch-annotation rays
+  annotationRay, rayPlane,
+  type AnnotationRay, type RayPlaneHit, type PlaneSpec,
 } from "./testing.js";

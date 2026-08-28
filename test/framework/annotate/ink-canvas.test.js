@@ -1,21 +1,43 @@
 // @vitest-environment happy-dom
-// Overlay canvas renderer: DOM lifecycle, halo+core draw passes, PNG export.
+// Overlay canvas renderer: DOM lifecycle, typed-element halo+core draw passes,
+// overlay adornments, PNG export (elements only, no overlay).
 import { afterEach, expect, test, vi } from "vitest";
 import { createInkCanvas } from "../../../src/framework/annotate/ink-canvas.js";
 
 afterEach(() => { document.body.innerHTML = ""; });
 
+// Records both method calls (`{ op, args }`) and property assignments
+// (`{ prop, value }`) in one ordered list, so a test can assert on draw
+// order across styling and drawing calls alike (e.g. "strokeStyle was set
+// to the halo color before it was set to the core color").
 function fakeCtx() {
-  return {
-    calls: [],
-    clearRect(...a) { this.calls.push(["clearRect", ...a]); },
-    beginPath() { this.calls.push(["beginPath"]); },
-    moveTo(...a) { this.calls.push(["moveTo", ...a]); },
-    lineTo(...a) { this.calls.push(["lineTo", ...a]); },
-    arc(...a) { this.calls.push(["arc", ...a]); },
-    fill() { this.calls.push(["fill"]); },
-    stroke() { this.calls.push(["stroke", this.strokeStyle, this.lineWidth]); },
+  const calls = [];
+  const ctx = {
+    calls,
+    clearRect(...args) { calls.push({ op: "clearRect", args }); },
+    beginPath() { calls.push({ op: "beginPath" }); },
+    closePath() { calls.push({ op: "closePath" }); },
+    moveTo(...args) { calls.push({ op: "moveTo", args }); },
+    lineTo(...args) { calls.push({ op: "lineTo", args }); },
+    arc(...args) { calls.push({ op: "arc", args }); },
+    fill() { calls.push({ op: "fill" }); },
+    stroke() { calls.push({ op: "stroke", strokeStyle: ctx.strokeStyle, lineWidth: ctx.lineWidth }); },
+    fillRect(...args) { calls.push({ op: "fillRect", args }); },
+    strokeRect(...args) { calls.push({ op: "strokeRect", args }); },
+    fillText(...args) { calls.push({ op: "fillText", args }); },
+    measureText(text) { calls.push({ op: "measureText", args: [text] }); return { width: text.length * 6 }; },
+    setLineDash(segs) { calls.push({ op: "setLineDash", args: [segs] }); },
+    save() { calls.push({ op: "save" }); },
+    restore() { calls.push({ op: "restore" }); },
   };
+  for (const prop of ["strokeStyle", "fillStyle", "lineWidth", "lineCap", "lineJoin", "globalAlpha", "font"]) {
+    let value;
+    Object.defineProperty(ctx, prop, {
+      get: () => value,
+      set(v) { value = v; calls.push({ prop, value: v }); },
+    });
+  }
+  return ctx;
 }
 
 function fixture() {
@@ -24,7 +46,17 @@ function fixture() {
   document.body.appendChild(stage);
   const ctx = fakeCtx();
   const canvas = createInkCanvas(stage, { getContext2d: () => ctx });
-  return { stage, ctx, canvas };
+  return {
+    stage, ctx, canvas, calls: ctx.calls,
+    countOps: (op) => ctx.calls.filter((c) => c.op === op).length,
+    // Marks the current call count; the returned function replays only the
+    // calls recorded since — used to inspect one operation's output (e.g.
+    // toDataUrl) in isolation from setup noise.
+    callsSince: () => {
+      const start = ctx.calls.length;
+      return () => ctx.calls.slice(start);
+    },
+  };
 }
 
 test("mounts hidden inside the stage with the pf- class", () => {
@@ -43,26 +75,137 @@ test("show() sizes the bitmap to the stage rect × dpr and unhides", () => {
   expect(height).toBe(Math.round(100 * dpr));
 });
 
-test("setStrokes draws two passes per stroke: halo then core", () => {
-  const { ctx, canvas } = fixture();
+test("setScene draws halo before core, per element color", () => {
+  const { canvas, calls } = fixture();
   canvas.show();
-  ctx.calls.length = 0;
-  canvas.setStrokes([{ points: [[0, 0], [1, 1]], width: 0.01 }]);
-  const strokeCalls = ctx.calls.filter(([op]) => op === "stroke");
-  expect(strokeCalls).toHaveLength(2);
-  // halo pass is wider than the core pass
-  expect(strokeCalls[0][2]).toBeGreaterThan(strokeCalls[1][2]);
-  // and a different color
-  expect(strokeCalls[0][1]).not.toBe(strokeCalls[1][1]);
+  calls.length = 0;
+  canvas.setScene({
+    elements: [
+      { type: "line", color: "blue", width: 0.004, params: { x1: 0, y1: 0, x2: 0.5, y2: 0.5 }, gaps: [] },
+    ],
+    overlay: {},
+  });
+  const strokeStyles = calls.filter((c) => c.prop === "strokeStyle").map((c) => c.value);
+  expect(strokeStyles[0]).toBe("rgba(255, 255, 255, 0.85)"); // halo pass first
+  expect(strokeStyles).toContain("#1570ef"); // blue core after
 });
 
-test("a one-point stroke draws as a filled dot, twice (halo + core)", () => {
-  const { ctx, canvas } = fixture();
+test("gapped elements draw one path per visible run", () => {
+  const { canvas, calls, countOps } = fixture();
+  canvas.show();
+  calls.length = 0;
+  canvas.setScene({
+    elements: [
+      { type: "line", color: "red", width: 0.004, params: { x1: 0, y1: 0.5, x2: 1, y2: 0.5 }, gaps: [[0.4, 0.6]] },
+    ],
+    overlay: {},
+  });
+  // 2 runs × 2 passes (halo+core) = 4 beginPath+stroke pairs
+  expect(countOps("beginPath")).toBe(4);
+  expect(countOps("stroke")).toBe(4);
+});
+
+test("a single-point run draws as a filled dot, in both halo and core passes", () => {
+  const { canvas, calls, countOps } = fixture();
+  canvas.show();
+  calls.length = 0;
+  canvas.setScene({
+    elements: [
+      { type: "freehand", color: "green", width: 0.01, params: { points: [[0.5, 0.5]] }, gaps: [] },
+    ],
+    overlay: {},
+  });
+  expect(countOps("arc")).toBe(2);
+  expect(countOps("fill")).toBe(2);
+});
+
+test("overlay draws glow, then halos, cores, handles, guide, label — in that order", () => {
+  // No pointer-followers here on purpose: the eraser ring and rotate glyph
+  // are CSS cursors (app.css), never canvas drawings — see the draw() comment.
+  const { canvas, calls } = fixture();
+  canvas.show();
+  calls.length = 0;
+  const el = { type: "line", color: "red", width: 0.01, params: { x1: 0, y1: 0, x2: 1, y2: 1 }, gaps: [] };
+  canvas.setScene({
+    elements: [el],
+    overlay: {
+      glowEl: el,
+      handlesEl: { type: "line", color: "red", width: 0.01, params: { x1: 0, y1: 0, x2: 1, y2: 0 }, gaps: [] },
+      guide: { kind: "cross", cx: 0.5, cy: 0.5 },
+      label: { x: 0.2, y: 0.2, text: "r 10" },
+    },
+  });
+  const glowAt = calls.findIndex((c) => c.prop === "globalAlpha" && c.value === 0.35);
+  const haloAt = calls.findIndex((c) => c.prop === "strokeStyle" && c.value === "rgba(255, 255, 255, 0.85)");
+  const coreAt = calls.findIndex((c) => c.prop === "strokeStyle" && c.value === "#d92d20");
+  const handlesAt = calls.findIndex((c) => c.op === "fillRect");
+  const guideAt = calls.findIndex((c) => c.op === "setLineDash");
+  const labelAt = calls.findIndex((c) => c.op === "fillText");
+  const order = [glowAt, haloAt, coreAt, handlesAt, guideAt, labelAt];
+  expect(order.every((i) => i >= 0)).toBe(true);
+  expect(order).toEqual([...order].sort((a, b) => a - b));
+});
+
+test("overlay chrome (handles, label, line widths) scales with the bitmap's dpr", () => {
+  // These adornments are specified in CSS pixels but drawn straight into the
+  // device-pixel bitmap; at dpr 2 every fixed constant must be doubled or the
+  // chrome renders at half its intended on-screen size (unlike ink strokes,
+  // which already scale for free via el.width being a fraction of the
+  // dpr-scaled short edge).
+  const original = globalThis.devicePixelRatio;
+  globalThis.devicePixelRatio = 2;
+  try {
+    const { canvas, calls } = fixture();
+    canvas.show(); // resize() reads devicePixelRatio here and latches currentDpr = 2
+    calls.length = 0;
+    canvas.setScene({
+      elements: [],
+      overlay: {
+        handlesEl: { type: "line", color: "red", width: 0.01, params: { x1: 0, y1: 0, x2: 1, y2: 0 }, gaps: [] },
+        label: { x: 0.2, y: 0.2, text: "x" },
+      },
+    });
+    // handle square: HS = 7 * dpr = 14
+    const fillRectCall = calls.find((c) => c.op === "fillRect");
+    expect(fillRectCall.args[2]).toBeCloseTo(14);
+    expect(fillRectCall.args[3]).toBeCloseTo(14);
+    // handles chrome line width: 1.5 * dpr = 3
+    expect(calls.some((c) => c.prop === "lineWidth" && c.value === 3)).toBe(true);
+    // label font size: 10 * dpr = 20
+    expect(calls.some((c) => c.prop === "font" && c.value === "20px monospace")).toBe(true);
+  } finally {
+    globalThis.devicePixelRatio = original;
+  }
+});
+
+test("chrome colors fall back to literal defaults in a bare test environment", () => {
+  const { canvas } = fixture();
+  canvas.show();
+  // getComputedStyle exists in happy-dom but the --pf-* custom properties are
+  // unset, so this must not throw and must fall back rather than draw "".
+  expect(() => canvas.setScene({
+    elements: [],
+    overlay: { label: { x: 0.5, y: 0.5, text: "r 10" } },
+  })).not.toThrow();
+});
+
+test("guide rect maps w/h like point extents (target.height), not the stroke-width short-edge convention", () => {
+  // Portrait stage (100x200) makes short-edge (100) and height (200) differ,
+  // so a guide box sized against the wrong factor is visibly wrong here even
+  // though the two conventions coincide on a landscape stage.
+  const stage = document.createElement("div");
+  stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 200 });
+  document.body.appendChild(stage);
+  const ctx = fakeCtx();
+  const canvas = createInkCanvas(stage, { getContext2d: () => ctx });
   canvas.show();
   ctx.calls.length = 0;
-  canvas.setStrokes([{ points: [[0.5, 0.5]], width: 0.01 }]);
-  expect(ctx.calls.filter(([op]) => op === "arc")).toHaveLength(2);
-  expect(ctx.calls.filter(([op]) => op === "fill")).toHaveLength(2);
+  canvas.setScene({
+    elements: [],
+    overlay: { guide: { kind: "rect", cx: 0.5, cy: 0.5, w: 0.2, h: 0.1 } },
+  });
+  const [call] = ctx.calls.filter((c) => c.op === "strokeRect");
+  call.args.forEach((v, i) => expect(v).toBeCloseTo([80, 90, 40, 20][i]));
 });
 
 test("resize observer callback ignores a hidden canvas", () => {
@@ -75,20 +218,34 @@ test("resize observer callback ignores a hidden canvas", () => {
   const original = global.ResizeObserver;
   global.ResizeObserver = FakeResizeObserver;
   try {
-    const { ctx, canvas } = fixture();
+    const { calls, canvas } = fixture();
     expect(canvas.element.hidden).toBe(true);
     observerCallback(); // still hidden: must not re-rasterize
-    expect(ctx.calls).toHaveLength(0);
+    expect(calls).toHaveLength(0);
     canvas.show();
-    ctx.calls.length = 0;
+    calls.length = 0;
     observerCallback(); // visible: resize()/draw() run as before
-    expect(ctx.calls.some(([op]) => op === "clearRect")).toBe(true);
+    expect(calls.some((c) => c.op === "clearRect")).toBe(true);
   } finally {
     global.ResizeObserver = original;
   }
 });
 
-test("toDataUrl re-rasterizes into a bounded scratch canvas above maxEdge", () => {
+test("toDataUrl exports elements only — overlay adornments never reach the PNG", () => {
+  const { canvas, callsSince } = fixture();
+  canvas.show();
+  canvas.setScene({
+    elements: [{ type: "line", color: "red", width: 0.004, params: { x1: 0, y1: 0, x2: 1, y2: 1 }, gaps: [] }],
+    overlay: { label: { x: 0.1, y: 0.1, text: "r 10" } },
+  });
+  const mark = callsSince();
+  canvas.toDataUrl({ maxEdge: 100 });
+  const exported = mark();
+  expect(exported.some((c) => c.op === "fillText")).toBe(false); // no label in export
+  expect(exported.some((c) => c.prop === "globalAlpha")).toBe(false); // no glow alpha in export
+});
+
+test("toDataUrl always re-rasterizes into a scratch canvas, scaled under maxEdge", () => {
   const stage = document.createElement("div");
   stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 4000, height: 2000 });
   document.body.appendChild(stage);
@@ -104,12 +261,16 @@ test("toDataUrl re-rasterizes into a bounded scratch canvas above maxEdge", () =
     },
   });
   canvas.show();
-  canvas.setStrokes([{ points: [[0, 0], [1, 1]], width: 0.01 }]);
+  canvas.setScene({
+    elements: [{ type: "line", color: "red", width: 0.01, params: { x1: 0, y1: 0, x2: 1, y2: 1 }, gaps: [] }],
+    overlay: {},
+  });
   const live = canvas.size();
   expect(Math.max(live.width, live.height)).toBeGreaterThan(2048);
 
-  // Bounded: the scratch canvas is a second canvas, scaled to the cap, with the
-  // aspect ratio kept — and the strokes are re-drawn into it, not resampled.
+  // Above the cap: a scratch canvas scaled to the cap, aspect kept, strokes
+  // re-drawn (not resampled).
+  made.length = 0;
   ctx.calls.length = 0;
   const bounded = canvas.toDataUrl({ maxEdge: 2048 });
   const scratch = made.at(-1);
@@ -117,12 +278,15 @@ test("toDataUrl re-rasterizes into a bounded scratch canvas above maxEdge", () =
   expect(scratch.width).toBe(2048);
   expect(scratch.height).toBe(1024);
   expect(bounded).toBe("data:image/png;base64,2048x1024");
-  expect(ctx.calls.filter(([op]) => op === "stroke")).toHaveLength(2);
+  expect(ctx.calls.filter((c) => c.op === "stroke")).toHaveLength(2);
 
-  // Under the cap nothing is copied: the live canvas exports directly.
+  // Under the cap: still a scratch canvas (the live canvas carries overlay
+  // now), but at full live resolution — nothing is scaled down.
   made.length = 0;
   const direct = canvas.toDataUrl({ maxEdge: 99_999 });
-  expect(made).toHaveLength(0);
+  expect(made).toHaveLength(1);
+  expect(made[0].width).toBe(live.width);
+  expect(made[0].height).toBe(live.height);
   expect(direct).toBe(`data:image/png;base64,${live.width}x${live.height}`);
 });
 

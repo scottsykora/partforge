@@ -29,3 +29,7 @@ export { parse3MF } from "./framework/geometry/threemf-parse.js";
 // these, re-exported so a downstream harness can reproduce a score outside the job loop.
 export { MATCH_VIEWS, rasterizeMeshMask, rasterizeRingsMask } from "./framework/oracle/silhouette.js";
 export { matchMasks, matchViews } from "./framework/oracle/match.js";
+// Sketch-annotation ray reconstruction — the consumer-side half of the
+// annotation payload's camera block: rebuild the pick ray for any screen
+// point, intersect it with a plane in parts-frame millimetres.
+export { annotationRay, rayPlane } from "./framework/oracle/annotation-ray.js";

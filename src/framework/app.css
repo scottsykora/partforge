@@ -279,7 +279,7 @@ button.action:disabled { opacity: .5; cursor: default; }
 .seg button:focus-visible, select.preset:focus-visible, .dl-row button:focus-visible,
 button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible, #viewbar button:focus-visible,
 .pf-view-select:focus-visible,
-.pf-viewcube-toggle:focus-visible, .pf-float-rail-toggle:focus-visible {
+.pf-viewcube-toggle:focus-visible, .pf-float-rail-toggle:focus-visible, .pf-sketch-toolbar button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
@@ -370,6 +370,10 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   border-radius: var(--pf-radius-pill);
   box-shadow: var(--pf-shadow-float);
 }
+/* Sketch mode hides the whole bar while it owns the stage (mount.js) — the
+   display: flex above is author-origin and beats the UA's [hidden] rule, the
+   same trap the buttons' own [hidden] rule below already guards against. */
+#viewbar[hidden] { display: none; }
 #viewbar:not(.pf-float-viewbar) { position: fixed; top: 12px; right: 12px; z-index: 15; }
 #viewbar button {
   width: 34px; height: 34px; border: 0; border-radius: var(--pf-radius-control);
@@ -389,24 +393,67 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar .pf-measure-actions { display: flex; gap: 4px; }
 #viewbar .pf-measure-actions[hidden] { display: none; }
 #viewbar .pf-measure-actions button { width: auto; min-width: 56px; padding: 0 8px; }
-#viewbar .pf-annotate-actions { display: flex; gap: 4px; }
-#viewbar .pf-annotate-actions[hidden] { display: none; }
-#viewbar .pf-annotate-actions button { width: auto; min-width: 56px; padding: 0 8px; }
-/* Annotate's actions row has three buttons (Undo/Clear/Send) against
-   cutaway's/measure's two, so it is the first to overflow the stage's left
-   edge as the viewport narrows — the full-size pill (5 icon buttons + this
-   row, ~374px) already exceeds a 375-390px phone's usable width (viewport
-   minus the stage's 12px margins on both sides) before the shared 360px
-   rule below ever engages. Shrink only this row here; the icon buttons and
-   the other two action rows still have room down to 360px. */
-@media (max-width: 430px) {
-  #viewbar .pf-annotate-actions { gap: 3px; }
-  #viewbar .pf-annotate-actions button { min-width: 40px; padding: 0 5px; font-size: 11px; }
-}
 #viewbar button:disabled { opacity: .38; cursor: not-allowed; }
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
+
+/* Sketch-mode toolbar: the #viewbar pill idiom, top-centre, owning the mode
+   while the viewbar itself is hidden (mount toggles both).
+
+   `left: 50%` is a shrink-to-fit trap for an absolutely positioned element:
+   its auto width shrink-wraps against the space between `left` and the
+   containing block's right edge, which here is only HALF the stage, not the
+   whole stage — so the row wraps (stranding the close button on its own
+   centred second line, on top of .pf-sketch-hint) well before it actually
+   needs to. `width: max-content` opts back into sizing to the row's
+   preferred (unwrapped) width; `max-width` below still caps that on stages
+   too narrow for the full row, so genuine wrapping on narrow stages still
+   works. */
+.pf-sketch-toolbar {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px; padding: 4px;
+  background: var(--pf-surface); border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-pill); box-shadow: var(--pf-shadow-float);
+  z-index: 20; width: max-content; max-width: calc(100% - 16px); flex-wrap: wrap; justify-content: center;
+}
+.pf-sketch-toolbar[hidden] { display: none; }
+.pf-sketch-toolbar .sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--pf-border); }
+.pf-sketch-toolbar button {
+  width: 34px; height: 34px; border: 0; border-radius: var(--pf-radius-control);
+  background: transparent; color: var(--pf-muted-2); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.pf-sketch-toolbar button[data-action="send"] { width: auto; min-width: 56px; padding: 0 10px; }
+.pf-sketch-toolbar button:hover { color: var(--pf-text-2); background: var(--pf-surface-2); }
+.pf-sketch-toolbar button:disabled { opacity: .35; cursor: default; background: transparent; color: var(--pf-muted); }
+.pf-sketch-toolbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
+.pf-sketch-toolbar .pf-swatch { width: 26px; height: 26px; margin: 4px 1px; border-radius: 50%; }
+.pf-sketch-toolbar .pf-swatch::before {
+  content: ""; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--sw); box-shadow: 0 0 0 2px color-mix(in oklab, var(--sw) 25%, transparent);
+}
+.pf-sketch-toolbar .pf-swatch.on { background: var(--pf-surface-2); }
+.pf-sketch-toolbar .pf-swatch.on::before { box-shadow: 0 0 0 2.5px var(--pf-bg), 0 0 0 4.5px var(--sw); }
+.pf-sketch-hint {
+  position: absolute; top: 58px; left: 50%; transform: translateX(-50%);
+  font-family: var(--pf-mono); font-size: 10px; letter-spacing: .04em;
+  color: var(--pf-hint); z-index: 19; pointer-events: none; white-space: nowrap;
+}
+.pf-sketch-hint[hidden] { display: none; }
+/* hand-tool cursors on the ink canvas */
+.pf-ink-canvas.hand { cursor: default; }
+.pf-ink-canvas.hand.over { cursor: grab; }
+.pf-ink-canvas.hand.handle { cursor: crosshair; }
+/* Pointer-followers are CSS cursors, not canvas drawings: anything that must
+   track the pointer per-mousemove would force a full-canvas redraw per event
+   (annotate-mode used to do exactly that for the rotate glyph and eraser
+   ring, and it read as lag). The compositor renders cursors for free. */
+.pf-ink-canvas.hand.rotate { cursor: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Cg stroke=%22%23000%22 stroke-width=%224.5%22 opacity=%22.55%22%3E%3Cpath d=%22M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8%22/%3E%3Cpath d=%22M21 3v5h-5%22/%3E%3C/g%3E%3Cg stroke=%22%23fff%22 stroke-width=%222%22%3E%3Cpath d=%22M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8%22/%3E%3Cpath d=%22M21 3v5h-5%22/%3E%3C/g%3E%3C/svg%3E") 12 12, alias; }
+.pf-ink-canvas.hand.dragging { cursor: grabbing; }
+/* The ring's 16px radius mirrors annotate-mode.js's ERASER_PX — keep them
+   in step so the cursor shows the true brush footprint. */
+.pf-ink-canvas.erasing { cursor: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2236%22 height=%2236%22 viewBox=%220 0 36 36%22 fill=%22none%22%3E%3Ccircle cx=%2218%22 cy=%2218%22 r=%2216%22 stroke=%22%23000%22 stroke-width=%223.5%22 opacity=%22.55%22/%3E%3Ccircle cx=%2218%22 cy=%2218%22 r=%2216%22 stroke=%22%23fff%22 stroke-width=%221.5%22/%3E%3C/svg%3E") 18 18, crosshair; }
 
 /* ---- the rail toggle: a bare floating icon at the stage's top right --------
    APPEARANCE only (placement lives in chrome.css, per the split at the top of
@@ -534,12 +581,8 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 @media (max-width: 360px) {
   #viewbar { gap: 3px; }
   #viewbar button { width: 30px; height: 30px; font-size: 13px; }
-  #viewbar .pf-cutaway-actions, #viewbar .pf-measure-actions, #viewbar .pf-annotate-actions { gap: 3px; }
-  #viewbar .pf-cutaway-actions button, #viewbar .pf-measure-actions button, #viewbar .pf-annotate-actions button { min-width: 44px; padding: 0 6px; }
-  /* Annotate's three-button row (Undo/Clear/Send) is wider than cutaway's or
-     measure's two-button rows at the shared size above, so it still clips the
-     bar's left edge at 320px — shrink it further than the shared rule. */
-  #viewbar .pf-annotate-actions button { min-width: 38px; padding: 0 4px; font-size: 10px; }
+  #viewbar .pf-cutaway-actions, #viewbar .pf-measure-actions { gap: 3px; }
+  #viewbar .pf-cutaway-actions button, #viewbar .pf-measure-actions button { min-width: 44px; padding: 0 6px; }
 }
 
 /* ---- measurement mode -----------------------------------------------------
