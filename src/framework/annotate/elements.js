@@ -212,3 +212,116 @@ export function appendThinned(points, x, y, minDistance) {
   points.push([x, y]);
   return true;
 }
+
+// ---- hand tool: handles, appliers, probe ----------------------------------
+export function handlesOf(el) {
+  const p = el.params;
+  if (el.type === "line") return [
+    { id: "p1", x: p.x1, y: p.y1 },
+    { id: "p2", x: p.x2, y: p.y2 },
+  ];
+  if (el.type === "rect") {
+    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
+      const [dx, dy] = rot2(sx * p.w / 2, sy * p.h / 2, p.rot || 0);
+      return { id: `corner${sx > 0 ? "R" : "L"}${sy > 0 ? "B" : "T"}`, sx, sy, x: p.cx + dx, y: p.cy + dy };
+    });
+  }
+  if (el.type === "ellipse") {
+    if (p.rx === p.ry) {
+      const [dx, dy] = rot2(p.rx, 0, p.rot || 0);
+      return [{ id: "r", x: p.cx + dx, y: p.cy + dy }];
+    }
+    const [ax, ay] = rot2(p.rx, 0, p.rot || 0);
+    const [bx, by] = rot2(0, p.ry, p.rot || 0);
+    return [
+      { id: "rx", x: p.cx + ax, y: p.cy + ay },
+      { id: "ry", x: p.cx + bx, y: p.cy + by },
+    ];
+  }
+  return [];
+}
+
+export function translateElement(el, dx, dy) {
+  const p = el.params;
+  if (el.type === "freehand") for (const q of p.points) { q[0] += dx; q[1] += dy; }
+  else if (el.type === "rect" || el.type === "ellipse") { p.cx += dx; p.cy += dy; }
+  else if (el.type === "line") { p.x1 += dx; p.y1 += dy; p.x2 += dx; p.y2 += dy; }
+}
+
+export function rectAnchorFor(el, handle) {
+  const p = el.params;
+  const [dx, dy] = rot2(-handle.sx * p.w / 2, -handle.sy * p.h / 2, p.rot || 0);
+  return [p.cx + dx, p.cy + dy];
+}
+
+const MIN_EDIT_EXTENT = 0.002;
+
+export function resizeRectFromAnchor(el, ax, ay, rot, x, y, { force = false } = {}) {
+  const p = el.params;
+  let [dx, dy] = invRot2(x - ax, y - ay, rot);
+  const w = Math.abs(dx), h = Math.abs(dy);
+  const near = Math.min(w, h) / Math.max(w, h, MIN_EDIT_EXTENT) > 1 - SNAP_RATIO;
+  if (force || near) {
+    const m = Math.max(w, h);
+    dx = Math.sign(dx || 1) * m;
+    dy = Math.sign(dy || 1) * m;
+  }
+  p.w = Math.max(Math.abs(dx), MIN_EDIT_EXTENT);
+  p.h = Math.max(Math.abs(dy), MIN_EDIT_EXTENT);
+  const [ox, oy] = rot2(dx / 2, dy / 2, rot);
+  p.cx = ax + ox;
+  p.cy = ay + oy;
+}
+
+export function resizeEllipseHandle(el, handleId, x, y, { force = false } = {}) {
+  const p = el.params;
+  const [lx, ly] = invRot2(x - p.cx, y - p.cy, p.rot || 0);
+  if (handleId === "r") {
+    p.rx = p.ry = Math.max(MIN_EDIT_EXTENT, Math.hypot(lx, ly));
+    return;
+  }
+  if (handleId === "rx") p.rx = Math.max(MIN_EDIT_EXTENT, Math.abs(lx));
+  else p.ry = Math.max(MIN_EDIT_EXTENT, Math.abs(ly));
+  const near = Math.min(p.rx, p.ry) / Math.max(p.rx, p.ry) > 1 - SNAP_RATIO;
+  if (force || near) p.rx = p.ry = handleId === "rx" ? p.rx : p.ry;
+}
+
+export function applyRotation(el, origParams, center, totalAngle) {
+  const [cx, cy] = center;
+  const p = el.params;
+  if (el.type === "rect" || el.type === "ellipse") {
+    p.rot = (origParams.rot || 0) + totalAngle;
+  } else if (el.type === "line") {
+    const [ax, ay] = rot2(origParams.x1 - cx, origParams.y1 - cy, totalAngle);
+    const [bx, by] = rot2(origParams.x2 - cx, origParams.y2 - cy, totalAngle);
+    p.x1 = cx + ax; p.y1 = cy + ay; p.x2 = cx + bx; p.y2 = cy + by;
+  } else if (el.type === "freehand") {
+    p.points = origParams.points.map(([px, py]) => {
+      const [dx, dy] = rot2(px - cx, py - cy, totalAngle);
+      return [cx + dx, cy + dy];
+    });
+  }
+}
+
+function minVisibleDistance(el, x, y) {
+  let min = Infinity;
+  for (const run of visibleRuns(el)) {
+    for (const q of run) min = Math.min(min, Math.hypot(q.x - x, q.y - y));
+  }
+  return min;
+}
+
+export function probe(list, x, y, { reach, handleR, band }) {
+  for (let i = list.length - 1; i >= 0; i--) {
+    for (const h of handlesOf(list[i])) {
+      if (Math.hypot(h.x - x, h.y - y) <= handleR) return { kind: "handle", el: list[i], handle: h };
+    }
+  }
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (minVisibleDistance(list[i], x, y) <= reach) return { kind: "outline", el: list[i] };
+  }
+  // Rotate only when "just outside" is unambiguous: exactly one element close.
+  const near = list.filter((el) => minVisibleDistance(el, x, y) <= reach + band);
+  if (near.length === 1) return { kind: "rotate", el: near[0] };
+  return null;
+}
