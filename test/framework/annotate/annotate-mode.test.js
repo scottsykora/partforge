@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import * as THREE from "three";
 import { createAnnotateMode, ANNOTATION_VERSION } from "../../../src/framework/annotate/annotate-mode.js";
+import { annotationRay, rayPlane } from "../../../src/framework/oracle/annotation-ray.js";
 
 afterEach(() => { document.body.innerHTML = ""; });
 
@@ -27,9 +28,15 @@ function fakeCanvas() {
 function fakeViewer(over = {}) {
   const camera = new THREE.PerspectiveCamera(45, 2, 0.1, 1000);
   camera.position.set(0, 0, 10);
+  camera.updateMatrixWorld(true);
+  // Real 3D canvas overlays the ink canvas at the same rect in production —
+  // raycastViewer reads this rect to convert screen coords back to NDC, so a
+  // detached default (zero-size) rect would silently NaN out every hit.
+  const domElement = document.createElement("canvas");
+  domElement.getBoundingClientRect = () => RECT;
   return {
     camera,
-    domElement: document.createElement("canvas"),
+    domElement,
     _subMeshes: {},
     getCameraState: () => ({ pos: [0, 0, 10], target: [0, 0, 0] }),
     captureCurrent: vi.fn(() => "data:image/jpeg;base64,MODEL"),
@@ -74,14 +81,26 @@ const lastScene = (canvas) => canvas.setScene.mock.calls.at(-1)[0];
 function perspectiveCamera() {
   const camera = new THREE.PerspectiveCamera(45, 2, 0.1, 1000);
   camera.position.set(0, 0, 10);
+  // No render loop in this headless fixture to update matrixWorld itself
+  // (production relies on the viewer's own render each frame) — without
+  // this, camera.matrixWorld stays the identity from construction and every
+  // raycast (hits, and the embedded anchor rays) originates from world
+  // origin instead of the camera's actual position.
+  camera.updateMatrixWorld(true);
   return camera;
 }
 
 function orthographicCamera() {
   // top/bottom span 40mm of world height at zoom 1, so orthoHeight must read
-  // back exactly 40.
-  const camera = new THREE.OrthographicCamera(-20, 20, 20, -20, 0.1, 1000);
+  // back exactly 40. left/right kept aspect-correct with RECT's 2:1 viewport
+  // (±40 for ±20 of height) — annotationRay's reconstruction derives the
+  // horizontal half-extent from orthoHeight * viewport.aspect (the payload
+  // only carries orthoHeight), so an off-aspect frustum here would place a
+  // non-center anchor's embedded ray at a different world x than the
+  // reconstruction expects.
+  const camera = new THREE.OrthographicCamera(-40, 40, 20, -20, 0.1, 1000);
   camera.position.set(0, 0, 10);
+  camera.updateMatrixWorld(true); // see perspectiveCamera()'s comment
   return camera;
 }
 
@@ -225,6 +244,58 @@ test("send payload is v3: elements with params, erased, description, anchors", (
   // sent -> mode exits and elements clear
   expect(mode.isEnabled()).toBe(false);
   expect(mode.strokeCount()).toBe(0);
+});
+
+test("anchors carry no ray when the sketch was sent with no meshes", () => {
+  const { payload } = sendOneStroke({ ortho: false }); // fixture has no sub meshes
+  expect(payload.camera.parts).toBeNull();
+  for (const el of payload.elements) {
+    for (const anchor of el.anchors) expect(anchor).not.toHaveProperty("ray");
+  }
+});
+
+describe("embedded anchor rays", () => {
+  for (const ortho of [false, true]) {
+    it(`match annotationRay's reconstruction (${ortho ? "orthographic" : "perspective"})`, () => {
+      const { payload } = sendOneStrokeWithParts({ ortho });
+      expect(payload.frames["elements[].anchors[].ray"]).toContain("parts frame");
+      const anchors = payload.elements[0].anchors;
+      expect(anchors.length).toBeGreaterThan(0);
+      for (const anchor of anchors) {
+        expect(anchor.ray).toBeDefined();
+        // 4-decimal payload rounding on both sides → 5e-4 per component
+        const rebuilt = annotationRay(payload, anchor);
+        for (let i = 0; i < 3; i++) {
+          expect(anchor.ray.origin[i]).toBeCloseTo(rebuilt.origin[i], 3);
+          expect(anchor.ray.dir[i]).toBeCloseTo(rebuilt.dir[i], 3);
+        }
+      }
+    });
+  }
+});
+
+test("round trip: an anchor's ray passes through its raycast hit", () => {
+  // Aim the stroke so its start lands inside the fixture triangle (vertices
+  // (0,0,0)/(1,0,0)/(0,1,0)): at fov 45 / z 10 / aspect 2 the screen band
+  // sx ∈ (0.5, 0.56), sy ∈ (0.38, 0.5) projects into the triangle's interior.
+  const camera = perspectiveCamera();
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo);
+  new THREE.Group().add(mesh);
+  const { canvas, onSend, mode } = fixture({ viewer: { camera, _subMeshes: { body: mesh } } });
+  mode.setEnabled(true);
+  drag(canvas, [116, 65], [130, 80]); // start = screen (0.53, 0.45)
+  mode.send();
+  const payload = onSend.mock.calls[0][0];
+  const anchor = payload.elements[0].anchors.find((a) => a.hit);
+  expect(anchor, "no anchor hit the fixture triangle — retune the drag").toBeDefined();
+  // plane through the hit point, perpendicular to the ray: the intersection
+  // must give the hit point back (embedded ray, raycast, and helper agree)
+  const back = rayPlane(anchor.ray, { point: anchor.hit.pointLocal, normal: anchor.ray.dir });
+  expect(back).not.toBeNull();
+  for (let i = 0; i < 3; i++) expect(back.point[i]).toBeCloseTo(anchor.hit.pointLocal[i], 2);
 });
 
 test("a circle-shaped ellipse is flagged and collapses to a single radius", () => {

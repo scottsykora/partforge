@@ -33,6 +33,8 @@ const FRAME_LEGEND = Object.freeze({
     "stage space: y 0..1 top-down, x 0..aspect (see viewport.aspect); sizes and radii in the same units; rot in radians (rotDeg is the same angle in degrees)",
   "elements[].anchors[].screen":
     "[x, y], each normalized 0..1 across the full viewport (x = stage x / aspect)",
+  "elements[].anchors[].ray":
+    "origin (mm) and unit dir in the parts frame — intersect with a plane (partforge/oracle's rayPlane) to place sketch geometry; present only when the model had meshes at send time",
   "elements[].description":
     "positions and sizes as % of viewport width/height, radii as % of the short edge, angles in degrees",
   "elements[].erased":
@@ -494,7 +496,17 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
   // the parts frame (through the inverse of the shared parts parent's
   // matrixWorld — the measure-mode idiom) stays pinned to the CAD geometry, so
   // it survives the per-view bbox recentring when the model is rebuilt later.
-  function cameraBlock() {
+  // The shared parts parent's inverse world matrix, or null when no meshes
+  // exist. cameraBlock() and send()'s anchor-ray loop both map through this —
+  // one definition keeps the payload's parts frame single-sourced.
+  function partsInverse() {
+    const parent = Object.values(viewer._subMeshes ?? {})[0]?.parent ?? null;
+    if (!parent) return null;
+    parent.updateWorldMatrix(true, false);
+    return parent.matrixWorld.clone().invert();
+  }
+
+  function cameraBlock(inv) {
     const { pos, target } = viewer.getCameraState();
     const cam = viewer.camera;
     const ortho = !!cam.isOrthographicCamera;
@@ -510,10 +522,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       fov: ortho ? null : +cam.fov.toFixed(4),
       orthoHeight: ortho ? +(Math.abs(cam.top - cam.bottom) / Math.max(cam.zoom, 1e-6)).toFixed(4) : null,
     };
-    const parent = Object.values(viewer._subMeshes ?? {})[0]?.parent ?? null;
-    if (!parent) return { world, parts: null };
-    parent.updateWorldMatrix(true, false);
-    const inv = parent.matrixWorld.clone().invert();
+    if (!inv) return { world, parts: null };
     const map = (v) => r4(new THREE.Vector3(v[0], v[1], v[2]).applyMatrix4(inv).toArray());
     const up = r4(new THREE.Vector3(world.up[0], world.up[1], world.up[2]).transformDirection(inv).toArray());
     return {
@@ -555,6 +564,24 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       if (d <= -180) d += 360;
       return { ...p, rotDeg: +d.toFixed(2) };
     };
+    const inv = partsInverse();
+    // Per-anchor pick rays, from the LIVE camera (the exact code path that
+    // produces `hit`), origin canonicalized to the point on the ray line
+    // nearest the camera position — a no-op for perspective, and for
+    // orthographic it slides three's near-plane origin onto the plane through
+    // the camera position, making the embedded ray definitionally identical
+    // to annotationRay's reconstruction (spec: annotation-ray design).
+    const rayCaster = new THREE.Raycaster();
+    const anchorRay = (screen) => {
+      if (!inv) return null; // no parts frame → no ray (same rule as hits)
+      rayCaster.setFromCamera(new THREE.Vector2(2 * screen[0] - 1, 1 - 2 * screen[1]), viewer.camera);
+      const { origin, direction } = rayCaster.ray;
+      const along = viewer.camera.position.clone().sub(origin).dot(direction);
+      origin.add(direction.clone().multiplyScalar(along));
+      origin.applyMatrix4(inv);
+      direction.transformDirection(inv); // rigid → exact for directions
+      return { origin: origin.toArray().map(round4), dir: direction.toArray().map(round4) };
+    };
     const elements = store.list().map((el, i) => ({
       id: `e${i + 1}`, // stable within this payload — how a reply names an element
       type: el.type,
@@ -572,10 +599,12 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
         const screen = [x / aspect, y]; // per-axis normalized, the v2 screen frame
         const hit = raycastViewer(viewer,
           rect.left + screen[0] * rect.width, rect.top + screen[1] * rect.height);
+        const ray = anchorRay(screen);
         return {
           at,
           ...(run !== undefined ? { run } : {}), // center anchors span all runs
           screen: screen.map(round4),
+          ...(ray ? { ray } : {}), // omitted, not null, when no parts frame
           hit: hit ? { subPart: hit.subPart, pointLocal: hit.pointLocal } : null,
         };
       }),
@@ -587,7 +616,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       frames: FRAME_LEGEND,
       elements,
       images: { drawing: canvas.toDataUrl({ maxEdge: SEND_MAX_EDGE }), model },
-      camera: cameraBlock(),
+      camera: cameraBlock(inv),
       viewport: { width: rect.width, height: rect.height, aspect: round4(aspect), dpr },
       context: { view, params: { ...params } },
     });
