@@ -341,13 +341,18 @@ export function probe(list, x, y, { reach, handleR, band }) {
       if (Math.hypot(h.x - x, h.y - y) <= handleR) return { kind: "handle", el: list[i], handle: h };
     }
   }
+  // One distance scan per element serves both tests: topmost-first, an
+  // outline hit returns immediately (band membership of anything beneath is
+  // moot — outline wins), otherwise band candidates accumulate. Rotate only
+  // when "just outside" is unambiguous: exactly one element that close.
+  let nearCount = 0;
+  let nearEl = null;
   for (let i = list.length - 1; i >= 0; i--) {
-    if (minVisibleDistance(list[i], x, y) <= reach) return { kind: "outline", el: list[i] };
+    const d = minVisibleDistance(list[i], x, y);
+    if (d <= reach) return { kind: "outline", el: list[i] };
+    if (d <= reach + band) { nearCount += 1; nearEl = list[i]; }
   }
-  // Rotate only when "just outside" is unambiguous: exactly one element close.
-  const near = list.filter((el) => minVisibleDistance(el, x, y) <= reach + band);
-  if (near.length === 1) return { kind: "rotate", el: near[0] };
-  return null;
+  return nearCount === 1 ? { kind: "rotate", el: nearEl } : null;
 }
 
 // ---- eraser ----------------------------------------------------------------

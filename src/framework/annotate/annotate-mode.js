@@ -61,7 +61,6 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
   let color = "red";
   let gesture = null; // the in-flight pointer gesture, or null between gestures
   let hoverProbe = null; // hand tool: what's under the pointer right now (no gesture)
-  let pointerPos = null; // stage [x,y]; drives the eraser ring / rotate glyph
   const modeListeners = new Set();
   const toolListeners = new Set();
   const notifyMode = () => { for (const cb of [...modeListeners]) cb(); };
@@ -176,7 +175,6 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     const [cx, cy] = gesture.center;
     return {
       glowEl: gesture.el,
-      rotateGlyph: { x: cx, y: cy },
       label: { x: cx, y: cy, text: `${sign}${deg}°` },
     };
   }
@@ -186,8 +184,6 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
       switch (gesture.kind) {
         case "line": case "rect": case "ellipse":
           return drawPreviewOverlay();
-        case "eraser":
-          return pointerPos ? { eraser: { x: pointerPos[0], y: pointerPos[1], r: stageUnits(ERASER_PX, rectOf()) } } : {};
         case "hand-move": case "hand-endpoint": case "hand-resize-rect": case "hand-resize-ellipse":
           return handEditOverlay();
         case "hand-rotate":
@@ -199,10 +195,8 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     if (tool === "hand" && hoverProbe) {
       const overlay = { glowEl: hoverProbe.el };
       if (hoverProbe.kind === "handle" || hoverProbe.kind === "outline") overlay.handlesEl = hoverProbe.el;
-      if (hoverProbe.kind === "rotate" && pointerPos) overlay.rotateGlyph = { x: pointerPos[0], y: pointerPos[1] };
       return overlay;
     }
-    if (tool === "eraser" && pointerPos) return { eraser: { x: pointerPos[0], y: pointerPos[1], r: stageUnits(ERASER_PX, rectOf()) } };
     return {};
   }
 
@@ -237,7 +231,6 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
   }
 
   function updateHover(x, y, rect) {
-    pointerPos = [x, y];
     const next = probe(store.list(), x, y, reachParams(rect));
     if (sameProbe(hoverProbe, next)) return;
     hoverProbe = next;
@@ -283,7 +276,6 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     }
     if (tool === "eraser") {
       store.snapshot();
-      pointerPos = [x, y];
       return { kind: "eraser", lastX: x, lastY: y, mutatesStore: true };
     }
     // hand
@@ -309,10 +301,8 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
         const radius = stageUnits(ERASER_PX, rect);
         const halfWidth = stageUnits(strokeWidthPx(rect) / 2, rect);
         const result = eraseSegment(store.list(), gesture.lastX, gesture.lastY, x, y, { radius, halfWidth });
-        if (result.changed) store.setList(result.list);
+        if (result.changed) store.setList(result.list); // notifies -> syncScene
         gesture.lastX = x; gesture.lastY = y;
-        pointerPos = [x, y];
-        syncScene();
         return;
       }
       case "hand-move": {
@@ -372,7 +362,7 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     const [x, y] = stagePoint(event, rect);
     if (gesture) { handleGestureMove(x, y, event, rect); return; }
     if (tool === "hand") updateHover(x, y, rect);
-    else if (tool === "eraser") { pointerPos = [x, y]; syncScene(); }
+    // eraser hover needs no per-move work: the brush ring is a CSS cursor
   };
 
   const onPointerEnd = (event) => {
@@ -468,7 +458,6 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     } else {
       gesture = null;
       hoverProbe = null;
-      pointerPos = null;
       store.reset(); // spec: ink never survives an exit; tool/color do
       canvas?.hide();
       escapeDoc?.removeEventListener("keydown", onEscapeCapture, true);

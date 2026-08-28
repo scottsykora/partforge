@@ -177,51 +177,6 @@ function drawLabel(ctx, target, label, chrome, dpr) {
   ctx.fillText(label.text, bx + padX, by + boxH - padY);
 }
 
-function drawRotateGlyph(ctx, target, rotateGlyph, chrome, dpr) {
-  if (!rotateGlyph) return;
-  const toPx = mapper(target);
-  const [x, y] = toPx(rotateGlyph);
-  const r = 8 * dpr;
-  const start = -0.15 * Math.PI;
-  const end = 1.15 * Math.PI;
-  ctx.strokeStyle = chrome.text;
-  ctx.fillStyle = chrome.text;
-  ctx.lineWidth = 1.5 * dpr;
-  ctx.beginPath();
-  ctx.arc(x, y, r, start, end);
-  ctx.stroke();
-  const ax = x + r * Math.cos(end);
-  const ay = y + r * Math.sin(end);
-  ctx.beginPath();
-  ctx.moveTo(ax, ay);
-  ctx.lineTo(ax - 4 * dpr, ay - 2 * dpr);
-  ctx.lineTo(ax - 2 * dpr, ay + 4 * dpr);
-  ctx.closePath();
-  ctx.fill();
-}
-
-// The eraser ring's RADIUS is not a fixed pixel constant here — the mode
-// passes it through in STAGE units (overlay.eraser.r, computed from the
-// mode's own ERASER_PX brush size via stageUnits()) so the ring always
-// matches the true brush footprint, and it maps with the same target.height
-// factor mapper() uses for positions (which already bakes in dpr, since
-// target.height is the dpr-scaled bitmap height). Only the ring's stroke
-// WIDTH is a fixed chrome constant, so only that is dpr-scaled directly.
-function drawEraser(ctx, target, eraser, chrome, dpr) {
-  if (!eraser) return;
-  const toPx = mapper(target);
-  const [x, y] = toPx(eraser);
-  const r = eraser.r * target.height;
-  ctx.save();
-  ctx.globalAlpha = 0.7;
-  ctx.strokeStyle = chrome.text;
-  ctx.lineWidth = 1.5 * dpr;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
-}
-
 export function createInkCanvas(stage, {
   getContext2d = (canvas) => canvas.getContext("2d"),
   createCanvas = () => document.createElement("canvas"),
@@ -234,15 +189,18 @@ export function createInkCanvas(stage, {
   let scene = { elements: [], overlay: {} };
   // The bitmap's current dpr, set by resize()/size() below and read by draw()
   // to scale the overlay chrome's fixed-CSS-pixel constants (handles, label,
-  // rotate glyph, chrome line widths) up to device pixels. Defaults to 1 so a
+  // chrome line widths) up to device pixels. Defaults to 1 so a
   // draw() before the first resize() (there isn't one on this path, but
   // belt-and-suspenders) doesn't under/over-scale.
   let currentDpr = 1;
 
   // Live draw order: glow -> all halos -> all cores -> handles -> guide ->
-  // label -> rotate glyph -> eraser ring. Glow renders before the elements'
-  // own halo/core passes so it reads as a soft field behind the ink, not on
-  // top of it.
+  // label. Glow renders before the elements' own halo/core passes so it reads
+  // as a soft field behind the ink, not on top of it. Pointer-followers (the
+  // eraser ring, the rotate glyph) are deliberately NOT drawn here: anything
+  // that must track the cursor per-mousemove would force a full-canvas redraw
+  // per event — they are CSS cursors instead (app.css), rendered by the
+  // compositor at zero canvas cost.
   function draw() {
     if (!ctx) return;
     const overlay = scene.overlay || {};
@@ -255,8 +213,6 @@ export function createInkCanvas(stage, {
     drawHandles(ctx, canvas, overlay.handlesEl, chrome, dpr);
     drawGuide(ctx, canvas, overlay.guide, chrome, dpr);
     drawLabel(ctx, canvas, overlay.label, chrome, dpr);
-    drawRotateGlyph(ctx, canvas, overlay.rotateGlyph, chrome, dpr);
-    drawEraser(ctx, canvas, overlay.eraser, chrome, dpr);
   }
 
   function resize() {

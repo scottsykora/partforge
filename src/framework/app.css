@@ -393,9 +393,15 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-ink-canvas.hand { cursor: default; }
 .pf-ink-canvas.hand.over { cursor: grab; }
 .pf-ink-canvas.hand.handle { cursor: crosshair; }
-.pf-ink-canvas.hand.rotate { cursor: none; }
+/* Pointer-followers are CSS cursors, not canvas drawings: anything that must
+   track the pointer per-mousemove would force a full-canvas redraw per event
+   (annotate-mode used to do exactly that for the rotate glyph and eraser
+   ring, and it read as lag). The compositor renders cursors for free. */
+.pf-ink-canvas.hand.rotate { cursor: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Cg stroke=%22%23000%22 stroke-width=%224.5%22 opacity=%22.55%22%3E%3Cpath d=%22M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8%22/%3E%3Cpath d=%22M21 3v5h-5%22/%3E%3C/g%3E%3Cg stroke=%22%23fff%22 stroke-width=%222%22%3E%3Cpath d=%22M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8%22/%3E%3Cpath d=%22M21 3v5h-5%22/%3E%3C/g%3E%3C/svg%3E") 12 12, alias; }
 .pf-ink-canvas.hand.dragging { cursor: grabbing; }
-.pf-ink-canvas.erasing { cursor: none; }
+/* The ring's 16px radius mirrors annotate-mode.js's ERASER_PX — keep them
+   in step so the cursor shows the true brush footprint. */
+.pf-ink-canvas.erasing { cursor: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2236%22 height=%2236%22 viewBox=%220 0 36 36%22 fill=%22none%22%3E%3Ccircle cx=%2218%22 cy=%2218%22 r=%2216%22 stroke=%22%23000%22 stroke-width=%223.5%22 opacity=%22.55%22/%3E%3Ccircle cx=%2218%22 cy=%2218%22 r=%2216%22 stroke=%22%23fff%22 stroke-width=%221.5%22/%3E%3C/svg%3E") 18 18, crosshair; }
 
 /* ---- the rail toggle: a bare floating icon at the stage's top right --------
    APPEARANCE only (placement lives in chrome.css, per the split at the top of

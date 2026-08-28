@@ -119,7 +119,9 @@ test("a single-point run draws as a filled dot, in both halo and core passes", (
   expect(countOps("fill")).toBe(2);
 });
 
-test("overlay draws glow, then halos, cores, handles, guide, label, rotate glyph, eraser — in that order", () => {
+test("overlay draws glow, then halos, cores, handles, guide, label — in that order", () => {
+  // No pointer-followers here on purpose: the eraser ring and rotate glyph
+  // are CSS cursors (app.css), never canvas drawings — see the draw() comment.
   const { canvas, calls } = fixture();
   canvas.show();
   calls.length = 0;
@@ -131,10 +133,6 @@ test("overlay draws glow, then halos, cores, handles, guide, label, rotate glyph
       handlesEl: { type: "line", color: "red", width: 0.01, params: { x1: 0, y1: 0, x2: 1, y2: 0 }, gaps: [] },
       guide: { kind: "cross", cx: 0.5, cy: 0.5 },
       label: { x: 0.2, y: 0.2, text: "r 10" },
-      rotateGlyph: { x: 0.5, y: 0.5 },
-      // Stage-unit radius: at this stage's dpr-1, height-100 bitmap, 0.16 *
-      // 100 = 16 device px — matches the mode's real ERASER_PX (16) brush.
-      eraser: { x: 0.5, y: 0.5, r: 0.16 },
     },
   });
   const glowAt = calls.findIndex((c) => c.prop === "globalAlpha" && c.value === 0.35);
@@ -143,14 +141,12 @@ test("overlay draws glow, then halos, cores, handles, guide, label, rotate glyph
   const handlesAt = calls.findIndex((c) => c.op === "fillRect");
   const guideAt = calls.findIndex((c) => c.op === "setLineDash");
   const labelAt = calls.findIndex((c) => c.op === "fillText");
-  const rotateAt = calls.findIndex((c) => c.op === "arc" && c.args[2] === 8);
-  const eraserAt = calls.findIndex((c) => c.op === "arc" && c.args[2] === 16);
-  const order = [glowAt, haloAt, coreAt, handlesAt, guideAt, labelAt, rotateAt, eraserAt];
+  const order = [glowAt, haloAt, coreAt, handlesAt, guideAt, labelAt];
   expect(order.every((i) => i >= 0)).toBe(true);
   expect(order).toEqual([...order].sort((a, b) => a - b));
 });
 
-test("overlay chrome (handles, label, rotate glyph, line widths) scales with the bitmap's dpr", () => {
+test("overlay chrome (handles, label, line widths) scales with the bitmap's dpr", () => {
   // These adornments are specified in CSS pixels but drawn straight into the
   // device-pixel bitmap; at dpr 2 every fixed constant must be doubled or the
   // chrome renders at half its intended on-screen size (unlike ink strokes,
@@ -166,7 +162,6 @@ test("overlay chrome (handles, label, rotate glyph, line widths) scales with the
       elements: [],
       overlay: {
         handlesEl: { type: "line", color: "red", width: 0.01, params: { x1: 0, y1: 0, x2: 1, y2: 0 }, gaps: [] },
-        rotateGlyph: { x: 0.5, y: 0.5 },
         label: { x: 0.2, y: 0.2, text: "x" },
       },
     });
@@ -176,22 +171,11 @@ test("overlay chrome (handles, label, rotate glyph, line widths) scales with the
     expect(fillRectCall.args[3]).toBeCloseTo(14);
     // handles chrome line width: 1.5 * dpr = 3
     expect(calls.some((c) => c.prop === "lineWidth" && c.value === 3)).toBe(true);
-    // rotate glyph radius: 8 * dpr = 16
-    expect(calls.some((c) => c.op === "arc" && c.args[2] === 16)).toBe(true);
     // label font size: 10 * dpr = 20
     expect(calls.some((c) => c.prop === "font" && c.value === "20px monospace")).toBe(true);
   } finally {
     globalThis.devicePixelRatio = original;
   }
-});
-
-test("eraser ring radius is the overlay's stage-unit radius mapped by the height factor, not a fixed constant", () => {
-  const { canvas, calls } = fixture(); // 200x100 stage rect, default dpr 1 -> target.height = 100
-  canvas.show();
-  calls.length = 0;
-  canvas.setScene({ elements: [], overlay: { eraser: { x: 0.5, y: 0.5, r: 0.2 } } });
-  const arc = calls.find((c) => c.op === "arc");
-  expect(arc.args[2]).toBeCloseTo(0.2 * 100); // same target.height factor mapper() uses for positions
 });
 
 test("chrome colors fall back to literal defaults in a bare test environment", () => {
@@ -201,7 +185,7 @@ test("chrome colors fall back to literal defaults in a bare test environment", (
   // unset, so this must not throw and must fall back rather than draw "".
   expect(() => canvas.setScene({
     elements: [],
-    overlay: { eraser: { x: 0.5, y: 0.5 } },
+    overlay: { label: { x: 0.5, y: 0.5, text: "r 10" } },
   })).not.toThrow();
 });
 
@@ -252,13 +236,13 @@ test("toDataUrl exports elements only — overlay adornments never reach the PNG
   canvas.show();
   canvas.setScene({
     elements: [{ type: "line", color: "red", width: 0.004, params: { x1: 0, y1: 0, x2: 1, y2: 1 }, gaps: [] }],
-    overlay: { eraser: { x: 0.5, y: 0.5 }, label: { x: 0.1, y: 0.1, text: "r 10" } },
+    overlay: { label: { x: 0.1, y: 0.1, text: "r 10" } },
   });
   const mark = callsSince();
   canvas.toDataUrl({ maxEdge: 100 });
   const exported = mark();
   expect(exported.some((c) => c.op === "fillText")).toBe(false); // no label in export
-  expect(exported.some((c) => c.prop === "globalAlpha")).toBe(false); // no glow/eraser alpha in export
+  expect(exported.some((c) => c.prop === "globalAlpha")).toBe(false); // no glow alpha in export
 });
 
 test("toDataUrl always re-rasterizes into a scratch canvas, scaled under maxEdge", () => {
