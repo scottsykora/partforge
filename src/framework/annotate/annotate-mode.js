@@ -32,7 +32,7 @@ const FRAME_LEGEND = Object.freeze({
   "elements[].params":
     "stage space: y 0..1 top-down, x 0..aspect (see viewport.aspect); sizes and radii in the same units; rot in radians (rotDeg is the same angle in degrees)",
   "elements[].anchors[].screen":
-    "[x, y], each normalized 0..1 across the full viewport (x = stage x / aspect)",
+    "[x, y] normalized to the viewport (0..1 inside it; values outside mean the point sits off-stage) — x = stage x / aspect",
   "elements[].anchors[].ray":
     "origin (mm) and unit dir in the parts frame — intersect with a plane (partforge/oracle's rayPlane) to place sketch geometry; present only when the model had meshes at send time",
   "elements[].description":

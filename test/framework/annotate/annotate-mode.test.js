@@ -263,7 +263,10 @@ describe("embedded anchor rays", () => {
       expect(anchors.length).toBeGreaterThan(0);
       for (const anchor of anchors) {
         expect(anchor.ray).toBeDefined();
-        // 4-decimal payload rounding on both sides → 5e-4 per component
+        // 4-decimal rounding on both sides; the fixture's integer client coords
+        // over the 200×100 rect make every screen value exactly representable,
+        // so ortho's aspect-amplified rounding error vanishes — retune the
+        // rect and this tolerance needs revisiting
         const rebuilt = annotationRay(payload, anchor);
         for (let i = 0; i < 3; i++) {
           expect(anchor.ray.origin[i]).toBeCloseTo(rebuilt.origin[i], 3);

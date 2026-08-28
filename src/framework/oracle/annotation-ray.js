@@ -25,16 +25,18 @@ const cross = (a, b) => [
 ];
 const norm = (a) => scale(a, 1 / Math.hypot(a[0], a[1], a[2]));
 
-// screen: [sx, sy] in the payload's anchor screen frame (each 0..1, y down),
-// or any object carrying such a `screen` array (an anchor passes directly).
+// screen: [sx, sy] in the payload's anchor screen frame (nominally 0..1, y
+// down), or any object carrying such a `screen` array (an anchor passes
+// directly). Off-viewport values (e.g. x = 1.03) are legal: the hand tool can
+// move a committed shape partly off-stage, and the projection math is
+// well-defined outside [0, 1] (three's Raycaster extrapolates the same way).
 export function annotationRay(payload, screen, { frame = "parts" } = {}) {
   if (frame !== "parts" && frame !== "world") {
     throw new Error('annotationRay: frame must be "parts" or "world"');
   }
   const s = Array.isArray(screen) ? screen : screen?.screen;
-  if (!Array.isArray(s) || s.length !== 2
-      || !s.every((v) => Number.isFinite(v) && v >= 0 && v <= 1)) {
-    throw new Error("annotationRay: screen must be [x, y] with each in 0..1");
+  if (!Array.isArray(s) || s.length !== 2 || !s.every((v) => Number.isFinite(v))) {
+    throw new Error("annotationRay: screen must be [x, y] finite numbers");
   }
   if (frame === "parts" && payload?.camera?.parts === null) {
     throw new Error("annotationRay: payload.camera.parts is null — the sketch was sent with no meshes (use { frame: \"world\" })");

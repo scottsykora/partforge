@@ -61,8 +61,8 @@ test("frame selection and its errors", () => {
     .toThrow('annotationRay: payload.camera.parts is null — the sketch was sent with no meshes (use { frame: "world" })');
   expect(() => annotationRay(p, [0.5, 0.5], { frame: "screen" }))
     .toThrow('annotationRay: frame must be "parts" or "world"');
-  expect(() => annotationRay(p, [0.5, 1.5]))
-    .toThrow("annotationRay: screen must be [x, y] with each in 0..1");
+  expect(() => annotationRay(p, [0.5, "1.5"]))
+    .toThrow("annotationRay: screen must be [x, y] finite numbers");
   expect(() => annotationRay({ camera: { parts: PERSP }, viewport: {} }, [0.5, 0.5]))
     .toThrow("annotationRay: payload has no camera/viewport block");
 });
@@ -98,7 +98,10 @@ test("rayPlane input validation", () => {
 // on the ray line nearest the camera position (a no-op for perspective, the
 // near-plane → camera-plane slide for orthographic) — the same
 // canonicalization annotate-mode applies to embedded rays.
-const GRID = [0, 0.25, 0.5, 0.75, 1];
+// 1.2 is out-of-viewport (a hand-moved shape can leave the stage); its
+// inclusion proves annotationRay extrapolates in parity with three's
+// Raycaster rather than clamping.
+const GRID = [0, 0.25, 0.5, 0.75, 1, 1.2];
 
 function canonicalize(ray, camPos) {
   const toCam = camPos.clone().sub(ray.origin);

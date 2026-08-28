@@ -135,21 +135,33 @@ millimetres, in the requested frame.
 - `payload` — an ANNOTATION_VERSION 3 payload (or any object carrying
   `camera` and `viewport` of that shape). Version is not checked; the shape
   is.
-- `screen` — `[sx, sy]`, each in 0..1, y down (the anchors' screen frame),
+- `screen` — `[sx, sy]`, nominally 0..1, y down (the anchors' screen frame),
   **or** any object with a `screen` array of that form, so
-  `element.anchors[i]` can be passed directly.
+  `element.anchors[i]` can be passed directly. Values outside [0, 1] are
+  legal — see the Amendment note below.
 - `frame` — `"parts"` (default) or `"world"`.
 
 **Errors** (all thrown as `Error`, messages exact):
 - `annotationRay: payload.camera.parts is null — the sketch was sent with no meshes (use { frame: "world" })`
   when `frame === "parts"` and `payload.camera.parts` is `null`.
 - `annotationRay: frame must be "parts" or "world"` for any other frame value.
-- `annotationRay: screen must be [x, y] with each in 0..1` when `screen`
-  (after unwrapping `.screen`) is not a 2-array of finite numbers in
-  [0, 1]. Exact 0 and 1 are legal (viewport edges).
+- `annotationRay: screen must be [x, y] finite numbers` when `screen`
+  (after unwrapping `.screen`) is not a 2-array of finite numbers;
+  off-viewport values are legal — the hand tool can move shapes partly
+  off-stage, and the projection extrapolates.
 - `annotationRay: payload has no camera/viewport block` when
   `payload.camera?.[frame]` (other than the null-parts case above) or
   `payload.viewport?.aspect` is missing.
+
+**Amendment (2026-08-28):** the original design range-checked `screen` to
+[0, 1] and threw `annotationRay: screen must be [x, y] with each in 0..1`
+outside it. That broke the no-mesh recovery path on payloads the framework
+itself produces: the sketch hand tool can drag a committed shape partly
+off-stage, so a legitimate anchor's `screen` can carry a value like
+`[1.03, 0.5]`. The projection math is well-defined off-viewport (three's
+`Raycaster` extrapolates the same way), so the range check is dropped —
+`annotationRay` now validates shape and finiteness only, per the Errors list
+above.
 
 **Math.** With `cam = payload.camera[frame]` and
 `aspect = payload.viewport.aspect`:
