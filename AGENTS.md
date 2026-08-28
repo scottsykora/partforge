@@ -102,13 +102,17 @@ the installed package, so let the publish finish before bumping the dep there.
   objects; `feature-dims.js`/`dim3-place.js`/`pins.js`/`param-link.js` are pure
   leaves, `dim3-scene.js` renders into the viewer scene, `measure-mode.js`
   orchestrates, `measure-controls.js` is the viewbar chrome), `annotate/` (the
-  annotation mode: freehand ink on a transparent canvas over the frozen view,
-  sent to the host via `onAnnotationSend` - `ink.js` is the pure stroke model,
-  `ink-canvas.js` the overlay renderer, `annotate-mode.js` the orchestrator,
-  `annotate-controls.js` the viewbar chrome; sketch mode stops animation
-  playback and hides the transport bar (`animation-controls.js`'s
-  `setHidden`), which is what frees the bottom-centre slot for a host-drawn
-  composer - playback does not resume on exit), `viewcube/` (the orientation
+  sketch mode: typed drawing elements - pen/line/rect/ellipse with three ink
+  colors, a hand tool for move/resize/rotate, and an interval eraser that
+  subtracts parameter spans so shapes stay parametric - sent to the host via
+  `onAnnotationSend` as a v3 semantic payload; `elements.js` is the pure
+  element model, `ink-canvas.js` the overlay renderer, `annotate-mode.js` the
+  orchestrator, `sketch-toolbar.js` the top-centre toolbar that replaces the
+  viewbar while the mode is on, `annotate-controls.js` the viewbar pencil
+  toggle; sketch mode stops animation playback and hides the transport bar
+  (`animation-controls.js`'s `setHidden`), which is what frees the
+  bottom-centre slot for a host-drawn composer - playback does not resume on
+  exit), `viewcube/` (the orientation
   cube: a ghost cube whose 26 regions - 6 faces, 12 edges, 8 corners - tween
   the camera to canonical angles, with model-frame X/Y/Z arrows drawn in
   front of it and a perspective/orthographic toggle beneath -

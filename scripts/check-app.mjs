@@ -863,11 +863,17 @@ try {
       await checkCompactLayout(601);
       await checkCompactLayout(390);
       await checkCompactLayout(320);
-      // Restore a normal-width viewport before clicking to close: at 320px
-      // the pill (by design) sits close to the stage's edge, and clicking an
-      // element outside the actual browser window would hang.
+      // Restore a normal-width viewport before closing.
       if (viewport) await page.setViewportSize(viewport);
-      await annotateButton.click(); // close it again
+      // Can't just click #annotate again: while sketch mode owns the
+      // top-centre toolbar, mount.js hides the WHOLE #viewbar (see app.css's
+      // "Sketch-mode toolbar" comment) so the pencil toggle is unreachable —
+      // by design, exiting is either Escape (which needs real DOM focus on
+      // viewer.domElement, not just a synthetic keypress with no element
+      // focused) or the runtime handle. Use the same __pfRuntime surface
+      // captureCurrent already relies on above to close the mode; #viewbar
+      // (and #annotate within it) reappears once setEnabled(false) restores it.
+      await page.evaluate(() => window.__pfRuntime?.annotate?.setEnabled(false));
     }
     if (cutawayWasOn) await cutawayButton.click(); // restore cutaway's prior state
   }

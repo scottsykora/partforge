@@ -1810,7 +1810,7 @@ button are hidden while Sketch (annotate) mode is active, but that only governs
 The ink is a transparent overlay and the WebGL canvas keeps rendering beneath
 it, so a host that calls `runtime.projection.set()` mid-sketch **visibly
 re-frames the 3D view underneath ink the user may still be drawing**: the
-strokes stay where they were laid down while the model shifts out from under
+elements stay where they were laid down while the model shifts out from under
 them, and the sketch that gets sent is misaligned, not merely mis-labelled.
 Deliberately unguarded, the same way it's always been free to call
 `setCameraState` during Sketch.
@@ -1821,10 +1821,12 @@ Deliberately unguarded, the same way it's always been free to call
 (replays exactly against the build that produced it) and `parts` (pinned to
 the CAD geometry, so it survives a later rebuild's bbox recentring; reread a
 sketch's camera intrinsics from `parts`, not `world`, once the model has been
-rebuilt). `ANNOTATION_VERSION` is **2**: both frames carry
+rebuilt). `ANNOTATION_VERSION` is **3**: both frames carry
 `projection: "perspective" | "orthographic"`, and under an orthographic camera
 `fov` is `null` while `orthoHeight` gives the frustum's world height instead.
-(v1 had `fov` only, and predates the projection toggle.)
+(v1 had `fov` only, and predates the projection toggle; v3 replaced the
+payload's `strokes` array with `elements` — typed pen/line/rect/ellipse
+shapes rather than raw ink paths — a change orthogonal to this camera block.)
 
 **The markup convention (`demo.html` is the canonical copy-me page):** `<body>` carries
 `class="pf-shell"`, the flex row that lays the viewer column next to the rail. `#app`
