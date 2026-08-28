@@ -355,3 +355,53 @@ export function eraseSegment(list, ax, ay, bx, by, { radius, halfWidth }) {
   });
   return { changed, list: changed ? next : list };
 }
+
+// ---- semantics -------------------------------------------------------------
+function rotNote(rot) {
+  let d = Math.round((rot || 0) * 180 / Math.PI) % 360;
+  if (d > 180) d -= 360;
+  if (d <= -180) d += 360;
+  return d ? ` · rot ${d}°` : "";
+}
+
+function gapNote(el) {
+  if (!el.gaps.length) return "";
+  const pct = Math.round(visibleFraction(el) * 100);
+  return ` · ${pct}% visible · ${el.gaps.length} gap${el.gaps.length > 1 ? "s" : ""}`;
+}
+
+export function describeElement(el, aspect) {
+  const p = el.params;
+  const px = (v) => `${Math.round((v / aspect) * 100)}%`;   // x-positions, widths
+  const py = (v) => `${Math.round(v * 100)}%`;               // y-positions, heights
+  const pr = (v) => `${Math.round((v / Math.min(1, aspect)) * 100)}%`; // radii: short edge
+  let base;
+  if (el.type === "freehand") base = `freehand · ${p.points.length} pts`;
+  else if (el.type === "line") {
+    base = `line · (${px(p.x1)}, ${py(p.y1)}) → (${px(p.x2)}, ${py(p.y2)})`;
+  } else if (el.type === "rect") {
+    base = (p.w === p.h
+      ? `square · c (${px(p.cx)}, ${py(p.cy)}) · ${px(p.w)}`
+      : `rect · c (${px(p.cx)}, ${py(p.cy)}) · ${px(p.w)} × ${py(p.h)}`) + rotNote(p.rot);
+  } else {
+    base = (p.rx === p.ry
+      ? `circle · c (${px(p.cx)}, ${py(p.cy)}) · r ${pr(p.rx)}`
+      : `ellipse · c (${px(p.cx)}, ${py(p.cy)}) · rx ${pr(p.rx)} · ry ${pr(p.ry)}` + rotNote(p.rot));
+  }
+  return base + gapNote(el);
+}
+
+export function elementAnchors(el) {
+  const out = [];
+  for (const run of visibleRuns(el)) {
+    const mid = run[Math.floor(run.length / 2)];
+    out.push({ at: "start", x: run[0].x, y: run[0].y });
+    out.push({ at: "mid", x: mid.x, y: mid.y });
+    out.push({ at: "end", x: run[run.length - 1].x, y: run[run.length - 1].y });
+  }
+  if (el.type === "rect" || el.type === "ellipse") {
+    const [x, y] = centerOf(el);
+    out.push({ at: "center", x, y });
+  }
+  return out;
+}
