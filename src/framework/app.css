@@ -300,20 +300,29 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   border-radius: var(--pf-radius-pill);
   box-shadow: var(--pf-shadow-float);
 }
-/* nowrap: `.seg button` is `flex: 1` (equal-width columns), and a part with
-   two views where one label is long (e.g. import-demo's "Reference overlay")
-   would otherwise wrap onto a second line, making this pill taller than the
-   single fixed height debug-overlay.js positions itself below (see its
-   comment) — the overlay would then overlap the now-two-row tabs. Letting the
-   label force the column wider instead keeps the pill single-row regardless
-   of label length.
+/* flex: the panel's `.seg button` is `flex: 1 1 0%` — equal-width columns,
+   which is right for a radio group in the rail and wrong here. With a zero
+   basis every tab gets the SAME width, so the widest label does not get to
+   size its own column: import-demo's two tabs came out 106px each while
+   "Reference overlay" needs ~127, and the text simply drew outside the pill's
+   rounded background (measured in Chromium: scrollWidth 238 against
+   clientWidth 221). Sizing each tab to its own content is what the nowrap note
+   below always claimed happened, and is also what makes the pill's natural
+   width honest — view-tabs.js's collapse measures exactly this.
 
-   view-tabs.js ALSO sets this inline on every button it generates, and that is
+   nowrap: with content-sized columns a long label would otherwise wrap onto a
+   second line, making this pill taller than the single fixed height
+   debug-overlay.js positions itself below (see its comment) — the overlay
+   would then overlap the now-two-row tabs. Letting the label force the column
+   wider instead keeps the pill single-row regardless of label length, and
+   hands the overflow to the collapse rather than to a second row.
+
+   view-tabs.js ALSO sets nowrap inline on every button it generates, and that is
    the copy that actually protects the rule: a host restyling the pill from
    scratch (partforge-cloud's `#viewer #part button`, with no `.seg` class)
    never sees this selector, and long labels wrapped there for exactly that
    reason. This one still covers hand-written markup on partforge's own pages. */
-#topbar .seg button { min-width: 70px; padding: 7px 10px; white-space: nowrap; }
+#topbar .seg button { flex: 0 0 auto; min-width: 70px; padding: 7px 10px; white-space: nowrap; }
 
 /* The tabs' narrow-stage fallback. When view-tabs.js measures the segmented
    pill as wider than the stage's top-centre slot it flips `data-pf-tabs` to
