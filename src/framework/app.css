@@ -318,6 +318,10 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   border-radius: var(--pf-radius-pill);
   box-shadow: var(--pf-shadow-float);
 }
+/* Sketch mode hides the whole bar while it owns the stage (mount.js) — the
+   display: flex above is author-origin and beats the UA's [hidden] rule, the
+   same trap the buttons' own [hidden] rule below already guards against. */
+#viewbar[hidden] { display: none; }
 #viewbar:not(.pf-float-viewbar) { position: fixed; top: 12px; right: 12px; z-index: 15; }
 #viewbar button {
   width: 34px; height: 34px; border: 0; border-radius: var(--pf-radius-control);
@@ -337,20 +341,6 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar .pf-measure-actions { display: flex; gap: 4px; }
 #viewbar .pf-measure-actions[hidden] { display: none; }
 #viewbar .pf-measure-actions button { width: auto; min-width: 56px; padding: 0 8px; }
-#viewbar .pf-annotate-actions { display: flex; gap: 4px; }
-#viewbar .pf-annotate-actions[hidden] { display: none; }
-#viewbar .pf-annotate-actions button { width: auto; min-width: 56px; padding: 0 8px; }
-/* Annotate's actions row has three buttons (Undo/Clear/Send) against
-   cutaway's/measure's two, so it is the first to overflow the stage's left
-   edge as the viewport narrows — the full-size pill (5 icon buttons + this
-   row, ~374px) already exceeds a 375-390px phone's usable width (viewport
-   minus the stage's 12px margins on both sides) before the shared 360px
-   rule below ever engages. Shrink only this row here; the icon buttons and
-   the other two action rows still have room down to 360px. */
-@media (max-width: 430px) {
-  #viewbar .pf-annotate-actions { gap: 3px; }
-  #viewbar .pf-annotate-actions button { min-width: 40px; padding: 0 5px; font-size: 11px; }
-}
 #viewbar button:disabled { opacity: .38; cursor: not-allowed; }
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
 #viewbar button:hover { color: var(--pf-text); background: var(--pf-surface-2); }
@@ -523,12 +513,8 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 @media (max-width: 360px) {
   #viewbar { gap: 3px; }
   #viewbar button { width: 30px; height: 30px; font-size: 13px; }
-  #viewbar .pf-cutaway-actions, #viewbar .pf-measure-actions, #viewbar .pf-annotate-actions { gap: 3px; }
-  #viewbar .pf-cutaway-actions button, #viewbar .pf-measure-actions button, #viewbar .pf-annotate-actions button { min-width: 44px; padding: 0 6px; }
-  /* Annotate's three-button row (Undo/Clear/Send) is wider than cutaway's or
-     measure's two-button rows at the shared size above, so it still clips the
-     bar's left edge at 320px — shrink it further than the shared rule. */
-  #viewbar .pf-annotate-actions button { min-width: 38px; padding: 0 4px; font-size: 10px; }
+  #viewbar .pf-cutaway-actions, #viewbar .pf-measure-actions { gap: 3px; }
+  #viewbar .pf-cutaway-actions button, #viewbar .pf-measure-actions button { min-width: 44px; padding: 0 6px; }
 }
 
 /* ---- measurement mode -----------------------------------------------------

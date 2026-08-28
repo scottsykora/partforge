@@ -30,6 +30,7 @@ import { createMeasureMode } from "./measure/measure-mode.js";
 import { attachMeasureControls } from "./measure/measure-controls.js";
 import { createAnnotateMode } from "./annotate/annotate-mode.js";
 import { attachAnnotateControls } from "./annotate/annotate-controls.js";
+import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
@@ -245,12 +246,12 @@ function createCleanupStack() {
 //                                         // KB of base64 apiece, so a host should not assume this
 //                                         // payload is small, only that it is bounded.
 // annotateSend: "viewbar" | "host"       // who owns the Send affordance. "viewbar" (default) puts
-//                                         // Send beside Undo/Clear in the annotate actions row.
-//                                         // "host" drops it and leaves Undo/Clear: the host draws
-//                                         // its own send control — e.g. a composer that pairs the
-//                                         // sketch with a typed message — and calls
-//                                         // runtime.annotate.send() itself. Ignored without
-//                                         // onAnnotationSend (there is no button to place).
+//                                         // Send in the sketch toolbar alongside the other tools.
+//                                         // "host" drops it: the host draws its own send control —
+//                                         // e.g. a composer that pairs the sketch with a typed
+//                                         // message — and calls runtime.annotate.send() itself.
+//                                         // Ignored without onAnnotationSend (there is no toolbar
+//                                         // to place it in).
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
@@ -431,8 +432,30 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     }
     const annotateChrome = attachAnnotateControls(viewer, annotateMode, {
       annotate: els.chrome.annotate,
-    }, { tooltip, escapeScope: els.viewer, send: annotateSend });
+    }, { tooltip, escapeScope: els.viewer });
     cleanup.defer(() => annotateChrome.detach());
+    // Sketch owns the top of the stage: the toolbar replaces the viewbar while
+    // the mode is on (spec 2026-08-27). Restore honors whatever hidden state
+    // the host had set before entering. Attached only when annotateMode
+    // exists — a mode-less mount (no onAnnotationSend) has nothing for the
+    // toolbar to drive.
+    if (annotateMode) {
+      const sketchToolbar = attachSketchToolbar(annotateMode, {
+        stage: els.viewer, tooltip, send: annotateSend,
+      });
+      cleanup.defer(() => sketchToolbar.detach());
+      const viewbarForSketch = els.viewer.querySelector("#viewbar");
+      let viewbarWasHidden = false;
+      cleanup.defer(annotateMode.onModeChange(() => {
+        if (!viewbarForSketch) return;
+        if (annotateMode.isEnabled()) {
+          viewbarWasHidden = viewbarForSketch.hidden;
+          viewbarForSketch.hidden = true;
+        } else {
+          viewbarForSketch.hidden = viewbarWasHidden;
+        }
+      }));
+    }
     // Orientation cube + projection toggle. Generated chrome — no host markup
     // declares it, so an embedder gets it for free. Restored BEFORE any framing
     // happens so a reload into ortho frames once instead of framing in
