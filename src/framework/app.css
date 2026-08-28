@@ -278,6 +278,7 @@ button.action:disabled { opacity: .5; cursor: default; }
 /* keyboard focus ring shared across the panel's interactive controls */
 .seg button:focus-visible, select.preset:focus-visible, .dl-row button:focus-visible,
 button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible, #viewbar button:focus-visible,
+.pf-view-select:focus-visible,
 .pf-viewcube-toggle:focus-visible, .pf-float-rail-toggle:focus-visible, .pf-sketch-toolbar button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
@@ -299,14 +300,65 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   border-radius: var(--pf-radius-pill);
   box-shadow: var(--pf-shadow-float);
 }
-/* nowrap: `.seg button` is `flex: 1` (equal-width columns), and a part with
-   two views where one label is long (e.g. import-demo's "Reference overlay")
-   would otherwise wrap onto a second line, making this pill taller than the
-   single fixed height debug-overlay.js positions itself below (see its
-   comment) — the overlay would then overlap the now-two-row tabs. Letting the
-   label force the column wider instead keeps the pill single-row regardless
-   of label length. */
-#topbar .seg button { min-width: 70px; padding: 7px 10px; white-space: nowrap; }
+/* flex: the panel's `.seg button` is `flex: 1 1 0%` — equal-width columns,
+   which is right for a radio group in the rail and wrong here. With a zero
+   basis every tab gets the SAME width, so the widest label does not get to
+   size its own column: import-demo's two tabs came out 106px each while
+   "Reference overlay" needs ~127, and the text simply drew outside the pill's
+   rounded background (measured in Chromium: scrollWidth 238 against
+   clientWidth 221). Sizing each tab to its own content is what the nowrap note
+   below always claimed happened, and is also what makes the pill's natural
+   width honest — view-tabs.js's collapse measures exactly this.
+
+   nowrap: with content-sized columns a long label would otherwise wrap onto a
+   second line, making this pill taller than the single fixed height
+   debug-overlay.js positions itself below (see its comment) — the overlay
+   would then overlap the now-two-row tabs. Letting the label force the column
+   wider instead keeps the pill single-row regardless of label length, and
+   hands the overflow to the collapse rather than to a second row.
+
+   view-tabs.js ALSO sets nowrap inline on every button it generates, and that is
+   the copy that actually protects the rule: a host restyling the pill from
+   scratch (partforge-cloud's `#viewer #part button`, with no `.seg` class)
+   never sees this selector, and long labels wrapped there for exactly that
+   reason. This one still covers hand-written markup on partforge's own pages. */
+#topbar .seg button { flex: 0 0 auto; min-width: 70px; padding: 7px 10px; white-space: nowrap; }
+
+/* The tabs' narrow-stage fallback. When view-tabs.js measures the segmented
+   pill as wider than the stage's top-centre slot it flips `data-pf-tabs` to
+   "menu", and this dropdown stands in for the buttons.
+
+   Ungated on `.seg` / `#topbar` for the same reason #viewbar's chrome below is:
+   partforge-cloud dresses the pill with its own `#viewer #part` rules and
+   neither of those selectors reaches it — and it is the host that most needs
+   this, since its stage is a column beside an editor rather than a full window.
+
+   27px tall, which is what the buttons it replaces measure (11px mono + 7px of
+   padding top and bottom). Matched rather than approximated so the pill's own
+   height does not change as it swaps — it sits at the stage's top centre, where
+   a 1px jump on every resize past the threshold would read as a twitch — and so
+   the collapsed pill stays under the fixed height debug-overlay.js parks itself
+   below. Capped in width so a long label ellipsizes rather than pushing the
+   pill back out to the width that collapsed it in the first place. */
+.pf-view-select {
+  box-sizing: border-box;
+  height: 27px; max-width: min(220px, 100%);
+  padding: 0 24px 0 9px;
+  border: 0; border-radius: var(--pf-radius-control);
+  background: transparent; color: var(--pf-text-2);
+  font-family: var(--pf-mono); font-size: 11px; letter-spacing: 0.02em;
+  cursor: pointer; appearance: none; text-overflow: ellipsis;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='7'%3E%3Cpolygon points='0,0 8,0 4,7' fill='%238b8b94'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+/* `hidden` is the switch view-tabs.js flips between the two representations,
+   and a host that gives tab buttons a `display` of their own would beat the
+   UA's [hidden] rule — the trap `#viewbar button[hidden]` below already guards
+   against. Said again here against the layout state, which lives on the
+   element itself and so holds whatever a host does to the pill around it. */
+[data-pf-tabs="menu"] > button[data-part] { display: none; }
+[data-pf-tabs="segmented"] > .pf-view-select { display: none; }
 
 /* viewer controls. APPEARANCE is ungated: partforge-cloud re-anchors #viewbar's
    position in sandbox.css but inherits this pill chrome, so gating it on a class
