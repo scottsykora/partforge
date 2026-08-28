@@ -1,16 +1,16 @@
-// Viewbar chrome for annotation mode: the pencil toggle + contextual actions
-// (Undo / Clear / Send) shown while the mode is on. A direct sibling of
-// measure-controls.js — same no-op-without-button contract, same attribute
-// restore discipline on detach. The mode object (annotate-mode.js) owns all
-// behavior; this file only puts it on screen. One extra contract: a host whose
-// markup HAS the button but whose mount passed no onAnnotationSend gets the
-// button hidden entirely (spec: no dead Send) — mount passes mode = null.
+// Viewbar chrome for annotation mode: just the pencil toggle. A direct
+// sibling of measure-controls.js — same no-op-without-button contract, same
+// attribute restore discipline on detach. The mode object (annotate-mode.js)
+// owns all behavior; this file only puts the toggle on screen. One extra
+// contract: a host whose markup HAS the button but whose mount passed no
+// onAnnotationSend gets the button hidden entirely (spec: no dead toggle) —
+// mount passes mode = null.
 //
-// `send: "host"` drops the Send button from the row and leaves Undo/Clear.
-// It is for a host that draws its own send affordance (partforge-cloud pairs
-// the sketch with a typed prompt in its own composer, then calls
-// runtime.annotate.send()) — two Send buttons in two places, one of which
-// ignores the typed message, is the failure this avoids.
+// The Undo/Clear/Send actions that used to live in a row beside this button
+// moved to the sketch toolbar (sketch-toolbar.js, spec 2026-08-27) — the
+// toolbar OWNS the top of the stage while sketch mode is on, replacing the
+// whole viewbar rather than sharing it. This file no longer knows about
+// Undo/Clear/Send at all.
 import { attachButtonTooltips } from "../tooltip.js";
 import { runCleanupSteps, captureAttributes, restoreAttributes } from "../teardown.js";
 
@@ -19,7 +19,7 @@ const PENCIL_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none"
 
 const noop = () => {};
 
-export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, { tooltip, escapeScope, send = "viewbar" } = {}) {
+export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, { tooltip, escapeScope } = {}) {
   if (!button) return { detach: noop };
 
   const hostAttributes = captureAttributes(button, BUTTON_ATTRIBUTES);
@@ -42,33 +42,8 @@ export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, 
   button.setAttribute("aria-pressed", "false");
   if (!tooltip && !button.hasAttribute("title")) button.title = "Sketch";
 
-  const actions = document.createElement("span");
-  actions.className = "pf-annotate-actions";
-  const undoButton = document.createElement("button");
-  undoButton.type = "button";
-  undoButton.textContent = "Undo";
-  undoButton.title = "Remove the last stroke";
-  undoButton.setAttribute("aria-label", "Remove the last stroke");
-  const clearButton = document.createElement("button");
-  clearButton.type = "button";
-  clearButton.textContent = "Clear";
-  clearButton.title = "Remove all strokes";
-  clearButton.setAttribute("aria-label", "Remove all strokes");
-  let sendButton = null;
-  if (send !== "host") {
-    sendButton = document.createElement("button");
-    sendButton.type = "button";
-    sendButton.className = "pf-annotate-send";
-    sendButton.textContent = "Send";
-    sendButton.title = "Send the annotation";
-    sendButton.setAttribute("aria-label", "Send the annotation");
-  }
-  actions.append(...[undoButton, clearButton, sendButton].filter(Boolean));
-  button.after(actions);
-
-  const buttons = [button, undoButton, clearButton, sendButton].filter(Boolean);
   const tooltipBinding = tooltip
-    ? attachButtonTooltips(tooltip, buttons.map((element) => ({ element })))
+    ? attachButtonTooltips(tooltip, [{ element: button }])
     : null;
 
   function sync() {
@@ -76,18 +51,10 @@ export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, 
     button.setAttribute("aria-pressed", String(on));
     button.setAttribute("aria-label", on ? "Stop sketching" : "Sketch");
     button.classList.toggle("on", on);
-    actions.hidden = !on;
-    const empty = mode.strokeCount() === 0;
-    undoButton.disabled = empty;
-    clearButton.disabled = empty;
-    if (sendButton) sendButton.disabled = empty;
     tooltipBinding?.sync();
   }
 
   const onToggle = () => { mode.setEnabled(!mode.isEnabled()); sync(); };
-  const onUndo = () => { mode.undo(); sync(); };
-  const onClear = () => { mode.clear(); sync(); };
-  const onSendClick = () => { mode.send(); sync(); };
   const onEscape = (event) => {
     if (event.key !== "Escape" || !mode.isEnabled()) return;
     event.preventDefault();
@@ -99,14 +66,10 @@ export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, 
     sync();
     tooltipBinding?.hide();
   };
-  const offInk = mode.onInkChange(sync);
   const offMode = mode.onModeChange(sync);
 
   button.addEventListener("click", onToggle);
-  undoButton.addEventListener("click", onUndo);
-  clearButton.addEventListener("click", onClear);
-  sendButton?.addEventListener("click", onSendClick);
-  const escapeTargets = [escapeScope ?? viewer.domElement, ...buttons];
+  const escapeTargets = [escapeScope ?? viewer.domElement, button];
   for (const element of escapeTargets) element.addEventListener("keydown", onEscape);
   sync();
 
@@ -116,15 +79,10 @@ export function attachAnnotateControls(viewer, mode, { annotate: button } = {}, 
       if (detached) return;
       detached = true;
       runCleanupSteps([
-        offInk,
         offMode,
         () => button.removeEventListener("click", onToggle),
-        () => undoButton.removeEventListener("click", onUndo),
-        () => clearButton.removeEventListener("click", onClear),
-        () => sendButton?.removeEventListener("click", onSendClick),
         ...escapeTargets.map((element) => () => element.removeEventListener("keydown", onEscape)),
         () => tooltipBinding?.detach(),
-        () => actions.remove(),
         () => restoreAttributes(button, hostAttributes),
         () => { button.innerHTML = hostHtml; },
         () => button.classList.toggle("on", hostOn),

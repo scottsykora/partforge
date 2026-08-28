@@ -499,3 +499,18 @@ export function renderViews(
     opacity?: Record<string, number>;
   },
 ): Promise<string[]>;
+
+// --- sketch-annotation rays --------------------------------------------------
+export interface AnnotationRay { origin: [number, number, number]; dir: [number, number, number] }
+export interface RayPlaneHit { point: [number, number, number]; t: number }
+export type PlaneSpec =
+  | { point: [number, number, number]; normal: [number, number, number] }
+  | "xy" | "yz" | "zx";
+/** Rebuild the pick ray for a screen point of an ANNOTATION_VERSION 3 payload. */
+export function annotationRay(
+  payload: { camera: unknown; viewport: { aspect: number } },
+  screen: [number, number] | { screen: [number, number] },
+  opts?: { frame?: "parts" | "world" },
+): AnnotationRay;
+/** Intersect a ray with a plane; null on parallel / behind-origin misses. */
+export function rayPlane(ray: AnnotationRay, plane: PlaneSpec): RayPlaneHit | null;

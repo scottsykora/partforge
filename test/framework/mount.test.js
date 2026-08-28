@@ -1525,3 +1525,79 @@ test("restores a persisted orthographic projection before the first framing", ()
   localStorage.clear();
   runtime.dispose();
 });
+
+// --- Sketch toolbar wiring (sdd 2026-08-27-sketch-tools, Task 10) ----------
+// The toolbar (sketch-toolbar.js, Task 9) replaces #viewbar as the top-of-stage
+// chrome while sketch mode is on, and is only attached at all when annotateMode
+// exists — same gate as the view-cube hide-reason tests above. makeElements()
+// carries no #viewbar (no test until now needed one); these tests add their
+// own so the hide/restore wiring has something real to toggle.
+function withViewbar(els) {
+  const viewbar = document.createElement("div");
+  viewbar.id = "viewbar";
+  els.viewer.append(viewbar);
+  return viewbar;
+}
+
+test("no sketch toolbar without onAnnotationSend — nothing for it to drive", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  expect(els.viewer.querySelector(".pf-sketch-toolbar")).toBeNull();
+  runtime.dispose();
+});
+
+test("sketch mode hides the viewbar and shows the toolbar; exit restores both", () => {
+  const els = makeElements();
+  const viewbar = withViewbar(els);
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, onAnnotationSend: () => {},
+  });
+  const toolbar = els.viewer.querySelector(".pf-sketch-toolbar");
+  expect(toolbar).not.toBeNull();
+  expect(toolbar.hidden).toBe(true);
+  expect(viewbar.hidden).toBe(false);
+
+  runtime.annotate.setEnabled(true);
+  expect(viewbar.hidden).toBe(true);
+  expect(toolbar.hidden).toBe(false);
+
+  runtime.annotate.setEnabled(false);
+  expect(viewbar.hidden).toBe(false);
+  expect(toolbar.hidden).toBe(true);
+
+  runtime.dispose();
+  expect(els.viewer.querySelector(".pf-sketch-toolbar")).toBeNull();
+});
+
+// Restore honors whatever hidden state the host had set BEFORE entering, not
+// a hardcoded "always reveal" — a host that had its own reason to hide
+// #viewbar must see that reason survive a sketch round-trip.
+test("leaving sketch mode restores the viewbar's PRIOR hidden state, not just false", () => {
+  const els = makeElements();
+  const viewbar = withViewbar(els);
+  viewbar.hidden = true; // host already had it hidden for an unrelated reason
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, onAnnotationSend: () => {},
+  });
+
+  runtime.annotate.setEnabled(true);
+  expect(viewbar.hidden).toBe(true); // still hidden, now for sketch's reason
+  runtime.annotate.setEnabled(false);
+  expect(viewbar.hidden).toBe(true); // restored to the host's prior state, not forced visible
+
+  runtime.dispose();
+});
+
+test("annotateSend: 'host' keeps Send out of the sketch toolbar", () => {
+  const els = makeElements();
+  withViewbar(els);
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, onAnnotationSend: () => {}, annotateSend: "host",
+  });
+  expect(els.viewer.querySelector('.pf-sketch-toolbar [data-action="send"]')).toBeNull();
+  runtime.dispose();
+});
