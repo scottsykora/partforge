@@ -69,3 +69,97 @@ export function createElementStore() {
     onChange(cb) { listeners.add(cb); return () => listeners.delete(cb); },
   };
 }
+
+// ---- rotation helpers ------------------------------------------------------
+export const rot2 = (x, y, a) =>
+  [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)];
+export const invRot2 = (x, y, a) => rot2(x, y, -a);
+
+const SHAPE_SEGMENTS = 320;
+const polylineSegments = (length) =>
+  Math.max(24, Math.min(600, Math.round(length / 0.004)));
+
+function computeSample(el) {
+  const pts = [];
+  const push = (x, y, t) => pts.push({ x, y, t });
+  const p = el.params;
+  if (el.type === "freehand") {
+    const P = p.points;
+    if (P.length === 1) push(P[0][0], P[0][1], 0);
+    else {
+      const cum = [0];
+      for (let i = 1; i < P.length; i++) {
+        cum.push(cum[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+      }
+      const total = cum[cum.length - 1] || 1;
+      const N = polylineSegments(total);
+      let seg = 1;
+      for (let i = 0; i <= N; i++) {
+        const d = (i / N) * total;
+        while (seg < cum.length - 1 && cum[seg] < d) seg++;
+        const span = cum[seg] - cum[seg - 1] || 1;
+        const f = Math.min(1, Math.max(0, (d - cum[seg - 1]) / span));
+        push(
+          P[seg - 1][0] + (P[seg][0] - P[seg - 1][0]) * f,
+          P[seg - 1][1] + (P[seg][1] - P[seg - 1][1]) * f,
+          i / N,
+        );
+      }
+    }
+  } else if (el.type === "line") {
+    const N = polylineSegments(Math.hypot(p.x2 - p.x1, p.y2 - p.y1));
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      push(p.x1 + (p.x2 - p.x1) * t, p.y1 + (p.y2 - p.y1) * t, t);
+    }
+  } else if (el.type === "rect") {
+    const { cx, cy, w, h, rot = 0 } = p;
+    const per = 2 * (w + h) || 1;
+    for (let i = 0; i <= SHAPE_SEGMENTS; i++) {
+      const t = i / SHAPE_SEGMENTS;
+      const d = t * per;
+      let lx, ly; // local frame, top-left origin, clockwise
+      if (d <= w) { lx = -w / 2 + d; ly = -h / 2; }
+      else if (d <= w + h) { lx = w / 2; ly = -h / 2 + (d - w); }
+      else if (d <= 2 * w + h) { lx = w / 2 - (d - w - h); ly = h / 2; }
+      else { lx = -w / 2; ly = h / 2 - (d - 2 * w - h); }
+      const [wx, wy] = rot2(lx, ly, rot);
+      push(cx + wx, cy + wy, t);
+    }
+  } else if (el.type === "ellipse") {
+    const { cx, cy, rx, ry, rot = 0 } = p;
+    for (let i = 0; i <= SHAPE_SEGMENTS; i++) {
+      const t = i / SHAPE_SEGMENTS;
+      const a = t * Math.PI * 2;
+      const [wx, wy] = rot2(rx * Math.cos(a), ry * Math.sin(a), rot);
+      push(cx + wx, cy + wy, t);
+    }
+  }
+  return { pts, closed: el.type === "rect" || el.type === "ellipse" };
+}
+
+export const sample = (el) => cachedSample(el, computeSample);
+
+export function visibleRuns(el) {
+  const { pts } = sample(el);
+  const runs = [];
+  let run = null;
+  for (const p of pts) {
+    if (inGaps(p.t, el.gaps)) { run = null; continue; }
+    if (!run) { run = []; runs.push(run); }
+    run.push(p);
+  }
+  return runs;
+}
+
+export function centerOf(el) {
+  const p = el.params;
+  if (el.type === "rect" || el.type === "ellipse") return [p.cx, p.cy];
+  if (el.type === "line") return [(p.x1 + p.x2) / 2, (p.y1 + p.y2) / 2];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of p.points) {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  return [(minX + maxX) / 2, (minY + maxY) / 2];
+}
