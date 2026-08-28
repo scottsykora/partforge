@@ -137,10 +137,14 @@ export function createAnnotateMode(viewer, { stage, getContext, onSend, createCa
     const p = el.params;
     if (el.type === "rect") return [p.cx + p.w / 2, p.cy - p.h / 2];
     if (el.type === "ellipse") return [p.cx + p.rx, p.cy - p.ry];
-    return [p.x2, p.y2]; // line
+    // Line: the MIDPOINT, like a CAD dimension riding the line — the endpoint
+    // is exactly the cursor, so a label anchored there always fights it.
+    return [(p.x1 + p.x2) / 2, (p.y1 + p.y2) / 2];
   }
 
   function activeHandlePos(el, handleId) {
+    // A dragged line endpoint IS the cursor; keep line labels at the midpoint.
+    if (el.type === "line") return shapeLabelAnchor(el);
     const h = handlesOf(el).find((candidate) => candidate.id === handleId);
     return h ? [h.x, h.y] : shapeLabelAnchor(el);
   }
