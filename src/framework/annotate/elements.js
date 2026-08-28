@@ -325,3 +325,33 @@ export function probe(list, x, y, { reach, handleR, band }) {
   if (near.length === 1) return { kind: "rotate", el: near[0] };
   return null;
 }
+
+// ---- eraser ----------------------------------------------------------------
+function distToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.min(1, Math.max(0, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+}
+
+// One eraser sweep step: subtract the covered t-spans from every element it
+// touches. Params are never modified — only `gaps` — which is the whole
+// point: a half-erased circle is still "a circle, center c, radius r".
+export function eraseSegment(list, ax, ay, bx, by, { radius, halfWidth }) {
+  let changed = false;
+  const next = list.filter((el) => {
+    const { pts } = sample(el);
+    const halfStep = (pts.length > 1 ? pts[1].t - pts[0].t : 1) / 2;
+    const hits = [];
+    for (const p of pts) {
+      if (distToSegment(p.x, p.y, ax, ay, bx, by) <= radius + halfWidth) {
+        hits.push([Math.max(0, p.t - halfStep), Math.min(1, p.t + halfStep)]);
+      }
+    }
+    if (!hits.length) return true;
+    changed = true;
+    el.gaps = mergeGaps(el.gaps.concat(hits));
+    return visibleFraction(el) > MIN_VISIBLE;
+  });
+  return { changed, list: changed ? next : list };
+}
