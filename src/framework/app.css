@@ -347,13 +347,23 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar button.on { background: var(--pf-accent); color: var(--pf-on-accent); }
 
 /* Sketch-mode toolbar: the #viewbar pill idiom, top-centre, owning the mode
-   while the viewbar itself is hidden (mount toggles both). */
+   while the viewbar itself is hidden (mount toggles both).
+
+   `left: 50%` is a shrink-to-fit trap for an absolutely positioned element:
+   its auto width shrink-wraps against the space between `left` and the
+   containing block's right edge, which here is only HALF the stage, not the
+   whole stage — so the row wraps (stranding the close button on its own
+   centred second line, on top of .pf-sketch-hint) well before it actually
+   needs to. `width: max-content` opts back into sizing to the row's
+   preferred (unwrapped) width; `max-width` below still caps that on stages
+   too narrow for the full row, so genuine wrapping on narrow stages still
+   works. */
 .pf-sketch-toolbar {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 4px; padding: 4px;
   background: var(--pf-surface); border: 1px solid var(--pf-border);
   border-radius: var(--pf-radius-pill); box-shadow: var(--pf-shadow-float);
-  z-index: 20; max-width: calc(100% - 16px); flex-wrap: wrap; justify-content: center;
+  z-index: 20; width: max-content; max-width: calc(100% - 16px); flex-wrap: wrap; justify-content: center;
 }
 .pf-sketch-toolbar[hidden] { display: none; }
 .pf-sketch-toolbar .sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--pf-border); }
