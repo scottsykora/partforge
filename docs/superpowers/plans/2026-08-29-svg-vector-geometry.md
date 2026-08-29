@@ -1070,6 +1070,7 @@ If happy-dom already defines `getContext` (returning null rather than being abse
 // that so much as names `document`.
 import paper from "paper/dist/paper-core.js";
 import { toContour, toOpenContour } from "../geometry/paper-bridge.js";
+import { reverseContour } from "../geometry/profile.js";
 import { resolveCurveFill } from "../geometry/curve-fill.js";
 import { outlineStroke } from "../geometry/stroke-outline.js";
 import { recoverArcs } from "../geometry/arc-fit.js";
@@ -1085,7 +1086,13 @@ function scope() {
 
 // SVG is y-down; the model frame is y-up. Applied after paper has baked
 // transforms and before arc recovery, so everything downstream is in one frame.
-const flipContour = (c) => ({
+//
+// Negating y REVERSES orientation, so every contour must also be reversed to
+// restore the storage winding invariant (outer CCW, holes CW in the y-up frame)
+// that contour-offset.js and contour-winding.js depend on. Without the reverse
+// this silently emits outers as CW and holes as CCW, and a later offset would
+// grow holes and shrink outers with no crash and no error.
+const flipContourRaw = (c) => ({
   start: [c.start[0], -c.start[1]],
   segments: c.segments.map((s) => {
     const m = { to: [s.to[0], -s.to[1]] };
@@ -1094,6 +1101,8 @@ const flipContour = (c) => ({
     return m;
   }),
 });
+
+const flipContour = (c) => reverseContour(flipContourRaw(c));
 
 const flipRegion = (r) => ({ outer: flipContour(r.outer), holes: r.holes.map(flipContour) });
 
