@@ -44,10 +44,9 @@ vi.mock("three", async (importOriginal) => {
     // size in CSS px; the real one answers from the drawing buffer.
     getSize(target) { target.set(400, 300); return target; }
     setAnimationLoop(callback) { this.animationLoop = callback; }
-    render(scene, camera) {
+    render(scene) {
       this.frames += 1;
       state.drawnScene = scene;
-      state.lastCamera = camera;
       // Snapshot every object's `visible` as the draw sees it. traverse() (not
       // traverseVisible) so hidden objects are still in the map.
       const seen = new Map();
@@ -326,6 +325,35 @@ test("the anchor follows a moving camera, and a still one publishes nothing", ()
   // Tween finished: the camera is at rest again and the gate closes.
   for (let t = 1500; t <= 1900; t += 100) tick(t);
   expect(seen).toHaveLength(moved);
+  viewer.dispose();
+});
+
+test("the published anchor is the marker's own position, on hold and on every frame", () => {
+  const viewer = framedViewer();
+  const seen = [];
+  viewer.onFlashAnchorChange((a) => { if (a) seen.push(a); });
+
+  pickAt(viewer, [0, 0, 0]);
+  viewer.holdFlashPoint();
+  const atOrigin = seen.at(-1).x;
+
+  // A second marker off the orbit target, same camera. Anything that projects a
+  // FIXED point — the origin, controls.target, the camera — publishes the same
+  // pixel for both, and every other test in this file picks at [0, 0, 0], where
+  // that mistake is invisible.
+  pickAt(viewer, [5, 0, 0]);
+  viewer.holdFlashPoint();
+  expect(seen.at(-1).x).not.toBeCloseTo(atOrigin, 3);
+
+  // The render loop has to re-project that same marker, not the camera pose it
+  // is following. Once the tween settles, the stream's last word must agree
+  // with a fresh projection of the dot — within the 0.5px publish gate, which
+  // is exactly how stale the last publish is allowed to be.
+  viewer.tweenCameraTo("top", { duration: 0.6 });
+  for (let t = 0; t <= 1400; t += 100) state.renderer.animationLoop(t);
+  const settled = viewer.projectPoint([5, 0, 0]);
+  expect(Math.abs(seen.at(-1).x - settled.x)).toBeLessThan(0.5);
+  expect(Math.abs(seen.at(-1).y - settled.y)).toBeLessThan(0.5);
   viewer.dispose();
 });
 
