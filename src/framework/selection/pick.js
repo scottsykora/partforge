@@ -32,10 +32,12 @@ export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
     // though the two coincide at this instant: the host's follow-the-camera
     // stream projects the same world point through the same function every
     // frame after, so the first answer is of a piece with the rest.
-    // Sized from the rect the raycast just used — the canvas's current CSS box,
-    // not the renderer's drawing buffer, which the stream reads instead. The
-    // two agree in steady state, and using the raycast's own rect is what makes
-    // this anchor land back on the pixel the user clicked.
+    // Sized from the rect the raycast just used, which is what makes this
+    // anchor land back on the pixel the user clicked. The stream sizes from the
+    // renderer's last setSize instead — also CSS px, but the CONTAINER's
+    // integer clientWidth/Height as of the last ResizeObserver call, and 1x1
+    // while the viewer is parked. They agree in steady state; the divergence is
+    // staleness, never units.
     const rect = viewer.domElement.getBoundingClientRect();
     const anchor = projectToScreen(viewer.camera, hit.pointWorld, rect.width, rect.height);
     onPick(selection, { x: anchor.x, y: anchor.y });
