@@ -454,8 +454,12 @@ Minor bump: `0.91.0` → `0.92.0`. `package.json` also gains the
 ## Out of scope (explicitly)
 
 - Writing the ingested file. The host owns storage.
-- Headless ingest. No CLI command, no Playwright dependency. The format doc is the
-  mitigation.
+- **Shipped** headless ingest — no `partforge` CLI subcommand, and no browser
+  dependency in the published package. A dev-only `scripts/ingest-svg.mjs` running
+  on the existing happy-dom **devDependency** does exist: it regenerates this
+  repo's own fixtures and doubles as a worked reference implementation for anyone
+  converting artwork with their own tooling. It is not in `package.json`'s `files`
+  and nothing shipped imports it.
 - `<text>` — an SVG-embedded typeface is `k.text2d`'s job.
 - Raster `<image>`, gradients, opacity, colour of any kind.
 - Painting-order occlusion (§2).
