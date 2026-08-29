@@ -5,6 +5,8 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { createCutaway } from "./cutaway.js";
+import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
+import { flashWorldRadius } from "./pick-flash.js";
 import { createCameraTween } from "./camera-tween.js";
 import { orbitPose } from "./camera-orbit.js";
 import { orthoFrustum, perspectiveDistance } from "./projection.js";
@@ -1049,6 +1051,10 @@ export function createViewer(container, part) {
       try { cb(dt); } catch (e) { console.warn("partforge: frame listener failed", e); }
     }
     if (cutaway.isEnabled) cutaway.updateForCamera();
+    // Re-size the pick markers against the pose this frame will actually draw:
+    // a dot is only alive for about a second, but orbiting or zooming inside
+    // that second must not resize it.
+    for (const dot of flashDots) scaleFlashDot(dot);
     renderer.render(scene, activeCamera);
     cutaway.renderOverlay(renderer, activeCamera);
   }
@@ -1139,18 +1145,44 @@ export function createViewer(container, part) {
   function onCameraEnd(cb) { controls.addEventListener("end", cb); }
 
   // Transient marker at a world-space point — visual confirmation of a pick.
+  //
+  // Two things keep it visible where it used to disappear. It is ordered above
+  // every band the cutaway raises its surfaces, edges and outlines into (a
+  // section view moves them past 1,000,000, so the old fixed 999 was painted
+  // over by the very geometry the marker sat on — and `depthTest: false` means
+  // no depth is written either, so nothing behind it survives the overdraw).
+  // And it is `transparent`, which puts it in the pass three draws LAST: a
+  // translucent part puts the cutaway's caps in the transparent list, where an
+  // opaque marker is already behind whatever its render order.
+  //
+  // The sphere is a UNIT sphere scaled per frame (see below) so it reads as a
+  // constant handful of CSS pixels instead of a fixed millimetre size.
+  const FLASH_RENDER_ORDER = CUTAWAY_OVERLAY_RENDER_ORDER + 1;
   const flashTimers = new Set();
+  const flashDots = new Set();
+  const flashGeometry = new THREE.SphereGeometry(1, 16, 12);
+  const flashViewport = new THREE.Vector2();
+  function scaleFlashDot(dot) {
+    renderer.getSize(flashViewport); // CSS px, which is what a pixel radius means
+    dot.scale.setScalar(flashWorldRadius(activeCamera, dot.position, flashViewport.y));
+  }
   function flashPoint(world) {
     const dot = new THREE.Mesh(
-      new THREE.SphereGeometry(1.2, 16, 12),
-      new THREE.MeshBasicMaterial({ color: 0xffcc33, depthTest: false })
+      flashGeometry,
+      new THREE.MeshBasicMaterial({
+        color: 0xffcc33, depthTest: false, depthWrite: false, transparent: true,
+      })
     );
-    dot.renderOrder = 999;
+    dot.renderOrder = FLASH_RENDER_ORDER;
     dot.position.set(world[0], world[1], world[2]);
+    scaleFlashDot(dot); // sized before its first frame, not one frame late
     scene.add(dot);
+    flashDots.add(dot);
     const t = setTimeout(() => {
       flashTimers.delete(t);
-      scene.remove(dot); dot.geometry.dispose(); dot.material.dispose();
+      flashDots.delete(dot);
+      // The geometry is shared by every dot and freed in dispose(), not here.
+      scene.remove(dot); dot.material.dispose();
     }, 1200);
     flashTimers.add(t);
   }
@@ -1179,6 +1211,11 @@ export function createViewer(container, part) {
     controls.dispose();
     for (const t of flashTimers) clearTimeout(t);
     flashTimers.clear();
+    // A dot whose timer was just cancelled still holds its own material; the
+    // sphere geometry is shared across all of them and freed once.
+    for (const dot of flashDots) { scene.remove(dot); dot.material.dispose(); }
+    flashDots.clear();
+    flashGeometry.dispose();
     cutaway.dispose();
     for (const n of names) {
       const g = subCache[n];
@@ -1253,6 +1290,7 @@ export function createViewer(container, part) {
     flipCutaway: cutaway.flip,
     resetCutaway: cutaway.reset,
     isWorldPointVisible: cutaway.isPointVisible,
+    getCutawayPlane: cutaway.getPlane,
     registerCutawayMaterial: cutaway.registerClippableMaterial,
     registerCanonicalCaptureHidden,
     onCutawayHandleHover: cutaway.onHandleHoverChange,

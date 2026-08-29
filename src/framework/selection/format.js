@@ -10,13 +10,18 @@ const fmtParams = (p) => Object.entries(p).map(([k, v]) => `${k}:${v}`).join(","
 function tokenStyle(s) {
   const head = `@${s.subPart}`;
   const feat = s.feature ? ` · ${s.feature.label}` : "";
-  return `${head}${feat} · pt(${s.point.join(",")}) n(${fmtNormal(s.normal)}) · {${fmtParams(s.params)}}`;
+  const cut = s.onCutPlane ? " · section" : "";
+  return `${head}${feat}${cut} · pt(${s.point.join(",")}) n(${fmtNormal(s.normal)}) · {${fmtParams(s.params)}}`;
 }
 
 function promptStyle(s) {
   const params = Object.entries(s.params).map(([k, v]) => `${k}: ${v}`).join(", ");
   const feat = s.feature ? ` **${s.feature.label}**,` : "";
-  return `On sub-part **${s.subPart}**, the user pointed at${feat} local point (${s.point.join(", ")}), `
+  // The section wording is load-bearing: without it the point reads as a spot
+  // on the part's surface, when it is a spot inside the material that the
+  // cutaway happens to have opened up.
+  const cut = s.onCutPlane ? " the cutaway section face at" : "";
+  return `On sub-part **${s.subPart}**, the user pointed at${feat}${cut} local point (${s.point.join(", ")}), `
     + `normal ${fmtNormal(s.normal)}, with params {${params}}.`;
 }
 

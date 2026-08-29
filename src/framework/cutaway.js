@@ -387,6 +387,14 @@ export function createCutaway({
     return !enabled || pointSurvivesPlane(plane, point);
   }
 
+  // The live clip plane, for a caller that has to reason about the CUT itself
+  // rather than test a point against it — clicking the cut face is the only one
+  // today. Null while disabled, and a copy either way, so no caller can hold a
+  // stale plane or move ours.
+  function getPlane(target = new THREE.Plane()) {
+    return enabled ? target.copy(plane) : null;
+  }
+
   function registerClippableMaterial(material) {
     if (disposed || !material) return () => {};
     let entry = auxiliaryMaterials.get(material);
@@ -521,6 +529,7 @@ export function createCutaway({
     setTheme,
     setViewportSize,
     isPointVisible,
+    getPlane,
     registerClippableMaterial,
     updateForCamera,
     renderOverlay,

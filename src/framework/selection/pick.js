@@ -19,7 +19,9 @@ export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
     // a suppressed click must still clear its just-dragged flag.
     const wasDragged = drag.consumeClick();
     if (!active || wasDragged || suppressed?.()) return;
-    const hit = raycastViewer(viewer, ev.clientX, ev.clientY);
+    // includeSection: in a cutaway the flat cut face is the biggest thing on
+    // screen, and it is the one surface with no geometry behind it to hit.
+    const hit = raycastViewer(viewer, ev.clientX, ev.clientY, { includeSection: true });
     if (!hit) return;
     const selection = resolveSelection(part, getContext(), hit);
     viewer.flashPoint([hit.pointWorld.x, hit.pointWorld.y, hit.pointWorld.z]);

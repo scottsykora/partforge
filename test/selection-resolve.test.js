@@ -52,3 +52,18 @@ test("a hit without a feature has no selection.feature", () => {
   });
   expect(s.feature).toBeUndefined();
 });
+
+test("resolveSelection carries the cut-face marker through", () => {
+  const hit = {
+    subPart: "one", pointLocal: [1.004, 0, -2], normalLocal: [0, 0, 1],
+    feature: null, onCutPlane: true,
+  };
+  const s = resolveSelection(part, ctx, hit);
+  expect(s.onCutPlane).toBe(true);
+  expect(s.feature).toBeUndefined();
+});
+
+test("an ordinary pick carries no cut-face marker", () => {
+  const hit = { subPart: "one", pointLocal: [0, 0, 2], normalLocal: [0, 0, 1], feature: null };
+  expect(resolveSelection(part, ctx, hit).onCutPlane).toBeUndefined();
+});
