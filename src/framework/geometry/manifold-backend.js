@@ -19,27 +19,13 @@ import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
 import { KernelCapabilityError } from "./errors.js";
-import { heightfieldMesh } from "./heightfield.js";
+import { heightfieldMesh, hashGridData } from "./heightfield.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
 // by the export path — Manifold meshing is cheap, so we tessellate generously).
 const SEGS = { preview: 116, print: 480 };       // circular segments
 const TUBE = { preview: { stationsPerTurn: 38, ringSegs: 24 }, print: { stationsPerTurn: 160, ringSegs: 40 } };
-
-// FNV-1a over a Uint16Array's raw sample values — same fold as solid-hash.js's `h`,
-// but a dedicated loop: `h`'s generic `canon()` treats a typed array as a plain
-// object (Object.keys on it), which works but is wasteful for a heightfield grid
-// that may hold up to HEIGHTFIELD_VERTEX_BUDGET samples. Used only to give an
-// UNCACHED inline heightfield grid a real content fingerprint in its solid's own
-// `_hash`, so composing it with another op afterward (union/cut) doesn't inherit
-// the same "two different things, one key" collision risk the cache bypass exists
-// to avoid.
-function hashGridData(data) {
-  let hsh = 0x811c9dc5;
-  for (let i = 0; i < data.length; i++) { hsh ^= data[i]; hsh = Math.imul(hsh, 0x01000193); }
-  return (hsh >>> 0).toString(36);
-}
 
 // true axis-angle rotation as a column-major 4x4 (manifold Mat4), translation 0
 function axisAngleMat4(axis, deg) {

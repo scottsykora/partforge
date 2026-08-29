@@ -33,7 +33,60 @@ import { createSolidCache } from "./solid-cache.js";
 import { composePose, transformPositions, rotateNormals } from "./pose.js";
 import { filterBrepEdges } from "./brep-edges.js";
 import { meshToStl } from "./mesh-stl.js";
+import { heightfieldMesh, hashGridData } from "./heightfield.js";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.25 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
+
+// Heightfield sew-time warning threshold, in triangles. Measured by the plan's
+// Task 1 probe against this exact sequence: 24,182 triangles sewed in 8.2-8.6s
+// (the largest size that stayed under ~10s), 29,750 took 10.4-10.6s. 24000 is a
+// round number just under the last confirmed-under-10s measurement, leaving
+// headroom for slower hardware than the probe ran on.
+const STEP_TRIANGLE_WARN = 24000;
+// STEP bytes per input triangle, from the same probe: 2.3-2.6 KB/triangle across
+// 7,670 -> 81,590 triangles (~37 STEP entities per triangle), linear in triangle
+// count. Only used to put an order-of-magnitude figure in the warning below.
+const STEP_KB_PER_TRIANGLE = 2.4;
+// Monotonic scratch-filename counter for the emscripten FS round trip in
+// stlBufferToShape. A counter, not Date.now()/Math.random(): `build` must be a
+// pure function of (k, p, d), and the name never reaches geometry or a cache key.
+// Collision-free within a process, which is all that matters — the file is
+// written and unlinked inside one synchronous call.
+let stlSeq = 0;
+
+// Binary STL ArrayBuffer -> replicad Solid, SYNCHRONOUSLY. This is replicad's own
+// `importSTL` body with the `await blob.arrayBuffer()` removed (we already hold an
+// ArrayBuffer from meshToStl) — verified against replicad 0.23.1 by the plan's
+// Task 1 probe at every grid size up to 81,590 triangles. Synchronous matters:
+// `build(k, p, d)` is a synchronous pure function, so a part author cannot await,
+// and the Manifold backend's `heightfield` is synchronous too.
+//
+// `getOC`, `localGC` and `cast` are all public replicad exports. Every
+// intermediate native object is registered with localGC's `r()` and freed by
+// `gc()` in a `finally` — unconditional, unlike the real importSTL, which frees
+// only on its two known exit paths and would leak if e.g. `Build()` threw.
+// `cast()` hands back a fresh JS handle onto the same reference-counted OCCT
+// TShape, so freeing `asSolid` does not invalidate the returned shape.
+function stlBufferToShape(replicad, arrayBuffer) {
+  const oc = replicad.getOC();
+  const [r, gc] = replicad.localGC();
+  const fileName = `hf-${stlSeq++}.stl`;
+  try {
+    oc.FS.writeFile(`/${fileName}`, new Uint8Array(arrayBuffer));
+    const reader = r(new oc.StlAPI_Reader());
+    const readShape = r(new oc.TopoDS_Shell());
+    if (!reader.Read(readShape, fileName)) throw new Error("StlAPI_Reader rejected the mesh");
+    const shapeUpgrader = r(new oc.ShapeUpgrade_UnifySameDomain_2(readShape, true, true, false));
+    shapeUpgrader.Build();
+    const upgradedShape = r(shapeUpgrader.Shape());
+    const solidSTL = r(new oc.BRepBuilderAPI_MakeSolid_1());
+    solidSTL.Add(oc.TopoDS.Shell_1(upgradedShape));
+    const asSolid = r(solidSTL.Solid());
+    return replicad.cast(asSolid);
+  } finally {
+    try { oc.FS.unlink(`/${fileName}`); } catch { /* writeFile may never have run */ }
+    gc();
+  }
+}
 
 export function createOcctKernel(replicad) {
   const { makeCylinder, makeBox, makeCircle, makeHelix, assembleWire, genericSweep,
@@ -53,6 +106,11 @@ export function createOcctKernel(replicad) {
   // registers pre-build via `_registerImport` (kernel-lifetime, untracked by the
   // solid cache: imports are the framework's own memo, keyed by name+digest).
   const imports = new Map();
+  // name -> { digest, width, height, data } — depth-map grids the framework
+  // registers pre-build via `_registerImage` (ensureImages). Kernel-lifetime like
+  // `imports` above, and plain data rather than OCCT objects, so there is nothing
+  // to free.
+  const images = new Map();
 
   const cache = createSolidCache();
   // Boundary ops route through cache.lookup. pin is unused here (no cleanup() —
@@ -486,11 +544,66 @@ export function createOcctKernel(replicad) {
     });
   };
 
+  // Height-map relief. The grid -> triangle conversion is the SAME pure leaf the
+  // Manifold backend uses (heightfield.js), so both kernels build from identical
+  // triangle data; the difference is only what happens next. Here the triangles go
+  // out through meshToStl and back in through OCCT's own mesh->B-rep path
+  // (StlAPI_Reader + ShapeUpgrade_UnifySameDomain + MakeSolid — see
+  // stlBufferToShape above). The result booleans, fillets and exports to STEP like
+  // any other B-rep shape; its surface is triangulated rather than analytic, which
+  // is the accepted trade for STEP support on a depth map.
+  const heightfield = (src, opts = {}) => {
+    const grid = typeof src === "string" ? images.get(src) : src;
+    if (!grid) throw new Error(`heightfield: unknown image "${src}" — declare it in the part's \`images\` field`);
+    const build = (key) => {
+      const { positions, indices, warnings } = heightfieldMesh(grid, opts);
+      // Only runs on a cache MISS for a registered image (and on every call for an
+      // inline grid, which always takes the bypass below), so a pitch clamp is not
+      // re-warned on a warm rebuild — the same intentional dedup as Manifold's.
+      for (const w of warnings) recordWarning(w);
+      const tris = indices.length / 3;
+      // ONE warning carrying both facts, because sew time and STEP size are both
+      // linear in triangle count — a second threshold would buy nothing. The size
+      // figure is deliberately hedged: ShapeUpgrade_UnifySameDomain merges only
+      // genuinely coplanar faces, so a flat relief compresses far better than a
+      // high-frequency one at the same triangle count.
+      if (tris > STEP_TRIANGLE_WARN) {
+        const mb = (tris * STEP_KB_PER_TRIANGLE) / 1024;
+        recordWarning(`heightfield: ${tris} triangles on the B-rep backend — sewing is slow above ${STEP_TRIANGLE_WARN} and STEP export will be roughly ${mb.toFixed(0)} MB (a content-dependent estimate: only coplanar faces merge, so a flat relief exports far smaller than a high-frequency one). Raise \`pitch\` to reduce the triangle count.`);
+      }
+      let shape;
+      try {
+        shape = stlBufferToShape(replicad, meshToStl(positions, indices));
+      } catch (e) {
+        throw new Error(
+          `heightfield: could not sew ${tris} triangles into a B-rep solid (${e.message}). ` +
+          "Raise `pitch` to reduce the triangle count, or build this sub-part on the Manifold backend.",
+        );
+      }
+      return wrap(shape, [], key);
+    };
+    // Only a REGISTERED image carries a content digest to key the cache on. An
+    // inline {width,height,data} grid has no identity of its own, so keying it on
+    // a literal would let two DIFFERENT inline grids at the same options collide
+    // and hand the second caller the first one's solid. Bypass the cache for those
+    // — the inline path is the test/low-level path and isn't performance-sensitive
+    // — but still give the solid a real content fingerprint in its `_hash`, since
+    // that hash feeds DOWNSTREAM boolean cache keys (cut/union). Matches the
+    // Manifold backend exactly.
+    if (typeof src !== "string") {
+      return build(h("heightfield-inline", grid.width, grid.height, hashGridData(grid.data),
+        opts.w, opts.d, opts.base, opts.maxZ, opts.pitch, opts.invert, opts.range, opts.origin));
+    }
+    const key = h("heightfield", grid.digest, opts.w, opts.d, opts.base, opts.maxZ,
+      opts.pitch, opts.invert, opts.range, opts.origin);
+    return cached(key, () => build(key));
+  };
+
   const kernel = finishKernel({
     cylinder, // boredCylinder: the kernel front's default composition is exactly right here
     box: (min, max) => cached(h("box", min, max), () => wrap(makeBox(min, max), [], h("box", min, max))),
     roundedBox,
-    prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube,
+    prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube, heightfield,
     sphere: (r) => cached(h("sphere", r), () => wrap(makeSphere(r), [], h("sphere", r))),
     union: (solids) => {
       const key = h("union", solids.map((s) => s._hash));
@@ -536,6 +649,13 @@ export function createOcctKernel(replicad) {
     // Registration memo: undefined for an error entry, so a later registration with
     // the same digest can upgrade it rather than being treated as a no-op repeat.
     _importDigest: (name) => { const e = imports.get(name); return e?.error ? undefined : e?.digest; },
+    // Depth-map grids, registered pre-build by the framework via `_registerImage`
+    // (ensureImages). Unlike imports there is no per-format error entry: every
+    // backend can consume a normalized grid, so registration never fails.
+    _registerImage: ({ name, digest, width, height, data }) => {
+      images.set(name, { digest, width, height, data });
+    },
+    _imageDigest: (name) => images.get(name)?.digest,
     _acceptsStep: true,
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),

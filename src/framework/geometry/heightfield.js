@@ -14,6 +14,22 @@ export const HEIGHTFIELD_VERTEX_BUDGET = 400000;
 
 const U16 = 65535;
 
+// FNV-1a over a Uint16Array's raw sample values — same fold as solid-hash.js's `h`,
+// but a dedicated loop: `h`'s generic `canon()` treats a typed array as a plain
+// object (Object.keys on it), which works but is wasteful for a heightfield grid
+// that may hold up to HEIGHTFIELD_VERTEX_BUDGET samples. Used only to give an
+// UNCACHED inline heightfield grid a real content fingerprint in its solid's own
+// `_hash`, so composing it with another op afterward (union/cut) doesn't inherit
+// the same "two different things, one key" collision risk the cache bypass exists
+// to avoid. Lives here, beside the grid contract itself, so BOTH backends
+// fingerprint an inline grid the same way (it started out module-local in
+// manifold-backend.js; the OCCT backend needs the identical bypass).
+export function hashGridData(data) {
+  let hsh = 0x811c9dc5;
+  for (let i = 0; i < data.length; i++) { hsh ^= data[i]; hsh = Math.imul(hsh, 0x01000193); }
+  return (hsh >>> 0).toString(36);
+}
+
 // Bilinear sample of a row-major Uint16 grid. u/v in 0..1 → 0..1.
 export function sampleGrid(grid, u, v) {
   const { width: W, height: H, data } = grid;
