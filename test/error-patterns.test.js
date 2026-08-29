@@ -65,6 +65,10 @@ const BASELINE_IDS = [
   "loftsmooth-zero-perimeter-arc",
   "loftsmooth-stations-out-of-range",
   "loftsmooth-samples-out-of-range",
+  "heightfield-unknown-image",
+  "images-only-png-supported",
+  "png-interlaced-unsupported",
+  "heightfield-sew-failed",
 ];
 
 const entries = parsePatterns(doc);

@@ -2275,7 +2275,24 @@ control that the control's own `allow` list would refuse — at build time it's
 swapped for `defaults[key]`, i.e. itself, so the part boots with no usable
 font; use a source `allow` accepts, or widen `allow`) (warning).
 
-**Source rules** — the ninth group, which runs only when the caller hands over
+**Image controls** — the sibling group for `type: "image"` controls, `images`,
+and `k.heightfield()`. `image-control-not-in-images` (a `type: "image"`
+control's `key` is never returned by `images` — unlike the font rule above,
+this one actually calls a function-form `images` with the control's key set to
+a sentinel value and checks whether the sentinel comes back out, because a
+picker only silently does nothing if the function ignores that specific key,
+not just any key; a static `images` object provably can't depend on any param,
+so it is skipped there — that is a different mistake, not this rule's business)
+(error); `heightfield-unknown-image` (a build calls `k.heightfield(name, opts)`
+with a string `name` absent from a **static** `images` object — skipped when
+`images` is a function, since its keys aren't statically known; an inline
+`{width, height, data}` grid as the first argument is never flagged, since that
+is a supported call shape, not a name) (error); `image-source-scheme`
+(`defaults` holds a value for an image control that the control's own `allow`
+list would refuse — same shape as `font-source-scheme` above, including the
+empty-string and raw-bytes exemptions from `image-source.js`) (warning).
+
+**Source rules** — the tenth group, which runs only when the caller hands over
 `sources` (above) — `control-default-not-literal` (a control's `defaults` entry is
 written as something other than a plain literal: an expression like `13 / 3`, an
 array or object, a template literal, a `0x10`/`1_000` spelling. Hosts persist a
