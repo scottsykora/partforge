@@ -211,7 +211,11 @@ export function svgPathToContours(d) {
       // Degree elevation, identical to text2d.js's TrueType quadratic handling.
       const c1 = [cur[0] + (2 / 3) * (q[0] - cur[0]), cur[1] + (2 / 3) * (q[1] - cur[1])];
       const c2 = [to[0] + (2 / 3) * (q[0] - to[0]), to[1] + (2 / 3) * (q[1] - to[1])];
-      pen.cubicTo(to, c1, c2); cur = to; prevQuadC = q; prevCubicC2 = c2;
+      // prevCubicC2 is CLEARED, not set: per SVG 1.1 §8.3.6, `S` reflects only
+      // when the previous command was C/c/S/s. After Q/q/T/t its implied first
+      // handle is the current point. Setting it to the elevated c2 here makes
+      // a following S bend the wrong way, silently, on legal input.
+      pen.cubicTo(to, c1, c2); cur = to; prevQuadC = q; prevCubicC2 = null;
     }
     else if (C === "A") {
       need(args, 7, cmd);

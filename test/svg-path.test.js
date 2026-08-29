@@ -68,6 +68,16 @@ test("T reflects the previous quadratic's control point", () => {
   expect(s.c1[1]).toBeCloseTo((2 / 3) * -10, 9);
 });
 
+test("S after Q falls back to the current point (Q is not a cubic for reflection)", () => {
+  const [{ contour }] = svgPathToContours("M0,0 Q5,10 10,0 S20,5 20,0");
+  expect(contour.segments[1].c1).toEqual([10, 0]);
+});
+
+test("T after C falls back to the current point", () => {
+  const [{ contour }] = svgPathToContours("M0,0 C0,5 5,10 10,10 T20,10");
+  expect(contour.segments[1].c1).toEqual([10, 10]);
+});
+
 test("A semicircle traces the true circle, not a chord", () => {
   // r=2 semicircle from (2,0) to (-2,0): area of the closed half-disc is 2π
   const [{ contour }] = svgPathToContours("M2,0 A2,2 0 0 1 -2,0 Z");
