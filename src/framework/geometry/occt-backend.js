@@ -78,8 +78,27 @@ function stlBufferToShape(replicad, arrayBuffer) {
     const shapeUpgrader = r(new oc.ShapeUpgrade_UnifySameDomain_2(readShape, true, true, false));
     shapeUpgrader.Build();
     const upgradedShape = r(shapeUpgrader.Shape());
+    // Watertightness gate. MakeSolid will happily build a "solid" from an OPEN
+    // shell and report nothing wrong, which is the silent-corruption mode this
+    // guards. Two tempting alternatives were probed on the installed OCCT build
+    // and BOTH are inadequate — do not swap this for either:
+    //   - `BRepBuilderAPI_MakeSolid.IsDone()` returns true on a freshly
+    //     constructed maker before any Add(), and true for a holed shell. It
+    //     reports "a maker exists", not "the shell closed".
+    //   - A positive-volume check passes too: a 20,790-triangle shell with 40
+    //     triangles removed still measured positive volume, only ~3% low.
+    // `BRep_Tool.IsClosed_1` is a topological free-edge pass with no geometry —
+    // measured at 0 ms (below timer resolution) against a 6.9 s sew. It must be
+    // applied to the UPGRADED SHELL, BEFORE MakeSolid: on the resulting solid it
+    // falls through to a never-set Closed() flag and answers false even when the
+    // shape is watertight. Throwing here lands in heightfield's catch, so the
+    // author gets the triangle-count-and-`pitch` message, not a raw OCCT error.
+    if (!oc.BRep_Tool.IsClosed_1(upgradedShape)) throw new Error("the sewn shell is not watertight (it has free edges)");
     const solidSTL = r(new oc.BRepBuilderAPI_MakeSolid_1());
-    solidSTL.Add(oc.TopoDS.Shell_1(upgradedShape));
+    // Shell_1 returns a distinct embind handle with its own .delete(), so it is
+    // registered like every other intermediate. Safe: Add() copies the shell into
+    // the builder before gc() runs.
+    solidSTL.Add(r(oc.TopoDS.Shell_1(upgradedShape)));
     const asSolid = r(solidSTL.Solid());
     return replicad.cast(asSolid);
   } finally {
@@ -571,9 +590,12 @@ export function createOcctKernel(replicad) {
         const mb = (tris * STEP_KB_PER_TRIANGLE) / 1024;
         recordWarning(`heightfield: ${tris} triangles on the B-rep backend — sewing is slow above ${STEP_TRIANGLE_WARN} and STEP export will be roughly ${mb.toFixed(0)} MB (a content-dependent estimate: only coplanar faces merge, so a flat relief exports far smaller than a high-frequency one). Raise \`pitch\` to reduce the triangle count.`);
       }
+      // Written OUTSIDE the try below: an allocation failure here is a mesh-size
+      // problem, not a sewing failure, and must not be reported as one.
+      const stl = meshToStl(positions, indices);
       let shape;
       try {
-        shape = stlBufferToShape(replicad, meshToStl(positions, indices));
+        shape = stlBufferToShape(replicad, stl);
       } catch (e) {
         throw new Error(
           `heightfield: could not sew ${tris} triangles into a B-rep solid (${e.message}). ` +
