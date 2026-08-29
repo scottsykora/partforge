@@ -548,7 +548,7 @@ export function svgArcToCubics(from, rx, ry, rotDeg, largeArc, sweep, to) {
   const out = [];
   for (let i = 0; i < pieces; i++) {
     const a0 = t1 + dT * (i / pieces), a1 = t1 + dT * ((i + 1) / pieces);
-    const k = ((a1 - a0) / 3) ;                              // Hermite→Bézier handle scale
+    const k = (4 / 3) * Math.tan((a1 - a0) / 4);             // magic-number Bézier handle scale
     const p0 = P(a0), p1 = P(a1), d0 = D(a0), d1 = D(a1);
     out.push({
       to: p1,
@@ -565,7 +565,7 @@ export function svgPathToContours(d) {
   const tokens = tokenize(d);
   const subs = [];
   let pen = null;                 // pathProfile builder for the open subpath
-  let cur = null;                 // current point
+  let cur = [0, 0];               // current point (spec: a relative first moveto is absolute)
   let sub = null;                 // this subpath's start point
   let prevCubicC2 = null;         // for S
   let prevQuadC = null;           // for T
@@ -656,7 +656,7 @@ export function svgPathToContours(d) {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/svg-path.test.js`
-Expected: PASS, 18 tests.
+Expected: PASS, 20 tests.
 
 - [ ] **Step 5: Commit**
 
