@@ -1399,6 +1399,8 @@ git commit -m "svg: scale and align ingested regions at build time"
 
 **Why the Node boot paths matter.** `bin/cli.js` boots its own kernel through `src/testing/manifold.js` / `occt.js` — it does not go through `jobs.js`. Wiring only `jobs.js` gives a part that builds in the browser and dies under `partforge measure` with `svg2d: unknown svg`, which is exactly the failure `bin/cli.js:96` records for fonts.
 
+**A trap to check before you finish.** `ensureSvgs` returns early when `kernel._svgs` is absent — a deliberate no-op for kernels that never got the map, but a silent one. `k._svgs ??= new Map()` lives in `kernel-front.js`, so confirm it has actually run by the time `ensureSvgs` is called on BOTH Node boots: add a temporary assertion, or check that `createManifoldKernel`/`bootOcctKernel` return a kernel where `_svgs` is a Map. `src/testing/manifold.js` writes to `kernel._fonts` directly today, which proves that map exists at that point; `_svgs` needs the same guarantee. If it does not hold, initialize `_svgs` in the backends beside `_fonts` rather than reordering kernel-front, and say so in your report.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `test/svgs.test.js`:
@@ -1837,8 +1839,7 @@ test("the artwork's aspect is 40:30 — fill unioned with stroke, not the viewBo
 });
 
 test("the circle survived ingest as symbolic arcs", () => {
-  const [region] = k._svgs.get("emblem");
-  const all = [region, ...k._svgs.get("emblem")].flatMap((r) => r.outer.segments);
+  const all = k._svgs.get("emblem").flatMap((r) => r.outer.segments);
   expect(all.some((s) => s.via)).toBe(true);
 });
 
