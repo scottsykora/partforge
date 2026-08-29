@@ -6,7 +6,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { createCutaway } from "./cutaway.js";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
-import { flashWorldRadius } from "./pick-flash.js";
+import { flashWorldRadius, projectToScreen, anchorMoved } from "./pick-flash.js";
 import { createCameraTween } from "./camera-tween.js";
 import { orbitPose } from "./camera-orbit.js";
 import { orthoFrustum, perspectiveDistance } from "./projection.js";
@@ -871,6 +871,17 @@ export function createViewer(container, part) {
     liveLights.key.visible = false;
     liveLights.fill.visible = false;
     scene.add(capKey, capKey.target, capFill, capFill.target);
+    // A pick marker is transient UI feedback about a click, never part of the
+    // part, so it belongs in no capture. It used to be near enough true that a
+    // capture would miss one — a dot faded after 1200ms — but a HELD dot lives
+    // as long as the host's UI hangs off it, so any capture taken during a pick
+    // would now bake the yellow sphere into an agent-facing render or a
+    // published thumbnail. Hidden HERE, at the one offscreen chokepoint, rather
+    // than via canonicalCaptureHidden: captureCurrent deliberately ignores that
+    // set. Only dots that were actually shown are restored, so this cannot
+    // resurrect one the live canvas had hidden for its own reasons.
+    const reshowFlashDots = [];
+    for (const dot of flashDots) if (dot.visible) { dot.visible = false; reshowFlashDots.push(dot); }
     try {
       renderer.setRenderTarget(rt);
       renderer.render(renderScene, cam);
@@ -878,11 +889,13 @@ export function createViewer(container, part) {
       // reads antialiased pixels.
       renderer.readRenderTargetPixels(rt, 0, 0, width, height, buf);
     } finally {
-      // Never leave the user's own view unlit or pointed at the offscreen target.
+      // Never leave the user's own view unlit, pointed at the offscreen target,
+      // or missing a marker the user is still looking at.
       renderer.setRenderTarget(null);
       scene.remove(capKey, capKey.target, capFill, capFill.target);
       liveLights.key.visible = true;
       liveLights.fill.visible = true;
+      for (const dot of reshowFlashDots) dot.visible = true;
       if (!cachedSize) rt.dispose();
     }
     const canvas = document.createElement("canvas");
@@ -1055,6 +1068,12 @@ export function createViewer(container, part) {
     // a dot is only alive for about a second, but orbiting or zooming inside
     // that second must not resize it.
     for (const dot of flashDots) scaleFlashDot(dot);
+    // …and re-project the held one, so a host anchored to it follows the
+    // camera. Change-gated: a still camera publishes nothing.
+    if (anchorDot) {
+      const next = projectPoint([anchorDot.position.x, anchorDot.position.y, anchorDot.position.z]);
+      if (anchorMoved(lastAnchor, next)) publishAnchor(next);
+    }
     renderer.render(scene, activeCamera);
     cutaway.renderOverlay(renderer, activeCamera);
   }
@@ -1157,15 +1176,48 @@ export function createViewer(container, part) {
   //
   // The sphere is a UNIT sphere scaled per frame (see below) so it reads as a
   // constant handful of CSS pixels instead of a fixed millimetre size.
+  const _flashWorld = new THREE.Vector3();
   const FLASH_RENDER_ORDER = CUTAWAY_OVERLAY_RENDER_ORDER + 1;
   const flashTimers = new Set();
   const flashDots = new Set();
+  // The subset that will not fade. A HELD marker outlives the pick that made
+  // it, because the host has hung something off it — see holdFlashPoint.
+  const heldDots = new Set();
+  let lastFlashed = null;   // the newest marker, which is what hold() holds
+  let anchorDot = null;     // the held marker the anchor stream follows
+  let lastAnchor = null;
+  const anchorListeners = new Set();
   const flashGeometry = new THREE.SphereGeometry(1, 16, 12);
   const flashViewport = new THREE.Vector2();
+
   function scaleFlashDot(dot) {
     renderer.getSize(flashViewport); // CSS px, which is what a pixel radius means
     dot.scale.setScalar(flashWorldRadius(activeCamera, dot.position, flashViewport.y));
   }
+
+  function projectPoint(world) {
+    renderer.getSize(flashViewport);
+    _flashWorld.set(world[0], world[1], world[2]);
+    return projectToScreen(activeCamera, _flashWorld, flashViewport.x, flashViewport.y);
+  }
+
+  function publishAnchor(anchor) {
+    lastAnchor = anchor;
+    // A throwing subscriber must not stop the render loop or the other
+    // subscribers — same containment the frame listeners get.
+    for (const cb of [...anchorListeners]) {
+      try { cb(anchor); } catch (e) { console.warn("partforge: anchor listener failed", e); }
+    }
+  }
+
+  function dropFlashDot(dot) {
+    scene.remove(dot);
+    dot.material.dispose(); // the geometry is shared and freed in dispose()
+    flashDots.delete(dot);
+    heldDots.delete(dot);
+    if (lastFlashed === dot) lastFlashed = null;
+  }
+
   function flashPoint(world) {
     const dot = new THREE.Mesh(
       flashGeometry,
@@ -1178,13 +1230,51 @@ export function createViewer(container, part) {
     scaleFlashDot(dot); // sized before its first frame, not one frame late
     scene.add(dot);
     flashDots.add(dot);
+    lastFlashed = dot;
     const t = setTimeout(() => {
       flashTimers.delete(t);
-      flashDots.delete(dot);
-      // The geometry is shared by every dot and freed in dispose(), not here.
-      scene.remove(dot); dot.material.dispose();
+      dot.userData.fadeTimer = null;
+      dropFlashDot(dot);
     }, 1200);
+    dot.userData.fadeTimer = t;
     flashTimers.add(t);
+  }
+
+  // Keep the newest marker on screen until released. Earlier held markers stay
+  // held: picking a second spot should light both, and one release() clears
+  // them together. The anchor stream follows the newest, which is the one a
+  // host's own UI is anchored to.
+  function holdFlashPoint() {
+    if (!lastFlashed) return false;
+    const dot = lastFlashed;
+    if (dot.userData.fadeTimer) {
+      clearTimeout(dot.userData.fadeTimer);
+      flashTimers.delete(dot.userData.fadeTimer);
+      dot.userData.fadeTimer = null;
+    }
+    heldDots.add(dot);
+    anchorDot = dot;
+    publishAnchor(projectPoint([dot.position.x, dot.position.y, dot.position.z]));
+    return true;
+  }
+
+  function releaseFlashPoints() {
+    if (heldDots.size === 0 && !anchorDot) return;
+    for (const dot of [...heldDots]) dropFlashDot(dot);
+    anchorDot = null;
+    publishAnchor(null);
+  }
+
+  function onFlashAnchorChange(cb) {
+    // The `disposed` half is the same guard cutaway's onHandleHoverChange takes,
+    // and for the same two reasons: a subscribe racing teardown (effect-cleanup
+    // ordering, a StrictMode remount) would otherwise be handed an anchor for a
+    // dot no longer in the scene, and would re-populate a listener set that
+    // dispose() will never clear again — retaining the embedder's closure.
+    if (disposed || typeof cb !== "function") return () => {};
+    anchorListeners.add(cb);
+    cb(lastAnchor); // current state on subscribe, like onCutawayHandleHover
+    return () => anchorListeners.delete(cb);
   }
 
   // Full teardown: render loop, observers, controls, timers, GPU resources, DOM.
@@ -1211,10 +1301,15 @@ export function createViewer(container, part) {
     controls.dispose();
     for (const t of flashTimers) clearTimeout(t);
     flashTimers.clear();
-    // A dot whose timer was just cancelled still holds its own material; the
-    // sphere geometry is shared across all of them and freed once.
+    // A dot whose timer was just cancelled — or one held indefinitely — still
+    // holds its own material; the sphere geometry is shared and freed once.
     for (const dot of flashDots) { scene.remove(dot); dot.material.dispose(); }
     flashDots.clear();
+    heldDots.clear();
+    lastFlashed = null;
+    anchorDot = null;
+    lastAnchor = null;
+    anchorListeners.clear();
     flashGeometry.dispose();
     cutaway.dispose();
     for (const n of names) {
@@ -1284,6 +1379,10 @@ export function createViewer(container, part) {
     __subMesh: (n) => subMesh[n],   // test hooks (cf. attachAnimationControls' __viewer)
     __subLines: (n) => subLines[n],
     flashPoint,
+    projectPoint,
+    holdFlashPoint,
+    releaseFlashPoints,
+    onFlashAnchorChange,
     cutawaySupported: () => cutaway.isSupported,
     cutawayEnabled: () => cutaway.isEnabled,
     setCutawayEnabled,

@@ -42,3 +42,34 @@ export function flashWorldRadius(
   const radius = worldPerPixel(camera, worldPoint, viewportHeightPx) * pixelRadius;
   return Number.isFinite(radius) && radius > MIN_RADIUS ? radius : MIN_RADIUS;
 }
+
+const _projected = new THREE.Vector3();
+
+// Where a world point lands on the canvas, in CSS px from its top-left.
+//
+// `visible` is the answer to "is the marker actually on screen", which is two
+// questions: is it in FRONT of the camera (a point behind a perspective eye
+// projects to a mirrored position with no warning — `ndc.z > 1` is what
+// catches it), and is it inside the canvas. The position is reported either
+// way: an off-screen anchor is information, and the caller decides what to do
+// with it.
+export function projectToScreen(camera, worldPoint, width, height) {
+  _projected.copy(worldPoint).project(camera);
+  const x = (_projected.x * 0.5 + 0.5) * width;
+  // NDC y grows upward, screen y downward — the flip is the whole reason this
+  // is a named function rather than two lines at each call site.
+  const y = (0.5 - _projected.y * 0.5) * height;
+  const inFront = _projected.z >= -1 && _projected.z <= 1;
+  const onCanvas = x >= 0 && x <= width && y >= 0 && y <= height;
+  return { x, y, visible: inFront && onCanvas };
+}
+
+// Is `next` different enough from `previous` to be worth telling anyone about?
+// A still camera re-projects to the same pixel every frame, and publishing that
+// 60 times a second across a postMessage boundary is pure noise.
+export function anchorMoved(previous, next, epsilon = 0.5) {
+  if (!previous || !next) return previous !== next;
+  return previous.visible !== next.visible
+    || Math.abs(previous.x - next.x) >= epsilon
+    || Math.abs(previous.y - next.y) >= epsilon;
+}

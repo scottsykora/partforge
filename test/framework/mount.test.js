@@ -17,6 +17,7 @@ vi.mock("../../src/framework/viewer.js", () => ({
     const orbitCbs = new Set();
     const themeCbs = new Set();
     const projectionCbs = new Set();
+    const flashAnchorCbs = new Set();
     let projection = "perspective";
     const v = {
       onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
@@ -51,6 +52,12 @@ vi.mock("../../src/framework/viewer.js", () => ({
       orbitBy: vi.fn(),
       _subMeshes: {},
       flashPoint: vi.fn(),
+      holdFlashPoint: vi.fn(() => true),
+      releaseFlashPoints: vi.fn(),
+      onFlashAnchorChange: (cb) => { flashAnchorCbs.add(cb); return () => flashAnchorCbs.delete(cb); },
+      // The test's hand on the viewer's anchor stream, as tickFrame is on the
+      // frame loop — the real one fires from the render loop.
+      emitFlashAnchor: (anchor) => { for (const cb of [...flashAnchorCbs]) cb(anchor); },
       cutawaySupported: vi.fn(() => true),
       cutawayEnabled: vi.fn(() => cutawayOn),
       setCutawayEnabled: vi.fn((on) => {
@@ -773,7 +780,7 @@ test("deprecated container/controls aliases still work", () => {
   return expect(runtime.ready).resolves.toBeUndefined();
 });
 
-test("onPick arms the picker permanently and delivers label/prompt/token", () => {
+test("onPick arms the picker permanently and delivers label/prompt/token/anchor", () => {
   const onPick = vi.fn();
   const { createWorker } = makeWorkers();
   mount(makePart(), { createWorker, elements: makeElements(), onPick });
@@ -785,10 +792,15 @@ test("onPick arms the picker permanently and delivers label/prompt/token", () =>
   // simulate a click resolving to a Selection (the picker core is tested elsewhere)
   const armed = attachPicker.mock.calls[0][1];
   armed.onPick({ subPart: "body", point: [0, 0, 1.5], normal: [0, 0, -1],
-                 params: { h: 4 }, feature: { label: "Drainage hole" } });
+                 params: { h: 4 }, feature: { label: "Drainage hole" } },
+               { x: 137, y: 82 });
 
   expect(onPick).toHaveBeenCalledTimes(1);
   const payload = onPick.mock.calls[0][0];
+  // The picker's second argument reaches the host verbatim. Asserted here
+  // because this join is the only thing between a covered producer (pick.js)
+  // and a covered consumer: drop it and every host silently gets undefined.
+  expect(payload.anchor).toEqual({ x: 137, y: 82 });
   expect(payload.label).toBe("Drainage hole"); // feature label wins
   expect(payload.prompt).toBe(
     "On sub-part **body**, the user pointed at **Drainage hole**, local point (0, 0, 1.5), normal -Z, with params {h: 4}."
@@ -1151,6 +1163,11 @@ test("makeHandle always exposes a callable setHostPane", () => {
   expect(() => handle.measure.setEnabled(true)).not.toThrow();
   expect(() => handle.measure.clearPins()).not.toThrow();
   expect(handle.measure.pinCount()).toBe(0);
+  // And for pickMarker: hold() reports "nothing held" rather than throwing, and
+  // onAnchorChange still hands back an unsubscribe the host can hold and call.
+  expect(handle.pickMarker.hold()).toBe(false);
+  expect(() => handle.pickMarker.release()).not.toThrow();
+  expect(() => handle.pickMarker.onAnchorChange(() => {})()).not.toThrow();
 });
 
 // Spec Goal 3 ("Communication"): the measure API must actually be reachable
@@ -1444,6 +1461,28 @@ test("exposes projection on the runtime and drives the viewer with it", () => {
   runtime.projection.set("orthographic");
   expect(viewer.setProjection).toHaveBeenCalledWith("orthographic");
   expect(runtime.projection.get()).toBe("orthographic");
+  runtime.dispose();
+});
+
+test("runtime.pickMarker drives the viewer's held marker", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  const viewer = fakeViewers.at(-1);
+
+  expect(runtime.pickMarker.hold()).toBe(true);
+  expect(viewer.holdFlashPoint).toHaveBeenCalledTimes(1);
+
+  const seen = [];
+  const off = runtime.pickMarker.onAnchorChange((a) => seen.push(a));
+  viewer.emitFlashAnchor({ x: 5, y: 6, visible: true });
+  expect(seen).toEqual([{ x: 5, y: 6, visible: true }]);
+  off();
+  viewer.emitFlashAnchor(null); // unsubscribed: nothing more arrives
+  expect(seen).toHaveLength(1);
+
+  runtime.pickMarker.release();
+  expect(viewer.releaseFlashPoints).toHaveBeenCalledTimes(1);
   runtime.dispose();
 });
 
