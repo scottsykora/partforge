@@ -1855,7 +1855,7 @@ test("the plate builds, is solid, and carries the emboss", () => {
 });
 
 test("the artwork's aspect is 40:30 — fill unioned with stroke, not the viewBox", () => {
-  const { min, max } = k.svg2d("emblem", { width: 40 }).extrude(1).boundingBox();
+  const { min, max } = k.svg2d("emblem", { width: 40 }).extrude({ h: 1 }).boundingBox();
   expect(max[0] - min[0]).toBeCloseTo(40, 1);
   expect(max[1] - min[1]).toBeCloseTo(30, 1);
 });
@@ -1885,7 +1885,7 @@ let k;
 beforeAll(async () => { k = await bootOcctKernel({ svgs: part.svgs }); });
 
 test("the emblem extrudes to the same bbox on OCCT as on Manifold", () => {
-  const { min, max } = k.svg2d("emblem", { width: 40 }).extrude(2).boundingBox();
+  const { min, max } = k.svg2d("emblem", { width: 40 }).extrude({ h: 2 }).boundingBox();
   expect(max[0] - min[0]).toBeCloseTo(40, 1);
   expect(max[1] - min[1]).toBeCloseTo(30, 1);
   expect(max[2] - min[2]).toBeCloseTo(2, 3);
@@ -2021,7 +2021,7 @@ export default {
       export: { name: "emblem-plate" },
       build: (k, p) => k
         .box({ min: [-p.plate_w / 2, -p.plate_h / 2, 0], max: [p.plate_w / 2, p.plate_h / 2, p.plate_t] })
-        .union(k.svg2d("emblem", { width: p.emblem_w }).extrude(p.emboss).translate([0, 0, p.plate_t])),
+        .union(k.svg2d("emblem", { width: p.emblem_w }).extrude({ h: p.emboss }).translate([0, 0, p.plate_t])),
     },
   },
   views: { plate: { label: "Plate" } },
