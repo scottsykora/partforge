@@ -130,10 +130,49 @@ export interface MountOptions {
    * the sketch with a typed message — and calls `runtime.annotate.send()`.
    */
   annotateSend?: "viewbar" | "host";
+  /**
+   * A previous mount's `runtime.getViewerState()`, handed back so this mount
+   * resumes the camera, projection and cutaway where that one left them. For a
+   * host that applies edits by REMOUNTING: the part changed, the user's view of
+   * it should not.
+   *
+   * Omit on a first mount — the viewer then restores its own persisted camera
+   * and projection as before. Restore is best-effort per field: a pose this
+   * part cannot support is dropped, never fatal.
+   */
+  viewerState?: ViewerState | null;
   /** @deprecated alias for `elements.viewer`. */
   container?: HTMLElement | null;
   /** @deprecated alias for `elements.controls`. */
   controls?: HTMLElement | null;
+}
+
+/** A cut plane, as `ViewerState` carries it across a remount. */
+export interface CutawayState {
+  /** Whether the cutaway was on. `false` means there is nothing to restore. */
+  enabled: boolean;
+  /** Which half the plane keeps. */
+  flipped: boolean;
+  /**
+   * The plane's world pose: `position` as `[x, y, z]`, `quaternion` as
+   * `[x, y, z, w]`. `null` while disabled. The plane's on-screen SIZE is
+   * deliberately absent — it follows the part's bounds, and the part is what
+   * changed, so a restore re-derives it from the geometry it lands on.
+   */
+  pose: { position: [number, number, number]; quaternion: [number, number, number, number] } | null;
+}
+
+/**
+ * Everything about the current view that a remount would otherwise lose. Plain
+ * JSON — it is meant to cross a mount boundary, and in an embedder like
+ * partforge-cloud an iframe RPC as well. Read it with
+ * `runtime.getViewerState()`; hand it back as `MountOptions.viewerState`.
+ */
+export interface ViewerState {
+  /** The live camera pose, or `null` when the viewer could not report one. */
+  camera: { pos: [number, number, number]; target: [number, number, number] } | null;
+  projection: "perspective" | "orthographic";
+  cutaway: CutawayState | null;
 }
 
 export interface ExportPartsOptions {
@@ -326,6 +365,14 @@ export interface PartRuntime {
    * unmounting it. Captures still work while parked. Safe after `dispose()`.
    */
   setActive(active: boolean): void;
+  /**
+   * Snapshot the camera, projection and cutaway so a REMOUNT can resume them —
+   * pass the result as the next `mount()`'s `viewerState`. Read at teardown
+   * time, so it is the live pose, unlike the camera the viewer persists for a
+   * page reload (which only records the end of an orbit drag, and so misses a
+   * view-cube click, Reframe, or an animation cue).
+   */
+  getViewerState(): ViewerState;
   /**
    * Subscribe to WebGL context loss — i.e. the GPU or the OS gave up — so a host
    * can say so rather than showing a dead canvas. The listener takes no

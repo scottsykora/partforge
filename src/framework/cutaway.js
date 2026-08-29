@@ -2,6 +2,7 @@ import * as THREE from "three";
 
 import { createCutawayGizmo } from "./cutaway-gizmo.js";
 import {
+  cutawayPoseSize,
   initialCutawayPose,
   planeFromPose,
   pointSurvivesPlane,
@@ -362,6 +363,60 @@ export function createCutaway({
     return true;
   }
 
+  // --- state carry-over ------------------------------------------------------
+  // The cutaway lives and dies with its mount, and an embedder that applies
+  // every edit by REMOUNTING (partforge-cloud does — the agent's edits, undo,
+  // redo, a settings commit) would otherwise close the user's slice on every
+  // turn. These two carry it across; mount.js owns the handoff.
+  //
+  // The snapshot is plain JSON on purpose: it crosses a mount boundary, and in
+  // partforge-cloud an iframe RPC as well, so no THREE object may ride along.
+  const isFiniteTuple = (value, length) =>
+    Array.isArray(value) && value.length === length && value.every(Number.isFinite);
+
+  function getState() {
+    // `size` is deliberately absent. It is a function of the part's bounds, and
+    // the part is exactly what changed between the snapshot and the restore —
+    // carrying it would size the cap and the gizmo for geometry that no longer
+    // exists. What the user actually chose is where the plane sits, which way
+    // it faces, and the flip; setState re-derives the rest.
+    if (!enabled || !pose) return { enabled: false, flipped: false, pose: null };
+    return {
+      enabled: true,
+      flipped,
+      pose: {
+        position: pose.position.toArray(),
+        quaternion: pose.quaternion.toArray(),
+      },
+    };
+  }
+
+  function setState(state) {
+    if (disposed || disabling) return false;
+    // A snapshot taken with the cutaway off carries nothing to restore. This is
+    // not an instruction to disable — setState only ever turns the mode ON, so
+    // restoring into a fresh mount (already off) is correctly a no-op.
+    if (!state?.enabled) return true;
+    // Enable first: this is the path that refuses when the restore is
+    // impossible (no stencil, no geometry yet), and it seeds a pose against the
+    // CURRENT bounds for the malformed-snapshot fallback below to land on.
+    if (!setEnabled(true)) return false;
+    if (!isFiniteTuple(state.pose?.position, 3) || !isFiniteTuple(state.pose?.quaternion, 4)) {
+      return true; // enabled at the fresh pose, which beats refusing the restore outright
+    }
+    const bounds = validBounds(getBounds);
+    flipped = Boolean(state.flipped); // read by applyPose, through planeFromPose and gizmo.setFlipped
+    applyPose({
+      position: new THREE.Vector3().fromArray(state.pose.position),
+      quaternion: new THREE.Quaternion().fromArray(state.pose.quaternion).normalize(),
+      // Re-derived, never carried — see getState above. The fallback covers
+      // setState on an ALREADY-enabled cutaway, where setEnabled returned early
+      // and bounds may since have gone away.
+      size: bounds ? cutawayPoseSize(bounds) : pose.size,
+    }, { activeAppearance: true });
+    return true;
+  }
+
   function setTheme(mode, edgeColor) {
     if (disposed) return false;
     theme = mode;
@@ -526,6 +581,8 @@ export function createCutaway({
     resyncSubpart,
     reset,
     flip,
+    getState,
+    setState,
     setTheme,
     setViewportSize,
     isPointVisible,

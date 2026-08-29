@@ -57,6 +57,17 @@ vi.mock("../../src/framework/viewer.js", () => ({
         cutawayOn = on;
         return true;
       }),
+      // State carry-over across a remount. `cutawayOn` is shared with
+      // cutawayEnabled above, so a restore here really does light the button
+      // the way the real viewer would.
+      getCutawayState: vi.fn(() => (cutawayOn
+        ? { enabled: true, flipped: false, pose: { position: [1, 2, 3], quaternion: [0, 0, 0, 1] } }
+        : { enabled: false, flipped: false, pose: null })),
+      setCutawayState: vi.fn((state) => {
+        if (!state?.enabled) return true;
+        cutawayOn = true;
+        return true;
+      }),
       flipCutaway: vi.fn(),
       resetCutaway: vi.fn(),
       isWorldPointVisible: vi.fn(() => true),
@@ -1662,5 +1673,137 @@ test("annotateSend: 'host' keeps Send out of the sketch toolbar", () => {
     createWorker, elements: els, onAnnotationSend: () => {}, annotateSend: "host",
   });
   expect(els.viewer.querySelector('.pf-sketch-toolbar [data-action="send"]')).toBeNull();
+  runtime.dispose();
+});
+
+// --- viewer state carry-over across a remount -------------------------------
+// partforge-cloud applies EVERY edit by remounting — the agent's, an undo, a
+// settings commit — so without a handoff the camera snaps back and the cutaway
+// closes on every turn. getViewerState() is the snapshot; mount's `viewerState`
+// option is the restore.
+
+test("getViewerState reports the live camera, projection and cutaway", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  const viewer = fakeViewers.at(-1);
+  els.chrome.cutaway.click(); // the user slices the part open
+
+  const state = runtime.getViewerState();
+  expect(state.camera).toEqual({ pos: [0, 0, 0], target: [0, 0, 0] });
+  expect(state.projection).toBe("perspective");
+  expect(state.cutaway.enabled).toBe(true);
+  // It has to survive the trip: the cloud sends this over an iframe RPC.
+  expect(JSON.parse(JSON.stringify(state))).toEqual(state);
+  expect(viewer.getCameraState).toHaveBeenCalled();
+  runtime.dispose();
+});
+
+test("a carried camera outranks the persisted one", () => {
+  // The persisted pose is only written at the end of an orbit drag, so it can
+  // be older than what is on screen. The carried one is the live answer.
+  localStorage.setItem("partforge:camera", JSON.stringify({ pos: [9, 9, 9], target: [0, 0, 0] }));
+  const carried = { pos: [1, 2, 3], target: [4, 5, 6] };
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, viewerState: { camera: carried, projection: "perspective", cutaway: null },
+  });
+  const viewer = fakeViewers.at(-1);
+  finishFirstBuild(workers);
+
+  expect(viewer.setCameraState).toHaveBeenCalledWith(carried);
+  expect(viewer.setCameraState).toHaveBeenCalledTimes(1);
+  runtime.dispose();
+});
+
+test("without a carried state the persisted camera still applies", () => {
+  // The first mount of a session has nothing to carry, and must behave exactly
+  // as it did before this option existed.
+  const stored = { pos: [9, 9, 9], target: [0, 0, 0] };
+  localStorage.setItem("partforge:camera", JSON.stringify(stored));
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: els });
+  const viewer = fakeViewers.at(-1);
+  finishFirstBuild(workers);
+
+  expect(viewer.setCameraState).toHaveBeenCalledWith(stored);
+  runtime.dispose();
+});
+
+test("a carried cutaway comes back on, with its button in step", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const cutaway = { enabled: true, flipped: true, pose: { position: [1, 2, 3], quaternion: [0, 0, 0, 1] } };
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, viewerState: { camera: null, projection: "perspective", cutaway },
+  });
+  const viewer = fakeViewers.at(-1);
+  // Not before the build: enabling needs the sub-parts registered and real
+  // bounds to size the plane against.
+  expect(viewer.setCutawayState).not.toHaveBeenCalled();
+  finishFirstBuild(workers);
+
+  expect(viewer.setCutawayState).toHaveBeenCalledWith(cutaway);
+  // The button was not what turned it on, so mount has to sync the chrome or
+  // the part comes back sliced open under a control still reading "off".
+  expect(els.chrome.cutaway.getAttribute("aria-pressed")).toBe("true");
+  expect(els.chrome.cutaway.classList.contains("on")).toBe(true);
+  runtime.dispose();
+});
+
+test("the camera is restored before the cutaway", () => {
+  // The cutaway's fallback pose is seeded from the camera direction, so a
+  // restore in the other order would square the plane up with the wrong view.
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker,
+    elements: els,
+    viewerState: {
+      camera: { pos: [1, 2, 3], target: [0, 0, 0] },
+      projection: "perspective",
+      cutaway: { enabled: true, flipped: false, pose: { position: [0, 0, 0], quaternion: [0, 0, 0, 1] } },
+    },
+  });
+  const viewer = fakeViewers.at(-1);
+  finishFirstBuild(workers);
+
+  expect(viewer.setCameraState.mock.invocationCallOrder[0])
+    .toBeLessThan(viewer.setCutawayState.mock.invocationCallOrder[0]);
+  runtime.dispose();
+});
+
+test("a cutaway that was off carries nothing and leaves the button alone", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker,
+    elements: els,
+    viewerState: {
+      camera: null,
+      projection: "perspective",
+      cutaway: { enabled: false, flipped: false, pose: null },
+    },
+  });
+  const viewer = fakeViewers.at(-1);
+  finishFirstBuild(workers);
+
+  expect(viewer.setCutawayState).not.toHaveBeenCalled();
+  expect(els.chrome.cutaway.getAttribute("aria-pressed")).toBe("false");
+  runtime.dispose();
+});
+
+test("a carried projection outranks the persisted one", () => {
+  localStorage.setItem("partforge:projection", "orthographic");
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, viewerState: { camera: null, projection: "perspective", cutaway: null },
+  });
+  const viewer = fakeViewers.at(-1);
+  expect(viewer.setProjection).toHaveBeenCalledWith("perspective");
+  localStorage.clear();
   runtime.dispose();
 });

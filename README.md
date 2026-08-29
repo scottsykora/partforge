@@ -120,8 +120,24 @@ runtime.attachTooltips([{ element: myButton }]);  // host chrome buttons join th
                                // aria-label, or a per-entry getLabel()); returns
                                // { sync, hide, detach }, auto-detached on dispose()
 const off = runtime.onContextLost(() => {});  // WebGL context loss; returns an unsubscribe
+const carried = runtime.getViewerState();  // camera + projection + cutaway, as plain JSON
 runtime.dispose();     // stops loops, workers, observers, listeners; frees GPU resources
+mount(nextPart, { createWorker, elements, viewerState: carried });  // resumes the view
 ```
+
+**Carry the view across a remount.** A host that applies edits by mounting a
+new part — rather than by `setParams` — starts each mount from the part's
+default framing, so the camera snaps back and the cutaway closes every time the
+user changes anything. Snapshot with `runtime.getViewerState()` *before*
+`dispose()` and hand the result to the next `mount()` as `viewerState`: the
+part changes, the user's view of it does not.
+
+Restore is best-effort per field, so a state that no longer fits is dropped
+rather than fatal. The cut plane's world pose is restored exactly; its
+on-screen size is re-derived from the new geometry, since that is a property of
+the part rather than of the user's choice. Omit `viewerState` on a first mount
+— the viewer then restores its own persisted camera and projection, as it
+always has.
 
 **Park the viewer when you hide it.** A host that hides the canvas with
 `display: none` needs nothing — the container collapses and the ResizeObserver
