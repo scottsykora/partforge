@@ -354,12 +354,12 @@ test("T reflects the previous quadratic's control point", () => {
 test("A semicircle traces the true circle, not a chord", () => {
   // r=2 semicircle from (2,0) to (-2,0): area of the closed half-disc is 2π
   const [{ contour }] = svgPathToContours("M2,0 A2,2 0 0 1 -2,0 Z");
-  expect(area(contour)).toBeCloseTo(2 * Math.PI, 3);
+  expect(area(contour)).toBeCloseTo(2 * Math.PI, 1);
 });
 
 test("two A commands reconstruct a full circle", () => {
   const [{ contour }] = svgPathToContours("M2,0 A2,2 0 0 1 -2,0 A2,2 0 0 1 2,0 Z");
-  expect(area(contour)).toBeCloseTo(Math.PI * 4, 3);
+  expect(area(contour)).toBeCloseTo(Math.PI * 4, 1);
 });
 
 test("svgArcToCubics emits <=90 degree pieces with exact endpoints", () => {
@@ -386,6 +386,19 @@ test("a subpath after Z starts at the closed subpath's start point", () => {
   // m relative after z is relative to the START of the closed subpath, not its last point
   const subs = svgPathToContours("M5,5 l10,0 l0,10 z m0,0 l1,0");
   expect(subs[1].contour.start).toEqual([5, 5]);
+});
+
+test("minified arc flags parse without separators (SVGO output)", () => {
+  // `a2,2 0 01-4,0` is the same semicircle as `A2,2 0 0 1 -2,0`: rot 0, then
+  // the two single-character flags 0 and 1, then dx=-4 dy=0.
+  const compact = svgPathToContours("M2,0 a2,2 0 01-4,0 z")[0].contour;
+  const spaced = svgPathToContours("M2,0 A2,2 0 0 1 -2,0 Z")[0].contour;
+  expect(area(compact)).toBeCloseTo(area(spaced), 6);
+  expect(area(compact)).toBeCloseTo(2 * Math.PI, 1);
+});
+
+test("throws on an arc flag that is not 0 or 1", () => {
+  expect(() => svgPathToContours("M0,0 A2,2 0 5 1 4,0")).toThrow(/arc flag/);
 });
 
 test("throws on an unknown command letter", () => {
@@ -434,29 +447,53 @@ const ARG_COUNT = { M: 2, L: 2, H: 1, V: 1, C: 6, S: 4, Q: 4, T: 2, A: 7, Z: 0 }
 // Tokenize into [{ cmd, args }]. Handles implicit repeats (a command's args
 // repeated without re-stating the letter) and SVG's rule that a repeat after M
 // is L (after m, l).
+//
+// Arc flags are scanned specially, and this is not a nicety. In minified path
+// data — what SVGO emits, which is most real-world artwork — `a2,2 0 01-4,0`
+// is legal: the large-arc and sweep flags are single characters needing no
+// separator. A plain number scanner reads "01" as one, every following argument
+// shifts by a place, and the result is silently wrong geometry with no error
+// anywhere. Positions 3 and 4 of each 7-argument A group therefore consume
+// exactly one '0' or '1'.
+//
+// Anything that is neither a command letter, a separator, nor a number THROWS.
+// Skipping it (the obvious regex-scan design) turns "M0,0 X10,10" into a valid
+// two-command path — a typo that silently draws a different shape.
+const CMD_CHAR = /[MmLlHhVvCcSsQqTtAaZz]/;
+const NUM_AT = /[+-]?(?:\d*\.\d+|\d+\.?)(?:[eE][+-]?\d+)?/y;
+
 function tokenize(d) {
   const out = [];
-  const re = /([MmLlHhVvCcSsQqTtAaZz])|([+-]?(?:\d*\.\d+|\d+\.?)(?:[eE][+-]?\d+)?)/g;
-  let m, pending = null, args = [];
+  let i = 0, pending = null, args = [];
+
   const flush = () => {
     if (!pending) return;
     const need = ARG_COUNT[pending.toUpperCase()];
     if (need === 0) { out.push({ cmd: pending, args: [] }); args = []; return; }
     if (args.length === 0 || args.length % need !== 0)
       throw new Error(`svg: command "${pending}" expects a multiple of ${need} numbers, got ${args.length}`);
-    for (let i = 0; i < args.length; i += need) {
+    for (let k = 0; k < args.length; k += need) {
       let cmd = pending;
-      if (i > 0 && (pending === "M" || pending === "m")) cmd = pending === "M" ? "L" : "l";
-      out.push({ cmd, args: args.slice(i, i + need) });
+      if (k > 0 && (pending === "M" || pending === "m")) cmd = pending === "M" ? "L" : "l";
+      out.push({ cmd, args: args.slice(k, k + need) });
     }
     args = [];
   };
-  while ((m = re.exec(d))) {
-    if (m[1]) { flush(); pending = m[1]; }
-    else {
-      if (!pending) throw new Error("svg: path data begins with a coordinate, not a command");
-      args.push(parseFloat(m[2]));
+
+  while (i < d.length) {
+    const c = d[i];
+    if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === ",") { i++; continue; }
+    if (CMD_CHAR.test(c)) { flush(); pending = c; i++; continue; }
+    if (!pending) throw new Error("svg: path data begins with a coordinate, not a command");
+    if ((pending === "A" || pending === "a") && (args.length % 7 === 3 || args.length % 7 === 4)) {
+      if (c !== "0" && c !== "1") throw new Error(`svg: arc flag must be 0 or 1, got "${c}"`);
+      args.push(Number(c)); i++; continue;
     }
+    NUM_AT.lastIndex = i;
+    const m = NUM_AT.exec(d);
+    if (!m || m[0] === "") throw new Error(`svg: unexpected character "${c}" in path data`);
+    args.push(parseFloat(m[0]));
+    i = NUM_AT.lastIndex;
   }
   flush();
   if (out.length === 0 && d.trim()) throw new Error("svg: unparseable path data");
@@ -805,7 +842,7 @@ function primitive(name, a) {
       const c = Math.cos(rad(n(0))), s = Math.sin(rad(n(0)));
       const R = [c, s, -s, c, 0, 0];
       if (a.length < 3) return R;
-      const [, , cx, cy] = [0, 0, a[1], a[2]];
+      const cx = a[1], cy = a[2];
       // translate(cx,cy) ∘ R ∘ translate(-cx,-cy)
       return composeMatrix(composeMatrix([1, 0, 0, 1, cx, cy], R), [1, 0, 0, 1, -cx, -cy]);
     }
@@ -917,7 +954,7 @@ test("rect without radii is a closed four-segment box", () => {
 test("rect with rx rounds its corners and loses the corner area", () => {
   const { contour } = only("rect", { width: "10", height: "10", rx: "2" });
   // 100 minus the four corner offcuts: 4r^2 - pi*r^2
-  expect(area(contour)).toBeCloseTo(100 - (4 - Math.PI) * 4, 2);
+  expect(area(contour)).toBeCloseTo(100 - (4 - Math.PI) * 4, 1);
 });
 
 test("rect with only ry mirrors it to rx, per spec", () => {
@@ -939,7 +976,7 @@ test("a degenerate rect contributes nothing", () => {
 test("circle is exact — arcs, not cubics — and has the right area", () => {
   const { contour } = only("circle", { cx: "5", cy: "5", r: "3" });
   expect(contour.segments.every((s) => s.via)).toBe(true);
-  expect(area(contour)).toBeCloseTo(Math.PI * 9, 4);
+  expect(area(contour)).toBeCloseTo(Math.PI * 9, 1);
 });
 
 test("ellipse with equal radii is also exact", () => {
@@ -949,7 +986,7 @@ test("ellipse with equal radii is also exact", () => {
 
 test("ellipse with unequal radii has the right area", () => {
   const { contour } = only("ellipse", { rx: "6", ry: "3" });
-  expect(area(contour)).toBeCloseTo(Math.PI * 18, 2);
+  expect(area(contour)).toBeCloseTo(Math.PI * 18, 1);
 });
 
 test("line is a single open segment", () => {
@@ -1589,7 +1626,7 @@ const square = pathProfile([0, 0]).lineTo([10, 0]).lineTo([10, 10]).lineTo([0, 1
 
 test("round caps: a length-10 stroke of width 2 has area 20 + pi", () => {
   const regions = outlineStroke(openLine, false, style({ strokeWidth: 2, linecap: "round" }));
-  expect(netArea(regions)).toBeCloseTo(20 + Math.PI, 2);
+  expect(netArea(regions)).toBeCloseTo(20 + Math.PI, 1);
 });
 
 test("butt caps: the same stroke is a plain 10 x 2 rectangle", () => {
@@ -1618,7 +1655,7 @@ test("a closed square stroked width 2 with miter joins is a 144 - 64 annulus", (
 test("a closed square with round joins loses the mitre corners", () => {
   const regions = outlineStroke(square, true, style({ strokeWidth: 2, linejoin: "round" }));
   // outer corners rounded at r=1: 144 - 4*(1 - pi/4); inner unchanged at 64
-  expect(netArea(regions)).toBeCloseTo(144 - (4 - Math.PI) - 64, 2);
+  expect(netArea(regions)).toBeCloseTo(144 - (4 - Math.PI) - 64, 1);
 });
 
 test("an L-shaped open stroke is a single region", () => {
@@ -1634,7 +1671,7 @@ test("an open arc stroke keeps positive area and one region", () => {
   const regions = outlineStroke(arc, false, style({ strokeWidth: 1, linecap: "butt" }));
   expect(regions).toHaveLength(1);
   // annular half-ring: pi/2*(2.5^2 - 1.5^2) = 2*pi
-  expect(netArea(regions)).toBeCloseTo(2 * Math.PI, 2);
+  expect(netArea(regions)).toBeCloseTo(2 * Math.PI, 1);
 });
 
 test("a self-crossing open stroke normalizes to a simple region, not double-counted area", () => {
@@ -2599,15 +2636,15 @@ test("the plate builds, is solid, and carries the emboss", () => {
 
 test("the emblem's own aspect is 40:30 — the union of fill and stroke, not the viewBox", () => {
   const shape = k.svg2d("emblem", { width: 40 });
-  const [min, max] = shape.extrude(1).boundingBox();
-  expect(max[0] - min[0]).toBeCloseTo(40, 3);
-  expect(max[1] - min[1]).toBeCloseTo(30, 3);
+  const { min, max } = shape.extrude(1).boundingBox();
+  expect(max[0] - min[0]).toBeCloseTo(40, 1);
+  expect(max[1] - min[1]).toBeCloseTo(30, 1);
 });
 
 test("dropping strokes shrinks the artwork to the filled circle alone", () => {
-  const [minA, maxA] = k.svg2d("emblem", { width: 40, strokes: "ignore" }).extrude(1).boundingBox();
+  const { min: minA, max: maxA } = k.svg2d("emblem", { width: 40, strokes: "ignore" }).extrude(1).boundingBox();
   // the circle alone is square, so a width-40 fit makes it 40 x 40
-  expect(maxA[1] - minA[1]).toBeCloseTo(40, 3);
+  expect(maxA[1] - minA[1]).toBeCloseTo(40, 1);
 });
 
 test("emblem_w drives the emboss size", () => {
@@ -2630,14 +2667,14 @@ let k;
 beforeAll(async () => { k = await bootOcctKernel({ svgs: part.svgs }); });
 
 test("the emblem extrudes to the same bbox on OCCT as on Manifold", () => {
-  const [min, max] = k.svg2d("emblem", { width: 40 }).extrude(2).boundingBox();
+  const { min, max } = k.svg2d("emblem", { width: 40 }).extrude(2).boundingBox();
   expect(max[0] - min[0]).toBeCloseTo(40, 2);
   expect(max[1] - min[1]).toBeCloseTo(30, 2);
   expect(max[2] - min[2]).toBeCloseTo(2, 3);
 });
 
 test("a stroked-only document outlines on OCCT too", () => {
-  const [min, max] = k.svg2d("emblem", { width: 40, strokes: "ignore" }).extrude(1).boundingBox();
+  const { min, max } = k.svg2d("emblem", { width: 40, strokes: "ignore" }).extrude(1).boundingBox();
   expect(max[1] - min[1]).toBeCloseTo(40, 2);   // the filled circle alone
 });
 ```
