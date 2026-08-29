@@ -2305,10 +2305,10 @@ part's `svgs` field doesn't declare — this throws at build time; lint reaches
 it in microseconds instead), `svg-size-missing` (a `k.svg2d` call declares none
 of `{ width }`, `{ height }`, or `{ fit }` — unlike `k.text2d`'s cap-height
 `size`, ingested artwork carries no physical unit, so there is no safe default
-to fall back on) (both errors). Both rules judge only literal `k.svg2d`
-arguments — a name computed from a param, or an options object passed by
-reference, carries no statically-visible answer, and guessing would produce
-false errors on good parts; those cases still fail correctly at build time.
+to fall back on) (both errors). Both judge the argument values the probe
+resolves under the part's default params, the same basis `import-unknown-name`
+uses; a call that only goes wrong for non-default params still fails correctly
+at build time.
 
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.

@@ -29,10 +29,19 @@ test("a declared name is clean", () => {
     .not.toContain("svg-unknown-name");
 });
 
-test("a non-literal name is skipped rather than guessed at", () => {
+// A name computed from a param is not skipped outright: probe().calls carries
+// the RESOLVED value under the part's default params (see rules-svg.js's file
+// header), so this is judged exactly like a literal that happens to equal the
+// same string — flagged here because "typo" isn't a declared name under the
+// defaults actually in force. A param value that only goes wrong for some
+// OTHER param setting is invisible to lint and still fails correctly at build
+// time; that's a real gap, just not one this call demonstrates.
+test("a name computed from a param is judged by its resolved default value", () => {
   const part = partWith((k, p) => k.svg2d(p.which, { width: 10 }).extrude(1),
-    { svgs: { badge: new URL("file:///badge.svg.json") }, defaults: { which: "badge" } });
-  expect(ids(lintPart(part).errors)).not.toContain("svg-unknown-name");
+    { svgs: { badge: new URL("file:///badge.svg.json") }, defaults: { which: "typo" } });
+  const r = lintPart(part);
+  expect(ids(r.errors)).toContain("svg-unknown-name");
+  expect(find(r, "svg-unknown-name").message).toContain("typo");
 });
 
 test("the same unknown name is reported once, not per call", () => {
@@ -59,8 +68,12 @@ test("each of width, height and fit clears the rule", () => {
   }
 });
 
-test("a non-literal options argument is skipped", () => {
+// Same story as the name case above: an options argument passed by reference
+// is judged by what it resolves to under the part's default params, not
+// skipped outright — flagged here because the resolved default has none of
+// width/height/fit.
+test("an options argument computed from a param is judged by its resolved default value", () => {
   const part = partWith((k, p) => k.svg2d("badge", p.opts).extrude(1),
-    { svgs: { badge: new URL("file:///badge.svg.json") }, defaults: { opts: { width: 10 } } });
-  expect(ids(lintPart(part).errors)).not.toContain("svg-size-missing");
+    { svgs: { badge: new URL("file:///badge.svg.json") }, defaults: { opts: { align: "left" } } });
+  expect(ids(lintPart(part).errors)).toContain("svg-size-missing");
 });

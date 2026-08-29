@@ -2,17 +2,23 @@
 // time anyway; these rules move them ahead of the kernel boot, which is where an
 // authoring agent wants them.
 //
-// Both are conservative in the same way rules-imports.js is: only LITERAL
-// arguments are judged. A name computed from a param, or an options object
-// passed by reference, carries no statically-visible answer, and guessing would
-// produce false errors on good parts. Those cases still fail correctly at build
-// time — this catches the common case early, it does not replace that authority.
+// Both read `probe().calls`, whose `args` are JSON.stringify of the RESOLVED
+// argument values under the part's default params (probe.js's `describe`), not
+// source text. So these judge what the part actually builds by default — the
+// same basis rules-imports.js's import-unknown-name already uses. A call that
+// only goes wrong for non-default params is not caught here and still fails
+// correctly at build time; this catches the common case early, it does not
+// replace that authority.
+//
+// Because values are JSON-serialized, an options object arrives as
+// `{"width":10}` — note the quote before the colon, which the size regex has to
+// tolerate.
 import { err } from "./finding.js";
 
 const declaredSvgs = (part) => Object.keys(part?.svgs ?? {});
 
-// A name is only knowable when it is a string literal — which JSON.parse
-// recognizes and nothing else does (import-unknown-name reads its name the same way).
+// The name arrives JSON-serialized, so JSON.parse recovers it — and yields null
+// for anything that is not a string (import-unknown-name reads its name the same way).
 const literalName = (src) => {
   try { const v = JSON.parse(src); return typeof v === "string" ? v : null; } catch { return null; }
 };
@@ -44,12 +50,8 @@ export const SVG_RULES = [
       const out = [];
       for (const call of svgCalls(probe)) {
         const opts = call.args[1]?.trim();
-        if (opts != null && !opts.startsWith("{")) continue;      // not a literal — skip
-        // `opts` is a probe call arg — JSON.stringify of the resolved options
-        // object (see probe.js's `describe()`), not JS source text — so an
-        // object key is quoted: `{"width":10}`, not `{ width: 10 }`. The
-        // optional `"?` accounts for that; without it this never matches a
-        // real call and every k.svg2d call would misreport as size-missing.
+        if (opts != null && !opts.startsWith("{")) continue;      // not an object — skip
+        // `"?` because probe args are JSON-serialized: `{"width":10}`, not `{ width: 10 }`.
         if (opts && /\b(width|height|fit)"?\s*:/.test(opts)) continue;
         const name = literalName(call.args[0]) ?? "…";
         out.push(err("svg-size-missing",
