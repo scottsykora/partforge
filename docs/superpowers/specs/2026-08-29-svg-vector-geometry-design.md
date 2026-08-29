@@ -1,285 +1,299 @@
 # SVG vector geometry (`k.svg2d`) — design
 
-**Date:** 2026-08-29
+**Date:** 2026-08-29 (revised the same day — see "Revision")
 **Status:** approved design, pre-implementation
-**Scope:** partforge framework, **worker/geometry layer only** — the author
-surface (`svgs` declaration, `k.svg2d`), the decoder, stroke outlining, lint,
-CLI, docs. No control panel, no picker, no host seams.
+**Scope:** partforge framework. A browser-side **ingest** step that converts SVG
+to a documented JSON vector format, and a **runtime** op (`k.svg2d`) that places
+that format as `Shape2D` geometry. Plus lint, the reference part, and docs.
 
-This is **phase A** of a three-phase feature. Phases B (`type: "svg"` control
-with drag-drop/upload) and C (`svgCatalog` provider + icon picker, e.g. Noun
-Project) are named here **only** where A's surface must not foreclose them.
+No control panel and no picker. Those are phases B and C, named here only where
+this design must not foreclose them.
+
+## Revision (2026-08-29)
+
+The first version of this spec decoded SVG **in the geometry worker**, with a
+hand-rolled DOM-free parser, because the Node CLI has no DOM and a native-DOM
+decoder would have meant two implementations.
+
+Scott ruled that partforge-cloud is effectively the only real host, that the
+headless CLI matters less than AGENTS.md implies, and that one code path beats
+two. That inverts the trade: with a browser guaranteed at ingest,
+**paper.js's `importSVG` becomes usable**, and it subsumes six of the eight
+modules the first design needed.
+
+Tasks 1–3 of the first plan (`svg-xml.js`, `svg-path.js`, `svg-transform.js` —
+458 lines, built and reviewed) are superseded and deleted. `git log` holds them
+if this direction disappoints.
 
 ## Goal
 
-Make vector art a first-class geometry source. A part declares SVG files the
-way it already declares fonts, and `k.svg2d(name, opts)` returns a `Shape2D`
+Make vector art a first-class geometry source. A part declares an ingested
+artwork the way it declares fonts, and `k.svg2d(name, opts)` returns a `Shape2D`
 that composes with every existing 2-D op:
 
 ```js
-svgs: { logo: () => import("./art/logo.svg") },
+svgs: { logo: new URL("./art/logo.svg.json", import.meta.url) },
 
 build: (k, p) => k.box({ size: [40, 40, 4] })
   .cut(k.svg2d("logo", { width: 28 }).extrude(1).translate([0, 0, 3])),
 ```
 
-Because the result is an ordinary `Shape2D`, the entire downstream — union,
-cut, offset, fillet, extrude, the emboss/deboss idiom from `nameplate.js` — is
-free. That is the whole reason this phase is worth shipping alone: it delivers
-the capability with none of the UI surface area.
+Because the result is an ordinary `Shape2D`, the whole downstream — union, cut,
+offset, fillet, extrude, the emboss idiom from `nameplate.js` — is free.
+
+## Architecture: one conversion, two halves
+
+**Ingest** — `partforge/ingest`, a new published entry. DOM-required,
+main-thread only, run **once per artwork** by the host:
+
+```
+SVG text
+  → paper.importSVG (transforms baked, styles resolved, <use>/<defs>/CSS handled)
+  → contours via paper-bridge's toContour / toOpenContour
+  → outlineStroke() for stroked items
+  → resolveCurveFill() per item under its own fill rule, then one union
+  → flip y (SVG is y-down; the model frame is y-up)
+  → arc recovery (cubic runs that are circles become symbolic arcs)
+  → tight bbox, coordinates rounded
+  → a VectorDocument, serialized as JSON
+```
+
+**Runtime** — the geometry worker, and that is all of it:
+
+```
+JSON → validate → scale to width|height|fit → align → k.shape2d → union
+```
+
+Nothing about the conversion is parameter-dependent, so it is done once rather
+than on every regeneration. The paper boolean work — by far the most expensive
+part — leaves the regen loop entirely.
+
+### What this buys
+
+- **`<use>`, `<defs>`, `<symbol>`, CSS `<style>` and `class=` all work**, because
+  a real DOM resolves them. The first design rejected all five.
+- **The runtime addition is ~70 lines** (`svg2d.js`) plus the JSON load, against
+  ~1,100 lines across eight worker modules.
+- **No cross-implementation drift is possible** — there is one converter.
+
+### What it costs, accepted explicitly
+
+- **SVG artwork can only be authored where a browser is.** `partforge
+  measure|render|lint` still work on a part — they read the stored JSON — but
+  nothing headless can *create* it. Mitigated by making the format normative and
+  documented well enough that an agent can convert to it with its own tooling
+  (see §"Documentation"); that is a requirement of this design, not a nicety.
+- **paper's `importSVG` fidelity becomes the contract**, quirks included, over a
+  surface partforge does not control.
 
 ## Decisions (settled with Scott, 2026-08-28/29)
 
-1. **Phase A only.** Geometry, no panel. Testable end-to-end from the CLI.
-2. **Strokes are supported** — not deferred, not error-on-encounter. Line-style
-   icons are too large a share of real artwork to exclude.
+1. Geometry only — no control panel, no picker.
+2. **Strokes are outlined into real geometry**, not skipped.
 3. **Sizing normalizes on the tight geometric bbox**, not the `viewBox`. Icons
-   are padded inconsistently; viewBox-relative sizing makes two icons at the
-   same nominal size look different.
-4. **No `<use>`, `<defs>`, or CSS** (`<style>` blocks, `class=`) in v1.
-5. **Decode runs in the worker, DOM-free.** Not on the main thread, not behind
-   a host crossover.
+   are padded inconsistently; viewBox-relative sizing makes two icons at the same
+   nominal size look different.
+4. **Conversion happens at ingest, in a browser**, and the result is stored.
+5. **Symbolic arcs are recovered**, so OCCT still gets true circular B-rep edges.
+6. **The JSON format is designed to be read and written by LLM agents** — explicit
+   discriminators, a self-describing header, no structure inference.
 
-## Evidence (probed 2026-08-28, against the installed tree)
+## Evidence (probed 2026-08-28/29, against the installed tree)
 
-Recorded because three of these overturn the obvious approach:
-
-- **`paper-core.js` ships the full SVG importer** (`importSVG`,
-  `node_modules/paper/dist/paper-core.js:15604`) and it is **unusable here**:
-  line 15616 is `new self.DOMParser().parseFromString(...)`, and the importer
-  then walks real DOM nodes. No `DOMParser` in a Web Worker, none in Node — so
-  it fails in the worker *and* in the `partforge measure|render|lint` CLI, which
-  is the agent-facing surface CI gates on.
-- **paper.js cannot outline strokes.** `importSVG` imports stroke *style* and
-  yields the centreline path. Stroke outlining has been an open paper.js
-  request since 2013 (paperjs/paper.js#371).
-- **`contour-offset.js` is already a port of `glenzli/paperjs-offset`** — its
-  own header says so (`src/framework/geometry/contour-offset.js:8-10`). That is
-  precisely the library whose *other* half, `offsetStroke()`, is the canonical
-  stroke outliner. The hard half is in-repo: `_offsetSegment` (exact for lines
-  and arcs, adaptive Tiller–Hanson for cubics), `joinSegs` (round/chamfer/sharp
-  with miter limit), `jointTangents`.
+- **`contour-offset.js` is already a port of `glenzli/paperjs-offset`** — its own
+  header says so (`contour-offset.js:8-10`). That is precisely the library whose
+  *other* half, `offsetStroke()`, is the canonical stroke outliner. The hard half
+  is in-repo: `_offsetSegment` (exact for lines and arcs, adaptive Tiller–Hanson
+  for cubics), `joinSegs` (round/chamfer/sharp with miter limit), `jointTangents`.
 - **`joinSegs`' round branch already handles the 180° reversal**
   (`contour-offset.js:117-126`) with a pinned regression note: *"a zero-width
-  spike dilated +1 round lost its end caps — area 20.000 where the stadium
-  truth is 20+π."* That stadium **is** an open stroke with round caps. The
-  nastiest case in this geometry is already found and fixed.
-- **`paper-bridge.js` already does open paths** — `toPaperPath(scope, contour,
-  segMap, { open: true })` and `toOpenContour()` (`paper-bridge.js:64`, `:128`).
+  spike dilated +1 round lost its end caps — area 20.000 where the stadium truth
+  is 20+π."* That stadium **is** an open stroke with round caps.
+- **`paper-bridge.js` already does open paths** — `toPaperPath(…, { open: true })`
+  and `toOpenContour()`.
 - **`resolveCurveFill(contours, { fillRule })` already accepts
-  `"nonzero" | "evenodd"`** (`curve-fill.js:12`). Built for OpenType, which only
-  ever needs nonzero; it is exactly SVG's `fill-rule`.
-- **`shape2d-regions.js` already has the elliptical-arc math** — `sampleSvgArc`
-  (W3C SVG 1.1 F.6 endpoint→centre) and `svgPathToRings`. Its curve-native twin
-  `svgPathToContours` was written and then deleted for having no caller
-  (`shape2d-regions.js:112`). This feature is that caller.
-- **`worker-layering.test.js:62` greps worker-graph module *source* for
-  `document`/`window`.** The DOM-free boundary is mechanically enforced, not a
-  convention.
+  `"nonzero" | "evenodd"`** (`curve-fill.js:12`).
+- **`arcCenterAndSweep`** (`paper-bridge.js:19`) is the three-point circle fit arc
+  recovery needs.
+- **Spike, 2026-08-29 (throwaway):** `paper.importSVG` runs under happy-dom once
+  `HTMLCanvasElement.prototype.getContext` is stubbed *before* paper's module
+  load. Confirmed on a real fixture: ancestor transforms are **baked into point
+  coordinates**; per-item `fillColor` / `fillRule` / `strokeWidth` / `strokeCap` /
+  `strokeJoin` all survive; `fill="none"` surfaces as `fillColor === undefined`;
+  `path.closed` carries open/closed; a `<circle>` under `expandShapes: true`
+  becomes 4 cubics with the standard kappa handle whose **endpoints lie exactly
+  on the true circle**. `importSVG` also emits one extra `Shape` leaf with
+  neither fill nor stroke (the root clip), which the "skip items with no paint"
+  rule drops.
 
-## Why the worker, and not the main thread
+## 1. The vector format
 
-Recorded because it was asked and the reasoning is non-obvious.
+Normative. This is a **published format** — agents will read and hand-write it,
+so it is explicit where the internal IR is implicit.
 
-The DOM only helps if we use the **native** `DOMParser`. But the CLI runs in
-pure Node, so a native-DOM decoder forces a second implementation there
-(`linkedom`/`jsdom`) — the browser and `partforge measure` then free to disagree
-about the same icon, which is the exact failure class the backend-identical
-discipline exists to prevent. And once a shim dependency is acceptable, it runs
-in the worker anyway, so the thread move buys nothing.
-
-The cost side is concrete: the STEP-on-Manifold crossover — the existing
-"worker can't do this, the host arranges it" pattern — is spread across
-`mount.js:807`, `export-controller.js:60`, `capture-build.js:48` and
-`imports.js:72`, with jobId claiming, prime-state tracking, retry and two
-documented failure modes. Host-side decode would also oblige *every* entry point
-(`mount.js`, `bin/cli.js`, `src/testing/`, `scripts/check-app.mjs`,
-partforge-cloud) to implement it, where today `runWorker(part)` is the whole
-story. It would additionally force pre-decoded contours through
-`partforge/oracle`, a published surface whose DOM-free closure is pinned by
-`test/oracle-entry.test.js` and by the closed oracle package's peer contract.
-
-Decisive point: **decision 4 removed the features a real DOM earns its keep on.**
-`<use>` resolution, node cloning and CSS cascade are what `getElementById` /
-`getComputedStyle` are for. Without them, decoding is walking children and
-reading attributes.
-
-If v2 ever needs a real cascade, the STEP crossover is the pattern to copy then.
-
-## Module layout
-
-The modularity requirement, made concrete. Every new file is a **pure leaf** —
-DOM-free, `three`-free, `node:`-free, WASM-free — with one job and a
-one-directional dependency edge. Each is unit-testable without booting a kernel.
-
-| New file (`src/framework/geometry/`) | Job | Depends on |
-|---|---|---|
-| `svg-xml.js` | bytes → element tree (`{tag, attrs, children}`) | — |
-| `svg-path.js` | `d` string → contours, incl. `A` → cubics | `polygon.js` (`pathProfile`) |
-| `svg-transform.js` | `transform=` → 2×3 matrix; compose; apply | `paper-bridge.js` (arc→cubic) |
-| `svg-shapes.js` | `rect`/`circle`/`ellipse`/`line`/`polyline`/`polygon` → contours | `polygon.js` |
-| `svg-style.js` | presentation attributes → resolved style | — |
-| `svg-doc.js` | tree → flat `[{ contours, style, closed }]` in user units | the five above |
-| `stroke-outline.js` | open/closed contour + stroke style → regions | `contour-offset.js`, `paper-bridge.js` |
-| `svg2d.js` | document + opts → `[{ outer, holes }]` in mm | `svg-doc.js`, `stroke-outline.js`, `curve-fill.js` |
-
-| Changed file | Change |
-|---|---|
-| `src/framework/svgs.js` *(new, framework root)* | declared sources → decoded documents; ~30 lines on `asset-resolve.js` |
-| `geometry/kernel-front.js` | `k._svgs ??= new Map()` and a ~6-line `k.svg2d` |
-| `jobs.js` | register `k._svgs` in the async pre-phase, beside fonts/imports |
-| `lint/rules-svg.js` *(new)* | two static rules |
-
-The shape deliberately mirrors `text2d`: a pure layout leaf (`text2d.js`) plus
-six lines in `kernel-front.js` (`:156-162`). `svg2d.js` is `text2d.js`'s
-sibling, and `k.svg2d` is `k.text2d`'s.
-
-**One dependency decision:** `svg-xml.js` is **hand-rolled** (~120 lines) rather
-than taking `svg-parser`/`svgson`. Reasons: no new runtime dependency inside the
-worker import closure (which `worker-layering.test.js` guards jealously); we
-need a strict subset with no DTD, no entities beyond the five predefined, and
-namespace prefixes simply stripped; and the hostile-input surface stays ours to
-bound. **Tripwire:** if the parser exceeds ~200 lines or needs entity/CDATA
-handling to pass the corpus in §9, stop and take `svg-parser` instead — it is
-DOM-free and would drop in behind the same interface.
-
-## 1. Author surface
-
-### `svgs` declaration
-
-Exactly the `fonts`/`imports` grammar, one level up in the contract:
-
-```js
-svgs: {
-  logo: () => import("./art/logo.svg"),        // Vite bundles → { default: url } → fetched
-  badge: "https://cdn.example.com/badge.svg",  // URL fetch
-  inline: someUint8Array,                      // bytes
-},
+```json
+{
+  "format": "partforge-vector",
+  "version": 1,
+  "note": "Filled 2-D outlines for k.svg2d. Coordinates are plain numbers in the artwork's own units — k.svg2d rescales at build time. y points UP. Each region is one filled area: `outer` is its boundary and `holes` are subtracted from it. Segments run head-to-tail from `start`; each segment's `to` is the next point. The contour closes implicitly from the last `to` back to `start`.",
+  "source": "emblem.svg",
+  "bbox": { "minX": 4, "minY": 4, "maxX": 44, "maxY": 34 },
+  "regions": [
+    {
+      "outer": {
+        "start": [14, 14],
+        "segments": [
+          { "kind": "line",  "to": [34, 14] },
+          { "kind": "arc",   "to": [34, 24], "through": [34.5, 19] },
+          { "kind": "cubic", "to": [14, 14], "c1": [30, 10], "c2": [20, 10] }
+        ]
+      },
+      "holes": []
+    }
+  ]
+}
 ```
 
-Resolved by `svgs.js` on `asset-resolve.js`'s shared core — same source grammar,
-same identity memoization, same `{ default: url }` dynamic-import handling. A
-third caller of a core that already has two.
+**Rules:**
 
-Unlike `fonts`, **`svgs` is a static object in phase A** — no function-of-params
-form. That form exists so a `type: "font"` control can drive the value; there is
-no control yet. Phase B adds it, and adds it the same way.
+- `format` is the literal `"partforge-vector"`; `version` is an integer, `1` here.
+  A document with a different `format`, or a `version` above what the running
+  build knows, is refused with a message naming both.
+- `note` is free text for a human or agent reading the file cold. It is **ignored
+  on load** — never parsed, never validated beyond being a string if present.
+- `source` is provenance only (the original filename, or `null`).
+- Coordinates are `[x, y]` number pairs in the artwork's own units, **y-up**, and
+  are rounded to 6 decimals at ingest so files stay diffable.
+- Segment `kind` is one of `"line"`, `"arc"`, `"cubic"`. Every segment has `to`.
+  An `arc` additionally has `through` — **a point the arc passes through**, not a
+  control point. A `cubic` additionally has `c1` and `c2`.
+- A contour is **implicitly closed**: the last segment's `to` connects back to
+  `start`. A final `to` equal to `start` is tolerated and dropped on load.
+- Winding: `outer` is CCW, each hole is CW, in the y-up frame. This is the storage
+  invariant the rest of the engine already uses.
+- `bbox` is the tight geometric bounding box of `regions`. It is a **cache, not an
+  authority**: `svg2d.js` recomputes it, and a mismatch beyond tolerance is a
+  validation error rather than something to trust.
 
-### `k.svg2d(name, opts)`
+`through` is named for the reader, not for symmetry with the internal IR (which
+calls the same point `via`). The internal name reads ambiguously — control point?
+tangent? — and this format's audience includes agents hand-writing files, where
+that ambiguity is an error rate. A three-line mapping on load pays for it.
 
-```js
-k.svg2d(name, {
-  width?, height?, fit?,        // mm — exactly one required
-  align?   = "center",          // "left" | "center" | "right"
-  valign?  = "middle",          // "top" | "middle" | "bottom"
-  strokes? = "outline",         // "outline" | "ignore"
-  fillRule?,                    // override the document's own rule
-}) → Shape2D
+### Validation
+
+`vector-format.js` validates on load and throws with a **position and a fix**,
+because hand-written documents will be wrong in ordinary ways:
+
+```
+svg2d: "emblem" region 1, outer segment 3 has "kind": "arc" but no "through"
+point — an arc needs a point it passes through, between the previous point
+and "to"
 ```
 
-`name` is a declared `svgs` key. An undeclared name throws, mirroring
-`text2d`'s unknown-font error and `k.import`'s unknown-name error. No
-inline-bytes form in phase A (see Open items).
+Validation is not optional and not best-effort. An invalid document fails the
+build loudly rather than producing partial geometry.
 
-## 2. Sizing
+## 2. Ingest
 
-**Exactly one of `width` / `height` / `fit` is required.** There is no default,
-and this is a deliberate asymmetry with `text2d`'s `size = 10`.
+`partforge/ingest` exports one function:
 
-`text2d` can default because cap height is a well-defined physical metric of a
-font. An SVG's user units mean nothing — the same icon ships as `viewBox="0 0
-24 24"` or `"0 0 512 512"` — so any default would silently produce
-wrong-scaled geometry. Omitting all three throws `svg-size-required`, naming
-the three options.
+```js
+ingestSvg(svgText, { strokes = "outline", source = null } = {}) → VectorDocument
+```
 
-- `width: mm` — scale so the tight bbox is this wide
-- `height: mm` — so it is this tall
-- `fit: mm` — so the **longer** bbox edge is this
+It is DOM-dependent and must never be reachable from the worker graph. The host
+calls it, stores the result, and owns the storage — the same division as
+`fontCatalog`. partforge does not write files.
 
-Always a uniform scale; aspect is preserved. `align`/`valign` place the tight
-bbox relative to the origin, with the same vocabulary and defaults as `text2d`,
-so the two ops feel like siblings.
+`strokes: "ignore"` drops stroke geometry, keeping fills only. It lives here
+rather than on `k.svg2d` because after ingest there are no strokes left to
+ignore.
+
+### Item walk
+
+`importSVG(svgText, { expandShapes: true, insert: false })`, then walk the item
+tree. Each leaf with paint contributes:
+
+- **fill** (`fillColor` set) — `resolveCurveFill` over the item's own subpaths,
+  under the item's `fillRule`. Per item, not per subpath: a fill rule applies
+  across an item's own subpaths, which is what makes the counter of an "O" a hole.
+- **stroke** (`strokeColor` set and `strokeWidth > 0`) — `outlineStroke` per
+  subpath, with the item's `strokeCap`/`strokeJoin`.
+
+An item with neither is skipped, which is also what drops `importSVG`'s root clip
+`Shape`.
+
+All resulting regions union under one final `resolveCurveFill(…, "nonzero")`.
 
 ### Ordering (load-bearing)
 
-The pipeline order is fixed and is **not** the obvious one:
+Strokes are outlined **before** the bbox is measured, in artwork units. Measuring
+fills first and outlining afterwards would leave stroke thickness fixed while the
+artwork scaled — the same icon at 28 mm and 60 mm with identical stroke weight,
+wrong in a way only noticed when someone changes `width`.
 
-1. decode to contours **in SVG user units**, carrying each element's style;
-2. **outline strokes**, in user units;
-3. assemble regions (§5);
-4. compute the tight bbox of the **final** regions;
-5. apply the uniform scale and the alignment translate.
-
-Outlining before measuring is what makes stroke width scale with the artwork.
-Measuring the fill geometry first and then outlining at the authored width
-would leave a 28 mm icon and a 60 mm icon with identical stroke thickness —
-visibly wrong, and wrong in a way that only shows up when someone changes
-`width`.
-
-## 3. The document subset
-
-**Admitted:** `<svg>`, `<g>`, `<path>`, `<rect>` (incl. `rx`/`ry`), `<circle>`,
-`<ellipse>`, `<line>`, `<polyline>`, `<polygon>`. `transform=` on any of them.
-Presentation attributes `fill`, `fill-rule`, `stroke`, `stroke-width`,
-`stroke-linecap`, `stroke-linejoin`, `stroke-miterlimit`, `display`. `viewBox`.
-
-**Path data:** the full `d` grammar — absolute *and* relative commands, and the
-`H`/`V`/`S`/`T` shorthands. Real-world SVGs are almost entirely relative (SVGO
-minifies to them), so `svg-path.js` normalizes to absolute before emitting
-contours. `A` reuses the centre-parameterization already proven in
-`sampleSvgArc`, emitting curve-native cubics rather than sampled points.
-
-**Ignored silently:** `fill`/`stroke` *colours* (this produces geometry, not
-paint), `opacity`, gradients, `<title>`/`<desc>`/`<metadata>`, XML comments,
-namespace prefixes, unknown attributes.
-
-**Rejected loudly** (`svg-unsupported-element`, naming the tag): `<use>`,
-`<defs>`, `<symbol>`, `<style>`, `<text>`, `<image>`, `<clipPath>`, `<mask>`,
-`<filter>`, and `class=`. Loud rather than silent because each of these
-*removes* geometry the author can see in their editor — a silent skip produces
-a part that is quietly missing a shape.
+The y flip happens **after** paper has baked transforms and **before** arc
+recovery and the bbox.
 
 ### Named non-semantics
 
-Painting order is **not** modelled. Every admitted element contributes material
-and the results union (§5). An SVG that fakes a hole by painting a white shape
-over a black one will produce a solid shape, not a hole. Documented in
-AUTHORING-PARTS and in the error-pattern entry, because it is the one
-divergence from "looks like my editor" that a user cannot debug by eye.
+Painting order is **not** modelled. Every painted item contributes material and
+the results union. An SVG that fakes a hole by painting a background-coloured
+shape over another gives a solid shape, not a hole. Documented in
+`VECTOR-FORMAT.md` and in ERROR-PATTERNS, because it is the one divergence from
+"looks like my editor" that a user cannot debug by eye.
 
-### Transforms and arcs
+Colour is read only as present-or-absent. This produces geometry, not paint.
 
-`svg-transform.js` composes ancestor `transform=` attributes into one 2×3
-matrix per element. Applying it needs care: an arc (`{to, via}`) under a
-**non-uniform or skewed** matrix becomes an ellipse, which the contour IR
-cannot represent. So `applyMatrix` checks uniformity and, when the matrix is
-non-uniform, degrades arcs to cubics first via `arcToCubicSegments` (already in
-`paper-bridge.js:40`) — cubics being closed under affine transform. Uniform
-matrices keep arcs symbolic, so OCCT still gets true circular edges.
+## 3. Arc recovery
+
+paper has no arc primitive — everything it returns is cubic. A pure
+`Contour → Contour` pass recovers circular arcs afterwards, which is better than
+special-casing `<circle>` because it works uniformly on arcs from `<circle>`, from
+`A` commands, from rounded-rect corners, and from arcs that survived a transform.
+
+For each maximal run of consecutive cubic segments:
+
+1. Fit a circle through three of the run's **segment endpoints** — its first, its
+   middle, and its last — using `arcCenterAndSweep`. Endpoints are exact: paper's
+   kappa construction pins a cubic's endpoints to the true circle, so the fit
+   recovers the original circle to float precision. The approximation error lives
+   only in each cubic's interior, which is what step 2 measures.
+2. Verify: sample each cubic's interior and require every sample within
+   `ARC_TOL = 1e-3 × radius` of the fitted circle. This threshold is above paper's
+   own kappa error (≈2.7e-4·r, so a tighter tolerance would reject genuine
+   circles) and far below anything that would mistake a freeform curve for an arc.
+3. Emit arcs split at **≤180° each**, so the three-point representation stays
+   unambiguous. A full circle becomes two semicircles.
+
+Greedy: extend a run while the fit holds, then emit and start the next. A run that
+fails verification is left as cubics.
 
 ## 4. Strokes
 
-Per SVG semantics a stroke is applied in the element's **local** user space and
-the result is then transformed. Outlining locally is therefore both simpler and
-more correct than outlining after transform, and it sidesteps the non-uniform
-stroke-ellipticity problem entirely.
+Per SVG semantics a stroke is applied in the element's local user space; paper has
+already baked transforms by the time we outline, so outlining operates on final
+coordinates.
 
 `stroke-outline.js` implements `offsetStroke` on the engine already in
 `contour-offset.js`:
 
-- **closed contour** — offset `+w/2` and `−w/2`; the outer becomes the region
-  outer and the inner becomes a hole. This is `_offsetContour` twice, unchanged.
-- **open contour** — offset `+w/2`, offset `−w/2`, reverse the second, cap both
-  ends, and close into a single ring. A stroke path that crosses itself makes
-  that ring self-intersecting, so it is normalized through `resolveCurveFill`
-  (nonzero) — the same resolver §5 already uses, not a second mechanism.
+- **closed contour** — offset `+w/2`, and offset the *reversed* contour `+w/2`.
+  Two rings of opposite handedness give an annulus under nonzero winding. This is
+  `_offsetContour` twice, adding no geometry code.
+- **open contour** — the same two offsets as open *chains*, joined end to end by
+  caps into one closed ring, then normalized through
+  `resolveCurveFill(…, "nonzero")` (a stroke that crosses itself makes that ring
+  self-intersecting).
 
-`_offsetContour` currently assumes an explicitly-closed ring
-(`contour-offset.js:129`). The open case needs a sibling — call it
-`_offsetOpenChain` — that reuses the interior-vertex join loop verbatim and
-differs only in dropping the wrap-around join and emitting caps at the two ends.
-
-Cap mapping, all onto existing machinery:
+`_offsetContour` assumes an explicitly-closed ring (`contour-offset.js:129`), so
+the open case gets a small purpose-built chain walker built from the same
+lower-level parts (`_offsetSegment`, and `joinSegs` once exported). It is not a
+modification of `_offsetContour`: that function is ring-oriented throughout —
+wrap-around indexing, a whole-ring collapse predicate, an overlap-side trim gate
+with pinned performance numbers — and threading an "open" flag through it would
+put every one of those invariants at risk for no gain.
 
 | SVG `stroke-linecap` | Implementation |
 |---|---|
@@ -287,185 +301,177 @@ Cap mapping, all onto existing machinery:
 | `butt` | a straight segment between the two offset endpoints |
 | `square` | extend both endpoints by `w/2` along the tangent, then `butt` |
 
-`stroke-linejoin` maps 1:1 onto `joinSegs`' existing `corners` argument
-(`miter`→`sharp`, `bevel`→`chamfer`, `round`→`round`).
+`stroke-linejoin` maps 1:1 onto `joinSegs`' `corners` argument (`miter`→`sharp`,
+`bevel`→`chamfer`, `round`→`round`).
 
-**`stroke-miterlimit` is resolved but not applied, and that is a recorded
+**`stroke-miterlimit` is resolved but NOT applied, and that is a recorded
 limitation.** `joinSegs` carries a fixed `MITER_LIMIT = 2`
 (`contour-offset.js:89`) and takes no parameter for it; threading one through
-would change a signature shared with the whole offset engine for a nuance that
-shows only on corners sharper than about 60 degrees. SVG's default is 4, so
-affected corners bevel slightly earlier than a browser would draw them. The
-style resolver keeps the value so a later change has somewhere to read it from.
+would change a signature shared with the whole offset engine for a nuance visible
+only on corners sharper than about 60°. SVG's default is 4, so affected corners
+bevel slightly earlier than a browser draws them.
 
-`stroke-width` defaults to `1` user unit per the SVG spec when `stroke` is set
-without it. `strokes: "ignore"` skips outlining entirely, which is the escape
-hatch for artwork whose strokes are decorative.
+## 5. The runtime op
 
-A stroke whose offset collapses throws through `contour-offset.js`'s existing
-collapse path, surfaced as `svg-stroke-collapsed`.
+```js
+k.svg2d(name, {
+  width?, height?, fit?,   // mm — exactly one required
+  align?  = "center",      // "left" | "center" | "right"
+  valign? = "middle",      // "top" | "middle" | "bottom"
+}) → Shape2D
+```
 
-## 5. Fill rules and region assembly
+`name` is a declared `svgs` key; an undeclared name throws, mirroring `text2d`'s
+unknown-font error and `k.import`'s unknown-name error.
 
-Each element is resolved **independently** with its own fill rule, then all
-elements' regions are unioned.
+**Exactly one of `width`/`height`/`fit` is required, with no default** — a
+deliberate asymmetry with `text2d`'s `size = 10`. Cap height is a well-defined
+physical metric of a font; an artwork's units mean nothing, so any default would
+silently produce wrong-scaled geometry. `fit` sizes the longer bbox edge. Scaling
+is always uniform. `align`/`valign` place the tight bbox relative to the origin,
+with the same vocabulary and defaults as `text2d`.
 
-Per-element is the correct grain: a single `<path>` with multiple subpaths
-relies on the fill rule *within* that path to make its counters (a donut, the
-inside of an "O"), so the rule cannot be applied across elements. Union across
-elements matches the "every element contributes material" semantics of §3.
+There is no `strokes` or `fillRule` option: both moved to ingest, where the
+decisions are actually made.
 
-An element contributes up to two independent region sets — its **fill** (when
-`fill` is not `none`) and its **stroke outline** (when `stroke` is set and
-`strokes: "outline"`) — which union like any others.
+## 6. Declaration, registration, caching
 
-Fill rule precedence: `opts.fillRule` if given, else the element's own
-`fill-rule` attribute, else `nonzero` (the SVG default). This is all existing
-capability in `resolveCurveFill`; the only new thing is plumbing the per-element
-value through.
+`svgs` is a `{ name: source }` map on the PartDefinition — exactly the `fonts` and
+`imports` grammar, resolved on the shared `asset-resolve.js` core (bytes, URL,
+`URL` instance, or a thunk; memoized by source identity). The source resolves to
+**JSON**, not SVG.
 
-An SVG that resolves to no regions at all throws `svg-no-geometry` rather than
-returning an empty `Shape2D` — the `text2d` precedent
-(`kernel-front.js:160`), and the same reasoning: an empty shape fails later and
-further away.
+The `new URL("./art/x.svg.json", import.meta.url)` form is the one to document:
+Vite turns it into a bundled asset URL, and in Node it is a `file:` URL that
+`src/testing/assets.js` reads off disk. A bare `() => import("./x.json")` works in
+Vite and fails in the CLI.
 
-## 6. Registration, caching, purity
+`svgs` is a static object in this phase — no function-of-params form. That form
+exists so a control can drive the value; there is no control yet. Phase B adds it.
 
-`svgs.js` resolves each declared source to bytes (memoized by source identity
-in `asset-resolve.js`), decodes bytes → text via `TextDecoder` (present in
-workers and Node), and decodes text → document. The decode is pure over bytes
-and memoized alongside.
+Registration mirrors fonts and imports: `jobs.js` registers the parsed documents
+on `kernel._svgs` in the async pre-phase, and prunes names the declaration no
+longer supplies (a kernel outlives a job, so a stale name would stay resolvable).
 
-`jobs.js` registers the resolved map on `k._svgs` in the async pre-phase,
-beside the existing font and import registration — gated on the part *declaring*
-`svgs` at all, exactly as the font branch is gated on `part.fonts`
-(`jobs.js:190`), so a part with no `svgs` field never touches the map.
+**No content digest.** It looks like a missing piece next to `imports.js`; it is
+not. `k.svg2d` lowers to `k.shape2d(regions)` and the `Shape2D` hash keys on the
+actual coordinates, so different artwork gives a different cache entry
+automatically. Imports need a digest because a `Solid` master is registered by
+name and is opaque to that hash; a parsed vector document is not. This is the
+same argument `kernel-front.js:117-121` records for `text2d`.
 
-**No separate geometry cache and no content digest are needed.** `k.svg2d`
-lowers to `k.shape2d(regions)`, and the `Shape2D` hash keys on the actual
-coordinates — different artwork gives different coordinates gives a different
-cache entry, automatically. This is the same argument `kernel-front.js:117-121`
-records for `text2d`, and the reason `svg2d` does **not** need the digest
-machinery `imports` carries (imports need it because a `Solid` master is
-registered on the kernel by name, opaque to the hash).
-
-Purity holds trivially: decode is a pure function of bytes, so `build` stays a
-pure function of `(k, p, d)`.
+Purity holds trivially: parsing is a pure function of bytes.
 
 ## 7. Backends
 
-`k.svg2d` is backend-agnostic by construction because it lowers to `k.shape2d`,
-which both backends implement (`test/shape2d-occt.test.js` covers the OCCT
-side). Nothing in this feature probe-routes, and `ROUTED_CAD_OPS` is unchanged.
-
-Curve-native output is what makes this hold: arcs stay arcs and cubics stay
-cubics through the whole pipeline, so OCCT builds exact B-rep edges and Manifold
-tessellates the same spec — backend-identical the same way every other
-`Shape2D` op is.
+`k.svg2d` is backend-agnostic because it lowers to `k.shape2d`, which both
+backends implement (`test/shape2d-occt.test.js` covers OCCT). Nothing
+probe-routes; `ROUTED_CAD_OPS` is unchanged. Arc recovery is what makes the
+curve-native promise hold across the split: arcs stay arcs, so OCCT builds exact
+B-rep circles and Manifold tessellates the same spec.
 
 ## 8. Lint
 
-A new `lint/rules-svg.js`, two rules, mirroring `rules-fonts.js`' scope
-discipline (static checks only, no kernel boot, no execution):
+A new `lint/rules-svg.js`, two rules, mirroring `rules-fonts.js`' scope discipline
+(static, no kernel boot, no execution):
 
-- **`svg-unknown-name`** (error) — `k.svg2d("foo")` with a literal string
-  argument that the part's `svgs` field does not declare. Directly parallel to
-  `import-unknown-name`. Non-literal arguments are skipped, not guessed at.
+- **`svg-unknown-name`** (error) — `k.svg2d("foo")` with a literal string argument
+  the part's `svgs` field does not declare. Parallel to `import-unknown-name`.
 - **`svg-size-missing`** (error) — a `k.svg2d` call whose options object literal
-  carries none of `width`/`height`/`fit`. This throws at build time anyway; the
-  lint rule moves it to before the kernel boots.
+  carries none of `width`/`height`/`fit`.
 
-`partforge/lint` keeps its zero-runtime-dependency guarantee — both rules read
-only the part module's source and its `svgs` field.
+Both judge only literal arguments; a computed name or options object is skipped
+and still fails correctly at build time. `partforge/lint` keeps its
+zero-runtime-dependency guarantee.
 
 ## 9. Testing
 
-**Pure unit tests, no WASM, one file per leaf:**
+**Pure unit tests, no WASM:**
 
-- `svg-xml` — nested elements, self-closing tags, attribute quoting, namespace
-  prefixes stripped, malformed input throwing rather than hanging.
-- `svg-path` — relative commands, `H`/`V`/`S`/`T` shorthands, implicit repeated
-  commands, `A` checked against `sampleSvgArc` as the truth oracle (semicircle
-  and full-circle cases, which is where a three-point arc fit degenerates),
-  malformed `d` throwing.
-- `svg-transform` — matrix composition through nested `<g>`; **arcs degrade to
-  cubics under a non-uniform matrix and stay arcs under a uniform one**.
-- `svg-shapes` — each element type; `rect` with and without `rx`/`ry`.
-- `svg-style` — inheritance through `<g>`, `stroke-width` defaulting, `display:none`.
-- `stroke-outline` — **the stadium regression: a straight open segment of length
-  10 stroked at width 2 with round caps has area `20 + π`.** This is the exact
-  figure `joinSegs`' comment pins, and it is the test that proves the caps
-  survived. Plus butt/square caps, each linejoin, a closed contour becoming
-  outer+hole, and a collapse throwing.
+- `vector-format` — validation of every malformed shape (bad `format`, future
+  `version`, unknown `kind`, arc without `through`, cubic without `c2`, non-numeric
+  coordinate, bbox mismatch), each asserting the message names the position; and
+  round-tripping internal regions → JSON → internal.
+- `arc-fit` — a paper-style 4-cubic circle collapses to arcs with the exact
+  original centre and radius; an ellipse does **not** collapse; a freeform curve
+  does not collapse; a partial arc run collapses while its neighbours stay cubic;
+  arcs are split at ≤180°.
+- `stroke-outline` — **the stadium: a straight open segment of length 10 stroked at
+  width 2 with round caps has area `20 + π`.** That is the exact figure `joinSegs`'
+  comment pins, and it is what proves the caps survived. Plus butt/square caps,
+  each linejoin, a closed contour becoming outer+hole, and a collapse throwing.
 - `svg2d` — each of `width`/`height`/`fit`; omitting all three throwing;
-  align/valign placement; **stroke width scaling with the artwork** (the §2
-  ordering guarantee — the same icon at two sizes has proportional stroke).
+  align/valign placement; the tight bbox ignoring padding.
+
+**DOM tests (happy-dom):**
+
+- `svg-ingest` — transforms baked; `fill="none"` + stroke giving stroke geometry
+  only; `evenodd` making a hole where `nonzero` does not; overlapping shapes
+  unioning rather than double-counting; `<use>`/`<defs>`/CSS `class=` all resolving
+  (the capability this architecture bought); stroke width scaling with the artwork;
+  a circle surviving as arcs end-to-end.
+- The canvas-context stub belongs in `test/setup/happy-dom-patches.js`, which runs
+  before test-module imports — that lets ingest tests use a plain static import.
 
 **Integration:**
 
-- A new reference part, `src/parts/emblem.js`, with a small bundled SVG that
-  exercises a filled path *and* a stroked open path, plus a `verify` block
-  asserting the bbox. Built through the CLI (`npx partforge measure
-  src/parts/emblem.js`) so the whole path is proven with no browser. Added to
-  `docs/REFERENCE-PARTS.md` as the SVG reference part, and to the CI app list.
-- A cross-backend area test in the `shape2d-occt` style: the same SVG yields
-  matching region area on both kernels.
-- `test/worker-layering.test.js` needs no new guard — it walks the import
-  closure, so the new files are covered the moment `jobs.js` reaches them. Its
-  passing **is** the DOM-free assertion.
+- A reference part, `src/parts/emblem.js`, with a checked-in ingested JSON
+  exercising a filled shape *and* a stroked open shape, plus a `verify` block.
+  Built through the CLI so the whole runtime path is proven headlessly.
+- A cross-backend area/bbox test in the `shape2d-occt` style.
+- `test/worker-layering.test.js` must keep passing. It also proves — implicitly but
+  completely — that `partforge/ingest` is unreachable from the worker graph: the
+  ingest path uses `document`, and the test fails the build if any module in the
+  worker's import closure so much as names it.
 
-## 10. Docs
+## 10. Documentation
 
-- **AUTHORING-PARTS.md** — a "Vector art (SVG)" section immediately after the
-  `k.text2d` section, structured as its sibling: the op, the `svgs` field,
-  sizing, the admitted subset, strokes, and the named non-semantics of §3. The
-  aspirational "imported SVG" reference at `AUTHORING-PARTS.md:1231` becomes a
-  real cross-reference. The `svgs` field joins the `PartDefinition` table at the
-  top, next to `fonts` and `imports`.
-- **ERROR-PATTERNS.md** — one `##` per pattern: `svg-unknown-name`,
-  `svg-unsupported-element`, `svg-no-geometry`, `svg-size-required`,
-  `svg-stroke-collapsed`, `svg-malformed`, and `svg-painting-order` (the
-  white-shape-over-black case from §3, which has no error to attach to and is
-  purely a "why does my part look wrong" entry).
-- **KERNEL-CONTRACT.md** — `svg2d` added to the op list and its conformance
-  class recorded (both backends, via `shape2d`). Its version header and op
-  coverage are held to the code by `test/kernel-contract.test.js`, so this is
-  not optional.
+- **`docs/VECTOR-FORMAT.md`** (new, normative, shipped in `package.json`'s
+  `files`) — the schema, a worked example, the line/arc/cubic rules, winding, the
+  y convention, and a **"converting an SVG to this by hand"** section covering
+  what is not obvious: the y flip, hole winding, stroke outlining, fill rules, and
+  the painting-order non-semantics. This section is what makes the loss of
+  headless creation acceptable, so it is a requirement, not an appendix.
+- **AUTHORING-PARTS.md** — a "Vector art (SVG)" section after `k.text2d`, the
+  `svgs` field in the PartDefinition table, the ingest story, and the lint rules in
+  the rule catalog. The aspirational "imported SVG" reference at line 1231 becomes
+  a real cross-reference.
+- **ERROR-PATTERNS.md** — `svg-unknown-name`, `svg-size-required`,
+  `svg-invalid-document`, `svg-stroke-collapsed`, `svg-no-geometry`, and
+  `svg-painting-order` (which has no error text — it is a "why does my part look
+  wrong" entry).
+- **KERNEL-CONTRACT.md** — `svg2d` in the op list with its conformance class.
+  `test/kernel-contract.test.js` holds this to the code, so it is not optional.
 - **skills/partforge/SKILL.md** — `svg2d` in the op vocabulary.
 
 ## Rollout
 
 Per AGENTS.md: **bump `package.json` on this branch, as part of the PR.** The
-publish workflow tags and publishes on merge; forgetting the bump fails quietly
-— the merge lands and the work never ships. Minor bump (new author-facing
-surface, no breaking change): `0.91.0` → `0.92.0`.
-
-Downstream, partforge-cloud pins `^<version>` and regenerates its prompt corpus
-against the installed package, so let the publish finish before bumping there.
+publish workflow tags and publishes on merge; forgetting the bump fails quietly.
+Minor bump: `0.91.0` → `0.92.0`. `package.json` also gains the
+`./ingest` export and `docs/VECTOR-FORMAT.md` in `files`.
 
 ## Out of scope (explicitly)
 
-- `<use>`, `<defs>`, `<symbol>`, CSS `<style>`/`class` — decision 4.
-- `<text>` — an SVG-embedded typeface is `k.text2d`'s job, not this one.
-- `<image>`, gradients, opacity, colour of any kind. This op produces geometry.
-- Painting-order occlusion (§3).
-- Elliptical stroke profiles from non-uniform ancestor transforms — §4 outlines
-  in local space, which is correct per spec; the residual case is an artwork
-  that scales a stroked group non-uniformly, and it renders as a
-  uniformly-stroked shape under that scale.
+- Writing the ingested file. The host owns storage.
+- Headless ingest. No CLI command, no Playwright dependency. The format doc is the
+  mitigation.
+- `<text>` — an SVG-embedded typeface is `k.text2d`'s job.
+- Raster `<image>`, gradients, opacity, colour of any kind.
+- Painting-order occlusion (§2).
+- Re-ingest staleness detection. A stored document that no longer matches its
+  `source` file is not detected; `source` is provenance for a human, not a check.
 - **Phase B** — `type: "svg"` control, drag-drop, upload, `pfc-asset:` vendoring.
-- **Phase C** — `svgCatalog` provider seam, icon picker, Noun Project. Noted
-  for whoever picks it up: Noun Project asset URLs expire within ~an hour, so a
-  picked URL can never be the persisted param value — vendoring is a day-one
-  requirement there, not an optimization.
+- **Phase C** — `svgCatalog` provider, icon picker, Noun Project. Noted for
+  whoever picks it up: Noun Project asset URLs expire within ~an hour, so a picked
+  URL can never be the persisted value — and this architecture already answers
+  that, since the pick is ingested to JSON in the browser at pick time.
 
 ## Open items carried into planning
 
-1. **Inline-bytes form of `k.svg2d`.** `text2d` accepts either a declared name
-   or raw bytes. `k.svg2d` takes a name only in phase A, matching `k.import`.
-   Worth revisiting if a generated-SVG use case appears; not speculating now.
-2. **Whether `fit` should acquire a default** once real parts exist. §2 argues
-   no; revisit only with evidence from authored parts.
-3. **`svg-xml.js` hand-rolled vs. `svg-parser`.** Decided hand-rolled, with the
-   explicit tripwire in the Module layout section. Planning should treat the
-   swap as a known, cheap contingency rather than a redesign.
+1. **Inline-object form of an `svgs` source.** A document could be written
+   literally into the part instead of referenced as a file. Deferred: the file
+   form keeps part sources readable and reuses `asset-resolve.js` unchanged.
+2. **Whether `bbox` should be optional in the format.** It is required in v1 and
+   validated against a recomputation. If hand-authoring proves that annoying,
+   making it optional is a backward-compatible v1 change.
