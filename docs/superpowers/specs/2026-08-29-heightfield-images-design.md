@@ -109,17 +109,24 @@ thrown: a pitch that is merely ambitious should still build.
 
 ### Mesh construction
 
-Top grid at `z = base + relief`; a **duplicated** perimeter ring at `z = 0`;
-`sideQuads` for the skirt; `fanCap` for the bottom. The last two are used
-verbatim from `mesh-build.js`.
+Top grid at `z = base + relief`; a new ring at `z = 0` for the skirt to drop
+to; an explicit skirt loop for the walls; `fanCap` for the bottom. `fanCap` is
+used verbatim from `mesh-build.js`; `sideQuads` is **not** reusable here — it
+derives ring bases as `i * ringSegs`, which assumes rings start at `V[0]`, and
+the vertex array here leads with the grid, so the skirt is written as an
+explicit loop instead.
 
-Duplicating the perimeter ring rather than indexing into the grid's boundary is
-deliberate. It lets `sideQuads` apply unchanged (it assumes contiguous,
-equal-length rings), and both consumers weld the duplicates away anyway —
-`mesh.merge()` before `ofMesh` on Manifold, tolerance sewing inside `importSTL`
-on OCCT. The two backends therefore receive **byte-identical triangle data**,
-which reduces cross-backend parity testing to "does sewing/tessellation
-diverge."
+The skirt's top ring reuses the grid's own perimeter vertex indices rather
+than duplicating them — only the bottom ring (`z = 0`) is new geometry, one
+vertex per perimeter vertex, plus one centre vertex for the fan cap. Reusing
+the grid's indices (instead of a duplicate ring at the same position) is what
+makes the top face's boundary edge and the skirt's top edge the exact same
+index pair, so the mesh is watertight by index alone with no separate
+weld/merge pass required. The two backends still receive **byte-identical
+triangle data** — Manifold's own `mesh.merge()` before `ofMesh` and OCCT's
+tolerance sewing inside `importSTL` still run downstream as normal, but this
+mesh's own watertightness no longer depends on either of them — which reduces
+cross-backend parity testing to "does sewing/tessellation diverge."
 
 Winding follows the repo convention: CCW = outward.
 

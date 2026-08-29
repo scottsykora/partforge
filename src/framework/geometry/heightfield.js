@@ -36,6 +36,9 @@ export function heightfieldMesh(grid, opts = {}) {
   if (!(base > 0)) throw new Error("heightfield: base must be > 0 (a zero base is degenerate)");
   if (!(pitch > 0)) throw new Error("heightfield: pitch must be > 0");
 
+  // Floor of 2 samples per axis: X()/Y()/Z() divide by (nx-1)/(ny-1) to map
+  // sample indices to 0..1, so nx or ny === 1 would divide by zero. 2 is also
+  // the minimum for a meaningful grid (one quad).
   const count = (len, p) => Math.max(2, Math.ceil(len / p));
   let nx = count(w, pitch), ny = count(d, pitch);
   if (nx * ny > HEIGHTFIELD_VERTEX_BUDGET) {

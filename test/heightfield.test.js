@@ -70,9 +70,22 @@ describe("heightfieldMesh", () => {
     for (const z of top) expect(z).toBeCloseTo(1 + 2 * 0.5, 3);
   });
 
-  test("invert flips the mapping", () => {
-    const m = heightfieldMesh(g2, { ...base, invert: true });
-    expect(Math.max(...zs(m))).toBeCloseTo(1 + 2 * 1, 2); // the 0 corner becomes the peak
+  test("invert flips a specific corner's height, not just the aggregate max", () => {
+    // g2 is a 2x2 grid, so it maps 1:1 onto the 2x2 sample mesh (nx=ny=2 here):
+    // vertex 0 is grid (i=0,j=0) -> u=0,v=0 -> raw g2.data[0] = 0 (the min);
+    // vertex 3 is grid (i=1,j=1) -> u=1,v=1 -> raw g2.data[3] = 65535 (the max).
+    // g2 contains BOTH extremes, so checking only the aggregate max (as the
+    // brief's original test did) can't tell invert apart from a no-op: either
+    // way the peak is 1 + 2*1 = 3, it just relocates to the opposite corner.
+    // Pin each corner's height under both settings instead, so an
+    // implementation that ignores `invert`, or only flips one corner, fails.
+    const zAt = (m, i) => m.positions[i * 3 + 2];
+    const plain = heightfieldMesh(g2, { ...base, invert: false });
+    const inverted = heightfieldMesh(g2, { ...base, invert: true });
+    expect(zAt(plain, 0)).toBeCloseTo(1 + 2 * 0, 3); // raw 0 -> f=0 -> base only
+    expect(zAt(plain, 3)).toBeCloseTo(1 + 2 * 1, 3); // raw 1 -> f=1 -> full relief
+    expect(zAt(inverted, 0)).toBeCloseTo(1 + 2 * 1, 3); // raw 0 -> f=1-0=1 -> now the peak
+    expect(zAt(inverted, 3)).toBeCloseTo(1 + 2 * 0, 3); // raw 1 -> f=1-1=0 -> now the base
   });
 
   test("range remaps: [0.5,1] puts mid-gray at zero relief", () => {
@@ -85,6 +98,20 @@ describe("heightfieldMesh", () => {
     const m = heightfieldMesh(g4, { ...base, range: [0.75, 1] });
     const top = zs(m).filter((z) => z > 0);
     for (const z of top) expect(z).toBeCloseTo(1, 3);
+  });
+
+  test("range remaps an interior value using BOTH endpoints", () => {
+    // The two tests above only ever put the sampled value at or below `lo`,
+    // and always use hi=1 — a formula that hardcodes hi=1 (ignoring
+    // range[1]), or that clamps by lo alone without dividing by the span,
+    // produces the same near-zero result in both cases and would still pass.
+    // Use a band where the flat mid-gray input (~0.5) falls in the MIDDLE,
+    // with hi != 1, so the expected relief only comes out right if both
+    // endpoints and the span division are all honoured.
+    const m = heightfieldMesh(g4, { ...base, range: [0.25, 0.75] });
+    // raw ~= 0.5 -> f = (0.5 - 0.25) / (0.75 - 0.25) = 0.5 -> half relief.
+    const top = zs(m).filter((z) => z > 0);
+    for (const z of top) expect(z).toBeCloseTo(1 + 2 * 0.5, 3);
   });
 
   test('origin "center" centres the footprint; "corner" puts min at the origin', () => {
