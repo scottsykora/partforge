@@ -351,6 +351,53 @@ asset layer (`images.js`, registration, cache keys); the Manifold adapter; the
 OCCT adapter; the control type and ingest helper; the `relief.js` reference part
 and its three glue files; docs; version bump.
 
+### Probe result (2026-08-29)
+
+Task 1's probe (`spike/importstl-probe.mjs`, deleted after this recording —
+full report in `.superpowers/sdd/2026-08-29-heightfield-images/task-1-report.md`)
+fed a watertight sine-relief mesh (the plan's own `relief(n)` generator,
+60x60mm plate) to both `replicad.importSTL` (async) and a hand-assembled
+synchronous equivalent reached through `replicad.getOC()`, at five grid sizes.
+
+| n | triangles | sew (async / sync) | STEP export (async / sync) | STEP size | boolean on sync shape |
+|---|---|---|---|---|---|
+| 60 | 7,670 | 2.47s / 2.49s | 1.33s / 1.18s | 17.6 MB | OK, 1.73s |
+| 90 | 16,910 | 5.79s / 5.88s | 3.04s / 2.76s | 40.3 MB | OK, 4.03s |
+| 108 | 24,182 | 8.22s / 8.60s | 4.41s / 4.11s | 58.3 MB | OK, 5.86s |
+| 120 | 29,750 | 10.40s / 10.61s | 5.44s / 8.67s | 72.4 MB | OK, 11.32s |
+| 200 | 81,590 | 31.72s / 35.14s | 16.10s / 15.45s | 206.5 MB | OK, 22.85s |
+
+**Both paths sewed at every size, including the nominal `n=200` case, with no
+failures and no hangs.** This resolves open item 2 (below) and Task 1's own
+go/no-go: proceed with OCCT STEP support as designed.
+
+**`STEP_TRIANGLE_WARN = 24,000`** — the sew-time threshold, set just under
+`n=108` (24,182 tris, 8.2-8.6s), the largest size measured to sew in under
+10s.
+
+**The synchronous path works and is what Task 6 implements.** replicad's own
+`importSTL` is async only because it awaits `Blob.arrayBuffer()`; since
+`meshToStl` already hands back an `ArrayBuffer`, that await is pure overhead.
+The same OCCT sequence (`StlAPI_Reader` -> `ShapeUpgrade_UnifySameDomain` ->
+`BRepBuilderAPI_MakeSolid`) run synchronously through `replicad.getOC()`,
+wrapped with `replicad.cast()` (a public export, despite this plan's earlier
+assumption it wasn't), sewed successfully at every size and produced a shape
+that both `exportSTEP` and a boolean accepted. `heightfield` therefore stays
+synchronous on both backends — no contract change. The exact call sequence is
+recorded verbatim in the task 1 report for Task 6 to copy.
+
+**Surprising finding: STEP file size, not sew time, is the binding
+constraint at realistic grid sizes.** `importSTL`'s OCCT sequence keeps the
+mesh's own per-triangle faceting rather than merging into larger planar
+faces, so STEP size scales roughly linearly with triangle count at ~2.3-2.6
+KB/triangle — the `n=200` case (81,590 triangles, the plan's own nominal
+size) produces a 206.5 MB STEP file. `STEP_TRIANGLE_WARN` as set above bounds
+sew time to under 10s but still permits a ~55-60 MB export; the design may
+want a separate, size-driven warning independent of triangle count, since
+STEP size is also content-dependent (flatter reliefs compress better via
+`ShapeUpgrade_UnifySameDomain` than high-frequency ones at the same triangle
+count).
+
 ## Accepted risks and non-goals (recorded)
 
 - **`importSTL` robustness** — the load-bearing unknown, probed first.
