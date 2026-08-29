@@ -95,3 +95,15 @@ test("the emitted document always validates", () => {
   const doc = ingestSvg(svg('<circle cx="10" cy="10" r="5" fill="#111"/><path fill="none" stroke="#111" stroke-width="2" d="M0,30 L40,30"/>'));
   expect(() => toInternalRegions(doc, "x")).not.toThrow();
 });
+
+test("emitted regions carry the storage winding invariant: outer CCW, holes CW", () => {
+  const signed = (c) => ringArea(tessellateContour(c, 64));
+
+  const rect = toInternalRegions(ingestSvg(svg('<rect width="20" height="10" fill="#111"/>')));
+  expect(signed(rect[0].outer)).toBeGreaterThan(0);
+
+  const d = "M0,0 L30,0 L30,30 L0,30 Z M10,10 L20,10 L20,20 L10,20 Z";
+  const [donut] = toInternalRegions(ingestSvg(svg(`<path fill="#111" fill-rule="evenodd" d="${d}"/>`)));
+  expect(signed(donut.outer)).toBeGreaterThan(0);
+  expect(signed(donut.holes[0])).toBeLessThan(0);
+});
