@@ -678,6 +678,11 @@ export function createOcctKernel(replicad) {
       images.set(name, { digest, width, height, data });
     },
     _imageDigest: (name) => images.get(name)?.digest,
+    // Drop every registered name NOT in `keep` (a Set) — see the identical
+    // comment on the Manifold backend's `_pruneImages` for why this exists.
+    _pruneImages: (keep) => {
+      for (const name of [...images.keys()]) if (!keep.has(name)) images.delete(name);
+    },
     _acceptsStep: true,
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),

@@ -767,6 +767,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       images.set(name, { digest, width, height, data });
     },
     _imageDigest: (name) => images.get(name)?.digest,
+    // Drop every registered name NOT in `keep` (a Set) — the images-map twin of
+    // fonts' kernel._fonts prune in jobs.js. `images` is keyed on the part's
+    // declared name (e.g. "relief"), not on content, so without this a name
+    // the user cleared — or a different part that reuses the same key across a
+    // worker-rebind — would silently keep resolving to a prior build's grid.
+    // A method rather than exposing `images` itself: jobs.js only ever needs
+    // "keep exactly this set", never raw Map access.
+    _pruneImages: (keep) => {
+      for (const name of [...images.keys()]) if (!keep.has(name)) images.delete(name);
+    },
     _acceptsMesh: true,
     shape2d,
     // Backend-internal region adapter: the shared native engine (contour-offset.js)
