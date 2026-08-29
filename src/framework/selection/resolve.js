@@ -45,5 +45,9 @@ export function resolveSelection(part, ctx, hit) {
   // Feature attribution from the mesh payload (Solid.label() in the part's build) —
   // the same name the hover tooltip shows, so user, agent, and viewer share vocabulary.
   if (hit.feature) selection.feature = { label: hit.feature.label };
+  // A cutaway section pick: the point is inside the material, on the cut face,
+  // not on a surface the part was built with. Callers that describe the click
+  // in words need to say so — the coordinates alone read as a normal surface.
+  if (hit.onCutPlane) selection.onCutPlane = true;
   return selection;
 }

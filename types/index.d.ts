@@ -28,6 +28,12 @@ export interface Selection {
   params: Record<string, ParamValue>;
   /** Present when the hit surface carries a `Solid.label()` name. */
   feature?: { label: string };
+  /**
+   * Present when the click landed on a cutaway's cut face. The point is inside
+   * the material rather than on a surface the part was built with, and the
+   * normal faces the half the section removed.
+   */
+  onCutPlane?: true;
 }
 
 export interface PickEvent {

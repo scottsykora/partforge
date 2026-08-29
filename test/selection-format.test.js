@@ -33,3 +33,16 @@ test("prompt style names the feature", () => {
   expect(formatSelection(s, { style: "prompt" }))
     .toBe("On sub-part **planter**, the user pointed at **Drainage hole**, local point (0, 0, 1.5), normal -Z, with params {drain: 8}.");
 });
+
+test("a cutaway section pick says so in both written styles", () => {
+  const s = { ...L0, onCutPlane: true };
+  expect(formatSelection(s)).toBe("@spacer · section · pt(0,0,5.2) n(+X) · {bore:3.4,h:10}");
+  // Without this the sentence reads as a point on the part's own surface.
+  expect(formatSelection(s, { style: "prompt" })).toContain("the cutaway section face at local point");
+});
+
+test("a section pick keeps the feature slot free — a cut face has no label", () => {
+  const s = { ...L0, feature: { label: "Bore" }, onCutPlane: true };
+  // Belt and braces: if a caller ever does supply both, neither is dropped.
+  expect(formatSelection(s)).toBe("@spacer · Bore · section · pt(0,0,5.2) n(+X) · {bore:3.4,h:10}");
+});
