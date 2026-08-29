@@ -19,12 +19,27 @@ import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
 import { KernelCapabilityError } from "./errors.js";
+import { heightfieldMesh } from "./heightfield.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
 // by the export path — Manifold meshing is cheap, so we tessellate generously).
 const SEGS = { preview: 116, print: 480 };       // circular segments
 const TUBE = { preview: { stationsPerTurn: 38, ringSegs: 24 }, print: { stationsPerTurn: 160, ringSegs: 40 } };
+
+// FNV-1a over a Uint16Array's raw sample values — same fold as solid-hash.js's `h`,
+// but a dedicated loop: `h`'s generic `canon()` treats a typed array as a plain
+// object (Object.keys on it), which works but is wasteful for a heightfield grid
+// that may hold up to HEIGHTFIELD_VERTEX_BUDGET samples. Used only to give an
+// UNCACHED inline heightfield grid a real content fingerprint in its solid's own
+// `_hash`, so composing it with another op afterward (union/cut) doesn't inherit
+// the same "two different things, one key" collision risk the cache bypass exists
+// to avoid.
+function hashGridData(data) {
+  let hsh = 0x811c9dc5;
+  for (let i = 0; i < data.length; i++) { hsh ^= data[i]; hsh = Math.imul(hsh, 0x01000193); }
+  return (hsh >>> 0).toString(36);
+}
 
 // true axis-angle rotation as a column-major 4x4 (manifold Mat4), translation 0
 function axisAngleMat4(axis, deg) {
@@ -89,6 +104,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // registers pre-build (ensureImports, Task 8). Kernel-lifetime, NOT tracked/T()'d:
   // these masters must survive cleanup() and be read again on every subsequent build.
   const imports = new Map();
+  // name -> { digest, width, height, data } — depth-map grids the framework registers
+  // pre-build via `_registerImage` (ensureImages, Task 4). Kernel-lifetime like
+  // `imports` above: plain data, not WASM, so there is nothing to T()/dispose.
+  const images = new Map();
   // Boundary ops route through cache.lookup; on a miss `make` runs the WASM op,
   // tracks the result, and returns the triple the cache needs to pin/dispose it.
   const cached = (hash, computeM) => cache.lookup(hash, () => {
@@ -614,6 +633,39 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // X and drives Y to 0, squishing the top to a line). Broadcast for a uniform taper.
         return T(cs.extrude(height, nDiv, twist, [scaleTop, scaleTop]));
       }),
+    // Height-map relief. The grid → triangle conversion is a pure leaf shared with
+    // the OCCT backend (heightfield.js), so both kernels build from identical
+    // triangle data. `manifoldFromMesh`'s output is NOT self-tracked (see its own
+    // header comment — "caller tracks `out`") so, unlike `import`'s master, this
+    // build wraps it in T() itself: a heightfield solid is an ordinary per-build
+    // result, not a kernel-lifetime master.
+    heightfield: (src, opts = {}) => {
+      const grid = typeof src === "string" ? images.get(src) : src;
+      if (!grid) throw new Error(`heightfield: unknown image "${src}" — declare it in the part's \`images\` field`);
+      const build = () => {
+        const { positions, indices, warnings } = heightfieldMesh(grid, opts);
+        for (const w of warnings) recordWarning(w);
+        return T(manifoldFromMesh(wasm, positions, indices));
+      };
+      // Only a registered image carries a content digest to key the cache on. An
+      // inline {width,height,data} grid has no identity of its own — keying it on a
+      // literal string like "inline" would let two DIFFERENT inline grids at the
+      // same options collide on the same cache key, and the second call would
+      // silently get back the FIRST call's solid. Skip the cache for those; the
+      // inline path is the test/low-level path and isn't performance-sensitive.
+      // (The returned solid still gets a real content-fingerprint hash below, so a
+      // downstream union/cut composing two different inline heightfields doesn't
+      // inherit the same collision risk one level up.)
+      if (typeof src !== "string") {
+        return wrap(build(), h("heightfield-inline", grid.width, grid.height, hashGridData(grid.data),
+          opts.w, opts.d, opts.base, opts.maxZ, opts.pitch, opts.invert, opts.range, opts.origin));
+      }
+      return cached(
+        h("heightfield", grid.digest, opts.w, opts.d, opts.base, opts.maxZ,
+          opts.pitch, opts.invert, opts.range, opts.origin),
+        build,
+      );
+    },
     // Polygon-with-holes extrude in one op: even/odd fill turns the extra contours into
     // holes regardless of their winding (outer + holes, no per-hole boolean cut).
     // A Shape2D `profile` (curve-native, possibly multi-region) materializes through
@@ -716,6 +768,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // Registration memo: undefined for an error entry, so a later registration with
     // the same digest can upgrade it rather than being treated as a no-op repeat.
     _importDigest: (name) => { const e = imports.get(name); return e?.error ? undefined : e?.digest; },
+    // Depth-map grids, registered pre-build by the framework via `_registerImage`
+    // (ensureImages, Task 4). Unlike imports there is no per-format error entry:
+    // every backend can consume a normalized grid, so registration never fails.
+    _registerImage: ({ name, digest, width, height, data }) => {
+      images.set(name, { digest, width, height, data });
+    },
+    _imageDigest: (name) => images.get(name)?.digest,
     _acceptsMesh: true,
     shape2d,
     // Backend-internal region adapter: the shared native engine (contour-offset.js)

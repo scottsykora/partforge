@@ -281,6 +281,13 @@ export const KERNEL_OP_SPECS = {
   },
   // loftSmooth: range checks live in loft-smooth.js, next to the defaults they guard.
   loftSmooth: { toArgs: passThrough("loftSmooth", ["sections", "stations", "samples", "shading", "closed"], ["sections"]) },
+  // heightfield: (nameOrGrid, opts) is a two-positional call, not the options-object
+  // convention — toArgs only normalizes a bare single-arg call; the rest of the
+  // range/positivity checks (base, pitch) live in heightfield.js next to the
+  // defaults they guard, same split as loftSmooth above.
+  heightfield: { toArgs: (a, b) => [a, b ?? {}], check: (_src, o = {}) => {
+    if (!(o.w > 0) || !(o.d > 0)) throw new Error("heightfield: w and d must be positive");
+  } },
   roundedBox:      { toArgs: roundedBoxArgs },
   roundedCylinder: { toArgs: roundedCylinderArgs },
   torus:           { toArgs: torusArgs },
