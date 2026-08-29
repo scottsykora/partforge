@@ -455,6 +455,22 @@ export interface Text2dOptions {
   kerning?: boolean;
 }
 
+/** Horizontal alignment of a `svg2d` placement. */
+export type Svg2dAlign = "center" | "left" | "right";
+/** Vertical alignment of a `svg2d` placement. */
+export type Svg2dValign = "middle" | "top" | "bottom";
+
+export interface Svg2dOptions {
+  /** Target width in mm — exactly one of `width`/`height`/`fit`. */
+  width?: number;
+  /** Target height in mm — exactly one of `width`/`height`/`fit`. */
+  height?: number;
+  /** Target size in mm for the artwork's larger extent — exactly one of `width`/`height`/`fit`. */
+  fit?: number;
+  align?: Svg2dAlign;
+  valign?: Svg2dValign;
+}
+
 /** Anything `k.hull`/`k.hullChain` accepts as one input. */
 export type HullInput = Shape2D | Contour;
 
@@ -501,6 +517,11 @@ export interface GeometryKernel {
   shape2d(profile: ProfileInput): Shape2D;
   /** Render outline-font text as a `Shape2D`. */
   text2d(string: string, opts?: Text2dOptions): Shape2D;
+  /**
+   * Place ingested vector artwork as a `Shape2D`. `name` is a key in the
+   * part's `svgs` field (ingested `partforge-vector` JSON, not raw `.svg`).
+   */
+  svg2d(name: string, opts: Svg2dOptions): Shape2D;
   /** Convex hull of all inputs → a convex (faceted) `Shape2D`. */
   hull(inputs: HullInput[]): Shape2D;
   /** Swept hull over an ordered sequence (>= 2 inputs). */

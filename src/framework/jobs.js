@@ -9,6 +9,7 @@ import { fontsFor, resolveFonts } from "./fonts.js";
 import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
+import { ensureSvgs } from "./svgs.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
 
 // The oracle loads LAZILY, per job family, never at worker boot. It is the largest
@@ -226,6 +227,9 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // lazy-error policy that keeps a STEP import inert until a build actually
     // calls k.import on it.
     if (part.imports) await ensureImports(kernel, part.imports, opts.importMeshes ?? null);
+    // Vector art, the third asset family after fonts and imports. Same pre-build
+    // timing; ensureSvgs owns the prune, so this stays one line.
+    if (part.svgs) await ensureSvgs(kernel, part.svgs);
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
     const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
     // Explicit selection (headless exportParts) overrides view-derived selection.

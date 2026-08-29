@@ -20,6 +20,7 @@ const opentype = normalizeOpentype(opentypeNamespace);
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
 import { textGlyphs } from "./text2d.js";
+import { placeRegions } from "./svg2d.js";
 import { beveledExtrude } from "./rim-bevel.js";
 import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
 import { convexHull, hullPoints } from "./hull.js";
@@ -159,6 +160,19 @@ export function finishKernel(k) {
     const regions = textGlyphs(parsed, string, { size, align, valign, lineHeight, tracking, kerning });
     if (regions.length === 0) throw new Error("text2d: string produced no glyph geometry (empty or all-whitespace?)");
     return regions.map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+  };
+
+  // 2-D vector art as a Shape2D. Backend-agnostic for the same reason text2d is:
+  // it lowers to k.shape2d + union, so both backends get identical curve regions.
+  // Regions come from k._svgs, preloaded by name from the part's ingested
+  // artwork — this op does no SVG parsing at all, by design.
+  k._svgs ??= new Map();
+  k.svg2d = (name, opts = {}) => {
+    if (typeof name !== "string" || !name)
+      throw new Error("svg2d: first argument must be the name of an entry in the part's `svgs` field");
+    const regions = k._svgs.get(name);
+    if (!regions) throw new Error(`svg2d: unknown svg "${name}" — declare it in the part's \`svgs\` field`);
+    return placeRegions(regions, opts).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
   };
 
   // Convex hull → Shape2D. Backend-agnostic: pure-JS monotone-chain hull of the inputs'
