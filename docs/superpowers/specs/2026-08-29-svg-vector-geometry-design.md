@@ -288,7 +288,15 @@ Cap mapping, all onto existing machinery:
 | `square` | extend both endpoints by `w/2` along the tangent, then `butt` |
 
 `stroke-linejoin` maps 1:1 onto `joinSegs`' existing `corners` argument
-(`miter`→`sharp`, `bevel`→`chamfer`, `round`→`round`), miter limit included.
+(`miter`→`sharp`, `bevel`→`chamfer`, `round`→`round`).
+
+**`stroke-miterlimit` is resolved but not applied, and that is a recorded
+limitation.** `joinSegs` carries a fixed `MITER_LIMIT = 2`
+(`contour-offset.js:89`) and takes no parameter for it; threading one through
+would change a signature shared with the whole offset engine for a nuance that
+shows only on corners sharper than about 60 degrees. SVG's default is 4, so
+affected corners bevel slightly earlier than a browser would draw them. The
+style resolver keeps the value so a later change has somewhere to read it from.
 
 `stroke-width` defaults to `1` user unit per the SVG spec when `stroke` is set
 without it. `strokes: "ignore"` skips outlining entirely, which is the escape
