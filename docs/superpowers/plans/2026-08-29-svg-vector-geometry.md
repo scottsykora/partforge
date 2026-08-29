@@ -351,6 +351,16 @@ test("T reflects the previous quadratic's control point", () => {
   expect(s.c1[1]).toBeCloseTo((2 / 3) * -10, 9);
 });
 
+test("S after Q falls back to the current point (Q is not a cubic for reflection)", () => {
+  const [{ contour }] = svgPathToContours("M0,0 Q5,10 10,0 S20,5 20,0");
+  expect(contour.segments[1].c1).toEqual([10, 0]);
+});
+
+test("T after C falls back to the current point", () => {
+  const [{ contour }] = svgPathToContours("M0,0 C0,5 5,10 10,10 T20,10");
+  expect(contour.segments[1].c1).toEqual([10, 10]);
+});
+
 test("A semicircle traces the true circle, not a chord", () => {
   // r=2 semicircle from (2,0) to (-2,0): area of the closed half-disc is 2π
   const [{ contour }] = svgPathToContours("M2,0 A2,2 0 0 1 -2,0 Z");
@@ -635,7 +645,11 @@ export function svgPathToContours(d) {
       // Degree elevation, identical to text2d.js's TrueType quadratic handling.
       const c1 = [cur[0] + (2 / 3) * (q[0] - cur[0]), cur[1] + (2 / 3) * (q[1] - cur[1])];
       const c2 = [to[0] + (2 / 3) * (q[0] - to[0]), to[1] + (2 / 3) * (q[1] - to[1])];
-      pen.cubicTo(to, c1, c2); cur = to; prevQuadC = q; prevCubicC2 = c2;
+      // prevCubicC2 is CLEARED, not set: per SVG 1.1 §8.3.6, `S` reflects only
+      // when the previous command was C/c/S/s. After Q/q/T/t its implied first
+      // handle is the current point. Setting it to the elevated c2 here makes
+      // a following S bend the wrong way, silently, on legal input.
+      pen.cubicTo(to, c1, c2); cur = to; prevQuadC = q; prevCubicC2 = null;
     }
     else if (C === "A") {
       need(args, 7, cmd);
