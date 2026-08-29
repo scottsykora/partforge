@@ -380,8 +380,11 @@ A new `lint/rules-svg.js`, two rules, mirroring `rules-fonts.js`' scope discipli
 - **`svg-size-missing`** (error) — a `k.svg2d` call whose options object literal
   carries none of `width`/`height`/`fit`.
 
-Both judge only literal arguments; a computed name or options object is skipped
-and still fails correctly at build time. `partforge/lint` keeps its
+Both judge the argument values the **probe resolves under the part's default
+params** — `probe().calls` records `JSON.stringify` of the resolved value, not
+source text, which is the same basis `import-unknown-name` already uses. A call
+that would only go wrong for non-default params is not caught here and still
+fails correctly at build time. `partforge/lint` keeps its
 zero-runtime-dependency guarantee.
 
 ## 9. Testing
