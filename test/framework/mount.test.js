@@ -1591,6 +1591,69 @@ test("leaving sketch mode restores the viewbar's PRIOR hidden state, not just fa
   runtime.dispose();
 });
 
+// The toolbar floats at the stage's top centre — the same slot the view tabs
+// float in — and the two are not the same width. A part with several views left
+// its tabs peeking out either side of the toolbar (measured in Chromium: 78px
+// each side for a five-view part on a 1400px stage), which is what "the sketch
+// UI takes over that spot" is supposed to mean and did not.
+test("sketch mode hides the view tabs too; exit restores them", () => {
+  const els = makeElements();
+  withViewbar(els);
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, onAnnotationSend: () => {},
+  });
+  expect(els.tabs.hidden).toBe(false);
+
+  runtime.annotate.setEnabled(true);
+  expect(els.tabs.hidden).toBe(true);
+
+  runtime.annotate.setEnabled(false);
+  expect(els.tabs.hidden).toBe(false);
+
+  runtime.dispose();
+});
+
+// `hidden` alone is not enough here, and that is not theoretical: app.css gives
+// the tab pill `display: flex`, which is author-origin and beats the UA's
+// [hidden] rule — the same trap #viewbar[hidden] already has an explicit rule
+// for. A host that restyles the pill under its own id (partforge-cloud's
+// `#viewer #part`) would beat any rule this framework could ship, so the hide
+// rides on the element itself.
+test("the view-tab hide survives a host stylesheet that gives the pill its own display", () => {
+  const els = makeElements();
+  withViewbar(els);
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, onAnnotationSend: () => {},
+  });
+
+  runtime.annotate.setEnabled(true);
+  expect(els.tabs.style.display).toBe("none");
+
+  runtime.annotate.setEnabled(false);
+  expect(els.tabs.style.display).toBe("");
+
+  runtime.dispose();
+});
+
+test("leaving sketch mode restores the view tabs' PRIOR hidden state, not just false", () => {
+  const els = makeElements();
+  withViewbar(els);
+  els.tabs.hidden = true; // a host with its own reason to hide the tabs
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), {
+    createWorker, elements: els, onAnnotationSend: () => {},
+  });
+
+  runtime.annotate.setEnabled(true);
+  expect(els.tabs.hidden).toBe(true);
+  runtime.annotate.setEnabled(false);
+  expect(els.tabs.hidden).toBe(true); // the host's reason survives the round-trip
+
+  runtime.dispose();
+});
+
 test("annotateSend: 'host' keeps Send out of the sketch toolbar", () => {
   const els = makeElements();
   withViewbar(els);

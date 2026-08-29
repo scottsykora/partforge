@@ -444,15 +444,44 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         stage: els.viewer, tooltip, send: annotateSend,
       });
       cleanup.defer(() => sketchToolbar.detach());
-      const viewbarForSketch = els.viewer.querySelector("#viewbar");
-      let viewbarWasHidden = false;
+      // Chrome the sketch toolbar stands in for while the mode is on. #viewbar
+      // because the toolbar carries its own tools; the view tabs because the
+      // toolbar floats in THEIR slot — both are the stage's top centre — and the
+      // two are not the same width, so a part with several views left its tabs
+      // peeking out either side (78px each side for a five-view part on a
+      // 1400px stage). The toolbar paints over them at z 20, so this was only
+      // ever about what shows.
+      //
+      // Each element remembers whatever hidden state the host had set and gets
+      // it back on exit, rather than being forced visible: a host with its own
+      // reason to hide either one must see that reason survive a round-trip.
+      //
+      // `hidden` is set for the semantics AND `display` inline for the effect.
+      // The property alone is not enough: app.css gives both the viewbar and the
+      // tab pill an author-origin `display`, which beats the UA's [hidden] rule
+      // — #viewbar[hidden] already carries an explicit rule for exactly that.
+      // A rule cannot fix the tabs the same way, because a host that restyles
+      // the pill under its own id (partforge-cloud's `#viewer #part`) outranks
+      // anything this framework could ship, so the hide rides on the element
+      // itself for the same reason view-tabs.js's nowrap does.
+      const sketchHides = [els.viewer.querySelector("#viewbar"), els.tabs]
+        .filter(Boolean)
+        .map((el) => ({ el, wasHidden: false, wasDisplay: "" }));
       cleanup.defer(annotateMode.onModeChange(() => {
-        if (!viewbarForSketch) return;
-        if (annotateMode.isEnabled()) {
-          viewbarWasHidden = viewbarForSketch.hidden;
-          viewbarForSketch.hidden = true;
-        } else {
-          viewbarForSketch.hidden = viewbarWasHidden;
+        // setEnabled early-returns when the mode is unchanged, so this only ever
+        // runs on a real transition and the saved state cannot be overwritten
+        // with the state we just imposed.
+        const on = annotateMode.isEnabled();
+        for (const entry of sketchHides) {
+          if (on) {
+            entry.wasHidden = entry.el.hidden;
+            entry.wasDisplay = entry.el.style.display;
+            entry.el.hidden = true;
+            entry.el.style.display = "none";
+          } else {
+            entry.el.hidden = entry.wasHidden;
+            entry.el.style.display = entry.wasDisplay;
+          }
         }
       }));
     }
