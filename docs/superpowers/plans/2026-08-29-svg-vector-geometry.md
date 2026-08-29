@@ -62,6 +62,7 @@
   - `validateVectorDocument(doc, label) → void` — throws `Error` starting `"svg2d: "` naming the position and the fix. `label` is the `svgs` key, for the message.
   - `toInternalRegions(doc) → Region[]` — validates, then maps `kind`/`through` to the internal implicit IR.
   - `fromInternalRegions(regions, { source }) → doc` — the ingest direction: internal regions → a complete document with `bbox` and rounded coordinates.
+  - `regionsBbox(regions) → { minX, minY, maxX, maxY }` — the tight bbox, sampled at 64 segments per curve. Exported because Task 5 needs the identical computation and two copies would be two places to fix a sampling bug.
 
 This file is the ONLY place the two vocabularies meet. Everything upstream of it speaks JSON (`kind`, `through`); everything downstream speaks the internal IR (implicit type, `via`).
 
@@ -313,7 +314,7 @@ export function validateVectorDocument(doc, label = "(unnamed)") {
   if (!doc.bbox || !["minX", "minY", "maxX", "maxY"].every((k) => Number.isFinite(doc.bbox[k]))) {
     fail(label, "document", "has no valid `bbox`", "bbox needs finite minX, minY, maxX, maxY");
   }
-  const actual = bboxOf(toInternalRegionsUnchecked(doc));
+  const actual = regionsBbox(toInternalRegionsUnchecked(doc));
   for (const k of ["minX", "minY", "maxX", "maxY"]) {
     if (Math.abs(actual[k] - doc.bbox[k]) > BBOX_TOL) {
       fail(label, "document", `has a bbox that disagrees with its geometry (${k}: header ${doc.bbox[k]}, actual ${round6(actual[k])})`,
@@ -344,7 +345,9 @@ export function toInternalRegions(doc, label = "(unnamed)") {
   return toInternalRegionsUnchecked(doc);
 }
 
-function bboxOf(regions) {
+// Exported: svg2d.js needs the same tight bbox at build time, and two copies of
+// this loop would be two places to fix a sampling bug.
+export function regionsBbox(regions) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const rg of regions) {
     for (const [x, y] of tessellateContour(rg.outer, BBOX_SEGS)) {
@@ -366,7 +369,7 @@ const fromSeg = (s) =>
 const fromContour = (c) => ({ start: [round6(c.start[0]), round6(c.start[1])], segments: c.segments.map(fromSeg) });
 
 export function fromInternalRegions(regions, { source = null } = {}) {
-  const bb = bboxOf(regions);
+  const bb = regionsBbox(regions);
   return {
     format: VECTOR_FORMAT,
     version: VECTOR_VERSION,
@@ -1194,7 +1197,7 @@ git commit -m "svg: browser-side ingest to the partforge-vector format"
 - Test: `test/svg2d.test.js`
 
 **Interfaces:**
-- Consumes: `tessellateContour` from `./profile.js`.
+- Consumes: `regionsBbox` from `./vector-format.js` (Task 1).
 - Produces: `placeRegions(regions: Region[], opts) → Region[]` — scales uniformly and aligns internal regions, in millimetres. `opts` is `{ width?, height?, fit?, align?, valign? }`. Throws `Error` starting `"svg2d: "` for a missing or non-positive size and for a degenerate extent.
 
 Input is already-validated internal regions (from `toInternalRegions`), so this file does no format work at all — it is pure placement.
@@ -1311,23 +1314,9 @@ Expected: FAIL — cannot resolve `svg2d.js`.
 // backend still gets true circular B-rep edges.
 //
 // Pure leaf: DOM-free, node:-free.
-import { tessellateContour } from "./profile.js";
+import { regionsBbox } from "./vector-format.js";
 
-const BBOX_SEGS = 64;
 const EXTENT_EPS = 1e-9;
-
-function bboxOf(regions) {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const r of regions) {
-    for (const [x, y] of tessellateContour(r.outer, BBOX_SEGS)) {
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-  }
-  return { minX, minY, maxX, maxY };
-}
 
 function scaleFor({ width, height, fit }, w, h) {
   const need = (extent, label) => {
@@ -1359,7 +1348,7 @@ const place = (c, s, dx, dy) => {
 
 export function placeRegions(regions, opts = {}) {
   const { align = "center", valign = "middle" } = opts;
-  const { minX, minY, maxX, maxY } = bboxOf(regions);
+  const { minX, minY, maxX, maxY } = regionsBbox(regions);
   const s = scaleFor(opts, maxX - minX, maxY - minY);
   const dx = align === "left" ? -minX * s : align === "right" ? -maxX * s : -((minX + maxX) / 2) * s;
   const dy = valign === "bottom" ? -minY * s : valign === "top" ? -maxY * s : -((minY + maxY) / 2) * s;
