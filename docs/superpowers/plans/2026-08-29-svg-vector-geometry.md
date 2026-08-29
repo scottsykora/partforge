@@ -1487,7 +1487,16 @@ Expected: FAIL — cannot resolve `svgs.js`.
 import { makeAssetResolver, resolveDecl } from "./asset-resolve.js";
 import { toInternalRegions } from "./geometry/vector-format.js";
 
-const cache = new Map();   // source → Promise<Region[]>
+const cache = new Map();   // source → Promise<Uint8Array> (raw bytes)
+// source → Region[]. The bytes memo above stops a refetch; this stops a re-PARSE
+// (UTF-8 decode + JSON.parse + validation + a bbox recomputation that tessellates
+// every contour). Without it every regen of a part with artwork redoes all of that.
+// Fonts solve the same problem with kernel._fontsBySource (jobs.js:206-212) and
+// imports with a digest comparison; this is the third pipeline's version of it.
+// Keyed on the SOURCE, not the name: one worker outlives many parts, and a name is
+// not an identity. Only successes are cached — a parse failure must throw again
+// under the next name that declares it, with that name in the message.
+const parsed = new Map();
 
 function parseDocument(bytes, label) {
   let text;
@@ -1513,7 +1522,11 @@ const resolveOne = makeAssetResolver(
 export async function resolveSvgs(svgsDecl) {
   const raw = await resolveDecl(svgsDecl, resolveOne);
   const out = new Map();
-  for (const [name, bytes] of raw) out.set(name, parseDocument(bytes, name));
+  for (const [name, bytes] of raw) {
+    let regions = parsed.get(bytes);
+    if (!regions) { regions = parseDocument(bytes, name); parsed.set(bytes, regions); }
+    out.set(name, regions);
+  }
   return out;
 }
 
