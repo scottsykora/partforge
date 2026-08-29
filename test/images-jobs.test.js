@@ -45,13 +45,6 @@ test("resolveParams' sanitize hook cannot mangle a buffer it doesn't reject", ()
   expect(out.p.unrelated).toBe(1);
 });
 
-// Spec §7 invariant 2.
-test("h() does not expand an ArrayBuffer into a giant key", () => {
-  const key = h("heightfield", "abc123", 60, 60, 1.5, 3, 0.5, false, [0, 1], "center");
-  expect(key.length).toBeLessThan(32);
-  expect(typeof key).toBe("string");
-});
-
 // ── Fix round 1: the REAL invariant-2 site is JSON.stringify, not h() ─────
 // h() is never actually called with raw image bytes anywhere in the codebase
 // (both backends' `heightfield` ops key on `grid.digest`, a hex string — see
@@ -110,6 +103,49 @@ test("the OCCT reroute latch does not treat two different images as the same par
   expect(policy.backendsFor(paramsA).p).toBe("occt"); // the exact params that proved it stay latched
   const paramsB = { relief: png(240) }; // a different image — nothing else differs in shape
   expect(policy.backendsFor(paramsB).p).toBe("manifold"); // must NOT inherit paramsA's latch
+});
+
+// ── Fix round 2 ──────────────────────────────────────────────────────────
+// A Node Buffer reaches byteAwareReplacer through a DIFFERENT door: Buffer
+// has its own `toJSON()` (inherited from its Uint8Array/TypedArray lineage —
+// Node adds `{type:"Buffer",data:[...]}`), and per the JSON spec that runs
+// BEFORE any replacer function ever sees the value. A replacer that checks
+// its `value` argument (as fix round 1's did) never sees the raw Buffer at
+// all — only the already-expanded `{type:"Buffer",data:[...]}` object, which
+// is not `instanceof ArrayBuffer` and fails `ArrayBuffer.isView` (a plain
+// object, not a typed array), so it silently falls through to ordinary
+// JSON.stringify handling: one JSON number per byte, unmemoized, on every
+// hash — the exact pathology fix round 1 existed to eliminate, reached
+// through Buffer's toJSON instead of ArrayBuffer's absent one.
+// image-source.js's `isBytes` explicitly admits `ArrayBuffer.isView`, so a
+// Buffer is a supported image-source shape — and `fs.readFileSync` (the
+// natural way to produce one in Node, which the CLI does) returns exactly
+// one.
+test("relevanceHash fingerprints a Node Buffer instead of expanding it byte-by-byte", () => {
+  const buf = Buffer.from(png(1)); // Buffer.from(ArrayBuffer) — the CLI's actual shape
+  const a = relevanceHash(["img"], { img: buf });
+  expect(a).not.toContain('"type":"Buffer"');  // never JSON.stringify's default Buffer expansion
+  expect(a).not.toContain('"data":[');
+  expect(a.length).toBeLessThan(64);           // a short fingerprint, not one number per byte
+
+  const b = relevanceHash(["img"], { img: Buffer.from(png(240)) }); // a different image
+  expect(a).not.toBe(b);
+});
+
+// Object.prototype.toString.call(...), not `instanceof`/`ArrayBuffer.isView`
+// alone, closes the cross-realm gap: an ArrayBuffer or SharedArrayBuffer
+// constructed in a different realm (vm context, worker, iframe) fails
+// `instanceof ArrayBuffer` and would otherwise silently fall back to the
+// original "{}" bug. Exercised here with a real SharedArrayBuffer (same
+// realm, but neither `instanceof ArrayBuffer` nor a typed-array view, so it
+// pins the same code path a cross-realm ArrayBuffer would take).
+test("relevanceHash fingerprints a SharedArrayBuffer, not just ArrayBuffer/typed-array views", () => {
+  const a = relevanceHash(["img"], { img: new SharedArrayBuffer(8) });
+  const bytes = new SharedArrayBuffer(8);
+  new Uint8Array(bytes).set([1, 2, 3, 4, 5, 6, 7, 8]);
+  const b = relevanceHash(["img"], { img: bytes });
+  expect(a).not.toContain("{}"); // must not silently collapse to the original bug
+  expect(a).not.toBe(b);
 });
 
 // Spec §7 invariant 2, still true of h() specifically: it is short and never

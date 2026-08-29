@@ -67,6 +67,23 @@ describe("heightfield on OCCT", () => {
     expect(k.heightfield("relief", { w: 10, d: 10, base: 1, maxZ: 1, pitch: 2 }).volume()).toBeGreaterThan(0);
   }, 120000);
 
+  // _pruneImages against the REAL OCCT backend — occt-backend.js:683 has the
+  // byte-identical body as manifold-backend.js's (test/heightfield-manifold.test.js
+  // covers that one), and until now it had no coverage of its own. Never boot
+  // this alongside a Manifold kernel in the same file/process — see the header.
+  test("_pruneImages drops a stale name and leaves the rest alone on the real OCCT kernel", async () => {
+    const g = ramp();
+    await k._registerImage({ name: "prune-a", digest: "pa", width: g.width, height: g.height, data: g.data });
+    await k._registerImage({ name: "prune-b", digest: "pb", width: g.width, height: g.height, data: g.data });
+    expect(k._imageDigest("prune-a")).toBe("pa");
+    expect(k._imageDigest("prune-b")).toBe("pb");
+    k._pruneImages(new Set(["prune-b"]));
+    expect(k._imageDigest("prune-a")).toBeUndefined();
+    expect(k._imageDigest("prune-b")).toBe("pb");
+    expect(() => k.heightfield("prune-a", { w: 10, d: 10, base: 1, maxZ: 1, pitch: 2 }))
+      .toThrow(/unknown image "prune-a"/);
+  }, 120000);
+
   // Registered images DO go through the ordinary cached() boundary-op path
   // (unlike inline grids, which deliberately bypass it — see below). A regression
   // that made them uncached would be silent: correctness intact, only sewing time
