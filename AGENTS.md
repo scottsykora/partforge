@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`scottsykora/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has fifteen: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has sixteen: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -30,9 +30,11 @@ per-sub-part routing), `import-demo.js` (the `imports`/`k.import`
 reference part - STL ghost + deviation gate + import-in-boolean + the `probes`
 block, part-declared measurements reported by measure/inspect),
 `propeller.js` (the `k.loftSmooth` reference part - spline-interpolated
-airfoil blades with a live smooth/raw A/B toggle), and
+airfoil blades with a live smooth/raw A/B toggle),
 `lofted-bottle.js` (the Shape2D-loft reference part - curve-mode body from a
-reused rounded-square ring, resample-mode square-to-circle shoulder).
+reused rounded-square ring, resample-mode square-to-circle shoulder), and
+`emblem.js` (the `k.svg2d` reference part — ingested vector art embossed on a
+plate).
 
 ## Node version
 
@@ -138,6 +140,12 @@ the installed package, so let the publish finish before bumping the dep there.
   suspended at that width — `rail.js` ignores a persisted `collapsed` flag there
   rather than clearing it.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
+- **`src/framework/ingest/`** - `svg-ingest.js`, the browser half of `k.svg2d`: SVG
+  text in, `partforge-vector` JSON out (`docs/VECTOR-FORMAT.md`). DOM-dependent and
+  main-thread-only, run once per artwork by the host - deliberately outside the
+  worker graph and never imported from it (`test/worker-layering.test.js` proves
+  it). Published as `partforge/ingest` (`src/ingest.js`), never re-exported from
+  the main entry or `partforge/geometry`.
 - **`src/framework/oracle/`** - the geometric oracle: `measure.js`, `verify.js`,
   `build.js`, `gaps.js`, `min-wall.js`, `bvh.js`, `mesh.js`, `assert-dsl.js`,
   `dfm-profiles.js`, `cases.js`. Despite reading like test code this is shared

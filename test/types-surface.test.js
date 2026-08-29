@@ -53,6 +53,7 @@ const RUNTIME = {
   "./derive": () => import("../src/framework/derive.js"),
   "./oracle": () => import("../src/oracle.js"),
   "./testing": () => import("../src/testing.js"),
+  "./ingest": () => import("../src/ingest.js"),
 };
 
 // Same comment-stripping rule the import-graph walker uses: this codebase
