@@ -31,7 +31,7 @@ const SOLID_ALLOWED = new Set([...SOLID_OPS, ...SOLID_OPTIONAL_OPS, ...SHAPE2D_O
 
 // Kernel ops whose result is a Shape2D, and Shape2D ops whose result is a Solid —
 // the only two places the probe's handle kind changes.
-const SHAPE2D_YIELDING_KERNEL_OPS = new Set(["shape2d", "text2d"]);
+const SHAPE2D_YIELDING_KERNEL_OPS = new Set(["shape2d", "text2d", "svg2d"]);
 const SOLID_YIELDING_SHAPE2D_OPS = new Set(["extrude", "revolve"]);
 
 export const MAX_PROBE_OPS = 100000;

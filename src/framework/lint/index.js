@@ -18,8 +18,9 @@ import { PLACE_RULES } from "./rules-place.js";
 import { IMPORT_RULES } from "./rules-imports.js";
 import { FONT_RULES } from "./rules-fonts.js";
 import { SOURCE_RULES } from "./rules-source.js";
+import { SVG_RULES } from "./rules-svg.js";
 
-export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES, ...IMPORT_RULES, ...FONT_RULES, ...SOURCE_RULES];
+export const RULES = [...SHAPE_RULES, ...SCHEMA_RULES, ...BUILD_RULES, ...VERIFY_RULES, ...ANIMATION_RULES, ...PLACE_RULES, ...IMPORT_RULES, ...FONT_RULES, ...SOURCE_RULES, ...SVG_RULES];
 
 // A usable sources input, or null. Deliberately forgiving: lintPart's callers
 // include hosted paths handing over user/LLM-authored trees, so a malformed
