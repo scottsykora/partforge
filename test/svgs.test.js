@@ -32,7 +32,18 @@ test("malformed JSON rejects with a message naming the key", async () => {
 
 test("a structurally invalid document rejects through the format validator", async () => {
   const d = box(); d.regions[0].outer.segments[0] = { kind: "spiral", to: [1, 1] };
-  await expect(resolveSvgs({ logo: bytes(d) })).rejects.toThrow(/spiral/);
+  const badSource = bytes(d);
+  await expect(resolveSvgs({ logo: badSource })).rejects.toThrow(/spiral/);
+  // A failed parse must not be cached — the same bad source retried (e.g. under a
+  // different name) must fail again, not silently resolve to a stale/undefined entry.
+  await expect(resolveSvgs({ other: badSource })).rejects.toThrow(/spiral/);
+});
+
+test("parsing is memoized by source, not repeated per name or per call", async () => {
+  const src = bytes(box());
+  const first = await resolveSvgs({ a: src });
+  const second = await resolveSvgs({ b: src });
+  expect(second.get("b")).toBe(first.get("a"));   // same object — not re-parsed
 });
 
 test("a source that is not bytes, a URL, or a thunk rejects", async () => {
