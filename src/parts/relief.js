@@ -18,7 +18,7 @@
 // shows the full relief amplitude. Applied only when the bundled default is in
 // use (`p.relief` empty) — a picked custom image's tonal range is unknown ahead
 // of build time, so it gets the identity range instead.
-const DEMO_RELIEF_RANGE = [25443 / 65535, 48830 / 65535];
+export const DEMO_RELIEF_RANGE = [25443 / 65535, 48830 / 65535];
 
 export default {
   meta: { title: "Relief plate", units: "mm", background: 0x15181d },
