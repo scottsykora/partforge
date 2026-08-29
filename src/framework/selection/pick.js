@@ -3,6 +3,7 @@
 import { raycastViewer, worldToSubPartLocal } from "./raycast.js";
 import { resolveSelection } from "./resolve.js";
 import { createDragTracker } from "./drag-tracker.js";
+import { projectToScreen } from "../pick-flash.js";
 
 export { worldToSubPartLocal };
 
@@ -10,6 +11,8 @@ export { worldToSubPartLocal };
 // whose suppression condition lives elsewhere (mount passes measure mode's
 // isEnabled): while it returns true a click neither raycasts, flashes, nor
 // picks — no resync bookkeeping the way an event-driven setActive would need.
+// onPick receives (selection, anchor): where the marker this click flashed
+// landed on the canvas, in CSS px from its top-left.
 export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
   let active = false;
   const drag = createDragTracker();
@@ -25,7 +28,13 @@ export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
     if (!hit) return;
     const selection = resolveSelection(part, getContext(), hit);
     viewer.flashPoint([hit.pointWorld.x, hit.pointWorld.y, hit.pointWorld.z]);
-    onPick(selection);
+    // The anchor is the MARKER's projection, not the pointer's position, even
+    // though the two coincide at this instant: the host's follow-the-camera
+    // stream reports the same projection every frame after, and one mechanism
+    // cannot disagree with itself.
+    const rect = viewer.domElement.getBoundingClientRect();
+    const anchor = projectToScreen(viewer.camera, hit.pointWorld, rect.width, rect.height);
+    onPick(selection, { x: anchor.x, y: anchor.y });
   }
 
   viewer.domElement.addEventListener("pointerdown", drag.onDown);

@@ -66,6 +66,42 @@ test("attachPicker raycasts a click and delivers a resolved selection", () => {
   picker.detach();
 });
 
+test("a pick reports where its marker lands on the canvas", () => {
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+  camera.position.set(0, 0, 10);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4));
+  mesh.name = "one";
+  mesh.visible = true;
+  mesh.updateMatrixWorld(true);
+
+  const domElement = document.createElement("div");
+  domElement.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  document.body.appendChild(domElement);
+
+  const onPick = vi.fn();
+  const picker = attachPicker({ camera, domElement, _subMeshes: { one: mesh }, flashPoint: vi.fn() }, {
+    part,
+    getContext: () => ({ view: "v", params: { a: 1 }, derived: {} }),
+    onPick,
+  });
+  picker.setActive(true);
+
+  // Off-centre on purpose: dead centre is the one click a "return the canvas
+  // middle" bug would also satisfy.
+  domElement.dispatchEvent(new MouseEvent("click", { clientX: 130, clientY: 80, bubbles: true }));
+
+  expect(onPick).toHaveBeenCalledTimes(1);
+  // The marker sits on the ray the click cast, so its projection comes back to
+  // the pixel that was clicked.
+  const anchor = onPick.mock.calls[0][1];
+  expect(anchor.x).toBeCloseTo(130, 0);
+  expect(anchor.y).toBeCloseTo(80, 0);
+  picker.detach();
+});
+
 test("attachPicker suppresses the click emitted after a pointer drag", () => {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
   camera.position.set(0, 0, 10);

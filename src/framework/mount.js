@@ -61,7 +61,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -122,6 +122,16 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       get: () => "perspective",
       set: () => {},
       onChange: () => () => {},
+    },
+    // The pick marker as a thing with a lifetime, for a host that hangs its own
+    // UI off it: hold() keeps the newest marker on screen (earlier held ones
+    // stay held), release() clears them all, and onAnchorChange reports where
+    // the newest one is on the canvas as the camera moves. Same shape
+    // convention as `measure`, `annotate` and `projection`.
+    pickMarker: pickMarker ?? {
+      hold: () => false,
+      release: () => {},
+      onAnchorChange: () => () => {},
     },
   };
 }
@@ -188,6 +198,15 @@ function createCleanupStack() {
 //                                 // { sync, hide, detach } — call sync() after you
 //                                 // toggle a button's disabled state. Detached
 //                                 // automatically on dispose().
+//   runtime.pickMarker.hold();    // keep the marker from the last pick on screen
+//                                 // (earlier held markers stay held), and start
+//                                 // reporting where it is. False when there is
+//                                 // nothing to hold — a marker's flash has a
+//                                 // lifetime, so hold promptly after a pick.
+//   runtime.pickMarker.onAnchorChange((a) => …);  // {x, y, visible} in CSS px from the
+//                                 // canvas's top-left, as the camera moves; null when
+//                                 // nothing is held. Returns an unsubscribe.
+//   runtime.pickMarker.release(); // clear every held marker
 //   runtime.setActive(false);     // park the viewer: stop the render loop and release
 //                                 // both large GPU allocations (the drawing buffer and
 //                                 // the cached capture target). For a host that hides the
@@ -580,11 +599,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         // deliberately not guarded — one is armed by an explicit dev toggle,
         // the other per agent request.
         suppressed: () => measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
-        onPick: (selection) => onPick({
+        onPick: (selection, anchor) => onPick({
           selection,
           label: selection.feature?.label ?? part.parts[selection.subPart]?.label ?? selection.subPart,
           prompt: formatSelection(selection, { style: "prompt" }),
           token: formatSelection(selection, { style: "token" }),
+          // Where the marker is on the canvas, in CSS px from its top-left, so
+          // a host can put its own UI beside the dot on the first frame rather
+          // than a round trip later.
+          anchor,
         }),
       });
       cleanup.defer(() => picker.detach());
@@ -1097,6 +1120,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
         get: () => viewer.getProjection(),
         set: (mode) => viewer.setProjection(mode),
         onChange: (cb) => viewer.onProjectionChange(cb),
+      },
+      pickMarker: {
+        hold: () => viewer.holdFlashPoint(),
+        release: () => viewer.releaseFlashPoints(),
+        onAnchorChange: (cb) => viewer.onFlashAnchorChange(cb),
       },
     });
   } catch (error) {
