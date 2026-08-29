@@ -702,7 +702,7 @@ Every control accepts `key`, `type`, `label`, `description`, `hidden`, `when` an
 | `"select"` | a dropdown | `options` |
 | `"radio"` | a segmented button row | `options` |
 | `"font"` | a typeface picker, or a URL field with no catalog | `allow`, `preview` |
-| `"image"` | an image picker, or a URL field with no catalog | `allow`, `preview` |
+| `"image"` | an image picker, or a URL field with no catalog | `allow` |
 
 Numeric controls always show the number box: drag the slider *or* type an exact
 value. Typed values may be finer than `step` and clamp to `[min, max]` on commit.

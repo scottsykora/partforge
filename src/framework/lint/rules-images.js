@@ -89,10 +89,12 @@ export const IMAGE_RULES = [
       const out = [];
       for (const [key, allow] of imageControlAllows(part)) {
         const v = part?.defaults?.[key];
-        // An empty source declares no image (jobs.js's sanitize hook and
-        // heightfield's own "no relief" fallback both treat it that way) — a
-        // legitimate way to author an optional relief, not a source the allow
-        // list is refusing. A bytes source (ArrayBuffer/typed array) always
+        // An empty source declares no image (jobs.js's sanitize hook drops it
+        // before it reaches ensureImages, and a build() that still calls
+        // k.heightfield for it gets the ordinary unknown-image throw — there
+        // is no automatic "no relief" fallback) — a legitimate way to author
+        // an optional relief, not a source the allow list is refusing. A
+        // bytes source (ArrayBuffer/typed array) always
         // passes imageSourceAllowed regardless of allow — see image-source.js's
         // header — so it never reaches this branch either.
         if (isNoImageSource(v) || imageSourceAllowed(v, allow)) continue;

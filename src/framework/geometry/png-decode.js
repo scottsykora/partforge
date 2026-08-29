@@ -22,7 +22,7 @@ export function decodePng(input) {
 
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   let off = 8, width = 0, height = 0, depth = 8, colorType = 6, interlace = 0;
-  let palette = null, trns = null;
+  let palette = null;
   const idat = [];
 
   while (off + 8 <= u8.length) {
@@ -34,7 +34,9 @@ export function decodePng(input) {
       width = dv.getUint32(body); height = dv.getUint32(body + 4);
       depth = u8[body + 8]; colorType = u8[body + 9]; interlace = u8[body + 12];
     } else if (type === "PLTE") palette = u8.subarray(body, body + len);
-    else if (type === "tRNS") trns = u8.subarray(body, body + len);
+    // tRNS (alpha) is intentionally not parsed: ignoring alpha is correct for a
+    // depth map, and this chunk still falls through to the unconditional
+    // `off` advance below like any other chunk type we don't care about.
     else if (type === "IDAT") idat.push(u8.subarray(body, body + len));
     else if (type === "IEND") break;
     off = body + len + 4; // + CRC

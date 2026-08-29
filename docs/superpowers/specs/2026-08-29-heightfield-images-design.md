@@ -154,7 +154,7 @@ is fine.
 
 ## 3. The `"image"` control and the catalog seam
 
-`{ key, type: "image", label, allow?, preview? }`, rendering as a URL field with
+`{ key, type: "image", label, allow? }`, rendering as a URL field with
 a thumbnail when no catalog is supplied, and as a picker when the host provides
 one via `mount(part, { imageCatalog })`. The provider shape mirrors
 `fontCatalog`:

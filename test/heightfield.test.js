@@ -144,6 +144,21 @@ describe("heightfieldMesh", () => {
     expect(m.warnings.join(" ")).toMatch(/pitch .* clamped/);
   });
 
+  test("an extreme aspect ratio still clamps to a valid grid (no NaN, no degenerate axis)", () => {
+    // d <= pitch forces ny to the count() floor of 2 before the budget clamp
+    // even runs; w/pitch is enormous, so nx*ny blows the budget. The uniform
+    // pitch-scale step above can't fix that alone (ny is already pinned at
+    // its floor, so scaling pitch only shrinks nx), so the `while (nx*ny >
+    // BUDGET) { nx--; ny--; }` loop has to finish the job — and decrementing
+    // both counters unconditionally walks ny straight through 1 to 0, well
+    // past the Math.max(2, …) floor count() enforced, before nx has shed
+    // enough to bring the product under budget.
+    const m = heightfieldMesh(g4, { w: 1e7, d: 0.4, base: 1, maxZ: 1, pitch: 0.5 });
+    expect(m.positions.every(Number.isFinite)).toBe(true);
+    expect(m.positions.length).toBeGreaterThan(0);
+    expect(m.indices.length).toBeGreaterThan(0);
+  });
+
   test("no warnings on an ordinary build", () => {
     expect(heightfieldMesh(g4, base).warnings).toEqual([]);
   });

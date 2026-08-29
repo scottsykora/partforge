@@ -275,9 +275,10 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // `_pruneImages` is the images twin of the `kernel._fonts` prune above:
       // `heightfield(name)` looks a name up by the part's declared key, not by
       // content, so a relief the user picked and then CLEARED would otherwise
-      // stay registered under its old name and go on rendering instead of the
-      // flat-slab fallback a part's own build() takes for a missing source —
-      // the stale-registration bug of spec §5, one asset over.
+      // stay registered under its old name and go on rendering instead of
+      // whatever a missing source actually does — the unknown-image throw, or
+      // a branch a part's own build() takes around the call — the
+      // stale-registration bug of spec §5, one asset over.
       kernel._pruneImages?.(new Set(Object.keys(declared)));
     }
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.

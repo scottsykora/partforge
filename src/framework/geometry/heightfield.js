@@ -64,7 +64,17 @@ export function heightfieldMesh(grid, opts = {}) {
     warnings.push(`heightfield: pitch ${pitch} clamped to ${clamped.toFixed(3)} (vertex budget ${HEIGHTFIELD_VERTEX_BUDGET})`);
     pitch = clamped;
     nx = count(w, pitch); ny = count(d, pitch);
-    while (nx * ny > HEIGHTFIELD_VERTEX_BUDGET) { nx--; ny--; }
+    // An extreme aspect ratio (e.g. d <= pitch pins ny at its floor of 2
+    // while w/pitch is still huge) can leave the uniform pitch-scale above
+    // unable to bring nx*ny under budget on its own, since a floored axis
+    // has nothing left to give up proportionally. Decrementing both axes
+    // unconditionally would then walk the pinned one straight through the
+    // count() floor to 1 or 0 — reintroducing the divide-by-(n-1) and empty
+    // top-grid failures that floor exists to prevent. Hold each axis at 2.
+    while (nx * ny > HEIGHTFIELD_VERTEX_BUDGET && (nx > 2 || ny > 2)) {
+      if (nx > 2) nx--;
+      if (ny > 2) ny--;
+    }
   }
 
   const [lo, hi] = range;
