@@ -257,6 +257,7 @@ function createCleanupStack() {
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
 export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange, onParamsCommit, onAnnotationSend,
                               fontCatalog,
+                              imageCatalog,
                               annotateSend = "viewbar",
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
@@ -897,7 +898,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     }, onParamsCommit
       ? (changed) => onParamsCommit({ changed, params: { ...params } })
       : undefined,
-      { fontCatalog });
+      { fontCatalog, imageCatalog });
     cleanup.defer(() => panel.dispose());
     panelRef = panel;
     const updateRelevance = () => {
