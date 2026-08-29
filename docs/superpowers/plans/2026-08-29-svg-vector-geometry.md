@@ -723,7 +723,10 @@ test("an L-shaped open stroke is a single region", () => {
   const L = pathProfile([0, 0]).lineTo([10, 0]).lineTo([10, 10]).close();
   const regions = outlineStroke(L, false, style());
   expect(regions).toHaveLength(1);
-  expect(netArea(regions)).toBeCloseTo(20 + 20 - 4, 1);   // two arms sharing a 2x2 corner
+  // Two 10x2 arms: arm 1 covers x[0,10] y[-1,1], arm 2 covers x[9,11] y[0,10].
+  // They overlap in a 1x1 square, so the union is 39; the miter join then fills
+  // x[10,11] y[-1,0], adding 1.
+  expect(netArea(regions)).toBeCloseTo(40, 1);
 });
 
 test("an open arc stroke keeps positive area and one region", () => {
