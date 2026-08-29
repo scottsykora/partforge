@@ -30,8 +30,12 @@ export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
     viewer.flashPoint([hit.pointWorld.x, hit.pointWorld.y, hit.pointWorld.z]);
     // The anchor is the MARKER's projection, not the pointer's position, even
     // though the two coincide at this instant: the host's follow-the-camera
-    // stream reports the same projection every frame after, and one mechanism
-    // cannot disagree with itself.
+    // stream projects the same world point through the same function every
+    // frame after, so the first answer is of a piece with the rest.
+    // Sized from the rect the raycast just used — the canvas's current CSS box,
+    // not the renderer's drawing buffer, which the stream reads instead. The
+    // two agree in steady state, and using the raycast's own rect is what makes
+    // this anchor land back on the pixel the user clicked.
     const rect = viewer.domElement.getBoundingClientRect();
     const anchor = projectToScreen(viewer.camera, hit.pointWorld, rect.width, rect.height);
     onPick(selection, { x: anchor.x, y: anchor.y });

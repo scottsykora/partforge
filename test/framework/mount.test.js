@@ -780,7 +780,7 @@ test("deprecated container/controls aliases still work", () => {
   return expect(runtime.ready).resolves.toBeUndefined();
 });
 
-test("onPick arms the picker permanently and delivers label/prompt/token", () => {
+test("onPick arms the picker permanently and delivers label/prompt/token/anchor", () => {
   const onPick = vi.fn();
   const { createWorker } = makeWorkers();
   mount(makePart(), { createWorker, elements: makeElements(), onPick });
@@ -792,10 +792,15 @@ test("onPick arms the picker permanently and delivers label/prompt/token", () =>
   // simulate a click resolving to a Selection (the picker core is tested elsewhere)
   const armed = attachPicker.mock.calls[0][1];
   armed.onPick({ subPart: "body", point: [0, 0, 1.5], normal: [0, 0, -1],
-                 params: { h: 4 }, feature: { label: "Drainage hole" } });
+                 params: { h: 4 }, feature: { label: "Drainage hole" } },
+               { x: 137, y: 82 });
 
   expect(onPick).toHaveBeenCalledTimes(1);
   const payload = onPick.mock.calls[0][0];
+  // The picker's second argument reaches the host verbatim. Asserted here
+  // because this join is the only thing between a covered producer (pick.js)
+  // and a covered consumer: drop it and every host silently gets undefined.
+  expect(payload.anchor).toEqual({ x: 137, y: 82 });
   expect(payload.label).toBe("Drainage hole"); // feature label wins
   expect(payload.prompt).toBe(
     "On sub-part **body**, the user pointed at **Drainage hole**, local point (0, 0, 1.5), normal -Z, with params {h: 4}."

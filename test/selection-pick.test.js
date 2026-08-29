@@ -77,8 +77,11 @@ test("a pick reports where its marker lands on the canvas", () => {
   mesh.visible = true;
   mesh.updateMatrixWorld(true);
 
+  // Nonzero origin, unlike the other fixtures here: the anchor is CSS px from
+  // the CANVAS's top-left, and with the canvas at the page origin an
+  // implementation that reported client coordinates would pass unnoticed.
   const domElement = document.createElement("div");
-  domElement.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  domElement.getBoundingClientRect = () => ({ left: 40, top: 25, width: 200, height: 200 });
   document.body.appendChild(domElement);
 
   const onPick = vi.fn();
@@ -89,13 +92,14 @@ test("a pick reports where its marker lands on the canvas", () => {
   });
   picker.setActive(true);
 
-  // Off-centre on purpose: dead centre is the one click a "return the canvas
-  // middle" bug would also satisfy.
-  domElement.dispatchEvent(new MouseEvent("click", { clientX: 130, clientY: 80, bubbles: true }));
+  // Off-centre on purpose too: dead centre is the one click a "return the
+  // canvas middle" bug would also satisfy.
+  domElement.dispatchEvent(new MouseEvent("click", { clientX: 170, clientY: 105, bubbles: true }));
 
   expect(onPick).toHaveBeenCalledTimes(1);
   // The marker sits on the ray the click cast, so its projection comes back to
-  // the pixel that was clicked.
+  // the pixel that was clicked — expressed against the canvas, so the rect's
+  // origin comes off: (170-40, 105-25).
   const anchor = onPick.mock.calls[0][1];
   expect(anchor.x).toBeCloseTo(130, 0);
   expect(anchor.y).toBeCloseTo(80, 0);
