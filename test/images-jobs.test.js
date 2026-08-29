@@ -4,6 +4,9 @@ import { resolveParams } from "../src/framework/part-model.js";
 import { h } from "../src/framework/geometry/solid-hash.js";
 import { handle } from "../src/framework/jobs.js";
 import { imagesFor } from "../src/framework/images.js";
+import { relevanceHash } from "../src/framework/param-deps.js";
+import { createMeshCache } from "../src/framework/mesh-cache.js";
+import { createBackendPolicy } from "../src/framework/backend-select.js";
 
 // Returns an ArrayBuffer holding exactly the encoded PNG bytes.
 //
@@ -49,18 +52,73 @@ test("h() does not expand an ArrayBuffer into a giant key", () => {
   expect(typeof key).toBe("string");
 });
 
-// The other half of invariant 2: h() is never actually called with raw image
-// bytes anywhere in the codebase today (both backends' `heightfield` ops key
-// on `grid.digest`, a hex string — see manifold-backend.js/occt-backend.js).
-// This test pins WHY that discipline matters: if a future call site ever did
-// pass an ArrayBuffer straight to h(), canon()'s `String(x)` would collapse
-// every distinct image to the same constant, and two different images would
-// collide on one cache entry. Documents the hazard rather than exercising a
-// real bug — see the report for the full "did I find one" search.
-test("a raw ArrayBuffer passed to h() would collide — canon() stringifies it to a constant", () => {
-  const a = h("heightfield", new ArrayBuffer(8));
-  const b = h("heightfield", new ArrayBuffer(400)); // a completely different image's bytes
-  expect(a).toBe(b); // the hazard invariant 2 warns about, reproduced in isolation
+// ── Fix round 1: the REAL invariant-2 site is JSON.stringify, not h() ─────
+// h() is never actually called with raw image bytes anywhere in the codebase
+// (both backends' `heightfield` ops key on `grid.digest`, a hex string — see
+// manifold-backend.js/occt-backend.js), so a test aimed at h() documented a
+// hypothetical, not the live bug. The wholesale params hash the codebase
+// actually uses is JSON.stringify — param-deps.js's relevanceHash (Layer-1
+// mesh-cache validity, and oracle/verify's memo signature), and
+// backend-select.js's JSON reroute-latch snapshot. These tests are retargeted
+// at the real call sites: two different image buffers, identical everything
+// else, must produce two different hashes.
+test("relevanceHash gives two different image buffers two different hashes", () => {
+  const a = relevanceHash(["relief", "n"], { relief: png(10), n: 1 });
+  const b = relevanceHash(["relief", "n"], { relief: png(240), n: 1 }); // a completely different image
+  expect(a).not.toBe(b);
+});
+
+// The Layer-1 mesh cache (mesh-cache.js) is the actual consumer relevanceHash
+// exists for: isCurrent() must go stale the moment the ONLY thing that
+// changed is which image is registered under a param, or a swapped relief
+// would keep showing the OLD relief indefinitely (viewer.hasSubMesh stays
+// true, and the old bug's hash — JSON.stringify(ArrayBuffer) === "{}" for
+// every image — never changes).
+test("mesh-cache isCurrent() reports stale when only an image buffer changes", () => {
+  const part = {
+    defaults: { relief: png(1), n: 5 },
+    views: { v: { label: "V" } },
+    parts: {
+      slab: {
+        views: ["v"],
+        build: (k, p) => { if (p.relief) { /* read, for subPartReadKeys to attribute */ } return k.box({ min: [0, 0, 0], max: [p.n, p.n, p.n] }); },
+      },
+    },
+  };
+  const params = { relief: png(1), n: 5 }; // mesh-cache.js: "params is a stable object mutated in place"
+  const viewer = { hasSubMesh: () => true };
+  const cache = createMeshCache(part, viewer, {
+    params, getView: () => "v", getParamsVersion: () => 1, isCaching: () => true,
+  });
+  cache.record("slab");
+  expect(cache.isCurrent("slab")).toBe(true);
+  params.relief = png(240); // swap the image; n and every other param untouched
+  expect(cache.isCurrent("slab"), "a swapped image must invalidate the cached mesh").toBe(false);
+});
+
+// backend-select.js's reroute latch has the same shape of bug: `noteNeedsOcct`
+// snapshots the params that proved OCCT was needed with JSON.stringify, and
+// `latched()` compares a later params object against that snapshot. Under the
+// old bug two different images both stringify to the same "{}", so a build
+// that never actually needed OCCT for ITS image would incorrectly inherit the
+// latch from a completely different image that did.
+test("the OCCT reroute latch does not treat two different images as the same params", () => {
+  const part = { defaults: { relief: png(1) }, parts: { p: { build: (k) => k.box({ min: [0, 0, 0], max: [1, 1, 1] }) } } };
+  const policy = createBackendPolicy(part);
+  const paramsA = { relief: png(1) };
+  policy.noteNeedsOcct(paramsA, ["p"]);
+  expect(policy.backendsFor(paramsA).p).toBe("occt"); // the exact params that proved it stay latched
+  const paramsB = { relief: png(240) }; // a different image — nothing else differs in shape
+  expect(policy.backendsFor(paramsB).p).toBe("manifold"); // must NOT inherit paramsA's latch
+});
+
+// Spec §7 invariant 2, still true of h() specifically: it is short and never
+// grows unbounded for the args heightfield actually passes it (a digest
+// string, never raw bytes).
+test("h() does not expand a heightfield call into a giant key", () => {
+  const key = h("heightfield", "abc123", 60, 60, 1.5, 3, 0.5, false, [0, 1], "center");
+  expect(key.length).toBeLessThan(32);
+  expect(typeof key).toBe("string");
 });
 
 const job = { type: "generate", subparts: [], view: "iso", params: {} };

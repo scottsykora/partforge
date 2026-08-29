@@ -4,6 +4,7 @@ import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { resolveProfile } from "./dfm-profiles.js";
 import { expandExpectations, partGatesMinWall } from "./gates.js";
 import { subPartReadKeys, relevanceHash, RELEVANT_ALL } from "../param-deps.js";
+import { byteAwareReplacer } from "../geometry/solid-hash.js";
 import { SUBPART_METRICS, VIEW_METRICS } from "../verify-metrics.js";
 
 // Re-exported for backwards compatibility: the registries moved to framework/ so
@@ -208,9 +209,13 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const expanded = expandExpectations(part);
   const needMinWall = partGatesMinWall(part, { process, expanded });
   const readKeys = subPartReadKeys(part, view, part.defaults);
+  // byteAwareReplacer on the RELEVANT_ALL branch too: an unattributable derive()
+  // still might read a byte-valued image param, and this memo key gates whether
+  // a case's geometry gets rebuilt or an earlier result reused (see the seeding
+  // block below) — the same collision the relevanceHash branch guards against.
   const signature = (params) =>
     readKeys === RELEVANT_ALL
-      ? JSON.stringify(params)
+      ? JSON.stringify(params, byteAwareReplacer)
       : [...readKeys.entries()].map(([name, keys]) => `${name}:${relevanceHash([...keys], params)}`).join("|");
 
   const memo = new Map();

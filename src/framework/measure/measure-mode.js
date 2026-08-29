@@ -13,6 +13,7 @@ import { raycastViewer } from "../selection/raycast.js";
 import { createFeatureHighlight } from "../selection/feature-highlight.js";
 import { createDragTracker } from "../selection/drag-tracker.js";
 import { subPartReadKeys, RELEVANT_ALL } from "../param-deps.js";
+import { byteAwareReplacer } from "../geometry/solid-hash.js";
 import { classifyFeature, bboxSpec, unionBounds } from "./feature-dims.js";
 import { paramMatches } from "./param-link.js";
 import { createPinStore, occurrenceOf } from "./pins.js";
@@ -136,7 +137,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getP
   // direct test) falls back to the content hash.
   let readsKey = null, readsMap = null;
   function readsFor(view, params) {
-    const key = `${view}|${getParamsVersion ? getParamsVersion() : JSON.stringify(params)}`;
+    const key = `${view}|${getParamsVersion ? getParamsVersion() : JSON.stringify(params, byteAwareReplacer)}`;
     if (readsKey !== key) {
       readsKey = key;
       try { readsMap = subPartReadKeys(part, view, params); } catch { readsMap = null; }

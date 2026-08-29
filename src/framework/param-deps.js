@@ -3,6 +3,7 @@
 // affect what's visible. Pure — no DOM, no real geometry (reuses the geometry-free
 // probe kernel). Errs toward RELEVANT_ALL whenever it can't analyze a build.
 import { createProbeKernel } from "./geometry/probe.js";
+import { byteAwareReplacer } from "./geometry/solid-hash.js";
 import { viewSubParts } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
 
@@ -125,7 +126,11 @@ export function subPartReadKeys(part, view, params) {
 }
 
 // Stable string of the given param keys' current values — the cache-validity key
-// for one sub-part. Sorted so key order never affects the result.
+// for one sub-part. Sorted so key order never affects the result. `byteAwareReplacer`
+// substitutes a content fingerprint for a byte-valued param (an ArrayBuffer/typed-array
+// image source — see its own header) so JSON.stringify's default handling doesn't
+// collapse every image to the same "{}" (cache never invalidates) or expand a typed
+// array to one JSON number per byte (see solid-hash.js).
 export function relevanceHash(keys, params) {
-  return JSON.stringify(keys.slice().sort().map((k) => [k, params[k]]));
+  return JSON.stringify(keys.slice().sort().map((k) => [k, params[k]]), byteAwareReplacer);
 }

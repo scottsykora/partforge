@@ -46,6 +46,23 @@ describe("heightfield on Manifold", () => {
     expect(k.heightfield("relief", { w: 10, d: 10, base: 1, maxZ: 1, pitch: 1 }).volume()).toBeGreaterThan(0);
   });
 
+  // _pruneImages against the REAL backend, not jobs.js's fakeImageKernel
+  // reimplementation (test/images-jobs.test.js only exercises the fake). This
+  // is what jobs.js actually calls when a picked image is cleared or a
+  // worker-rebind lands on a different part reusing the same declared name.
+  test("_pruneImages drops a stale name and leaves the rest alone on the real kernel", async () => {
+    const g = ramp(8);
+    await k._registerImage({ name: "prune-a", digest: "pa", width: g.width, height: g.height, data: g.data });
+    await k._registerImage({ name: "prune-b", digest: "pb", width: g.width, height: g.height, data: g.data });
+    expect(k._imageDigest("prune-a")).toBe("pa");
+    expect(k._imageDigest("prune-b")).toBe("pb");
+    k._pruneImages(new Set(["prune-b"]));
+    expect(k._imageDigest("prune-a")).toBeUndefined();
+    expect(k._imageDigest("prune-b")).toBe("pb");
+    expect(() => k.heightfield("prune-a", { w: 10, d: 10, base: 1, maxZ: 1, pitch: 1 }))
+      .toThrow(/unknown image "prune-a"/);
+  });
+
   // Registered images DO go through the ordinary cached() boundary-op path
   // (unlike inline grids, which deliberately bypass it — see the test below).
   // A regression that made registered images uncached would be silent
