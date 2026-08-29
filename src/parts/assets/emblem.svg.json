@@ -1,0 +1,105 @@
+{
+  "format": "partforge-vector",
+  "version": 1,
+  "note": "Filled 2-D outlines for k.svg2d. Coordinates are plain numbers in the artwork's own units — k.svg2d rescales at build time. y points UP. Each region is one filled area: `outer` is its boundary and `holes` are subtracted from it. Segments run head-to-tail from `start`; each segment's `to` is the next point. The contour closes implicitly from the last `to` back to `start`. See docs/VECTOR-FORMAT.md.",
+  "source": "emblem.svg",
+  "bbox": {
+    "minX": 4,
+    "minY": -44,
+    "maxX": 44,
+    "maxY": -14
+  },
+  "regions": [
+    {
+      "outer": {
+        "start": [
+          14,
+          -24
+        ],
+        "segments": [
+          {
+            "kind": "arc",
+            "to": [
+              31.071068,
+              -31.071068
+            ],
+            "through": [
+              20.173166,
+              -33.238795
+            ]
+          },
+          {
+            "kind": "arc",
+            "to": [
+              24,
+              -14
+            ],
+            "through": [
+              33.238795,
+              -20.173166
+            ]
+          },
+          {
+            "kind": "arc",
+            "to": [
+              14,
+              -24
+            ],
+            "through": [
+              16.928932,
+              -16.928932
+            ]
+          }
+        ]
+      },
+      "holes": []
+    },
+    {
+      "outer": {
+        "start": [
+          6,
+          -40
+        ],
+        "segments": [
+          {
+            "kind": "arc",
+            "to": [
+              6,
+              -44
+            ],
+            "through": [
+              4,
+              -42
+            ]
+          },
+          {
+            "kind": "line",
+            "to": [
+              42,
+              -44
+            ]
+          },
+          {
+            "kind": "arc",
+            "to": [
+              42,
+              -40
+            ],
+            "through": [
+              44,
+              -42
+            ]
+          },
+          {
+            "kind": "line",
+            "to": [
+              6,
+              -40
+            ]
+          }
+        ]
+      },
+      "holes": []
+    }
+  ]
+}
