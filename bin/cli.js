@@ -107,7 +107,8 @@ const readSources = (partPath) => {
 // since a part's `images` is commonly function-form (that's what lets a
 // `type: "image"` control drive the source). An unset control (isNoImageSource)
 // is dropped rather than handed to ensureImages, mirroring jobs.js's own filter —
-// `k.heightfield` falls back to a flat slab for a name never registered.
+// `k.heightfield` throws unknown-image for a name never registered; a part
+// that wants to build with no image branches around the call itself.
 const bootKernel = (part, params = {}) => {
   const p = { ...(part.defaults ?? {}), ...params };
   const imagesDecl = part.images ? (imagesFor(part, p) ?? {}) : undefined;

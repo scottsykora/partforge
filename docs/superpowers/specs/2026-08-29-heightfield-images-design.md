@@ -139,10 +139,15 @@ that makes the source swappable:
 images: (p) => (p.relief ? { relief: p.relief } : {}),
 ```
 
-An empty value declares nothing and the op falls back to a **flat slab**,
-mirroring how an empty `face` falls back to bundled Roboto. A part therefore
-still builds, and `partforge measure` still passes, with no network and no
-image — which is what CI should see.
+An empty value declares nothing, and — unlike `text2d`, which has a bundled
+Roboto to fall back to at the op level — `heightfield` has no default grid of
+its own: calling it with an unset/unregistered name throws the ordinary
+unknown-image error. A part that wants to build with no image branches around
+the `k.heightfield` call in its own `build()`, or supplies a bundled default
+through `images` itself (a function-form `images` returning a fallback URL
+when the control is empty) so the name is never actually empty. Either way the
+part still builds, and `partforge measure` still passes, with no network and
+no image — which is what CI should see.
 
 A part with a fixed image needs none of this; a plain `{ name: source }` object
 is fine.

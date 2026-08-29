@@ -795,9 +795,10 @@ export const IMAGE_ALLOW_DEFAULT = ["https"];
 
 const ASSET_SCHEME = "pfc-asset:";
 
-// The "unset" image source. An empty value declares NO image — the documented way
-// to leave a relief off, after which heightfield falls back to a flat slab. Never
-// a source to fetch, and never a source to refuse.
+// The "unset" image source. An empty value declares NO image — the documented
+// way to leave a relief off; the op itself has no fallback, so a build() that
+// still calls k.heightfield for an unset name gets the ordinary unknown-image
+// throw. Never a source to fetch, and never a source to refuse.
 export const isNoImageSource = (v) => v === undefined || v === null || v === "";
 
 const isBytes = (v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v);
