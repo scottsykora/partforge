@@ -164,9 +164,10 @@ export interface CutawayState {
 
 /**
  * Everything about the current view that a remount would otherwise lose. Plain
- * JSON — it is meant to cross a mount boundary, and in an embedder like
- * partforge-cloud an iframe RPC as well. Read it with
- * `runtime.getViewerState()`; hand it back as `MountOptions.viewerState`.
+ * JSON: it outlives the mount that produced it, so nothing in it points into a
+ * disposed scene, and a host may store or post it rather than only handing it
+ * straight back. Read it with `runtime.getViewerState()`; hand it back as
+ * `MountOptions.viewerState`.
  */
 export interface ViewerState {
   /** The live camera pose, or `null` when the viewer could not report one. */

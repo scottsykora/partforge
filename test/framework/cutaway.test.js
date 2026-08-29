@@ -1285,8 +1285,9 @@ describe("getState / setState", () => {
     expect(state.flipped).toBe(true);
     expect(state.pose.position).toEqual([5, 4, 3]); // the box's centre
     expect(state.pose.quaternion).toHaveLength(4);
-    // The snapshot crosses a mount boundary (and an iframe RPC in the cloud),
-    // so a THREE object riding along would not survive the trip.
+    // The snapshot outlives the mount that produced it, so a live THREE object
+    // would point into a disposed scene — and a host free to store or post it
+    // needs something structured-cloneable.
     expect(JSON.parse(JSON.stringify(state))).toEqual(state);
   });
 

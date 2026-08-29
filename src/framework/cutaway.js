@@ -369,8 +369,10 @@ export function createCutaway({
   // redo, a settings commit) would otherwise close the user's slice on every
   // turn. These two carry it across; mount.js owns the handoff.
   //
-  // The snapshot is plain JSON on purpose: it crosses a mount boundary, and in
-  // partforge-cloud an iframe RPC as well, so no THREE object may ride along.
+  // The snapshot is plain JSON on purpose. It outlives the mount that produced
+  // it, so a live THREE object would hand the next mount a reference into a
+  // disposed scene — and a host free to store or post it needs something
+  // structured-cloneable either way.
   const isFiniteTuple = (value, length) =>
     Array.isArray(value) && value.length === length && value.every(Number.isFinite);
 

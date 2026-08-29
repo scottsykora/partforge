@@ -1693,7 +1693,8 @@ test("getViewerState reports the live camera, projection and cutaway", () => {
   expect(state.camera).toEqual({ pos: [0, 0, 0], target: [0, 0, 0] });
   expect(state.projection).toBe("perspective");
   expect(state.cutaway.enabled).toBe(true);
-  // It has to survive the trip: the cloud sends this over an iframe RPC.
+  // Structured-cloneable, so a host may store or post it rather than only
+  // handing it straight back.
   expect(JSON.parse(JSON.stringify(state))).toEqual(state);
   expect(viewer.getCameraState).toHaveBeenCalled();
   runtime.dispose();
