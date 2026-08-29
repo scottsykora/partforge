@@ -871,6 +871,17 @@ export function createViewer(container, part) {
     liveLights.key.visible = false;
     liveLights.fill.visible = false;
     scene.add(capKey, capKey.target, capFill, capFill.target);
+    // A pick marker is transient UI feedback about a click, never part of the
+    // part, so it belongs in no capture. It used to be near enough true that a
+    // capture would miss one — a dot faded after 1200ms — but a HELD dot lives
+    // as long as the host's UI hangs off it, so any capture taken during a pick
+    // would now bake the yellow sphere into an agent-facing render or a
+    // published thumbnail. Hidden HERE, at the one offscreen chokepoint, rather
+    // than via canonicalCaptureHidden: captureCurrent deliberately ignores that
+    // set. Only dots that were actually shown are restored, so this cannot
+    // resurrect one the live canvas had hidden for its own reasons.
+    const reshowFlashDots = [];
+    for (const dot of flashDots) if (dot.visible) { dot.visible = false; reshowFlashDots.push(dot); }
     try {
       renderer.setRenderTarget(rt);
       renderer.render(renderScene, cam);
@@ -878,11 +889,13 @@ export function createViewer(container, part) {
       // reads antialiased pixels.
       renderer.readRenderTargetPixels(rt, 0, 0, width, height, buf);
     } finally {
-      // Never leave the user's own view unlit or pointed at the offscreen target.
+      // Never leave the user's own view unlit, pointed at the offscreen target,
+      // or missing a marker the user is still looking at.
       renderer.setRenderTarget(null);
       scene.remove(capKey, capKey.target, capFill, capFill.target);
       liveLights.key.visible = true;
       liveLights.fill.visible = true;
+      for (const dot of reshowFlashDots) dot.visible = true;
       if (!cachedSize) rt.dispose();
     }
     const canvas = document.createElement("canvas");
@@ -1253,7 +1266,12 @@ export function createViewer(container, part) {
   }
 
   function onFlashAnchorChange(cb) {
-    if (typeof cb !== "function") return () => {};
+    // The `disposed` half is the same guard cutaway's onHandleHoverChange takes,
+    // and for the same two reasons: a subscribe racing teardown (effect-cleanup
+    // ordering, a StrictMode remount) would otherwise be handed an anchor for a
+    // dot no longer in the scene, and would re-populate a listener set that
+    // dispose() will never clear again — retaining the embedder's closure.
+    if (disposed || typeof cb !== "function") return () => {};
     anchorListeners.add(cb);
     cb(lastAnchor); // current state on subscribe, like onCutawayHandleHover
     return () => anchorListeners.delete(cb);
@@ -1290,6 +1308,7 @@ export function createViewer(container, part) {
     heldDots.clear();
     lastFlashed = null;
     anchorDot = null;
+    lastAnchor = null;
     anchorListeners.clear();
     flashGeometry.dispose();
     cutaway.dispose();
