@@ -1560,6 +1560,181 @@ build: (k, p, d) => {
 
 **CLI:** `partforge measure|render|lint` work on an importing part exactly as on any other — the `imports` field resolves in the CLI's Node boot the same way `fonts` does, no extra flags.
 
+## Height maps and images
+
+`k.heightfield(nameOrGrid, opts)` turns a grayscale depth map into a relief
+solid: a sampled grid on top, skirt walls down the sides, a flat cap at
+`z = 0`. It exists for one thing — a printable relief plate from a picture —
+and `src/parts/relief.js` is the worked example; read it alongside this
+section.
+
+**Declaring images (the `images` PartDefinition field):**
+
+Same grammar as `fonts` and `imports`, one more asset sibling:
+
+```js
+images: {
+  relief: new URL("./assets/relief-demo.png", import.meta.url), // Vite serves it; Node reads disk
+  logo:   "https://…/signed-url.png",                            // URL string
+  scan:   bytesOrThunk,                                           // ArrayBuffer/Uint8Array, or a (possibly async) thunk returning one
+},
+```
+
+`images` may also be a **function of the resolved params** — `images: (p) => ({...})`
+— which is what lets a `type: "image"` control pick the source. `relief.js` uses
+exactly this to fall back to a bundled sample when the control is empty:
+
+```js
+images: (p) => ({
+  relief: p.relief || new URL("./assets/relief-demo.png", import.meta.url),
+}),
+```
+
+**The empty-value fallback:** `p.relief` starts as `""` (its `defaults` entry),
+which reads as "no image chosen" — never a source to fetch, never a source
+`npx partforge lint`/the runtime warn about. A part is responsible for
+supplying its own fallback when a key resolves empty, exactly as above; an
+`images` entry that stays empty is simply dropped from registration (with a
+progress note, not an error), so a `build()` that still calls
+`k.heightfield(name, …)` for that name gets the same
+[`heightfield-unknown-image`](ERROR-PATTERNS.md#heightfield-unknown-image)
+throw as a typo'd name — the framework has no automatic "flat slab" behavior of
+its own; a part that wants one branches around the `k.heightfield` call itself
+when its source param is empty, the same way it would branch around any other
+optional feature.
+
+**The `type: "image"` control:** the control-types table above lists `"image"`
+— an image picker with a host-supplied catalog, or a plain URL text field
+without one. `allow` restricts what a **param-supplied** value (from the
+picker, or a pasted/shared URL) may be — the same shape as `font`'s `allow`,
+but with one fewer kind, since there's no image equivalent of Google Fonts'
+CDN allowance:
+
+| value | accepts |
+|---|---|
+| `"https"` | any `https:` URL. **The default** — omitting `allow` means `["https"]` |
+| `"asset"` | a `pfc-asset://` token — an image the host has stored for this part |
+
+A refused param falls back to `defaults[key]`, with a build warning naming the
+key — `image-source-scheme` (lint) catches a `defaults` value the control's own
+`allow` would itself refuse. As with `fonts`, `allow` only gates values that
+arrive as **params**; a source you write into `images` yourself is code, not
+user input, and is never checked against it.
+
+**`k.heightfield`'s options:**
+
+```js
+k.heightfield("relief", {
+  w: 60, d: 60,        // footprint, mm — REQUIRED, both > 0 (no default)
+  base: 1.5,            // solid slab thickness under the relief, mm (default 1; must be > 0 — zero is degenerate)
+  maxZ: 3,               // how far the tallest sample rises above base, mm (default 1)
+  pitch: 0.5,             // grid spacing, mm (default 0.5) — see "pitch" below
+  invert: false,           // swap high/low (default false)
+  range: [0, 1],            // remap the raw sample range before invert (default [0, 1] — identity)
+  origin: "center",         // "center" | "corner" — footprint placement in XY (default "center")
+});
+```
+
+`nameOrGrid` is either a name declared in `images`, or an inline
+`{ width, height, data: Uint16Array }` grid (bypassing `images`/PNG entirely —
+useful for procedural depth maps, as CI fixtures use).
+
+- **`range` is a remap with clamped ends, not an output clamp.** `range[0]` maps
+  to sample value 0, `range[1]` maps to sample value 1, and everything outside
+  `[range[0], range[1]]` clamps to the nearer end — it does not pass the raw
+  0..1 sample through unclamped and then chop the *output* height. `range: [0, 1]`
+  (the default) is the identity map: a raw sample stays exactly what it was.
+  This is exactly the tool for a source whose luminance never reaches the
+  extremes — `relief.js`'s bundled demo asset only spans roughly 39–75% of the
+  16-bit range (the ripple pattern that generated it decays toward mid-gray),
+  so left at the default `range` the demo would use well under half of `maxZ`;
+  it sets `range` to the asset's own measured extent to stretch that into the
+  full 0..1 span. **`invert` applies after the remap**, as `1 − t` on the
+  remapped value — it flips which end is raised, not which end of the source
+  range is used.
+- **`origin` positions the footprint in XY only.** `"corner"` puts the minimum
+  corner at `(0, 0)`; `"center"` (the default) centers the footprint on the
+  origin. Either way the **base always sits at `z = 0`** — `origin` never moves
+  the part vertically, only in X/Y.
+- **The image stretches to `w × d`.** Sampling maps the image's own aspect
+  ratio onto whatever rectangle `w`/`d` describe — a square source on a
+  non-square footprint stretches, it is not letterboxed or cropped.
+- **Axis convention:** a source PNG's row 0 (its first scanline — the visual
+  top of the file in an image viewer) maps to the footprint's **−Y** edge, with
+  Y increasing down the rows — the standard texture-coordinate convention, and
+  not something this framework special-cases. In practice: a depth map viewed
+  in the app from above (+Z) reads vertically flipped relative to the same file
+  open in an image viewer. If a source contains text or a logo and that
+  orientation matters, flip the source pixels before declaring it — `invert`
+  will not do this for you, since it remaps sampled *height*, not pixel
+  position.
+- **Vertex budget:** the sampled grid is `max(2, ceil(w/pitch))` ×
+  `max(2, ceil(d/pitch))` vertices. If that product would exceed 400,000,
+  `pitch` is scaled up uniformly until it fits (and, if still over, the two
+  counts are shrunk in lockstep) — a build warning names the clamped pitch
+  rather than the build hanging or throwing.
+
+**PNG only, in core.** `images` resolves exactly one format — a source that
+doesn't start with the PNG signature throws
+[`images-only-png-supported`](ERROR-PATTERNS.md#images-only-png-supported) —
+and the decoder itself rejects Adam7-interlaced files
+([`png-interlaced-unsupported`](ERROR-PATTERNS.md#png-interlaced-unsupported)).
+This is deliberate, not an oversight: the same pure-JS decoder
+(`src/framework/geometry/png-decode.js`) runs in the browser worker, the CLI,
+and CI alike, so the geometry a user previews, the geometry `partforge measure`
+gates, and the geometry a regression test pins can never disagree about how a
+given file decodes — a second format would mean a second decode path, and a
+second place for the three to drift apart. The escape hatch is
+`imageToPng(fileOrBlob, { maxSize = 1024 }) → Promise<Blob>`, exported from
+`"partforge"` (main-thread only — it draws through a `<canvas>`, never import
+it from a part or a worker): convert any format the browser can decode into a
+PNG before it reaches `images`, in a host's upload handler. It downsamples to
+`maxSize` on the long edge on the way, since `pitch` caps useful resolution
+anyway and downsampling avoids shipping detail no `heightfield` call will ever
+sample.
+
+**`pitch` is the throttle for both triangle count and STEP size.** Every
+`w/pitch × d/pitch` grid cell becomes two triangles, plus a skirt and a cap —
+halving `pitch` roughly quadruples the triangle count. On a 60×60 mm plate,
+pitch 1.0 produces about 7,670 triangles and (on the OCCT backend) a STEP file
+around 17.6 MB; pitch 0.3 produces about 81,590 triangles and a STEP file
+around 206.5 MB, for the same footprint. STEP size is content-dependent — only
+genuinely coplanar faces merge during sewing, so a flat relief compresses far
+better than a high-frequency one at the same triangle count — but the linear
+relationship to triangle count holds regardless of content. Above 24,000
+triangles the OCCT backend's sewing step also slows down and warns on the same
+build; past a further, content-dependent point sewing can fail outright
+([`heightfield-sew-failed`](ERROR-PATTERNS.md#heightfield-sew-failed)), fixed
+by raising `pitch` or keeping the sub-part on the Manifold backend, which never
+sews through OCCT. Manifold's own preview has no such ceiling, so a fine
+`pitch` is always safe there — it only becomes expensive at STEP-export /
+OCCT time.
+
+**Bytes in params — the sandbox path.** A `type: "image"` control's value may
+also be raw PNG bytes (an `ArrayBuffer`/typed array) rather than a URL string —
+this is how a host that cannot fetch URLs (the partforge-cloud sandbox is the
+motivating case) gets an uploaded image into a part: its own trusted panel
+puts the bytes straight into `params`. Byte values **bypass the `allow` check
+entirely**, for every `allow` list, including the default — not a hole, but
+the deliberate consequence of what a byte value in `params` can mean: a URL
+cannot carry megabytes, so an `ArrayBuffer` arriving there cannot have come
+from a pasted link or a shared URL; it can only have been placed there by the
+host's own code. `allow` exists to keep a shared link from turning into an
+arbitrary fetch — a concern that doesn't apply to a value the host already
+has in hand.
+
+**Linting:** `npx partforge lint` adds an "Image controls" group of static
+checks — `image-control-not-in-images`, `heightfield-unknown-image`,
+`image-source-scheme` — described in full under "Linting" → Rule catalog →
+"Image controls", below; this section only points there rather than repeating
+it.
+
+**CLI:** `partforge measure|render|lint` resolve `images` in the CLI's Node
+boot exactly the way `fonts`/`imports` do — no extra flags — with the same
+function-form caveat: a `verify` case or animation frame that changes the
+image-control param still builds against the base-params source, because the
+CLI boots its kernel once.
+
 ## Host jobs: extending the worker
 
 The worker's job loop handles a closed set of message types (`generate`, the exports,
@@ -1765,6 +1940,11 @@ yourself (e.g. to download from a different origin) instead of partforge's own D
 
   partforge ships no provider — a host supplies one, and without it every font
   control renders as a URL field.
+
+- `imageCatalog` — a provider backing every `type: "image"` control in the part:
+  `{ search(query, { limit }) → Promise<ImageAsset[]>, describe?(source) → { label, width, height } | null }`,
+  where `ImageAsset` is `{ id, label, url, width, height, thumbUrl }`. With no
+  provider a `type: "image"` control degrades to a URL field.
 
 **Showcase capture (the mount handle).** The handle can also render the user's *current*
 framing offscreen at a resolution independent of the window size and devicePixelRatio —
