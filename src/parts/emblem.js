@@ -49,7 +49,20 @@ export default {
   views: { plate: { label: "Plate" } },
   verify: {
     expect: {
-      plate: { bbox: "<=[81,61,15]" },
+      plate: {
+        // The bbox bound is the parameter schema's own envelope (plate_w<=80,
+        // plate_h<=60, plate_t+emboss<=14), so it catches a mis-scaled governing
+        // dimension but nothing subtler.
+        bbox: "<=[81,61,15]",
+        // This is the gate that actually watches the artwork. The bare plate is
+        // 40x32x3 = 3840 mm^3 at defaults and the emboss adds ~260 mm^3, so if
+        // the svg2d union ever produced nothing the volume drops to 3840 and
+        // this fails. Without it, a silently-empty emboss still satisfies every
+        // other assertion here.
+        volume: ">=4000",
+        watertight: true,
+        holes: 0,
+      },
       _view: { overlaps: 0 },
     },
   },
