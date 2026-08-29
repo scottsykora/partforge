@@ -65,6 +65,12 @@ const BASELINE_IDS = [
   "loftsmooth-zero-perimeter-arc",
   "loftsmooth-stations-out-of-range",
   "loftsmooth-samples-out-of-range",
+  "svg-unknown-name",
+  "svg-size-required",
+  "svg-invalid-document",
+  "svg-stroke-collapsed",
+  "svg-no-geometry",
+  "svg-painting-order",
 ];
 
 const entries = parsePatterns(doc);

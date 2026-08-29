@@ -116,14 +116,14 @@ one:
   "version": 1,
   "note": "free text, ignored on load",
   "source": "logo.svg",
-  "bbox": { "minX": 0, "minY": 0, "maxX": 20, "maxY": 22.612305 },
+  "bbox": { "minX": 0, "minY": 0, "maxX": 24, "maxY": 22.612305 },
   "regions": [
     {
       "outer": {
         "start": [0, 0],
         "segments": [
           { "kind": "line",  "to": [20, 0] },
-          { "kind": "arc",   "to": [20, 20], "through": [20, 10] },
+          { "kind": "arc",   "to": [20, 20], "through": [24, 10] },
           { "kind": "cubic", "to": [0, 0],   "c1": [15, 25], "c2": [5, 25] }
         ]
       },
