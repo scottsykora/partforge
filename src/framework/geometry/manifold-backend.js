@@ -644,6 +644,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       if (!grid) throw new Error(`heightfield: unknown image "${src}" — declare it in the part's \`images\` field`);
       const build = () => {
         const { positions, indices, warnings } = heightfieldMesh(grid, opts);
+        // Only runs on a cache MISS for a registered image (every call for an
+        // inline grid, which always takes the bypass below). A repeat build of
+        // the same registered image at the same options is a cache HIT and never
+        // re-enters this closure, so a pitch-clamp warning is NOT re-emitted on
+        // a warm rebuild — intentional dedup (same call, same warning, once),
+        // not a missed re-warn.
         for (const w of warnings) recordWarning(w);
         return T(manifoldFromMesh(wasm, positions, indices));
       };

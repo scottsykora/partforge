@@ -46,6 +46,27 @@ describe("heightfield on Manifold", () => {
     expect(k.heightfield("relief", { w: 10, d: 10, base: 1, maxZ: 1, pitch: 1 }).volume()).toBeGreaterThan(0);
   });
 
+  // Registered images DO go through the ordinary cached() boundary-op path
+  // (unlike inline grids, which deliberately bypass it — see the test below).
+  // A regression that made registered images uncached would be silent
+  // otherwise: correctness intact, only speed lost, nothing failing. Pin it.
+  test("a registered image's second identical build hits the solid cache", async () => {
+    const g = ramp(16);
+    await k._registerImage({ name: "relief2", digest: "d2", width: g.width, height: g.height, data: g.data });
+    const o = { w: 10, d: 10, base: 1, maxZ: 1, pitch: 1 };
+    k.beginSubPart("heightfield-cache-hit-probe");
+    k.heightfield("relief2", o);
+    k.endSubPart();
+    k.resetCacheStats();
+    // Same sub-part name, same image, same options: solid-cache.js's `lookup`
+    // adopts the previous round's entry from `prev` into `active` on a hash
+    // match — a hit, not a rebuild.
+    k.beginSubPart("heightfield-cache-hit-probe");
+    k.heightfield("relief2", o);
+    k.endSubPart();
+    expect(k.cacheStats()).toEqual({ hits: 1, misses: 0 });
+  });
+
   test("an undeclared name throws naming the op", () => {
     expect(() => k.heightfield("nope", { w: 10, d: 10 })).toThrow(/heightfield.*"nope"/);
   });
