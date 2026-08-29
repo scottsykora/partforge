@@ -10,6 +10,8 @@ import { resolve, dirname, basename } from "node:path";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { detectBackend } from "../src/framework/backend-select.js";
 import { fontsFor } from "../src/framework/fonts.js";
+import { imagesFor } from "../src/framework/images.js";
+import { isNoImageSource } from "../src/framework/image-source.js";
 import { viewAnimations, evaluate, cueAt } from "../src/framework/animation.js";
 import { bootOcctKernel } from "../src/testing/occt.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
@@ -99,9 +101,19 @@ const readSources = (partPath) => {
 // the CLI's base params; see "CLI limitation" in the design doc — a verify case
 // or animation frame that CHANGES the font param still builds with the
 // base-params face, because the kernel is booted once.
+//
+// Same story for `images` — the third asset sibling (fonts.js / imports.js /
+// images.js), resolved with `imagesFor` exactly like `fonts` is with `fontsFor`,
+// since a part's `images` is commonly function-form (that's what lets a
+// `type: "image"` control drive the source). An unset control (isNoImageSource)
+// is dropped rather than handed to ensureImages, mirroring jobs.js's own filter —
+// `k.heightfield` falls back to a flat slab for a name never registered.
 const bootKernel = (part, params = {}) => {
   const p = { ...(part.defaults ?? {}), ...params };
-  const opts = { fonts: fontsFor(part, p), imports: part.imports };
+  const imagesDecl = part.images ? (imagesFor(part, p) ?? {}) : undefined;
+  const images = imagesDecl &&
+    Object.fromEntries(Object.entries(imagesDecl).filter(([, src]) => !isNoImageSource(src)));
+  const opts = { fonts: fontsFor(part, p), imports: part.imports, images };
   const backend = process.env.PARTFORGE_BACKEND || detectBackend(part); // env: crash()'s NEEDS_OCCT retry
   return backend === "occt" ? bootOcctKernel(opts) : bootManifoldKernel(opts);
 };

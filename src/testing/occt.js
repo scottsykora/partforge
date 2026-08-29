@@ -8,9 +8,10 @@ import { createOcctKernel } from "../framework/geometry/occt-backend.js";
 import { resolveFonts } from "../framework/fonts.js";
 import { normalizeOpentype, parseFont } from "../framework/geometry/opentype-interop.js";
 import { ensureImports } from "../framework/imports.js";
+import { ensureImages } from "../framework/images.js";
 import { nodeAssetSources } from "./assets.js";
 
-export async function bootOcctKernel({ fonts, imports, importMeshes } = {}) {
+export async function bootOcctKernel({ fonts, imports, importMeshes, images } = {}) {
   const require = createRequire(import.meta.url);
   globalThis.require = globalThis.require ?? require;
   globalThis.__dirname = globalThis.__dirname ?? path.dirname(fileURLToPath(import.meta.url));
@@ -22,5 +23,7 @@ export async function bootOcctKernel({ fonts, imports, importMeshes } = {}) {
   if (fonts) { const opentype = normalizeOpentype(await import("opentype.js"));
     for (const [name, buf] of await resolveFonts(nodeAssetSources(fonts))) kernel._fonts.set(name, parseFont(opentype, buf, name)); }
   if (imports) await ensureImports(kernel, nodeAssetSources(imports), importMeshes ?? null);
+  // Third asset sibling: see bootManifoldKernel's matching comment.
+  if (images && Object.keys(images).length) await ensureImages(kernel, nodeAssetSources(images));
   return kernel;
 }

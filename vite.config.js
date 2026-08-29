@@ -27,6 +27,7 @@ export default defineConfig(({ command }) => ({
         hullSweep: "hull-sweep.html",
         hingedBox: "hinged-box.html",
         screw: "screw.html",
+        relief: "relief.html",
       },
     },
   },

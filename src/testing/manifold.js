@@ -6,10 +6,11 @@ import { createManifoldKernel } from "../framework/geometry/manifold-backend.js"
 import { resolveFonts } from "../framework/fonts.js";
 import { normalizeOpentype, parseFont } from "../framework/geometry/opentype-interop.js";
 import { ensureImports } from "../framework/imports.js";
+import { ensureImages } from "../framework/images.js";
 import { nodeAssetSources } from "./assets.js";
 import { tessellateStepAssets } from "./step-mesh.js";
 
-export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes } = {}) {
+export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes, images } = {}) {
   const wasm = await Module();
   wasm.setup();
   const kernel = createManifoldKernel(wasm, { quality });
@@ -24,5 +25,10 @@ export async function bootManifoldKernel({ quality = "preview", fonts, imports, 
     const meshes = importMeshes ?? (stepEntries.length ? await tessellateStepAssets(stepEntries) : null);
     await ensureImports(kernel, decl, meshes);
   }
+  // Third asset sibling: register declared images the same way as fonts/imports
+  // above, so a part using `k.heightfield` builds headlessly instead of hitting
+  // `heightfield: unknown image "…"` — file: sources need the same Node mapping
+  // (global fetch can't read them) that fonts/imports get from nodeAssetSources.
+  if (images && Object.keys(images).length) await ensureImages(kernel, nodeAssetSources(images));
   return kernel;
 }
