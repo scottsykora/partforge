@@ -367,9 +367,16 @@ synchronous equivalent reached through `replicad.getOC()`, at five grid sizes.
 | 120 | 29,750 | 10.40s / 10.61s | 5.44s / 8.67s | 72.4 MB | OK, 11.32s |
 | 200 | 81,590 | 31.72s / 35.14s | 16.10s / 15.45s | 206.5 MB | OK, 22.85s |
 
+(`n=120`'s sync STEP-export and boolean times run ~1.6x above the
+per-triangle trend the other rows follow — probable measurement noise from
+running sizes back to back in one process, not a real per-size effect; see
+the task 1 report §1 for detail.)
+
 **Both paths sewed at every size, including the nominal `n=200` case, with no
-failures and no hangs.** This resolves open item 2 (below) and Task 1's own
-go/no-go: proceed with OCCT STEP support as designed.
+failures and no hangs.** Open item 2 below (the OCCT triangle-count threshold
+for the STEP-size warning) is answered by this probe — see
+`STEP_TRIANGLE_WARN` below — and is struck from that list. This is also Task
+1's own go/no-go: proceed with OCCT STEP support as designed.
 
 **`STEP_TRIANGLE_WARN = 24,000`** — the sew-time threshold, set just under
 `n=108` (24,182 tris, 8.2-8.6s), the largest size measured to sew in under
@@ -382,9 +389,13 @@ The same OCCT sequence (`StlAPI_Reader` -> `ShapeUpgrade_UnifySameDomain` ->
 `BRepBuilderAPI_MakeSolid`) run synchronously through `replicad.getOC()`,
 wrapped with `replicad.cast()` (a public export, despite this plan's earlier
 assumption it wasn't), sewed successfully at every size and produced a shape
-that both `exportSTEP` and a boolean accepted. `heightfield` therefore stays
-synchronous on both backends — no contract change. The exact call sequence is
-recorded verbatim in the task 1 report for Task 6 to copy.
+that both `exportSTEP` and a boolean accepted. Every intermediate OCCT
+object is freed via `replicad.localGC()` (also a public export) in a
+`try/finally`, so the sequence leaks no native memory across repeated calls —
+important since `heightfield` rebuilds on every param change during an
+editing session. `heightfield` therefore stays synchronous on both backends —
+no contract change. The exact call sequence, cleanup included, is recorded
+verbatim in the task 1 report §2 for Task 6 to copy.
 
 **Surprising finding: STEP file size, not sew time, is the binding
 constraint at realistic grid sizes.** `importSTL`'s OCCT sequence keeps the
@@ -419,6 +430,8 @@ count).
 ## Open items carried into planning
 
 1. The exact vertex budget and its default `pitch` clamp.
-2. The OCCT triangle-count threshold for the STEP-size warning.
+2. ~~The OCCT triangle-count threshold for the STEP-size warning.~~ Resolved
+   by the Task 1 probe: `STEP_TRIANGLE_WARN = 24,000` (see "Probe result
+   (2026-08-29)" above).
 3. Whether interlaced (Adam7) PNG is supported or rejected with a clear message.
 4. `imageCatalog`'s `ImageAsset` shape, settled against cloud's storage model.
