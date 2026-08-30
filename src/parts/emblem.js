@@ -68,9 +68,14 @@ export default {
   verify: {
     expect: {
       plate: {
-        // The plate outline is fixed by plate.vector.json (40 x 24), so this
-        // envelope is tight in x/y and schema-bounded in z (plate_t + emboss <= 14).
-        bbox: "<=[41,25,15]",
+        // Tight in all three axes, by the same +1 mm convention as
+        // import-demo.js's gates: verify evaluates the `defaults` case only
+        // (this part declares no presets), so bbox is checked against one
+        // deterministic value (40 x 24 x 4) forever, not a swept range —
+        // z = plate_t + emboss = 3 + 1 = 4 at these defaults specifically,
+        // not the schema's wider plate_t/emboss envelope. Revisit this bound
+        // if a preset is ever added that sweeps plate_t or emboss.
+        bbox: "<=[41,25,5]",
         // Measured at defaults: 3013 mm^3 (`npx partforge measure`). The bare
         // plate (no emboss union) is 2748 mm^3 — comfortably under this bound —
         // so a silently-vanished emboss union fails here. Complemented by the
