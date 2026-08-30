@@ -643,7 +643,7 @@ between the Manifold preview and the OCCT STEP export.
 
 - **Symptom:** `a size is required for artwork units` — with the declared `vectors` name in front of it (`vector2d: "logo" a size is required …`) — pass one of `{ width }`, `{ height }`, or `{ fit }` in millimetres — thrown from a build calling `k.vector2d`.
 - **Cause:** The named document is `units: "artwork"` and the call passed none of `width`, `height`, or `fit`. Artwork coordinates carry no physical meaning (an SVG `viewBox` unit is not a length), so there is no safe default to fall back on — a deliberate asymmetry with `k.text2d`, whose `size` can default because a cap height is a real measurement. A `units: "mm"` document never raises this: its coordinates already are millimetres, so it places at scale 1 with no size option at all.
-- **Fix:** Pass exactly one of `width`/`height`/`fit`, in millimetres — or, if the file's coordinates really are millimetres, re-author it with `"units": "mm"` and drop the size option entirely (do not do both: see vector-mm-shapes-misscaled below). `npx partforge lint <part>` catches an options-literal call statically (`vector-size-missing`) before any kernel boots, provided the caller supplied `vectorDocs` so lint can read the file's units. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" and [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Units".
+- **Fix:** Pass exactly one of `width`/`height`/`fit`, in millimetres — or, if the file's coordinates really are millimetres, re-author it with `"units": "mm"` and drop the size option entirely (do not do both: see vector-mm-shapes-misscaled below). `npx partforge lint <part>` catches an options-literal call statically (`vector-size-missing`) before any kernel boots, and so does the in-app lint job — both resolve the part's vector files so lint can read their `units`. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" and [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Units".
 
 ## vector-size-options-conflict
 
@@ -679,7 +679,7 @@ between the Manifold preview and the OCCT STEP export.
 
 - **Symptom:** `has no shape ` followed by the requested name and the list the file does declare — e.g. `vector2d: "plate" has no shape "bodyy" — it declares: body, holes, keyway` — thrown from a build calling `k.vector2d(name, { shape })`.
 - **Cause:** The `shape` option names a key the document's `shapes` object doesn't have — a typo, or a shape that was renamed in the JSON and not in `build`.
-- **Fix:** Use one of the names the error lists, or drop `shape` entirely to get the file's own role-composed result (every `"add"` shape unioned, minus every `"subtract"` shape). `npx partforge lint <part>` catches this statically (`vector-unknown-shape`) when the caller supplies `vectorDocs` — the CLI always does. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry".
+- **Fix:** Use one of the names the error lists, or drop `shape` entirely to get the file's own role-composed result (every `"add"` shape unioned, minus every `"subtract"` shape). `npx partforge lint <part>` catches this statically (`vector-unknown-shape`), and so does the in-app lint job — both resolve the part's vector files first. (A caller embedding `lintPart` directly must pass `vectorDocs` itself, or this rule stays silent.) See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry".
 
 ## vector-mm-shapes-misscaled
 

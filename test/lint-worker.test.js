@@ -65,3 +65,44 @@ test("lint does not boot the OCCT kernel", async () => {
   await self.onmessage({ data: { type: "lint" } });
   expect(posted.find((m) => m.type === "progress" && /exact kernel/.test(m.phase ?? ""))).toBeUndefined();
 });
+
+// The two document-dependent vector rules — vector-size-missing and
+// vector-unknown-shape — need the part's parsed vector files, which the worker
+// used not to pass. That meant they could only ever fire from the CLI, never in
+// the hosted browser sandbox, which is the environment they were designed for.
+// Bytes rather than a URL so this resolves with no fetch.
+const vectorPart = (build) => ({
+  meta: { title: "T" },
+  defaults: {},
+  vectors: {
+    badge: new TextEncoder().encode(JSON.stringify({
+      format: "partforge-vector", version: 1, units: "artwork",
+      shapes: { artwork: [{ outer: { kind: "rect", center: [0, 0], width: 10, height: 10 } }] },
+    })),
+  },
+  parts: { body: { views: ["main"], build } },
+  views: { main: { label: "Main" } },
+});
+
+test("the worker resolves vectorDocs, so the units-aware rule can fire", async () => {
+  const { self, posted } = await bootWorker(vectorPart((k) => k.vector2d("badge").extrude({ h: 1 })));
+  await self.onmessage({ data: { type: "lint" } });
+  const report = posted.find((m) => m.type === "lint-report").report;
+  expect(report.errors.map((f) => f.rule)).toContain("vector-size-missing");
+});
+
+test("the worker resolves vectorDocs, so the unknown-shape rule can fire", async () => {
+  const { self, posted } = await bootWorker(
+    vectorPart((k) => k.vector2d("badge", { width: 10, shape: "rim" }).extrude({ h: 1 })));
+  await self.onmessage({ data: { type: "lint" } });
+  const report = posted.find((m) => m.type === "lint-report").report;
+  const found = [...report.errors, ...report.warnings].map((f) => f.rule);
+  expect(found).toContain("vector-unknown-shape");
+});
+
+test("a part with no vectors at all still lints, and still boots no kernel", async () => {
+  const { self, posted } = await bootWorker(goodPart());
+  await self.onmessage({ data: { type: "lint" } });
+  expect(posted.find((m) => m.type === "lint-report").report.ok).toBe(true);
+  expect(posted.find((m) => m.type === "progress" && /exact kernel/.test(m.phase ?? ""))).toBeUndefined();
+});

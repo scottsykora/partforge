@@ -10,6 +10,7 @@
 // in docs/KERNEL-CONTRACT.md.
 import { handle } from "./jobs.js";
 import { lintPart } from "../lint.js";
+import { resolveVectorDocs } from "./vectors.js";
 
 async function manifoldKernels() {
   const [{ default: Module }, { createManifoldKernel }] = await Promise.all([
@@ -126,7 +127,7 @@ export function runWorker(part, opts = {}) {
     }
   }
 
-  self.onmessage = (e) => {
+  self.onmessage = async (e) => {
     // STEP-on-Manifold crossover: the host primes this worker's importMeshes before
     // (or interleaved with) a generate, so a build's k.import(name) that needs
     // pre-tessellated triangles finds them without touching the kernel — no queueing,
@@ -140,7 +141,22 @@ export function runWorker(part, opts = {}) {
     // the pump awaits that boot, so routing lint through the queue would drag in
     // OCCT's ~11 MB WASM to run a check that never calls the kernel at all.
     if (e.data?.type === "lint") {
-      postMessage({ type: "lint-report", report: lintPart(current, { params: e.data.params }) });
+      // `vectorDocs` is what the two document-dependent vector rules need —
+      // vector-size-missing (does this file's `units` require a size?) and
+      // vector-unknown-shape (does it declare that shape name?). Without it they
+      // return nothing, which would have meant they fired only from the CLI and
+      // never in the hosted browser sandbox — the environment they were designed
+      // for. Resolving it here keeps lint itself pure: the I/O lives in
+      // vectors.js, exactly as it does for bin/cli.js, and lintPart still gets a
+      // plain object. It shares resolveVectors' bytes memo, so a lint after a
+      // generate refetches nothing.
+      //
+      // `current` is captured because setPart may swap the part while this
+      // awaits, and the report must describe the part that was linted. This
+      // still boots no kernel — the whole point of intercepting lint here.
+      const part = current;
+      const vectorDocs = Object.fromEntries(await resolveVectorDocs(part?.vectors));
+      postMessage({ type: "lint-report", report: lintPart(part, { params: e.data.params, vectorDocs }) });
       return;
     }
     // Only generates supersede each other; exports/inspect always run (cancelling

@@ -2248,9 +2248,11 @@ two vector rules that need to read `units`/`shapes` (below). Lint is pure and
 synchronous by contract, so it never fetches these itself: `vectors.js`'s
 `resolveVectorDocs(part.vectors)` does the async resolve (sharing the same
 bytes memo `resolveVectors` uses, so `lint` ahead of `measure` costs no extra
-fetch) and the caller — the CLI, or a host — passes the result in, exactly the
-way `sources` already works. Omit it, or hand over something malformed, and
-those two rules just stay silent rather than guess.
+fetch) and the caller passes the result in, exactly the way `sources` already
+works. Both built-in callers do: `bin/cli.js` for `partforge lint|measure`, and
+the worker's own `lint` job, so an app's in-editor lint sees these rules too.
+Omit it, or hand over something malformed, and those two rules just stay silent
+rather than guess.
 
 `partforge/lint` has **zero runtime dependencies** and never imports a geometry
 kernel or the DOM viewer, so it runs unchanged in Node, a Web Worker, a sandboxed
