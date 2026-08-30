@@ -637,19 +637,55 @@ between the Manifold preview and the OCCT STEP export.
 
 - **Symptom:** `vector2d: unknown vector "` followed by the name and — declare it in the part's `vectors` field — thrown from a build calling `k.vector2d(name)`.
 - **Cause:** `k.vector2d(name)` was called with a name that isn't a key in the part's `vectors` field — a typo, or the declaration was never added. Same failure shape as `text2d`'s unknown-font error and `k.import`'s unknown-name error.
-- **Fix:** Add the name to `vectors`, or fix the typo. `npx partforge lint <part>` catches this statically, in microseconds, before any kernel boots (`vector-unknown-name`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector art (SVG)" and § "Linting" (Rule catalog → Vector art).
+- **Fix:** Add the name to `vectors`, or fix the typo. `npx partforge lint <part>` catches this statically, in microseconds, before any kernel boots (`vector-unknown-name`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" and § "Linting" (Rule catalog → Vector geometry).
 
 ## svg-size-required
 
-- **Symptom:** `vector2d: a size is required` — pass one of `{ width }`, `{ height }`, or `{ fit }` in millimetres — thrown from a build calling `k.vector2d`.
-- **Cause:** None of `width`, `height`, or `fit` was passed in the options object. Unlike `text2d`'s cap-height `size`, an ingested artwork's coordinate units carry no physical meaning, so there is no safe default to fall back on — this is a deliberate asymmetry with `text2d`, not an oversight.
-- **Fix:** Pass exactly one of `width`/`height`/`fit`, in millimetres. `npx partforge lint <part>` catches an options-literal call statically (`vector-size-missing`) before any kernel boots. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector art (SVG)".
+- **Symptom:** `vector2d: a size is required for artwork units` — pass one of `{ width }`, `{ height }`, or `{ fit }` in millimetres — thrown from a build calling `k.vector2d`.
+- **Cause:** The named document is `units: "artwork"` and the call passed none of `width`, `height`, or `fit`. Artwork coordinates carry no physical meaning (an SVG `viewBox` unit is not a length), so there is no safe default to fall back on — a deliberate asymmetry with `k.text2d`, whose `size` can default because a cap height is a real measurement. A `units: "mm"` document never raises this: its coordinates already are millimetres, so it places at scale 1 with no size option at all.
+- **Fix:** Pass exactly one of `width`/`height`/`fit`, in millimetres — or, if the file's coordinates really are millimetres, re-author it with `"units": "mm"` and drop the size option entirely (do not do both: see vector-mm-shapes-misscaled below). `npx partforge lint <part>` catches an options-literal call statically (`vector-size-missing`) before any kernel boots, provided the caller supplied `vectorDocs` so lint can read the file's units. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" and [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Units".
+
+## vector-size-options-conflict
+
+- **Symptom:** `vector2d: pass only one of width, height, or fit` followed by the ones that were passed — e.g. `— got width, fit` — thrown from a build calling `k.vector2d`.
+- **Cause:** Two or more size options in one call. Scaling is always uniform, so a second option would either be ignored or contradict the first; rather than silently preferring one, the op refuses. (Earlier revisions silently preferred `width`, then `height`, then `fit`.)
+- **Fix:** Keep the one you meant. `fit` sizes the longer extent of the artwork's tight bounding box, `width`/`height` the named axis; all three scale uniformly, so one is always enough.
 
 ## svg-invalid-document
 
-- **Symptom:** `vector2d: "` followed by the declared `vectors` name and a validation complaint — a bad `format`/`version`, a malformed contour or segment (missing `start`, too few segments, an `arc` with no `through`, a `cubic` missing `c1`/`c2`, a non-numeric coordinate), a `bbox` that disagrees with the geometry, or (a different message, same `vector2d: "<name>"` lead) `vector2d: "<name>" is not valid JSON — <parse error>` — thrown while resolving a part's `vectors`, before `build` even runs.
-- **Cause:** The stored document isn't a well-formed `partforge-vector` file. The single most common case for the "is not valid JSON" variant: `vectors` points at the raw `.svg` file instead of the **ingested** `.vector.json` — an SVG document is not JSON at all, so it fails to parse before validation ever gets a chance to name a more specific problem.
-- **Fix:** If the message says "is not valid JSON," check the source points at the ingested `<name>.vector.json`, not the original `.svg` — re-ingest with `partforge/ingest` (or `node scripts/ingest-svg.mjs <file.svg>` in this repo) if you don't have it yet. Otherwise, the message names the exact field and position that's wrong; fix it by hand or re-ingest. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) for the full schema and what each field means.
+- **Symptom:** `vector2d: "` followed by the declared `vectors` name and a validation complaint — a bad `format` or `version`, a contour with no `kind` or an unknown one, a malformed `"path"` contour or segment (missing `start`, too few segments, an `arc` with no `through`, a `cubic` missing `c1`/`c2`, a non-numeric coordinate), a primitive with a bad `center`/`r`/`width`/`height`, a shape that is neither a region array nor a `{ role, regions }` object, an unknown `role`, a `bbox` that disagrees with the geometry, or (a different message, same `vector2d: "<name>"` lead) `vector2d: "<name>" is not valid JSON — <parse error>` — thrown while resolving a part's `vectors`, before `build` even runs.
+- **Cause:** The stored document isn't a well-formed `partforge-vector` file. The single most common case for the "is not valid JSON" variant: `vectors` points at the raw `.svg` file instead of an ingested `.vector.json` — an SVG document is not JSON at all, so it fails to parse before validation ever gets a chance to name a more specific problem.
+- **Fix:** If the message says "is not valid JSON," check the source points at the ingested `<name>.vector.json`, not the original `.svg` — re-ingest with `partforge/ingest` (or `node scripts/ingest-svg.mjs <file.svg>` in this repo) if you don't have it yet. Otherwise the message names the shape, the 1-indexed region, the role (`outer` / `hole n`), and where applicable the 1-indexed segment, so the fix is a single edit. Several specific cases have their own entries below (vector-units-missing, vector-stale-regions-array, vector-rect-radius-too-large). See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) for the full schema and what each field means.
+
+## vector-units-missing
+
+- **Symptom:** `file has no valid ` followed by `units` and the value found — e.g. `vector2d: "logo" file has no valid \`units\` (undefined) — \`units\` must be "mm" … or "artwork" …` — thrown while resolving a part's `vectors`, before `build` runs.
+- **Cause:** The document has no `units` field, or one that is neither `"mm"` nor `"artwork"`. `units` is required and has no default: millimetre coordinates place as authored, artwork coordinates have no physical meaning and need a size at every call site, and guessing between the two would silently produce wrong-scaled geometry. A file hitting this was either hand-authored without the field or written by a converter that predates it.
+- **Fix:** Add `"units": "mm"` if the coordinates are millimetres and should place exactly where they are drawn, or `"units": "artwork"` if they came from an SVG (or anything else whose units are not lengths) and should be sized per call site. Ingest always writes `"artwork"`; re-ingesting the source `.svg` fixes a generated file. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Units".
+
+## vector-stale-regions-array
+
+- **Symptom:** `has a "regions" array, which this build does not read` — followed by `regions now live under a named shape in "shapes"` — thrown while resolving a part's `vectors`.
+- **Cause:** The document uses the old flat top-level `regions` array instead of the named-`shapes` envelope. Either a hand-written draft copied from an obsolete example, or a `.vector.json` generated by an older ingest.
+- **Fix:** Wrap the regions in a named shape: `{ "shapes": { "artwork": [ …the regions… ] } }`. Nothing else about a region changes — `outer`/`holes` are unchanged — but every contour also needs its `kind` (`"path"` for the explicit `start`/`segments` form). Re-ingesting the source `.svg` produces the current envelope directly. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Shapes and roles".
+
+## vector-rect-radius-too-large
+
+- **Symptom:** `has "kind": "rect" with radius` followed by the value, the maximum, and `a corner radius cannot be more than half the shorter side` — e.g. `vector2d: "plate" shape "body" region 1 outer has "kind": "rect" with radius 3.5 exceeds the maximum 3`.
+- **Cause:** A `"rect"` contour's corner `radius` is greater than `min(width, height) / 2`, where the four corner arcs would overlap. The loader refuses rather than clamping: a format loader has no warning channel, and a radius past half the shorter side is a typo, not a request.
+- **Fix:** Reduce `radius` to at most half the shorter side, or enlarge `width`/`height`. Exactly `min(width, height) / 2` is legal and is the fully-rounded case — a square at that radius expands to four arcs and no straight edges (the degenerate zero-length lines are omitted). See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Contour kinds".
+
+## vector-unknown-shape
+
+- **Symptom:** `has no shape ` followed by the requested name and the list the file does declare — e.g. `vector2d: "plate" has no shape "bodyy" — it declares: body, holes, keyway` — thrown from a build calling `k.vector2d(name, { shape })`.
+- **Cause:** The `shape` option names a key the document's `shapes` object doesn't have — a typo, or a shape that was renamed in the JSON and not in `build`.
+- **Fix:** Use one of the names the error lists, or drop `shape` entirely to get the file's own role-composed result (every `"add"` shape unioned, minus every `"subtract"` shape). `npx partforge lint <part>` catches this statically (`vector-unknown-shape`) when the caller supplies `vectorDocs` — the CLI always does. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry".
+
+## vector-mm-shapes-misscaled
+
+- **Symptom:** No thrown error — a `units: "mm"` document's shapes come out wrong *relative to each other*. Holes land off-centre or off the part, a subtracted keyway misses the body, and features drawn concentric in the JSON are not concentric in the solid. The **overall bounding box is usually exactly what you asked for**, which is what makes this hard to spot. Measured on `src/parts/assets/plate.vector.json`, whose `add` shape is 40 mm wide anyway: `k.vector2d("plate")` gives bbox `40×24×3`, volume `2748.3`, `holes 3`; the same call with `{ width: 40 }` gives the *same* bbox `40×24×3` but volume `2692.0` and `holes 2` — one of the three cuts has moved off the plate. A `holes` or `volume` gate in `verify` catches this; a `bbox` gate does not.
+- **Cause:** A size option (`width`, `height`, or `fit`) was passed to `k.vector2d` on a millimetre document. Sizing is applied **per shape group, against that group's own tight bounding box** — the `"add"` union is scaled to the requested size and the `"subtract"` union is scaled to *its own* bounds independently — so the moment a document has more than one shape, a size option destroys the shared coordinate frame that `units: "mm"` exists to provide. Nothing throws: each group is individually well-formed, just no longer registered with the others. The same applies to composing two `{ shape }` calls that each pass a size.
+- **Fix:** Drop the size option. A millimetre document places as authored — scale 1, no re-centring — which is the whole point of the units mode; `src/parts/emblem.js`'s `k.vector2d("plate")` call carries a comment saying exactly this. If a drawn part genuinely needs rescaling, scale the composed `Shape2D` once in `build` (or `.scale()` the extruded solid) so one transform applies to every shape together. Pass `width`/`height`/`fit` only to `units: "artwork"` documents, where they are required. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Rules that are not obvious from the schema".
 
 ## svg-stroke-collapsed
 
@@ -667,7 +703,7 @@ between the Manifold preview and the OCCT STEP export.
 
 - **Symptom:** No thrown error — a shape that looks like it has a hole in an SVG editor (or in a browser rendering the SVG directly) comes out **solid** through `k.vector2d`.
 - **Cause:** The artwork fakes the hole by painting a background-colored shape *on top of* another shape, rather than actually cutting a hole (one path, two subpaths, opposite winding or `fill-rule="evenodd"`). Painting order is not modelled by this format at all — every ingested region adds material unconditionally, and colour is read only as present-or-absent, never compared between elements, so "painted over" and "not there" are indistinguishable once ingest has run. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Painting order is not modelled".
-- **Fix:** Either make it a real hole in the source artwork (one `<path>` element with two subpaths and `fill-rule="evenodd"`, or two subpaths wound oppositely under `nonzero`) and re-ingest, or leave the artwork as-is and subtract the "hole" shape in the part with `.cut()` instead of relying on ingest to infer it from paint order.
+- **Fix:** Either make it a real hole in the source artwork (one `<path>` element with two subpaths and `fill-rule="evenodd"`, or two subpaths wound oppositely under `nonzero`) and re-ingest; or move the "hole" geometry into its own shape in the JSON with `"role": "subtract"`, so the document composes correctly on its own (an edit that a re-ingest overwrites); or leave the artwork as-is and subtract the "hole" shape in the part with `.cut()` instead of relying on ingest to infer it from paint order.
 
 ## svg-overlapping-subpaths
 
