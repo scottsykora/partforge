@@ -944,7 +944,7 @@ In `types/kernel.d.ts`, add `shape` to `Vector2dOptions`, make the size options 
 
 ```ts
 export interface Vector2dOptions {
-  /** Name of one shape in the file. Omit for the union of every shape. */
+  /** Name of one shape in the file. Omit for the document's composed result. */
   shape?: string;
   /** Target width in mm. At most one of `width`/`height`/`fit`; required for `units: "artwork"`. */
   width?: number;
@@ -1351,7 +1351,7 @@ const optsOf = (src) => {
         if (Object.hasOwn(shapes, opts.shape)) continue;
         out.push(err("vector-unknown-shape",
           `k.vector2d("${name}", { shape: "${opts.shape}" }) names a shape "${name}" does not contain: ${Object.keys(shapes).join(", ") || "(none)"}`,
-          "Fix the shape name to match one the file declares, or omit `shape` to use the union of every shape.",
+          "Fix the shape name to match one the file declares, or omit `shape` to use the file's own composed result.",
           "build"));
       }
       return out;

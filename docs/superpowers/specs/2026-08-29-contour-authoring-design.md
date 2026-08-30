@@ -230,7 +230,10 @@ size option on an `mm` document is accepted, not refused.
 
 `shapes` replaces the flat `regions` array.
 
-- `k.vector2d("plate")` — the union of every shape in the document. Single-shape
+- `k.vector2d("plate")` — the document's composed result. Before roles were
+  added this was a plain union of every shape; it is now the union of every
+  `"add"` shape minus the union of every `"subtract"` one (see "Roles" below),
+  which for a document with no `subtract` shape is the same thing. Single-shape
   documents therefore never mention a name, and ingested artwork behaves exactly
   as it does today.
 - `k.vector2d("plate", { shape: "holes" })` — one shape. An unknown name throws,
