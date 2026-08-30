@@ -69,6 +69,8 @@ Apply each of these, in this order, to every tracked file **except** the do-not-
 | `resolveSvgs` | `resolveVectors` |
 | `ensureSvgs` | `ensureVectors` |
 | `SVG_RULES` | `VECTOR_RULES` |
+| `svgCalls` | `vectorCalls` |
+| `declaredSvgs` | `declaredVectors` |
 | `svg-unknown-name` | `vector-unknown-name` |
 | `svg-size-missing` | `vector-size-missing` |
 | `Svg2dOptions` | `Vector2dOptions` |
@@ -180,6 +182,15 @@ describe("envelope", () => {
     expect(d.units).toBe("mm");
     expect([...d.shapes.keys()]).toEqual(["body"]);
     expect(d.shapes.get("body")).toHaveLength(1);
+  });
+
+  it("places identically with and without a bbox", () => {
+    // "Optional" must mean "recomputed", not "ignored" — an implementation that
+    // skipped the geometry when the header was absent would pass every other
+    // test here and silently mis-size every authored file.
+    const withBox = doc({ bbox: { minX: 0, minY: 0, maxX: 10, maxY: 10 } });
+    expect(toInternalDocument(withBox, "plate").shapes.get("body"))
+      .toEqual(toInternalDocument(doc(), "plate").shapes.get("body"));
   });
 
   it("still validates a bbox when one is present", () => {
@@ -484,6 +495,20 @@ describe("contour kinds", () => {
   it("refuses an unknown contour kind, naming the four", () => {
     expect(() => regions({ kind: "blob", center: [0, 0], r: 1 }))
       .toThrow(/kind must be "path", "circle", "rect", or "polygon"/);
+  });
+
+  it("matches the hand-written path equivalent of each primitive", () => {
+    // Pins the normative expansions in the spec: a primitive is exactly the
+    // contour an author would have written out by hand, never an approximation.
+    const handRect = { kind: "path", start: [-5, -2], segments: [
+      { kind: "line", to: [5, -2] }, { kind: "line", to: [5, 2] }, { kind: "line", to: [-5, 2] },
+    ] };
+    expect(regions({ kind: "rect", center: [0, 0], width: 10, height: 4 })).toEqual(regions(handRect));
+
+    const handCircle = { kind: "path", start: [5, 0], segments: [
+      { kind: "arc", to: [-5, 0], through: [0, 5] }, { kind: "arc", to: [5, 0], through: [0, -5] },
+    ] };
+    expect(regions({ kind: "circle", center: [0, 0], r: 5 })).toEqual(regions(handCircle));
   });
 
   it("gives a primitive hole the same geometry as its hand-written path", () => {
@@ -885,8 +910,6 @@ describe("shape selection", () => {
 });
 ```
 
-If `Shape2D` exposes area under another name, use whatever `test/vector2d.test.js` already uses to measure a 2-D shape; do not add a new accessor.
-
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run test/vector2d.test.js -t "shape selection"`
@@ -1074,8 +1097,6 @@ const optsOf = (src) => {
   if (src == null) return {};
   try { const v = JSON.parse(src); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch { return null; }
 };
-
-const docFor = (ctx, name) => (ctx.vectorDocs && Object.hasOwn(ctx.vectorDocs, name) ? ctx.vectorDocs[name] : null);
 ```
 
 `vector-size-missing`:
