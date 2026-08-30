@@ -70,8 +70,11 @@ part — leaves the regen loop entirely.
 
 ### What this buys
 
-- **`<use>`, `<defs>`, `<symbol>`, CSS `<style>` and `class=` all work**, because
-  a real DOM resolves them. The first design rejected all five.
+- **`<use>`, `<defs>`, CSS `<style>` and `class=` work**, because a real DOM
+  resolves them. The first design rejected all of them. Two caveats found in
+  final review: paper reads `<use>`'s target from the **xlink** namespace, so a
+  bare SVG2 `href` needs normalizing to `xlink:href` before import; and
+  `<symbol>` is not resolved at all.
 - **The runtime addition is ~70 lines** (`svg2d.js`) plus the JSON load, against
   ~1,100 lines across eight worker modules.
 - **No cross-implementation drift is possible** — there is one converter.
@@ -224,7 +227,15 @@ tree. Each leaf with paint contributes:
 An item with neither is skipped, which is also what drops `importSVG`'s root clip
 `Shape`.
 
-All resulting regions union under one final `resolveCurveFill(…, "nonzero")`.
+All resulting regions union under a fold of `booleanRegions(acc, [r], "unite")`.
+
+**Not** a final `resolveCurveFill(…, "nonzero")` pass, which is the obvious
+choice and is wrong: paper's `compound.unite(compound)` self-unite normalizes
+crossings *within* one path set but does not perform a true planar union between
+two distinct overlapping members. Measured — two overlapping 10×10 squares come
+back as area 100 where the union is 150, one square dropped outright.
+`booleanRegions` gives 150. That defect is in shipped `curve-fill.js` and
+`k.text2d` calls the same function; it has its own task.
 
 ### Ordering (load-bearing)
 
