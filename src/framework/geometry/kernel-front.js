@@ -166,16 +166,26 @@ export function finishKernel(k) {
   // it lowers to k.shape2d + union, so both backends get identical curve regions.
   // Regions come from k._vectors, preloaded by name from the part's declared
   // vector documents — this op does no SVG parsing at all, by design.
-  // k._vectors now holds documents ({ units, shapes: Map<name, Region[]> }), not
-  // flat region arrays. Task 5 gives this its own shape selection; for now,
-  // union every shape so behaviour is unchanged.
+  // k._vectors holds documents ({ units, shapes: Map<name, Region[]> }). With no
+  // `shape` option every shape in the file is unioned (a single-shape file never
+  // has to name anything, and union is commutative so key order is moot);
+  // `shape` selects one by name so the caller can compose shapes with ordinary
+  // booleans in the drawing's own frame.
   k._vectors ??= new Map();
   k.vector2d = (name, opts = {}) => {
     if (typeof name !== "string" || !name)
       throw new Error("vector2d: first argument must be the name of an entry in the part's `vectors` field");
     const doc = k._vectors.get(name);
     if (!doc) throw new Error(`vector2d: unknown vector "${name}" — declare it in the part's \`vectors\` field`);
-    const regions = [...doc.shapes.values()].flat();
+    let regions;
+    if (opts.shape == null) {
+      regions = [...doc.shapes.values()].flat();
+    } else {
+      regions = doc.shapes.get(opts.shape);
+      if (!regions) {
+        throw new Error(`vector2d: "${name}" has no shape ${JSON.stringify(opts.shape)} — it declares: ${[...doc.shapes.keys()].join(", ")}`);
+      }
+    }
     return placeRegions(regions, doc.units, opts).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
   };
 

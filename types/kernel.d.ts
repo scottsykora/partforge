@@ -461,13 +461,17 @@ export type Vector2dAlign = "center" | "left" | "right";
 export type Vector2dValign = "middle" | "top" | "bottom";
 
 export interface Vector2dOptions {
-  /** Target width in mm — exactly one of `width`/`height`/`fit`. */
+  /** Name of one shape in the file. Omit for the union of every shape. */
+  shape?: string;
+  /** Target width in mm. At most one of `width`/`height`/`fit`; required for `units: "artwork"`. */
   width?: number;
-  /** Target height in mm — exactly one of `width`/`height`/`fit`. */
+  /** Target height in mm. At most one of `width`/`height`/`fit`; required for `units: "artwork"`. */
   height?: number;
-  /** Target size in mm for the artwork's larger extent — exactly one of `width`/`height`/`fit`. */
+  /** Target size in mm for the larger extent. At most one of `width`/`height`/`fit`; required for `units: "artwork"`. */
   fit?: number;
+  /** Defaults to `"center"` for `units: "artwork"`, and to no horizontal translate for `units: "mm"`. */
   align?: Vector2dAlign;
+  /** Defaults to `"middle"` for `units: "artwork"`, and to no vertical translate for `units: "mm"`. */
   valign?: Vector2dValign;
 }
 
@@ -518,10 +522,10 @@ export interface GeometryKernel {
   /** Render outline-font text as a `Shape2D`. */
   text2d(string: string, opts?: Text2dOptions): Shape2D;
   /**
-   * Place ingested vector artwork as a `Shape2D`. `name` is a key in the
-   * part's `vectors` field (ingested `partforge-vector` JSON, not raw `.svg`).
+   * Place a declared vector file as a `Shape2D`. `name` is a key in the part's
+   * `vectors` field (`partforge-vector` JSON, not raw `.svg`).
    */
-  vector2d(name: string, opts: Vector2dOptions): Shape2D;
+  vector2d(name: string, opts?: Vector2dOptions): Shape2D;
   /** Convex hull of all inputs → a convex (faceted) `Shape2D`. */
   hull(inputs: HullInput[]): Shape2D;
   /** Swept hull over an ordered sequence (>= 2 inputs). */

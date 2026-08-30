@@ -1,7 +1,9 @@
-import { expect, test, describe, it } from "vitest";
+import { expect, test, describe, it, beforeAll } from "vitest";
 import { placeRegions } from "../src/framework/geometry/vector2d.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 import { profileBounds } from "../src/framework/geometry/contour-ops.js";
+import { bootManifoldKernel } from "../src/testing/manifold.js";
+import { toInternalDocument } from "../src/framework/geometry/vector-format.js";
 
 // a 20 x 10 box in artwork units
 const BOX = [{ outer: { start: [0, 0], segments: [
@@ -145,5 +147,42 @@ describe("placement", () => {
   it("still refuses an unrecognized align or valign", () => {
     expect(() => placeRegions(boxAt(), "mm", { align: "centre" })).toThrow(/align must be/);
     expect(() => placeRegions(boxAt(), "mm", { valign: "centre" })).toThrow(/valign must be/);
+  });
+});
+
+const TWO_SHAPE = {
+  format: "partforge-vector", version: 1, units: "mm",
+  shapes: {
+    body:  [{ outer: { kind: "rect", center: [0, 0], width: 20, height: 20 } }],
+    holes: [{ outer: { kind: "circle", center: [0, 0], r: 4 } }],
+  },
+};
+
+describe("shape selection", () => {
+  let k;
+  beforeAll(async () => {
+    k = await bootManifoldKernel();
+    k._vectors.set("plate", toInternalDocument(TWO_SHAPE, "plate"));
+  });
+
+  it("unions every shape by default", () => {
+    expect(k.vector2d("plate").area()).toBeCloseTo(400, 2);   // circle is inside the rect
+  });
+
+  it("selects one shape by name", () => {
+    // Precision 1 (not 2): a circle contour is symbolic arcs until this boolean
+    // meshes it at preview quality (116 segs), which biases area by ~1e-2 for
+    // r=4 — a pre-existing property of the mesh backend, not of shape selection.
+    expect(k.vector2d("plate", { shape: "holes" }).area()).toBeCloseTo(Math.PI * 16, 1);
+  });
+
+  it("composes shapes with ordinary booleans, in the drawing's own frame", () => {
+    const cut = k.vector2d("plate", { shape: "body" }).cut(k.vector2d("plate", { shape: "holes" }));
+    expect(cut.area()).toBeCloseTo(400 - Math.PI * 16, 1);
+  });
+
+  it("names the available shapes when one is unknown", () => {
+    expect(() => k.vector2d("plate", { shape: "rim" }))
+      .toThrow(/"plate" has no shape "rim" — it declares: body, holes/);
   });
 });
