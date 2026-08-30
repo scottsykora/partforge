@@ -1315,7 +1315,10 @@ The bbox envelope changes with `plate_w`/`plate_h` gone: the plate is a fixed 40
         // that silently stopped cutting. A one-sided gate misses half of that.
         volume: ">=2900",
         watertight: true,
-        holes: 2,
+        // Three through-holes, not two: the two bolt circles AND the keyway
+        // triangle all cut clean through the extruded plate. Confirm against
+        // `measure` rather than trusting this number.
+        holes: 3,
       },
       _view: { overlaps: 0 },
     },
