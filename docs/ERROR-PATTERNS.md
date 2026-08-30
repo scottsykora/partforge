@@ -639,19 +639,19 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** `k.vector2d(name)` was called with a name that isn't a key in the part's `vectors` field — a typo, or the declaration was never added. Same failure shape as `text2d`'s unknown-font error and `k.import`'s unknown-name error.
 - **Fix:** Add the name to `vectors`, or fix the typo. `npx partforge lint <part>` catches this statically, in microseconds, before any kernel boots (`vector-unknown-name`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" and § "Linting" (Rule catalog → Vector geometry).
 
-## svg-size-required
+## vector-size-required
 
-- **Symptom:** `vector2d: a size is required for artwork units` — pass one of `{ width }`, `{ height }`, or `{ fit }` in millimetres — thrown from a build calling `k.vector2d`.
+- **Symptom:** `a size is required for artwork units` — with the declared `vectors` name in front of it (`vector2d: "logo" a size is required …`) — pass one of `{ width }`, `{ height }`, or `{ fit }` in millimetres — thrown from a build calling `k.vector2d`.
 - **Cause:** The named document is `units: "artwork"` and the call passed none of `width`, `height`, or `fit`. Artwork coordinates carry no physical meaning (an SVG `viewBox` unit is not a length), so there is no safe default to fall back on — a deliberate asymmetry with `k.text2d`, whose `size` can default because a cap height is a real measurement. A `units: "mm"` document never raises this: its coordinates already are millimetres, so it places at scale 1 with no size option at all.
 - **Fix:** Pass exactly one of `width`/`height`/`fit`, in millimetres — or, if the file's coordinates really are millimetres, re-author it with `"units": "mm"` and drop the size option entirely (do not do both: see vector-mm-shapes-misscaled below). `npx partforge lint <part>` catches an options-literal call statically (`vector-size-missing`) before any kernel boots, provided the caller supplied `vectorDocs` so lint can read the file's units. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" and [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Units".
 
 ## vector-size-options-conflict
 
-- **Symptom:** `vector2d: pass only one of width, height, or fit` followed by the ones that were passed — e.g. `— got width, fit` — thrown from a build calling `k.vector2d`.
+- **Symptom:** `pass only one of width, height, or fit` — led by the declared `vectors` name (`vector2d: "logo" pass only one of …`) — followed by the ones that were passed — e.g. `— got width, fit` — thrown from a build calling `k.vector2d`.
 - **Cause:** Two or more size options in one call. Scaling is always uniform, so a second option would either be ignored or contradict the first; rather than silently preferring one, the op refuses. (Earlier revisions silently preferred `width`, then `height`, then `fit`.)
 - **Fix:** Keep the one you meant. `fit` sizes the longer extent of the artwork's tight bounding box, `width`/`height` the named axis; all three scale uniformly, so one is always enough.
 
-## svg-invalid-document
+## vector-invalid-document
 
 - **Symptom:** `vector2d: "` followed by the declared `vectors` name and a validation complaint — a bad `format` or `version`, a contour with no `kind` or an unknown one, a malformed `"path"` contour or segment (missing `start`, too few segments, an `arc` with no `through`, a `cubic` missing `c1`/`c2`, a non-numeric coordinate), a primitive with a bad `center`/`r`/`width`/`height`, a shape that is neither a region array nor a `{ role, regions }` object, an unknown `role`, a `bbox` that disagrees with the geometry, or (a different message, same `vector2d: "<name>"` lead) `vector2d: "<name>" is not valid JSON — <parse error>` — thrown while resolving a part's `vectors`, before `build` even runs.
 - **Cause:** The stored document isn't a well-formed `partforge-vector` file. The single most common case for the "is not valid JSON" variant: `vectors` points at the raw `.svg` file instead of an ingested `.vector.json` — an SVG document is not JSON at all, so it fails to parse before validation ever gets a chance to name a more specific problem.

@@ -179,7 +179,7 @@ export function finishKernel(k) {
     const doc = k._vectors.get(name);
     if (!doc) throw new Error(`vector2d: unknown vector "${name}" — declare it in the part's \`vectors\` field`);
     const lift = (regions, measureAgainst = regions) =>
-      placeRegions(regions, doc.units, opts, measureAgainst).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+      placeRegions(regions, doc.units, opts, { measureAgainst, name }).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
     if (opts.shape != null) {
       const entry = doc.shapes.get(opts.shape);
       if (!entry) {

@@ -1503,7 +1503,7 @@ One formula covers both: scale uniformly about the document origin, then transla
 `align`/`valign`. `fit` sizes the artwork's longer bounding-box edge; scaling is always
 uniform (never stretched to fit both). Passing **more than one** of `width`/`height`/`fit`
 throws, naming the ones it got. Omitting all three on an `"artwork"` document throws — see
-[ERROR-PATTERNS.md#svg-size-required](ERROR-PATTERNS.md#svg-size-required); unlike
+[ERROR-PATTERNS.md#vector-size-required](ERROR-PATTERNS.md#vector-size-required); unlike
 `text2d`'s `size`, which defaults to a cap height of 10 mm, there is no default here,
 because a font's cap height is a well-defined physical metric and an SVG's own coordinate
 units are not.

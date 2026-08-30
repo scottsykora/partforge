@@ -313,3 +313,30 @@ describe("a composed document is measured against the geometry that survives", (
     expect(k.vector2d("over", { width: 80 }).area()).toBeCloseTo((40 * 24 - 5 * 4) * 4, 1);
   });
 });
+
+// VECTOR-FORMAT.md 3 promises, without qualification, that every validation
+// error names the part's declared `vectors` key. That held for the file-shape
+// errors (vector-format.js's fail) and for kernel-front's own two, but not for
+// any of the six raised while PLACING — which are the ones a new author meets
+// most, because they are call-shape mistakes rather than file mistakes.
+describe("every placement error names the vector", () => {
+  let k;
+  beforeAll(async () => {
+    k = await bootManifoldKernel();
+    k._vectors.set("badge", toInternalDocument({
+      format: "partforge-vector", version: 1, units: "artwork",
+      shapes: { artwork: [{ outer: { kind: "rect", center: [0, 0], width: 20, height: 10 } }] },
+    }, "badge"));
+  });
+
+  it.each([
+    ["no size on an artwork document", {}, /a size is required/],
+    ["two size options", { width: 10, fit: 10 }, /only one of width, height, or fit/],
+    ["a non-positive size", { width: 0 }, /must be a positive number/],
+    ["a misspelled align", { width: 10, align: "centre" }, /align must be/],
+    ["a misspelled valign", { width: 10, valign: "centre" }, /valign must be/],
+  ])("%s", (_label, opts, re) => {
+    expect(() => k.vector2d("badge", opts)).toThrow(re);
+    expect(() => k.vector2d("badge", opts)).toThrow(/vector2d: "badge"/);
+  });
+});
