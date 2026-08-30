@@ -981,6 +981,213 @@ git commit -m "feat(vector): select a named shape with k.vector2d(name, { shape 
 
 ---
 
+### Task 5b: Shape roles
+
+Added 2026-08-30 after design review. A shape declares whether it adds or subtracts material, so a document states its own composition instead of leaving that fact in `build`.
+
+**Files:**
+- Modify: `src/framework/geometry/vector-format.js`
+- Modify: `src/framework/geometry/kernel-front.js`
+- Modify: `types/kernel.d.ts`
+- Test: `test/vector-format.test.js`, `test/vector2d.test.js`
+
+**Interfaces:**
+- Consumes: `toInternalDocument`, `k.vector2d(name, { shape })` (Tasks 2 and 5).
+- Produces: **`toInternalDocument` now returns `{ units, shapes: Map<string, { role, regions }> }`** — the map value gains a wrapper. This is a breaking change to the shape Task 5 consumes; `kernel-front.js` is the only reader and is updated here.
+
+**Semantics:**
+- `role` is `"add"` (default when absent) or `"subtract"`. Any other value is refused by name.
+- `k.vector2d(name)` with no `shape` returns `union(add shapes).cut(union(subtract shapes))`.
+- `k.vector2d(name, { shape })` returns that shape's own geometry whatever its role.
+- A file with no `add` shape is refused at load — an all-`subtract` file composes to nothing, and an empty `Shape2D` would only surface later as an empty extrude.
+- `bbox` still covers every region, `subtract` shapes included. It checksums stored geometry, not the composed result.
+- Ingest omits `role` entirely; its single `artwork` shape defaults to `"add"`. The fixture must not change.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `test/vector-format.test.js`:
+
+```js
+const roleDoc = (roles) => ({
+  format: "partforge-vector", version: 1, units: "mm",
+  shapes: Object.fromEntries(Object.entries(roles).map(([name, role]) => [
+    name,
+    role === null
+      ? [{ outer: { kind: "circle", center: [0, 0], r: 3 } }]
+      : { role, regions: undefined } && [{ outer: { kind: "circle", center: [0, 0], r: 3 } }],
+  ])),
+});
+
+describe("roles", () => {
+  const doc = (shapes) => ({ format: "partforge-vector", version: 1, units: "mm", shapes });
+  const body = { role: "add", regions: [{ outer: { kind: "rect", center: [0, 0], width: 20, height: 20 } }] };
+  const hole = { role: "subtract", regions: [{ outer: { kind: "circle", center: [0, 0], r: 4 } }] };
+
+  it("defaults a bare region array to the add role", () => {
+    const d = toInternalDocument(doc({ s: [{ outer: { kind: "circle", center: [0, 0], r: 3 } }] }), "t");
+    expect(d.shapes.get("s").role).toBe("add");
+    expect(d.shapes.get("s").regions).toHaveLength(1);
+  });
+
+  it("reads an explicit role", () => {
+    const d = toInternalDocument(doc({ body, hole }), "t");
+    expect(d.shapes.get("body").role).toBe("add");
+    expect(d.shapes.get("hole").role).toBe("subtract");
+  });
+
+  it("refuses an unknown role", () => {
+    expect(() => toInternalDocument(doc({ s: { role: "erase", regions: body.regions } }), "t"))
+      .toThrow(/has an unknown `role` "erase".*"add".*"subtract"/s);
+  });
+
+  it("refuses a file with no add shape", () => {
+    expect(() => toInternalDocument(doc({ hole }), "t"))
+      .toThrow(/has no shape with role "add"/);
+  });
+});
+```
+
+Add to `test/vector2d.test.js`, in the booted-kernel block:
+
+```js
+const ROLE_DOC = {
+  format: "partforge-vector", version: 1, units: "mm",
+  shapes: {
+    body:  { role: "add", regions: [{ outer: { kind: "rect", center: [0, 0], width: 20, height: 20 } }] },
+    holes: { role: "subtract", regions: [{ outer: { kind: "circle", center: [0, 0], r: 4 } }] },
+  },
+};
+
+describe("roles compose", () => {
+  beforeAll(() => { k._vectors.set("roled", toInternalDocument(ROLE_DOC, "roled")); });
+
+  it("subtracts by default instead of unioning", () => {
+    expect(k.vector2d("roled").area()).toBeCloseTo(400 - Math.PI * 16, 1);
+  });
+
+  it("still hands back a subtract shape when it is named explicitly", () => {
+    expect(k.vector2d("roled", { shape: "holes" }).area()).toBeCloseTo(Math.PI * 16, 1);
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `npx vitest run test/vector-format.test.js -t "roles" && npx vitest run test/vector2d.test.js -t "roles compose"`
+Expected: FAIL — a shape is still a bare array and the default call unions.
+
+- [ ] **Step 3: Accept both shape forms in the validator**
+
+A shape value is either a bare array of regions (role defaults to `"add"`) or an object `{ role?, regions }`. In `validateVectorDocument`, replace the per-name body:
+
+```js
+const ROLES = ["add", "subtract"];
+
+// A shape is either a bare region array — the common case, role "add" — or
+// { role, regions }. Two forms rather than one because "add" is an honest
+// default: a painted region adds material, which is what every file written
+// before roles existed already meant.
+const shapeParts = (v) => (Array.isArray(v) ? { role: "add", regions: v } : { role: v?.role ?? "add", regions: v?.regions });
+
+  let anyAdd = false;
+  for (const name of names) {
+    const where = `shape ${JSON.stringify(name)}`;
+    const raw = doc.shapes[name];
+    if (!raw || (typeof raw !== "object")) fail(label, where, "is not an array of regions or a { role, regions } object");
+    const { role, regions } = shapeParts(raw);
+    if (!ROLES.includes(role)) {
+      fail(label, where, `has an unknown \`role\` ${JSON.stringify(role)}`,
+        '`role` must be "add" (the default, may be omitted) or "subtract"');
+    }
+    if (role === "add") anyAdd = true;
+    if (!Array.isArray(regions)) fail(label, where, "is not an array of regions");
+    if (regions.length === 0) fail(label, where, "is empty", "a shape needs at least one region");
+    regions.forEach((rg, i) => { /* unchanged region + contour checks, `${where} region ${i + 1}` */ });
+  }
+  if (!anyAdd) {
+    fail(label, "file", 'has no shape with role "add"',
+      "a file whose every shape subtracts composes to nothing — at least one shape must add material");
+  }
+```
+
+`allRegionsUnchecked` must also read through the wrapper, so `bbox` keeps covering every region including subtracted ones:
+
+```js
+const allRegionsUnchecked = (doc) =>
+  Object.values(doc.shapes).flatMap((v) => shapeParts(v).regions).map(toRegion);
+```
+
+And `toInternalDocument` returns the wrapper:
+
+```js
+export function toInternalDocument(doc, label = "(unnamed)") {
+  validateVectorDocument(doc, label);
+  return {
+    units: doc.units,
+    shapes: new Map(Object.entries(doc.shapes).map(([name, v]) => {
+      const { role, regions } = shapeParts(v);
+      return [name, { role, regions: regions.map(toRegion) }];
+    })),
+  };
+}
+```
+
+`fromInternalRegions` is unchanged — ingest emits a bare array, so its single `artwork` shape defaults to `"add"` and the checked-in fixture must not change.
+
+- [ ] **Step 4: Compose by role in the kernel op**
+
+In `kernel-front.js`, `k.vector2d` now reads `.regions` through the wrapper, and the default call composes:
+
+```js
+    const lift = (regions) => placeRegions(regions, doc.units, opts).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+    if (opts.shape != null) {
+      const entry = doc.shapes.get(opts.shape);
+      if (!entry) {
+        throw new Error(`vector2d: "${name}" has no shape ${JSON.stringify(opts.shape)} — it declares: ${[...doc.shapes.keys()].join(", ")}`);
+      }
+      // Naming a shape is a request for THAT geometry; role governs only the
+      // default composition below.
+      return lift(entry.regions);
+    }
+    const adds = [...doc.shapes.values()].filter((e) => e.role === "add").flatMap((e) => e.regions);
+    const subs = [...doc.shapes.values()].filter((e) => e.role === "subtract").flatMap((e) => e.regions);
+    const composed = lift(adds);
+    return subs.length === 0 ? composed : composed.cut(lift(subs));
+```
+
+Both groups are unioned before the cut, and union is commutative, so the result does not depend on key order. `adds` is never empty — the validator guarantees at least one `add` shape.
+
+- [ ] **Step 5: Update the type surface**
+
+In `types/kernel.d.ts`, document that `shape` overrides role-based composition:
+
+```ts
+  /**
+   * Name of one shape in the file, returned whatever its `role`. Omit for the
+   * composed result: every `"add"` shape unioned, minus every `"subtract"` one.
+   */
+  shape?: string;
+```
+
+- [ ] **Step 6: Run the tests**
+
+Run: `npx vitest run test/vector-format.test.js test/vector2d.test.js && npm test`
+Expected: PASS. The `emblem` fixture has one bare-array shape, so it defaults to `"add"` and its geometry is unchanged.
+
+- [ ] **Step 7: Confirm the fixture did not move**
+
+Run: `node scripts/ingest-svg.mjs src/parts/assets/emblem.svg | diff - src/parts/assets/emblem.vector.json`
+Expected: no output beyond a possible trailing newline. Ingest must not have started emitting `role`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add -A
+git commit -m "feat(vector): per-shape add/subtract roles so a file states its own composition"
+```
+
+---
+
 ### Task 6: Lint — the `vectorDocs` seam and the three rules
 
 **Files:**
@@ -1227,16 +1434,25 @@ One part now exercises `units: "mm"`, named shapes, all four contour kinds, and 
   "units": "mm",
   "note": "Emblem backing plate. Drawn at 40 x 24 mm with M3 clearance holes on 28 mm centres. Coordinates are millimetres and place as authored, so `body` and `holes` share one frame — the cut in build lands where it is drawn.",
   "shapes": {
-    "body": [
-      { "outer": { "kind": "rect", "center": [0, 0], "width": 40, "height": 24, "radius": 4 } }
-    ],
-    "holes": [
-      { "outer": { "kind": "circle", "center": [-14, 0], "r": 1.7 } },
-      { "outer": { "kind": "circle", "center": [14, 0], "r": 1.7 } }
-    ],
-    "keyway": [
-      { "outer": { "kind": "polygon", "points": [[-3, 9], [3, 9], [0, 5]] } }
-    ]
+    "body": {
+      "role": "add",
+      "regions": [
+        { "outer": { "kind": "rect", "center": [0, 0], "width": 40, "height": 24, "radius": 4 } }
+      ]
+    },
+    "holes": {
+      "role": "subtract",
+      "regions": [
+        { "outer": { "kind": "circle", "center": [-14, 0], "r": 1.7 } },
+        { "outer": { "kind": "circle", "center": [14, 0], "r": 1.7 } }
+      ]
+    },
+    "keyway": {
+      "role": "subtract",
+      "regions": [
+        { "outer": { "kind": "polygon", "points": [[-3, 9], [3, 9], [0, 5]] } }
+      ]
+    }
   }
 }
 ```
@@ -1285,10 +1501,12 @@ In `src/parts/emblem.js`, declare the second vector and build the plate from it 
 **A note the implementer must get right:** every one of those three calls passes the same `width: p.plate_w`, and each is scaled against **its own shape's bounds** — so `holes` scaled to `plate_w` would be enormous. That is wrong. Because the file is `units: "mm"`, the correct form passes **no size at all**, letting all three shapes place as authored in one frame, and drops `plate_w` from the plate geometry:
 
 ```js
+      // No shape named and no size: the file's own roles compose it (body minus
+      // holes minus keyway), and units "mm" places it exactly as drawn. Passing
+      // a size here would scale each shape against ITS OWN bounds — the trap
+      // this format exists to prevent.
       build: (k, p) => k
-        .vector2d("plate", { shape: "body" })
-        .cut(k.vector2d("plate", { shape: "holes" }))
-        .cut(k.vector2d("plate", { shape: "keyway" }))
+        .vector2d("plate")
         .extrude({ h: p.plate_t })
         .union(k.vector2d("emblem", { width: p.emblem_w }).extrude({ h: p.emboss }).translate([0, 0, p.plate_t])),
 ```

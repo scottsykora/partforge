@@ -241,6 +241,38 @@ non-overlapping per shape, so the default union is independent of key order.
 
 Ingest emits a single shape named `"artwork"`.
 
+### Roles (added 2026-08-30, after review)
+
+A shape may declare `role`: `"add"` (the default) or `"subtract"`.
+
+`k.vector2d(name)` with no `shape` returns the **composed** result — the union of
+every `add` shape, minus the union of every `subtract` shape — rather than a
+naive union of everything. `k.vector2d(name, { shape })` returns that shape's own
+geometry whatever its role: naming a shape explicitly is a request for that
+geometry, and role governs only the default composition.
+
+**Why this exists.** Without it a document is not self-describing. Reading
+`plate.vector.json` and finding `body`, `holes`, and `keyway`, you cannot tell
+that the last two are subtracted — that fact lives in `build`. `role` lets the
+file state its own intent without becoming a language: there is no evaluation
+order to reason about (union is commutative, and subtracting a union is
+order-independent), no references between documents, and no cycles. It is the
+middle ground between the flat union this spec originally described and the
+op-graph §"Out of scope" still declines.
+
+`role` is optional where `units` is required, and the difference is principled:
+`"add"` is an honest default because a painted region adds material, which is
+what every existing document already means. `units` has no honest default
+because artwork coordinates have no physical meaning.
+
+**A document must declare at least one `add` shape.** An all-`subtract`
+document composes to nothing, and returning an empty `Shape2D` from the default
+call would surface much later as an empty extrude. Refused at load, by name.
+
+**`bbox` still covers every region, `subtract` shapes included.** It is a
+checksum over the file's stored geometry, not over the composed result — a
+`subtract` shape that extends past the `add` shapes still counts toward it.
+
 Composition is ordinary `Shape2D` algebra in `build`, which is what makes
 `units: "mm"` load-bearing — the pieces share the drawing's coordinate frame, so
 a cut lands where the drawing says it lands:
@@ -475,7 +507,10 @@ rename.
   unstarted. This spec makes the format worth pointing a control at; it does not
   add one.
 - **An op-graph in JSON.** Documents do not reference or combine other
-  documents. Composition is `Shape2D` algebra in `build`.
+  documents, and there is no intersect, no ordering, and no nesting. Per-shape
+  `role` is deliberately the weakest thing that makes a document self-describing:
+  two flat groups, both commutative. Anything that needs more than that belongs
+  in `build`.
 - **Per-contour transforms.** Considered and declined: they interact with the
   mm-as-authored rule and add an evaluation step to reason about, for a
   convenience an agent can meet by emitting the coordinates.
