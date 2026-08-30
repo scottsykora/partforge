@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "vitest";
 import { validateVectorDocument, toInternalDocument, fromInternalRegions, VECTOR_FORMAT, VECTOR_VERSION }
   from "../src/framework/geometry/vector-format.js";
+import { profileArea, profileBounds } from "../src/framework/geometry/contour-ops.js";
 
 const doc = (over = {}) => ({
   format: VECTOR_FORMAT,
@@ -9,7 +10,7 @@ const doc = (over = {}) => ({
   source: "x.svg",
   bbox: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
   shapes: { body: [{
-    outer: { start: [0, 0], segments: [
+    outer: { kind: "path", start: [0, 0], segments: [
       { kind: "line", to: [10, 0] },
       { kind: "line", to: [10, 10] },
       { kind: "line", to: [0, 10] },
@@ -99,6 +100,7 @@ test("a hand-authored exact bbox for a phase-shifted circle validates", () => {
     bbox: { minX: -10, minY: -10, maxX: 10, maxY: 10 },
     shapes: { artwork: [{
       outer: {
+        kind: "path",
         start: [9.848078, 1.736482],
         segments: [
           { kind: "arc", to: [-6.427876, 7.660444], through: [3.420201, 9.396926] },
@@ -242,5 +244,98 @@ describe("envelope", () => {
     expect(out.units).toBe("mm");
     expect(Object.keys(out.shapes)).toEqual(["body"]);
     expect(toInternalDocument(out, "plate").shapes.get("body")).toHaveLength(1);
+  });
+});
+
+const withShape = (contour) => ({
+  format: "partforge-vector", version: 1, units: "mm",
+  shapes: { s: [{ outer: contour }] },
+});
+const regions = (contour) => toInternalDocument(withShape(contour), "t").shapes.get("s");
+
+describe("contour kinds", () => {
+  it("requires kind on a path", () => {
+    expect(() => regions({ start: [0, 0], segments: [{ kind: "line", to: [1, 0] }, { kind: "line", to: [1, 1] }] }))
+      .toThrow(/has no "kind"/);
+  });
+
+  it("expands a circle to two arcs with the right area and bounds", () => {
+    const r = regions({ kind: "circle", center: [3, 4], r: 5 });
+    expect(r[0].outer.segments).toHaveLength(2);
+    expect(r[0].outer.segments.every((s) => s.via)).toBe(true);
+    // profileArea goes through the shared arc->cubic tessellation (arcToCubicSegments,
+    // <=90 degrees/piece); a 180 degree arc becomes two quarter-circle beziers, carrying
+    // the standard ~0.03% circle-approximation area error other suites already tolerate
+    // (e.g. test/contour-ops-queries.test.js's circle-area check uses 0 digits).
+    expect(profileArea(r)).toBeCloseTo(Math.PI * 25, 1);
+    const { min, max } = profileBounds(r);
+    expect(min).toEqual([-2, -1]);
+    expect(max).toEqual([8, 9]);
+  });
+
+  it("expands a square rect to three line segments", () => {
+    const r = regions({ kind: "rect", center: [0, 0], width: 10, height: 4 });
+    expect(r[0].outer.segments).toHaveLength(3);
+    expect(profileArea(r)).toBeCloseTo(40, 6);
+    expect(profileBounds(r).min).toEqual([-5, -2]);
+  });
+
+  it("expands a rounded rect and matches the analytic area", () => {
+    const r = regions({ kind: "rect", center: [0, 0], width: 10, height: 6, radius: 2 });
+    expect(r[0].outer.segments).toHaveLength(8);
+    // 10*6 minus four corner squares plus the quarter-discs that replace them.
+    // (2 digits, not 3: each 90-degree corner arc carries the same bezier-tessellation
+    // area error as the circle test above, just over a quarter of the perimeter.)
+    expect(profileArea(r)).toBeCloseTo(60 - 4 * 4 + Math.PI * 4, 2);
+  });
+
+  it("omits zero-length edges at the maximum radius", () => {
+    const r = regions({ kind: "rect", center: [0, 0], width: 10, height: 10, radius: 5 });
+    expect(r[0].outer.segments).toHaveLength(4);
+    expect(r[0].outer.segments.every((s) => s.via)).toBe(true);
+    // Same bezier-tessellation tolerance as the circle test above — at the maximum
+    // radius this rounded rect degenerates to a plain circle.
+    expect(profileArea(r)).toBeCloseTo(Math.PI * 25, 1);
+  });
+
+  it("refuses a radius past half the shorter side, naming the maximum", () => {
+    expect(() => regions({ kind: "rect", center: [0, 0], width: 10, height: 6, radius: 3.5 }))
+      .toThrow(/radius 3\.5 exceeds the maximum 3/);
+  });
+
+  it("expands a polygon and refuses fewer than three points", () => {
+    const r = regions({ kind: "polygon", points: [[0, 0], [4, 0], [4, 3]] });
+    expect(r[0].outer.segments).toHaveLength(2);
+    expect(profileArea(r)).toBeCloseTo(6, 6);
+    expect(() => regions({ kind: "polygon", points: [[0, 0], [4, 0]] })).toThrow(/needs at least 3 points/);
+  });
+
+  it("refuses an unknown contour kind, naming the four", () => {
+    expect(() => regions({ kind: "blob", center: [0, 0], r: 1 }))
+      .toThrow(/kind must be "path", "circle", "rect", or "polygon"/);
+  });
+
+  it("matches the hand-written path equivalent of each primitive", () => {
+    // Pins the normative expansions in the spec: a primitive is exactly the
+    // contour an author would have written out by hand, never an approximation.
+    const handRect = { kind: "path", start: [-5, -2], segments: [
+      { kind: "line", to: [5, -2] }, { kind: "line", to: [5, 2] }, { kind: "line", to: [-5, 2] },
+    ] };
+    expect(regions({ kind: "rect", center: [0, 0], width: 10, height: 4 })).toEqual(regions(handRect));
+
+    const handCircle = { kind: "path", start: [5, 0], segments: [
+      { kind: "arc", to: [-5, 0], through: [0, 5] }, { kind: "arc", to: [5, 0], through: [0, -5] },
+    ] };
+    expect(regions({ kind: "circle", center: [0, 0], r: 5 })).toEqual(regions(handCircle));
+  });
+
+  it("gives a primitive hole the same geometry as its hand-written path", () => {
+    const doc = (hole) => toInternalDocument({
+      format: "partforge-vector", version: 1, units: "mm",
+      shapes: { s: [{ outer: { kind: "rect", center: [0, 0], width: 20, height: 20 }, holes: [hole] }] },
+    }, "t").shapes.get("s");
+    const prim = doc({ kind: "circle", center: [0, 0], r: 4 });
+    // Same bezier-tessellation tolerance as the other circle-area checks above.
+    expect(profileArea(prim)).toBeCloseTo(400 - Math.PI * 16, 1);
   });
 });

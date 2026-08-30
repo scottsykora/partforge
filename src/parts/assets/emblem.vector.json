@@ -14,6 +14,7 @@
     "artwork": [
       {
         "outer": {
+          "kind": "path",
           "start": [
             14,
             -24
@@ -58,6 +59,7 @@
       },
       {
         "outer": {
+          "kind": "path",
           "start": [
             6,
             -40

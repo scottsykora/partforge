@@ -31,6 +31,7 @@ const ROUND = 1e6;            // 6 decimal places
 
 const round6 = (n) => Math.round(n * ROUND) / ROUND;
 const isPt = (v) => Array.isArray(v) && v.length === 2 && Number.isFinite(v[0]) && Number.isFinite(v[1]);
+const num = (v) => Number.isFinite(v);
 
 // Every message carries the vectors key and the position, because the reader is as
 // likely to be an agent that generated the file as a human who wrote it.
@@ -38,14 +39,103 @@ const fail = (label, where, what, fix) => {
   throw new Error(`vector2d: "${label}" ${where} ${what}${fix ? ` — ${fix}` : ""}`);
 };
 
-function checkContour(label, where, contour) {
-  if (!contour || typeof contour !== "object") fail(label, where, "is not an object");
-  if (!isPt(contour.start)) fail(label, where, 'has no valid "start"', "start must be a [x, y] pair of finite numbers");
-  if (!Array.isArray(contour.segments) || contour.segments.length < 2) {
-    fail(label, where, `has too few segments (${contour.segments?.length ?? 0})`,
+const EPS = 1e-12;
+const CONTOUR_KINDS = '"path", "circle", "rect", or "polygon"';
+
+// Every primitive expands to the SAME internal contour a hand-written "path"
+// would produce, right here at the JSON boundary. Nothing downstream —
+// placement, Shape2D, either backend, the exporters — knows primitives exist.
+//
+// circle and rect wind counter-clockwise by construction; polygon follows the
+// author's point order. None of them needs to know whether it is an outer or a
+// hole: ensureRegionWinding reorients from that label when the region is lifted
+// into a Shape2D, so stored winding carries no information.
+const expandCircle = ({ center: [cx, cy], r }) => ({
+  start: [cx + r, cy],
+  segments: [
+    { to: [cx - r, cy], via: [cx, cy + r] },
+    { to: [cx + r, cy], via: [cx, cy - r] },
+  ],
+});
+
+const expandRect = ({ center: [cx, cy], width, height, radius = 0 }) => {
+  const hw = width / 2, hh = height / 2;
+  if (!(radius > 0)) {
+    return { start: [cx - hw, cy - hh], segments: [
+      { to: [cx + hw, cy - hh] }, { to: [cx + hw, cy + hh] }, { to: [cx - hw, cy + hh] },
+    ] };
+  }
+  const r = radius, k = r / Math.SQRT2;
+  const start = [cx - hw + r, cy - hh];
+  const raw = [
+    { to: [cx + hw - r, cy - hh] },
+    { to: [cx + hw, cy - hh + r], via: [cx + hw - r + k, cy - hh + r - k] },
+    { to: [cx + hw, cy + hh - r] },
+    { to: [cx + hw - r, cy + hh], via: [cx + hw - r + k, cy + hh - r + k] },
+    { to: [cx - hw + r, cy + hh] },
+    { to: [cx - hw, cy + hh - r], via: [cx - hw + r - k, cy + hh - r + k] },
+    { to: [cx - hw, cy - hh + r] },
+    { to: [cx - hw + r, cy - hh], via: [cx - hw + r - k, cy - hh + r - k] },
+  ];
+  // At radius = min(w,h)/2 two (or four) edges collapse to a point. Emitting a
+  // zero-length line would hand a degenerate edge to the boolean engine.
+  const out = [];
+  let prev = start;
+  for (const seg of raw) {
+    if (!seg.via && Math.abs(seg.to[0] - prev[0]) < EPS && Math.abs(seg.to[1] - prev[1]) < EPS) continue;
+    out.push(seg);
+    prev = seg.to;
+  }
+  return { start, segments: out };
+};
+
+const expandPolygon = ({ points }) => ({
+  start: [...points[0]],
+  segments: points.slice(1).map((p) => ({ to: [...p] })),
+});
+
+function checkContour(label, where, c) {
+  if (!c || typeof c !== "object") fail(label, where, "is not an object");
+  if (typeof c.kind !== "string") {
+    fail(label, where, 'has no "kind"', `every contour needs a kind — ${CONTOUR_KINDS}`);
+  }
+  if (c.kind === "circle") {
+    if (!isPt(c.center)) fail(label, where, 'has "kind": "circle" but no valid "center"', "center must be an [x, y] pair of finite numbers");
+    if (!num(c.r) || c.r <= 0) fail(label, where, `has "kind": "circle" but a non-positive r (${JSON.stringify(c.r)})`, "r must be a finite number greater than 0");
+    return;
+  }
+  if (c.kind === "rect") {
+    if (!isPt(c.center)) fail(label, where, 'has "kind": "rect" but no valid "center"', "center must be an [x, y] pair of finite numbers");
+    for (const k of ["width", "height"]) {
+      if (!num(c[k]) || c[k] <= 0) fail(label, where, `has "kind": "rect" but a non-positive ${k} (${JSON.stringify(c[k])})`, `${k} must be a finite number greater than 0`);
+    }
+    if (c.radius != null) {
+      if (!num(c.radius) || c.radius < 0) fail(label, where, `has "kind": "rect" but an invalid radius (${JSON.stringify(c.radius)})`, "radius must be a finite number of 0 or more");
+      const max = Math.min(c.width, c.height) / 2;
+      if (c.radius > max) {
+        fail(label, where, `has "kind": "rect" with radius ${c.radius} exceeds the maximum ${round6(max)}`,
+          "a corner radius cannot be more than half the shorter side");
+      }
+    }
+    return;
+  }
+  if (c.kind === "polygon") {
+    if (!Array.isArray(c.points) || c.points.length < 3) {
+      fail(label, where, `has "kind": "polygon" with ${c.points?.length ?? 0} points`, "a polygon needs at least 3 points");
+    }
+    c.points.forEach((p, i) => { if (!isPt(p)) fail(label, `${where} point ${i + 1}`, "is not a valid [x, y] pair of finite numbers"); });
+    return;
+  }
+  if (c.kind !== "path") {
+    fail(label, where, `has unknown "kind": ${JSON.stringify(c.kind)}`, `kind must be ${CONTOUR_KINDS}`);
+  }
+  // "path" — the explicit form.
+  if (!isPt(c.start)) fail(label, where, 'has no valid "start"', "start must be a [x, y] pair of finite numbers");
+  if (!Array.isArray(c.segments) || c.segments.length < 2) {
+    fail(label, where, `has too few segments (${c.segments?.length ?? 0})`,
       "a closed contour needs at least two segments; it closes implicitly from the last `to` back to `start`");
   }
-  contour.segments.forEach((s, i) => {
+  c.segments.forEach((s, i) => {
     const at = `${where} segment ${i + 1}`;
     if (!s || typeof s !== "object") fail(label, at, "is not an object");
     if (!isPt(s.to)) fail(label, at, 'has no valid "to"', "every segment needs a `to` [x, y] pair of finite numbers");
@@ -132,6 +222,9 @@ const toSeg = (s) =>
   : { to: [...s.to] };
 
 function toContour(c) {
+  if (c.kind === "circle") return expandCircle(c);
+  if (c.kind === "rect") return expandRect(c);
+  if (c.kind === "polygon") return expandPolygon(c);
   const segments = c.segments.map(toSeg);
   // A file may spell the implicit closure out. Dropping it here keeps one
   // internal representation, so downstream never has to ask which form it got.
@@ -177,7 +270,11 @@ const fromSeg = (s) =>
              c1: [round6(s.c1[0]), round6(s.c1[1])], c2: [round6(s.c2[0]), round6(s.c2[1])] }
   : { kind: "line", to: [round6(s.to[0]), round6(s.to[1])] };
 
-const fromContour = (c) => ({ start: [round6(c.start[0]), round6(c.start[1])], segments: c.segments.map(fromSeg) });
+const fromContour = (c) => ({
+  kind: "path",
+  start: [round6(c.start[0]), round6(c.start[1])],
+  segments: c.segments.map(fromSeg),
+});
 
 export function fromInternalRegions(regions, { source = null, units = "artwork", shape = "artwork" } = {}) {
   const bb = regionsBbox(regions);

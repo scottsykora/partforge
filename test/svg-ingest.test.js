@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { expect, test } from "vitest";
+import { expect, it, test } from "vitest";
+import { readFileSync } from "node:fs";
 import { ingestSvg } from "../src/framework/ingest/svg-ingest.js";
 import { toInternalDocument } from "../src/framework/geometry/vector-format.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
@@ -140,4 +141,17 @@ test("emitted regions carry the storage winding invariant: outer CCW, holes CW",
   const [donut] = regionsOf(ingestSvg(svg(`<path fill="#111" fill-rule="evenodd" d="${d}"/>`)));
   expect(signed(donut.outer)).toBeGreaterThan(0);
   expect(signed(donut.holes[0])).toBeLessThan(0);
+});
+
+it("is deterministic: ingesting twice gives identical bytes", () => {
+  const svg = readFileSync("src/parts/assets/emblem.svg", "utf8");
+  const a = JSON.stringify(ingestSvg(svg, { source: "emblem.svg" }), null, 2);
+  const b = JSON.stringify(ingestSvg(svg, { source: "emblem.svg" }), null, 2);
+  expect(a).toBe(b);
+});
+
+it("reproduces the checked-in emblem fixture byte for byte", () => {
+  const svg = readFileSync("src/parts/assets/emblem.svg", "utf8");
+  const fresh = `${JSON.stringify(ingestSvg(svg, { source: "emblem.svg" }), null, 2)}\n`;
+  expect(fresh).toBe(readFileSync("src/parts/assets/emblem.vector.json", "utf8"));
 });
