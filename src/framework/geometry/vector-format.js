@@ -158,6 +158,14 @@ function checkContour(label, where, c) {
 
 export const VECTOR_UNITS = ["mm", "artwork"];
 
+const ROLES = ["add", "subtract"];
+
+// A shape is either a bare region array — the common case, role "add" — or
+// { role, regions }. Two forms rather than one because "add" is an honest
+// default: a painted region adds material, which is what every file written
+// before roles existed already meant.
+const shapeParts = (v) => (Array.isArray(v) ? { role: "add", regions: v } : { role: v?.role ?? "add", regions: v?.regions });
+
 export function validateVectorDocument(doc, label = "(unnamed)") {
   if (!doc || typeof doc !== "object") fail(label, "file", "is not an object", "expected parsed JSON");
   if (doc.format !== VECTOR_FORMAT) {
@@ -186,17 +194,30 @@ export function validateVectorDocument(doc, label = "(unnamed)") {
   if (names.length === 0) {
     fail(label, "file", "has no shapes", 'a vector file needs at least one named shape: { "shapes": { "artwork": [ …regions… ] } }');
   }
+  let anyAdd = false;
   for (const name of names) {
-    const regions = doc.shapes[name];
-    if (!Array.isArray(regions)) fail(label, `shape ${JSON.stringify(name)}`, "is not an array of regions");
-    if (regions.length === 0) fail(label, `shape ${JSON.stringify(name)}`, "is empty", "a shape needs at least one region");
+    const where = `shape ${JSON.stringify(name)}`;
+    const raw = doc.shapes[name];
+    if (!raw || typeof raw !== "object") fail(label, where, "is not an array of regions or a { role, regions } object");
+    const { role, regions } = shapeParts(raw);
+    if (!ROLES.includes(role)) {
+      fail(label, where, `has an unknown \`role\` ${JSON.stringify(role)}`,
+        '`role` must be "add" (the default, may be omitted) or "subtract"');
+    }
+    if (role === "add") anyAdd = true;
+    if (!Array.isArray(regions)) fail(label, where, "is not an array of regions");
+    if (regions.length === 0) fail(label, where, "is empty", "a shape needs at least one region");
     regions.forEach((rg, i) => {
-      const where = `shape ${JSON.stringify(name)} region ${i + 1}`;
-      if (!rg || typeof rg !== "object") fail(label, where, "is not an object");
-      checkContour(label, `${where} outer`, rg.outer);
-      if (rg.holes != null && !Array.isArray(rg.holes)) fail(label, where, "has a non-array `holes`");
-      (rg.holes ?? []).forEach((h, j) => checkContour(label, `${where} hole ${j + 1}`, h));
+      const at = `${where} region ${i + 1}`;
+      if (!rg || typeof rg !== "object") fail(label, at, "is not an object");
+      checkContour(label, `${at} outer`, rg.outer);
+      if (rg.holes != null && !Array.isArray(rg.holes)) fail(label, at, "has a non-array `holes`");
+      (rg.holes ?? []).forEach((h, j) => checkContour(label, `${at} hole ${j + 1}`, h));
     });
+  }
+  if (!anyAdd) {
+    fail(label, "file", 'has no shape with role "add"',
+      "a file whose every shape subtracts composes to nothing — at least one shape must add material");
   }
 
   // bbox is a CACHE, not an authority: placement recomputes it anyway. It is
@@ -235,13 +256,17 @@ function toContour(c) {
 
 const toRegion = (rg) => ({ outer: toContour(rg.outer), holes: (rg.holes ?? []).map(toContour) });
 
-const allRegionsUnchecked = (doc) => Object.values(doc.shapes).flat().map(toRegion);
+const allRegionsUnchecked = (doc) =>
+  Object.values(doc.shapes).flatMap((v) => shapeParts(v).regions).map(toRegion);
 
 export function toInternalDocument(doc, label = "(unnamed)") {
   validateVectorDocument(doc, label);
   return {
     units: doc.units,
-    shapes: new Map(Object.entries(doc.shapes).map(([name, regions]) => [name, regions.map(toRegion)])),
+    shapes: new Map(Object.entries(doc.shapes).map(([name, v]) => {
+      const { role, regions } = shapeParts(v);
+      return [name, { role, regions: regions.map(toRegion) }];
+    })),
   };
 }
 

@@ -131,7 +131,7 @@ test("toInternalDocument maps kind/through onto the implicit IR", () => {
   // the kind/through mapping instead of tripping the (separately tested)
   // bbox-consistency check.
   d.bbox = { minX: 0, minY: 0, maxX: 11, maxY: 11.5 };
-  const [r] = toInternalDocument(d).shapes.get("body");
+  const [r] = toInternalDocument(d).shapes.get("body").regions;
   expect(r.outer.start).toEqual([0, 0]);
   expect(r.outer.segments[0]).toEqual({ to: [10, 0] });
   expect(r.outer.segments[1]).toEqual({ to: [10, 10], via: [11, 5] });
@@ -141,7 +141,7 @@ test("toInternalDocument maps kind/through onto the implicit IR", () => {
 test("toInternalDocument drops a redundant closing segment equal to start", () => {
   const d = doc();
   d.shapes.body[0].outer.segments.push({ kind: "line", to: [0, 0] });
-  const [r] = toInternalDocument(d).shapes.get("body");
+  const [r] = toInternalDocument(d).shapes.get("body").regions;
   expect(r.outer.segments).toHaveLength(3);
 });
 
@@ -159,7 +159,7 @@ test("fromInternalRegions round-trips back through toInternalDocument", () => {
   expect(typeof out.note).toBe("string");
   expect(out.shapes.body[0].outer.segments[1]).toEqual({ kind: "arc", to: [10, 10], through: [11, 5] });
   expect(() => validateVectorDocument(out, "rt")).not.toThrow();
-  const back = toInternalDocument(out).shapes.get("body");
+  const back = toInternalDocument(out).shapes.get("body").regions;
   expect(back[0].outer.segments).toEqual(regions[0].outer.segments);
   expect(back[0].holes).toHaveLength(1);
 });
@@ -196,7 +196,8 @@ describe("envelope", () => {
     const d = toInternalDocument(envelopeDoc(), "plate");
     expect(d.units).toBe("mm");
     expect([...d.shapes.keys()]).toEqual(["body"]);
-    expect(d.shapes.get("body")).toHaveLength(1);
+    expect(d.shapes.get("body").role).toBe("add");
+    expect(d.shapes.get("body").regions).toHaveLength(1);
   });
 
   it("places identically with and without a bbox", () => {
@@ -240,10 +241,10 @@ describe("envelope", () => {
 
   it("round-trips through fromInternalRegions", () => {
     const internal = toInternalDocument(envelopeDoc(), "plate");
-    const out = fromInternalRegions(internal.shapes.get("body"), { units: "mm", shape: "body" });
+    const out = fromInternalRegions(internal.shapes.get("body").regions, { units: "mm", shape: "body" });
     expect(out.units).toBe("mm");
     expect(Object.keys(out.shapes)).toEqual(["body"]);
-    expect(toInternalDocument(out, "plate").shapes.get("body")).toHaveLength(1);
+    expect(toInternalDocument(out, "plate").shapes.get("body").regions).toHaveLength(1);
   });
 });
 
@@ -251,7 +252,7 @@ const withShape = (contour) => ({
   format: "partforge-vector", version: 1, units: "mm",
   shapes: { s: [{ outer: contour }] },
 });
-const regions = (contour) => toInternalDocument(withShape(contour), "t").shapes.get("s");
+const regions = (contour) => toInternalDocument(withShape(contour), "t").shapes.get("s").regions;
 
 describe("contour kinds", () => {
   it("requires kind on a path", () => {
@@ -333,9 +334,37 @@ describe("contour kinds", () => {
     const doc = (hole) => toInternalDocument({
       format: "partforge-vector", version: 1, units: "mm",
       shapes: { s: [{ outer: { kind: "rect", center: [0, 0], width: 20, height: 20 }, holes: [hole] }] },
-    }, "t").shapes.get("s");
+    }, "t").shapes.get("s").regions;
     const prim = doc({ kind: "circle", center: [0, 0], r: 4 });
     // Same bezier-tessellation tolerance as the other circle-area checks above.
     expect(profileArea(prim)).toBeCloseTo(400 - Math.PI * 16, 1);
+  });
+});
+
+describe("roles", () => {
+  const doc = (shapes) => ({ format: "partforge-vector", version: 1, units: "mm", shapes });
+  const body = { role: "add", regions: [{ outer: { kind: "rect", center: [0, 0], width: 20, height: 20 } }] };
+  const hole = { role: "subtract", regions: [{ outer: { kind: "circle", center: [0, 0], r: 4 } }] };
+
+  it("defaults a bare region array to the add role", () => {
+    const d = toInternalDocument(doc({ s: [{ outer: { kind: "circle", center: [0, 0], r: 3 } }] }), "t");
+    expect(d.shapes.get("s").role).toBe("add");
+    expect(d.shapes.get("s").regions).toHaveLength(1);
+  });
+
+  it("reads an explicit role", () => {
+    const d = toInternalDocument(doc({ body, hole }), "t");
+    expect(d.shapes.get("body").role).toBe("add");
+    expect(d.shapes.get("hole").role).toBe("subtract");
+  });
+
+  it("refuses an unknown role", () => {
+    expect(() => toInternalDocument(doc({ s: { role: "erase", regions: body.regions } }), "t"))
+      .toThrow(/has an unknown `role` "erase".*"add".*"subtract"/s);
+  });
+
+  it("refuses a file with no add shape", () => {
+    expect(() => toInternalDocument(doc({ hole }), "t"))
+      .toThrow(/has no shape with role "add"/);
   });
 });

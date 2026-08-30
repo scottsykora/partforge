@@ -11,14 +11,14 @@ const bytes = (doc) => new TextEncoder().encode(JSON.stringify(doc));
 test("resolves JSON bytes to an internal document", async () => {
   const map = await resolveVectors({ a: bytes(box()) });
   expect(map.get("a").units).toBe("artwork");
-  const regions = map.get("a").shapes.get("artwork");
+  const regions = map.get("a").shapes.get("artwork").regions;
   expect(regions).toHaveLength(1);
   expect(regions[0].outer.segments).toHaveLength(3);
 });
 
 test("resolves a thunk returning bytes", async () => {
   const map = await resolveVectors({ a: () => bytes(box()) });
-  expect(map.get("a").shapes.get("artwork")).toHaveLength(1);
+  expect(map.get("a").shapes.get("artwork").regions).toHaveLength(1);
 });
 
 test("memoizes by source identity — one parse per source", async () => {

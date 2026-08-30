@@ -33,7 +33,7 @@ function scaleFor(opts, units, w, h) {
   }
   const [key] = given;
   const v = opts[key];
-  if (!(v > 0)) throw new Error(`vector2d: ${key} must be a positive number of millimetres`);
+  if (!(Number.isFinite(v) && v > 0)) throw new Error(`vector2d: ${key} must be a positive number of millimetres`);
   const extent = key === "width" ? w : key === "height" ? h : Math.max(w, h);
   if (!(extent > EXTENT_EPS)) throw new Error(`vector2d: artwork has no ${key === "fit" ? "extent" : key} to size against`);
   return v / extent;

@@ -37,7 +37,7 @@ test("the circle survived ingest as symbolic arcs", () => {
   // Bézier approximation instead of a true circular arc). Assert what the
   // fixture actually guarantees: NO cubic survived, not just that one arc did.
   const doc = k._vectors.get("emblem");
-  const all = [...doc.shapes.values()].flat().flatMap((r) => r.outer.segments);
+  const all = [...doc.shapes.values()].flatMap((e) => e.regions).flatMap((r) => r.outer.segments);
   expect(all.some((s) => s.via)).toBe(true);
   expect(all.every((s) => !s.c1)).toBe(true);
 });

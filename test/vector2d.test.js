@@ -85,6 +85,12 @@ test("an unrecognized valign throws instead of silently centring", () => {
   expect(() => placeRegions(BOX, "artwork", { width: 20, valign: "centre" })).toThrow(/valign/);
 });
 
+// `v > 0` alone lets Infinity through — a non-finite size must not silently
+// produce Infinity-scaled coordinates. Refuse rather than guess.
+test("a non-finite size throws instead of scaling to Infinity", () => {
+  expect(() => placeRegions(BOX, "artwork", { width: Infinity })).toThrow(/width must be a positive number/);
+});
+
 test("holes are scaled and aligned with their outer", () => {
   const withHole = [{
     outer: BOX[0].outer,
@@ -184,5 +190,29 @@ describe("shape selection", () => {
   it("names the available shapes when one is unknown", () => {
     expect(() => k.vector2d("plate", { shape: "rim" }))
       .toThrow(/"plate" has no shape "rim" — it declares: body, holes/);
+  });
+});
+
+const ROLE_DOC = {
+  format: "partforge-vector", version: 1, units: "mm",
+  shapes: {
+    body:  { role: "add", regions: [{ outer: { kind: "rect", center: [0, 0], width: 20, height: 20 } }] },
+    holes: { role: "subtract", regions: [{ outer: { kind: "circle", center: [0, 0], r: 4 } }] },
+  },
+};
+
+describe("roles compose", () => {
+  let k;
+  beforeAll(async () => {
+    k = await bootManifoldKernel();
+    k._vectors.set("roled", toInternalDocument(ROLE_DOC, "roled"));
+  });
+
+  it("subtracts by default instead of unioning", () => {
+    expect(k.vector2d("roled").area()).toBeCloseTo(400 - Math.PI * 16, 1);
+  });
+
+  it("still hands back a subtract shape when it is named explicitly", () => {
+    expect(k.vector2d("roled", { shape: "holes" }).area()).toBeCloseTo(Math.PI * 16, 1);
   });
 });

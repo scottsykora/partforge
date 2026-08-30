@@ -461,7 +461,10 @@ export type Vector2dAlign = "center" | "left" | "right";
 export type Vector2dValign = "middle" | "top" | "bottom";
 
 export interface Vector2dOptions {
-  /** Name of one shape in the file. Omit for the union of every shape. */
+  /**
+   * Name of one shape in the file, returned whatever its `role`. Omit for the
+   * composed result: every `"add"` shape unioned, minus every `"subtract"` one.
+   */
   shape?: string;
   /** Target width in mm. At most one of `width`/`height`/`fit`; required for `units: "artwork"`. */
   width?: number;

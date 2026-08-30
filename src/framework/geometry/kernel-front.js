@@ -166,27 +166,32 @@ export function finishKernel(k) {
   // it lowers to k.shape2d + union, so both backends get identical curve regions.
   // Regions come from k._vectors, preloaded by name from the part's declared
   // vector documents — this op does no SVG parsing at all, by design.
-  // k._vectors holds documents ({ units, shapes: Map<name, Region[]> }). With no
-  // `shape` option every shape in the file is unioned (a single-shape file never
-  // has to name anything, and union is commutative so key order is moot);
-  // `shape` selects one by name so the caller can compose shapes with ordinary
-  // booleans in the drawing's own frame.
+  // k._vectors holds documents ({ units, shapes: Map<name, { role, regions }> }).
+  // With no `shape` option, every "add" shape is unioned and every "subtract"
+  // shape is cut from that union (role states the file's own composition; union
+  // is commutative so key order is moot within each group). `shape` selects one
+  // shape's own geometry by name, whatever its role, so the caller can compose
+  // shapes with ordinary booleans in the drawing's own frame.
   k._vectors ??= new Map();
   k.vector2d = (name, opts = {}) => {
     if (typeof name !== "string" || !name)
       throw new Error("vector2d: first argument must be the name of an entry in the part's `vectors` field");
     const doc = k._vectors.get(name);
     if (!doc) throw new Error(`vector2d: unknown vector "${name}" — declare it in the part's \`vectors\` field`);
-    let regions;
-    if (opts.shape == null) {
-      regions = [...doc.shapes.values()].flat();
-    } else {
-      regions = doc.shapes.get(opts.shape);
-      if (!regions) {
+    const lift = (regions) => placeRegions(regions, doc.units, opts).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+    if (opts.shape != null) {
+      const entry = doc.shapes.get(opts.shape);
+      if (!entry) {
         throw new Error(`vector2d: "${name}" has no shape ${JSON.stringify(opts.shape)} — it declares: ${[...doc.shapes.keys()].join(", ")}`);
       }
+      // Naming a shape is a request for THAT geometry; role governs only the
+      // default composition below.
+      return lift(entry.regions);
     }
-    return placeRegions(regions, doc.units, opts).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+    const adds = [...doc.shapes.values()].filter((e) => e.role === "add").flatMap((e) => e.regions);
+    const subs = [...doc.shapes.values()].filter((e) => e.role === "subtract").flatMap((e) => e.regions);
+    const composed = lift(adds);
+    return subs.length === 0 ? composed : composed.cut(lift(subs));
   };
 
   // Convex hull → Shape2D. Backend-agnostic: pure-JS monotone-chain hull of the inputs'

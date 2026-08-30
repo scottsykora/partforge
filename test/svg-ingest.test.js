@@ -10,7 +10,7 @@ const svg = (body, attrs = 'viewBox="0 0 48 48"') =>
   `<svg xmlns="http://www.w3.org/2000/svg" ${attrs}>${body}</svg>`;
 // Ingest always emits a single shape named "artwork" — see fromInternalRegions's
 // call in svg-ingest.js's last line.
-const regionsOf = (doc, label) => toInternalDocument(doc, label).shapes.get("artwork");
+const regionsOf = (doc, label) => toInternalDocument(doc, label).shapes.get("artwork").regions;
 const netArea = (doc) => regionsOf(doc).reduce((a, r) =>
   a + Math.abs(ringArea(tessellateContour(r.outer, 256)))
     - r.holes.reduce((h, c) => h + Math.abs(ringArea(tessellateContour(c, 256))), 0), 0);
