@@ -161,8 +161,9 @@ Nothing downstream — `placeRegions`, `Shape2D`, either backend, the exporters 
 learns that primitives exist. This preserves the property that file's header
 claims for itself: it is the only place the two vocabularies meet.
 
-**All primitives expand counter-clockwise, unconditionally**, including when
-used as a hole. This is sound precisely because of the winding finding above:
+**`circle` and `rect` expand counter-clockwise by construction, including when
+used as a hole; `polygon` follows the author's own point order.** Neither needs
+to know which role it fills, precisely because of the winding finding above:
 `ensureRegionWinding` reorients from the `outer`/`holes` labels, so a primitive
 never needs to know which role it is filling. It is also the reason the format
 does not offer a winding or direction field on primitives.
@@ -185,7 +186,11 @@ Let `c = center`. Coordinates are y-up.
   segments of a rounded rectangle, corner arcs specified by their `through`
   point at 45° on the corner-arc's own circle. **`radius > min(width, height) / 2`
   is refused**, naming the maximum — not clamped. A format loader has no warning
-  channel, and a radius past half the shorter side is a typo, not a request.
+  channel, and a radius past half the shorter side is a typo, not a request. At
+  exactly `min(width, height) / 2` two of the four edges are zero-length; the
+  expansion **omits any line segment whose endpoints coincide**, so a square with
+  `radius = width / 2` expands to four arcs rather than four arcs and two
+  degenerate lines.
 - **`polygon`** — `points` an array of ≥3 finite `[x, y]` pairs. `start` is
   `points[0]`; one `"line"` segment per remaining point; the closing edge is
   implicit.
