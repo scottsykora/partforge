@@ -132,3 +132,64 @@ test("endpoints are preserved exactly", () => {
   expect(out.start).toEqual(c.start);
   expect(out.segments.at(-1).to).toEqual(c.segments.at(-1).to);
 });
+
+// --- the tolerance must not grow with the fitted radius ----------------------
+//
+// The acceptance band used to be `1e-3 * r` alone, where r is the radius of the
+// circle the run FITS. A nearly-straight run fits a huge circle, so the band grew
+// without limit exactly where the author's own feature was smallest, and a gentle
+// asymmetric cubic — the most common curve in real logo artwork — was silently
+// replaced by an arc that missed it by half the curve's own depth. Nothing threw,
+// and the stored file then claimed `"kind": "arc"`, so the intent was unrecoverable.
+//
+// Max deviation of a cubic run from the circle a recovered arc encodes, sampled
+// densely. The arc's three points (previous point, `via`, `to`) determine it.
+const deviationFromArc = (start, cubics, arc) => {
+  const c = arcCenterAndSweep(start, arc.via, arc.to);
+  const d = (p) => Math.hypot(p[0] - c.center[0], p[1] - c.center[1]);
+  const at = (p0, s, t) => {
+    const u = 1 - t;
+    return [0, 1].map((i) =>
+      u ** 3 * p0[i] + 3 * u * u * t * s.c1[i] + 3 * u * t * t * s.c2[i] + t ** 3 * s.to[i]);
+  };
+  let max = 0, p = start;
+  for (const s of cubics) {
+    for (let i = 0; i <= 200; i++) max = Math.max(max, Math.abs(d(at(p, s, i / 200)) - c.r));
+    p = s.to;
+  }
+  return max;
+};
+
+const straightRun = (c1, c2) => ({ start: [0, 0], segments: [{ c1, c2, to: [100, 0] }] });
+
+test("a shallow ASYMMETRIC cubic is left alone, not swallowed by a huge-radius fit", () => {
+  // Reported case: fitted r = 913.6, max deviation 0.701 against the curve's own
+  // sagitta of 1.427 — 49% error, accepted silently.
+  const out = recoverArcs(straightRun([10, 3.0], [55, 0.4]));
+  expect(out.segments[0].via).toBeUndefined();
+  expect(out.segments[0].c1).toEqual([10, 3.0]);
+
+  // …and the milder sibling from the same report (27% error) too.
+  expect(recoverArcs(straightRun([20, 2.2], [70, 0.9])).segments[0].via).toBeUndefined();
+});
+
+test("a shallow cubic that really is near-circular still recovers, and accurately", () => {
+  const run = straightRun([33, 1.5], [67, 1.5]);
+  const out = recoverArcs(run);
+  expect(out.segments[0].via).toBeDefined();
+  // Fidelity, not just acceptance: within 2e-3 of the 100-unit chord.
+  expect(deviationFromArc(run.start, run.segments, out.segments[0])).toBeLessThan(0.2);
+});
+
+test("a deep non-circular cubic stays a cubic (unchanged behaviour)", () => {
+  expect(recoverArcs(straightRun([33, 40], [67, 40])).segments[0].via).toBeUndefined();
+});
+
+test("genuine circles still recover across four orders of magnitude of radius", () => {
+  // The chord bound must not be so tight that a real large-radius circle — the
+  // thing a radius-relative tolerance existed to protect — stops being one.
+  for (const r of [0.5, 5, 100, 5000]) {
+    const out = recoverArcs(paperCircle(0, 0, r));
+    expect(out.segments.every((s) => s.via), `r=${r} lost its arcs`).toBe(true);
+  }
+});

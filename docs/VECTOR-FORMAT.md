@@ -622,10 +622,24 @@ followed by the one already-written reference to check your output against.
    cubic segments, fit a circle through the run's first, middle, and last
    **segment endpoints** (a three-point circle fit), then verify by sampling each
    cubic's interior and checking it stays within a tight tolerance of that fitted
-   circle (something around `1e-3 × radius` is what partforge's own recovery
-   uses); if it doesn't hold for the whole run, leave it as cubics rather than
-   emitting a wrong arc. Split any recovered arc at 180° so the three-point form
-   stays unambiguous (a full circle becomes two `"arc"` segments, not one).
+   circle. **Do not make that tolerance relative to the fitted radius alone.**
+   The flatter a curve is, the larger the circle it fits, so a radius-relative
+   band grows without limit exactly where the drawn feature is smallest, and a
+   gentle asymmetric cubic — the most common curve in real logo artwork — gets
+   replaced by an arc that misses it by a large fraction of the curve's own
+   depth, silently and irreversibly. partforge's own recovery bounds it by both:
+   `min(1e-3 × radius, 2e-3 × chord)`, where *chord* is the straight distance
+   between that cubic's own two endpoints — a scale the artwork actually has,
+   which stays finite as the curve flattens and does not degenerate on a closed
+   run the way the whole run's chord does. (For calibration: a correct
+   kappa-handle cubic deviates from its true circle by at most about
+   `1.8e-4 × chord`, so `2e-3` leaves an order of magnitude of headroom.) Sample
+   at several interior parameters, not one — and note that for a single-cubic run
+   the `t = 0.5` point is exact by construction of the three-point fit, so it
+   constrains nothing. If the check doesn't hold for the whole run, leave it as
+   cubics rather than emitting a wrong arc. Split any recovered arc at 180° so
+   the three-point form stays unambiguous (a full circle becomes two `"arc"`
+   segments, not one).
 8. **Write the envelope.** Emit `"units": "artwork"` (an SVG's coordinates are
    not millimetres), wrap the flat region list in a named shape —
    `"shapes": { "artwork": [ …regions… ] }` is what ingest uses — and tag every
@@ -648,6 +662,17 @@ that repository's own fixtures — including the worked example in §4 — are
 reproducible instead of being hand-maintained blobs, and so there is a second
 thing (besides this document) to check a from-scratch converter's output
 against: ingest the same SVG both ways and diff the JSON.
+
+**One place where a correct converter will legitimately disagree with it.**
+partforge's ingest has a pinned known defect: **overlapping same-winding
+subpaths inside a single `<path>` lose their union** — `M0,0 L10,0 L10,10 L0,10 Z
+M5,0 L15,0 L15,10 L5,10 Z` should fill 150 units across a width of 15, and ingest
+returns 100 across a width of 10. Step 4 above specifies the correct behaviour,
+and this document — not the reference implementation — is normative. If your
+output differs on overlapping subpaths, check it against step 4 rather than
+against `ingest-svg.mjs`; see `docs/ERROR-PATTERNS.md#svg-overlapping-subpaths`,
+where the defect and its symptom are recorded. Everything else in the pipeline
+should match.
 
 Ingest is deterministic: the same `.svg`, ingested twice against the same
 installed dependencies, produces byte-identical JSON. That is a property of the
