@@ -34,8 +34,9 @@ airfoil blades with a live smooth/raw A/B toggle),
 `lofted-bottle.js` (the Shape2D-loft reference part - curve-mode body from a
 reused rounded-square ring, resample-mode square-to-circle shoulder), and
 `emblem.js` (the `k.vector2d` reference part — ingested vector art embossed on an
-authored millimetre plate, exercising both units modes, named shapes, and all four
-contour kinds).
+authored millimetre plate, exercising both units modes, per-shape add/subtract
+roles, and all four contour kinds; the `{ shape }` selector is covered by
+test/vector2d.test.js rather than by the part).
 
 ## Node version
 
