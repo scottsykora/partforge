@@ -363,6 +363,14 @@ describe("roles", () => {
       .toThrow(/has an unknown `role` "erase".*"add".*"subtract"/s);
   });
 
+  // The default applies when `role` is ABSENT, not when it is present and
+  // null (or any other falsy-but-present value) — a silent default here is
+  // exactly what "refuse rather than guess" forbids.
+  it("refuses an explicit null role instead of silently defaulting it", () => {
+    expect(() => toInternalDocument(doc({ s: { role: null, regions: body.regions } }), "t"))
+      .toThrow(/has an unknown `role`/);
+  });
+
   it("refuses a file with no add shape", () => {
     expect(() => toInternalDocument(doc({ hole }), "t"))
       .toThrow(/has no shape with role "add"/);

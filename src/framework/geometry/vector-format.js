@@ -164,7 +164,14 @@ const ROLES = ["add", "subtract"];
 // { role, regions }. Two forms rather than one because "add" is an honest
 // default: a painted region adds material, which is what every file written
 // before roles existed already meant.
-const shapeParts = (v) => (Array.isArray(v) ? { role: "add", regions: v } : { role: v?.role ?? "add", regions: v?.regions });
+//
+// The default applies when `role` is ABSENT, not merely falsy — an explicit
+// `"role": null` (or any other present-but-wrong value) must fall through to
+// the unknown-role check below, not silently become "add". `"role" in v` is
+// safe here: the array branch has already returned, so `v` is a non-array
+// object (validateVectorDocument rejects a non-object shape value before
+// either caller of this function reaches a bare-object shape).
+const shapeParts = (v) => (Array.isArray(v) ? { role: "add", regions: v } : { role: "role" in v ? v.role : "add", regions: v.regions });
 
 export function validateVectorDocument(doc, label = "(unnamed)") {
   if (!doc || typeof doc !== "object") fail(label, "file", "is not an object", "expected parsed JSON");
