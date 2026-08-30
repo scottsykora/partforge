@@ -1,6 +1,6 @@
 // The k.vector2d reference part. Manifold-booting only; never boot OCCT in this
 // file (AGENTS.md — the two WASM kernels must not share a process).
-import { beforeAll, expect, test } from "vitest";
+import { beforeAll, expect, it, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import part from "../src/parts/emblem.js";
 
@@ -12,15 +12,17 @@ const build = (over = {}) => {
   return part.parts.plate.build(k, p, part.derive ? part.derive(p) : {});
 };
 
-test("the part declares its ingested artwork under vectors", () => {
-  expect(Object.keys(part.vectors)).toEqual(["emblem"]);
+test("the part declares both the ingested artwork and the authored plate under vectors", () => {
+  expect(Object.keys(part.vectors)).toEqual(["emblem", "plate"]);
 });
 
 test("the plate builds, is solid, and carries the emboss", () => {
   const s = build();
   expect(s.toMesh().triangles).toBeGreaterThan(0);
+  // The plate outline is now drawn (40 x 24 mm, plate.vector.json), not
+  // parameterized — the box bound below matches that fixed footprint.
   expect(s.volume()).toBeGreaterThan(
-    k.box({ min: [-20, -16, 0], max: [20, 16, 3] }).volume());
+    k.box({ min: [-20, -12, 0], max: [20, 12, 3] }).volume());
 });
 
 test("the artwork's aspect is 40:30 — fill unioned with stroke, not the viewBox", () => {
@@ -44,4 +46,17 @@ test("the circle survived ingest as symbolic arcs", () => {
 
 test("emblem_w drives the emboss size", () => {
   expect(build({ emblem_w: 30 }).volume()).toBeGreaterThan(build({ emblem_w: 15 }).volume());
+});
+
+it("cuts the authored plate's holes and keyway, in the drawing's own frame", async () => {
+  const k = await bootManifoldKernel({ vectors: part.vectors });
+  const body = k.vector2d("plate", { shape: "body" });
+  const cut = body.cut(k.vector2d("plate", { shape: "holes" })).cut(k.vector2d("plate", { shape: "keyway" }));
+  // 40x24 with four r=4 corners, minus two r=1.7 discs and a 6x4 triangle.
+  const bodyArea = 40 * 24 - 4 * 16 + Math.PI * 16;
+  expect(body.area()).toBeCloseTo(bodyArea, 1);
+  expect(cut.area()).toBeCloseTo(bodyArea - 2 * Math.PI * 1.7 ** 2 - 12, 1);
+  // The whole point of roles: the file composes itself, and the result is
+  // identical to doing it by hand shape by shape.
+  expect(k.vector2d("plate").area()).toBeCloseTo(cut.area(), 6);
 });

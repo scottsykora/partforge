@@ -1,4 +1,7 @@
-// The k.vector2d reference part — ingested vector art embossed on a plate.
+// The k.vector2d reference part — for BOTH paths the format supports: ingested
+// artwork (`emblem`, `units: "artwork"`, sized per call site) and an authored
+// millimetre drawing (`plate`, `units: "mm"`, placed exactly as drawn). The two
+// vectors share one build, composed together with an ordinary boolean.
 //
 // `vectors` is declared with `new URL(..., import.meta.url)`, the same form
 // import-demo.js uses for its STL: Vite turns it into a bundled asset URL, and
@@ -6,20 +9,22 @@
 // `() => import("./assets/emblem.vector.json")` would work in Vite and fail in the CLI.
 //
 // The source artwork lives beside it as emblem.svg, and the .json is regenerated
-// with `node scripts/ingest-svg.mjs src/parts/assets/emblem.svg`.
+// with `node scripts/ingest-svg.mjs src/parts/assets/emblem.svg`. plate.vector.json
+// is hand-authored — no ingest step, no source SVG — and is kept legible enough
+// to serve as documentation's worked example of a multi-shape, role-composed file.
 export default {
   meta: { title: "Emblem", units: "mm", background: 0x15181d },
   vectors: {
     emblem: new URL("./assets/emblem.vector.json", import.meta.url),
+    plate: new URL("./assets/plate.vector.json", import.meta.url),
   },
   parameters: [
     {
       id: "plate",
       title: "Plate",
-      description: "The backing plate the artwork is embossed on.",
+      description: "The backing plate the artwork is embossed on. Its outline — including the bolt "
+        + "holes and keyway — is drawn in plate.vector.json, not parameterized.",
       advanced: [
-        { key: "plate_w", label: "Width", unit: "mm", min: 20, max: 80, step: 1, description: "Plate width." },
-        { key: "plate_h", label: "Depth", unit: "mm", min: 16, max: 60, step: 1, description: "Plate depth." },
         { key: "plate_t", label: "Thickness", unit: "mm", min: 1, max: 10, step: 0.5, description: "Plate thickness." },
       ],
     },
@@ -35,14 +40,19 @@ export default {
       ],
     },
   ],
-  defaults: { plate_w: 40, plate_h: 32, plate_t: 3, emblem_w: 30, emboss: 1 },
+  defaults: { plate_t: 3, emblem_w: 30, emboss: 1 },
   parts: {
     plate: {
       label: "Plate",
       views: ["plate"],
       export: { name: "emblem-plate" },
+      // No shape named and no size: the file's own roles compose it (body minus
+      // holes minus keyway), and units "mm" places it exactly as drawn. Passing
+      // a size here would scale each shape against ITS OWN bounds — the trap
+      // this format exists to prevent.
       build: (k, p) => k
-        .box({ min: [-p.plate_w / 2, -p.plate_h / 2, 0], max: [p.plate_w / 2, p.plate_h / 2, p.plate_t] })
+        .vector2d("plate")
+        .extrude({ h: p.plate_t })
         .union(k.vector2d("emblem", { width: p.emblem_w }).extrude({ h: p.emboss }).translate([0, 0, p.plate_t])),
     },
   },
@@ -50,18 +60,24 @@ export default {
   verify: {
     expect: {
       plate: {
-        // The bbox bound is the parameter schema's own envelope (plate_w<=80,
-        // plate_h<=60, plate_t+emboss<=14), so it catches a mis-scaled governing
-        // dimension but nothing subtler.
-        bbox: "<=[81,61,15]",
-        // This is the gate that actually watches the artwork. The bare plate is
-        // 40x32x3 = 3840 mm^3 at defaults and the emboss adds ~260 mm^3, so if
-        // the vector2d union ever produced nothing the volume drops to 3840 and
-        // this fails. Without it, a silently-empty emboss still satisfies every
-        // other assertion here.
-        volume: ">=4000",
+        // The plate outline is fixed by plate.vector.json (40 x 24), so this
+        // envelope is tight in x/y and schema-bounded in z (plate_t + emboss <= 14).
+        bbox: "<=[41,25,15]",
+        // Measured at defaults: 3013 mm^3 (`npx partforge measure`). The bare
+        // plate (no emboss union) is 2748 mm^3 — comfortably under this bound —
+        // so a silently-vanished emboss union fails here. Complemented by the
+        // `holes` gate below for the opposite failure (a cut that stops working
+        // raises volume, not lowers it, so this bound alone can't catch that).
+        volume: ">=2900",
         watertight: true,
-        holes: 0,
+        // Measured 2, not 3: the two bolt circles cut clean through, but the
+        // emblem artwork's default footprint (`emblem_w`=30, centred) sits
+        // directly over the keyway and fully covers it from above, capping what
+        // would otherwise be a through-slot into a blind pocket — one fewer
+        // tunnel, so genus is 2. Confirmed with `npx partforge measure`, and by
+        // temporarily flipping "holes"/"keyway" to role "add" in
+        // plate.vector.json (which drops this to 0, proving the gate can fail).
+        holes: 2,
       },
       _view: { overlaps: 0 },
     },
