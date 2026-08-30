@@ -8,10 +8,10 @@ import { createOcctKernel } from "../framework/geometry/occt-backend.js";
 import { resolveFonts } from "../framework/fonts.js";
 import { normalizeOpentype, parseFont } from "../framework/geometry/opentype-interop.js";
 import { ensureImports } from "../framework/imports.js";
-import { ensureSvgs } from "../framework/svgs.js";
+import { ensureVectors } from "../framework/vectors.js";
 import { nodeAssetSources } from "./assets.js";
 
-export async function bootOcctKernel({ fonts, imports, importMeshes, svgs } = {}) {
+export async function bootOcctKernel({ fonts, imports, importMeshes, vectors } = {}) {
   const require = createRequire(import.meta.url);
   globalThis.require = globalThis.require ?? require;
   globalThis.__dirname = globalThis.__dirname ?? path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +23,6 @@ export async function bootOcctKernel({ fonts, imports, importMeshes, svgs } = {}
   if (fonts) { const opentype = normalizeOpentype(await import("opentype.js"));
     for (const [name, buf] of await resolveFonts(nodeAssetSources(fonts))) kernel._fonts.set(name, parseFont(opentype, buf, name)); }
   if (imports) await ensureImports(kernel, nodeAssetSources(imports), importMeshes ?? null);
-  if (svgs) await ensureSvgs(kernel, nodeAssetSources(svgs));
+  if (vectors) await ensureVectors(kernel, nodeAssetSources(vectors));
   return kernel;
 }

@@ -1,4 +1,4 @@
-// SVG -> the partforge-vector JSON format. The browser half of k.svg2d, run ONCE
+// SVG -> the partforge-vector JSON format. The browser half of k.vector2d, run ONCE
 // per artwork by the host — never at build time, never in the geometry worker.
 //
 // This is the ONLY DOM-dependent file in the feature, and that is the whole

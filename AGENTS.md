@@ -33,7 +33,7 @@ block, part-declared measurements reported by measure/inspect),
 airfoil blades with a live smooth/raw A/B toggle),
 `lofted-bottle.js` (the Shape2D-loft reference part - curve-mode body from a
 reused rounded-square ring, resample-mode square-to-circle shoulder), and
-`emblem.js` (the `k.svg2d` reference part — ingested vector art embossed on a
+`emblem.js` (the `k.vector2d` reference part — ingested vector art embossed on a
 plate).
 
 ## Node version
@@ -140,7 +140,7 @@ the installed package, so let the publish finish before bumping the dep there.
   suspended at that width — `rail.js` ignores a persisted `collapsed` flag there
   rather than clearing it.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
-- **`src/framework/ingest/`** - `svg-ingest.js`, the browser half of `k.svg2d`: SVG
+- **`src/framework/ingest/`** - `svg-ingest.js`, the browser half of `k.vector2d`: SVG
   text in, `partforge-vector` JSON out (`docs/VECTOR-FORMAT.md`). DOM-dependent and
   main-thread-only, run once per artwork by the host - deliberately outside the
   worker graph and never imported from it (`test/worker-layering.test.js` proves

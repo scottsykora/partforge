@@ -74,7 +74,7 @@ export default {
   defaults,                                // flat { paramKey: value } — seeds params + control values
   fonts?,                                  // { name: source } — or (p) => ({ name: source }) when a control drives the typeface
   imports?,                                // { name: source } — STEP/STL/3MF files a part's k.import() needs; same preload timing as fonts (see below)
-  svgs?,                                   // { name: source } — ingested vector artwork k.svg2d() places; same source grammar and preload timing as fonts
+  vectors?,                                // { name: source } — ingested vector artwork k.vector2d() places; same source grammar and preload timing as fonts
   derive?,                                 // (p) => d, or { group: (p, d) => {…}, … } — dependent values computed once per build
   parts: {                                 // named sub-parts; each builds ONE solid
     <name>: {
@@ -135,7 +135,7 @@ export default {
   grammar and preload timing as `fonts` above. See "Importing geometry (STEP/STL/3MF)"
   below for the full contract — backend matrix, units, the `reference` field + the
   deviation gate, and caching.
-- `svgs` declares the ingested vector artwork a part's `k.svg2d()` calls need, same source
+- `vectors` declares the ingested vector artwork a part's `k.vector2d()` calls need, same source
   grammar and preload timing as `fonts` above — but the source resolves to **JSON**
   (the output of `partforge/ingest`), never to raw `.svg`. See "Vector art (SVG)" below
   for the full contract.
@@ -1233,7 +1233,7 @@ const wall  = k.shape2d(outer).offset(-2, { corners: "sharp" });  // inset, mite
 
 ## Editing profiles
 
-Once a profile exists — ingested vector art (`k.svg2d`, see "Vector art (SVG)" below),
+Once a profile exists — ingested vector art (`k.vector2d`, see "Vector art (SVG)" below),
 `pathProfile`, or the result of a boolean — the
 **2-D editing ops** let you reshape it with named operations instead of hand-editing
 control points: round or bevel a corner, nudge/rotate/mirror it, measure it, simplify
@@ -1454,31 +1454,31 @@ Both backends produce watertight emboss/deboss geometry; the difference is expor
 
 ## Vector art (SVG)
 
-`k.svg2d(name, { width?, height?, fit?, align?, valign? })` places previously-ingested
+`k.vector2d(name, { width?, height?, fit?, align?, valign? })` places previously-ingested
 SVG artwork as a `Shape2D` — the same kind of value `k.text2d`, `k.shape2d`, and every
 2-D boolean/editing op above return, so it composes exactly the same way: union it onto
 a face, cut it as a depression, `.offset()` it, extrude or revolve it, run it through the
 "Editing profiles" ops above (fillet a corner, `.simplify()` it, query its bounds).
 
 ```js
-svgs: { logo: new URL("./art/logo.svg.json", import.meta.url) },
+vectors: { logo: new URL("./art/logo.vector.json", import.meta.url) },
 build: (k, p) => k.box({ size: [40, 40, 4] })
-  .cut(k.svg2d("logo", { width: 28 }).extrude(1).translate([0, 0, 3])),
+  .cut(k.vector2d("logo", { width: 28 }).extrude(1).translate([0, 0, 3])),
 ```
 
 **Exactly one of `width`/`height`/`fit` is required, in millimetres, with no default.**
 `fit` sizes the artwork's longer bounding-box edge; scaling is always uniform (never
 stretched to fit both). `align`/`valign` position the artwork's bounding box relative to
 the origin — same vocabulary and defaults as `text2d` (`align: "center"`, `valign:
-"middle"`). Unlike `text2d`'s `size`, which defaults to a cap height of 10 mm, `svg2d` has
+"middle"`). Unlike `text2d`'s `size`, which defaults to a cap height of 10 mm, `vector2d` has
 **no size default**: a font's cap height is a well-defined physical metric, but an SVG's
 own coordinate units carry no physical meaning at all, so any default here would silently
 produce wrong-scaled geometry. Omitting all three throws — see
 [ERROR-PATTERNS.md#svg-size-required](ERROR-PATTERNS.md#svg-size-required).
 
-**The two-step story: ingest once in a browser, then reference the result.** `k.svg2d`
+**The two-step story: ingest once in a browser, then reference the result.** `k.vector2d`
 never parses SVG — it reads previously-ingested JSON, resolved by name from the part's
-`svgs` field, exactly the `fonts`/`imports` grammar above. The conversion from `.svg` to
+`vectors` field, exactly the `fonts`/`imports` grammar above. The conversion from `.svg` to
 that JSON happens **once**, in a browser, via the published `partforge/ingest` entry
 (`ingestSvg(svgText, opts) → VectorDocument`; DOM-required, main-thread-only — it is
 never reachable from the geometry worker, and never runs at build time). The host runs it
@@ -1487,8 +1487,8 @@ full normative spec of that JSON format — read it before hand-authoring or han
 one, and definitely before debugging a validation error from it.
 
 ```js
-svgs: {
-  logo: new URL("./art/logo.svg.json", import.meta.url),   // the INGESTED .json, not the .svg
+vectors: {
+  logo: new URL("./art/logo.vector.json", import.meta.url),   // the INGESTED .json, not the .svg
 },
 ```
 
@@ -1496,7 +1496,7 @@ Sources use the same `new URL("./…", import.meta.url)` form `imports` and `fon
 the same reason: Vite turns it into a bundled asset URL in the app, and in Node it
 resolves to a `file:` URL that `src/testing/assets.js` reads straight off disk — so the
 same declaration works unchanged in the browser, the CLI, and tests. A bare
-`() => import("./art/logo.svg.json")` dynamic import works under Vite but **fails in the
+`() => import("./art/logo.vector.json")` dynamic import works under Vite but **fails in the
 CLI**, the same gotcha `fonts`/`imports` have: nothing bundles the dynamic import outside
 a Vite build, so `partforge lint`/`measure`/`render` can't resolve it.
 
@@ -1505,13 +1505,13 @@ Icon sets pad their `viewBox` inconsistently, so sizing relative to `viewBox` ma
 icons declared at the same nominal size look different on the plate. `width`/`height`/
 `fit` instead measure the actual painted geometry — which is also why there is no default:
 that tight bbox is computed and stored at ingest time (`docs/VECTOR-FORMAT.md`'s `bbox`
-field), and `k.svg2d` recomputes it again at build time rather than trusting the stored
+field), and `k.vector2d` recomputes it again at build time rather than trusting the stored
 value.
 
 **Strokes are outlined into real filled geometry, at ingest — not at build time, and not
 skipped.** A stroked SVG element (`stroke` + `stroke-width`) is not a "line" anywhere in
 the ingested format; ingest turns it into an ordinary filled `{outer, holes}` region the
-width of the stroke, caps and joins included, before it ever reaches `k.svg2d`.
+width of the stroke, caps and joins included, before it ever reaches `k.vector2d`.
 `src/parts/emblem.js` is the reference part for this — its `emblem.svg` carries one filled
 circle and one stroked open polyline, so both of ingest's geometry paths are exercised in
 one checked-in fixture.
@@ -1519,13 +1519,13 @@ one checked-in fixture.
 **`<use>`, `<defs>`, `<symbol>`, and CSS `class=`/`<style>` all work**, because ingest runs
 inside a real browser DOM that resolves them the same way rendering the SVG directly
 would — this is the actual reason ingest requires a browser rather than running headlessly
-inside `k.svg2d` or the CLI.
+inside `k.vector2d` or the CLI.
 
 **Painting order is not modelled.** Every ingested region adds material, unconditionally —
 there is no notion of one shape being painted over, and therefore visually hiding, another.
 An SVG that fakes a hole by painting a background-colored shape on top of another shape
 (rather than using an actual fill-rule hole, or two properly-wound subpaths) comes out
-**solid** through `k.svg2d`, not holed. See `docs/VECTOR-FORMAT.md` § "Painting order is
+**solid** through `k.vector2d`, not holed. See `docs/VECTOR-FORMAT.md` § "Painting order is
 not modelled" for the fix (a real hole in the source artwork, or `.cut()` it in `build`),
 and [ERROR-PATTERNS.md#svg-painting-order](ERROR-PATTERNS.md#svg-painting-order).
 
@@ -2390,9 +2390,9 @@ first), so an impurity token inside a `${…}` interpolation is not seen. It emi
 one finding per (file, token) pair, carrying the occurrence count and the first
 occurrence's line, rather than one per occurrence.
 
-**Vector art** — `svg-unknown-name` (a build calls `k.svg2d` with a name the
-part's `svgs` field doesn't declare — this throws at build time; lint reaches
-it in microseconds instead), `svg-size-missing` (a `k.svg2d` call declares none
+**Vector art** — `vector-unknown-name` (a build calls `k.vector2d` with a name the
+part's `vectors` field doesn't declare — this throws at build time; lint reaches
+it in microseconds instead), `vector-size-missing` (a `k.vector2d` call declares none
 of `{ width }`, `{ height }`, or `{ fit }` — unlike `k.text2d`'s cap-height
 `size`, ingested artwork carries no physical unit, so there is no safe default
 to fall back on) (both errors). Both judge the argument values the probe

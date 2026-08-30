@@ -67,7 +67,7 @@ test("no module in the worker closure touches a main-thread-only global", () => 
 });
 
 test("the worker import closure reaches nothing under src/framework/ingest/", () => {
-  // The only DOM-dependent module in the svg2d feature (svg-ingest.js's own
+  // The only DOM-dependent module in the vector2d feature (svg-ingest.js's own
   // header comment) — it runs paper.js's importSVG + a DOMParser normalization
   // pass, both of which need a real DOM, in the browser host that runs ingest
   // once per artwork. Nothing under here may reach the worker: today the DOM

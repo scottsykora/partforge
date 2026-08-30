@@ -2,7 +2,7 @@
 // Dev-only: run partforge's browser-side SVG ingest headlessly, over the
 // happy-dom devDependency, and print the resulting partforge-vector JSON.
 //
-//   node scripts/ingest-svg.mjs src/parts/assets/emblem.svg > src/parts/assets/emblem.svg.json
+//   node scripts/ingest-svg.mjs src/parts/assets/emblem.svg > src/parts/assets/emblem.vector.json
 //
 // This is NOT part of the published package — `partforge/ingest` is browser-side
 // by design (see the spec). It exists so repo fixtures are reproducible instead

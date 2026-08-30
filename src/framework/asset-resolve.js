@@ -1,10 +1,10 @@
-// Shared source-resolution core for fonts.js, imports.js, and svgs.js. All three resolve a
+// Shared source-resolution core for fonts.js, imports.js, and vectors.js. All three resolve a
 // part's declared `{ name: source }` map before the synchronous build, where a
 // source is: an ArrayBuffer/typed-array view (bytes), a URL string, a `URL`
 // instance (fetched), or a thunk (possibly async) returning any of those —
 // including the `{ default: … }` shape a Vite dynamic `import('./x.ttf')`
 // yields. The three callers differ only in what they do with the resolved bytes
-// (fonts keep the raw ArrayBuffer; imports also stamp a digest + format; svgs
+// (fonts keep the raw ArrayBuffer; imports also stamp a digest + format; vectors
 // parses the bytes as a partforge-vector document), so each owns its own cache
 // Map and result shape; this module owns just the
 // source→bytes grammar and the identity-memoization rule (a source, e.g. a

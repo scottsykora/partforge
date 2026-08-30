@@ -1,16 +1,16 @@
-// The k.svg2d reference part — ingested vector art embossed on a plate.
+// The k.vector2d reference part — ingested vector art embossed on a plate.
 //
-// `svgs` is declared with `new URL(..., import.meta.url)`, the same form
+// `vectors` is declared with `new URL(..., import.meta.url)`, the same form
 // import-demo.js uses for its STL: Vite turns it into a bundled asset URL, and
 // in Node it is a file: URL that src/testing/assets.js reads off disk. A bare
-// `() => import("./assets/emblem.svg.json")` would work in Vite and fail in the CLI.
+// `() => import("./assets/emblem.vector.json")` would work in Vite and fail in the CLI.
 //
 // The source artwork lives beside it as emblem.svg, and the .json is regenerated
 // with `node scripts/ingest-svg.mjs src/parts/assets/emblem.svg`.
 export default {
   meta: { title: "Emblem", units: "mm", background: 0x15181d },
-  svgs: {
-    emblem: new URL("./assets/emblem.svg.json", import.meta.url),
+  vectors: {
+    emblem: new URL("./assets/emblem.vector.json", import.meta.url),
   },
   parameters: [
     {
@@ -43,7 +43,7 @@ export default {
       export: { name: "emblem-plate" },
       build: (k, p) => k
         .box({ min: [-p.plate_w / 2, -p.plate_h / 2, 0], max: [p.plate_w / 2, p.plate_h / 2, p.plate_t] })
-        .union(k.svg2d("emblem", { width: p.emblem_w }).extrude({ h: p.emboss }).translate([0, 0, p.plate_t])),
+        .union(k.vector2d("emblem", { width: p.emblem_w }).extrude({ h: p.emboss }).translate([0, 0, p.plate_t])),
     },
   },
   views: { plate: { label: "Plate" } },
@@ -56,7 +56,7 @@ export default {
         bbox: "<=[81,61,15]",
         // This is the gate that actually watches the artwork. The bare plate is
         // 40x32x3 = 3840 mm^3 at defaults and the emboss adds ~260 mm^3, so if
-        // the svg2d union ever produced nothing the volume drops to 3840 and
+        // the vector2d union ever produced nothing the volume drops to 3840 and
         // this fails. Without it, a silently-empty emboss still satisfies every
         // other assertion here.
         volume: ">=4000",

@@ -34,7 +34,7 @@ export interface IngestSvgOptions {
   /**
    * `"outline"` (default) turns strokes into filled geometry; `"ignore"` drops
    * stroke geometry entirely and keeps only fills. There is no equivalent
-   * option on `k.svg2d` — once ingested, there is no stroke left to ignore.
+   * option on `k.vector2d` — once ingested, there is no stroke left to ignore.
    */
   strokes?: "outline" | "ignore";
   /** Provenance only — typically the original filename. Stored verbatim as `source`; not validated or used at load/build time. */
@@ -43,9 +43,9 @@ export interface IngestSvgOptions {
 
 /**
  * Convert an SVG document (as text) into the `partforge-vector` JSON format a
- * part's `k.svg2d()` calls can place. DOM-required — call this in a browser,
- * store the returned document (e.g. as `<name>.svg.json` beside the part),
- * and reference it from the part's `svgs` field. Throws if the SVG can't be
+ * part's `k.vector2d()` calls can place. DOM-required — call this in a browser,
+ * store the returned document (e.g. as `<name>.vector.json` beside the part),
+ * and reference it from the part's `vectors` field. Throws if the SVG can't be
  * parsed, or if it contains no painted geometry (every element is
  * `fill="none"` with no stroke, hidden, or empty).
  */

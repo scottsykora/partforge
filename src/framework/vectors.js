@@ -1,11 +1,11 @@
-// Resolve a part's declared `svgs` ({ name: source }) to internal regions before
+// Resolve a part's declared `vectors` ({ name: source }) to internal regions before
 // the synchronous build — the vector-art sibling of fonts.js and imports.js:
 // same source grammar and identity-memoization rule, built on the shared core in
 // asset-resolve.js. The source resolves to JSON in the partforge-vector format,
 // not to SVG; conversion happened once, in a browser, at ingest.
 //
 // No content digest, deliberately. It looks like a missing piece next to
-// imports.js and is not: k.svg2d lowers to k.shape2d(regions) and the Shape2D
+// imports.js and is not: k.vector2d lowers to k.shape2d(regions) and the Shape2D
 // hash keys on the actual coordinates, so different artwork gives a different
 // cache entry automatically. Imports need a digest because a Solid master is
 // registered by NAME and is opaque to that hash; parsed regions are not. Same
@@ -29,12 +29,12 @@ const parsed = new Map();
 function parseDocument(bytes, label) {
   let text;
   try { text = new TextDecoder().decode(bytes); }
-  catch { throw new Error(`svg2d: "${label}" could not be decoded as UTF-8 text`); }
+  catch { throw new Error(`vector2d: "${label}" could not be decoded as UTF-8 text`); }
   let doc;
   try { doc = JSON.parse(text); }
   catch (e) {
-    throw new Error(`svg2d: "${label}" is not valid JSON — ${e.message}. `
-      + "An svgs source is an ingested partforge-vector file, not an .svg file; see docs/VECTOR-FORMAT.md");
+    throw new Error(`vector2d: "${label}" is not valid JSON — ${e.message}. `
+      + "A vectors source is an ingested partforge-vector file, not an .svg file; see docs/VECTOR-FORMAT.md");
   }
   return toInternalRegions(doc, label);
 }
@@ -44,23 +44,23 @@ function parseDocument(bytes, label) {
 const resolveOne = makeAssetResolver(
   cache,
   (bytes) => bytes,
-  "resolveSvgs: an svg source must be bytes, a URL, or a thunk returning one",
+  "resolveVectors: a vector source must be bytes, a URL, or a thunk returning one",
 );
 
-export async function resolveSvgs(svgsDecl) {
-  // A function reaching here means a caller passed `part.svgs` raw, the way
+export async function resolveVectors(vectorsDecl) {
+  // A function reaching here means a caller passed `part.vectors` raw, the way
   // fonts.js's resolveFonts guards against the same mistake for `part.fonts`.
   // `Object.entries` on a function is `[]`, not a thrown error, so without
-  // this check a function-valued `svgs` would silently resolve to an empty
-  // map and only surface much later as `svg2d: unknown svg "…"` — a name a
-  // part author declared correctly, that k.svg2d insists doesn't exist. No
-  // part currently declares `svgs` as a function (unlike fonts, which a
+  // this check a function-valued `vectors` would silently resolve to an empty
+  // map and only surface much later as `vector2d: unknown vector "…"` — a name a
+  // part author declared correctly, that k.vector2d insists doesn't exist. No
+  // part currently declares `vectors` as a function (unlike fonts, which a
   // `type: "font"` control already drives this way) — this exists so the
   // day that form is added, it fails loudly instead of silently.
-  if (typeof svgsDecl === "function") {
-    throw new Error("resolveSvgs: `svgs` is a function — it is not resolved against params yet; pass the plain object form");
+  if (typeof vectorsDecl === "function") {
+    throw new Error("resolveVectors: `vectors` is a function — it is not resolved against params yet; pass the plain object form");
   }
-  const raw = await resolveDecl(svgsDecl, resolveOne);
+  const raw = await resolveDecl(vectorsDecl, resolveOne);
   const out = new Map();
   for (const [name, bytes] of raw) {
     let regions = parsed.get(bytes);
@@ -70,17 +70,17 @@ export async function resolveSvgs(svgsDecl) {
   return out;
 }
 
-// Register a part's svgs on a booted kernel. Called in the async phase before
+// Register a part's vectors on a booted kernel. Called in the async phase before
 // every job's synchronous build — worker (jobs.js) and Node boots alike.
-export async function ensureSvgs(kernel, svgsDecl) {
-  if (!kernel?._svgs) return;
-  const declared = svgsDecl ?? {};
-  for (const [name, regions] of await resolveSvgs(declared)) kernel._svgs.set(name, regions);
-  // Drop names this declaration does not supply. `_svgs` is the kernel's and the
+export async function ensureVectors(kernel, vectorsDecl) {
+  if (!kernel?._vectors) return;
+  const declared = vectorsDecl ?? {};
+  for (const [name, regions] of await resolveVectors(declared)) kernel._vectors.set(name, regions);
+  // Drop names this declaration does not supply. `_vectors` is the kernel's and the
   // kernel outlives the job (worker-rebind, many parts), so without this a name
   // from a previous part stays resolvable — the stale-registration bug jobs.js's
   // font prune exists to prevent.
-  for (const name of [...kernel._svgs.keys()]) {
-    if (!Object.hasOwn(declared, name)) kernel._svgs.delete(name);
+  for (const name of [...kernel._vectors.keys()]) {
+    if (!Object.hasOwn(declared, name)) kernel._vectors.delete(name);
   }
 }

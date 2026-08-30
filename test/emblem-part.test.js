@@ -1,19 +1,19 @@
-// The k.svg2d reference part. Manifold-booting only; never boot OCCT in this
+// The k.vector2d reference part. Manifold-booting only; never boot OCCT in this
 // file (AGENTS.md — the two WASM kernels must not share a process).
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import part from "../src/parts/emblem.js";
 
 let k;
-beforeAll(async () => { k = await bootManifoldKernel({ svgs: part.svgs }); });
+beforeAll(async () => { k = await bootManifoldKernel({ vectors: part.vectors }); });
 
 const build = (over = {}) => {
   const p = { ...part.defaults, ...over };
   return part.parts.plate.build(k, p, part.derive ? part.derive(p) : {});
 };
 
-test("the part declares its ingested artwork under svgs", () => {
-  expect(Object.keys(part.svgs)).toEqual(["emblem"]);
+test("the part declares its ingested artwork under vectors", () => {
+  expect(Object.keys(part.vectors)).toEqual(["emblem"]);
 });
 
 test("the plate builds, is solid, and carries the emboss", () => {
@@ -24,19 +24,19 @@ test("the plate builds, is solid, and carries the emboss", () => {
 });
 
 test("the artwork's aspect is 40:30 — fill unioned with stroke, not the viewBox", () => {
-  const { min, max } = k.svg2d("emblem", { width: 40 }).extrude({ h: 1 }).boundingBox();
+  const { min, max } = k.vector2d("emblem", { width: 40 }).extrude({ h: 1 }).boundingBox();
   expect(max[0] - min[0]).toBeCloseTo(40, 1);
   expect(max[1] - min[1]).toBeCloseTo(30, 1);
 });
 
 test("the circle survived ingest as symbolic arcs", () => {
-  // emblem.svg.json's outer contours are 5 arcs and 2 lines, 0 cubics (see
+  // emblem.vector.json's outer contours are 5 arcs and 2 lines, 0 cubics (see
   // docs/VECTOR-FORMAT.md §2) — `some((s) => s.via)` would pass just as
   // happily on one arc buried in a pile of cubics, which is exactly the
   // regression this test exists to catch (arc recovery falling back to a
   // Bézier approximation instead of a true circular arc). Assert what the
   // fixture actually guarantees: NO cubic survived, not just that one arc did.
-  const all = k._svgs.get("emblem").flatMap((r) => r.outer.segments);
+  const all = k._vectors.get("emblem").flatMap((r) => r.outer.segments);
   expect(all.some((s) => s.via)).toBe(true);
   expect(all.every((s) => !s.c1)).toBe(true);
 });

@@ -6,11 +6,11 @@ import { createManifoldKernel } from "../framework/geometry/manifold-backend.js"
 import { resolveFonts } from "../framework/fonts.js";
 import { normalizeOpentype, parseFont } from "../framework/geometry/opentype-interop.js";
 import { ensureImports } from "../framework/imports.js";
-import { ensureSvgs } from "../framework/svgs.js";
+import { ensureVectors } from "../framework/vectors.js";
 import { nodeAssetSources } from "./assets.js";
 import { tessellateStepAssets } from "./step-mesh.js";
 
-export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes, svgs } = {}) {
+export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes, vectors } = {}) {
   const wasm = await Module();
   wasm.setup();
   const kernel = createManifoldKernel(wasm, { quality });
@@ -25,6 +25,6 @@ export async function bootManifoldKernel({ quality = "preview", fonts, imports, 
     const meshes = importMeshes ?? (stepEntries.length ? await tessellateStepAssets(stepEntries) : null);
     await ensureImports(kernel, decl, meshes);
   }
-  if (svgs) await ensureSvgs(kernel, nodeAssetSources(svgs));
+  if (vectors) await ensureVectors(kernel, nodeAssetSources(vectors));
   return kernel;
 }

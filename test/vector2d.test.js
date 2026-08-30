@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { placeRegions } from "../src/framework/geometry/svg2d.js";
+import { placeRegions } from "../src/framework/geometry/vector2d.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 
 // a 20 x 10 box in artwork units
@@ -38,8 +38,8 @@ test("omitting all three size options throws and names them", () => {
 });
 
 test("a non-positive size throws", () => {
-  expect(() => placeRegions(BOX, { width: 0 })).toThrow(/svg2d: /);
-  expect(() => placeRegions(BOX, { height: -3 })).toThrow(/svg2d: /);
+  expect(() => placeRegions(BOX, { width: 0 })).toThrow(/vector2d: /);
+  expect(() => placeRegions(BOX, { height: -3 })).toThrow(/vector2d: /);
 });
 
 test("placement ignores where the artwork sits in its own coordinate space", () => {

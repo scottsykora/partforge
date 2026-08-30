@@ -101,7 +101,7 @@ const readSources = (partPath) => {
 // base-params face, because the kernel is booted once.
 const bootKernel = (part, params = {}) => {
   const p = { ...(part.defaults ?? {}), ...params };
-  const opts = { fonts: fontsFor(part, p), imports: part.imports, svgs: part.svgs };
+  const opts = { fonts: fontsFor(part, p), imports: part.imports, vectors: part.vectors };
   const backend = process.env.PARTFORGE_BACKEND || detectBackend(part); // env: crash()'s NEEDS_OCCT retry
   return backend === "occt" ? bootOcctKernel(opts) : bootManifoldKernel(opts);
 };

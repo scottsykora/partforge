@@ -68,7 +68,7 @@ test("overlapping filled shapes union rather than double-count", () => {
 // overlap between two same-winding subpaths instead of merging them — so this
 // comes back as area 100 / bbox width 10 (the *first* subpath alone) instead
 // of the true union, area 150 / bbox width 15, that the two-element version
-// above correctly produces via booleanRegions. Because k.svg2d sizes on the
+// above correctly produces via booleanRegions. Because k.vector2d sizes on the
 // bbox, this silently scales the whole artwork wrong with no error — see
 // docs/ERROR-PATTERNS.md's svg-overlapping-subpaths entry. Fixing
 // resolveCurveFill itself is a separate task (nonzero winding legitimately

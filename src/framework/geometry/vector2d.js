@@ -1,6 +1,6 @@
 // Place ingested vector regions: one uniform scale to the requested millimetre
 // size, then an alignment translate. That is the entire runtime half of
-// k.svg2d — everything else happened once, at ingest.
+// k.vector2d — everything else happened once, at ingest.
 //
 // The transform is uniform by construction, so arcs stay arcs and the OCCT
 // backend still gets true circular B-rep edges.
@@ -14,17 +14,17 @@ const VALIGN = new Set(["bottom", "middle", "top"]);
 
 function scaleFor({ width, height, fit }, w, h) {
   const need = (extent, label) => {
-    if (!(extent > EXTENT_EPS)) throw new Error(`svg2d: artwork has no ${label} to size against`);
+    if (!(extent > EXTENT_EPS)) throw new Error(`vector2d: artwork has no ${label} to size against`);
   };
   const positive = (v, name) => {
-    if (!(v > 0)) throw new Error(`svg2d: ${name} must be a positive number of millimetres`);
+    if (!(v > 0)) throw new Error(`vector2d: ${name} must be a positive number of millimetres`);
   };
   if (width != null) { positive(width, "width"); need(w, "width"); return width / w; }
   if (height != null) { positive(height, "height"); need(h, "height"); return height / h; }
   if (fit != null) { positive(fit, "fit"); need(Math.max(w, h), "extent"); return fit / Math.max(w, h); }
   // No honest default exists: an artwork's units have no physical meaning, unlike
   // a font's cap height — which is why k.text2d can default `size` and this cannot.
-  throw new Error("svg2d: a size is required — pass one of { width }, { height }, or { fit } in millimetres");
+  throw new Error("vector2d: a size is required — pass one of { width }, { height }, or { fit } in millimetres");
 }
 
 const place = (c, s, dx, dy) => {
@@ -49,8 +49,8 @@ export function placeRegions(regions, opts = {}) {
   // somewhere the caller never asked for. Every other op in this feature
   // refuses instead of guessing (scaleFor above, right on this same function);
   // this closes the one silent-default gap.
-  if (!ALIGN.has(align)) throw new Error(`svg2d: align must be "left", "center", or "right" — got ${JSON.stringify(align)}`);
-  if (!VALIGN.has(valign)) throw new Error(`svg2d: valign must be "bottom", "middle", or "top" — got ${JSON.stringify(valign)}`);
+  if (!ALIGN.has(align)) throw new Error(`vector2d: align must be "left", "center", or "right" — got ${JSON.stringify(align)}`);
+  if (!VALIGN.has(valign)) throw new Error(`vector2d: valign must be "bottom", "middle", or "top" — got ${JSON.stringify(valign)}`);
   const { minX, minY, maxX, maxY } = regionsBbox(regions);
   const s = scaleFor(opts, maxX - minX, maxY - minY);
   const dx = align === "left" ? -minX * s : align === "right" ? -maxX * s : -((minX + maxX) / 2) * s;

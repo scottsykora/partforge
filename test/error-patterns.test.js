@@ -65,7 +65,7 @@ const BASELINE_IDS = [
   "loftsmooth-zero-perimeter-arc",
   "loftsmooth-stations-out-of-range",
   "loftsmooth-samples-out-of-range",
-  "svg-unknown-name",
+  "vector-unknown-name",
   "svg-size-required",
   "svg-invalid-document",
   "svg-stroke-collapsed",

@@ -21,7 +21,7 @@ export const CONTRACT_VERSION = 4;
 // Ops every backend kernel must implement.
 export const KERNEL_OPS = [
   "cylinder", "boredCylinder", "sphere", "box", "prism", "extrude", "revolve",
-  "loft", "sweep", "helixSweptTube", "screwSweep", "union", "shape2d", "text2d", "svg2d", "hull", "hullChain", "toSTEP",
+  "loft", "sweep", "helixSweptTube", "screwSweep", "union", "shape2d", "text2d", "vector2d", "hull", "hullChain", "toSTEP",
   "roundedCylinder", "torus", "roundedBox", "import",
   // Additive in 0.84 (no CONTRACT_VERSION bump — the import-op precedent).
   "loftSmooth",

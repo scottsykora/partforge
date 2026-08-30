@@ -15,7 +15,7 @@
 // tolerate.
 import { err } from "./finding.js";
 
-const declaredSvgs = (part) => Object.keys(part?.svgs ?? {});
+const declaredVectors = (part) => Object.keys(part?.vectors ?? {});
 
 // The name arrives JSON-serialized, so JSON.parse recovers it — and yields null
 // for anything that is not a string (import-unknown-name reads its name the same way).
@@ -23,41 +23,41 @@ const literalName = (src) => {
   try { const v = JSON.parse(src); return typeof v === "string" ? v : null; } catch { return null; }
 };
 
-const svgCalls = (probe) => probe().calls.filter((c) => c.scope === "kernel" && c.op === "svg2d");
+const vectorCalls = (probe) => probe().calls.filter((c) => c.scope === "kernel" && c.op === "vector2d");
 
-export const SVG_RULES = [
+export const VECTOR_RULES = [
   {
-    id: "svg-unknown-name",
+    id: "vector-unknown-name",
     run: ({ part, probe }) => {
-      const known = new Set(declaredSvgs(part));
+      const known = new Set(declaredVectors(part));
       const seen = new Set();
       const out = [];
-      for (const call of svgCalls(probe)) {
+      for (const call of vectorCalls(probe)) {
         const name = literalName(call.args[0]);
         if (name == null || known.has(name) || seen.has(name)) continue;
         seen.add(name);
-        out.push(err("svg-unknown-name",
-          `build calls k.svg2d with name "${name}", which the part's svgs field does not declare: ${[...known].join(", ") || "(nothing)"}`,
-          "Declare the ingested artwork under svgs: { name: source }, or fix the name to match an existing entry.",
-          "svgs"));
+        out.push(err("vector-unknown-name",
+          `build calls k.vector2d with name "${name}", which the part's vectors field does not declare: ${[...known].join(", ") || "(nothing)"}`,
+          "Declare the ingested artwork under vectors: { name: source }, or fix the name to match an existing entry.",
+          "vectors"));
       }
       return out;
     },
   },
   {
-    id: "svg-size-missing",
+    id: "vector-size-missing",
     run: ({ probe }) => {
       const out = [];
-      for (const call of svgCalls(probe)) {
+      for (const call of vectorCalls(probe)) {
         const opts = call.args[1]?.trim();
         if (opts != null && !opts.startsWith("{")) continue;      // not an object — skip
         // `"?` because probe args are JSON-serialized: `{"width":10}`, not `{ width: 10 }`.
         if (opts && /\b(width|height|fit)"?\s*:/.test(opts)) continue;
         const name = literalName(call.args[0]) ?? "…";
-        out.push(err("svg-size-missing",
-          `k.svg2d("${name}", …) declares no size — one of { width }, { height }, or { fit } is required, in millimetres`,
+        out.push(err("vector-size-missing",
+          `k.vector2d("${name}", …) declares no size — one of { width }, { height }, or { fit } is required, in millimetres`,
           "An artwork's units have no physical meaning, so there is no safe default to fall back on (unlike k.text2d's cap-height `size`). "
-          + `Add one, e.g. k.svg2d("${name}", { width: 20 }).`,
+          + `Add one, e.g. k.vector2d("${name}", { width: 20 }).`,
           "build"));
       }
       return out;

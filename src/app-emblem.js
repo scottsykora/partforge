@@ -3,7 +3,7 @@ import "@fontsource-variable/geist-mono";
 import emblemPart from "./parts/emblem.js";
 import { mount } from "./framework/index.js";
 
-// Dev-only example app for the emblem part (the k.svg2d reference).
+// Dev-only example app for the emblem part (the k.vector2d reference).
 // `npm run dev`, then open /emblem.html.
 window.__pfRuntime = mount(emblemPart, {
   createWorker: (name) =>

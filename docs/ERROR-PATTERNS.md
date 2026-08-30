@@ -633,29 +633,29 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** A STEP import used on the Manifold backend needs OCCT-tessellated triangles first (the "crossover" described in [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Importing geometry (STEP/STL/3MF)"). This hop is meant to self-heal — the browser worker requests a `tessellate-imports` job from the OCCT worker, Node hops through a `node:worker_threads` isolate (the two WASM kernels may never share a process) — but it surfaces here when the tessellation either delivered a mesh whose digest didn't match what Manifold now expects (a genuinely broken state, not a retry loop) or the worker/thread exited without completing.
 - **Fix:** This should be rare and self-resolving on the next build; if it persists, confirm the STEP file parses under OCCT on its own (e.g. `meta.backend: "occt"` temporarily, or `npx partforge measure` against an OCCT-routed copy of the part) to rule out a malformed STEP file, and check the console/thread output for the underlying tessellation error being wrapped.
 
-## svg-unknown-name
+## vector-unknown-name
 
-- **Symptom:** `svg2d: unknown svg "` followed by the name and — declare it in the part's `svgs` field — thrown from a build calling `k.svg2d(name)`.
-- **Cause:** `k.svg2d(name)` was called with a name that isn't a key in the part's `svgs` field — a typo, or the declaration was never added. Same failure shape as `text2d`'s unknown-font error and `k.import`'s unknown-name error.
-- **Fix:** Add the name to `svgs`, or fix the typo. `npx partforge lint <part>` catches this statically, in microseconds, before any kernel boots (`svg-unknown-name`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector art (SVG)" and § "Linting" (Rule catalog → Vector art).
+- **Symptom:** `vector2d: unknown vector "` followed by the name and — declare it in the part's `vectors` field — thrown from a build calling `k.vector2d(name)`.
+- **Cause:** `k.vector2d(name)` was called with a name that isn't a key in the part's `vectors` field — a typo, or the declaration was never added. Same failure shape as `text2d`'s unknown-font error and `k.import`'s unknown-name error.
+- **Fix:** Add the name to `vectors`, or fix the typo. `npx partforge lint <part>` catches this statically, in microseconds, before any kernel boots (`vector-unknown-name`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector art (SVG)" and § "Linting" (Rule catalog → Vector art).
 
 ## svg-size-required
 
-- **Symptom:** `svg2d: a size is required` — pass one of `{ width }`, `{ height }`, or `{ fit }` in millimetres — thrown from a build calling `k.svg2d`.
+- **Symptom:** `vector2d: a size is required` — pass one of `{ width }`, `{ height }`, or `{ fit }` in millimetres — thrown from a build calling `k.vector2d`.
 - **Cause:** None of `width`, `height`, or `fit` was passed in the options object. Unlike `text2d`'s cap-height `size`, an ingested artwork's coordinate units carry no physical meaning, so there is no safe default to fall back on — this is a deliberate asymmetry with `text2d`, not an oversight.
-- **Fix:** Pass exactly one of `width`/`height`/`fit`, in millimetres. `npx partforge lint <part>` catches an options-literal call statically (`svg-size-missing`) before any kernel boots. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector art (SVG)".
+- **Fix:** Pass exactly one of `width`/`height`/`fit`, in millimetres. `npx partforge lint <part>` catches an options-literal call statically (`vector-size-missing`) before any kernel boots. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector art (SVG)".
 
 ## svg-invalid-document
 
-- **Symptom:** `svg2d: "` followed by the declared `svgs` name and a validation complaint — a bad `format`/`version`, a malformed contour or segment (missing `start`, too few segments, an `arc` with no `through`, a `cubic` missing `c1`/`c2`, a non-numeric coordinate), a `bbox` that disagrees with the geometry, or (a different message, same `svg2d: "<name>"` lead) `svg2d: "<name>" is not valid JSON — <parse error>` — thrown while resolving a part's `svgs`, before `build` even runs.
-- **Cause:** The stored document isn't a well-formed `partforge-vector` file. The single most common case for the "is not valid JSON" variant: `svgs` points at the raw `.svg` file instead of the **ingested** `.svg.json` — an SVG document is not JSON at all, so it fails to parse before validation ever gets a chance to name a more specific problem.
-- **Fix:** If the message says "is not valid JSON," check the source points at the ingested `<name>.svg.json`, not the original `.svg` — re-ingest with `partforge/ingest` (or `node scripts/ingest-svg.mjs <file.svg>` in this repo) if you don't have it yet. Otherwise, the message names the exact field and position that's wrong; fix it by hand or re-ingest. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) for the full schema and what each field means.
+- **Symptom:** `svg2d: "` followed by the declared `vectors` name and a validation complaint — a bad `format`/`version`, a malformed contour or segment (missing `start`, too few segments, an `arc` with no `through`, a `cubic` missing `c1`/`c2`, a non-numeric coordinate), a `bbox` that disagrees with the geometry — or (a different lead) `vector2d: "<name>" is not valid JSON — <parse error>` — thrown while resolving a part's `vectors`, before `build` even runs.
+- **Cause:** The stored document isn't a well-formed `partforge-vector` file. The single most common case for the "is not valid JSON" variant: `vectors` points at the raw `.svg` file instead of the **ingested** `.vector.json` — an SVG document is not JSON at all, so it fails to parse before validation ever gets a chance to name a more specific problem.
+- **Fix:** If the message says "is not valid JSON," check the source points at the ingested `<name>.vector.json`, not the original `.svg` — re-ingest with `partforge/ingest` (or `node scripts/ingest-svg.mjs <file.svg>` in this repo) if you don't have it yet. Otherwise, the message names the exact field and position that's wrong; fix it by hand or re-ingest. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) for the full schema and what each field means.
 
 ## svg-stroke-collapsed
 
 - **Symptom:** `svg: stroke outline collapsed — stroke-width is too large for this shape` thrown during ingest (`partforge/ingest`'s `ingestSvg`).
 - **Cause:** A stroked element's `stroke-width` is large enough, relative to the shape it strokes, that outlining the stroke (offsetting the path by `±w/2` and joining the results — see [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Converting an SVG to this format by hand") produces no valid ring — the offset consumed the entire shape.
-- **Fix:** Reduce `stroke-width` on the offending element, or thicken the path it strokes, in the source SVG, then re-ingest. This is a property of the artwork, not something `k.svg2d` or the part can work around at build time — ingest has already discarded the original stroke by the time a build runs.
+- **Fix:** Reduce `stroke-width` on the offending element, or thicken the path it strokes, in the source SVG, then re-ingest. This is a property of the artwork, not something `k.vector2d` or the part can work around at build time — ingest has already discarded the original stroke by the time a build runs.
 
 ## svg-no-geometry
 
@@ -665,7 +665,7 @@ between the Manifold preview and the OCCT STEP export.
 
 ## svg-painting-order
 
-- **Symptom:** No thrown error — a shape that looks like it has a hole in an SVG editor (or in a browser rendering the SVG directly) comes out **solid** through `k.svg2d`.
+- **Symptom:** No thrown error — a shape that looks like it has a hole in an SVG editor (or in a browser rendering the SVG directly) comes out **solid** through `k.vector2d`.
 - **Cause:** The artwork fakes the hole by painting a background-colored shape *on top of* another shape, rather than actually cutting a hole (one path, two subpaths, opposite winding or `fill-rule="evenodd"`). Painting order is not modelled by this format at all — every ingested region adds material unconditionally, and colour is read only as present-or-absent, never compared between elements, so "painted over" and "not there" are indistinguishable once ingest has run. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Painting order is not modelled".
 - **Fix:** Either make it a real hole in the source artwork (one `<path>` element with two subpaths and `fill-rule="evenodd"`, or two subpaths wound oppositely under `nonzero`) and re-ingest, or leave the artwork as-is and subtract the "hole" shape in the part with `.cut()` instead of relying on ingest to infer it from paint order.
 
