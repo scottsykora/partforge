@@ -68,6 +68,9 @@ const BASELINE_IDS = [
   "vector-unknown-name",
   "vector-size-required",
   "vector-size-options-conflict",
+  "vector-align-invalid",
+  "vector-size-not-positive",
+  "vector-artwork-no-extent",
   "vector-invalid-document",
   "vector-units-missing",
   "vector-stale-regions-array",
@@ -238,17 +241,16 @@ describe("the partforge-vector entries match the errors actually thrown", () => 
     ...over,
   });
   const thrown = (fn) => { try { fn(); } catch (e) { return e.message; } return null; };
+  const SQUARE = [{ outer: { start: [0, 0], segments: [{ to: [1, 0] }, { to: [1, 1] }] }, holes: [] }];
 
   test.each([
     ["vector-size-required", async () => {
       const { placeRegions } = await import("../src/framework/geometry/vector2d.js");
-      return thrown(() => placeRegions([{ outer: { start: [0, 0], segments: [{ to: [1, 0] }, { to: [1, 1] }] }, holes: [] }],
-        "artwork", {}, { name: "logo" }));
+      return thrown(() => placeRegions(SQUARE, "artwork", {}, { name: "logo" }));
     }],
     ["vector-size-options-conflict", async () => {
       const { placeRegions } = await import("../src/framework/geometry/vector2d.js");
-      return thrown(() => placeRegions([{ outer: { start: [0, 0], segments: [{ to: [1, 0] }, { to: [1, 1] }] }, holes: [] }],
-        "mm", { width: 10, fit: 10 }, { name: "logo" }));
+      return thrown(() => placeRegions(SQUARE, "mm", { width: 10, fit: 10 }, { name: "logo" }));
     }],
     ["vector-units-missing", async () => {
       const { validateVectorDocument } = await import("../src/framework/geometry/vector-format.js");
@@ -258,13 +260,32 @@ describe("the partforge-vector entries match the errors actually thrown", () => 
       const { validateVectorDocument } = await import("../src/framework/geometry/vector-format.js");
       return thrown(() => validateVectorDocument({ ...vdoc(), shapes: undefined, regions: [] }, "logo"));
     }],
+    ["vector-align-invalid", async () => {
+      const { placeRegions } = await import("../src/framework/geometry/vector2d.js");
+      return thrown(() => placeRegions(SQUARE, "mm", { align: "centre" }, { name: "logo" }));
+    }],
+    // The same entry must also route `valign` — its literal is deliberately the
+    // suffix `align must be `, which `valign must be …` contains.
+    ["vector-align-invalid", async () => {
+      const { placeRegions } = await import("../src/framework/geometry/vector2d.js");
+      return thrown(() => placeRegions(SQUARE, "mm", { valign: "centre" }, { name: "logo" }));
+    }],
+    ["vector-size-not-positive", async () => {
+      const { placeRegions } = await import("../src/framework/geometry/vector2d.js");
+      return thrown(() => placeRegions(SQUARE, "artwork", { width: 0 }, { name: "logo" }));
+    }],
+    ["vector-artwork-no-extent", async () => {
+      const { placeRegions } = await import("../src/framework/geometry/vector2d.js");
+      const flat = [{ outer: { start: [0, 0], segments: [{ to: [10, 0] }, { to: [10, 0] }] }, holes: [] }];
+      return thrown(() => placeRegions(flat, "artwork", { height: 10 }, { name: "logo" }));
+    }],
     ["vector-rect-radius-too-large", async () => {
       const { validateVectorDocument } = await import("../src/framework/geometry/vector-format.js");
       return thrown(() => validateVectorDocument(vdoc({
         shapes: { body: [{ outer: { kind: "rect", center: [0, 0], width: 10, height: 10, radius: 7 } }] },
       }), "logo"));
     }],
-  ])("%s", async (id, produce) => {
+  ])("%s (#%#)", async (id, produce) => {
     const message = await produce();
     expect(message, `${id}: expected an error, got none`).toBeTruthy();
     expect(matchPattern(message, live), `${id} does not match:\n  ${message}`).toEqual(

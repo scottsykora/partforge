@@ -651,6 +651,24 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** Two or more size options in one call. Scaling is always uniform, so a second option would either be ignored or contradict the first; rather than silently preferring one, the op refuses. (Earlier revisions silently preferred `width`, then `height`, then `fit`.)
 - **Fix:** Keep the one you meant. `fit` sizes the longer extent of the artwork's tight bounding box, `width`/`height` the named axis; all three scale uniformly, so one is always enough.
 
+## vector-align-invalid
+
+- **Symptom:** `align must be ` followed by the three legal values and the one that was passed — e.g. `vector2d: "logo" align must be "left", "center", or "right" — got "centre"`, or the vertical twin `vector2d: "logo" valign must be "bottom", "middle", or "top" — got "centre"`. Thrown from a build calling `k.vector2d`.
+- **Cause:** A typo in `align` or `valign`. The British spelling `"centre"` is far and away the most common; so is reaching for `"middle"` on the horizontal axis or `"center"` on the vertical one, which are each the *other* axis's word. `k.vector2d` refuses rather than falling through to its default, because every value that fails all three comparisons would otherwise silently land the artwork where the caller never asked for it. (The Symptom literal is deliberately `align must be `, without a leading word: `valign must be …` contains it, so one entry routes both messages. Do not "fix" it to `align must be "left"`.)
+- **Fix:** Use one of the values the message lists — horizontal is `"left"`/`"center"`/`"right"`, vertical is `"bottom"`/`"middle"`/`"top"`. Omit the option entirely to get the default, which differs by units: an `"artwork"` document re-centres (`center`/`middle`) because its coordinates mean nothing, and an `"mm"` document does not translate at all, because its coordinates already say where the drawing sits. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Units".
+
+## vector-size-not-positive
+
+- **Symptom:** `must be a positive number of millimetres`, led by the option's own name and the declared `vectors` key — e.g. `vector2d: "logo" width must be a positive number of millimetres`. Thrown from a build calling `k.vector2d`.
+- **Cause:** The `width`, `height`, or `fit` option was present but not a finite number greater than zero — `0`, a negative, `NaN`, `Infinity`, or a string. The usual source is arithmetic on a parameter that can reach zero (a slider whose `min` is `0`, or a subtraction that can go negative), not a literal.
+- **Fix:** Clamp or floor the expression that produces the size, or give the driving control a `min` above zero. Note that the option is only read when it is non-`null`: to mean "no size", leave it out (or pass `null`/`undefined`) rather than passing `0` — see vector-size-required for what happens then, which depends on the document's `units`.
+
+## vector-artwork-no-extent
+
+- **Symptom:** `to size against`, led by the axis — e.g. `vector2d: "logo" artwork has no width to size against`, or `… has no extent to size against` for a `fit` call. Thrown from a build calling `k.vector2d`.
+- **Cause:** The geometry being sized is degenerate on the requested axis: its tight bounding box has (near) zero width, height, or overall extent, so there is nothing for the scale factor to divide by. Usually a document whose contours are collinear or coincident, or a `{ shape }` call naming a shape that is a single flat line. It is not a units problem — an `"mm"` document with a size option hits it just as readily.
+- **Fix:** Size against the axis the artwork actually has (`height` instead of `width`, or `fit`, which uses the longer extent), or fix the geometry — a contour that measures zero on an axis is nearly always a drawing mistake rather than an intentional one. `npx partforge measure <part>` prints the bbox, which names the collapsed axis immediately.
+
 ## vector-invalid-document
 
 - **Symptom:** `vector2d: "` followed by the declared `vectors` name and a validation complaint — a bad `format` or `version`, a contour with no `kind` or an unknown one, a malformed `"path"` contour or segment (missing `start`, too few segments, an `arc` with no `through`, a `cubic` missing `c1`/`c2`, a non-numeric coordinate), a primitive with a bad `center`/`r`/`width`/`height`, a shape that is neither a region array nor a `{ role, regions }` object, an unknown `role`, a `bbox` that disagrees with the geometry, or (a different message, same `vector2d: "<name>"` lead) `vector2d: "<name>" is not valid JSON — <parse error>` — thrown while resolving a part's `vectors`, before `build` even runs.
