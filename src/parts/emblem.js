@@ -50,6 +50,14 @@ export default {
       // holes minus keyway), and units "mm" places it exactly as drawn. Passing
       // a size here would scale each shape against ITS OWN bounds — the trap
       // this format exists to prevent.
+      // The keyway sits clear of the artwork at the default `emblem_w` (30) —
+      // confirmed by measurement, not eyeballed: their 2-D footprints have zero
+      // intersection. That clearance is deliberate, not incidental: a much
+      // larger `emblem_w` would grow the emboss until it overlaps the keyway's
+      // footprint again, and the union below would then cap it from above —
+      // a through-slot the drawing marks `role: "subtract"` quietly becoming a
+      // blind pocket. This is exactly the failure mode the `holes` gate below
+      // exists to catch, which is why that gate is only asserted at defaults.
       build: (k, p) => k
         .vector2d("plate")
         .extrude({ h: p.plate_t })
@@ -70,14 +78,14 @@ export default {
         // raises volume, not lowers it, so this bound alone can't catch that).
         volume: ">=2900",
         watertight: true,
-        // Measured 2, not 3: the two bolt circles cut clean through, but the
-        // emblem artwork's default footprint (`emblem_w`=30, centred) sits
-        // directly over the keyway and fully covers it from above, capping what
-        // would otherwise be a through-slot into a blind pocket — one fewer
-        // tunnel, so genus is 2. Confirmed with `npx partforge measure`, and by
-        // temporarily flipping "holes"/"keyway" to role "add" in
-        // plate.vector.json (which drops this to 0, proving the gate can fail).
-        holes: 2,
+        // Three through-holes: the two bolt circles, plus the keyway triangle —
+        // all cut clean through the extruded plate and, at this part's default
+        // `emblem_w`, none of them sit under the artwork's emboss (see the
+        // build comment above for why that placement matters). Confirmed with
+        // `npx partforge measure`, and falsified by temporarily flipping
+        // "holes"/"keyway" to role "add" in plate.vector.json (which drops
+        // this to 0, proving the gate can fail).
+        holes: 3,
       },
       _view: { overlaps: 0 },
     },
