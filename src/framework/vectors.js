@@ -70,6 +70,26 @@ export async function resolveVectors(vectorsDecl) {
   return out;
 }
 
+// The RAW parsed JSON, before validation or conversion — what lint's
+// document-dependent rules need to read `units` and `shapes`. Never throws: a
+// source that will not fetch, decode, or parse maps to null, and the rules that
+// depend on it stay quiet. Diagnosing a broken file is the build's job, and it
+// does that with a named error; lint's job is to be fast and never wrong.
+// Deliberately shares `resolveOne`'s bytes memo above with resolveVectors, so
+// running `lint` ahead of `measure` (the CLI does both) costs no extra fetch —
+// but it does its own decode/parse rather than reusing the `parsed` memo, which
+// holds the VALIDATED/converted document, not the raw JSON this needs.
+export async function resolveVectorDocs(vectorsDecl) {
+  if (typeof vectorsDecl === "function") return new Map();
+  const out = new Map();
+  let raw;
+  try { raw = await resolveDecl(vectorsDecl ?? {}, resolveOne); } catch { return out; }
+  for (const [name, bytes] of raw) {
+    try { out.set(name, JSON.parse(new TextDecoder().decode(bytes))); } catch { out.set(name, null); }
+  }
+  return out;
+}
+
 // Register a part's vectors on a booted kernel. Called in the async phase before
 // every job's synchronous build — worker (jobs.js) and Node boots alike.
 export async function ensureVectors(kernel, vectorsDecl) {

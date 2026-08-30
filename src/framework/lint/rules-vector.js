@@ -1,8 +1,8 @@
-// Group 10 — vector-art call well-formedness. Both conditions throw at build
-// time anyway; these rules move them ahead of the kernel boot, which is where an
-// authoring agent wants them.
+// Group 10 — vector-art call well-formedness. All three conditions throw at
+// build time anyway; these rules move them ahead of the kernel boot, which is
+// where an authoring agent wants them.
 //
-// Both read `probe().calls`, whose `args` are JSON.stringify of the RESOLVED
+// All read `probe().calls`, whose `args` are JSON.stringify of the RESOLVED
 // argument values under the part's default params (probe.js's `describe`), not
 // source text. So these judge what the part actually builds by default — the
 // same basis rules-imports.js's import-unknown-name already uses. A call that
@@ -10,9 +10,11 @@
 // correctly at build time; this catches the common case early, it does not
 // replace that authority.
 //
-// Because values are JSON-serialized, an options object arrives as
-// `{"width":10}` — note the quote before the colon, which the size regex has to
-// tolerate.
+// vector-size-missing and vector-unknown-shape additionally need `ctx.vectorDocs`
+// — the caller's parsed vector files (see lint/index.js's normalizeVectorDocs,
+// vectors.js's resolveVectorDocs). Lint itself never reads a file (this
+// package's header), so without a supplied document neither rule can tell
+// units from shapes and both stay silent rather than guess.
 import { err } from "./finding.js";
 
 const declaredVectors = (part) => Object.keys(part?.vectors ?? {});
@@ -21,6 +23,17 @@ const declaredVectors = (part) => Object.keys(part?.vectors ?? {});
 // for anything that is not a string (import-unknown-name reads its name the same way).
 const literalName = (src) => {
   try { const v = JSON.parse(src); return typeof v === "string" ? v : null; } catch { return null; }
+};
+
+// Probe args are JSON-serialized resolved VALUES (probe.js's `describe`), not
+// source text — so an options object arrives as `{"width":10,"shape":"body"}`.
+// Parsing it back is exact for the literal cases these rules judge; anything
+// that does not parse to a plain object means "cannot tell", and the rule stays
+// quiet rather than guessing. A missing argument (`src == null`) is not
+// malformed — it means "no options object" — so it reads as `{}`, not "unknown".
+const optsOf = (src) => {
+  if (src == null) return {};
+  try { const v = JSON.parse(src); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch { return null; }
 };
 
 const vectorCalls = (probe) => probe().calls.filter((c) => c.scope === "kernel" && c.op === "vector2d");
@@ -46,18 +59,42 @@ export const VECTOR_RULES = [
   },
   {
     id: "vector-size-missing",
-    run: ({ probe }) => {
+    run: ({ probe, vectorDocs }) => {
+      if (!vectorDocs) return [];                       // caller supplied nothing — cannot judge units
       const out = [];
       for (const call of vectorCalls(probe)) {
-        const opts = call.args[1]?.trim();
-        if (opts != null && !opts.startsWith("{")) continue;      // not an object — skip
-        // `"?` because probe args are JSON-serialized: `{"width":10}`, not `{ width: 10 }`.
-        if (opts && /\b(width|height|fit)"?\s*:/.test(opts)) continue;
-        const name = literalName(call.args[0]) ?? "…";
+        const name = literalName(call.args[0]);
+        if (name == null) continue;
+        const doc = Object.hasOwn(vectorDocs, name) ? vectorDocs[name] : null;
+        if (doc?.units !== "artwork") continue;         // mm files place as authored; a size is optional
+        const opts = optsOf(call.args[1]);
+        if (opts == null) continue;
+        if (opts.width != null || opts.height != null || opts.fit != null) continue;
         out.push(err("vector-size-missing",
-          `k.vector2d("${name}", …) declares no size — one of { width }, { height }, or { fit } is required, in millimetres`,
-          "An artwork's units have no physical meaning, so there is no safe default to fall back on (unlike k.text2d's cap-height `size`). "
-          + `Add one, e.g. k.vector2d("${name}", { width: 20 }).`,
+          `k.vector2d("${name}", …) declares no size, and "${name}" has units "artwork" — one of { width }, { height }, or { fit } is required, in millimetres`,
+          "Artwork units have no physical meaning, so there is no safe default to fall back on (unlike k.text2d's cap-height `size`). "
+          + `Add one, e.g. k.vector2d("${name}", { width: 20 }) — or re-author the file with "units": "mm" if its coordinates really are millimetres.`,
+          "build"));
+      }
+      return out;
+    },
+  },
+  {
+    id: "vector-unknown-shape",
+    run: ({ probe, vectorDocs }) => {
+      if (!vectorDocs) return [];
+      const out = [];
+      for (const call of vectorCalls(probe)) {
+        const name = literalName(call.args[0]);
+        const opts = optsOf(call.args[1]);
+        if (name == null || opts == null || typeof opts.shape !== "string") continue;
+        const doc = Object.hasOwn(vectorDocs, name) ? vectorDocs[name] : null;
+        const shapes = doc?.shapes;
+        if (!shapes || typeof shapes !== "object" || Array.isArray(shapes)) continue;
+        if (Object.hasOwn(shapes, opts.shape)) continue;
+        out.push(err("vector-unknown-shape",
+          `k.vector2d("${name}", { shape: "${opts.shape}" }) names a shape "${opts.shape}" that "${name}" does not contain: ${Object.keys(shapes).join(", ") || "(none)"}`,
+          "Fix the shape name to match one the file declares, or omit `shape` to use the union of every shape.",
           "build"));
       }
       return out;

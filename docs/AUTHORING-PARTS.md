@@ -2183,6 +2183,16 @@ no findings from that group. Source findings carry `file` and `line` on top of t
 standard shape, and `SOURCE_RULE_IDS` names them — a host that gates rendering on
 lint errors uses it to keep them reported but non-blocking.
 
+`lintPart(part, { vectorDocs })` optionally takes the RAW parsed JSON of the
+part's declared `vectors` files — `{ name: parsedDocument }` — and unlocks the
+two vector rules that need to read `units`/`shapes` (below). Lint is pure and
+synchronous by contract, so it never fetches these itself: `vectors.js`'s
+`resolveVectorDocs(part.vectors)` does the async resolve (sharing the same
+bytes memo `resolveVectors` uses, so `lint` ahead of `measure` costs no extra
+fetch) and the caller — the CLI, or a host — passes the result in, exactly the
+way `sources` already works. Omit it, or hand over something malformed, and
+those two rules just stay silent rather than guess.
+
 `partforge/lint` has **zero runtime dependencies** and never imports a geometry
 kernel or the DOM viewer, so it runs unchanged in Node, a Web Worker, a sandboxed
 iframe, and Deno. A worker also answers `{ type: "lint", params }` with
@@ -2392,13 +2402,19 @@ occurrence's line, rather than one per occurrence.
 
 **Vector art** — `vector-unknown-name` (a build calls `k.vector2d` with a name the
 part's `vectors` field doesn't declare — this throws at build time; lint reaches
-it in microseconds instead), `vector-size-missing` (a `k.vector2d` call declares none
-of `{ width }`, `{ height }`, or `{ fit }` — unlike `k.text2d`'s cap-height
-`size`, ingested artwork carries no physical unit, so there is no safe default
-to fall back on) (both errors). Both judge the argument values the probe
-resolves under the part's default params, the same basis `import-unknown-name`
-uses; a call that only goes wrong for non-default params still fails correctly
-at build time.
+it in microseconds instead; needs no `vectorDocs`), `vector-size-missing` (a
+`k.vector2d` call declares none of `{ width }`, `{ height }`, or `{ fit }` **and**
+the named file's `units` is `"artwork"` — unlike `k.text2d`'s cap-height `size`,
+artwork units carry no physical meaning, so there is no safe default to fall
+back on; an `"mm"` file's coordinates already are millimetres, so a size is
+genuinely optional there), `vector-unknown-shape` (a `k.vector2d(name, { shape })`
+call names a shape the file's `shapes` object doesn't contain) (all errors).
+`vector-size-missing` and `vector-unknown-shape` need `vectorDocs` (above) to
+read the file's `units`/`shapes` — without it, both stay silent rather than
+fire on every correct millimetre file or guess at shape names. All three judge
+the argument values the probe resolves under the part's default params, the
+same basis `import-unknown-name` uses; a call that only goes wrong for
+non-default params still fails correctly at build time.
 
 A rule that itself throws yields an `internal-rule-error` **warning** and the run
 continues: `lintPart` never throws and never blocks a part because of a linter bug.

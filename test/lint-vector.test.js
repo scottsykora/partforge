@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import { lintPart } from "../src/lint.js";
 
 const ids = (findings) => findings.map((f) => f.rule);
@@ -11,6 +11,10 @@ const partWith = (build, extra = {}) => ({
   ...extra,
 });
 const withArt = (build) => partWith(build, { vectors: { badge: new URL("file:///badge.svg.json") } });
+// vector-size-missing only fires for "artwork" units (units are unknown without
+// vectorDocs, so it stays silent by default) — the pre-existing size tests below
+// need to supply a document to exercise it.
+const ARTWORK_DOCS = { vectorDocs: { badge: { format: "partforge-vector", version: 1, units: "artwork", shapes: {} } } };
 
 test("a k.vector2d call naming an undeclared vector is an error", () => {
   const r = lintPart(withArt((k) => k.vector2d("logo", { width: 10 }).extrude(1)));
@@ -50,21 +54,21 @@ test("the same unknown name is reported once, not per call", () => {
   expect(ids(r.errors).filter((i) => i === "vector-unknown-name")).toHaveLength(1);
 });
 
-test("a k.vector2d call with no options object is an error naming the three options", () => {
-  const r = lintPart(withArt((k) => k.vector2d("badge").extrude(1)));
+test("a k.vector2d call with no options object is an error naming the three options, for artwork units", () => {
+  const r = lintPart(withArt((k) => k.vector2d("badge").extrude(1)), ARTWORK_DOCS);
   expect(ids(r.errors)).toContain("vector-size-missing");
   expect(find(r, "vector-size-missing").message).toMatch(/width|height|fit/);
 });
 
-test("an options literal with none of width/height/fit is an error", () => {
-  expect(ids(lintPart(withArt((k) => k.vector2d("badge", { align: "left" }).extrude(1))).errors))
+test("an options literal with none of width/height/fit is an error, for artwork units", () => {
+  expect(ids(lintPart(withArt((k) => k.vector2d("badge", { align: "left" }).extrude(1)), ARTWORK_DOCS).errors))
     .toContain("vector-size-missing");
 });
 
 test("each of width, height and fit clears the rule", () => {
   for (const opt of ["{ width: 10 }", "{ height: 10 }", "{ fit: 10 }"]) {
     const build = new Function("k", `return k.vector2d("badge", ${opt}).extrude(1)`);
-    expect(ids(lintPart(withArt(build)).errors)).not.toContain("vector-size-missing");
+    expect(ids(lintPart(withArt(build), ARTWORK_DOCS).errors)).not.toContain("vector-size-missing");
   }
 });
 
@@ -75,5 +79,55 @@ test("each of width, height and fit clears the rule", () => {
 test("an options argument computed from a param is judged by its resolved default value", () => {
   const part = partWith((k, p) => k.vector2d("badge", p.opts).extrude(1),
     { vectors: { badge: new URL("file:///badge.svg.json") }, defaults: { opts: { align: "left" } } });
-  expect(ids(lintPart(part).errors)).toContain("vector-size-missing");
+  expect(ids(lintPart(part, ARTWORK_DOCS).errors)).toContain("vector-size-missing");
+});
+
+test("vector-size-missing stays silent for mm units, even with none of width/height/fit", () => {
+  const mmDocs = { vectorDocs: { badge: { format: "partforge-vector", version: 1, units: "mm", shapes: {} } } };
+  expect(ids(lintPart(withArt((k) => k.vector2d("badge").extrude(1)), mmDocs).errors))
+    .not.toContain("vector-size-missing");
+});
+
+// Findings key off `rule` (finding.js's `make`), not `id` — the field the
+// brief's own draft used before it was reconciled against the actual shape.
+const DOC = (units, shapes) => ({ format: "partforge-vector", version: 1, units, shapes });
+const partWithDoc = (buildFn) => ({
+  meta: { title: "T" },
+  vectors: { plate: new Uint8Array() },
+  defaults: {},
+  parts: { body: { views: ["main"], build: buildFn } },
+  views: { main: { label: "Main" } },
+});
+
+describe("vector lint rules needing vectorDocs", () => {
+  it("vector-unknown-name fires without vectorDocs", () => {
+    const r = lintPart(partWithDoc((k) => k.vector2d("nope", { width: 10 }).extrude(1)));
+    expect(r.errors.map((e) => e.rule)).toContain("vector-unknown-name");
+  });
+
+  it("vector-size-missing needs vectorDocs and fires only for artwork units", () => {
+    const build = (k) => k.vector2d("plate").extrude(1);
+    // No documents supplied → the rule cannot know the units, so it stays quiet.
+    expect(lintPart(partWithDoc(build)).errors.map((e) => e.rule)).not.toContain("vector-size-missing");
+    // mm → a size is genuinely optional.
+    expect(lintPart(partWithDoc(build), { vectorDocs: { plate: DOC("mm", { s: [] }) } })
+      .errors.map((e) => e.rule)).not.toContain("vector-size-missing");
+    // artwork → a size is required.
+    expect(lintPart(partWithDoc(build), { vectorDocs: { plate: DOC("artwork", { artwork: [] }) } })
+      .errors.map((e) => e.rule)).toContain("vector-size-missing");
+  });
+
+  it("vector-unknown-shape names the shapes the file declares", () => {
+    const build = (k) => k.vector2d("plate", { shape: "rim" }).extrude(1);
+    const r = lintPart(partWithDoc(build), { vectorDocs: { plate: DOC("mm", { body: [], holes: [] }) } });
+    const f = r.errors.find((e) => e.rule === "vector-unknown-shape");
+    expect(f.message).toMatch(/body, holes/);
+  });
+
+  it("survives a malformed vectorDocs without throwing", () => {
+    const build = (k) => k.vector2d("plate", { shape: "rim" }).extrude(1);
+    for (const bad of [null, 42, "x", { plate: null }, { plate: "not a doc" }]) {
+      expect(() => lintPart(partWithDoc(build), { vectorDocs: bad })).not.toThrow();
+    }
+  });
 });

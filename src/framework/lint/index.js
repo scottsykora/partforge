@@ -45,6 +45,24 @@ function normalizeSources(sources) {
   return { files, entrypoint };
 }
 
+// The caller's parsed vector files, or null. Deliberately forgiving for the same
+// reason normalizeSources is: hosted callers hand over user- and agent-authored
+// trees, and a malformed input must mean "no document-dependent findings",
+// never a throw. Lint itself never reads a file — it is pure and synchronous by
+// contract (see this file's header); the caller does the I/O and passes the
+// result in.
+function normalizeVectorDocs(docs) {
+  if (!docs || typeof docs !== "object") return null;
+  const out = Object.create(null);
+  let any = false;
+  for (const [name, doc] of Object.entries(docs)) {
+    if (!doc || typeof doc !== "object") continue;
+    out[name] = doc;
+    any = true;
+  }
+  return any ? out : null;
+}
+
 // Every rule runs inside a guard. lintPart is called on a user-facing hosted path
 // (partforge-cloud's sandbox), and a linter that takes down the preview it exists to
 // protect is worse than no linter — so a throwing rule becomes a WARNING, never an
@@ -99,9 +117,12 @@ export function lintContext(part, params) {
 /**
  * Lint a PartDefinition. Never throws.
  * @param {object} part   the default-exported PartDefinition
- * @param {{params?: object, sources?: {files?: Record<string, string>, entrypoint?: string}}} [opts]
+ * @param {{params?: object, sources?: {files?: Record<string, string>, entrypoint?: string}, vectorDocs?: Record<string, object>}} [opts]
  *   `params` are layered over part.defaults for the probe pass; `sources` is the part's own
  *   source text, which unlocks the source rules (Group 9) — omit it and lint behaves as before.
+ *   `vectorDocs` is `{ name: parsedDocument }`, the raw parsed JSON of the part's declared
+ *   vector files (see vectors.js's resolveVectorDocs) — omit it and the document-dependent
+ *   vector rules (vector-size-missing, vector-unknown-shape) stay silent rather than guess.
  * @returns {{ok: boolean, errors: object[], warnings: object[], notes: object[]}}
  */
 export function lintPart(part, opts) {
@@ -109,7 +130,7 @@ export function lintPart(part, opts) {
   // parameter only fires on `undefined` — a caller passing `lintPart(part, null)`
   // (a plausible downstream-harness call) would otherwise throw destructuring
   // `{ params }` out of `null` before this function's body ever runs.
-  const { params, sources } = opts ?? {};
+  const { params, sources, vectorDocs } = opts ?? {};
   // lintContext already guards its own internals (see its comment above), but it
   // is user-authored data all the way down — wrap the call itself too, so a
   // failure mode neither of us has thought of still degrades to a report instead
@@ -137,6 +158,9 @@ export function lintPart(part, opts) {
   // host filtering source findings out to keep them non-blocking would instead
   // refuse to render a part that builds fine.
   try { ctx.sources = normalizeSources(sources); } catch { ctx.sources = null; }
+  // Same deliberate own-guard as sources above: a malformed vectorDocs input
+  // means "the document-dependent vector rules stay quiet", never a broken part.
+  try { ctx.vectorDocs = normalizeVectorDocs(vectorDocs); } catch { ctx.vectorDocs = null; }
   const findings = runRules(RULES, ctx);
   // `p` (params merged from `defaults`) failed to build — every rule still ran
   // against the `{}` fallback (each guarded individually by runRules), but the

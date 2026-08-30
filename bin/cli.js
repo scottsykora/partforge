@@ -23,6 +23,7 @@ import {
 import { savePickToken, loadPickToken, clearPickToken, pickTokenPath } from "../src/framework/pick-request/token-store.js";
 import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
+import { resolveVectorDocs } from "../src/framework/vectors.js";
 
 const die = (msg) => { console.error(msg); process.exit(1); };
 
@@ -119,7 +120,8 @@ const commands = {
       const part = await loadPart(partPath, usage);
       const params = flags.params ? JSON.parse(flags.params) : undefined;
       const sources = readSources(partPath);
-      const report = lintPart(part, { params, sources });
+      const vectorDocs = Object.fromEntries(await resolveVectorDocs(part.vectors));
+      const report = lintPart(part, { params, sources, vectorDocs });
       if (!flags.json) printLint(report);
       if (flags.out) {
         mkdirSync(dirname(resolve(flags.out)), { recursive: true });
@@ -148,7 +150,8 @@ const commands = {
       // milliseconds with a precise message rather than after a WASM boot and a
       // downstream error that doesn't name the cause. Warnings never gate measure.
       if (!flags["no-lint"]) {
-        const lint = lintPart(part, { sources: readSources(partPath) });
+        const vectorDocs = Object.fromEntries(await resolveVectorDocs(part.vectors));
+        const lint = lintPart(part, { sources: readSources(partPath), vectorDocs });
         if (!lint.ok) {
           if (flags.json) console.log(JSON.stringify({ ok: false, lint }, null, 2));
           else printLint(lint);
