@@ -155,3 +155,29 @@ it("reproduces the checked-in emblem fixture byte for byte", () => {
   const fresh = `${JSON.stringify(ingestSvg(svg, { source: "emblem.svg" }), null, 2)}\n`;
   expect(fresh).toBe(readFileSync("src/parts/assets/emblem.vector.json", "utf8"));
 });
+
+// Regression for the half-disc class: `toContour` drops the implicit closing
+// chord, and arc recovery merges two quarter-arc cubics into ONE ≤180° arc, so
+// the contour arrives with a single segment. validateVectorDocument used to
+// require two and refused the file — ingest wrote it happily, and the first
+// build that touched it died. Both halves are fixed: the rule now accepts a lone
+// CURVED segment, and ingestSvg validates its own output before returning, so
+// this can never silently ship again.
+test("a filled half-disc round-trips: one arc plus the implicit chord is a valid contour", () => {
+  const doc = ingestSvg(svg('<path fill="#111" d="M 4 24 A 10 10 0 0 1 24 24 Z"/>'));
+  const [region] = doc.shapes.artwork;              // the emitted JSON, not the internal form
+  expect(region.outer.segments).toHaveLength(1);
+  expect(region.outer.segments[0].kind).toBe("arc");
+  expect(netArea(doc)).toBeCloseTo(Math.PI * 100 / 2, 0);
+});
+
+test("the reversed-sweep half-disc round-trips too", () => {
+  const doc = ingestSvg(svg('<path fill="#111" d="M 24 24 A 10 10 0 0 1 4 24 Z"/>'));
+  expect(regionsOf(doc)[0].outer.segments).toHaveLength(1);
+  expect(netArea(doc)).toBeCloseTo(Math.PI * 100 / 2, 0);
+});
+
+test("a half-disc written as two 90-degree A commands round-trips", () => {
+  const doc = ingestSvg(svg('<path fill="#111" d="M 4 24 A 10 10 0 0 1 14 14 A 10 10 0 0 1 24 24 Z"/>'));
+  expect(netArea(doc)).toBeCloseTo(Math.PI * 100 / 2, 0);
+});

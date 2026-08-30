@@ -63,10 +63,39 @@ test("a non-numeric coordinate is refused, with the position", () => {
   expect(() => validateVectorDocument(d, "emblem")).toThrow(/shape "body" region 1.*segment 1/s);
 });
 
-test("a contour with fewer than two segments is refused", () => {
+test("a contour with a single STRAIGHT segment is refused — it encloses nothing", () => {
   const d = doc();
   d.shapes.body[0].outer.segments = [{ kind: "line", to: [1, 1] }];
-  expect(() => validateVectorDocument(d, "emblem")).toThrow(/at least two segments|too few/i);
+  expect(() => validateVectorDocument(d, "emblem")).toThrow(/at least two segments|encloses no area/i);
+});
+
+test("a contour with no segments at all is refused", () => {
+  const d = doc();
+  d.shapes.body[0].outer.segments = [];
+  expect(() => validateVectorDocument(d, "emblem")).toThrow(/too few segments/i);
+});
+
+// A half-disc: one ≤180° arc plus the implicit closing chord bounds real area.
+// The old "at least two segments" rule was justified by the triangle — true of
+// STRAIGHT edges only — and it refused documents this repo's own ingest emits.
+test("a contour with a single CURVED segment is accepted (half-disc, lens, petal)", () => {
+  const half = doc({ bbox: null });
+  delete half.bbox;
+  half.shapes.body[0].outer = { kind: "path", start: [-10, 0], segments: [
+    { kind: "arc", to: [10, 0], through: [0, 10] },
+  ] };
+  expect(() => validateVectorDocument(half, "emblem")).not.toThrow();
+  const [region] = toInternalDocument(half, "emblem").shapes.get("body").regions;
+  expect(Math.abs(profileArea([region]))).toBeCloseTo(Math.PI * 100 / 2, 1);
+});
+
+test("a single cubic segment is accepted too", () => {
+  const d = doc();
+  delete d.bbox;
+  d.shapes.body[0].outer = { kind: "path", start: [0, 0], segments: [
+    { kind: "cubic", to: [10, 0], c1: [2, 8], c2: [8, 8] },
+  ] };
+  expect(() => validateVectorDocument(d, "emblem")).not.toThrow();
 });
 
 test("no shapes at all is refused", () => {

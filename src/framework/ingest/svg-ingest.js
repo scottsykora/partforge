@@ -15,7 +15,7 @@ import { toContour, toOpenContour, booleanRegions } from "../geometry/paper-brid
 import { resolveCurveFill } from "../geometry/curve-fill.js";
 import { outlineStroke } from "../geometry/stroke-outline.js";
 import { recoverArcs } from "../geometry/arc-fit.js";
-import { fromInternalRegions } from "../geometry/vector-format.js";
+import { fromInternalRegions, validateVectorDocument } from "../geometry/vector-format.js";
 import { reverseContour } from "../geometry/profile.js";
 
 // A private scope, never paper's package-global project — another consumer in
@@ -191,5 +191,22 @@ export function ingestSvg(svgText, { strokes = "outline", source = null } = {}) 
   // pre-round coordinates to work around: that old sampling grid could shift
   // an extremum by ~1e-3 on an unrounded-vs-rounded ULP nudge, which is gone
   // now that the bbox check isn't sampling a grid at all.
-  return fromInternalRegions(withArcs, { source, units: "artwork", shape: "artwork" });
+  const doc = fromInternalRegions(withArcs, { source, units: "artwork", shape: "artwork" });
+  // Ingest must never emit a document its own loader refuses. It used to: a
+  // filled half-disc reduced to a ONE-segment contour (the implicit chord is
+  // dropped, and arc recovery merged two quarter-cubics into a single ≤180°
+  // arc) and validateVectorDocument then required two. The file wrote fine and
+  // died at the first build that touched it, telling the author to hand-edit a
+  // generated file the docs say never to hand-edit.
+  //
+  // The rule was the wrong one and is fixed, but the CLASS of bug is closed
+  // here: this is the reference implementation VECTOR-FORMAT.md invites third
+  // parties to diff against, so the loader's own gate runs on the way out. A
+  // throw here is a partforge bug, not an author's — say so.
+  try {
+    validateVectorDocument(doc, source ?? "(ingested)");
+  } catch (e) {
+    throw new Error(`svg: ingest produced a document this build cannot load — that is a partforge bug, please report it with the SVG.\n  ${e.message}`);
+  }
+  return doc;
 }

@@ -131,9 +131,9 @@ function checkContour(label, where, c) {
   }
   // "path" — the explicit form.
   if (!isPt(c.start)) fail(label, where, 'has no valid "start"', "start must be a [x, y] pair of finite numbers");
-  if (!Array.isArray(c.segments) || c.segments.length < 2) {
+  if (!Array.isArray(c.segments) || c.segments.length === 0) {
     fail(label, where, `has too few segments (${c.segments?.length ?? 0})`,
-      "a closed contour needs at least two segments; it closes implicitly from the last `to` back to `start`");
+      "a closed contour needs at least one segment; it closes implicitly from the last `to` back to `start`");
   }
   c.segments.forEach((s, i) => {
     const at = `${where} segment ${i + 1}`;
@@ -154,6 +154,18 @@ function checkContour(label, where, c) {
     }
     fail(label, at, `has unknown "kind": ${JSON.stringify(s.kind)}`, 'kind must be "line", "arc", or "cubic"');
   });
+  // How few segments can bound area? It depends on whether they are straight.
+  // Two straight edges plus the implicit closure is the fewest — a triangle. But
+  // ONE curved segment plus the closing chord bounds area perfectly well: that is
+  // a lens, a half-disc, a petal, and arc recovery produces exactly it (a filled
+  // half-disc arrives as two quarter-cubics, which merge into one ≤180° arc).
+  // A lone straight segment is the only single-segment contour that encloses
+  // nothing, because it and the closure are the same line.
+  if (c.segments.length === 1 && c.segments[0].kind === "line") {
+    fail(label, where, "has a single straight segment, which encloses no area",
+      "a straight-edged contour needs at least two segments — with the implicit closure that is a triangle, "
+      + "the fewest that can bound area. A single `arc` or `cubic` segment is fine: it bounds area against the closing chord");
+  }
 }
 
 export const VECTOR_UNITS = ["mm", "artwork"];

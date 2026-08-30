@@ -339,9 +339,13 @@ primitive, and no per-contour transform: emit the coordinates you mean.
 
 ### 2.6 Segments
 
-A `"path"` contour is `{ kind: "path", start: [x, y], segments: [...] }`, with
-**at least two segments** (with the implicit closing edge, two explicit segments
-plus the closure is the fewest that can bound a nonzero area — a triangle). Every
+A `"path"` contour is `{ kind: "path", start: [x, y], segments: [...] }`, with at
+least one segment, and **at least two if they are all straight**. The rule is
+"can this bound a nonzero area?", not a segment count: two straight segments plus
+the implicit closure is the fewest that can — a triangle — but a single `"arc"`
+or `"cubic"` bounds area against the closing chord all by itself. That is a
+half-disc, a lens, a petal, and ingest emits exactly that shape. Only a lone
+`"line"` is refused, because it and the closing edge are the same line. Every
 segment has a `kind` and a `to`; `kind` determines what else it carries:
 
 | `kind` | Extra fields | Meaning |
