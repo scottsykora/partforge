@@ -176,7 +176,7 @@ export function finishKernel(k) {
     const doc = k._vectors.get(name);
     if (!doc) throw new Error(`vector2d: unknown vector "${name}" — declare it in the part's \`vectors\` field`);
     const regions = [...doc.shapes.values()].flat();
-    return placeRegions(regions, opts).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+    return placeRegions(regions, doc.units, opts).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
   };
 
   // Convex hull → Shape2D. Backend-agnostic: pure-JS monotone-chain hull of the inputs'
