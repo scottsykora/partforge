@@ -39,11 +39,22 @@ function parseDocument(bytes, label) {
   return toInternalDocument(doc, label);
 }
 
+// source -> resolved bytes, recorded only once a source has SUCCESSFULLY resolved.
+// `cache` above cannot answer that question: makeAssetResolver stores the promise
+// synchronously, so `cache.has(source)` is true the instant a fetch starts and
+// stays true if it never finishes. This map is what `cachedVectorDocs` reads, and
+// its whole point is that membership means "the bytes are here, now".
+const bytesBySource = new Map();
+// source -> raw parsed JSON, or null if it is not a JSON object. Filled LAZILY by
+// cachedVectorDocs rather than at resolve time, so the build path never pays a
+// JSON.parse for lint's benefit, and lint never re-parses the same file twice.
+const rawBySource = new Map();
+
 // The resolver memoizes by source identity and cannot see the declared name, so
 // the name is bound per declaration below rather than baked into the resolver.
 const resolveOne = makeAssetResolver(
   cache,
-  (bytes) => bytes,
+  (bytes, _value, source) => { bytesBySource.set(source, bytes); return bytes; },
   "resolveVectors: a vector source must be bytes, a URL, or a thunk returning one",
 );
 
@@ -95,6 +106,51 @@ export async function resolveVectorDocs(vectorsDecl) {
       out.set(name, null);
     }
   }));
+  return out;
+}
+
+// The SYNCHRONOUS, FETCH-FREE sibling of resolveVectorDocs: the raw parsed JSON
+// for every declared vector whose bytes are ALREADY resolved, and nothing for the
+// rest. Never fetches, never awaits, never throws.
+//
+// This exists because lint is instant and offline BY CONSTRUCTION — that is the
+// property that lets a browser sandbox run it on every keystroke — and calling
+// the async resolver from the lint path quietly gave that away: a slow or hanging
+// vector URL (asset-resolve.js's fetch has no timeout) would stall the lint reply
+// forever, and a throwing `vectors` getter would reject in a floating promise,
+// which surfaces as `unhandledrejection` rather than an `error` event, so a host
+// waiting on a lint-report simply waits.
+//
+// The degradation is the one the two document-dependent rules are designed for:
+// no document, no finding. In a hosted sandbox a build has almost always run
+// first, so the bytes are already in the memo and both rules light up; before the
+// first build they stay silent, exactly as they do today for a caller that passes
+// no vectorDocs at all. Nothing regresses, and lint cannot become slower or
+// hangable than it was before vectors existed.
+//
+// `decl` is caller data all the way down (a throwing getter, a Proxy whose
+// ownKeys trap throws), so every step that touches it is guarded per-name and the
+// whole walk is guarded once.
+export function cachedVectorDocs(vectorsDecl) {
+  const out = new Map();
+  if (!vectorsDecl || typeof vectorsDecl !== "object") return out;
+  let entries;
+  try { entries = Object.entries(vectorsDecl); } catch { return out; }
+  for (const entry of entries) {
+    try {
+      const [name, source] = entry;
+      if (!bytesBySource.has(source)) continue;        // not resolved yet — stay silent
+      if (!rawBySource.has(source)) {
+        let doc = null;
+        try {
+          const parsedJson = JSON.parse(new TextDecoder().decode(bytesBySource.get(source)));
+          doc = parsedJson && typeof parsedJson === "object" ? parsedJson : null;
+        } catch { doc = null; }                        // not JSON, or not decodable
+        rawBySource.set(source, doc);
+      }
+      out.set(name, rawBySource.get(source));
+    } catch { /* one hostile entry silences itself, not its siblings */ }
+  }
   return out;
 }
 

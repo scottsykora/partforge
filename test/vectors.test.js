@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { resolveVectors, resolveVectorDocs, ensureVectors } from "../src/framework/vectors.js";
+import { resolveVectors, resolveVectorDocs, cachedVectorDocs, ensureVectors } from "../src/framework/vectors.js";
 import { fromInternalRegions } from "../src/framework/geometry/vector-format.js";
 import { handle } from "../src/framework/jobs.js";
 
@@ -151,4 +151,55 @@ test("resolveVectorDocs never rejects, even when every source is bad", async () 
 
 test("resolveVectorDocs on a function-valued vectors declaration resolves to an empty map, not a throw", async () => {
   await expect(resolveVectorDocs((p) => ({ logo: rawDoc() }))).resolves.toEqual(new Map());
+});
+
+// --- cachedVectorDocs: synchronous, fetch-free, never throws ------------------
+//
+// This is what the worker's lint job reads. Its whole reason to exist is that
+// lint must stay instant and offline: it may look only at bytes that are already
+// resolved, must never start a fetch (asset-resolve.js's has no timeout), and
+// must never throw, because a throw there costs the host its lint-report.
+
+test("cachedVectorDocs returns nothing for a source that has not resolved yet", () => {
+  expect([...cachedVectorDocs({ a: bytes(box()) }).keys()]).toEqual([]);
+});
+
+test("cachedVectorDocs returns the RAW parsed JSON once the source has resolved", async () => {
+  const src = bytes(box());
+  await resolveVectors({ a: src });
+  const doc = cachedVectorDocs({ a: src }).get("a");
+  // Raw JSON, not the internal form: `shapes` is a plain object the lint rules
+  // can call Object.hasOwn on, not the Map that toInternalDocument builds.
+  expect(doc.format).toBe("partforge-vector");
+  expect(doc.units).toBe("artwork");
+  expect(Object.hasOwn(doc.shapes, "artwork")).toBe(true);
+});
+
+test("cachedVectorDocs never invokes a thunk, so it can never start a fetch", () => {
+  let called = 0;
+  const src = () => { called++; return bytes(box()); };
+  expect([...cachedVectorDocs({ a: src }).keys()]).toEqual([]);
+  expect(called).toBe(0);
+});
+
+test("cachedVectorDocs reports resolved siblings even when one source is unresolved", async () => {
+  const ready = bytes(box());
+  await resolveVectors({ ready });
+  const out = cachedVectorDocs({ ready, pending: () => new Promise(() => {}) });
+  expect([...out.keys()]).toEqual(["ready"]);
+});
+
+test("cachedVectorDocs maps a resolved-but-unparseable source to null, not a throw", async () => {
+  const src = new TextEncoder().encode("<svg>not json</svg>");
+  await resolveVectors({ a: src }).catch(() => {});   // parse fails downstream; bytes still resolved
+  expect(cachedVectorDocs({ a: src }).get("a")).toBeNull();
+});
+
+test.each([
+  ["null", null],
+  ["a function", () => ({})],
+  ["a throwing ownKeys Proxy", new Proxy({}, { ownKeys() { throw new Error("hostile"); } })],
+  ["a throwing value getter", Object.defineProperty({}, "a", { get() { throw new Error("hostile"); }, enumerable: true })],
+])("cachedVectorDocs never throws on %s", (_label, decl) => {
+  expect(() => cachedVectorDocs(decl)).not.toThrow();
 });

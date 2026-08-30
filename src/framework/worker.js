@@ -10,7 +10,7 @@
 // in docs/KERNEL-CONTRACT.md.
 import { handle } from "./jobs.js";
 import { lintPart } from "../lint.js";
-import { resolveVectorDocs } from "./vectors.js";
+import { cachedVectorDocs } from "./vectors.js";
 
 async function manifoldKernels() {
   const [{ default: Module }, { createManifoldKernel }] = await Promise.all([
@@ -127,7 +127,7 @@ export function runWorker(part, opts = {}) {
     }
   }
 
-  self.onmessage = async (e) => {
+  self.onmessage = (e) => {
     // STEP-on-Manifold crossover: the host primes this worker's importMeshes before
     // (or interleaved with) a generate, so a build's k.import(name) that needs
     // pre-tessellated triangles finds them without touching the kernel — no queueing,
@@ -143,20 +143,49 @@ export function runWorker(part, opts = {}) {
     if (e.data?.type === "lint") {
       // `vectorDocs` is what the two document-dependent vector rules need —
       // vector-size-missing (does this file's `units` require a size?) and
-      // vector-unknown-shape (does it declare that shape name?). Without it they
-      // return nothing, which would have meant they fired only from the CLI and
-      // never in the hosted browser sandbox — the environment they were designed
-      // for. Resolving it here keeps lint itself pure: the I/O lives in
-      // vectors.js, exactly as it does for bin/cli.js, and lintPart still gets a
-      // plain object. It shares resolveVectors' bytes memo, so a lint after a
-      // generate refetches nothing.
+      // vector-unknown-shape (does it declare that shape name?). Without it both
+      // stay silent, which is how they are designed to degrade.
       //
-      // `current` is captured because setPart may swap the part while this
-      // awaits, and the report must describe the part that was linted. This
-      // still boots no kernel — the whole point of intercepting lint here.
-      const part = current;
-      const vectorDocs = Object.fromEntries(await resolveVectorDocs(part?.vectors));
-      postMessage({ type: "lint-report", report: lintPart(part, { params: e.data.params, vectorDocs }) });
+      // CACHED ONLY, and deliberately so. This handler must stay synchronous:
+      // lint is instant and offline by construction, which is the property that
+      // lets a sandbox run it on every keystroke. Awaiting the async resolver
+      // here made lint hangable (asset-resolve.js's fetch has no timeout) and
+      // made the reply order depend on how fast each part's vectors fetched.
+      // cachedVectorDocs reads only bytes that are already resolved and never
+      // initiates a fetch, so a hosted sandbox gets both rules as soon as one
+      // build has run — the common case — and never waits for them.
+      //
+      // Guarded even so: lintPart's never-throws contract is worth nothing to a
+      // host if the handler around it can throw first and post NOTHING at all —
+      // in a real worker that surfaces as `unhandledrejection`, not an `error`
+      // event, so a host waiting on a lint-report just waits.
+      //
+      // Two levels, because they mean different things. The inner one covers a
+      // hostile `vectors` (a throwing getter, a Proxy whose ownKeys trap throws):
+      // that means "no documents", exactly as if the caller passed none, so the
+      // report is the same one lintPart alone would produce. The outer one is the
+      // last resort for anything neither of us has thought of.
+      let report;
+      try {
+        let vectorDocs;
+        try { vectorDocs = Object.fromEntries(cachedVectorDocs(current?.vectors)); }
+        catch { vectorDocs = undefined; }
+        report = lintPart(current, { params: e.data.params, vectorDocs });
+      } catch (cause) {
+        report = {
+          ok: false,
+          errors: [{
+            rule: "lint-context-error",
+            severity: "error",
+            message: `partforge/lint could not run: ${cause?.message || String(cause)}`,
+            hint: "The part or the lint request is too malformed to analyze — make sure `vectors`, `defaults` and `params` are plain, side-effect-free data rather than throwing getters or hostile Proxies.",
+            path: "",
+          }],
+          warnings: [],
+          notes: [],
+        };
+      }
+      postMessage({ type: "lint-report", report });
       return;
     }
     // Only generates supersede each other; exports/inspect always run (cancelling

@@ -2249,10 +2249,16 @@ synchronous by contract, so it never fetches these itself: `vectors.js`'s
 `resolveVectorDocs(part.vectors)` does the async resolve (sharing the same
 bytes memo `resolveVectors` uses, so `lint` ahead of `measure` costs no extra
 fetch) and the caller passes the result in, exactly the way `sources` already
-works. Both built-in callers do: `bin/cli.js` for `partforge lint|measure`, and
-the worker's own `lint` job, so an app's in-editor lint sees these rules too.
-Omit it, or hand over something malformed, and those two rules just stay silent
-rather than guess.
+works. Both built-in callers do, by different routes: `bin/cli.js` awaits
+`resolveVectorDocs` for `partforge lint|measure`, while the worker's `lint` job
+uses the synchronous `cachedVectorDocs`, which reads only documents already in
+the resolver's memo and never starts a fetch. That difference is deliberate — a
+CLI run can afford to wait for a file, but the in-app lint must stay instant and
+offline, because a host runs it on every edit and `fetch` has no timeout. In
+practice a build has loaded the artwork long before anyone reads a lint report,
+so both rules are live in the app too; before the first build they are simply
+silent. Omit `vectorDocs`, or hand over something malformed, and those two rules
+just stay silent rather than guess.
 
 `partforge/lint` has **zero runtime dependencies** and never imports a geometry
 kernel or the DOM viewer, so it runs unchanged in Node, a Web Worker, a sandboxed
