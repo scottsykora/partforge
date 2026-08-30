@@ -72,21 +72,29 @@ export async function resolveVectors(vectorsDecl) {
 
 // The RAW parsed JSON, before validation or conversion — what lint's
 // document-dependent rules need to read `units` and `shapes`. Never throws: a
-// source that will not fetch, decode, or parse maps to null, and the rules that
-// depend on it stay quiet. Diagnosing a broken file is the build's job, and it
-// does that with a named error; lint's job is to be fast and never wrong.
-// Deliberately shares `resolveOne`'s bytes memo above with resolveVectors, so
-// running `lint` ahead of `measure` (the CLI does both) costs no extra fetch —
-// but it does its own decode/parse rather than reusing the `parsed` memo, which
-// holds the VALIDATED/converted document, not the raw JSON this needs.
+// source that will not fetch, decode, or parse (to a JSON object) maps to
+// null, and the rules that depend on it stay quiet for that name only —
+// resolution is PER-SOURCE, not all-or-nothing, so one broken vector among
+// several does not silence document-aware lint for its siblings. Deliberately
+// calls `resolveOne` itself rather than going through `resolveDecl` (whose
+// `Promise.all` rejects the whole batch on a single failure) — this still
+// shares `resolveOne`'s bytes memo with resolveVectors, so running `lint`
+// ahead of `measure` (the CLI does both) costs no extra fetch. It does its own
+// decode/parse rather than reusing the `parsed` memo, which holds the
+// VALIDATED/converted document, not the raw JSON this needs.
 export async function resolveVectorDocs(vectorsDecl) {
   if (typeof vectorsDecl === "function") return new Map();
+  const decl = vectorsDecl ?? {};
   const out = new Map();
-  let raw;
-  try { raw = await resolveDecl(vectorsDecl ?? {}, resolveOne); } catch { return out; }
-  for (const [name, bytes] of raw) {
-    try { out.set(name, JSON.parse(new TextDecoder().decode(bytes))); } catch { out.set(name, null); }
-  }
+  await Promise.all(Object.entries(decl).map(async ([name, source]) => {
+    try {
+      const bytes = await resolveOne(source);
+      const doc = JSON.parse(new TextDecoder().decode(bytes));
+      out.set(name, doc && typeof doc === "object" ? doc : null);
+    } catch {
+      out.set(name, null);
+    }
+  }));
   return out;
 }
 

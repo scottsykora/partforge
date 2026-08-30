@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { resolveVectors, ensureVectors } from "../src/framework/vectors.js";
+import { resolveVectors, resolveVectorDocs, ensureVectors } from "../src/framework/vectors.js";
 import { fromInternalRegions } from "../src/framework/geometry/vector-format.js";
 import { handle } from "../src/framework/jobs.js";
 
@@ -93,4 +93,62 @@ test("handle prunes a stale vector name even when the next part declares no vect
 
   await handle(kernel, { parts: {}, defaults: {} }, job, () => {}); // no `vectors` key whatsoever
   expect(kernel._vectors.has("logo")).toBe(false);
+});
+
+// resolveVectorDocs — the RAW parsed JSON lint's document-aware rules read
+// (lint/index.js's ctx.vectorDocs). Unlike resolveVectors, it never rejects:
+// a per-name failure maps that one entry to null instead of taking the whole
+// call down, so lint stays useful for a part's other, well-formed vectors.
+const rawDoc = (units = "mm", shapes = { body: [] }) => bytes({ format: "partforge-vector", version: 1, units, shapes });
+
+test("resolveVectorDocs returns the raw parsed JSON, not the internal document", async () => {
+  const map = await resolveVectorDocs({ a: rawDoc("artwork", { body: [], holes: [] }) });
+  expect(map.get("a")).toEqual({ format: "partforge-vector", version: 1, units: "artwork", shapes: { body: [], holes: [] } });
+});
+
+// The important one: resolution is PER-SOURCE. A single unresolvable vector
+// must not silence document-aware lint for every OTHER vector the part
+// declares — confirmed here with a good source right beside one whose thunk
+// rejects (the "will not fetch" case, below).
+test("one bad source maps to null without affecting a good sibling", async () => {
+  const map = await resolveVectorDocs({ good: rawDoc("mm"), bad: async () => { throw new Error("network down"); } });
+  expect(map.get("good")).toEqual({ format: "partforge-vector", version: 1, units: "mm", shapes: { body: [] } });
+  expect(map.get("bad")).toBeNull();
+});
+
+test("a source that will not fetch maps to null", async () => {
+  const map = await resolveVectorDocs({ bad: async () => { throw new Error("network down"); } });
+  expect(map.get("bad")).toBeNull();
+});
+
+test("a source of the wrong type (not bytes/URL/thunk) also maps to null, not a throw", async () => {
+  const map = await resolveVectorDocs({ bad: 42 });
+  expect(map.get("bad")).toBeNull();
+});
+
+test("bytes that are not valid UTF-8 map to null", async () => {
+  // Decoding invalid UTF-8 does not itself throw (the default TextDecoder
+  // substitutes U+FFFD rather than raising); the replacement characters break
+  // JSON syntax instead, which is what actually maps this to null — the
+  // observable contract ("garbage bytes in, null out") holds either way.
+  const map = await resolveVectorDocs({ bad: new Uint8Array([0xff, 0xfe, 0x80, 0x81, 0x7b]) });
+  expect(map.get("bad")).toBeNull();
+});
+
+test("valid UTF-8 that is not JSON maps to null", async () => {
+  const map = await resolveVectorDocs({ bad: new TextEncoder().encode("{ not json") });
+  expect(map.get("bad")).toBeNull();
+});
+
+test("JSON that is not an object maps to null", async () => {
+  const map = await resolveVectorDocs({ bad: new TextEncoder().encode("42") });
+  expect(map.get("bad")).toBeNull();
+});
+
+test("resolveVectorDocs never rejects, even when every source is bad", async () => {
+  await expect(resolveVectorDocs({ a: 42, b: new TextEncoder().encode("not json") })).resolves.toBeInstanceOf(Map);
+});
+
+test("resolveVectorDocs on a function-valued vectors declaration resolves to an empty map, not a throw", async () => {
+  await expect(resolveVectorDocs((p) => ({ logo: rawDoc() }))).resolves.toEqual(new Map());
 });

@@ -130,4 +130,25 @@ describe("vector lint rules needing vectorDocs", () => {
       expect(() => lintPart(partWithDoc(build), { vectorDocs: bad })).not.toThrow();
     }
   });
+
+  // vector-unknown-name's sibling behaviour: the same bad (name, shape) pair
+  // repeated across call sites is one finding, not one per call — but two
+  // DIFFERENT bad shape names on the same vector still report separately,
+  // because they are genuinely different defects an author needs to see both of.
+  it("vector-unknown-shape reports a repeated bad shape name once, not per call", () => {
+    const build = (k) => k.vector2d("plate", { shape: "rim" }).extrude(1)
+      .union(k.vector2d("plate", { shape: "rim" }).extrude(1));
+    const r = lintPart(partWithDoc(build), { vectorDocs: { plate: DOC("mm", { body: [], holes: [] }) } });
+    expect(r.errors.filter((e) => e.rule === "vector-unknown-shape")).toHaveLength(1);
+  });
+
+  it("vector-unknown-shape reports two different bad shape names on the same vector separately", () => {
+    const build = (k) => k.vector2d("plate", { shape: "rim" }).extrude(1)
+      .union(k.vector2d("plate", { shape: "trim" }).extrude(1));
+    const r = lintPart(partWithDoc(build), { vectorDocs: { plate: DOC("mm", { body: [], holes: [] }) } });
+    const shapeErrors = r.errors.filter((e) => e.rule === "vector-unknown-shape");
+    expect(shapeErrors).toHaveLength(2);
+    expect(shapeErrors.map((e) => e.message).join("\n")).toMatch(/"rim"/);
+    expect(shapeErrors.map((e) => e.message).join("\n")).toMatch(/"trim"/);
+  });
 });
