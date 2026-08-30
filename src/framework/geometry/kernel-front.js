@@ -192,12 +192,19 @@ export function finishKernel(k) {
     const adds = [...doc.shapes.values()].filter((e) => e.role === "add").flatMap((e) => e.regions);
     const subs = [...doc.shapes.values()].filter((e) => e.role === "subtract").flatMap((e) => e.regions);
     if (subs.length === 0) return lift(adds);
-    // ONE transform for the whole document: both groups are measured against
-    // every region in it, so a size or align option cannot scale the subtracts
+    // ONE transform for the whole document — both groups are measured against
+    // the SAME regions, so a size or align option cannot scale the subtracts
     // relative to the adds. (With no size and no align — the common millimetre
     // case — the transform is the identity and this changes nothing.)
-    const all = [...adds, ...subs];
-    return lift(adds, all).cut(lift(subs, all));
+    //
+    // Measured against the ADDS, not against every region. A subtract may
+    // legitimately overhang the adds — a rect that lops off a corner, an
+    // overhanging keyway — and that overhang is deleted before the caller sees
+    // anything, so sizing or aligning against it puts the visible edge where
+    // nobody asked for it. With a subtract reaching 5 mm past the adds' left,
+    // measuring against all of them put `{ align: "left" }` — no size option at
+    // all — 5 mm right of the origin.
+    return lift(adds).cut(lift(subs, adds));
   };
 
   // Convex hull → Shape2D. Backend-agnostic: pure-JS monotone-chain hull of the inputs'

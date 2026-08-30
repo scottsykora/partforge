@@ -185,9 +185,12 @@ an `mm` document is legitimate (a drawing reused at another size), so a size
 option on an `mm` document is accepted, not refused. Passing **more than one** of
 `width`/`height`/`fit` is refused in either mode, naming the ones it got.
 
-Sizing is always against the **tight geometric bounding box of the regions being
-placed**, never a `viewBox`: `fit` sizes the longer extent, `width`/`height` the
-named one, and the scale is uniform in every case (never stretched to fit both).
+Sizing is always against a **tight geometric bounding box**, never a `viewBox`:
+`fit` sizes the longer extent, `width`/`height` the named one, and the scale is
+uniform in every case (never stretched to fit both). The box is measured on the
+geometry the call actually returns — for a `{ shape }` call, that shape; for the
+composed call, the `add` shapes only, since anything a `subtract` shape adds to
+the extent is cut away before you see it (§2.3).
 
 ### 2.3 Shapes and roles
 
@@ -219,12 +222,15 @@ composition. An unknown shape name throws, listing the names the document does
 declare. Union is commutative and subtracting a union is order-independent, so
 key order never affects the result.
 
-The composed call places the **whole document on one transform**, derived from
-every region in it — so a size or `align` option can never scale or shift the
-`subtract` shapes relative to the `add` ones. A `{ shape }` call is measured
-against that shape alone, which is what you asked for; see §3's "Size a
-millimetre drawing as a whole, never shape by shape" for when that distinction
-bites.
+The composed call places the **whole document on one transform** — so a size or
+`align` option can never scale or shift the `subtract` shapes relative to the
+`add` ones. That one transform is derived from the **`add` shapes**, because they
+are what survives the cut: a `subtract` shape may legitimately overhang the adds
+(a rect that lops a corner off, an overhanging keyway), and sizing or aligning
+against an edge that is then deleted would put the visible edge somewhere you
+never asked for. A `{ shape }` call is measured against that shape alone, which is
+what you asked for; see §3's "Size a millimetre drawing as a whole, never shape by
+shape" for when that distinction bites.
 
 `role` is optional where `units` is required, and the difference is principled:
 `"add"` is an honest default because a painted region adds material, which is

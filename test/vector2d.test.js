@@ -257,3 +257,59 @@ describe("a size or align option places a composed document on ONE transform", (
     expect(b.max[0] - b.min[0]).toBeCloseTo(40, 1);
   });
 });
+
+// Every role test above has the subtract STRICTLY INSIDE the add, so the two
+// candidate measurement sets — the adds alone, and every region — have the same
+// bounds and the distinction is untestable. This document breaks that tie: the
+// notch reaches 5 mm past the body's left edge, and only geometry that survives
+// the cut is visible to the caller.
+const OVERHANG_DOC = {
+  format: "partforge-vector", version: 1, units: "mm",
+  shapes: {
+    body:  { role: "add", regions: [{ outer: { kind: "rect", center: [0, 0], width: 40, height: 24 } }] },
+    notch: { role: "subtract", regions: [{ outer: { kind: "rect", center: [-20, 0], width: 10, height: 4 } }] },
+  },
+};
+
+describe("a composed document is measured against the geometry that survives", () => {
+  let k;
+  beforeAll(async () => {
+    k = await bootManifoldKernel();
+    k._vectors.set("over", toInternalDocument(OVERHANG_DOC, "over"));
+  });
+
+  it("places an mm document as authored, overhang and all", () => {
+    const b = k.vector2d("over").boundingBox();
+    expect(b.min[0]).toBeCloseTo(-20, 3);
+    expect(b.max[0] - b.min[0]).toBeCloseTo(40, 3);
+  });
+
+  it("align:left with NO size option puts the visible left edge on the origin", () => {
+    // Measuring against [...adds, ...subs] used the notch's -25 as minX, so the
+    // body landed at +5 — a part 5 mm right of where `align: "left"` promises.
+    const b = k.vector2d("over", { align: "left" }).boundingBox();
+    expect(b.min[0]).toBeCloseTo(0, 3);
+    expect(b.max[0] - b.min[0]).toBeCloseTo(40, 3);
+  });
+
+  it("width sizes the visible result, not the overhang", () => {
+    // The adds are 40 wide, so { width: 40 } is the identity. Measuring against
+    // the union of both groups (45 wide) would shrink everything by 8/9.
+    const b = k.vector2d("over", { width: 40 }).boundingBox();
+    expect(b.max[0] - b.min[0]).toBeCloseTo(40, 3);
+    expect(b.max[1] - b.min[1]).toBeCloseTo(24, 3);
+  });
+
+  it("width and align:left together still land the visible edge on the origin", () => {
+    const b = k.vector2d("over", { width: 80, align: "left" }).boundingBox();
+    expect(b.min[0]).toBeCloseTo(0, 3);
+    expect(b.max[0] - b.min[0]).toBeCloseTo(80, 3);
+  });
+
+  it("keeps the notch in register with the body under a scale", () => {
+    // The notch bites 5 x 4 out of the body's left edge: area 40*24 - 5*4.
+    // If the two groups took different transforms the bite would change size.
+    expect(k.vector2d("over").area()).toBeCloseTo(40 * 24 - 5 * 4, 1);
+    expect(k.vector2d("over", { width: 80 }).area()).toBeCloseTo((40 * 24 - 5 * 4) * 4, 1);
+  });
+});
