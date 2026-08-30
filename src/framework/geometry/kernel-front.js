@@ -178,7 +178,8 @@ export function finishKernel(k) {
       throw new Error("vector2d: first argument must be the name of an entry in the part's `vectors` field");
     const doc = k._vectors.get(name);
     if (!doc) throw new Error(`vector2d: unknown vector "${name}" — declare it in the part's \`vectors\` field`);
-    const lift = (regions) => placeRegions(regions, doc.units, opts).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+    const lift = (regions, measureAgainst = regions) =>
+      placeRegions(regions, doc.units, opts, measureAgainst).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
     if (opts.shape != null) {
       const entry = doc.shapes.get(opts.shape);
       if (!entry) {
@@ -190,8 +191,13 @@ export function finishKernel(k) {
     }
     const adds = [...doc.shapes.values()].filter((e) => e.role === "add").flatMap((e) => e.regions);
     const subs = [...doc.shapes.values()].filter((e) => e.role === "subtract").flatMap((e) => e.regions);
-    const composed = lift(adds);
-    return subs.length === 0 ? composed : composed.cut(lift(subs));
+    if (subs.length === 0) return lift(adds);
+    // ONE transform for the whole document: both groups are measured against
+    // every region in it, so a size or align option cannot scale the subtracts
+    // relative to the adds. (With no size and no align — the common millimetre
+    // case — the transform is the identity and this changes nothing.)
+    const all = [...adds, ...subs];
+    return lift(adds, all).cut(lift(subs, all));
   };
 
   // Convex hull → Shape2D. Backend-agnostic: pure-JS monotone-chain hull of the inputs'

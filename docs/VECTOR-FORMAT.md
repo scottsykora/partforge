@@ -86,11 +86,13 @@ Things worth reading off that pair:
   is `units: "mm"`. Millimetres place *as authored*: scale 1, no re-centring. A
   hole at `[-14, 0]` lands 14 mm left of the plate's centre in the finished
   solid, not somewhere a bounding box happened to put it.
-- **`k.vector2d("plate")` passes no size option, and that is load-bearing.** The
-  `emblem` call must pass one (`width: p.emblem_w`) because that document is
-  `units: "artwork"`; the `plate` call must not, because a size option is applied
-  **per shape group, against that group's own bounds** — see §3's "Do not size a
-  role-composed millimetre document."
+- **`k.vector2d("plate")` names no shape and passes no size.** It doesn't need
+  to: the file's own roles compose it, and millimetre coordinates place as
+  drawn. The `emblem` call must pass a size (`width: p.emblem_w`) because that
+  document is `units: "artwork"`. Fetching `body`, `holes`, and `keyway`
+  separately and sizing each call would scale them against three different
+  bounding boxes — see §3's "Size a millimetre drawing as a whole, never shape
+  by shape."
 - **The file states its own composition.** Reading it, you can see that `holes`
   and `keyway` are subtracted. That fact does not live only in `build`.
 - **There is no `bbox` and no `source`.** Both are optional. An author never
@@ -216,6 +218,13 @@ Naming a shape is a request for *that* geometry; `role` governs only the default
 composition. An unknown shape name throws, listing the names the document does
 declare. Union is commutative and subtracting a union is order-independent, so
 key order never affects the result.
+
+The composed call places the **whole document on one transform**, derived from
+every region in it — so a size or `align` option can never scale or shift the
+`subtract` shapes relative to the `add` ones. A `{ shape }` call is measured
+against that shape alone, which is what you asked for; see §3's "Size a
+millimetre drawing as a whole, never shape by shape" for when that distinction
+bites.
 
 `role` is optional where `units` is required, and the difference is principled:
 `"add"` is an honest default because a painted region adds material, which is
@@ -446,22 +455,19 @@ Shapes are named, regions and segments are 1-indexed, and the role (`outer` /
   `<circle>` elements are never a hole no matter what `fill-rule` either
   declares.
 
-- **Do not size a role-composed millimetre document.** A size option is applied
-  **per shape group, against that group's own bounds**: the `add` union is scaled
-  so that *its* bounding box hits the requested size, and the `subtract` union is
-  scaled so that *its own, different* bounding box hits the same number — two
-  different scale factors, applied to geometry that was drawn in one frame. On an `artwork` document with a single shape that is exactly
-  right. On an `mm` document with `add` and `subtract` shapes it silently
-  destroys the shared frame — the holes end up scaled and positioned against
-  their own bounding box rather than the plate's, and the geometry is wrong with
-  no error anywhere. Measured on the §1 plate, whose `add` shape is 40 mm wide
-  anyway: `k.vector2d("plate")` extrudes to bbox `40 × 24 × 3`, volume `2748.3`,
-  3 through-holes; the same call with `{ width: 40 }` gives the **same** bbox and
-  volume `2692.0` with only **2** holes — one cut has walked off the plate, and
-  nothing reports it. Millimetre documents place as authored; leave the size
-  options off. (If a millimetre drawing genuinely needs rescaling, scale the
-  finished `Shape2D` in `build`, where one transform applies to the composed
-  result.) See
+- **Size a millimetre drawing as a whole, never shape by shape.** A size option
+  scales the geometry being placed against **that geometry's own** tight
+  bounding box. Sizing the composed call is therefore safe — the whole document,
+  `add` and `subtract` regions alike, is measured and placed on one transform.
+  Sizing two `{ shape }` calls on the same document is not: each gets its own
+  scale factor, and the moment the shapes have different extents the shared
+  frame that `units: "mm"` exists to provide is gone. Nothing throws, the
+  composed bounding box is still exactly what you asked for, and the volume
+  barely moves — measured on the §1 plate, sizing its three shapes separately
+  leaves the bbox and volume all but unchanged while dropping it from three
+  through-holes to one. Prefer `k.vector2d(name)` with no size at all; if a
+  drawing genuinely needs rescaling, compose it first and scale the finished
+  `Shape2D` once. See
   [ERROR-PATTERNS.md#vector-mm-shapes-misscaled](ERROR-PATTERNS.md#vector-mm-shapes-misscaled).
 
 ## 4. A worked ingested example

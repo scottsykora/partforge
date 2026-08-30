@@ -52,7 +52,15 @@ const place = (c, s, dx, dy) => {
   };
 };
 
-export function placeRegions(regions, units, opts = {}) {
+// `measureAgainst` is the region set the transform is DERIVED from; `regions` is
+// what it is applied to. They differ in exactly one case: a role-composed call,
+// where the "add" group and the "subtract" group are placed by separate calls but
+// must land on ONE transform. Measuring each group against its own bounds instead
+// scales the subtracts relative to the adds — silently, since the adds still
+// govern the composed bbox — which is a wrong-geometry bug, not a wrong-size one.
+// Selecting a single shape with { shape } deliberately keeps the default: you
+// asked for that shape, so it is sized against its own bounds.
+export function placeRegions(regions, units, opts = {}, measureAgainst = regions) {
   // An mm file places where it was drawn; only artwork has to be re-centred,
   // because its own coordinates mean nothing. `null` here is "no translate" —
   // distinct from `align: "center"`, which does translate (to the origin).
@@ -67,7 +75,7 @@ export function placeRegions(regions, units, opts = {}) {
   // this closes the one silent-default gap.
   if (align != null && !ALIGN.has(align)) throw new Error(`vector2d: align must be "left", "center", or "right" — got ${JSON.stringify(align)}`);
   if (valign != null && !VALIGN.has(valign)) throw new Error(`vector2d: valign must be "bottom", "middle", or "top" — got ${JSON.stringify(valign)}`);
-  const { minX, minY, maxX, maxY } = regionsBbox(regions);
+  const { minX, minY, maxX, maxY } = regionsBbox(measureAgainst);
   const s = scaleFor(opts, units, maxX - minX, maxY - minY);
   const dx = align == null ? 0 : align === "left" ? -minX * s : align === "right" ? -maxX * s : -((minX + maxX) / 2) * s;
   const dy = valign == null ? 0 : valign === "bottom" ? -minY * s : valign === "top" ? -maxY * s : -((minY + maxY) / 2) * s;

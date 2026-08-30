@@ -1508,12 +1508,16 @@ throws, naming the ones it got. Omitting all three on an `"artwork"` document th
 because a font's cap height is a well-defined physical metric and an SVG's own coordinate
 units are not.
 
-**Do not pass a size option to a millimetre document.** A size is applied *per shape
-group, against that group's own bounds*, so on a multi-shape `"mm"` file it silently
-destroys the shared coordinate frame that made the file worth authoring in millimetres:
-the holes scale against the holes' bounding box, not the body's. Nothing throws; the
-geometry is just wrong. If a drawn part needs rescaling, scale the composed `Shape2D` (or
-the extruded solid) once in `build` instead. See
+**Size a millimetre drawing as a whole, never shape by shape.** A size option scales the
+geometry being placed against *that geometry's own* bounds. On the composed call
+(`k.vector2d(name)` with no `shape`) that is the whole document, measured and placed on
+one transform, so it is safe. On two `{ shape }` calls it is two different scale factors,
+which silently destroys the shared coordinate frame that made the file worth authoring in
+millimetres — the holes scale against the holes' bounding box, not the body's. Nothing
+throws, and the composed bbox still comes out the size you asked for; only a hole or
+feature count reveals it. Prefer no size option at all on an `"mm"` file; if a drawn part
+needs rescaling, compose it first and scale the finished `Shape2D` (or the extruded solid)
+once in `build`. See
 [ERROR-PATTERNS.md#vector-mm-shapes-misscaled](ERROR-PATTERNS.md#vector-mm-shapes-misscaled).
 
 **Named shapes and roles.** A document's geometry lives under named shapes, and each shape
@@ -1526,8 +1530,11 @@ declares a `role` of `"add"` (the default) or `"subtract"`:
 
 Naming a shape is a request for *that* geometry; `role` governs only the default
 composition. An unknown shape name throws, listing the ones the file does declare
-(`npx partforge lint` catches it statically — see the rule catalog below). Anything more
-than add/subtract is ordinary `Shape2D` algebra in `build`:
+(`npx partforge lint` catches it statically — see the rule catalog below). The composed
+call places the whole document on **one** transform, derived from every region in it, so a
+size or `align` option cannot scale the subtracts relative to the adds; a `{ shape }` call
+is measured against that shape alone. Anything more than add/subtract is ordinary
+`Shape2D` algebra in `build`:
 
 ```js
 k.vector2d("plate", { shape: "body" }).cut(k.vector2d("plate", { shape: "holes" }))

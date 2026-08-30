@@ -216,3 +216,44 @@ describe("roles compose", () => {
     expect(k.vector2d("roled", { shape: "holes" }).area()).toBeCloseTo(Math.PI * 16, 1);
   });
 });
+
+// The add group is 20 x 20 and the subtract circle only 8 x 8. Deriving each
+// group's transform from its OWN bounds — which the composed path used to do,
+// because it calls placeRegions once per group — scales the hole 5x while the
+// body scales 2x, and the hole then swallows the plate. Nothing throws and the
+// composed bbox is still exactly the requested size, because the add group
+// governs it, so only the AREA catches this.
+describe("a size or align option places a composed document on ONE transform", () => {
+  let k;
+  beforeAll(async () => {
+    k = await bootManifoldKernel();
+    k._vectors.set("roled", toInternalDocument(ROLE_DOC, "roled"));
+  });
+
+  it("scales a composed result by exactly the linear factor squared", () => {
+    // 20 -> 40 is 2x linear, so 4x area. Measuring per group would give
+    // 1600 - pi*20^2 = 343, not 4 * (400 - pi*16) = 1399.
+    expect(k.vector2d("roled", { width: 40 }).area())
+      .toBeCloseTo(k.vector2d("roled").area() * 4, 1);
+  });
+
+  it("still sizes the composed result to the requested width", () => {
+    const b = k.vector2d("roled", { width: 40 }).boundingBox();
+    expect(b.max[0] - b.min[0]).toBeCloseTo(40, 6);
+  });
+
+  it("aligns both groups together, so the hole keeps its place in the drawing", () => {
+    // align "left" shifts the whole document by +10 (its minX is -10), carrying
+    // the centred hole to x=10. Measuring the hole group alone would shift it by
+    // +4 instead, leaving it at x=4 — a hole that moved relative to its plate.
+    const s = k.vector2d("roled", { align: "left" });
+    expect(s.contains([10, 0])).toBe(false);   // inside the hole
+    expect(s.contains([4, 0])).toBe(true);     // solid plate, where the bug put the hole
+  });
+
+  it("still sizes a single named shape against its own bounds", () => {
+    // { shape } is a request for THAT geometry: nothing else is in the frame.
+    const b = k.vector2d("roled", { shape: "holes", width: 40 }).boundingBox();
+    expect(b.max[0] - b.min[0]).toBeCloseTo(40, 1);
+  });
+});

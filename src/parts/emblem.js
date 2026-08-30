@@ -47,9 +47,13 @@ export default {
       views: ["plate"],
       export: { name: "emblem-plate" },
       // No shape named and no size: the file's own roles compose it (body minus
-      // holes minus keyway), and units "mm" places it exactly as drawn. Passing
-      // a size here would scale each shape against ITS OWN bounds — the trap
-      // this format exists to prevent.
+      // holes minus keyway), and units "mm" places it exactly as drawn. A size
+      // HERE would be safe — the composed call measures the whole document at
+      // once — but it would also be pointless. What is not safe is fetching
+      // body/holes/keyway separately and sizing each call: each would scale
+      // against ITS OWN bounds, and the drawing's shared frame would be gone
+      // (ERROR-PATTERNS.md#vector-mm-shapes-misscaled). Millimetres place as
+      // authored; that is the whole point of the units mode.
       // The keyway sits clear of the artwork at the default `emblem_w` (30) —
       // confirmed by measurement, not eyeballed: their 2-D footprints have zero
       // intersection. That clearance is deliberate, not incidental: a much
