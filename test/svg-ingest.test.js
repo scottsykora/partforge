@@ -1,13 +1,16 @@
 // @vitest-environment happy-dom
 import { expect, test } from "vitest";
 import { ingestSvg } from "../src/framework/ingest/svg-ingest.js";
-import { toInternalRegions } from "../src/framework/geometry/vector-format.js";
+import { toInternalDocument } from "../src/framework/geometry/vector-format.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 import { ringArea } from "../src/framework/geometry/shape2d-regions.js";
 
 const svg = (body, attrs = 'viewBox="0 0 48 48"') =>
   `<svg xmlns="http://www.w3.org/2000/svg" ${attrs}>${body}</svg>`;
-const netArea = (doc) => toInternalRegions(doc).reduce((a, r) =>
+// Ingest always emits a single shape named "artwork" — see fromInternalRegions's
+// call in svg-ingest.js's last line.
+const regionsOf = (doc, label) => toInternalDocument(doc, label).shapes.get("artwork");
+const netArea = (doc) => regionsOf(doc).reduce((a, r) =>
   a + Math.abs(ringArea(tessellateContour(r.outer, 256)))
     - r.holes.reduce((h, c) => h + Math.abs(ringArea(tessellateContour(c, 256))), 0), 0);
 
@@ -23,7 +26,7 @@ test("a filled rect ingests to a valid document with the right bbox and area", (
 test("y is flipped from SVG's y-down to model y-up", () => {
   // a wide bar at SVG y=0 (the top) and a small square at SVG y=40 (the bottom)
   const doc = ingestSvg(svg('<rect x="0" y="0" width="40" height="4" fill="#111"/><rect x="0" y="40" width="4" height="4" fill="#111"/>'));
-  const regions = toInternalRegions(doc);
+  const regions = regionsOf(doc);
   const widest = regions.map((r) => tessellateContour(r.outer, 8))
     .map((pts) => ({ w: Math.max(...pts.map((p) => p[0])) - Math.min(...pts.map((p) => p[0])),
                      top: Math.max(...pts.map((p) => p[1])) }))
@@ -83,7 +86,7 @@ test("KNOWN DEFECT: overlapping same-winding subpaths within one <path> lose the
 
 test("a circle survives as symbolic arcs, not cubics", () => {
   const doc = ingestSvg(svg('<circle cx="24" cy="24" r="10" fill="#111"/>'));
-  const [region] = toInternalRegions(doc);
+  const [region] = regionsOf(doc);
   expect(region.outer.segments.every((s) => s.via)).toBe(true);
   expect(netArea(doc)).toBeCloseTo(Math.PI * 100, 0);
 });
@@ -124,17 +127,17 @@ test("an SVG with no painted geometry throws", () => {
 
 test("the emitted document always validates", () => {
   const doc = ingestSvg(svg('<circle cx="10" cy="10" r="5" fill="#111"/><path fill="none" stroke="#111" stroke-width="2" d="M0,30 L40,30"/>'));
-  expect(() => toInternalRegions(doc, "x")).not.toThrow();
+  expect(() => toInternalDocument(doc, "x")).not.toThrow();
 });
 
 test("emitted regions carry the storage winding invariant: outer CCW, holes CW", () => {
   const signed = (c) => ringArea(tessellateContour(c, 64));
 
-  const rect = toInternalRegions(ingestSvg(svg('<rect width="20" height="10" fill="#111"/>')));
+  const rect = regionsOf(ingestSvg(svg('<rect width="20" height="10" fill="#111"/>')));
   expect(signed(rect[0].outer)).toBeGreaterThan(0);
 
   const d = "M0,0 L30,0 L30,30 L0,30 Z M10,10 L20,10 L20,20 L10,20 Z";
-  const [donut] = toInternalRegions(ingestSvg(svg(`<path fill="#111" fill-rule="evenodd" d="${d}"/>`)));
+  const [donut] = regionsOf(ingestSvg(svg(`<path fill="#111" fill-rule="evenodd" d="${d}"/>`)));
   expect(signed(donut.outer)).toBeGreaterThan(0);
   expect(signed(donut.holes[0])).toBeLessThan(0);
 });

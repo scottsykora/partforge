@@ -166,12 +166,16 @@ export function finishKernel(k) {
   // it lowers to k.shape2d + union, so both backends get identical curve regions.
   // Regions come from k._vectors, preloaded by name from the part's declared
   // vector documents — this op does no SVG parsing at all, by design.
+  // k._vectors now holds documents ({ units, shapes: Map<name, Region[]> }), not
+  // flat region arrays. Task 5 gives this its own shape selection; for now,
+  // union every shape so behaviour is unchanged.
   k._vectors ??= new Map();
   k.vector2d = (name, opts = {}) => {
     if (typeof name !== "string" || !name)
       throw new Error("vector2d: first argument must be the name of an entry in the part's `vectors` field");
-    const regions = k._vectors.get(name);
-    if (!regions) throw new Error(`vector2d: unknown vector "${name}" — declare it in the part's \`vectors\` field`);
+    const doc = k._vectors.get(name);
+    if (!doc) throw new Error(`vector2d: unknown vector "${name}" — declare it in the part's \`vectors\` field`);
+    const regions = [...doc.shapes.values()].flat();
     return placeRegions(regions, opts).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
   };
 

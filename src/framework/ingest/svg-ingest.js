@@ -191,5 +191,5 @@ export function ingestSvg(svgText, { strokes = "outline", source = null } = {}) 
   // pre-round coordinates to work around: that old sampling grid could shift
   // an extremum by ~1e-3 on an unrounded-vs-rounded ULP nudge, which is gone
   // now that the bbox check isn't sampling a grid at all.
-  return fromInternalRegions(withArcs, { source });
+  return fromInternalRegions(withArcs, { source, units: "artwork", shape: "artwork" });
 }

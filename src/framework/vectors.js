@@ -13,10 +13,10 @@
 //
 // DOM-free and node:-free.
 import { makeAssetResolver, resolveDecl } from "./asset-resolve.js";
-import { toInternalRegions } from "./geometry/vector-format.js";
+import { toInternalDocument } from "./geometry/vector-format.js";
 
 const cache = new Map();   // source → Promise<Uint8Array> (raw bytes)
-// source → Region[]. The bytes memo above stops a refetch; this stops a re-PARSE
+// source → { units, shapes }. The bytes memo above stops a refetch; this stops a re-PARSE
 // (UTF-8 decode + JSON.parse + validation + a bbox recomputation that tessellates
 // every contour). Without it every regen of a part with artwork redoes all of that.
 // Fonts solve the same problem with kernel._fontsBySource (jobs.js:206-212) and
@@ -36,7 +36,7 @@ function parseDocument(bytes, label) {
     throw new Error(`vector2d: "${label}" is not valid JSON — ${e.message}. `
       + "A vectors source is an ingested partforge-vector file, not an .svg file; see docs/VECTOR-FORMAT.md");
   }
-  return toInternalRegions(doc, label);
+  return toInternalDocument(doc, label);
 }
 
 // The resolver memoizes by source identity and cannot see the declared name, so
@@ -63,9 +63,9 @@ export async function resolveVectors(vectorsDecl) {
   const raw = await resolveDecl(vectorsDecl, resolveOne);
   const out = new Map();
   for (const [name, bytes] of raw) {
-    let regions = parsed.get(bytes);
-    if (!regions) { regions = parseDocument(bytes, name); parsed.set(bytes, regions); }
-    out.set(name, regions);
+    let doc = parsed.get(bytes);
+    if (!doc) { doc = parseDocument(bytes, name); parsed.set(bytes, doc); }
+    out.set(name, doc);
   }
   return out;
 }
@@ -75,7 +75,7 @@ export async function resolveVectors(vectorsDecl) {
 export async function ensureVectors(kernel, vectorsDecl) {
   if (!kernel?._vectors) return;
   const declared = vectorsDecl ?? {};
-  for (const [name, regions] of await resolveVectors(declared)) kernel._vectors.set(name, regions);
+  for (const [name, doc] of await resolveVectors(declared)) kernel._vectors.set(name, doc);
   // Drop names this declaration does not supply. `_vectors` is the kernel's and the
   // kernel outlives the job (worker-rebind, many parts), so without this a name
   // from a previous part stays resolvable — the stale-registration bug jobs.js's

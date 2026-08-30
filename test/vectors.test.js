@@ -8,15 +8,17 @@ const box = (w = 10) => fromInternalRegions([{ outer: { start: [0, 0], segments:
 ] }, holes: [] }], { source: null });
 const bytes = (doc) => new TextEncoder().encode(JSON.stringify(doc));
 
-test("resolves JSON bytes to internal regions", async () => {
+test("resolves JSON bytes to an internal document", async () => {
   const map = await resolveVectors({ a: bytes(box()) });
-  expect(map.get("a")).toHaveLength(1);
-  expect(map.get("a")[0].outer.segments).toHaveLength(3);
+  expect(map.get("a").units).toBe("artwork");
+  const regions = map.get("a").shapes.get("artwork");
+  expect(regions).toHaveLength(1);
+  expect(regions[0].outer.segments).toHaveLength(3);
 });
 
 test("resolves a thunk returning bytes", async () => {
   const map = await resolveVectors({ a: () => bytes(box()) });
-  expect(map.get("a")).toHaveLength(1);
+  expect(map.get("a").shapes.get("artwork")).toHaveLength(1);
 });
 
 test("memoizes by source identity — one parse per source", async () => {
@@ -32,7 +34,7 @@ test("malformed JSON rejects with a message naming the key", async () => {
 });
 
 test("a structurally invalid document rejects through the format validator", async () => {
-  const d = box(); d.regions[0].outer.segments[0] = { kind: "spiral", to: [1, 1] };
+  const d = box(); d.shapes.artwork[0].outer.segments[0] = { kind: "spiral", to: [1, 1] };
   const badSource = bytes(d);
   await expect(resolveVectors({ logo: badSource })).rejects.toThrow(/spiral/);
   // A failed parse must not be cached — the same bad source retried (e.g. under a

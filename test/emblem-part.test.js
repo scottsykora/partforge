@@ -36,7 +36,8 @@ test("the circle survived ingest as symbolic arcs", () => {
   // regression this test exists to catch (arc recovery falling back to a
   // Bézier approximation instead of a true circular arc). Assert what the
   // fixture actually guarantees: NO cubic survived, not just that one arc did.
-  const all = k._vectors.get("emblem").flatMap((r) => r.outer.segments);
+  const doc = k._vectors.get("emblem");
+  const all = [...doc.shapes.values()].flat().flatMap((r) => r.outer.segments);
   expect(all.some((s) => s.via)).toBe(true);
   expect(all.every((s) => !s.c1)).toBe(true);
 });

@@ -1,20 +1,21 @@
-import { expect, test } from "vitest";
-import { validateVectorDocument, toInternalRegions, fromInternalRegions, VECTOR_FORMAT, VECTOR_VERSION }
+import { describe, expect, it, test } from "vitest";
+import { validateVectorDocument, toInternalDocument, fromInternalRegions, VECTOR_FORMAT, VECTOR_VERSION }
   from "../src/framework/geometry/vector-format.js";
 
 const doc = (over = {}) => ({
   format: VECTOR_FORMAT,
   version: VECTOR_VERSION,
+  units: "mm",
   source: "x.svg",
   bbox: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
-  regions: [{
+  shapes: { body: [{
     outer: { start: [0, 0], segments: [
       { kind: "line", to: [10, 0] },
       { kind: "line", to: [10, 10] },
       { kind: "line", to: [0, 10] },
     ] },
     holes: [],
-  }],
+  }] },
   ...over,
 });
 
@@ -38,37 +39,37 @@ test("a future version is refused and names both versions", () => {
 
 test("an unknown segment kind is refused, with the position", () => {
   const d = doc();
-  d.regions[0].outer.segments[1] = { kind: "spiral", to: [1, 1] };
-  expect(() => validateVectorDocument(d, "emblem")).toThrow(/region 1.*outer.*segment 2.*spiral/s);
+  d.shapes.body[0].outer.segments[1] = { kind: "spiral", to: [1, 1] };
+  expect(() => validateVectorDocument(d, "emblem")).toThrow(/shape "body" region 1.*outer.*segment 2.*spiral/s);
 });
 
 test("an arc without `through` is refused and the message says what through is", () => {
   const d = doc();
-  d.regions[0].outer.segments[1] = { kind: "arc", to: [1, 1] };
+  d.shapes.body[0].outer.segments[1] = { kind: "arc", to: [1, 1] };
   expect(() => validateVectorDocument(d, "emblem")).toThrow(/through/);
   expect(() => validateVectorDocument(d, "emblem")).toThrow(/passes through/);
 });
 
 test("a cubic missing c2 is refused", () => {
   const d = doc();
-  d.regions[0].outer.segments[1] = { kind: "cubic", to: [1, 1], c1: [0, 1] };
+  d.shapes.body[0].outer.segments[1] = { kind: "cubic", to: [1, 1], c1: [0, 1] };
   expect(() => validateVectorDocument(d, "emblem")).toThrow(/c2/);
 });
 
 test("a non-numeric coordinate is refused, with the position", () => {
   const d = doc();
-  d.regions[0].outer.segments[0].to = [10, "x"];
-  expect(() => validateVectorDocument(d, "emblem")).toThrow(/region 1.*segment 1/s);
+  d.shapes.body[0].outer.segments[0].to = [10, "x"];
+  expect(() => validateVectorDocument(d, "emblem")).toThrow(/shape "body" region 1.*segment 1/s);
 });
 
 test("a contour with fewer than two segments is refused", () => {
   const d = doc();
-  d.regions[0].outer.segments = [{ kind: "line", to: [1, 1] }];
+  d.shapes.body[0].outer.segments = [{ kind: "line", to: [1, 1] }];
   expect(() => validateVectorDocument(d, "emblem")).toThrow(/at least two segments|too few/i);
 });
 
-test("no regions at all is refused", () => {
-  bad({ regions: [] }, /no regions|empty/i);
+test("no shapes at all is refused", () => {
+  bad({ shapes: {} }, /no shapes/i);
 });
 
 test("a bbox that disagrees with the geometry is refused", () => {
@@ -93,9 +94,10 @@ test("a hand-authored exact bbox for a phase-shifted circle validates", () => {
   const d = {
     format: VECTOR_FORMAT,
     version: VECTOR_VERSION,
+    units: "artwork",
     source: "circle.svg",
     bbox: { minX: -10, minY: -10, maxX: 10, maxY: 10 },
-    regions: [{
+    shapes: { artwork: [{
       outer: {
         start: [9.848078, 1.736482],
         segments: [
@@ -105,7 +107,7 @@ test("a hand-authored exact bbox for a phase-shifted circle validates", () => {
         ],
       },
       holes: [],
-    }],
+    }] },
   };
   expect(() => validateVectorDocument(d, "circle")).not.toThrow();
 });
@@ -116,10 +118,10 @@ test("note is optional and ignored", () => {
   expect(() => validateVectorDocument(d, "emblem")).not.toThrow();
 });
 
-test("toInternalRegions maps kind/through onto the implicit IR", () => {
+test("toInternalDocument maps kind/through onto the implicit IR", () => {
   const d = doc();
-  d.regions[0].outer.segments[1] = { kind: "arc", to: [10, 10], through: [11, 5] };
-  d.regions[0].outer.segments[2] = { kind: "cubic", to: [0, 10], c1: [8, 12], c2: [4, 12] };
+  d.shapes.body[0].outer.segments[1] = { kind: "arc", to: [10, 10], through: [11, 5] };
+  d.shapes.body[0].outer.segments[2] = { kind: "cubic", to: [0, 10], c1: [8, 12], c2: [4, 12] };
   // The arc/cubic swap bulges the contour past the base fixture's 10x10 bbox
   // (the arc through [11,5] peaks at exactly x=11 — the via point IS the arc's
   // extremum here, by construction; the cubic's control points pull y to
@@ -127,34 +129,35 @@ test("toInternalRegions maps kind/through onto the implicit IR", () => {
   // the kind/through mapping instead of tripping the (separately tested)
   // bbox-consistency check.
   d.bbox = { minX: 0, minY: 0, maxX: 11, maxY: 11.5 };
-  const [r] = toInternalRegions(d);
+  const [r] = toInternalDocument(d).shapes.get("body");
   expect(r.outer.start).toEqual([0, 0]);
   expect(r.outer.segments[0]).toEqual({ to: [10, 0] });
   expect(r.outer.segments[1]).toEqual({ to: [10, 10], via: [11, 5] });
   expect(r.outer.segments[2]).toEqual({ to: [0, 10], c1: [8, 12], c2: [4, 12] });
 });
 
-test("toInternalRegions drops a redundant closing segment equal to start", () => {
+test("toInternalDocument drops a redundant closing segment equal to start", () => {
   const d = doc();
-  d.regions[0].outer.segments.push({ kind: "line", to: [0, 0] });
-  const [r] = toInternalRegions(d);
+  d.shapes.body[0].outer.segments.push({ kind: "line", to: [0, 0] });
+  const [r] = toInternalDocument(d).shapes.get("body");
   expect(r.outer.segments).toHaveLength(3);
 });
 
-test("fromInternalRegions round-trips back through toInternalRegions", () => {
+test("fromInternalRegions round-trips back through toInternalDocument", () => {
   const regions = [{
     outer: { start: [0, 0], segments: [
       { to: [10, 0] }, { to: [10, 10], via: [11, 5] }, { to: [0, 10], c1: [8, 12], c2: [4, 12] },
     ] },
     holes: [{ start: [3, 3], segments: [{ to: [3, 6] }, { to: [6, 6] }, { to: [6, 3] }] }],
   }];
-  const out = fromInternalRegions(regions, { source: "x.svg" });
+  const out = fromInternalRegions(regions, { source: "x.svg", units: "mm", shape: "body" });
   expect(out.format).toBe(VECTOR_FORMAT);
   expect(out.version).toBe(VECTOR_VERSION);
+  expect(out.units).toBe("mm");
   expect(typeof out.note).toBe("string");
-  expect(out.regions[0].outer.segments[1]).toEqual({ kind: "arc", to: [10, 10], through: [11, 5] });
+  expect(out.shapes.body[0].outer.segments[1]).toEqual({ kind: "arc", to: [10, 10], through: [11, 5] });
   expect(() => validateVectorDocument(out, "rt")).not.toThrow();
-  const back = toInternalRegions(out);
+  const back = toInternalDocument(out).shapes.get("body");
   expect(back[0].outer.segments).toEqual(regions[0].outer.segments);
   expect(back[0].holes).toHaveLength(1);
 });
@@ -173,5 +176,71 @@ test("fromInternalRegions rounds coordinates to 6 decimals", () => {
     { to: [1 / 3, 0] }, { to: [1, 1] }, { to: [0, 1] },
   ] }, holes: [] }];
   const out = fromInternalRegions(regions, { source: null });
-  expect(out.regions[0].outer.segments[0].to[0]).toBe(0.333333);
+  expect(out.shapes.artwork[0].outer.segments[0].to[0]).toBe(0.333333);
+});
+
+const square = (n) => ({
+  outer: { kind: "path", start: [0, 0], segments: [
+    { kind: "line", to: [n, 0] }, { kind: "line", to: [n, n] }, { kind: "line", to: [0, n] },
+  ] },
+});
+const envelopeDoc = (over = {}) => ({
+  format: "partforge-vector", version: 1, units: "mm",
+  shapes: { body: [square(10)] }, ...over,
+});
+
+describe("envelope", () => {
+  it("accepts a document with no bbox and no source", () => {
+    const d = toInternalDocument(envelopeDoc(), "plate");
+    expect(d.units).toBe("mm");
+    expect([...d.shapes.keys()]).toEqual(["body"]);
+    expect(d.shapes.get("body")).toHaveLength(1);
+  });
+
+  it("places identically with and without a bbox", () => {
+    // "Optional" must mean "recomputed", not "ignored" — an implementation that
+    // skipped the geometry when the header was absent would pass every other
+    // test here and silently mis-size every authored file.
+    const withBox = envelopeDoc({ bbox: { minX: 0, minY: 0, maxX: 10, maxY: 10 } });
+    expect(toInternalDocument(withBox, "plate").shapes.get("body"))
+      .toEqual(toInternalDocument(envelopeDoc(), "plate").shapes.get("body"));
+  });
+
+  it("still validates a bbox when one is present", () => {
+    expect(() => validateVectorDocument(envelopeDoc({ bbox: { minX: 0, minY: 0, maxX: 10, maxY: 10 } }), "plate")).not.toThrow();
+    expect(() => validateVectorDocument(envelopeDoc({ bbox: { minX: 0, minY: 0, maxX: 99, maxY: 10 } }), "plate"))
+      .toThrow(/disagrees with its geometry \(maxX: header 99, actual 10\)/);
+  });
+
+  it("refuses a missing or unknown units", () => {
+    const { units, ...noUnits } = envelopeDoc();
+    expect(() => validateVectorDocument(noUnits, "plate")).toThrow(/has no valid `units`.*"mm".*"artwork"/s);
+    expect(() => validateVectorDocument(envelopeDoc({ units: "inches" }), "plate")).toThrow(/"inches"/);
+  });
+
+  it("refuses version below 1 as well as above", () => {
+    expect(() => validateVectorDocument(envelopeDoc({ version: 0 }), "plate")).toThrow(/has version 0/);
+    expect(() => validateVectorDocument(envelopeDoc({ version: -1 }), "plate")).toThrow(/has version -1/);
+    expect(() => validateVectorDocument(envelopeDoc({ version: 2 }), "plate")).toThrow(/has version 2/);
+  });
+
+  it("refuses an empty or non-object shapes", () => {
+    expect(() => validateVectorDocument(envelopeDoc({ shapes: {} }), "plate")).toThrow(/has no shapes/);
+    expect(() => validateVectorDocument(envelopeDoc({ shapes: [] }), "plate")).toThrow(/has no shapes/);
+    expect(() => validateVectorDocument(envelopeDoc({ shapes: { body: [] } }), "plate")).toThrow(/shape "body" is empty/);
+  });
+
+  it("names the old flat regions array specifically", () => {
+    const { shapes, ...old } = envelopeDoc();
+    expect(() => validateVectorDocument({ ...old, regions: [square(10)] }, "plate"))
+      .toThrow(/has a "regions" array, which this build does not read/);
+  });
+
+  it("round-trips through fromInternalRegions", () => {
+    const internal = toInternalDocument(envelopeDoc(), "plate");
+    const out = fromInternalRegions(internal.shapes.get("body"), { units: "mm", shape: "body" });
+    expect(out.units).toBe("mm");
+    expect(Object.keys(out.shapes)).toEqual(["body"]);
+    expect(toInternalDocument(out, "plate").shapes.get("body")).toHaveLength(1);
+  });
 });
