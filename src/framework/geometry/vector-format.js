@@ -19,8 +19,8 @@ export const VECTOR_FORMAT = "partforge-vector";
 export const VECTOR_VERSION = 1;
 
 export const FORMAT_NOTE =
-  "Filled 2-D outlines for k.svg2d. Coordinates are plain numbers in the artwork's own "
-  + "units — k.svg2d rescales at build time. y points UP. Each region is one filled area: "
+  "Filled 2-D outlines for k.vector2d. Coordinates are plain numbers in the artwork's own "
+  + "units — k.vector2d rescales at build time. y points UP. Each region is one filled area: "
   + "`outer` is its boundary and `holes` are subtracted from it. Segments run head-to-tail "
   + "from `start`; each segment's `to` is the next point. The contour closes implicitly from "
   + "the last `to` back to `start`. See docs/VECTOR-FORMAT.md.";
@@ -31,10 +31,10 @@ const ROUND = 1e6;            // 6 decimal places
 const round6 = (n) => Math.round(n * ROUND) / ROUND;
 const isPt = (v) => Array.isArray(v) && v.length === 2 && Number.isFinite(v[0]) && Number.isFinite(v[1]);
 
-// Every message carries the svgs key and the position, because the reader is as
+// Every message carries the vectors key and the position, because the reader is as
 // likely to be an agent that generated the file as a human who wrote it.
 const fail = (label, where, what, fix) => {
-  throw new Error(`svg2d: "${label}" ${where} ${what}${fix ? ` — ${fix}` : ""}`);
+  throw new Error(`vector2d: "${label}" ${where} ${what}${fix ? ` — ${fix}` : ""}`);
 };
 
 function checkContour(label, where, contour) {
@@ -87,7 +87,7 @@ export function validateVectorDocument(doc, label = "(unnamed)") {
     (rg.holes ?? []).forEach((h, j) => checkContour(label, `${where} hole ${j + 1}`, h));
   });
 
-  // bbox is a CACHE, not an authority: svg2d recomputes it anyway. Checking it
+  // bbox is a CACHE, not an authority: vector2d recomputes it anyway. Checking it
   // here turns a stale or hand-miscalculated header into a named error instead
   // of silently wrong sizing at build time.
   if (!doc.bbox || !["minX", "minY", "maxX", "maxY"].every((k) => Number.isFinite(doc.bbox[k]))) {
@@ -124,7 +124,7 @@ export function toInternalRegions(doc, label = "(unnamed)") {
   return toInternalRegionsUnchecked(doc);
 }
 
-// Exported: svg2d.js needs the same tight bbox at build time, and two copies of
+// Exported: vector2d.js needs the same tight bbox at build time, and two copies of
 // this loop would be two places to fix a bounds bug.
 //
 // Built on contour-ops.js's profileBounds — an EXACT bbox (paper.js computes a
