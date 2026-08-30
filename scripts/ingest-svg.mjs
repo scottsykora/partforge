@@ -32,13 +32,19 @@ for (const [key, value] of Object.entries({
 })) {
   Object.defineProperty(globalThis, key, { value, writable: true, configurable: true, enumerable: true });
 }
+// Kept in sync with test/setup/happy-dom-patches.js's own copy of this stub
+// by hand — this script runs standalone, outside vitest's setup, so it can't
+// import that file directly. If paper (or a future caller this script grows)
+// starts calling another 2D context method, add it in both places.
 globalThis.HTMLCanvasElement.prototype.getContext = () => ({
   save() {}, restore() {}, beginPath() {}, closePath() {}, moveTo() {}, lineTo() {},
   bezierCurveTo() {}, quadraticCurveTo() {}, arc() {}, rect() {}, fill() {}, stroke() {},
   clip() {}, translate() {}, scale() {}, rotate() {}, transform() {}, setTransform() {},
   clearRect() {}, fillRect() {}, strokeRect() {}, setLineDash() {},
+  fillText() {}, strokeText() {},
   measureText: () => ({ width: 0 }),
   getImageData: () => ({ data: new Uint8ClampedArray(4) }),
+  createImageData: (w, h) => ({ data: new Uint8ClampedArray(Math.max(0, w) * Math.max(0, h) * 4), width: w, height: h }),
   putImageData() {}, drawImage() {}, isPointInPath: () => false,
   createLinearGradient: () => ({ addColorStop() {} }),
   canvas: { width: 1, height: 1 },

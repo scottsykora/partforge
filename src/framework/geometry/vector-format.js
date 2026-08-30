@@ -13,7 +13,7 @@
 // downstream speaks the internal IR, and nothing else needs to know both.
 //
 // Pure leaf: DOM-free, node:-free. Both halves of the feature import it.
-import { tessellateContour } from "./profile.js";
+import { profileBounds } from "./contour-ops.js";
 
 export const VECTOR_FORMAT = "partforge-vector";
 export const VECTOR_VERSION = 1;
@@ -25,7 +25,6 @@ export const FORMAT_NOTE =
   + "from `start`; each segment's `to` is the next point. The contour closes implicitly from "
   + "the last `to` back to `start`. See docs/VECTOR-FORMAT.md.";
 
-const BBOX_SEGS = 64;         // curve sampling for bbox computation and its check
 const BBOX_TOL = 1e-3;        // mm-free: these are artwork units, and 6dp rounding is finer
 const ROUND = 1e6;            // 6 decimal places
 
@@ -126,18 +125,22 @@ export function toInternalRegions(doc, label = "(unnamed)") {
 }
 
 // Exported: svg2d.js needs the same tight bbox at build time, and two copies of
-// this loop would be two places to fix a sampling bug.
+// this loop would be two places to fix a bounds bug.
+//
+// Built on contour-ops.js's profileBounds — an EXACT bbox (paper.js computes a
+// curve's analytic extrema, not a sampled approximation) rather than the fixed
+// 64-segment tessellation this used to walk. That mattered in practice, not
+// just in theory: 64-segment sampling can undershoot a true arc extremum by
+// roughly 1.2e-3 × radius — comfortably past BBOX_TOL below — which meant a
+// hand-authored document with the mathematically CORRECT tight bbox could be
+// rejected by validateVectorDocument's "disagrees with its geometry" check.
+// profileBounds also folds in holes, which regions never needed excluded: a
+// hole is by construction inside its own outer, so its bounds can only sit
+// within the outer's and never move minX/minY/maxX/maxY.
 export function regionsBbox(regions) {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const rg of regions) {
-    for (const [x, y] of tessellateContour(rg.outer, BBOX_SEGS)) {
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-  }
-  return { minX, minY, maxX, maxY };
+  if (regions.length === 0) return { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  const { min, max } = profileBounds(regions);
+  return { minX: min[0], minY: min[1], maxX: max[0], maxY: max[1] };
 }
 
 const fromSeg = (s) =>

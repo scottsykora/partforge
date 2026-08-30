@@ -48,6 +48,18 @@ const resolveOne = makeAssetResolver(
 );
 
 export async function resolveSvgs(svgsDecl) {
+  // A function reaching here means a caller passed `part.svgs` raw, the way
+  // fonts.js's resolveFonts guards against the same mistake for `part.fonts`.
+  // `Object.entries` on a function is `[]`, not a thrown error, so without
+  // this check a function-valued `svgs` would silently resolve to an empty
+  // map and only surface much later as `svg2d: unknown svg "…"` — a name a
+  // part author declared correctly, that k.svg2d insists doesn't exist. No
+  // part currently declares `svgs` as a function (unlike fonts, which a
+  // `type: "font"` control already drives this way) — this exists so the
+  // day that form is added, it fails loudly instead of silently.
+  if (typeof svgsDecl === "function") {
+    throw new Error("resolveSvgs: `svgs` is a function — it is not resolved against params yet; pass the plain object form");
+  }
   const raw = await resolveDecl(svgsDecl, resolveOne);
   const out = new Map();
   for (const [name, bytes] of raw) {

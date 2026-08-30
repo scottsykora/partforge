@@ -66,6 +66,26 @@ test("no module in the worker closure touches a main-thread-only global", () => 
   }
 });
 
+test("the worker import closure reaches nothing under src/framework/ingest/", () => {
+  // The only DOM-dependent module in the svg2d feature (svg-ingest.js's own
+  // header comment) — it runs paper.js's importSVG + a DOMParser normalization
+  // pass, both of which need a real DOM, in the browser host that runs ingest
+  // once per artwork. Nothing under here may reach the worker: today the DOM
+  // check above happens to catch it too, but only because the word `document`
+  // survives in a few error strings there by accident — this branch already
+  // demonstrates that accident is fragile (vector-format.js was renamed
+  // "document" → "file" in its own error text so THAT module could safely
+  // enter the worker). Assert the actual invariant directly instead of relying
+  // on incidental wording.
+  const { files, importer } = graph();
+  for (const file of files) {
+    const inIngest = file.startsWith(`${ROOT}/src/framework/ingest/`);
+    expect(inIngest, inIngest
+      ? `src/framework/ingest/ is DOM-dependent; the geometry worker must not reach it:\n  ${chainTo(file, importer, ROOT)}`
+      : "").toBe(false);
+  }
+});
+
 test("the worker import closure reaches nothing under src/testing/", () => {
   // src/testing/ is the Node-only harness (kernel booters, the PNG renderer, the
   // ERROR-PATTERNS reader). The worker-reachable oracle lives in src/framework/oracle/.

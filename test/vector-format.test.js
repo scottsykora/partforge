@@ -75,6 +75,41 @@ test("a bbox that disagrees with the geometry is refused", () => {
   bad({ bbox: { minX: 0, minY: 0, maxX: 999, maxY: 10 } }, /bbox/i);
 });
 
+// regionsBbox used to walk a FIXED 64-segment tessellation of each curve
+// (BBOX_SEGS) rather than computing exact bounds, and a 64-segment sampling
+// grid can undershoot a true arc extremum by roughly 1.2e-3 × radius —
+// comfortably past BBOX_TOL. This circle is "phase-shifted" specifically to
+// expose that: it is three 120°-sweep arcs starting at 10°/130°/250°, so none
+// of the four axis-aligned extrema (0°, 90°, 180°, 270° — where a naive
+// sampling grid is most likely to land a point) coincide with a segment
+// endpoint or `through` point; each one falls strictly inside an arc's span,
+// where the OLD sampler had to interpolate across its grid and would
+// undershoot far enough to fail this exact check. A hand-authored bbox of
+// exactly [-10, 10] on both axes — the mathematically correct tight bounds of
+// a radius-10 circle — must validate now that regionsBbox computes exact
+// bounds (contour-ops.js's profileBounds, built on paper.js's own analytic
+// curve bounds) instead of sampling.
+test("a hand-authored exact bbox for a phase-shifted circle validates", () => {
+  const d = {
+    format: VECTOR_FORMAT,
+    version: VECTOR_VERSION,
+    source: "circle.svg",
+    bbox: { minX: -10, minY: -10, maxX: 10, maxY: 10 },
+    regions: [{
+      outer: {
+        start: [9.848078, 1.736482],
+        segments: [
+          { kind: "arc", to: [-6.427876, 7.660444], through: [3.420201, 9.396926] },
+          { kind: "arc", to: [-3.420201, -9.396926], through: [-9.848078, -1.736482] },
+          { kind: "arc", to: [9.848078, 1.736482], through: [6.427876, -7.660444] },
+        ],
+      },
+      holes: [],
+    }],
+  };
+  expect(() => validateVectorDocument(d, "circle")).not.toThrow();
+});
+
 test("note is optional and ignored", () => {
   expect(() => validateVectorDocument(doc({ note: "anything at all" }), "emblem")).not.toThrow();
   const d = doc(); delete d.note;
@@ -86,11 +121,12 @@ test("toInternalRegions maps kind/through onto the implicit IR", () => {
   d.regions[0].outer.segments[1] = { kind: "arc", to: [10, 10], through: [11, 5] };
   d.regions[0].outer.segments[2] = { kind: "cubic", to: [0, 10], c1: [8, 12], c2: [4, 12] };
   // The arc/cubic swap bulges the contour past the base fixture's 10x10 bbox
-  // (arc via [11,5] reaches x≈10.9875; the cubic's control points pull y to
+  // (the arc through [11,5] peaks at exactly x=11 — the via point IS the arc's
+  // extremum here, by construction; the cubic's control points pull y to
   // 11.5) — update the header to the actual tight bbox so this test isolates
   // the kind/through mapping instead of tripping the (separately tested)
   // bbox-consistency check.
-  d.bbox = { minX: 0, minY: 0, maxX: 10.987495, maxY: 11.5 };
+  d.bbox = { minX: 0, minY: 0, maxX: 11, maxY: 11.5 };
   const [r] = toInternalRegions(d);
   expect(r.outer.start).toEqual([0, 0]);
   expect(r.outer.segments[0]).toEqual({ to: [10, 0] });

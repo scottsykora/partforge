@@ -69,6 +69,19 @@ test("align right and valign top put the far edges on the origin", () => {
   expect(b.maxY).toBeCloseTo(0, 6);
 });
 
+// An unrecognized align/valign used to fall through both ternaries straight
+// to the middle/center case with no error at all — "centre" (the British
+// spelling) silently mis-placed the artwork instead of failing loudly. Every
+// other option here (scaleFor's width/height/fit) already refuses garbage
+// rather than guessing; this closes the one silent-default gap.
+test("an unrecognized align throws instead of silently centring", () => {
+  expect(() => placeRegions(BOX, { width: 20, align: "centre" })).toThrow(/align/);
+});
+
+test("an unrecognized valign throws instead of silently centring", () => {
+  expect(() => placeRegions(BOX, { width: 20, valign: "centre" })).toThrow(/valign/);
+});
+
 test("holes are scaled and aligned with their outer", () => {
   const withHole = [{
     outer: BOX[0].outer,

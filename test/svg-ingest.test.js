@@ -59,6 +59,28 @@ test("overlapping filled shapes union rather than double-count", () => {
   expect(netArea(doc)).toBeCloseTo(150, 1);
 });
 
+// KNOWN DEFECT — pins the current WRONG answer, not desired behaviour.
+//
+// The same two overlapping squares as the test above, but as two subpaths of
+// ONE <path> element instead of two separate elements. resolveCurveFill
+// (src/framework/geometry/curve-fill.js) is what ingest calls per-ITEM to
+// resolve an element's own subpaths under its fill rule, and it drops the
+// overlap between two same-winding subpaths instead of merging them — so this
+// comes back as area 100 / bbox width 10 (the *first* subpath alone) instead
+// of the true union, area 150 / bbox width 15, that the two-element version
+// above correctly produces via booleanRegions. Because k.svg2d sizes on the
+// bbox, this silently scales the whole artwork wrong with no error — see
+// docs/ERROR-PATTERNS.md's svg-overlapping-subpaths entry. Fixing
+// resolveCurveFill itself is a separate task (nonzero winding legitimately
+// forms holes, so subpaths can't simply be unioned locally); this test only
+// records the defect so a fix there is caught by a red test, not silence.
+test("KNOWN DEFECT: overlapping same-winding subpaths within one <path> lose their union", () => {
+  const d = "M0,0 L10,0 L10,10 L0,10 Z M5,0 L15,0 L15,10 L5,10 Z";
+  const doc = ingestSvg(svg(`<path fill="#111" d="${d}"/>`));
+  expect(netArea(doc)).toBeCloseTo(100, 1);                    // WRONG — truth is 150
+  expect(doc.bbox.maxX - doc.bbox.minX).toBeCloseTo(10, 1);     // WRONG — truth is 15
+});
+
 test("a circle survives as symbolic arcs, not cubics", () => {
   const doc = ingestSvg(svg('<circle cx="24" cy="24" r="10" fill="#111"/>'));
   const [region] = toInternalRegions(doc);
@@ -66,18 +88,27 @@ test("a circle survives as symbolic arcs, not cubics", () => {
   expect(netArea(doc)).toBeCloseTo(Math.PI * 100, 0);
 });
 
-// happy-dom's SVG support does not resolve <use href="#id"> against <defs> the
-// way a real browser's DOM does: paper.js's importSVG walks the DOM tree it is
-// handed, and under happy-dom that walk finds the <use> elements produce no
-// child geometry at all (confirmed by instrumenting importSVG's own output —
-// the imported tree contains only the empty root clip Shape, no rect). This is
-// a gap in the test environment, not in ingestSvg: the capability this
-// architecture is built to reach is real in an actual browser, which is where
-// this file runs. See task-4-report.md for the full trace.
-test.skip("<use> and <defs> resolve — the capability this architecture bought", () => {
+test("<use> and <defs> resolve — the capability this architecture bought (bare href)", () => {
   const doc = ingestSvg(svg(
     '<defs><rect id="r" width="10" height="10"/></defs>'
     + '<use href="#r" fill="#111"/><use href="#r" x="20" fill="#111"/>'));
+  expect(netArea(doc)).toBeCloseTo(200, 1);
+  expect(doc.bbox.maxX - doc.bbox.minX).toBeCloseTo(30, 1);
+});
+
+test("<use> and <defs> resolve with the legacy xlink:href spelling too", () => {
+  const doc = ingestSvg(svg(
+    '<defs><rect id="r" width="10" height="10"/></defs>'
+    + '<use xlink:href="#r" fill="#111"/><use xlink:href="#r" x="20" fill="#111"/>',
+    'viewBox="0 0 48 48" xmlns:xlink="http://www.w3.org/1999/xlink"'));
+  expect(netArea(doc)).toBeCloseTo(200, 1);
+  expect(doc.bbox.maxX - doc.bbox.minX).toBeCloseTo(30, 1);
+});
+
+test("<symbol> + <use> resolves", () => {
+  const doc = ingestSvg(svg(
+    '<symbol id="s"><rect width="10" height="10" fill="#111"/></symbol>'
+    + '<use href="#s"/><use href="#s" x="20"/>'));
   expect(netArea(doc)).toBeCloseTo(200, 1);
   expect(doc.bbox.maxX - doc.bbox.minX).toBeCloseTo(30, 1);
 });

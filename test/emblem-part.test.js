@@ -30,8 +30,15 @@ test("the artwork's aspect is 40:30 — fill unioned with stroke, not the viewBo
 });
 
 test("the circle survived ingest as symbolic arcs", () => {
+  // emblem.svg.json's outer contours are 5 arcs and 2 lines, 0 cubics (see
+  // docs/VECTOR-FORMAT.md §2) — `some((s) => s.via)` would pass just as
+  // happily on one arc buried in a pile of cubics, which is exactly the
+  // regression this test exists to catch (arc recovery falling back to a
+  // Bézier approximation instead of a true circular arc). Assert what the
+  // fixture actually guarantees: NO cubic survived, not just that one arc did.
   const all = k._svgs.get("emblem").flatMap((r) => r.outer.segments);
   expect(all.some((s) => s.via)).toBe(true);
+  expect(all.every((s) => !s.c1)).toBe(true);
 });
 
 test("emblem_w drives the emboss size", () => {

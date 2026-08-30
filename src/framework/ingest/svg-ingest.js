@@ -18,32 +18,6 @@ import { recoverArcs } from "../geometry/arc-fit.js";
 import { fromInternalRegions } from "../geometry/vector-format.js";
 import { reverseContour } from "../geometry/profile.js";
 
-// Matches vector-format.js's own round6 exactly (6 decimal places). Rounding
-// HERE, before fromInternalRegions, makes the emitted document self-consistent
-// under its own round-trip: fromInternalRegions computes doc.bbox from these
-// same rounded numbers, so re-loading the document and recomputing the bbox
-// from the (already-rounded) stored coordinates reproduces the identical
-// floats — no residual sub-micron drift left for validateVectorDocument's
-// BBOX_TOL to trip over. Without this, an unrounded arc `via` that happens to
-// land a hair off an exact circle can shift `recoverArcs`'s fitted sweep by a
-// few ULPs; round-tripped through JSON that nudge can cross an integer
-// boundary in sampleArc's `Math.ceil(segs * sweep / 2π)` step count, which
-// changes which angle the tessellation grid actually samples and moves a
-// bbox extremum by ~1e-3 — well past the 1e-3 tolerance validateVectorDocument
-// checks against. Rounding first removes the discrepancy at its source.
-const round6 = (n) => Math.round(n * 1e6) / 1e6;
-const roundPt = (p) => [round6(p[0]), round6(p[1])];
-const roundContour = (c) => ({
-  start: roundPt(c.start),
-  segments: c.segments.map((s) => {
-    const m = { to: roundPt(s.to) };
-    if (s.via) m.via = roundPt(s.via);
-    if (s.c1) { m.c1 = roundPt(s.c1); m.c2 = roundPt(s.c2); }
-    return m;
-  }),
-});
-const roundRegion = (r) => ({ outer: roundContour(r.outer), holes: r.holes.map(roundContour) });
-
 // A private scope, never paper's package-global project — another consumer in
 // the same page may import paper too. Same rule paper-bridge.js follows.
 let _scope = null;
@@ -84,6 +58,33 @@ function itemContours(item) {
 const LINECAP = { butt: "butt", round: "round", square: "square" };
 const LINEJOIN = { miter: "miter", round: "round", bevel: "bevel" };
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+const XLINK_NS = "http://www.w3.org/1999/xlink";
+
+// paper's <use> importer (paper-core.js's `use:` entry) resolves its target
+// through `SvgElement.get(node, "href")`, which is hard-wired to read that
+// attribute from the XLINK namespace ONLY (`attributeNamespace.href = xlink`
+// in paper-core.js). A bare SVG2 `href="#id"` — what every modern authoring
+// tool emits — lives in no namespace at all, so `getAttributeNS(xlink, href)`
+// returns null and the `<use>` silently resolves to nothing. This is true in
+// any DOM, real browser included; it is not a test-environment gap. Patch it
+// ourselves before handing the tree to paper: mirror a bare `href` onto
+// `xlink:href` on every `<use>` that doesn't already have one. Do this by
+// parsing the markup into a real DOM tree (paper's importSVG accepts a node
+// as readily as a string) rather than string-munging the SVG text, so this
+// survives whatever quoting/whitespace the source happens to use.
+function normalizeUseHref(svgText) {
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  const uses = doc.getElementsByTagNameNS(SVG_NS, "use");
+  for (let i = 0; i < uses.length; i++) {
+    const use = uses[i];
+    if (use.hasAttribute("href") && !use.hasAttributeNS(XLINK_NS, "href")) {
+      use.setAttributeNS(XLINK_NS, "xlink:href", use.getAttribute("href"));
+    }
+  }
+  return doc;
+}
+
 export function ingestSvg(svgText, { strokes = "outline", source = null } = {}) {
   if (typeof svgText !== "string" || !svgText.trim()) {
     throw new Error("svg: ingestSvg needs the SVG document as a non-empty string");
@@ -91,7 +92,7 @@ export function ingestSvg(svgText, { strokes = "outline", source = null } = {}) 
   const sc = scope();
   let root;
   try {
-    root = sc.project.importSVG(svgText, { expandShapes: true, insert: false });
+    root = sc.project.importSVG(normalizeUseHref(svgText), { expandShapes: true, insert: false });
   } catch (e) {
     throw new Error(`svg: could not parse the SVG document — ${e?.message ?? e}`);
   }
@@ -99,6 +100,35 @@ export function ingestSvg(svgText, { strokes = "outline", source = null } = {}) 
 
   const resolved = [];
   const visit = (item) => {
+    // A <use> that resolves to a <symbol> (rather than a plain element)
+    // imports as a paper SymbolItem, not a Group/Path — paper keeps the
+    // symbol's geometry in one shared SymbolDefinition and never clones it
+    // per <use>, so it has no .children and no .segments of its own and
+    // would otherwise fall straight through to the `return` below, silently
+    // contributing nothing. Unwrap it: clone the definition's item and bake
+    // this particular <use>'s placement matrix into the clone, then recurse
+    // into the (now ordinary) Group/Path. Note that fill/stroke set directly
+    // on the <use> element does NOT carry over — paper resolves each
+    // element's paint from the real DOM's computed style at that element's
+    // own position in the document, and a <symbol>'s content is parsed once
+    // as a *sibling* of <use>, never as its descendant, so paint must live on
+    // the symbol's own shapes (or an ancestor they actually share).
+    if (item.className === "SymbolItem") {
+      const inner = item.definition.item.clone();
+      // A SymbolDefinition's item is kept with applyMatrix=false — its shared
+      // geometry stays in LOCAL coordinates and each SymbolItem carries only
+      // its own placement matrix, so multiple <use>s of one <symbol> reuse
+      // one set of segment points. item.transform(item.matrix) would only
+      // update the clone's own decomposed matrix, not its segments — every
+      // placement would then read back the same untransformed local points.
+      // append + apply(true, true) bakes the placement into real segment
+      // coordinates (recursively, and flips applyMatrix to true on the way),
+      // which is what itemContours/toContour below actually read.
+      inner.matrix.append(item.matrix);
+      inner.matrix.apply(true, true);
+      visit(inner);
+      return;
+    }
     // A CompoundPath has .children too (its subpaths), but it is ONE paintable
     // item — recursing into its children would split it into independent
     // single-subpath items and lose the fill-rule relationship between them
@@ -154,6 +184,12 @@ export function ingestSvg(svgText, { strokes = "outline", source = null } = {}) 
 
   const flipped = union.map(flipRegion);
   const withArcs = flipped.map((r) => ({ outer: recoverArcs(r.outer), holes: r.holes.map(recoverArcs) }));
-  const rounded = withArcs.map(roundRegion);
-  return fromInternalRegions(rounded, { source });
+  // fromInternalRegions rounds every coordinate to 6dp itself when it serializes
+  // the document, and computes doc.bbox (regionsBbox, vector-format.js) from
+  // these UNROUNDED regions first — an EXACT bbox (paper.js's analytic curve
+  // bounds), not the fixed-step tessellation this file used to have to
+  // pre-round coordinates to work around: that old sampling grid could shift
+  // an extremum by ~1e-3 on an unrounded-vs-rounded ULP nudge, which is gone
+  // now that the bbox check isn't sampling a grid at all.
+  return fromInternalRegions(withArcs, { source });
 }

@@ -661,13 +661,19 @@ between the Manifold preview and the OCCT STEP export.
 
 - **Symptom:** `svg: no painted geometry — every element is fill="none" with no stroke, hidden, or empty` thrown during ingest.
 - **Cause:** Every element in the SVG document either has no `fill` and no (`stroke` + positive `stroke-width`), or the document has no paintable elements at all (e.g. only `<defs>`, only groups with nothing visible, or the whole thing is empty). `partforge/ingest` skips unpainted elements silently — this error fires only when *nothing* in the whole document painted anything.
-- **Fix:** Confirm the SVG actually has visible fill/stroke — a common cause is authoring artwork entirely inside `<defs>`/`<symbol>` and forgetting the `<use>` that would actually paint it, or an accidental `fill="none"` with no `stroke` on every element. Fix the source SVG and re-ingest.
+- **Fix:** Confirm the SVG actually has visible fill/stroke — a common cause is authoring artwork entirely inside `<defs>`/`<symbol>` with no `<use>` anywhere that references it, or a `<use>` whose `href`/`xlink:href` targets an `id` that doesn't exist in the document, or an accidental `fill="none"` with no `stroke` on every element. (Both `href` and the legacy `xlink:href` spelling are resolved — this is not a spelling issue.) Fix the source SVG and re-ingest.
 
 ## svg-painting-order
 
 - **Symptom:** No thrown error — a shape that looks like it has a hole in an SVG editor (or in a browser rendering the SVG directly) comes out **solid** through `k.svg2d`.
 - **Cause:** The artwork fakes the hole by painting a background-colored shape *on top of* another shape, rather than actually cutting a hole (one path, two subpaths, opposite winding or `fill-rule="evenodd"`). Painting order is not modelled by this format at all — every ingested region adds material unconditionally, and colour is read only as present-or-absent, never compared between elements, so "painted over" and "not there" are indistinguishable once ingest has run. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Painting order is not modelled".
 - **Fix:** Either make it a real hole in the source artwork (one `<path>` element with two subpaths and `fill-rule="evenodd"`, or two subpaths wound oppositely under `nonzero`) and re-ingest, or leave the artwork as-is and subtract the "hole" shape in the part with `.cut()` instead of relying on ingest to infer it from paint order.
+
+## svg-overlapping-subpaths
+
+- **Symptom:** No thrown error — the ingested artwork comes out too small, or a shape vanishes entirely. `doc.bbox` is narrower (or shorter) than the source SVG actually is.
+- **Cause:** A known defect in the shared fill resolver, `resolveCurveFill` (`src/framework/geometry/curve-fill.js`), which ingest calls per-*element* to resolve one `<path>`'s own subpaths under its fill rule. When that one element has two or more subpaths of the *same* winding direction that overlap, the resolver drops the overlap instead of merging the subpaths into their union — so the result is missing area, not just a wrong count. (This is specifically about subpaths sharing *one* `<path>`/`<g>` element; separate elements that overlap union correctly, since those go through a different path — `booleanRegions`, a real `A.unite(B)` — that doesn't hit this.) Pinned by a deliberately-red test in `test/svg-ingest.test.js` ("KNOWN DEFECT: overlapping same-winding subpaths within one `<path>` lose their union").
+- **Fix:** Split the offending subpaths into separate `<path>` elements (each with its own `fill`) in the source SVG and re-ingest — that goes through the union path that handles overlap correctly. There is no per-file workaround inside ingest; the fix belongs in `curve-fill.js` itself and is tracked separately, not something a part or its build can route around.
 
 ## mesh-fillet-unsupported-edge
 

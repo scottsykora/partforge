@@ -23,6 +23,42 @@ test("a paper-style circle collapses to arcs", () => {
   expect(out.segments.every((s) => s.c1 === undefined)).toBe(true);
 });
 
+// Sweep-direction coverage: paperCircle above always traces CCW (right → top →
+// left → bottom, positive dA). recoverArcs' 3-point circle fit has to be
+// equally correct for the opposite handedness — nothing about ingest
+// guarantees CCW: a transformed <circle> (e.g. a negative scale) or a winding
+// flip (svg-ingest.js negates y to go from SVG's y-down to the model's y-up,
+// which reverses every contour's sense) can hand recoverArcs a CW run just as
+// easily. This is the highest-risk part of arc recovery — a sign error in the
+// fit or in how the recovered `via` encodes sweep direction — and until now
+// nothing here traced a circle the other way to catch it.
+function paperCircleCW(cx, cy, r) {
+  const k = KAPPA * r;
+  const pts = [[cx + r, cy], [cx, cy - r], [cx - r, cy], [cx, cy + r]];
+  const tans = [[0, -k], [-k, 0], [0, k], [k, 0]];
+  const segments = [];
+  for (let i = 0; i < 4; i++) {
+    const a = pts[i], b = pts[(i + 1) % 4], ta = tans[i], tb = tans[(i + 1) % 4];
+    segments.push({ to: b, c1: [a[0] + ta[0], a[1] + ta[1]], c2: [b[0] - tb[0], b[1] - tb[1]] });
+  }
+  return { start: pts[0], segments };
+}
+
+test("a clockwise (mirrored) circle also collapses to arcs, with the correct negative sweep", () => {
+  const out = recoverArcs(paperCircleCW(5, 7, 3));
+  expect(out.segments.every((s) => s.via)).toBe(true);
+  expect(out.segments.every((s) => s.c1 === undefined)).toBe(true);
+  let prev = out.start;
+  for (const s of out.segments) {
+    const c = arcCenterAndSweep(prev, s.via, s.to);
+    expect(c.center[0]).toBeCloseTo(5, 6);
+    expect(c.center[1]).toBeCloseTo(7, 6);
+    expect(c.r).toBeCloseTo(3, 6);
+    expect(c.dA).toBeLessThan(0);   // CW is the negative-sweep sense in this convention — CCW (above) is positive
+    prev = s.to;
+  }
+});
+
 test("the recovered circle has the exact original centre and radius", () => {
   const out = recoverArcs(paperCircle(5, 7, 3));
   let prev = out.start;

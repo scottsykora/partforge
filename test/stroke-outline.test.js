@@ -35,6 +35,12 @@ test("a closed square stroked width 2 with miter joins is a 144 - 64 annulus", (
   expect(netArea(regions)).toBeCloseTo(80, 1);
   expect(regions).toHaveLength(1);
   expect(regions[0].holes).toHaveLength(1);
+  // The storage winding invariant (outer CCW, holes CW) is exactly what an
+  // annulus built from "two rings of opposite handedness" can get backwards
+  // with no other symptom — area and hole-count above are blind to it (they
+  // only ever use Math.abs). Pin the sign, not just the shape.
+  expect(ringArea(tessellateContour(regions[0].outer, 64))).toBeGreaterThan(0);
+  expect(ringArea(tessellateContour(regions[0].holes[0], 64))).toBeLessThan(0);
 });
 
 test("a closed square with round joins loses the mitre corners", () => {
