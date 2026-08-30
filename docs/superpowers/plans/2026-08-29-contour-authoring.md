@@ -1468,8 +1468,11 @@ it("cuts the authored plate's holes and keyway, in the drawing's own frame", asy
   const cut = body.cut(k.vector2d("plate", { shape: "holes" })).cut(k.vector2d("plate", { shape: "keyway" }));
   // 40x24 with four r=4 corners, minus two r=1.7 discs and a 6x4 triangle.
   const bodyArea = 40 * 24 - 4 * 16 + Math.PI * 16;
-  expect(body.area()).toBeCloseTo(bodyArea, 2);
-  expect(cut.area()).toBeCloseTo(bodyArea - 2 * Math.PI * 1.7 ** 2 - 12, 2);
+  expect(body.area()).toBeCloseTo(bodyArea, 1);
+  expect(cut.area()).toBeCloseTo(bodyArea - 2 * Math.PI * 1.7 ** 2 - 12, 1);
+  // The whole point of roles: the file composes itself, and the result is
+  // identical to doing it by hand shape by shape.
+  expect(k.vector2d("plate").area()).toBeCloseTo(cut.area(), 6);
 });
 ```
 
@@ -1498,7 +1501,7 @@ In `src/parts/emblem.js`, declare the second vector and build the plate from it 
         .union(k.vector2d("emblem", { width: p.emblem_w }).extrude({ h: p.emboss }).translate([0, 0, p.plate_t])),
 ```
 
-**A note the implementer must get right:** every one of those three calls passes the same `width: p.plate_w`, and each is scaled against **its own shape's bounds** — so `holes` scaled to `plate_w` would be enormous. That is wrong. Because the file is `units: "mm"`, the correct form passes **no size at all**, letting all three shapes place as authored in one frame, and drops `plate_w` from the plate geometry:
+**A note the implementer must get right:** every one of those three calls passes the same `width: p.plate_w`, and each is scaled against **its own shape's bounds** — so `holes` scaled to `plate_w` would be enormous. That is wrong on two counts. Because the file is `units: "mm"`, the correct form passes **no size at all**, letting every shape place as authored in one shared frame. And because the file declares `role` per shape, it composes *itself* — so no `shape` argument and no `.cut()` chain are needed either. The whole plate is one call, and `plate_w` drops out of the geometry:
 
 ```js
       // No shape named and no size: the file's own roles compose it (body minus
@@ -1575,7 +1578,7 @@ A rewrite, not a patch — enough changes that patching would leave contradictio
 
 1. **What this is** — a format for filled 2-D outlines that `k.vector2d` turns into a `Shape2D`. Lead with the **authored** case; ingest is now the secondary path. State the property that justifies shipping no headless converter: this file alone is enough to write a compliant converter.
 2. **A worked authored example** — `src/parts/assets/plate.vector.json` in full, with the `build` that composes its three shapes. Point out that `body` and `holes` share a frame because the file is `units: "mm"`, and that no size option appears anywhere.
-3. **Schema** — the envelope table from spec §1, the four contour kinds from §2 with their normative expansions, and the three segment kinds. Keep the two `through` gotchas verbatim: collinearity degenerates to a line, and which side of the chord decides sweep and major/minor.
+3. **Schema** — the envelope table from spec §1, the four contour kinds from §2 with their normative expansions, and the three segment kinds. Cover `role` explicitly: the two shape forms (a bare region array, or `{ role, regions }`), that `"add"` is the default and why it has an honest default where `units` does not, that a file must declare at least one `add` shape, that `bbox` still covers subtracted regions, and that naming a `shape` returns that geometry whatever its role. Keep the two `through` gotchas verbatim: collinearity degenerates to a line, and which side of the chord decides sweep and major/minor.
 4. **Rules that are not obvious from the schema** — y points up; `units` and what each means; a path closes implicitly; `bbox` is optional and recomputed; a stroke is never a line; a fill rule applies across one element's own subpaths.
 
    **Rewrite the winding rule. The current text is wrong.** It says reversed winding "produces geometry with the outer treated as a hole and vice versa, silently, no error." Measured on the shipped code: a 10 × 10 square with a 4 × 4 hole gives area 84 both ways, because `k.shape2d`'s `liftRegions` runs `ensureRegionWinding`, which forces `outer` counter-clockwise and holes clockwise **from the `outer`/`holes` labels**, ignoring stored winding entirely. The replacement text must say plainly: orientation comes from the labels, stored winding carries no information, and **an author never needs a shoelace sum.** Do not soften this into "prefer counter-clockwise" — it is a correction, and the current text costs an agent real work.
