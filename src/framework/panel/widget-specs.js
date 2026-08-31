@@ -38,6 +38,7 @@ export const WIDGET_SPECS = [
   { type: "radio", kind: "control", fields: [...AUTHOR_COMMON, "options"] },
   { type: "font", kind: "control", fields: [...AUTHOR_COMMON, "allow", "preview"] },
   { type: "image", kind: "control", fields: [...AUTHOR_COMMON, "allow"] },
+  { type: "vector", kind: "control", fields: [...AUTHOR_COMMON] },
   { type: "readout", kind: "display", fields: ["type", "label", "description", "unit", "derivedKey", "hidden", "when", "whenFalse"] },
 ];
 
@@ -58,6 +59,7 @@ const AUTHOR_EXTRAS = {
   radio: ["options"],
   font: ["allow", "preview"],
   image: ["allow"],
+  vector: [],
 };
 const AUTHOR_FIELDS = new Map(Object.entries(AUTHOR_EXTRAS).map(
   ([type, extra]) => [type, [...AUTHOR_COMMON, ...extra]]));

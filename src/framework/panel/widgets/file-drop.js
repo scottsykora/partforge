@@ -1,12 +1,20 @@
 // The shared drop target behind `type: "image"`, `type: "vector"` and
 // `type: "font"` (Tasks 6, 8, 9) — NOT itself a control. It owns no param key
 // and draws no label/row of its own; it turns a dropped, picked or pasted
-// file into either a host-stored source string or the converted bytes, and
+// file into either a host-stored source string or the converted artifact, and
 // hands that to `onSource`. Kind-agnostic: the registry
 // (`../../ingest/registry.js`) already knows what each kind accepts and how
 // to convert it, so nothing here special-cases a media type by name — only
-// the three-way argument shape a converter wants (see `convertedArtifact`)
-// is kind-specific, and even that reduces to "image or not".
+// the argument shape a converter wants and what "no host hook" delivers (see
+// `convertedArtifact`) is kind-specific.
+//
+// `mountDrop` (bottom of this file) is the widget-facing half: wiring
+// `makeFileDrop`'s output to a control's own `params[node.key]` and error
+// surface is the same ~25 lines in widgets/image.js, widgets/font.js and
+// widgets/vector.js — two copies were defensible as deliberate mirroring
+// (Tasks 6, 8); a third (Task 9) is where a shared helper wins (task-9
+// addendum, Ruling L). All three widgets call it instead of keeping their own
+// `mountXDrop`/`makeDropError` pair.
 //
 // Before this file there was no drag-and-drop, file picker, or paste
 // affordance anywhere in the panel (design doc, "Evidence" §1) — this is new
@@ -125,15 +133,25 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
   // the Blob itself, ingestSvg wants the decoded SVG text — so this is the one
   // place that looks past "kind" as an opaque string. A `convert: null` row
   // (font) needs no call at all: the dropped file is already the artifact.
+  //
+  // Returns `{ blob, doc }`: `blob` is what an `onAssetUpload` host hook gets
+  // (a host uploads bytes, not a live object) and what `lastBlob()` retains
+  // for a retry; `doc` is set only for "vector", where it is the PARSED
+  // partforge-vector document `ingestSvg` already produced. `blob` still
+  // carries the JSON-serialized form for the upload path, but `handle()`
+  // below delivers `doc` — never the serialized bytes — to `onSource` when
+  // there is no host hook to upload to (task-9 addendum, Ruling D: the
+  // resolver already accepts an in-tree parsed object directly, so
+  // serializing it only for the resolver to re-parse would be pure waste).
   async function convertedArtifact(file, mediaType) {
     const convert = await convertFor(kind, mediaType);
-    if (!convert) return file;
+    if (!convert) return { blob: file, doc: undefined };
     if (kind === "vector") {
       const text = new TextDecoder("utf-8").decode(await file.arrayBuffer());
       const doc = convert(text, { source: file.name });
-      return new Blob([JSON.stringify(doc)], { type: "application/json" });
+      return { blob: new Blob([JSON.stringify(doc)], { type: "application/json" }), doc };
     }
-    return convert(file);
+    return { blob: await convert(file), doc: undefined };
   }
 
   async function handle(file) {
@@ -167,11 +185,11 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
       return;
     }
     if (stale()) return;             // a newer drop already won — don't clobber its `converted`
-    converted = artifact; // retained from here on, success or not — see the field comment above
+    converted = artifact.blob; // retained from here on, success or not — see the field comment above
 
     if (onAssetUpload) {
       try {
-        const source = await onAssetUpload(artifact, { kind, filename: file.name });
+        const source = await onAssetUpload(artifact.blob, { kind, filename: file.name });
         if (stale()) return;
         // A host hook that resolves to anything but a non-empty string —
         // `undefined`, an object, `""` — is a contract violation, not a
@@ -192,11 +210,19 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
       return;
     }
 
-    // No host hook: the bytes themselves are the param value. This is the
+    // No host hook. For "vector" the artifact IS the parsed document object —
+    // deliver that directly, never its serialized bytes (task-9 addendum,
+    // Ruling D; see `convertedArtifact` above).
+    if (kind === "vector") {
+      onSource?.(artifact.doc);
+      return;
+    }
+
+    // Every other kind: the bytes themselves are the param value. This is the
     // path the partforge-cloud sandbox needs because it cannot fetch URLs —
     // correct and expected, not a degraded fallback (see font.js/image.js's
     // own byte-valued param handling for the downstream half of this).
-    const ab = await artifact.arrayBuffer();
+    const ab = await artifact.blob.arrayBuffer();
     if (stale()) return;
     onSource?.(ab);
   }
@@ -243,4 +269,46 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
     dispose: () => ac.abort(),
     lastBlob: () => converted,
   };
+}
+
+// The widget-facing wiring: mounts a `makeFileDrop` for one control and binds
+// it to `params[node.key]`, including the control's own error surface (a
+// hidden-by-default line under the drop target, filled verbatim with
+// whatever `onError` composed — spec: "do not rewrite or wrap it; render
+// it"). Marks the drop element `data-pf-drop` (the tests select on it).
+//
+// `onRender` is the widget's own repaint (`paintField`/`paint`) — called
+// after a successful drop so the field/button reflects the new value
+// immediately, the same way a catalog picker's `onPicked` already does.
+// `onChange`/`onCommit` are then fired in that order, mirroring every other
+// widget's own edit path (render.js wires them: `onChange` marks the section
+// Custom and re-applies condition state, `onCommit` is the "the user finished
+// an interaction" signal that triggers a rebuild).
+//
+// Returns `{ el, errorEl, dispose }` rather than appending anything itself —
+// the caller still owns layout (where the drop target and error line sit
+// relative to the field/button), only the wiring is shared.
+export function mountDrop(kind, { params, node, onAssetUpload, onChange, onCommit, onRender }) {
+  const errorEl = el("div", "file-drop-error");
+  errorEl.hidden = true;
+
+  const drop = makeFileDrop({
+    kind,
+    onAssetUpload,
+    onSource: (source) => {
+      errorEl.hidden = true;
+      errorEl.textContent = "";
+      params[node.key] = source;
+      onRender?.();
+      onChange?.();
+      onCommit?.();
+    },
+    onError: (message) => {
+      errorEl.hidden = false;
+      errorEl.textContent = message;
+    },
+  });
+  drop.el.setAttribute("data-pf-drop", "");
+
+  return { el: drop.el, errorEl, dispose: () => drop.dispose() };
 }

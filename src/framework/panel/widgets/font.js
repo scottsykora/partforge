@@ -16,7 +16,7 @@
 // note below.
 import { attachInfo } from "../info.js";
 import { FONT_ALLOW_DEFAULT, fontSourceAllowed } from "../../font-source.js";
-import { makeFileDrop } from "./file-drop.js";
+import { mountDrop } from "./file-drop.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -26,44 +26,6 @@ function el(tag, className, text) {
 }
 
 const isBytes = (v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v);
-
-// The drop widget's error surface: a hidden-by-default line under the
-// control, filled verbatim with whatever `onError` composed (spec: "do not
-// rewrite or wrap it; render it"). Mirrors widgets/image.js's own copy.
-function makeDropError() {
-  const errorEl = el("div", "file-drop-error");
-  errorEl.hidden = true;
-  return errorEl;
-}
-
-// Mounts a `makeFileDrop` for this control and wires it to `params[node.key]`.
-// `paint` is the widget's own repaint (`paintField`/`paint`) — called after a
-// successful drop so the field/button reflects the new value immediately, the
-// same way the picker's `onPicked` already does. `onSource` receives either a
-// host-uploaded string or (no `onAssetUpload`) the raw dropped bytes — both
-// are valid `params[node.key]` shapes already handled by `paintField`/`paint`
-// below. Unlike image/vector, the font row's `convert` is `null`, so there is
-// no conversion step in between: a dropped TTF/OTF's bytes ARE the artifact.
-function mountFontDrop({ params, node, onAssetUpload, onChange, onCommit, paint, errorEl }) {
-  const drop = makeFileDrop({
-    kind: "font",
-    onAssetUpload,
-    onSource: (source) => {
-      errorEl.hidden = true;
-      errorEl.textContent = "";
-      params[node.key] = source;
-      paint();
-      onChange?.();
-      onCommit?.();
-    },
-    onError: (message) => {
-      errorEl.hidden = false;
-      errorEl.textContent = message;
-    },
-  });
-  drop.el.setAttribute("data-pf-drop", "");
-  return drop;
-}
 
 const WEIGHTS = { 100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular", 500: "Medium",
                   600: "SemiBold", 700: "Bold", 800: "ExtraBold", 900: "Black" };
@@ -126,11 +88,10 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog, 
     paintField();
     wrap.append(field);
 
-    const errorEl = makeDropError();
-    const drop = mountFontDrop({
-      params, node, onAssetUpload, onChange, onCommit, paint: paintField, errorEl,
+    const drop = mountDrop("font", {
+      params, node, onAssetUpload, onChange, onCommit, onRender: paintField,
     });
-    wrap.append(drop.el, errorEl);
+    wrap.append(drop.el, drop.errorEl);
 
     return { el: wrap, sync: paintField, dispose: () => drop.dispose() };
   }
@@ -185,9 +146,8 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog, 
     picker = openFontPicker?.({ node, params, allow, fontCatalog, anchor: wrap, onPicked: () => { paint(); onChange?.(); onCommit?.(); } }) ?? null;
   });
 
-  const errorEl = makeDropError();
-  const drop = mountFontDrop({ params, node, onAssetUpload, onChange, onCommit, paint, errorEl });
-  wrap.append(drop.el, errorEl);
+  const drop = mountDrop("font", { params, node, onAssetUpload, onChange, onCommit, onRender: paint });
+  wrap.append(drop.el, drop.errorEl);
 
   return {
     el: wrap,
