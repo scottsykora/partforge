@@ -523,6 +523,26 @@ magic vectors. Three habits:
   body.cutAll([a, b, c])          // and k.union([base, f1, f2]) for additive batches
   ```
 
+- **Size cut tools so no two of them land on exactly the same surface.** Booleans are
+  cheap right up until two operands share a coincident face, at which point OCCT has to
+  classify a surface belonging to both and the search degenerates — seconds become
+  minutes, with no error and no warning. Manifold's mesh CSG is unaffected, so the trap
+  is invisible until a STEP export (the one format pinned to OCCT) or an OCCT-routed
+  build. The classic is a threaded cap: a bore sized straight off the thread's root
+  diameter puts the bore wall and the thread root on the same cylinder.
+
+  ```js
+  // ✗  the bore wall lands exactly on the thread root
+  const boreD = threadRootD;
+  cap.cutAll([k.cylinder({ d: boreD, h }), thread]);
+  // ✓  a deliberate gap, far below a printable layer
+  const boreD = threadRootD - 2 * 0.05;
+  ```
+
+  The same applies to a cut that stops exactly flush with a face — overshoot it instead,
+  which is why cut tools throughout this guide carry `+ 0.4` / `- 0.2` slop. See
+  [boolean-coincident-faces-hang](ERROR-PATTERNS.md#boolean-coincident-faces-hang).
+
 The bare `rotate(deg, center, axis)` remains available as the low-level primitive for
 anything `rotateX/Y/Z`/`rotateAbout` can't express, but prefer the vocabulary above.
 
@@ -3362,6 +3382,11 @@ symptom first** — it maps error text → cause → fix. The invariants, one li
 - **Keep geometry backend-agnostic** (kernel calls only); only STEP requires OCCT
   ([probe-routed-to-occt](ERROR-PATTERNS.md#probe-routed-to-occt),
   [occt-holes-watertight-na](ERROR-PATTERNS.md#occt-holes-watertight-na)).
+- **Never let two cut tools share an exactly coincident face** — a bore whose radius
+  equals a thread's root radius, a cut ending flush with a face. Give them 0.05-0.1 mm
+  of deliberate clearance, or overshoot the cut. Mesh CSG shrugs; OCCT's boolean
+  degenerates, so the part previews instantly and the STEP export runs for minutes
+  ([boolean-coincident-faces-hang](ERROR-PATTERNS.md#boolean-coincident-faces-hang)).
 
 ---
 
