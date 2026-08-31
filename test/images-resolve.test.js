@@ -56,9 +56,13 @@ test("resolveImages rejects when `images` is still the function form (must be re
   await expect(resolveImages((p) => ({}))).rejects.toThrow(/imagesFor/);
 });
 
-test("a non-PNG source names the ingest helper", async () => {
+test("a non-PNG source names the ingest helper and its actual entry", async () => {
+  // Regression: imageToPng moved from the main entry to partforge/ingest
+  // (task 4 of the unified-asset-ingest plan) but this assertion only checked
+  // for the helper name, so it stayed green even while the thrown message
+  // pointed a host at the wrong package export. Assert the entry too.
   await expect(resolveImages({ r: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]).buffer }))
-    .rejects.toThrow(/imageToPng/);
+    .rejects.toThrow(/imageToPng\(\) from "partforge\/ingest"/);
 });
 
 test("ensureImages registers on the kernel and is digest-gated", async () => {

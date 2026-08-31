@@ -769,9 +769,9 @@ between the Manifold preview and the OCCT STEP export.
 
 ## images-only-png-supported
 
-- **Symptom:** `images: only PNG is supported — convert with imageToPng() from "partforge" before storing, or have the host normalize on upload` thrown while resolving a part's `images`.
+- **Symptom:** `images: only PNG is supported — convert with imageToPng() from "partforge/ingest" before storing, or have the host normalize on upload` thrown while resolving a part's `images`.
 - **Cause:** The image resolver checks the first four bytes against the PNG magic number before decoding; a JPEG, WEBP, or any other format fails that check immediately; a heightfield source is a depth map and needs a single well-defined decode path, so no other format is attempted.
-- **Fix:** Convert the source to PNG before it reaches `images` — call `imageToPng()` (exported from `"partforge"`, browser-only: it draws through a `<canvas>`) in the host's upload/panel handler, or pre-convert with any image tool. Bytes that are already PNG (the 4-byte signature `89 50 4E 47`) skip this check entirely.
+- **Fix:** Convert the source to PNG before it reaches `images` — call `imageToPng()` (exported from `"partforge/ingest"`, browser-only: it draws through a `<canvas>`) in the host's upload/panel handler, or pre-convert with any image tool. Bytes that are already PNG (the 4-byte signature `89 50 4E 47`) skip this check entirely.
 
 ## png-interlaced-unsupported
 

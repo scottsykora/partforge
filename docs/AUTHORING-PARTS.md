@@ -1862,7 +1862,7 @@ gates, and the geometry a regression test pins can never disagree about how a
 given file decodes — a second format would mean a second decode path, and a
 second place for the three to drift apart. The escape hatch is
 `imageToPng(fileOrBlob, { maxSize = 1024 }) → Promise<Blob>`, exported from
-`"partforge"` (main-thread only — it draws through a `<canvas>`, never import
+`"partforge/ingest"` (main-thread only — it draws through a `<canvas>`, never import
 it from a part or a worker): convert any format the browser can decode into a
 PNG before it reaches `images`, in a host's upload handler. It downsamples to
 `maxSize` on the long edge on the way, since `pitch` caps useful resolution

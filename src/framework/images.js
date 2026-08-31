@@ -24,7 +24,7 @@ const resolveOne = makeAssetResolver(
     for (let i = 0; i < 4; i++) {
       if (u8[i] !== PNG_SIG[i]) {
         throw new Error(
-          "images: only PNG is supported — convert with imageToPng() from \"partforge\" before storing, " +
+          "images: only PNG is supported — convert with imageToPng() from \"partforge/ingest\" before storing, " +
           "or have the host normalize on upload",
         );
       }
