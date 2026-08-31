@@ -101,6 +101,50 @@ export interface MountElements {
   };
 }
 
+/** Which control family a dropped file belongs to. */
+export type AssetKind = "image" | "vector" | "font";
+
+/** One selectable face in a `FontCatalog` family. */
+export interface FontVariant {
+  variant: string;
+  label: string;
+  /** What the picker writes into `params`. */
+  url: string;
+  bytes?: number;
+}
+
+export interface FontFamily {
+  id: string;
+  family: string;
+  category?: string;
+  variants: FontVariant[];
+  /** A name-only subset used to draw the list row. */
+  menuUrl?: string;
+}
+
+/** Backs `type: "font"` controls. Supplied by the host; partforge ships none. */
+export interface FontCatalog {
+  search: (query: string, opts: { limit?: number }) => Promise<FontFamily[]>;
+  /** Reverse lookup, so a hashed-filename URL can still be named in the UI. */
+  describe?: (source: string) => { family: string; variant: string } | null;
+}
+
+export interface ImageAsset {
+  id: string;
+  label: string;
+  /** What the picker writes into `params`. */
+  url: string;
+  width?: number;
+  height?: number;
+  thumbUrl?: string;
+}
+
+/** Backs `type: "image"` controls. Supplied by the host; partforge ships none. */
+export interface ImageCatalog {
+  search: (query: string, opts: { limit?: number }) => Promise<ImageAsset[]>;
+  describe?: (source: string) => { label: string; width: number; height: number } | null;
+}
+
 export interface MountOptions {
   /**
    * Spawns a geometry worker. Called once per backend with `name` as the
@@ -143,6 +187,28 @@ export interface MountOptions {
    * part cannot support is dropped, never fatal.
    */
   viewerState?: ViewerState | null;
+  /**
+   * A provider backing every `type: "font"` control in the part. partforge
+   * ships none — without one, a font control renders as a plain URL field.
+   */
+  fontCatalog?: FontCatalog;
+  /**
+   * A provider backing every `type: "image"` control in the part. Without one,
+   * an image control degrades to a plain URL field.
+   */
+  imageCatalog?: ImageCatalog;
+  /**
+   * The upload hook for the drop target shared by the `"image"`, `"vector"`
+   * and `"font"` controls. Called with the CONVERTED artifact — a PNG, a
+   * partforge-vector document serialized as JSON, or the original file for a
+   * font — never the user's raw drop, and must resolve to a non-empty source
+   * string (an `https:` URL, or a host-defined `pfc-asset:` token) which is
+   * written into the param. Anything else, or a rejection, is reported through
+   * the control's own error line and never written. Omit it and the converted
+   * artifact lands in the param directly — the path a host that cannot fetch
+   * URLs needs, not a degraded fallback.
+   */
+  onAssetUpload?: (blob: Blob, info: { kind: AssetKind; filename: string }) => Promise<string>;
   /** @deprecated alias for `elements.viewer`. */
   container?: HTMLElement | null;
   /** @deprecated alias for `elements.controls`. */
@@ -455,15 +521,3 @@ export function viewSubParts(
   params: Record<string, ParamValue>,
 ): string[];
 
-export interface ImageToPngOptions {
-  /** Long-edge cap in px; an image already under this is not upscaled. Default 1024. */
-  maxSize?: number;
-}
-
-/**
- * Convert any image the browser can decode into a PNG `Blob`, downsampling the
- * long edge to `maxSize` on the way. Main-thread only (uses `createImageBitmap`
- * and a canvas) — for a host normalising uploads before storing them, since a
- * part's `images` field decodes PNG only. Never call from a part's `build`.
- */
-export function imageToPng(fileOrBlob: Blob | File, options?: ImageToPngOptions): Promise<Blob>;

@@ -3,8 +3,8 @@
 //
 // This file uses createImageBitmap and a canvas, so it must NEVER be reachable
 // from the geometry worker's import closure — test/worker-layering.test.js
-// enforces that. It is exported from src/index.js, the DOM entry documented as
-// one a part's `build` must never import.
+// enforces that. It is exported from src/ingest.js (`partforge/ingest`), not
+// from the main entry — see that file's header for why.
 //
 // Why PNG and not the source format: core decodes PNG only, in pure JS, so one
 // decoder produces the geometry in the browser, the CLI and CI alike. Converting

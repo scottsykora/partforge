@@ -299,12 +299,24 @@ function createCleanupStack() {
 //                                         // message — and calls runtime.annotate.send() itself.
 //                                         // Ignored without onAnnotationSend (there is no toolbar
 //                                         // to place it in).
+// onAssetUpload(blob, { kind, filename }) // the drop widget's (widgets/file-drop.js) upload hook:
+//                                         // async, resolves to a source string (an https: URL or a
+//                                         // host token) that gets written into the param. `blob` is
+//                                         // the CONVERTED artifact — a PNG, a partforge-vector JSON
+//                                         // blob, or the original file for a font — never the user's
+//                                         // raw drop. Omit it and the converted bytes land straight
+//                                         // in the param instead (what the partforge-cloud sandbox
+//                                         // needs, since it cannot fetch URLs — a correct destination,
+//                                         // not a degraded one). A rejection is reported through the
+//                                         // control's own onError; the widget keeps the converted blob
+//                                         // so a retry costs a network call, not a reconvert.
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
 export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange, onParamsCommit, onAnnotationSend,
                               fontCatalog,
                               imageCatalog,
+                              onAssetUpload,
                               viewerState,
                               annotateSend = "viewbar",
                               container: legacyContainer, controls: legacyControls } = {}) {
@@ -964,7 +976,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     }, onParamsCommit
       ? (changed) => onParamsCommit({ changed, params: { ...params } })
       : undefined,
-      { fontCatalog, imageCatalog });
+      { fontCatalog, imageCatalog, onAssetUpload });
     cleanup.defer(() => panel.dispose());
     panelRef = panel;
     const updateRelevance = () => {

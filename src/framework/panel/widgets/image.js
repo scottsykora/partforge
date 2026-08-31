@@ -17,6 +17,7 @@
 // path, not the panel.
 import { attachInfo } from "../info.js";
 import { IMAGE_ALLOW_DEFAULT, imageSourceAllowed } from "../../image-source.js";
+import { mountDrop } from "./file-drop.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -53,7 +54,7 @@ function paintPreview(img, source) {
   }
 }
 
-export function makeImage(node, params, { onChange, onCommit, info, imageCatalog } = {}) {
+export function makeImage(node, params, { onChange, onCommit, info, imageCatalog, onAssetUpload } = {}) {
   const allow = Array.isArray(node.allow) && node.allow.length ? node.allow : IMAGE_ALLOW_DEFAULT;
   const wrap = el("div", "slider");
   const row = el("div", "row");
@@ -98,7 +99,13 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
     });
     paintField();
     wrap.append(field);
-    return { el: wrap, sync: paintField };
+
+    const drop = mountDrop("image", {
+      params, node, onAssetUpload, onChange, onCommit, onRender: paintField,
+    });
+    wrap.append(drop.el, drop.errorEl);
+
+    return { el: wrap, sync: paintField, dispose: () => drop.dispose() };
   }
 
   const btn = el("button", "image-btn");
@@ -154,7 +161,14 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
     picker = openImagePicker?.({ node, params, allow, imageCatalog, anchor: wrap, onPicked: () => { paint(); onChange?.(); onCommit?.(); } }) ?? null;
   });
 
-  return { el: wrap, sync: paint, dispose: () => { picker?.close(); picker = null; } };
+  const drop = mountDrop("image", { params, node, onAssetUpload, onChange, onCommit, onRender: paint });
+  wrap.append(drop.el, drop.errorEl);
+
+  return {
+    el: wrap,
+    sync: paint,
+    dispose: () => { picker?.close(); picker = null; drop.dispose(); },
+  };
 }
 
 // Assigned by image-picker.js, which widgets/index.js imports for the side

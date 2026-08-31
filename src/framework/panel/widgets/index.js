@@ -6,6 +6,7 @@ import { makeCheckbox } from "./checkbox.js";
 import { makeSelect, makeRadio } from "./select.js";
 import { makeFont } from "./font.js";
 import { makeImage } from "./image.js";
+import { makeVector } from "./vector.js";
 // Side-effect imports: font-picker.js / image-picker.js call setFontPicker() /
 // setImagePicker() at module scope, so each widget's button finds a picker to
 // open. They live HERE and not in font.js/image.js because the dependency has
@@ -25,4 +26,5 @@ export const WIDGET_FACTORIES = {
   radio: makeRadio,
   font: makeFont,
   image: makeImage,
+  vector: makeVector,
 };

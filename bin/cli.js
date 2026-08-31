@@ -13,8 +13,6 @@ import { fontsFor } from "../src/framework/fonts.js";
 import { imagesFor } from "../src/framework/images.js";
 import { isNoImageSource } from "../src/framework/image-source.js";
 import { viewAnimations, evaluate, cueAt } from "../src/framework/animation.js";
-import { bootOcctKernel } from "../src/testing/occt.js";
-import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { measure } from "../src/framework/oracle/measure.js";
 import { verify } from "../src/framework/oracle/verify.js";
 import { renderViews } from "../src/testing/render.js";
@@ -25,11 +23,15 @@ import {
 import { savePickToken, loadPickToken, clearPickToken, pickTokenPath } from "../src/framework/pick-request/token-store.js";
 import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
-import { resolveVectorDocs } from "../src/framework/vectors.js";
+import { sniffMediaType } from "../src/framework/ingest/sniff.js";
+import { ASSET_KINDS, rowFor, convertFor } from "../src/framework/ingest/registry.js";
+import { installNodeDom } from "../src/framework/ingest/node-dom.js";
+import * as opentypeNamespace from "opentype.js";
+import { normalizeOpentype, parseFont } from "../src/framework/geometry/opentype-interop.js";
 
 const die = (msg) => { console.error(msg); process.exit(1); };
 
-const USAGE = "usage: partforge <lint|measure|render|pick-serve|pick> …";
+const USAGE = "usage: partforge <lint|measure|render|pick-serve|pick|ingest> …";
 
 // Crash contract (issue #27): with --json, a thrown error becomes structured
 // stdout JSON; either way the message is matched against ERROR-PATTERNS.md and
@@ -96,6 +98,24 @@ const readSources = (partPath) => {
   }
 };
 
+// vectors.js, testing/occt.js and testing/manifold.js are imported DYNAMICALLY
+// here rather than statically at the top of this file — not for laziness'
+// sake, but because all three transitively reach paper-core.js (vectors.js ->
+// geometry/vector-format.js -> geometry/contour-ops.js -> geometry/paper-bridge.js
+// -> "paper/dist/paper-core.js"; testing/occt.js and testing/manifold.js the
+// same, via their *-backend.js's own contour-ops.js use). paper-core does a
+// canvas + 2D context probe at MODULE LOAD time (svg-ingest.js's header) and
+// caches what it finds about its environment for the lifetime of the process —
+// load it before `ingest`'s installNodeDom() has set up a DOM and every later
+// SVG conversion fails deep inside paper's importSVG with an opaque "Cannot
+// read properties of undefined (reading 'body')", even after the DOM exists.
+// A static import here runs before `commands[cmd](args)` is ever called, no
+// matter which verb was requested, so it would poison `ingest` even though
+// `ingest` itself never touches these three. Deferring the import to the
+// commands that actually need them keeps every other verb's behavior
+// unchanged and keeps paper-core.js's first load in `ingest`'s hands.
+const importVectors = () => import("../src/framework/vectors.js");
+
 // Pass the part's declared fonts through, mirroring the worker path (jobs.js) —
 // otherwise a part using a named font builds in the browser but dies headlessly
 // with `text2d: unknown font …`. A function-form `fonts` is resolved against
@@ -110,14 +130,20 @@ const readSources = (partPath) => {
 // is dropped rather than handed to ensureImages, mirroring jobs.js's own filter —
 // `k.heightfield` throws unknown-image for a name never registered; a part
 // that wants to build with no image branches around the call itself.
-const bootKernel = (part, params = {}) => {
+const bootKernel = async (part, params = {}) => {
   const p = { ...(part.defaults ?? {}), ...params };
   const imagesDecl = part.images ? (imagesFor(part, p) ?? {}) : undefined;
   const images = imagesDecl &&
     Object.fromEntries(Object.entries(imagesDecl).filter(([, src]) => !isNoImageSource(src)));
-  const opts = { fonts: fontsFor(part, p), imports: part.imports, images, vectors: part.vectors };
+  const { vectorsFor } = await importVectors();
+  const opts = { fonts: fontsFor(part, p), imports: part.imports, images, vectors: vectorsFor(part, p) };
   const backend = process.env.PARTFORGE_BACKEND || detectBackend(part); // env: crash()'s NEEDS_OCCT retry
-  return backend === "occt" ? bootOcctKernel(opts) : bootManifoldKernel(opts);
+  if (backend === "occt") {
+    const { bootOcctKernel } = await import("../src/testing/occt.js");
+    return bootOcctKernel(opts);
+  }
+  const { bootManifoldKernel } = await import("../src/testing/manifold.js");
+  return bootManifoldKernel(opts);
 };
 
 const commands = {
@@ -133,7 +159,11 @@ const commands = {
       const part = await loadPart(partPath, usage);
       const params = flags.params ? JSON.parse(flags.params) : undefined;
       const sources = readSources(partPath);
-      const vectorDocs = Object.fromEntries(await resolveVectorDocs(part.vectors));
+      // Same `p` derivation as bootKernel — needed here only to resolve a
+      // function-form `vectors` against params before handing it to lint.
+      const p = { ...(part.defaults ?? {}), ...params };
+      const { resolveVectorDocs, vectorsFor } = await importVectors();
+      const vectorDocs = Object.fromEntries(await resolveVectorDocs(vectorsFor(part, p)));
       const report = lintPart(part, { params, sources, vectorDocs });
       if (!flags.json) printLint(report);
       if (flags.out) {
@@ -163,7 +193,11 @@ const commands = {
       // milliseconds with a precise message rather than after a WASM boot and a
       // downstream error that doesn't name the cause. Warnings never gate measure.
       if (!flags["no-lint"]) {
-        const vectorDocs = Object.fromEntries(await resolveVectorDocs(part.vectors));
+        // Same `p` derivation as bootKernel below — measure has no --params
+        // flag, so this is just the part's own defaults.
+        const p = { ...(part.defaults ?? {}) };
+        const { resolveVectorDocs, vectorsFor } = await importVectors();
+        const vectorDocs = Object.fromEntries(await resolveVectorDocs(vectorsFor(part, p)));
         const lint = lintPart(part, { sources: readSources(partPath), vectorDocs });
         if (!lint.ok) {
           if (flags.json) console.log(JSON.stringify({ ok: false, lint }, null, 2));
@@ -370,6 +404,78 @@ const commands = {
     const out = await requestPicks({ port, prompts, token }).catch((e) => die(e.message));
     console.log(formatPickResult(out));
     process.exit(out.status === "done" ? 0 : 1);
+  },
+
+  // Command-line surface over the same drop-target machinery the control
+  // panel uses (registry.js's ASSET_KINDS/rowFor/convertFor) — so an agent
+  // handed a raw SVG, font, or PNG can get it into a part's asset tree without
+  // a browser. --out is REQUIRED, not defaulted: this command writes a file,
+  // and for the pass-through cases (PNG, font) a computed "next to the input"
+  // default would land on the exact same path as the input itself — a
+  // surprising same-path overwrite is worse than making the destination
+  // explicit every time.
+  async ingest(args) {
+    const usage = "usage: partforge ingest <file> --out <output-file> [--strokes ignore]";
+    const { values: flags, positionals: [inPath] } = parse(args, {
+      out: { type: "string" },
+      strokes: { type: "string" },
+    }, usage);
+    try {
+      if (!inPath) die(usage);
+      if (!flags.out) die(`ingest writes a file, so it needs an explicit destination — pass --out\n${usage}`);
+      const resolvedIn = resolve(process.cwd(), inPath);
+      const bytes = readFileSync(resolvedIn);
+      const mediaType = sniffMediaType(bytes);
+      // Which slot, if any, this media type belongs to — same lookup registry.js's
+      // own kindAccepting() does internally, but that helper isn't exported (the
+      // panel never needs it: a drop target already knows its own kind).
+      const kind = mediaType ? ASSET_KINDS.find((k) => rowFor(k).accepts.includes(mediaType)) : undefined;
+      if (!kind) {
+        throw new Error(`ingest: unrecognised file "${inPath}"${mediaType ? ` (looks like ${mediaType}, but no asset slot accepts it)` : ""} — expected a PNG, JPEG, WebP, SVG, TTF, or OTF`);
+      }
+      const outPath = resolve(process.cwd(), flags.out);
+      mkdirSync(dirname(outPath), { recursive: true });
+
+      if (kind === "vector") {
+        // Must install the DOM BEFORE the dynamic import below: paper-core
+        // (loaded by svg-ingest.js, resolved through convertFor's thunk)
+        // builds a canvas and asks for a 2D context at MODULE LOAD time.
+        await installNodeDom();
+        const ingestSvg = await convertFor(kind, mediaType);
+        const doc = ingestSvg(bytes.toString("utf8"), {
+          strokes: flags.strokes ?? "outline",
+          source: basename(inPath),
+        });
+        writeFileSync(outPath, `${JSON.stringify(doc, null, 2)}\n`);
+      } else if (kind === "font") {
+        // Identity + validation, no DOM: fonts have no converter (registry.js's
+        // "font" row declares `convert: null`) — used as-is, so the only thing
+        // to do here is prove opentype.js can actually read it.
+        parseFont(normalizeOpentype(opentypeNamespace), bytes, basename(inPath));
+        writeFileSync(outPath, bytes);
+      } else if (mediaType === "image/png") {
+        // Already the target format: pass through unchanged. "Validation"
+        // here is the classification above (sniffMediaType's real signature
+        // check, the same gate the drop target uses) — NOT a full structural
+        // PNG decode: decodePng (src/framework/geometry/png-decode.js) rejects
+        // anything short of a complete IHDR/IDAT/IEND file, which is stricter
+        // than what a PNG-slot asset needs to satisfy and would refuse
+        // otherwise-fine files a real decoder tolerates (trailing junk after
+        // IEND, unusual-but-legal ancillary chunk ordering, ...).
+        writeFileSync(outPath, bytes);
+      } else {
+        // JPEG/WebP/other raster: converting to PNG needs createImageBitmap and
+        // a real canvas encoder (image-ingest.js's imageToPng) — happy-dom has
+        // no canvas raster backend, so this cannot run headlessly. Do not add
+        // an image-processing dependency to work around that; point at the
+        // browser path instead.
+        throw new Error(`ingest: ${mediaType} images can't be converted headlessly — happy-dom has no canvas raster backend, so imageToPng only runs in a browser. Drop "${inPath}" onto the app's Image control instead, or convert it to PNG yourself first.`);
+      }
+      console.log(`wrote ${outPath}`);
+      process.exit(0);
+    } catch (e) {
+      crash("ingest", e, false);
+    }
   },
 };
 

@@ -1,6 +1,6 @@
 {
   "name": "partforge",
-  "version": "0.97.0",
+  "version": "0.98.0",
   "description": "Turn a declarative part definition into a parametric-CAD web app (three.js + Manifold/Replicad). Requires a Vite-based consumer.",
   "type": "module",
   "license": "MIT",
@@ -98,6 +98,14 @@
     "typecheck": "tsc -p tsconfig.json",
     "check": "node scripts/check-app.mjs",
     "offset-rates": "node scripts/offset-rates.mjs"
+  },
+  "peerDependencies": {
+    "happy-dom": ">=20"
+  },
+  "peerDependenciesMeta": {
+    "happy-dom": {
+      "optional": true
+    }
   },
   "dependencies": {
     "dompurify": "^3.4.11",

@@ -6,3 +6,4 @@
 // Deliberately NOT re-exported from `partforge` (the main entry) or from
 // `partforge/geometry`: this must stay unreachable from the geometry worker.
 export { ingestSvg } from "./framework/ingest/svg-ingest.js";
+export { imageToPng } from "./framework/ingest/image-ingest.js";
