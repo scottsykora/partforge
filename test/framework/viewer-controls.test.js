@@ -138,13 +138,20 @@ test("missing buttons are a no-op", () => {
   }))).not.toThrow();
 });
 
-test("detach() removes button and pagehide listeners", () => {
+test("detach() saves the live camera, then removes button and pagehide listeners", () => {
   const viewer = fakeViewer();
   const chrome = attachViewerControls(viewer, els);
   handles.push(chrome);
   chrome.detach();
   els.reframe.click();
   expect(viewer.frame).not.toHaveBeenCalled();
+  // Teardown is the third save site, and the only one that catches a pose the
+  // OrbitControls "end" event never sees — a view-cube click, Reframe, or an
+  // animation cue. Without it a session ending on one of those persists a pose
+  // the user had already moved away from.
+  expect(localStorage.getItem("partforge:camera")).toBe('{"pos":[1,2,3],"target":[0,0,0]}');
+  // ...and the pagehide listener really is gone: a later pose cannot re-save.
+  viewer.getCameraState = vi.fn(() => ({ pos: [9, 9, 9], target: [0, 0, 0] }));
   window.dispatchEvent(new Event("pagehide"));
-  expect(localStorage.getItem("partforge:camera")).toBeNull(); // camera not saved after detach
+  expect(localStorage.getItem("partforge:camera")).toBe('{"pos":[1,2,3],"target":[0,0,0]}');
 });

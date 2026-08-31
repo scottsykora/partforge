@@ -7,11 +7,17 @@
 // test/worker-layering.test.js close theirs: by holding the prose (here, the
 // types) to the data.
 //
-// Four invariants:
+// Five invariants:
 //   1. package.json actually WIRES and SHIPS the declarations.
 //   2. Every entry's declared value exports == its runtime exports, exactly.
 //   3. The kernel interfaces == the op lists in geometry/kernel.js.
 //   4. The verify/DFM vocabularies == the registries they mirror.
+//   5. The partforge-vector declarations == the shipped .vector.json documents.
+//
+// Note what 2 alone does NOT buy: it compares export NAMES, so an interface can
+// drift arbitrarily far from the runtime shape it describes and still pass. That
+// is how types/ingest.d.ts came to declare an envelope the loader refuses by
+// name. Invariants 3-5 exist because the members are the contract, not the names.
 //
 // The .d.ts scanner below is deliberately small and format-sensitive: it reads
 // only files in types/, which this repo owns and formats one member per line.
@@ -26,6 +32,7 @@ import {
   SHAPE2D_OPS, SOLID_OPS, SOLID_OPTIONAL_OPS,
 } from "../src/framework/geometry/kernel.js";
 import { SUBPART_METRICS, VIEW_METRICS } from "../src/framework/verify-metrics.js";
+import { VECTOR_UNITS } from "../src/framework/geometry/vector-format.js";
 import { PROFILES } from "../src/framework/oracle/dfm-profiles.js";
 import { CANONICAL_VIEWS } from "../src/framework/view-angles.js";
 
@@ -53,6 +60,7 @@ const RUNTIME = {
   "./derive": () => import("../src/framework/derive.js"),
   "./oracle": () => import("../src/oracle.js"),
   "./testing": () => import("../src/testing.js"),
+  "./ingest": () => import("../src/ingest.js"),
 };
 
 // Same comment-stripping rule the import-graph walker uses: this codebase
@@ -248,5 +256,102 @@ describe("the verify declarations mirror the metric registries", () => {
     const rhs = /^export type CameraCue\s*=([^;]+);/m.exec(stripComments(read("types/part.d.ts")));
     expect(rhs, "types/part.d.ts declares no type CameraCue").not.toBeNull();
     expect(rhs[1].trim()).toBe("CanonicalView");
+  });
+});
+
+// --- 5. the vector-format declarations == the shipped documents --------------
+
+// Invariant 2 above compares VALUE exports only, so `types/ingest.d.ts` sat two
+// format revisions behind the runtime without a single test noticing: it still
+// declared a top-level `regions` array (which the loader now refuses BY NAME),
+// no `units`, no `shapes`, and no `kind` on a contour. Under `tsc --strict` a
+// consumer's `doc.shapes` was an error and `doc.regions` compiled clean and was
+// `undefined`. Internally-consistent declarations are exactly what `typecheck`
+// cannot catch, so hold them to real data instead: the two checked-in vector
+// documents, which between them use every envelope key, both shape forms, and
+// all four contour kinds.
+describe("the partforge-vector declarations match the shipped documents", () => {
+  const FIXTURES = ["src/parts/assets/plate.vector.json", "src/parts/assets/emblem.vector.json"]
+    .map((rel) => ({ rel, doc: JSON.parse(read(rel)) }));
+
+  const regionsOf = (shape) => (Array.isArray(shape) ? shape : shape.regions);
+  const contours = function* (doc) {
+    for (const shape of Object.values(doc.shapes)) {
+      for (const region of regionsOf(shape)) yield* [region.outer, ...(region.holes ?? [])];
+    }
+  };
+
+  test("VectorDocument declares every key the fixtures use, and nothing stale", () => {
+    const { all, optional } = interfaceMembers("types/ingest.d.ts", "VectorDocument");
+    // Every key any real document carries must be declared…
+    for (const { rel, doc } of FIXTURES) {
+      for (const key of Object.keys(doc)) expect(all.has(key), `${rel} has "${key}", undeclared`).toBe(true);
+    }
+    // …and every REQUIRED member must be present in every document, or it is not
+    // required. (plate.vector.json omits source and bbox; emblem's has both.)
+    for (const member of all) {
+      if (optional.has(member)) continue;
+      for (const { rel, doc } of FIXTURES) {
+        expect(Object.hasOwn(doc, member), `${rel} lacks required member "${member}"`).toBe(true);
+      }
+    }
+    // The specific drift this test exists for.
+    expect(all.has("regions"), "VectorDocument must not declare a top-level `regions`").toBe(false);
+    expect(all.has("shapes")).toBe(true);
+  });
+
+  test("VectorUnits declares exactly the units the validator accepts", () => {
+    expect(sorted(unionMembers("types/ingest.d.ts", "VectorUnits"))).toEqual(sorted(VECTOR_UNITS));
+  });
+
+  test("every contour kind in the fixtures has a declared interface pinning that `kind`", () => {
+    const src = stripComments(read("types/ingest.d.ts"));
+    const declared = new Map();
+    for (const m of src.matchAll(/^export interface (\w+)\s*\{\s*\n\s*kind:\s*"(\w+)";/gm)) declared.set(m[2], m[1]);
+    // The union must list them all, so a new kind cannot be declared and orphaned.
+    const union = /^export type VectorContour\s*=([^;]+);/m.exec(src);
+    expect(union, "types/ingest.d.ts declares no type VectorContour").not.toBeNull();
+    for (const [kind, iface] of declared) {
+      expect(union[1], `VectorContour omits ${iface}`).toContain(iface);
+    }
+    const used = new Set();
+    for (const { rel, doc } of FIXTURES) {
+      for (const c of contours(doc)) {
+        expect(typeof c.kind, `${rel}: a contour with no kind`).toBe("string");
+        expect(declared.has(c.kind), `${rel}: contour kind "${c.kind}" has no declared interface`).toBe(true);
+        used.add(c.kind);
+      }
+    }
+    // The reference documents are meant to exercise the whole contour vocabulary.
+    expect(sorted(used)).toEqual(sorted([...declared.keys()]));
+  });
+
+  test("VectorSegment declares exactly the segment kinds the fixtures use", () => {
+    const src = stripComments(read("types/ingest.d.ts"));
+    // Non-greedy to the first `};` — the branches themselves contain `;`.
+    const m = /^export type VectorSegment\s*=([\s\S]*?)\};/m.exec(src);
+    expect(m, "types/ingest.d.ts declares no type VectorSegment").not.toBeNull();
+    const declared = new Set([...m[1].matchAll(/kind:\s*"(\w+)"/g)].map((q) => q[1]));
+    expect(sorted(declared)).toEqual(["arc", "cubic", "line"]);
+    for (const { rel, doc } of FIXTURES) {
+      for (const c of contours(doc)) {
+        for (const s of c.segments ?? []) {
+          expect(declared.has(s.kind), `${rel}: segment kind "${s.kind}" is undeclared`).toBe(true);
+        }
+      }
+    }
+  });
+
+  test("both shape forms — a bare region array and { role, regions } — are declared", () => {
+    const src = stripComments(read("types/ingest.d.ts"));
+    // One line, and it contains a `;` inside the object branch — match the line.
+    const m = /^export type VectorShape\s*=(.+);$/m.exec(src);
+    expect(m, "types/ingest.d.ts declares no type VectorShape").not.toBeNull();
+    expect(m[1]).toContain("VectorRegion[]");
+    expect(m[1]).toContain("regions");
+    // Both forms really do occur in the shipped documents.
+    const forms = new Set(FIXTURES.flatMap(({ doc }) =>
+      Object.values(doc.shapes).map((s) => (Array.isArray(s) ? "array" : "object"))));
+    expect(sorted(forms)).toEqual(["array", "object"]);
   });
 });

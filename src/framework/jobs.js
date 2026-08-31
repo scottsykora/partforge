@@ -11,6 +11,7 @@ import { imageControlAllows, imageSourceAllowed, isNoImageSource } from "./image
 import { imagesFor, ensureImages } from "./images.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
+import { ensureVectors } from "./vectors.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
 
 // The oracle loads LAZILY, per job family, never at worker boot. It is the largest
@@ -281,6 +282,16 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // stale-registration bug of spec §5, one asset over.
       kernel._pruneImages?.(new Set(Object.keys(declared)));
     }
+    // Vector art, the third asset family after fonts and imports. Same pre-build
+    // timing; ensureVectors owns the prune, so this stays one line. Call it
+    // unconditionally, even when this part has no `vectors` at all: ensureVectors
+    // treats a nullish declaration as `{}` and its prune loop is what drops
+    // names a *previous* part (on a rebound worker) registered — the same
+    // stale-registration bug the unconditional fonts prune above exists to
+    // prevent. Guarding this on `part.vectors` would skip exactly the case where
+    // pruning matters most: a worker rebound from a part WITH artwork to one
+    // WITHOUT would leave the old names resolvable forever.
+    await ensureVectors(kernel, part.vectors);
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
     const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
     // Explicit selection (headless exportParts) overrides view-derived selection.

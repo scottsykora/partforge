@@ -50,6 +50,13 @@ export function attachViewerControls(
 
   return {
     detach: () => {
+      // Third save site, and the one that catches what the other two miss: the
+      // `end` event above fires for an orbit or a wheel-zoom, but NOT for a
+      // view-cube click, Reframe, or an animation camera cue, so a session that
+      // finished on one of those used to persist a pose the user had already
+      // moved away from. Taking the live pose at teardown makes the stored
+      // camera honest whatever last moved it.
+      saveCamera(viewer.getCameraState());
       themeBtn?.removeEventListener("click", onThemeClick);
       reframeBtn?.removeEventListener("click", onReframeClick);
       window.removeEventListener("pagehide", onPageHide);

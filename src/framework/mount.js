@@ -85,6 +85,20 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
         ? { ...opts, recenter: false }
         : opts,
     ),
+    // Everything about the CURRENT VIEW that a host would lose by remounting,
+    // as one plain-JSON token: pass it back as mount()'s `viewerState` and the
+    // remount comes up where the user left it. An embedder that applies edits
+    // by remounting (partforge-cloud applies every one that way) needs this or
+    // the camera snaps and the cutaway closes on every turn.
+    //
+    // Read at teardown time, so it is the LIVE pose — unlike the camera the
+    // viewer persists for a page reload, which only records the end of a drag
+    // and so misses a view-cube click, Reframe, or an animation cue.
+    getViewerState: () => ({
+      camera: viewer.getCameraState(),
+      projection: viewer.getProjection?.() ?? "perspective",
+      cutaway: viewer.getCutawayState?.() ?? null,
+    }),
     // Park/unpark the viewer: stops the render loop and frees the drawing
     // buffer and the cached capture target. For an embedder that hides the
     // canvas without unmounting it — `visibility: hidden`, an off-screen tab —
@@ -264,6 +278,13 @@ function createCleanupStack() {
 //                                         // rather than at its own hi-DPI size. Still hundreds of
 //                                         // KB of base64 apiece, so a host should not assume this
 //                                         // payload is small, only that it is bounded.
+// viewerState: ViewerState               // a previous mount's runtime.getViewerState(), handed back to
+//                                         // resume the camera, projection and cutaway where that mount
+//                                         // left them. For a host that applies edits by REMOUNTING: the
+//                                         // part changed, the user's view of it should not. Omit on a
+//                                         // first mount — the viewer then restores its own persisted
+//                                         // camera as before. Restore is best-effort per field: a pose
+//                                         // this part cannot support is dropped, never fatal.
 // annotateSend: "viewbar" | "host"       // who owns the Send affordance. "viewbar" (default) puts
 //                                         // Send in the sketch toolbar alongside the other tools.
 //                                         // "host" drops it: the host draws its own send control —
@@ -277,6 +298,7 @@ function createCleanupStack() {
 export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDownload, onViewChange, onParamsCommit, onAnnotationSend,
                               fontCatalog,
                               imageCatalog,
+                              viewerState,
                               annotateSend = "viewbar",
                               container: legacyContainer, controls: legacyControls } = {}) {
   // --- element resolution (the only getElementById calls in the framework, save the ?pickserver client's optional #viewbar lookup) ----
@@ -509,7 +531,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     // declares it, so an embedder gets it for free. Restored BEFORE any framing
     // happens so a reload into ortho frames once instead of framing in
     // perspective and then visibly re-framing.
-    viewer.setProjection(loadProjection());
+    // A carried state outranks the persisted preference: it is this session's
+    // live answer, where the stored one is the last page-reload's.
+    viewer.setProjection(viewerState?.projection ?? loadProjection());
     const viewcube = attachViewcubeControls(viewer, { stage: els.viewer }, { tooltip });
     cleanup.defer(() => viewcube.detach());
     cleanup.defer(viewer.onProjectionChange((mode) => saveProjection(mode)));
@@ -711,8 +735,20 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       if (frame) {
         framedView = view();
         if (!cameraRestored) {
-          const cam = loadCamera();
+          // A carried camera beats the persisted one for the same reason the
+          // projection above does — and it is also the accurate one, since the
+          // persisted pose is only written at the end of an orbit drag.
+          const cam = viewerState?.camera ?? loadCamera();
           if (cam) viewer.setCameraState(cam);
+          // The cutaway goes back on AFTER the camera and only here, on the
+          // first accepted build: enabling it needs the sub-parts registered
+          // and real bounds to size the plane against, neither of which exists
+          // until showAssembly above has run. (Its initial pose also reads the
+          // camera direction, so a restore before the camera would seed the
+          // fallback pose from the wrong view.)
+          if (viewerState?.cutaway?.enabled && viewer.setCutawayState?.(viewerState.cutaway)) {
+            cutawayChrome.sync(); // the button was not what turned it on
+          }
           cameraRestored = true;
         }
       }

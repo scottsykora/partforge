@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 
 import { OUTLINE_SLICE_BUDGET_MS, createCutaway } from "../../src/framework/cutaway.js";
+import { cutawayPoseSize } from "../../src/framework/cutaway-math.js";
 
 const controllers = [];
 const CENTER_HANDLE = "rotate-y";
@@ -1260,5 +1261,104 @@ describe("setCamera", () => {
     const { controller, camera } = createFixture();
     controller.setCamera(null);
     expect(() => controller.renderOverlay(makeRenderer(), camera)).not.toThrow();
+  });
+});
+
+describe("getState / setState", () => {
+  // A remount is how partforge-cloud applies every edit, so a cutaway that
+  // cannot cross one closes itself on every agent turn. These pin the carry.
+  const boxFrom = (max) => new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(...max));
+
+  test("reports nothing to carry while disabled", () => {
+    const { controller } = createFixture();
+    expect(controller.getState()).toEqual({ enabled: false, flipped: false, pose: null });
+  });
+
+  test("round-trips the plane's pose and flip as plain JSON", () => {
+    const fixture = createFixture({ box: boxFrom([10, 8, 6]) });
+    addSubpart(fixture);
+    fixture.controller.setEnabled(true);
+    fixture.controller.flip();
+
+    const state = fixture.controller.getState();
+    expect(state.enabled).toBe(true);
+    expect(state.flipped).toBe(true);
+    expect(state.pose.position).toEqual([5, 4, 3]); // the box's centre
+    expect(state.pose.quaternion).toHaveLength(4);
+    // The snapshot outlives the mount that produced it, so a live THREE object
+    // would point into a disposed scene — and a host free to store or post it
+    // needs something structured-cloneable.
+    expect(JSON.parse(JSON.stringify(state))).toEqual(state);
+  });
+
+  test("restores the pose onto a part whose bounds changed, re-deriving only the size", () => {
+    const before = createFixture({ box: boxFrom([10, 8, 6]) });
+    addSubpart(before);
+    before.controller.setEnabled(true);
+    const carried = before.controller.getState();
+
+    // The rebuild: the user's cut, against a part twice the size.
+    const grown = boxFrom([20, 16, 12]);
+    const after = createFixture({ box: grown });
+    addSubpart(after);
+    expect(after.controller.setState(carried)).toBe(true);
+
+    const restored = after.controller.getState();
+    expect(restored.enabled).toBe(true);
+    expect(restored.pose.position).toEqual(carried.pose.position);
+    expect(restored.pose.quaternion).toEqual(carried.pose.quaternion);
+    // The cap is sized for the NEW geometry, not the part the snapshot came from.
+    expect(findCap(after.scene).scale.x).toBeCloseTo(cutawayPoseSize(grown));
+  });
+
+  test("carries the flip, which decides which half survives", () => {
+    const box = boxFrom([10, 8, 6]);
+    const before = createFixture({ box });
+    addSubpart(before);
+    before.controller.setEnabled(true);
+    const unflipped = before.controller.getPlane().normal.clone();
+    before.controller.flip();
+
+    const after = createFixture({ box });
+    addSubpart(after);
+    after.controller.setState(before.controller.getState());
+    expect(after.controller.getState().flipped).toBe(true);
+    // Same plane, opposite keep-side: the flip is the whole difference.
+    expect(after.controller.getPlane().normal.dot(unflipped)).toBeCloseTo(-1);
+  });
+
+  test("leaves the cutaway off for a snapshot taken while it was off", () => {
+    const before = createFixture();
+    const after = createFixture();
+    addSubpart(after);
+    expect(after.controller.setState(before.controller.getState())).toBe(true);
+    expect(after.controller.isEnabled).toBe(false);
+  });
+
+  test("enables at the fresh pose rather than refusing a malformed snapshot", () => {
+    // Fail-soft: a snapshot we cannot read still means "the user had this open".
+    const box = boxFrom([10, 8, 6]);
+    const fixture = createFixture({ box });
+    addSubpart(fixture);
+    expect(fixture.controller.setState({
+      enabled: true,
+      flipped: false,
+      pose: { position: [Number.NaN, 0, 0], quaternion: [0, 0, 0, 1] },
+    })).toBe(true);
+    expect(fixture.controller.getState().pose.position).toEqual([5, 4, 3]);
+  });
+
+  test("refuses a restore the new part cannot support", () => {
+    const before = createFixture({ box: boxFrom([10, 8, 6]) });
+    addSubpart(before);
+    before.controller.setEnabled(true);
+    const carried = before.controller.getState();
+
+    // No stencil buffer: the same refusal setEnabled gives, surfaced to the
+    // caller so a host can tell "restored" from "could not".
+    const unsupported = createFixture({ stencil: false });
+    addSubpart(unsupported);
+    expect(unsupported.controller.setState(carried)).toBe(false);
+    expect(unsupported.controller.isEnabled).toBe(false);
   });
 });

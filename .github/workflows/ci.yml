@@ -35,4 +35,5 @@ jobs:
       - run: CHECK_PORT=5186 node scripts/check-app.mjs propeller.html # k.loftSmooth reference part (spline-interpolated airfoil blades)
       - run: CHECK_PORT=5187 node scripts/check-app.mjs import-demo.html # k.import reference part (STL ghost + deviation gate)
       - run: CHECK_PORT=5188 node scripts/check-app.mjs lofted-bottle.html # Shape2D loft reference part (curve-mode body + resample-mode shoulder)
-      - run: CHECK_PORT=5189 node scripts/check-app.mjs relief.html # k.heightfield reference part (images / type: "image" control, depth map to relief plate)
+      - run: CHECK_PORT=5189 node scripts/check-app.mjs emblem.html # k.vector2d reference part (ingested vector art)
+      - run: CHECK_PORT=5190 node scripts/check-app.mjs relief.html # k.heightfield reference part (images / type: "image" control, depth map to relief plate)
