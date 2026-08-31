@@ -10,6 +10,7 @@
 // in docs/KERNEL-CONTRACT.md.
 import { handle } from "./jobs.js";
 import { lintPart } from "../lint.js";
+import { cachedVectorDocs } from "./vectors.js";
 
 async function manifoldKernels() {
   const [{ default: Module }, { createManifoldKernel }] = await Promise.all([
@@ -140,7 +141,51 @@ export function runWorker(part, opts = {}) {
     // the pump awaits that boot, so routing lint through the queue would drag in
     // OCCT's ~11 MB WASM to run a check that never calls the kernel at all.
     if (e.data?.type === "lint") {
-      postMessage({ type: "lint-report", report: lintPart(current, { params: e.data.params }) });
+      // `vectorDocs` is what the two document-dependent vector rules need —
+      // vector-size-missing (does this file's `units` require a size?) and
+      // vector-unknown-shape (does it declare that shape name?). Without it both
+      // stay silent, which is how they are designed to degrade.
+      //
+      // CACHED ONLY, and deliberately so. This handler must stay synchronous:
+      // lint is instant and offline by construction, which is the property that
+      // lets a sandbox run it on every keystroke. Awaiting the async resolver
+      // here made lint hangable (asset-resolve.js's fetch has no timeout) and
+      // made the reply order depend on how fast each part's vectors fetched.
+      // cachedVectorDocs reads only bytes that are already resolved and never
+      // initiates a fetch, so a hosted sandbox gets both rules as soon as one
+      // build has run — the common case — and never waits for them.
+      //
+      // Guarded even so: lintPart's never-throws contract is worth nothing to a
+      // host if the handler around it can throw first and post NOTHING at all —
+      // in a real worker that surfaces as `unhandledrejection`, not an `error`
+      // event, so a host waiting on a lint-report just waits.
+      //
+      // Two levels, because they mean different things. The inner one covers a
+      // hostile `vectors` (a throwing getter, a Proxy whose ownKeys trap throws):
+      // that means "no documents", exactly as if the caller passed none, so the
+      // report is the same one lintPart alone would produce. The outer one is the
+      // last resort for anything neither of us has thought of.
+      let report;
+      try {
+        let vectorDocs;
+        try { vectorDocs = Object.fromEntries(cachedVectorDocs(current?.vectors)); }
+        catch { vectorDocs = undefined; }
+        report = lintPart(current, { params: e.data.params, vectorDocs });
+      } catch (cause) {
+        report = {
+          ok: false,
+          errors: [{
+            rule: "lint-context-error",
+            severity: "error",
+            message: `partforge/lint could not run: ${cause?.message || String(cause)}`,
+            hint: "The part or the lint request is too malformed to analyze — make sure `vectors`, `defaults` and `params` are plain, side-effect-free data rather than throwing getters or hostile Proxies.",
+            path: "",
+          }],
+          warnings: [],
+          notes: [],
+        };
+      }
+      postMessage({ type: "lint-report", report });
       return;
     }
     // Only generates supersede each other; exports/inspect always run (cancelling

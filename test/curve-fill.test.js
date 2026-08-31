@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, test, expect, beforeAll } from "vitest";
 import Module from "manifold-3d";
 import opentype from "opentype.js";
 import { DEFAULT_FONT_BYTES } from "../src/framework/geometry/fonts/default-font.js";
 import { pathProfile } from "../src/framework/geometry/polygon.js";
 import { tessellateContour } from "../src/framework/geometry/profile.js";
 import { resolveCurveFill } from "../src/framework/geometry/curve-fill.js";
+import { profileArea } from "../src/framework/geometry/contour-ops.js";
 
 // Build a glyph's raw cubic contours (y-up), mirroring text2d's glyph reader.
 function glyphContours(font, ch) {
@@ -110,5 +111,69 @@ describe("resolveCurveFill", () => {
     const a = resolvedArea(resolveCurveFill(glyphContours(font, "O"), { fillRule: "nonzero" }));
     const b = resolvedArea(resolveCurveFill(glyphContours(font, "O"), { fillRule: "nonzero" }));
     expect(a).toBeCloseTo(b, 3);
+  });
+});
+
+// --- fill-rule evaluation by real booleans -----------------------------------
+// resolveCurveFill used to normalize a self-overlapping CompoundPath with
+// compound.unite(compound). That handles nesting but silently drops the overlap
+// between two same-wound subpaths. These pin both rules against hand-computed
+// areas, including the cases that exercise the difference.
+describe("fill rules over overlapping subpaths", () => {
+  const ccw = (x0, y0, x1, y1) => ({ start: [x0, y0], segments: [{ to: [x1, y0] }, { to: [x1, y1] }, { to: [x0, y1] }] });
+  const cw = (x0, y0, x1, y1) => ({ start: [x0, y0], segments: [{ to: [x0, y1] }, { to: [x1, y1] }, { to: [x1, y0] }] });
+  const area = (cs, fillRule) => profileArea(resolveCurveFill(cs, { fillRule }));
+
+  // Two 10x10 squares overlapping in a 5x10 band. This is the case that was wrong:
+  // nonzero returned 100 (the first square alone) instead of the 150 union.
+  const OVERLAP = [ccw(0, 0, 10, 10), ccw(5, 0, 15, 10)];
+
+  test("nonzero merges same-wound overlapping subpaths", () => {
+    expect(area(OVERLAP, "nonzero")).toBeCloseTo(150, 6);
+  });
+
+  test("nonzero merges them the same way when both wind negatively", () => {
+    expect(area([cw(0, 0, 10, 10), cw(5, 0, 15, 10)], "nonzero")).toBeCloseTo(150, 6);
+  });
+
+  test("evenodd cancels the doubly-covered band", () => {
+    expect(area(OVERLAP, "evenodd")).toBeCloseTo(100, 6);
+  });
+
+  test("a counter wound against its outline still cuts a hole", () => {
+    // The "O" case — the thing a naive union-everything fix would break.
+    const O = [ccw(0, 0, 20, 20), cw(5, 5, 15, 15)];
+    expect(area(O, "nonzero")).toBeCloseTo(300, 6);
+    expect(area(O, "evenodd")).toBeCloseTo(300, 6);
+  });
+
+  test("a same-wound subpath nested inside another fills under nonzero, cancels under evenodd", () => {
+    const nested = [ccw(0, 0, 20, 20), ccw(5, 5, 15, 15)];
+    expect(area(nested, "nonzero")).toBeCloseTo(400, 6);
+    expect(area(nested, "evenodd")).toBeCloseTo(300, 6);
+  });
+
+  test("three subpaths overlapping in a chain", () => {
+    const chain = [ccw(0, 0, 10, 10), ccw(5, 0, 15, 10), ccw(10, 0, 20, 10)];
+    expect(area(chain, "nonzero")).toBeCloseTo(200, 6);
+    expect(area(chain, "evenodd")).toBeCloseTo(100, 6);
+  });
+
+  test("disjoint subpaths are unaffected by either rule", () => {
+    const apart = [ccw(0, 0, 10, 10), ccw(20, 0, 30, 10)];
+    expect(area(apart, "nonzero")).toBeCloseTo(200, 6);
+    expect(area(apart, "evenodd")).toBeCloseTo(200, 6);
+  });
+
+  // KNOWN DIVERGENCE, pinned deliberately. nonzero is evaluated as
+  // union(positives) - union(negatives), which is exact whenever a negative
+  // subpath overlaps at most one positive. Here it overlaps two, so true winding
+  // is +1+1-1 = 1 and the band should stay filled at 150; this returns 100.
+  // Even-odd has no such case — it ignores direction and is exact throughout.
+  // Documented as docs/ERROR-PATTERNS.md#svg-overlapping-subpaths.
+  test("KNOWN DIVERGENCE: a negative subpath over doubly-covered area subtracts", () => {
+    const d = [ccw(0, 0, 10, 10), ccw(5, 0, 15, 10), cw(5, 0, 10, 10)];
+    expect(area(d, "nonzero")).toBeCloseTo(100, 6);   // true nonzero would be 150
+    expect(area(d, "evenodd")).toBeCloseTo(150, 6);   // exact: three covers is odd
   });
 });

@@ -1,0 +1,27 @@
+{
+  "format": "partforge-vector",
+  "version": 1,
+  "units": "mm",
+  "note": "Emblem backing plate. Drawn at 40 x 24 mm with M3 clearance holes on 28 mm centres and a keyway placed low, in the gap between the emblem artwork's disc and its bar, so it stays a real through-slot rather than getting capped by the emboss at the default emblem_w. Coordinates are millimetres and place as authored, so `body`, `holes`, and `keyway` share one frame — the cut in build lands where it is drawn.",
+  "shapes": {
+    "body": {
+      "role": "add",
+      "regions": [
+        { "outer": { "kind": "rect", "center": [0, 0], "width": 40, "height": 24, "radius": 4 } }
+      ]
+    },
+    "holes": {
+      "role": "subtract",
+      "regions": [
+        { "outer": { "kind": "circle", "center": [-14, 0], "r": 1.7 } },
+        { "outer": { "kind": "circle", "center": [14, 0], "r": 1.7 } }
+      ]
+    },
+    "keyway": {
+      "role": "subtract",
+      "regions": [
+        { "outer": { "kind": "polygon", "points": [[-3, -8], [3, -8], [0, -4]] } }
+      ]
+    }
+  }
+}

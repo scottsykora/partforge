@@ -20,6 +20,7 @@ const opentype = normalizeOpentype(opentypeNamespace);
 import { KernelCapabilityError } from "./errors.js";
 import { isPlainOptions, KERNEL_OP_SPECS } from "./op-options.js";
 import { textGlyphs } from "./text2d.js";
+import { placeRegions } from "./vector2d.js";
 import { beveledExtrude } from "./rim-bevel.js";
 import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
 import { convexHull, hullPoints } from "./hull.js";
@@ -159,6 +160,51 @@ export function finishKernel(k) {
     const regions = textGlyphs(parsed, string, { size, align, valign, lineHeight, tracking, kerning });
     if (regions.length === 0) throw new Error("text2d: string produced no glyph geometry (empty or all-whitespace?)");
     return regions.map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+  };
+
+  // 2-D vector art as a Shape2D. Backend-agnostic for the same reason text2d is:
+  // it lowers to k.shape2d + union, so both backends get identical curve regions.
+  // Regions come from k._vectors, preloaded by name from the part's declared
+  // vector documents — this op does no SVG parsing at all, by design.
+  // k._vectors holds documents ({ units, shapes: Map<name, { role, regions }> }).
+  // With no `shape` option, every "add" shape is unioned and every "subtract"
+  // shape is cut from that union (role states the file's own composition; union
+  // is commutative so key order is moot within each group). `shape` selects one
+  // shape's own geometry by name, whatever its role, so the caller can compose
+  // shapes with ordinary booleans in the drawing's own frame.
+  k._vectors ??= new Map();
+  k.vector2d = (name, opts = {}) => {
+    if (typeof name !== "string" || !name)
+      throw new Error("vector2d: first argument must be the name of an entry in the part's `vectors` field");
+    const doc = k._vectors.get(name);
+    if (!doc) throw new Error(`vector2d: unknown vector "${name}" — declare it in the part's \`vectors\` field`);
+    const lift = (regions, measureAgainst = regions) =>
+      placeRegions(regions, doc.units, opts, { measureAgainst, name }).map((r) => k.shape2d(r)).reduce((a, b) => a.union(b));
+    if (opts.shape != null) {
+      const entry = doc.shapes.get(opts.shape);
+      if (!entry) {
+        throw new Error(`vector2d: "${name}" has no shape ${JSON.stringify(opts.shape)} — it declares: ${[...doc.shapes.keys()].join(", ")}`);
+      }
+      // Naming a shape is a request for THAT geometry; role governs only the
+      // default composition below.
+      return lift(entry.regions);
+    }
+    const adds = [...doc.shapes.values()].filter((e) => e.role === "add").flatMap((e) => e.regions);
+    const subs = [...doc.shapes.values()].filter((e) => e.role === "subtract").flatMap((e) => e.regions);
+    if (subs.length === 0) return lift(adds);
+    // ONE transform for the whole document — both groups are measured against
+    // the SAME regions, so a size or align option cannot scale the subtracts
+    // relative to the adds. (With no size and no align — the common millimetre
+    // case — the transform is the identity and this changes nothing.)
+    //
+    // Measured against the ADDS, not against every region. A subtract may
+    // legitimately overhang the adds — a rect that lops off a corner, an
+    // overhanging keyway — and that overhang is deleted before the caller sees
+    // anything, so sizing or aligning against it puts the visible edge where
+    // nobody asked for it. With a subtract reaching 5 mm past the adds' left,
+    // measuring against all of them put `{ align: "left" }` — no size option at
+    // all — 5 mm right of the origin.
+    return lift(adds).cut(lift(subs, adds));
   };
 
   // Convex hull → Shape2D. Backend-agnostic: pure-JS monotone-chain hull of the inputs'
