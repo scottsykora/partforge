@@ -6,7 +6,7 @@
 // resize policy, the PNG output contract, and bitmap cleanup — not the browser's
 // codec, which these stubs never actually exercise.
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { imageToPng } from "../src/framework/image-ingest.js";
+import { imageToPng } from "../src/framework/ingest/image-ingest.js";
 
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 
