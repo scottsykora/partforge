@@ -18,6 +18,11 @@ export function backendForFormat(format, defaultBackend) {
 export function createExportController({ send, currentView, title, defaultBackend = () => "manifold", currentParams = () => ({}) }) {
   const pending = new Map(); // jobId -> { resolve, reject, onProgress }
   let nextId = 1;
+  // Warm jobs are STRING-namespaced ("warm-N") for the reason mount.js spells
+  // out for tessellate-imports: this map is keyed by jobId alone and read before
+  // any type check, so a bare numeric id here could be claimed by a pending
+  // export (both counters start at 1) and settle the wrong Promise.
+  let nextWarmId = 1;
 
   function exportParts({ parts, format, quality = "print", onProgress } = {}) {
     const jobId = nextId++;
@@ -29,12 +34,31 @@ export function createExportController({ send, currentView, title, defaultBacken
     });
   }
 
+  // Pay a backend's cold boot on purpose, before anything needs it. STEP is
+  // pinned to OCCT (backendForFormat), whose ~11 MB WASM loads lazily on its
+  // first job — so for a Manifold-previewed part the STEP export IS that boot,
+  // and the user waits for it having just asked for a file. A host that knows an
+  // export is likely (its download dialog just opened) can spend that time
+  // earlier instead.
+  //
+  // Best-effort by contract: resolves true once the kernel is up, false on any
+  // failure or teardown, and NEVER rejects — a speculative warm must not become
+  // an unhandled rejection in a host that fired it and moved on.
+  function warmKernel() {
+    const jobId = `warm-${nextWarmId++}`;
+    return new Promise((resolve) => {
+      pending.set(jobId, { resolve: () => resolve(true), reject: () => resolve(false) });
+      send({ type: "warm-kernel", jobId }, backendForFormat("step", defaultBackend));
+    });
+  }
+
   // Returns true iff this message belonged to a pending export (so the caller
   // can skip legacy handling). `sink` is partforge's onDownload.
   function handleMessage(m, sink) {
     const entry = m && m.jobId != null ? pending.get(m.jobId) : undefined;
     if (!entry) return false;
     if (m.type === "progress") { entry.onProgress?.(m.phase); return true; }
+    if (m.type === "kernel-warm") { pending.delete(m.jobId); entry.resolve(); return true; }
     if (m.type === "download") {
       pending.delete(m.jobId);
       triggerDownload(m.data, m.filename, m.mime, sink);
@@ -73,5 +97,5 @@ export function createExportController({ send, currentView, title, defaultBacken
     pending.clear();
   }
 
-  return { exportParts, handleMessage, dispose };
+  return { exportParts, warmKernel, handleMessage, dispose };
 }

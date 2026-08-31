@@ -76,7 +76,15 @@ export function runWorker(part, opts = {}) {
       return data.quality === "print" ? manifold.print : manifold.preview;
     }
     if (!occt) {
-      postMessage({ type: "progress", phase: "loading exact kernel" }); // feedback during cold boot
+      // Feedback during cold boot — and CORRELATED, because for a Manifold-previewed
+      // part this boot IS the STEP export: backendForFormat pins STEP to OCCT, so the
+      // export is the session's first OCCT job and pays the whole ~11 MB WASM load.
+      // export-controller claims replies by jobId, so an unstamped message here is
+      // dropped and a headless exportParts() caller shows no progress at all for the
+      // one phase that can outlast its timeout. Jobs with no jobId (the in-page export
+      // buttons) stay unstamped, so their progress still reaches mount's own busy
+      // indicator instead of an export controller that has nothing pending.
+      postMessage({ type: "progress", phase: "loading exact kernel", ...(data.jobId != null ? { jobId: data.jobId } : {}) });
       booting = booting ?? occtKernel().then((k) => (occt = k));
       await booting;
     }
