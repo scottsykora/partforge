@@ -24,9 +24,11 @@ test('"asset" accepts a pfc-asset token; https alone does not', () => {
   expect(fontSourceAllowed(tok, ["https", "asset"])).toBe(true);
 });
 
-test("non-string sources are never param-supplied and are not checked here", () => {
-  expect(fontSourceAllowed(new ArrayBuffer(4), FONT_ALLOW_DEFAULT)).toBe(false);
-});
+// Superseded by "BYTES bypass the allow check" below: bytes are now a
+// legitimate param-supplied source (the panel's drop target), so they are no
+// longer refused here. Kept only as a pointer so a reader who remembers the
+// old assertion (`fontSourceAllowed(bytes, …) === false`) finds why it moved
+// rather than assuming it was silently dropped.
 
 test("fontControlAllows finds every font control and its allow list", () => {
   const part = { parameters: [
@@ -229,4 +231,15 @@ test("an allowed source leaves the result's warnings absent", async () => {
       params: { face: "https://fonts.gstatic.com/s/fine/v1/ok.ttf" } }, (m) => posts.push(m));
   } finally { globalThis.fetch = g; }
   expect(posts.find((m) => m.type === "meshes").warnings).toBeUndefined();
+});
+
+test("BYTES bypass the allow check — they cannot have come from a shared link", () => {
+  expect(fontSourceAllowed(new ArrayBuffer(8), ["https"])).toBe(true);
+  expect(fontSourceAllowed(new Uint8Array(8), ["https"])).toBe(true);
+});
+
+test("string sources still get the full allow treatment", () => {
+  expect(fontSourceAllowed("http://cdn.test/f.ttf", ["https"])).toBe(false);
+  expect(fontSourceAllowed("https://cdn.test/f.ttf", ["https"])).toBe(true);
+  expect(fontSourceAllowed("javascript:alert(1)", ["https"])).toBe(false);
 });
