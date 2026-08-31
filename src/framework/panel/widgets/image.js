@@ -40,14 +40,46 @@ export function imageLabel(source) {
   return file || source;
 }
 
-// Point (or unpoint) the live preview. A byte-valued param has no URL to hand
-// the browser, so the image stays hidden rather than trying to render it or
-// showing a broken-image glyph — same rule an empty/unset value gets. `onerror`
-// covers the other broken-image case: a URL that 404s or that CORS refuses.
-function paintPreview(img, source) {
-  if (typeof source === "string" && source) {
+// An object URL is a real resource, not a string: the browser pins the blob
+// behind it until it is revoked, and a panel rebuild constructs a fresh widget
+// every time. This owns the whole lifetime — one live URL at a time, the old one
+// revoked before a new one replaces it, and everything released on dispose — so
+// no caller has to remember. Returns `null` for a value that needs no URL.
+function makeObjectUrlSlot() {
+  let current = null;
+  const release = () => {
+    if (current) URL.revokeObjectURL(current);
+    current = null;
+  };
+  return {
+    forBytes(source) {
+      release();
+      if (!isBytes(source)) return null;
+      // Always image/png: `imageToPng` is what produced these bytes, whatever the
+      // user dropped. The type matters — a Blob with none renders nothing.
+      current = URL.createObjectURL(new Blob([source], { type: "image/png" }));
+      return current;
+    },
+    dispose: release,
+  };
+}
+
+// Point (or unpoint) the live preview. A string source is used directly. Bytes —
+// the partforge-cloud sandbox path, where the converted PNG travels in the param
+// because that sandbox cannot fetch URLs — become an object URL, so the cloud
+// gets the same thumbnail as everyone else rather than a blank tile. `onerror`
+// still covers the remaining broken-image case: a URL that 404s or CORS refuses.
+// Resolved ONCE per paint, never per image: the catalog rendering shows the same
+// source in two <img>s, and asking the slot twice would revoke the URL it had
+// just handed the first one, leaving it pointing at a dead blob.
+function previewSrc(source, urls) {
+  return typeof source === "string" && source ? source : urls.forBytes(source);
+}
+
+function applyPreview(img, src) {
+  if (src) {
     img.hidden = false;
-    img.src = source;
+    img.src = src;
   } else {
     img.hidden = true;
     img.removeAttribute("src");
@@ -55,6 +87,7 @@ function paintPreview(img, source) {
 }
 
 export function makeImage(node, params, { onChange, onCommit, info, imageCatalog, onAssetUpload } = {}) {
+  const urls = makeObjectUrlSlot();   // one live preview URL per widget; see makeObjectUrlSlot
   const allow = Array.isArray(node.allow) && node.allow.length ? node.allow : IMAGE_ALLOW_DEFAULT;
   const wrap = el("div", "slider");
   const row = el("div", "row");
@@ -88,7 +121,7 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
       field.value = isBytes(v) ? "" : String(v ?? "");
       field.placeholder = isBytes(v) ? "Uploaded image" : "";
       field.classList.remove("warn");
-      paintPreview(preview, v);
+      applyPreview(preview, previewSrc(v, urls));
     };
     field.addEventListener("change", () => {
       if (!imageSourceAllowed(field.value, allow)) { field.classList.add("warn"); return; }
@@ -105,7 +138,7 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
     });
     wrap.append(drop.el, drop.errorEl);
 
-    return { el: wrap, sync: paintField, dispose: () => drop.dispose() };
+    return { el: wrap, sync: paintField, dispose: () => { drop.dispose(); urls.dispose(); } };
   }
 
   const btn = el("button", "image-btn");
@@ -131,8 +164,9 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
   const paint = () => {
     const src = params[node.key];
     const seq = ++paintSeq;
-    paintPreview(preview, src);
-    paintPreview(thumb, src);
+    const url = previewSrc(src, urls);
+    applyPreview(preview, url);
+    applyPreview(thumb, url);
     const show = ({ label: text, width, height }) => {
       if (seq !== paintSeq) return;                  // a newer paint already won
       iname.textContent = width && height ? `${text} (${width}×${height})` : text;
@@ -167,7 +201,7 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
   return {
     el: wrap,
     sync: paint,
-    dispose: () => { picker?.close(); picker = null; drop.dispose(); },
+    dispose: () => { picker?.close(); picker = null; drop.dispose(); urls.dispose(); },
   };
 }
 

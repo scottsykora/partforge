@@ -107,13 +107,15 @@ test("a byte-valued param with a catalog renders an honest label, not [object Ar
   expect(btn).toBeTruthy();
   expect(btn.textContent).not.toContain("[object ArrayBuffer]");
   expect(root.querySelector(".iname").textContent).toBe("Uploaded image");
-  // No src on either <img> — never a broken-image glyph for bytes.
+  // Bytes used to leave both <img>s hidden and src-less. They now carry an object
+  // URL so the cloud path gets a real thumbnail — the original intent ("never a
+  // broken-image glyph") is preserved, the mechanism changed. Both images must
+  // share ONE url: resolving per-image would revoke the first one's blob.
   const preview = root.querySelector("img.image-preview");
   const thumb = root.querySelector("img.image-btn-thumb");
-  expect(preview.hidden).toBe(true);
-  expect(preview.hasAttribute("src")).toBe(false);
-  expect(thumb.hidden).toBe(true);
-  expect(thumb.hasAttribute("src")).toBe(false);
+  expect(preview.hidden).toBe(false);
+  expect(preview.getAttribute("src")).toMatch(/^blob:/);
+  expect(thumb.getAttribute("src")).toBe(preview.getAttribute("src"));
 });
 
 test("a byte-valued param asks describe() for dimensions and shows Uploaded image (WxH)", async () => {
@@ -149,9 +151,12 @@ test("a byte-valued param with NO catalog degrades without corrupting the field"
   const field = root.querySelector("input.text-input");
   expect(field.value).toBe("");                         // never "[object ArrayBuffer]"
   expect(field.placeholder).toBe("Uploaded image");
+  // Same contract change as the catalog case above: bytes now render a thumbnail
+  // via an object URL rather than leaving the preview blank. The field itself is
+  // what this test is really about, and it is untouched.
   const preview = root.querySelector("img.image-preview");
-  expect(preview.hidden).toBe(true);
-  expect(preview.hasAttribute("src")).toBe(false);
+  expect(preview.hidden).toBe(false);
+  expect(preview.getAttribute("src")).toMatch(/^blob:/);
 });
 
 test("sync repaints the button from params, including a switch to bytes", async () => {
@@ -300,3 +305,75 @@ describe("the drop target", () => {
     expect(errorEl.textContent).toContain("not-an-image.txt");
   });
 });
+
+// ── thumbnail of a byte-valued source ────────────────────────────────────────
+// The cloud sandbox puts converted PNG bytes straight in the param, so the
+// preview cannot be a URL. It becomes an object URL instead — which is a real
+// resource: every one that is not revoked pins its blob for the tab's lifetime,
+// and a panel rebuild constructs a fresh widget each time.
+describe("byte-valued preview", () => {
+  const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const bytes = () => PNG.buffer.slice(0);
+
+  const spyUrls = () => {
+    const created = [], revoked = [];
+    const c = URL.createObjectURL, r = URL.revokeObjectURL;
+    URL.createObjectURL = (b) => { const u = `blob:test/${created.length}`; created.push(u); return u; };
+    URL.revokeObjectURL = (u) => { revoked.push(u); };
+    return { created, revoked, restore: () => { URL.createObjectURL = c; URL.revokeObjectURL = r; } };
+  };
+
+  test("shows a thumbnail for bytes instead of hiding the preview", () => {
+    const spy = spyUrls();
+    try {
+      document.body.innerHTML = '<div id="root"></div>';
+      const root = document.getElementById("root");
+      buildControls(root, [{ id: "s", controls: [{ key: "relief", type: "image", label: "Depth map" }] }],
+        { relief: bytes() }, () => {});
+      const img = root.querySelector("img");
+      expect(img, "an <img> is rendered").toBeTruthy();
+      expect(img.hidden, "and it is visible, not hidden as before").toBe(false);
+      expect(img.getAttribute("src")).toBe(spy.created[0]);
+    } finally { spy.restore(); }
+  });
+
+  test("revokes the previous object URL when the value changes", () => {
+    const spy = spyUrls();
+    try {
+      document.body.innerHTML = '<div id="root"></div>';
+      const root = document.getElementById("root");
+      const params = { relief: bytes() };
+      const panel = buildControls(root, [{ id: "s", controls: [{ key: "relief", type: "image", label: "Depth map" }] }],
+        params, () => {});
+      params.relief = bytes();
+      panel.syncValues?.(["relief"]);
+      expect(spy.created.length, "a second URL was made").toBe(2);
+      expect(spy.revoked, "the first was revoked").toContain(spy.created[0]);
+    } finally { spy.restore(); }
+  });
+
+  test("revokes on dispose — otherwise every panel rebuild leaks a blob", () => {
+    const spy = spyUrls();
+    try {
+      document.body.innerHTML = '<div id="root"></div>';
+      const root = document.getElementById("root");
+      const panel = buildControls(root, [{ id: "s", controls: [{ key: "relief", type: "image", label: "Depth map" }] }],
+        { relief: bytes() }, () => {});
+      panel.dispose?.();
+      expect(spy.revoked).toContain(spy.created[0]);
+    } finally { spy.restore(); }
+  });
+
+  test("a string source still uses the URL directly, creating no object URL", () => {
+    const spy = spyUrls();
+    try {
+      document.body.innerHTML = '<div id="root"></div>';
+      const root = document.getElementById("root");
+      buildControls(root, [{ id: "s", controls: [{ key: "relief", type: "image", label: "Depth map" }] }],
+        { relief: "https://cdn.test/d.png" }, () => {});
+      expect(root.querySelector("img").getAttribute("src")).toBe("https://cdn.test/d.png");
+      expect(spy.created.length, "no blob URL for a plain URL source").toBe(0);
+    } finally { spy.restore(); }
+  });
+});
+
