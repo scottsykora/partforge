@@ -126,6 +126,11 @@ function joinSegs(corner, aEnd, bStart, inTan, outTan, delta, corners) {
   return [{ via: add(corner, scl(norm(m), Math.abs(delta))), to: bStart }];
 }
 
+// Exposed for stroke-outline.js, which walks OPEN chains and so cannot use
+// _offsetContour's ring loop, but needs exactly this join vocabulary
+// (round/chamfer/sharp + miter limit) at its interior vertices.
+export const _joinSegs = joinSegs;
+
 // Offset one explicitly-closed ring. Returns { contour, dirty }.
 export function _offsetContour(contour, delta, corners) {
   const pts = [contour.start, ...contour.segments.map((s) => s.to)];

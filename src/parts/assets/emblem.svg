@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- A filled shape and a stroked OPEN shape, so this one file exercises both
+       of ingest's geometry paths. The union's tight bbox is 40 x 30 artwork
+       units: the circle spans 14..34 in both axes, and the stroked bar spans
+       4..44 in x (round caps add half the 4-unit width at each end) and 40..44
+       in y. Deliberately NOT centred in the viewBox, so anything that sizes from
+       the viewBox instead of the geometry gets a visibly wrong answer. -->
+  <circle cx="24" cy="24" r="10" fill="#111"/>
+  <polyline points="6 42 42 42" fill="none" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+</svg>
