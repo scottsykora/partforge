@@ -257,6 +257,57 @@ export type FontSource =
 
 type FontSourceValue = string | ArrayBuffer | ArrayBufferView | { default: string };
 
+// --- imports and vectors ------------------------------------------------------
+
+/**
+ * One entry of a part's `imports` map: the STEP/STL/3MF file a `k.import()` call
+ * names. Same source grammar and preload timing as {@link FontSource}.
+ */
+export type ImportSource = FontSource;
+
+/**
+ * One entry of a part's `vectors` map: a `partforge-vector` file for `k.vector2d()`
+ * to place — never a raw `.svg`, which nothing in the geometry worker can read.
+ *
+ * Beyond the bytes/URL/thunk forms every asset source accepts, a vector source may
+ * be the file's ALREADY-PARSED contents: the object a `.vector.json` yields when
+ * something has imported or fetched it. That is the form to reach for when the
+ * artwork lives in the part's own tree and is meant to stay readable and editable,
+ * rather than sitting behind an opaque asset token.
+ *
+ * The object is read, never written, and is validated on every resolve — so a
+ * malformed one fails with the same message its on-disk twin would produce.
+ */
+export type VectorSource =
+  | string
+  | ArrayBuffer
+  | ArrayBufferView
+  | VectorDocument
+  | (() => VectorSourceValue | Promise<VectorSourceValue>);
+
+type VectorSourceValue =
+  | string
+  | ArrayBuffer
+  | ArrayBufferView
+  | VectorDocument
+  | { default: string | VectorDocument };
+
+/**
+ * The parsed contents of a `partforge-vector` file. `docs/VECTOR-FORMAT.md` is the
+ * normative spec; this type is deliberately shallow — it pins the envelope every
+ * reader depends on and leaves contour shapes to the runtime validator, which
+ * reports far better errors than a structural type mismatch can.
+ */
+export interface VectorDocument {
+  format: "partforge-vector";
+  version: number;
+  units: "mm" | "artwork";
+  shapes: Record<string, unknown>;
+  source?: unknown;
+  bbox?: unknown;
+  note?: string;
+}
+
 // --- derive -----------------------------------------------------------------
 
 /**
@@ -316,6 +367,11 @@ export interface SubPartDefinition<P = ResolvedParams, D = Derived> {
 
 export interface ViewDefinition {
   label: string;
+  /**
+   * Open this view first. With none flagged, the first key wins — see
+   * `default-view.js`, which also falls back when the flagged view is empty.
+   */
+  default?: boolean;
   /**
    * Named animations belonging to this view — keyframe data driving this view's
    * params and sub-part opacity over time. See `AnimationSpec` below; the
@@ -548,6 +604,10 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
   defaults: Defaults;
   /** Outline fonts a part's `k.text2d()` calls need, as `{ name: source }`. */
   fonts?: Record<string, FontSource>;
+  /** STEP/STL/3MF files a part's `k.import()` calls need, as `{ name: source }`. */
+  imports?: Record<string, ImportSource>;
+  /** Vector artwork a part's `k.vector2d()` calls place, as `{ name: source }`. */
+  vectors?: Record<string, VectorSource>;
   /** Dependent values computed once per build. */
   derive?: DeriveSpec<P, D>;
   /** Named sub-parts; each builds exactly one solid. */
@@ -556,4 +616,9 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
   views: Record<string, ViewDefinition>;
   /** Self-verification, co-located with the schema. */
   verify?: VerifyBlock<P, D>;
+  /**
+   * Named measurements reported by `measure`/`inspect` — never rendered, never
+   * exported. Each entry returns either a solid to measure or plain JSON.
+   */
+  probes?: Record<string, (k: GeometryKernel, p: P, d: D) => unknown>;
 }

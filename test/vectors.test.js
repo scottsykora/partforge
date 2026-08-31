@@ -50,7 +50,7 @@ test("parsing is memoized by source, not repeated per name or per call", async (
 });
 
 test("a source that is not bytes, a URL, or a thunk rejects", async () => {
-  await expect(resolveVectors({ bad: 42 })).rejects.toThrow(/must be bytes, a URL, or a thunk/);
+  await expect(resolveVectors({ bad: 42 })).rejects.toThrow(/must be bytes, a URL, a thunk/);
 });
 
 // Mirrors fonts.js's resolveFonts guard: `Object.entries` on a function is
@@ -202,4 +202,84 @@ test.each([
   ["a throwing value getter", Object.defineProperty({}, "a", { get() { throw new Error("hostile"); }, enumerable: true })],
 ])("cachedVectorDocs never throws on %s", (_label, decl) => {
   expect(() => cachedVectorDocs(decl)).not.toThrow();
+});
+
+// --- an already-parsed file as a source --------------------------------------
+//
+// The in-memory form of a vectors source: the CONTENTS of a .vector.json that
+// something already parsed, rather than its bytes or a URL to fetch them from.
+// This is what lets artwork live in the part TREE as an editable file —
+// `import doc from "./plate.vector.json"` — instead of behind an opaque asset
+// token. A format an agent is meant to read and edit has to be reachable as
+// data, not only as an attachment.
+
+test("resolves an already-parsed file object", async () => {
+  const map = await resolveVectors({ a: box() });
+  expect(map.get("a").units).toBe("artwork");
+  expect(map.get("a").shapes.get("artwork").regions).toHaveLength(1);
+});
+
+test("resolves a thunk returning an already-parsed file", async () => {
+  const map = await resolveVectors({ a: () => box() });
+  expect(map.get("a").shapes.get("artwork").regions).toHaveLength(1);
+});
+
+// A static `import doc from "./x.vector.json"` yields the object itself; a
+// dynamic `import("./x.vector.json")` yields the module namespace. Both forms
+// have to land on the same place, the way FontSource already handles Vite's
+// `() => import("./x.ttf")`.
+test("resolves the { default } module shape a dynamic JSON import yields", async () => {
+  const map = await resolveVectors({ a: () => ({ default: box() }) });
+  expect(map.get("a").shapes.get("artwork").regions).toHaveLength(1);
+});
+
+test("an invalid parsed file rejects through the format validator, naming the key", async () => {
+  await expect(resolveVectors({ logo: { format: "svg", version: 1, units: "mm", shapes: {} } }))
+    .rejects.toThrow(/logo/);
+});
+
+test("parsing is memoized by object identity, not repeated per name", async () => {
+  const doc = box();
+  const first = await resolveVectors({ a: doc });
+  const second = await resolveVectors({ b: doc });
+  expect(second.get("b")).toBe(first.get("a"));
+});
+
+// The caller owns the object — a part module's `vectors` map is plain data the
+// host may also be holding. Reading it must not write to it.
+test("resolution does not mutate the caller's object", async () => {
+  const doc = box();
+  const before = JSON.stringify(doc);
+  await resolveVectors({ a: doc });
+  expect(JSON.stringify(doc)).toBe(before);
+});
+
+test("an array source is still refused by the source grammar", async () => {
+  await expect(resolveVectors({ bad: [] })).rejects.toThrow(/must be bytes, a URL, a thunk/);
+});
+
+test("resolveVectorDocs returns the raw object for an already-parsed source", async () => {
+  const doc = { format: "partforge-vector", version: 1, units: "mm", shapes: { body: [] } };
+  const map = await resolveVectorDocs({ a: doc });
+  expect(map.get("a")).toEqual(doc);
+});
+
+// The one behavioural gain over bytes or a URL: nothing has to resolve first.
+// A part whose artwork lives in its own tree gets document-aware lint on the
+// FIRST keystroke, before any build has run — which is exactly the case a
+// hosted editor spends most of its time in.
+test("cachedVectorDocs reads an already-parsed source with no resolve at all", () => {
+  const doc = { format: "partforge-vector", version: 1, units: "artwork", shapes: { body: [] } };
+  expect(cachedVectorDocs({ a: doc }).get("a")).toEqual(doc);
+});
+
+test("cachedVectorDocs unwraps the { default } module shape too", () => {
+  const doc = { format: "partforge-vector", version: 1, units: "artwork", shapes: { body: [] } };
+  expect(cachedVectorDocs({ a: { default: doc } }).get("a")).toEqual(doc);
+});
+
+test("ensureVectors registers an already-parsed file on the kernel", async () => {
+  const kernel = { _vectors: new Map() };
+  await ensureVectors(kernel, { a: box() });
+  expect(kernel._vectors.get("a").shapes.get("artwork").regions).toHaveLength(1);
 });

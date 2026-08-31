@@ -567,9 +567,18 @@ one:
 - **Existing artwork** — an `.svg` someone else made — goes through
   `partforge/ingest` once and is then referenced like any other document.
 
+Wherever it comes from, the file reaches a part through its `vectors` map — as a
+URL, as bytes, or as the parsed contents themselves (`import doc from
+"./x.vector.json" with { type: "json" }`). The last form is the one to prefer for
+authored artwork, because it keeps the numbers in a file a reader can open and
+edit rather than behind a fetch. See "Vector geometry" in
+`docs/AUTHORING-PARTS.md` for the declaration rules.
+
 `k.shape2d` does **not** accept this JSON dialect, and there is no inline
-document form in `build`. The two vocabularies stay separated by the file
-boundary; that separation is what lets this document be the only place they meet.
+document form in `build` — a parsed source is a declaration resolved before the
+build, not something `build` assembles. The two vocabularies stay separated by
+the file boundary; that separation is what lets this document be the only place
+they meet.
 
 ## 6. Converting an SVG to this format by hand
 
