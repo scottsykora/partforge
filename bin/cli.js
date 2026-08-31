@@ -25,7 +25,7 @@ import {
 import { savePickToken, loadPickToken, clearPickToken, pickTokenPath } from "../src/framework/pick-request/token-store.js";
 import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
-import { resolveVectorDocs } from "../src/framework/vectors.js";
+import { resolveVectorDocs, vectorsFor } from "../src/framework/vectors.js";
 
 const die = (msg) => { console.error(msg); process.exit(1); };
 
@@ -115,7 +115,7 @@ const bootKernel = (part, params = {}) => {
   const imagesDecl = part.images ? (imagesFor(part, p) ?? {}) : undefined;
   const images = imagesDecl &&
     Object.fromEntries(Object.entries(imagesDecl).filter(([, src]) => !isNoImageSource(src)));
-  const opts = { fonts: fontsFor(part, p), imports: part.imports, images, vectors: part.vectors };
+  const opts = { fonts: fontsFor(part, p), imports: part.imports, images, vectors: vectorsFor(part, p) };
   const backend = process.env.PARTFORGE_BACKEND || detectBackend(part); // env: crash()'s NEEDS_OCCT retry
   return backend === "occt" ? bootOcctKernel(opts) : bootManifoldKernel(opts);
 };
@@ -133,7 +133,10 @@ const commands = {
       const part = await loadPart(partPath, usage);
       const params = flags.params ? JSON.parse(flags.params) : undefined;
       const sources = readSources(partPath);
-      const vectorDocs = Object.fromEntries(await resolveVectorDocs(part.vectors));
+      // Same `p` derivation as bootKernel — needed here only to resolve a
+      // function-form `vectors` against params before handing it to lint.
+      const p = { ...(part.defaults ?? {}), ...params };
+      const vectorDocs = Object.fromEntries(await resolveVectorDocs(vectorsFor(part, p)));
       const report = lintPart(part, { params, sources, vectorDocs });
       if (!flags.json) printLint(report);
       if (flags.out) {
@@ -163,7 +166,10 @@ const commands = {
       // milliseconds with a precise message rather than after a WASM boot and a
       // downstream error that doesn't name the cause. Warnings never gate measure.
       if (!flags["no-lint"]) {
-        const vectorDocs = Object.fromEntries(await resolveVectorDocs(part.vectors));
+        // Same `p` derivation as bootKernel below — measure has no --params
+        // flag, so this is just the part's own defaults.
+        const p = { ...(part.defaults ?? {}) };
+        const vectorDocs = Object.fromEntries(await resolveVectorDocs(vectorsFor(part, p)));
         const lint = lintPart(part, { sources: readSources(partPath), vectorDocs });
         if (!lint.ok) {
           if (flags.json) console.log(JSON.stringify({ ok: false, lint }, null, 2));

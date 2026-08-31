@@ -11,7 +11,7 @@ import { imageControlAllows, imageSourceAllowed, isNoImageSource } from "./image
 import { imagesFor, ensureImages } from "./images.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
-import { ensureVectors } from "./vectors.js";
+import { vectorsFor, ensureVectors } from "./vectors.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
 
 // The oracle loads LAZILY, per job family, never at worker boot. It is the largest
@@ -291,7 +291,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // prevent. Guarding this on `part.vectors` would skip exactly the case where
     // pruning matters most: a worker rebound from a part WITH artwork to one
     // WITHOUT would leave the old names resolvable forever.
-    await ensureVectors(kernel, part.vectors);
+    await ensureVectors(kernel, vectorsFor(part, p));
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
     const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
     // Explicit selection (headless exportParts) overrides view-derived selection.

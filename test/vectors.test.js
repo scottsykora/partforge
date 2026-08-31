@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { resolveVectors, resolveVectorDocs, cachedVectorDocs, ensureVectors } from "../src/framework/vectors.js";
+import { resolveVectors, resolveVectorDocs, cachedVectorDocs, ensureVectors, vectorsFor } from "../src/framework/vectors.js";
 import { fromInternalRegions } from "../src/framework/geometry/vector-format.js";
 import { handle } from "../src/framework/jobs.js";
 
@@ -282,4 +282,19 @@ test("ensureVectors registers an already-parsed file on the kernel", async () =>
   const kernel = { _vectors: new Map() };
   await ensureVectors(kernel, { a: box() });
   expect(kernel._vectors.get("a").shapes.get("artwork").regions).toHaveLength(1);
+});
+
+test("vectorsFor resolves the function form with params", () => {
+  const part = { vectors: (p) => (p.art ? { art: p.art } : {}) };
+  expect(vectorsFor(part, { art: "x" })).toEqual({ art: "x" });
+  expect(vectorsFor(part, {})).toEqual({});
+});
+
+test("vectorsFor passes a static object through unchanged", () => {
+  const decl = { art: "https://cdn.test/a.vector.json" };
+  expect(vectorsFor({ vectors: decl }, {})).toBe(decl);
+});
+
+test("vectorsFor is undefined-safe for a part with no vectors", () => {
+  expect(vectorsFor({}, {})).toBeUndefined();
 });
