@@ -6,7 +6,7 @@
 // array and mutates the root in place; see render.js and
 // test/mount-font-catalog.test.js (the precedent this file mirrors) for the
 // real shape.
-import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
+import { expect, test, describe, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { buildControls } from "../src/framework/panel/render.js";
 import { imageLabel } from "../src/framework/panel/widgets/image.js";
 
@@ -198,7 +198,20 @@ test("imageLabel never throws on junk, including bytes", () => {
 // file needs the identical stub for the same reason, or every drop here
 // fails conversion and lands in onError instead of the param. The brief for
 // this task did not mention the stub — see the task-6 report.
+//
+// The registry's `convert` for "image" is a genuine dynamic import
+// (`() => import("./image-ingest.js").then(...)`), done lazily so a part
+// with no image control never pays for it. The FIRST call pays Vite's
+// transform cost, which can outrun the single `setTimeout(..., 0)` tick the
+// drop tests below wait on — a real flake seen when this file runs alone
+// (fix round 1: `npx vitest run test/image-control.test.js` failed solo with
+// `expected '' to be an instance of ArrayBuffer` even though the stub above
+// was in place, because the import hadn't resolved yet). test/file-drop.test.js
+// hit the identical race and fixed it with a `beforeAll` warm-up; this needs
+// the same one, run once before any test in this block.
 describe("the drop target", () => {
+  beforeAll(() => import("../src/framework/ingest/image-ingest.js"));
+
   beforeEach(() => {
     vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 4, height: 4, close: vi.fn() })));
     vi.stubGlobal("OffscreenCanvas", class StubOffscreenCanvas {
@@ -238,7 +251,7 @@ describe("the drop target", () => {
     expect(params.relief).toBeInstanceOf(ArrayBuffer);
   });
 
-  test("a panel rebuild disposes the drop widget — no stray listener keeps the old params alive", () => {
+  test("a panel rebuild disposes the drop widget — no stray listener keeps the old params alive", async () => {
     document.body.innerHTML = '<div id="root"></div>';
     const root = document.getElementById("root");
     const params = { relief: "" };
@@ -246,9 +259,21 @@ describe("the drop target", () => {
       params, () => {});
     const dropEl = root.querySelector("[data-pf-drop]");
     panel.dispose();
+    // A REAL file — the same PNG the other tests use — not an empty file
+    // list. `handleFiles` returns immediately on an empty list, before ever
+    // touching the disposed AbortController, so an empty-list drop passes
+    // whether or not dispose() is wired (fix round 1 caught this: the
+    // reviewer removed `drop.dispose()` from both render paths and this
+    // test still passed). A real file forces the listener itself to have
+    // been removed for the assertion below to hold.
+    const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const file = Object.assign(new Blob([PNG]), {
+      name: "d.png", arrayBuffer: async () => PNG.buffer.slice(0),
+    });
     const ev = new Event("drop", { bubbles: true, cancelable: true });
-    Object.defineProperty(ev, "dataTransfer", { value: { files: [] } });
+    Object.defineProperty(ev, "dataTransfer", { value: { files: [file] } });
     expect(() => dropEl.dispatchEvent(ev)).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
     expect(params.relief).toBe("");                      // disposed: never wrote back
   });
 
