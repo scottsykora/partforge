@@ -381,6 +381,32 @@ export interface ScrewSweepOptions {
   lefthand?: boolean;
 }
 
+/** `k.tappedBore` — a tapped (internally threaded) hole as ONE cut tool: the
+ *  plain bore and its thread, fused, with the thread's root sunk inside the bore
+ *  so the two never share a face. Hand-assembling the pair puts the bore wall and
+ *  the thread root on exactly the same cylinder, which OCCT's boolean cannot
+ *  resolve — measured at fifteen minutes without finishing, against ~10 s here. */
+export interface TappedBoreOptions {
+  /** Bore (minor/root) diameter, mm — the hole a tap would cut into. */
+  d: number;
+  /** Axial rise per turn, mm. */
+  pitch: number;
+  /** Number of thread turns; the thread is `pitch * turns` long. */
+  turns: number;
+  /** Plain-bore length, mm. Defaults to the thread's own length. */
+  depth?: number;
+  /** Radial thread height (major radius minus root), mm. Defaults to `0.15 * pitch`. */
+  crest?: number;
+  lefthand?: boolean;
+  /** How far the thread's root sits INSIDE the bore, mm (default 0.2). Free
+   *  rather than a compromise: the bore already removes that material, so the
+   *  union is unchanged — it only stops the two tools being tangent. */
+  rootSink?: number;
+  /** How far the bore overhangs the thread at each end, mm (default 0.2).
+   *  Flush ends are coincident faces, the same failure one layer down. */
+  overshoot?: number;
+}
+
 /** One `k.loftSmooth` control section. Point arrays may tag true corners with
  *  `sharp`; curve contours and Shape2D outlines carry corners implicitly. */
 export interface LoftSmoothSection {
@@ -536,6 +562,8 @@ export interface GeometryKernel {
   helixSweptTube(o: HelixSweptTubeOptions): Solid;
   /** Sweep an axial lathe profile by screw motion — threads. */
   screwSweep(o: ScrewSweepOptions): Solid;
+  /** A tapped hole as one cut tool — bore plus thread, never tangent. */
+  tappedBore(o: TappedBoreOptions): Solid;
   /** Spline-interpolated loft of sparse control sections. */
   loftSmooth(o: LoftSmoothOptions): Solid;
   /** Rim round-overs via one lathe revolve; curve-exact in STEP. */

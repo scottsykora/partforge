@@ -1221,6 +1221,36 @@ turn. A 30 mm shank is 20 turns and about half a second on Manifold; hundreds of
 turns is millions of triangles and minutes behind the STEP button. Bound the
 `length` and `pitch` your schema exposes accordingly.
 
+**Internal threads: use `k.tappedBore`, not a bore plus a `screwSweep`.** The
+periodic trick above is what saves an *external* thread from a boolean, and it
+has no internal equivalent — a tapped hole is a bore and a thread, and they have
+to be combined. Assembled by hand the obvious way, they are a trap:
+
+```js
+// ✗  the bore wall and the thread root land on the same cylinder
+const bore = k.cylinder({ d: boreD, h: depth });
+const thread = k.screwSweep({ profile: [[boreD / 2, 0], …], pitch, turns });
+cap.cutAll([bore, thread]);
+// ✓  one tool, no shared face
+cap.cut(k.tappedBore({ d: boreD, pitch, turns, depth }));
+```
+
+Both cut tools touch along an exactly coincident cylinder without overlapping.
+Manifold shrugs; OCCT has to resolve a tangential contact between a cylinder and
+the thread root's swept spline surface, along a helix, and the intersector
+degenerates — on one real 6-turn cap the export did not finish in **fifteen
+minutes**, while `tappedBore` builds the same hole in about fifteen seconds
+([boolean-coincident-faces-hang](ERROR-PATTERNS.md#boolean-coincident-faces-hang)).
+
+`k.tappedBore({ d, pitch, turns, depth?, crest?, lefthand?, rootSink?, overshoot? })`
+returns that hole as **one** solid to cut: `d` is the bore a tap would cut into,
+`crest` the radial thread height (default `0.15 · pitch`), `depth` the plain-bore
+length (default the thread's own). It owns both halves precisely so it can sink
+the thread's root *inside* the bore — which costs nothing, since the bore already
+removes that material, and is why the tangency never arises. `screwSweep` cannot
+do that for you: a thread cut into solid stock with no bore would then cut a
+deeper root and change your part.
+
 The hand-rolled equivalent, for the record: `screwSweep` is
 `k.extrude({ profile, h, twist })` with the axial profile remapped to polar
 (`ψ = −360·z/pitch`) and `twist = 360 · turns` — one full turn of twist per pitch
@@ -3375,6 +3405,9 @@ symptom first** — it maps error text → cause → fix. The invariants, one li
   of deliberate clearance, or overshoot the cut. Mesh CSG shrugs; OCCT's boolean
   degenerates, so the part previews instantly and the STEP export runs for minutes
   ([boolean-coincident-faces-hang](ERROR-PATTERNS.md#boolean-coincident-faces-hang)).
+  For the case that causes this most often — a tapped hole — reach for
+  `k.tappedBore`, which owns the bore and the thread together and cannot land them
+  on the same face.
 
 ---
 
