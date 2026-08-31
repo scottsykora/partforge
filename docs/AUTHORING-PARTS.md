@@ -2101,6 +2101,15 @@ returns instead:
   `onDownload` sink, or downloaded directly if you don't supply one); rejects on
   build/export failure or an empty selection. Placement uses the current
   view. STEP is routed to OCCT automatically.
+- `runtime.warmExportKernel() → Promise<boolean>` — pay OCCT's cold boot *before* an
+  export needs it. Because STEP is pinned to OCCT and OCCT's ~11 MB WASM loads on its
+  first job, a part whose preview ran on Manifold pays that whole boot inside its first
+  STEP export — the user waits having just asked for a file, and a host with an export
+  timeout can trip it. Call this when an export becomes likely (your download dialog
+  opening) and the wait lands somewhere harmless instead. Best-effort: resolves `true`
+  once the kernel is up, `false` on any failure or teardown, never rejects, and is a
+  cheap no-op once warm. It costs a speculative ~11 MB download, so fire it on a real
+  signal of intent rather than on mount.
 
 Pass `onDownload({ data, filename, mime })` to `mount()` to receive the exported bytes
 yourself (e.g. to download from a different origin) instead of partforge's own DOM download.
