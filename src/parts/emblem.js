@@ -3,20 +3,32 @@
 // millimetre drawing (`plate`, `units: "mm"`, placed exactly as drawn). The two
 // vectors share one build, composed together with an ordinary boolean.
 //
-// `vectors` is declared with `new URL(..., import.meta.url)`, the same form
-// import-demo.js uses for its STL: Vite turns it into a bundled asset URL, and
-// in Node it is a file: URL that src/testing/assets.js reads off disk. A bare
-// `() => import("./assets/emblem.vector.json")` would work in Vite and fail in the CLI.
+// The two entries also demonstrate the two SOURCE forms, deliberately:
+//
+//   `emblem` is `new URL(..., import.meta.url)` — the form import-demo.js uses
+//   for its STL. Vite turns it into a bundled asset URL; in Node it is a file:
+//   URL src/testing/assets.js reads off disk. Right for ingested output, which is
+//   generated, large, and not meant to be read by hand.
+//
+//   `plate` is the file's parsed CONTENTS, imported directly. Right for artwork
+//   that is hand-authored and meant to STAY hand-editable: the numbers live in a
+//   .json a reader can open, and nothing has to fetch anything to see them —
+//   which is also what lets lint read the file before the first build has run.
+//   The `with { type: "json" }` attribute is required: Node refuses a JSON import
+//   without it, and a bare `() => import("./assets/plate.vector.json")` would
+//   work under Vite and fail in the CLI.
 //
 // The source artwork lives beside it as emblem.svg, and the .json is regenerated
 // with `node scripts/ingest-svg.mjs src/parts/assets/emblem.svg`. plate.vector.json
 // is hand-authored — no ingest step, no source SVG — and is kept legible enough
 // to serve as documentation's worked example of a multi-shape, role-composed file.
+import plate from "./assets/plate.vector.json" with { type: "json" };
+
 export default {
   meta: { title: "Emblem", units: "mm", background: 0x15181d },
   vectors: {
     emblem: new URL("./assets/emblem.vector.json", import.meta.url),
-    plate: new URL("./assets/plate.vector.json", import.meta.url),
+    plate,
   },
   parameters: [
     {

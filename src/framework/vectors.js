@@ -12,7 +12,7 @@
 // argument kernel-front.js:117-121 records for text2d.
 //
 // DOM-free and node:-free.
-import { makeAssetResolver, resolveDecl } from "./asset-resolve.js";
+import { makeAssetResolver, resolveDecl, unwrapModule } from "./asset-resolve.js";
 import { toInternalDocument } from "./geometry/vector-format.js";
 
 const cache = new Map();   // source → Promise<Uint8Array> (raw bytes)
@@ -26,9 +26,32 @@ const cache = new Map();   // source → Promise<Uint8Array> (raw bytes)
 // under the next name that declares it, with that name in the message.
 const parsed = new Map();
 
-function parseDocument(bytes, label) {
+// A source that IS the parsed contents of a partforge-vector file, rather than a
+// way to reach its bytes — the in-tree form, `import doc from "./x.vector.json"`.
+// Returns that object, or null for every other source form.
+//
+// `unwrapModule` first, so a dynamic `import("./x.vector.json")` namespace reads
+// the same as the static default import, matching the rule the resolver applies
+// to bytes and URLs.
+//
+// Deliberately STRUCTURAL, not a format check: anything object-shaped is claimed
+// here and judged afterwards by toInternalDocument, so an object that is not
+// artwork draws the validator's specific complaint (`has format "svg"`) rather
+// than the source grammar's generic one. Arrays are not claimed — an array is
+// never a file, and for it the grammar error names the real mistake.
+function asParsedFile(source) {
+  const v = unwrapModule(source);
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  if (v instanceof ArrayBuffer || ArrayBuffer.isView(v) || v instanceof URL) return null;
+  return v;
+}
+
+// `payload` is what resolveOne produced: the resolved bytes, or — for a source
+// `asParsedFile` claimed — the file's contents themselves, already parsed.
+function parseDocument(payload, label) {
+  if (!(payload instanceof ArrayBuffer)) return toInternalDocument(payload, label);
   let text;
-  try { text = new TextDecoder().decode(bytes); }
+  try { text = new TextDecoder().decode(payload); }
   catch { throw new Error(`vector2d: "${label}" could not be decoded as UTF-8 text`); }
   let doc;
   try { doc = JSON.parse(text); }
@@ -55,7 +78,9 @@ const rawBySource = new Map();
 const resolveOne = makeAssetResolver(
   cache,
   (bytes, _value, source) => { bytesBySource.set(source, bytes); return bytes; },
-  "resolveVectors: a vector source must be bytes, a URL, or a thunk returning one",
+  "resolveVectors: a vector source must be bytes, a URL, a thunk returning one, "
+    + "or the already-parsed contents of a partforge-vector file",
+  (value) => asParsedFile(value) ?? undefined,
 );
 
 export async function resolveVectors(vectorsDecl) {
@@ -73,9 +98,9 @@ export async function resolveVectors(vectorsDecl) {
   }
   const raw = await resolveDecl(vectorsDecl, resolveOne);
   const out = new Map();
-  for (const [name, bytes] of raw) {
-    let doc = parsed.get(bytes);
-    if (!doc) { doc = parseDocument(bytes, name); parsed.set(bytes, doc); }
+  for (const [name, payload] of raw) {
+    let doc = parsed.get(payload);
+    if (!doc) { doc = parseDocument(payload, name); parsed.set(payload, doc); }
     out.set(name, doc);
   }
   return out;
@@ -99,8 +124,13 @@ export async function resolveVectorDocs(vectorsDecl) {
   const out = new Map();
   await Promise.all(Object.entries(decl).map(async ([name, source]) => {
     try {
-      const bytes = await resolveOne(source);
-      const doc = JSON.parse(new TextDecoder().decode(bytes));
+      const payload = await resolveOne(source);
+      // An adopted source resolves to the raw JSON itself — there is nothing to
+      // decode, and running it through TextDecoder would map a perfectly good
+      // file to null.
+      const doc = payload instanceof ArrayBuffer
+        ? JSON.parse(new TextDecoder().decode(payload))
+        : payload;
       out.set(name, doc && typeof doc === "object" ? doc : null);
     } catch {
       out.set(name, null);
@@ -139,6 +169,11 @@ export function cachedVectorDocs(vectorsDecl) {
   for (const entry of entries) {
     try {
       const [name, source] = entry;
+      // An already-parsed source has nothing to resolve, so unlike bytes and URLs
+      // it is readable on the very first lint — before any build has run. That is
+      // the state a hosted editor spends most of its time in.
+      const inline = asParsedFile(source);
+      if (inline) { out.set(name, inline); continue; }
       if (!bytesBySource.has(source)) continue;        // not resolved yet — stay silent
       if (!rawBySource.has(source)) {
         let doc = null;
