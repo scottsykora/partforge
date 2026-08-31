@@ -9,6 +9,45 @@ on:
 permissions:
   contents: read
 jobs:
+  # A merge whose version is already on npm publishes NOTHING. publish.yml's guard
+  # is npm itself ("is this version published?"), so it correctly does nothing and
+  # the work silently never ships — invisible to every other check. Git will even
+  # merge two branches that made the IDENTICAL bump without reporting a conflict,
+  # and GitHub's "Update branch" button cannot know a version needs raising.
+  #
+  # Only enforced when the PR changes something that actually SHIPS. package.json's
+  # `files` field publishes src, bin and types; a PR touching only docs, tests or
+  # workflows has nothing to release and is exempt — including this job's own PR.
+  version:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0   # need the base branch to diff against
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+      - name: version is unpublished when shippable files change
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --name-only "$BASE_SHA"...HEAD | grep -qE '^(src|bin|types)/'; then
+            local=$(node -p "require('./package.json').version")
+            # `npm view <pkg>@<version> version` prints the version when it exists and
+            # nothing when it does not; it exits non-zero for a never-published
+            # package, so tolerate that rather than treating it as "published".
+            published=$(npm view "partforge@$local" version 2>/dev/null || true)
+            if [ -n "$published" ]; then
+              echo "::error file=package.json::Version $local is already published to npm."
+              echo "::error file=package.json::This PR changes shippable code, so bump it — otherwise the merge lands and never publishes."
+              exit 1
+            fi
+            echo "version $local is unpublished — this will publish on merge"
+          else
+            echo "no shippable files changed (src/, bin/, types/) — no release needed"
+          fi
+
   test:
     runs-on: ubuntu-latest
     steps:
