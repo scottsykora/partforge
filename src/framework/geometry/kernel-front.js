@@ -79,18 +79,34 @@ export function finishKernel(k) {
   k.tappedBore ??= ({ d, pitch, turns, depth, crest, lefthand = false, rootSink = 0.2, overshoot = 0.2 }) => {
     const rootR = d / 2;
     const majorR = rootR + (crest ?? 0.15 * pitch);
-    const innerR = Math.max(0, rootR - rootSink);
     // A printable trapezoidal tooth: flat at root and crest so neither knife-edges
     // at FDM resolution. Same shape a hand-rolled coarse thread converges on.
     const rootFlat = pitch / 4;
     const crestFlat = pitch / 8;
     const rise = (pitch - rootFlat - crestFlat) / 2;
+    // Sink the root by extending the flanks COLINEARLY into the bore, not by
+    // moving the root points straight inward. A radially-moved root changes the
+    // flank slope, which fattens the tooth OUTSIDE the bore — measured at 2% of
+    // tool volume, and it lands exactly where a mating printed thread needs its
+    // clearance. A colinear extension is the same swept surface carried further
+    // down, so everything at r >= rootR is byte-identical to the hand-assembled
+    // tangent construction and the union with the bore clips the rest — the
+    // identity test in test/tapped-bore.test.js holds this to mesh precision.
+    // The extension steals axial root-flat width (e per side), so the sink is
+    // clamped where a full rootSink would consume it; the clamped overlap still
+    // clears the coincidence band by an order of magnitude.
+    const slope = rise / (majorR - rootR); // axial travel per unit of radial travel, along a flank
+    const sink = Math.min(rootSink, rootR, (0.45 * rootFlat) / slope);
+    const innerR = rootR - sink;
+    const e = slope * sink;
+    // Shifted down by e so the thread still spans [0, pitch*turns] — the bore's
+    // overshoot math below must not depend on the flank geometry.
     const thread = k.screwSweep({
       profile: [
         [innerR, 0],
-        [innerR, rootFlat],
-        [majorR, rootFlat + rise],
-        [majorR, rootFlat + rise + crestFlat],
+        [innerR, rootFlat - 2 * e],
+        [majorR, rootFlat + rise - e],
+        [majorR, rootFlat + rise + crestFlat - e],
         [innerR, pitch],
       ],
       pitch, turns, lefthand,

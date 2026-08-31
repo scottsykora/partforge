@@ -60,6 +60,38 @@ test("a bigger crest makes a deeper thread", () => {
   expect(triangles(shallow.cut(gauge()))).toBeGreaterThan(0);
 });
 
+test("sinking the root changes nothing: identical to the tangent construction", () => {
+  // THE correctness claim, verified rather than argued. The hand-assembled
+  // tangent form — bore of diameter d plus a thread whose root radius is d/2 —
+  // is what an author means; OCCT can never build it, but Manifold can, so the
+  // comparison runs here. The sunk root only adds material at radius < d/2,
+  // strictly inside the bore, so tool and cut result must agree to mesh
+  // precision. (The two roots tessellate differently — the tangent root rides
+  // the helix discretization, the sunk one vanishes into the bore's polygonal
+  // cylinder — hence a tolerance rather than exact equality.)
+  const o = { d: 6.5, pitch: 3, turns: 4, depth: 14 };
+  const rootR = o.d / 2, majorR = rootR + 0.15 * o.pitch;
+  const rootFlat = o.pitch / 4, crestFlat = o.pitch / 8;
+  const rise = (o.pitch - rootFlat - crestFlat) / 2;
+  const tangent = k.cylinder({ d: o.d, h: o.depth + 0.4 }).translate([0, 0, -0.2]).union(
+    k.screwSweep({
+      profile: [
+        [rootR, 0], [rootR, rootFlat],
+        [majorR, rootFlat + rise], [majorR, rootFlat + rise + crestFlat],
+        [rootR, o.pitch],
+      ],
+      pitch: o.pitch, turns: o.turns,
+    }),
+  );
+  const sunk = k.tappedBore(o);
+  expect(Math.abs(sunk.volume() - tangent.volume()) / tangent.volume()).toBeLessThan(1e-3);
+  // And through a real cut — the op's actual use.
+  const stock = () => k.cylinder({ d: o.d * 3, h: o.depth + 4 }).translate([0, 0, -2]);
+  const a = stock().cut(tangent).volume();
+  const b = stock().cut(sunk).volume();
+  expect(Math.abs(a - b) / a).toBeLessThan(1e-3);
+});
+
 test("the options are range-checked", () => {
   expect(() => k.tappedBore({ ...opts, pitch: 0 })).toThrow(/pitch must be > 0/);
   expect(() => k.tappedBore({ ...opts, turns: 0 })).toThrow(/turns must be > 0/);
@@ -69,4 +101,7 @@ test("the options are range-checked", () => {
   expect(() => k.tappedBore({ ...opts, rootSink: 0 })).toThrow(/rootSink must be > 0/);
   expect(() => k.tappedBore({ ...opts, rootSink: 5 })).toThrow(/smaller than the bore radius/);
   expect(() => k.tappedBore({ ...opts, overshoot: 0 })).toThrow(/overshoot must be > 0/);
+  // depth 14 covers pitch 3 x turns 4 = 12; anything shorter would leave the
+  // thread poking past the bore — a tap deeper than its own hole.
+  expect(() => k.tappedBore({ ...opts, depth: 11 })).toThrow(/must cover the thread/);
 });

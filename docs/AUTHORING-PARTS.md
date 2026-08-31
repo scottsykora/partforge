@@ -1239,7 +1239,7 @@ Both cut tools touch along an exactly coincident cylinder without overlapping.
 Manifold shrugs; OCCT has to resolve a tangential contact between a cylinder and
 the thread root's swept spline surface, along a helix, and the intersector
 degenerates — on one real 6-turn cap the export did not finish in **fifteen
-minutes**, while `tappedBore` builds the same hole in about ten seconds
+minutes**, while `tappedBore` builds the same hole in about fifteen seconds
 ([boolean-coincident-faces-hang](ERROR-PATTERNS.md#boolean-coincident-faces-hang)).
 
 `k.tappedBore({ d, pitch, turns, depth?, crest?, lefthand?, rootSink?, overshoot? })`

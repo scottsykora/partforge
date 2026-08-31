@@ -288,6 +288,12 @@ export const KERNEL_OP_SPECS = {
       if (o.rootSink != null && o.rootSink >= o.d / 2)
         throw new Error("tappedBore: rootSink must be smaller than the bore radius");
       if (o.overshoot != null && !(o.overshoot > 0)) throw new Error("tappedBore: overshoot must be > 0");
+      // The thread is always pitch*turns long; a shorter bore would leave it
+      // poking out past the bore's far end — a tap deeper than its own hole,
+      // and the overhang guarantee above quietly broken at that end.
+      if (o.depth != null && o.depth < o.pitch * o.turns)
+        throw new Error(
+          `tappedBore: depth (${o.depth}) must cover the thread (pitch*turns = ${o.pitch * o.turns}) — lower turns to Math.floor(depth / pitch), or raise depth`);
     },
   },
   screwSweep: {
