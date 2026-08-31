@@ -272,6 +272,30 @@ export const KERNEL_OP_SPECS = {
   boredCylinder:  { toArgs: passThrough("boredCylinder", ["od", "h", "bore"], ["od", "h", "bore"]) },
   helixSweptTube: { toArgs: passThrough("helixSweptTube",
     ["pathR", "profileR", "pitch", "turns", "z0", "lefthand"], ["pathR", "profileR", "pitch", "turns"]) },
+  tappedBore: {
+    toArgs: passThrough("tappedBore",
+      ["d", "pitch", "turns", "depth", "crest", "lefthand", "rootSink", "overshoot"], ["d", "pitch", "turns"]),
+    check: (o) => {
+      if (!(o.d > 0)) throw new Error("tappedBore: d must be > 0");
+      if (!(o.pitch > 0)) throw new Error("tappedBore: pitch must be > 0");
+      if (!(o.turns > 0)) throw new Error("tappedBore: turns must be > 0");
+      if (o.depth != null && !(o.depth > 0)) throw new Error("tappedBore: depth must be > 0");
+      if (o.crest != null && !(o.crest > 0)) throw new Error("tappedBore: crest must be > 0");
+      // The sink is what keeps the bore and the thread root off the same
+      // cylinder; at zero they are tangent again and OCCT degenerates, which is
+      // the entire failure this op exists to prevent.
+      if (o.rootSink != null && !(o.rootSink > 0)) throw new Error("tappedBore: rootSink must be > 0");
+      if (o.rootSink != null && o.rootSink >= o.d / 2)
+        throw new Error("tappedBore: rootSink must be smaller than the bore radius");
+      if (o.overshoot != null && !(o.overshoot > 0)) throw new Error("tappedBore: overshoot must be > 0");
+      // The thread is always pitch*turns long; a shorter bore would leave it
+      // poking out past the bore's far end — a tap deeper than its own hole,
+      // and the overhang guarantee above quietly broken at that end.
+      if (o.depth != null && o.depth < o.pitch * o.turns)
+        throw new Error(
+          `tappedBore: depth (${o.depth}) must cover the thread (pitch*turns = ${o.pitch * o.turns}) — lower turns to Math.floor(depth / pitch), or raise depth`);
+    },
+  },
   screwSweep: {
     toArgs: passThrough("screwSweep", ["profile", "pitch", "turns", "lefthand"], ["profile", "pitch", "turns"]),
     check: (o) => {
