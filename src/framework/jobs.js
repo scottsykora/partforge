@@ -11,6 +11,7 @@ import { imageControlAllows, imageSourceAllowed, isNoImageSource } from "./image
 import { imagesFor, ensureImages } from "./images.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
+import { vectorControlAllows, vectorSourceAllowed, isNoVectorSource } from "./vector-source.js";
 import { vectorsFor, ensureVectors } from "./vectors.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
 
@@ -179,6 +180,29 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         const v = params[key];
         if (isNoImageSource(v) || imageSourceAllowed(v, allow)) continue;
         const message = `image source for "${key}" is not allowed — using the default`;
+        onProgress(message);
+        jobWarnings.push({ part: null, message });
+        params[key] = part.defaults?.[key];
+      }
+      // Same shape again for `type: "vector"` controls — a param bound to one
+      // is user input, and on a shared link a STRING value is arbitrary
+      // attacker text that `vectors: (p) => …` would turn into a fetch URL.
+      // Unlike the two blocks above, a non-string value here does NOT bypass
+      // the check on a "can't survive a link" plausibility argument — see
+      // vector-source.js's header: a parsed vector document is plain JSON and
+      // survives a link just fine. It's permitted for the narrower, still-
+      // sufficient structural reason that vectorSourceAllowed applies:
+      // asset-resolve.js only ever calls `fetch` for a string/URL source, so
+      // an object (or bytes) can never become the SSRF-style request `allow`
+      // exists to gate. Runs in this same sanitize hook, not after
+      // resolveParams returns, for the reason both comments above state:
+      // rewriting p[key] afterwards would leave derive() — and therefore `d`
+      // and the geometry — holding the refused value while build() saw the
+      // default.
+      for (const [key, allow] of vectorControlAllows(part)) {
+        const v = params[key];
+        if (isNoVectorSource(v) || vectorSourceAllowed(v, allow)) continue;
+        const message = `vector source for "${key}" is not allowed — using the default`;
         onProgress(message);
         jobWarnings.push({ part: null, message });
         params[key] = part.defaults?.[key];

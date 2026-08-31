@@ -2,11 +2,18 @@
 // `type: "font"` (Tasks 6, 8, 9) — NOT itself a control. It owns no param key
 // and draws no label/row of its own; it turns a dropped, picked or pasted
 // file into either a host-stored source string or the converted artifact, and
-// hands that to `onSource`. Kind-agnostic: the registry
-// (`../../ingest/registry.js`) already knows what each kind accepts and how
-// to convert it, so nothing here special-cases a media type by name — only
-// the argument shape a converter wants and what "no host hook" delivers (see
-// `convertedArtifact`) is kind-specific.
+// hands that to `onSource`. Kind-agnostic for classification and upload: the
+// registry (`../../ingest/registry.js`) already knows what each kind accepts
+// and how to convert it, and `classify`/`convertFor`/the `onAssetUpload`
+// branch never look past `kind` as an opaque string.
+//
+// ONE named exception, in exactly two places, both explained where they
+// occur: `convertedArtifact` and the "no host hook" branch of `handle()`
+// both check `kind === "vector"` by name, because a vector's "no host hook"
+// delivery is the PARSED document object, not bytes like every other kind
+// (task-9 addendum, Ruling D) — that asymmetry has to live somewhere, and
+// singling it out here is more honest than pretending every kind still ends
+// up looking the same.
 //
 // `mountDrop` (bottom of this file) is the widget-facing half: wiring
 // `makeFileDrop`'s output to a control's own `params[node.key]` and error

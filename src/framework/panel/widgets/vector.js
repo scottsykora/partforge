@@ -17,6 +17,7 @@
 // runs inside `makeFileDrop` -> the registry's "vector" convert thunk,
 // never here.
 import { attachInfo } from "../info.js";
+import { VECTOR_ALLOW_DEFAULT, vectorSourceAllowed } from "../../vector-source.js";
 import { mountDrop } from "./file-drop.js";
 
 function el(tag, className, text) {
@@ -34,6 +35,7 @@ const isBytes = (v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v);
 const isOpaque = (v) => isBytes(v) || (v != null && typeof v === "object");
 
 export function makeVector(node, params, { onChange, onCommit, info, onAssetUpload } = {}) {
+  const allow = Array.isArray(node.allow) && node.allow.length ? node.allow : VECTOR_ALLOW_DEFAULT;
   const wrap = el("div", "slider");
   const row = el("div", "row");
   const label = el("label", "", node.label ?? node.key);
@@ -54,8 +56,11 @@ export function makeVector(node, params, { onChange, onCommit, info, onAssetUplo
     // replacement URL over it.
     field.value = isOpaque(v) ? "" : String(v ?? "");
     field.placeholder = isOpaque(v) ? "Uploaded artwork" : "";
+    field.classList.remove("warn");
   };
   field.addEventListener("change", () => {
+    if (!vectorSourceAllowed(field.value, allow)) { field.classList.add("warn"); return; }
+    field.classList.remove("warn");
     params[node.key] = field.value;
     onChange?.();
     onCommit?.();
