@@ -1,0 +1,110 @@
+{
+  "format": "partforge-vector",
+  "version": 1,
+  "units": "artwork",
+  "note": "Filled 2-D outlines for k.vector2d. `units` is \"mm\" (coordinates are millimetres, placed as authored) or \"artwork\" (no physical meaning; a size is required at every call site). `shapes` maps a name to a list of filled regions; each region's `outer` is its boundary and `holes` are subtracted from it. A contour is a `kind`: \"path\", \"circle\", \"rect\", or \"polygon\". Path segments run head-to-tail from `start`, and the contour closes implicitly from the last `to` back to `start`. y points UP. See docs/VECTOR-FORMAT.md.",
+  "source": "emblem.svg",
+  "bbox": {
+    "minX": 4,
+    "minY": -44,
+    "maxX": 44,
+    "maxY": -14
+  },
+  "shapes": {
+    "artwork": [
+      {
+        "outer": {
+          "kind": "path",
+          "start": [
+            14,
+            -24
+          ],
+          "segments": [
+            {
+              "kind": "arc",
+              "to": [
+                31.071068,
+                -31.071068
+              ],
+              "through": [
+                20.173166,
+                -33.238795
+              ]
+            },
+            {
+              "kind": "arc",
+              "to": [
+                24,
+                -14
+              ],
+              "through": [
+                33.238795,
+                -20.173166
+              ]
+            },
+            {
+              "kind": "arc",
+              "to": [
+                14,
+                -24
+              ],
+              "through": [
+                16.928932,
+                -16.928932
+              ]
+            }
+          ]
+        },
+        "holes": []
+      },
+      {
+        "outer": {
+          "kind": "path",
+          "start": [
+            6,
+            -40
+          ],
+          "segments": [
+            {
+              "kind": "arc",
+              "to": [
+                6,
+                -44
+              ],
+              "through": [
+                4,
+                -42
+              ]
+            },
+            {
+              "kind": "line",
+              "to": [
+                42,
+                -44
+              ]
+            },
+            {
+              "kind": "arc",
+              "to": [
+                42,
+                -40
+              ],
+              "through": [
+                44,
+                -42
+              ]
+            },
+            {
+              "kind": "line",
+              "to": [
+                6,
+                -40
+              ]
+            }
+          ]
+        },
+        "holes": []
+      }
+    ]
+  }
+}

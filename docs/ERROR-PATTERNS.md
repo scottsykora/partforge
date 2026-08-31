@@ -632,6 +632,103 @@ between the Manifold preview and the OCCT STEP export.
 - **Symptom:** `STEP import tessellation failed to satisfy the import — see console` in the browser (a build's status/error), or `step tessellation thread exited <n>` from a failed Node CLI/test run.
 - **Cause:** A STEP import used on the Manifold backend needs OCCT-tessellated triangles first (the "crossover" described in [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Importing geometry (STEP/STL/3MF)"). This hop is meant to self-heal — the browser worker requests a `tessellate-imports` job from the OCCT worker, Node hops through a `node:worker_threads` isolate (the two WASM kernels may never share a process) — but it surfaces here when the tessellation either delivered a mesh whose digest didn't match what Manifold now expects (a genuinely broken state, not a retry loop) or the worker/thread exited without completing.
 - **Fix:** This should be rare and self-resolving on the next build; if it persists, confirm the STEP file parses under OCCT on its own (e.g. `meta.backend: "occt"` temporarily, or `npx partforge measure` against an OCCT-routed copy of the part) to rule out a malformed STEP file, and check the console/thread output for the underlying tessellation error being wrapped.
+
+## vector-unknown-name
+
+- **Symptom:** `vector2d: unknown vector "` followed by the name and — declare it in the part's `vectors` field — thrown from a build calling `k.vector2d(name)`.
+- **Cause:** `k.vector2d(name)` was called with a name that isn't a key in the part's `vectors` field — a typo, or the declaration was never added. Same failure shape as `text2d`'s unknown-font error and `k.import`'s unknown-name error.
+- **Fix:** Add the name to `vectors`, or fix the typo. `npx partforge lint <part>` catches this statically, in microseconds, before any kernel boots (`vector-unknown-name`). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" and § "Linting" (Rule catalog → Vector geometry).
+
+## vector-size-required
+
+- **Symptom:** `a size is required for artwork units` — with the declared `vectors` name in front of it (`vector2d: "logo" a size is required …`) — pass one of `{ width }`, `{ height }`, or `{ fit }` in millimetres — thrown from a build calling `k.vector2d`.
+- **Cause:** The named document is `units: "artwork"` and the call passed none of `width`, `height`, or `fit`. Artwork coordinates carry no physical meaning (an SVG `viewBox` unit is not a length), so there is no safe default to fall back on — a deliberate asymmetry with `k.text2d`, whose `size` can default because a cap height is a real measurement. A `units: "mm"` document never raises this: its coordinates already are millimetres, so it places at scale 1 with no size option at all.
+- **Fix:** Pass exactly one of `width`/`height`/`fit`, in millimetres — or, if the file's coordinates really are millimetres, re-author it with `"units": "mm"` and drop the size option entirely (do not do both: see vector-mm-shapes-misscaled below). `npx partforge lint <part>` catches an options-literal call statically (`vector-size-missing`) before any kernel boots. The in-app lint job catches it too, once the vector file has been fetched — it reads only already-resolved documents, so lint stays instant and offline, and this rule is silent until the first build has loaded the artwork. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" and [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Units".
+
+## vector-size-options-conflict
+
+- **Symptom:** `pass only one of width, height, or fit` — led by the declared `vectors` name (`vector2d: "logo" pass only one of …`) — followed by the ones that were passed — e.g. `— got width, fit` — thrown from a build calling `k.vector2d`.
+- **Cause:** Two or more size options in one call. Scaling is always uniform, so a second option would either be ignored or contradict the first; rather than silently preferring one, the op refuses. (Earlier revisions silently preferred `width`, then `height`, then `fit`.)
+- **Fix:** Keep the one you meant. `fit` sizes the longer extent of the artwork's tight bounding box, `width`/`height` the named axis; all three scale uniformly, so one is always enough.
+
+## vector-align-invalid
+
+- **Symptom:** `align must be ` followed by the three legal values and the one that was passed — e.g. `vector2d: "logo" align must be "left", "center", or "right" — got "centre"`, or the vertical twin `vector2d: "logo" valign must be "bottom", "middle", or "top" — got "centre"`. Thrown from a build calling `k.vector2d`.
+- **Cause:** A typo in `align` or `valign`. The British spelling `"centre"` is far and away the most common; so is reaching for `"middle"` on the horizontal axis or `"center"` on the vertical one, which are each the *other* axis's word. `k.vector2d` refuses rather than falling through to its default, because every value that fails all three comparisons would otherwise silently land the artwork where the caller never asked for it. (The Symptom literal is deliberately `align must be `, without a leading word: `valign must be …` contains it, so one entry routes both messages. Do not "fix" it to `align must be "left"`.)
+- **Fix:** Use one of the values the message lists — horizontal is `"left"`/`"center"`/`"right"`, vertical is `"bottom"`/`"middle"`/`"top"`. Omit the option entirely to get the default, which differs by units: an `"artwork"` document re-centres (`center`/`middle`) because its coordinates mean nothing, and an `"mm"` document does not translate at all, because its coordinates already say where the drawing sits. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Units".
+
+## vector-size-not-positive
+
+- **Symptom:** `must be a positive number of millimetres`, led by the option's own name and the declared `vectors` key — e.g. `vector2d: "logo" width must be a positive number of millimetres`. Thrown from a build calling `k.vector2d`.
+- **Cause:** The `width`, `height`, or `fit` option was present but not a finite number greater than zero — `0`, a negative, `NaN`, `Infinity`, or a string. The usual source is arithmetic on a parameter that can reach zero (a slider whose `min` is `0`, or a subtraction that can go negative), not a literal.
+- **Fix:** Clamp or floor the expression that produces the size, or give the driving control a `min` above zero. Note that the option is only read when it is non-`null`: to mean "no size", leave it out (or pass `null`/`undefined`) rather than passing `0` — see vector-size-required for what happens then, which depends on the document's `units`.
+
+## vector-artwork-no-extent
+
+- **Symptom:** `to size against`, led by the axis — e.g. `vector2d: "logo" artwork has no width to size against`, or `… has no extent to size against` for a `fit` call. Thrown from a build calling `k.vector2d`.
+- **Cause:** The geometry being sized is degenerate on the requested axis: its tight bounding box has (near) zero width, height, or overall extent, so there is nothing for the scale factor to divide by. Usually a document whose contours are collinear or coincident, or a `{ shape }` call naming a shape that is a single flat line. It is not a units problem — an `"mm"` document with a size option hits it just as readily.
+- **Fix:** Size against the axis the artwork actually has (`height` instead of `width`, or `fit`, which uses the longer extent), or fix the geometry — a contour that measures zero on an axis is nearly always a drawing mistake rather than an intentional one. `npx partforge measure <part>` prints the bbox, which names the collapsed axis immediately.
+
+## vector-invalid-document
+
+- **Symptom:** `vector2d: "` followed by the declared `vectors` name and a validation complaint — a bad `format` or `version`, a contour with no `kind` or an unknown one, a malformed `"path"` contour or segment (missing `start`, too few segments, an `arc` with no `through`, a `cubic` missing `c1`/`c2`, a non-numeric coordinate), a primitive with a bad `center`/`r`/`width`/`height`, a shape that is neither a region array nor a `{ role, regions }` object, an unknown `role`, a `bbox` that disagrees with the geometry, or (a different message, same `vector2d: "<name>"` lead) `vector2d: "<name>" is not valid JSON — <parse error>` — thrown while resolving a part's `vectors`, before `build` even runs.
+- **Cause:** The stored document isn't a well-formed `partforge-vector` file. The single most common case for the "is not valid JSON" variant: `vectors` points at the raw `.svg` file instead of an ingested `.vector.json` — an SVG document is not JSON at all, so it fails to parse before validation ever gets a chance to name a more specific problem.
+- **Fix:** If the message says "is not valid JSON," check the source points at the ingested `<name>.vector.json`, not the original `.svg` — re-ingest with `partforge/ingest` (or `node scripts/ingest-svg.mjs <file.svg>` in this repo) if you don't have it yet. Otherwise the message names the shape, the 1-indexed region, the role (`outer` / `hole n`), and where applicable the 1-indexed segment, so the fix is a single edit. Several specific cases have their own entries below (vector-units-missing, vector-stale-regions-array, vector-rect-radius-too-large). See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) for the full schema and what each field means.
+
+## vector-units-missing
+
+- **Symptom:** `file has no valid ` followed by `units` and the value found — e.g. `vector2d: "logo" file has no valid \`units\` (undefined) — \`units\` must be "mm" … or "artwork" …` — thrown while resolving a part's `vectors`, before `build` runs.
+- **Cause:** The document has no `units` field, or one that is neither `"mm"` nor `"artwork"`. `units` is required and has no default: millimetre coordinates place as authored, artwork coordinates have no physical meaning and need a size at every call site, and guessing between the two would silently produce wrong-scaled geometry. A file hitting this was either hand-authored without the field or written by a converter that predates it.
+- **Fix:** Add `"units": "mm"` if the coordinates are millimetres and should place exactly where they are drawn, or `"units": "artwork"` if they came from an SVG (or anything else whose units are not lengths) and should be sized per call site. Ingest always writes `"artwork"`; re-ingesting the source `.svg` fixes a generated file. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Units".
+
+## vector-stale-regions-array
+
+- **Symptom:** `has a "regions" array, which this build does not read` — followed by `regions now live under a named shape in "shapes"` — thrown while resolving a part's `vectors`.
+- **Cause:** The document uses the old flat top-level `regions` array instead of the named-`shapes` envelope. Either a hand-written draft copied from an obsolete example, or a `.vector.json` generated by an older ingest.
+- **Fix:** Wrap the regions in a named shape: `{ "shapes": { "artwork": [ …the regions… ] } }`. Nothing else about a region changes — `outer`/`holes` are unchanged — but every contour also needs its `kind` (`"path"` for the explicit `start`/`segments` form). Re-ingesting the source `.svg` produces the current envelope directly. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Shapes and roles".
+
+## vector-rect-radius-too-large
+
+- **Symptom:** `has "kind": "rect" with radius` followed by the value, the maximum, and `a corner radius cannot be more than half the shorter side` — e.g. `vector2d: "plate" shape "body" region 1 outer has "kind": "rect" with radius 3.5 exceeds the maximum 3`.
+- **Cause:** A `"rect"` contour's corner `radius` is greater than `min(width, height) / 2`, where the four corner arcs would overlap. The loader refuses rather than clamping: a format loader has no warning channel, and a radius past half the shorter side is a typo, not a request.
+- **Fix:** Reduce `radius` to at most half the shorter side, or enlarge `width`/`height`. Exactly `min(width, height) / 2` is legal and is the fully-rounded case — a square at that radius expands to four arcs and no straight edges (the degenerate zero-length lines are omitted). See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Contour kinds".
+
+## vector-unknown-shape
+
+- **Symptom:** `has no shape ` followed by the requested name and the list the file does declare — e.g. `vector2d: "plate" has no shape "bodyy" — it declares: body, holes, keyway` — thrown from a build calling `k.vector2d(name, { shape })`.
+- **Cause:** The `shape` option names a key the document's `shapes` object doesn't have — a typo, or a shape that was renamed in the JSON and not in `build`.
+- **Fix:** Use one of the names the error lists, or drop `shape` entirely to get the file's own role-composed result (every `"add"` shape unioned, minus every `"subtract"` shape). `npx partforge lint <part>` catches this statically (`vector-unknown-shape`), and so does the in-app lint job once the file has been fetched — the in-app job reads only already-resolved documents, so the rule is silent until the first build has loaded the artwork. (A caller embedding `lintPart` directly must pass `vectorDocs` itself, or this rule stays silent.) See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry".
+
+## vector-mm-shapes-misscaled
+
+- **Symptom:** No thrown error — a `units: "mm"` document's shapes come out wrong *relative to each other*, when they are fetched one at a time with `{ shape }` and composed in `build`. Holes land off-centre or off the part, a subtracted keyway misses the body, features drawn concentric in the JSON are not concentric in the solid. The overall **bounding box is exactly what you asked for and the volume barely moves**, so the giveaway is a hole or feature count rather than a size. Measured on `src/parts/assets/plate.vector.json`: composing its `body`, `holes`, and `keyway` shapes with `{ width: 40 }` on each call yields the same bbox and a volume within 0.1% of correct, but **1 through-hole where the drawing has 3**.
+- **Cause:** A size option (`width`/`height`/`fit`) scales the geometry being placed against **that geometry's own** tight bounding box. For a single shape that is right — `{ shape }` is a request for that shape, and nothing else is in the frame. But two `{ shape }` calls on one document get two *different* scale factors whenever the shapes have different extents, which destroys the shared coordinate frame `units: "mm"` exists to provide. Each call is individually well-formed; they are just no longer registered with each other, so nothing throws.
+- **Fix:** Don't size a millimetre drawing per shape. In order of preference: let the file compose itself — `k.vector2d(name)` with no `shape` and no size returns every `"add"` shape minus every `"subtract"` one, placed as authored; or, if you need per-shape composition, drop the size options and let the millimetre coordinates place as drawn; or, if the drawing genuinely needs rescaling, compose it first and scale the finished `Shape2D` (or the extruded solid) once, so one transform applies to every shape together. `src/parts/emblem.js`'s `plate` build carries a comment on exactly this. Note that a size on the **composed** call is safe — the whole document is measured and placed as one — and that `units: "artwork"` documents, which have a single shape, are unaffected.
+
+## svg-stroke-collapsed
+
+- **Symptom:** `svg: stroke outline collapsed — stroke-width is too large for this shape` thrown during ingest (`partforge/ingest`'s `ingestSvg`).
+- **Cause:** A stroked element's `stroke-width` is large enough, relative to the shape it strokes, that outlining the stroke (offsetting the path by `±w/2` and joining the results — see [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Converting an SVG to this format by hand") produces no valid ring — the offset consumed the entire shape.
+- **Fix:** Reduce `stroke-width` on the offending element, or thicken the path it strokes, in the source SVG, then re-ingest. This is a property of the artwork, not something `k.vector2d` or the part can work around at build time — ingest has already discarded the original stroke by the time a build runs.
+
+## svg-no-geometry
+
+- **Symptom:** `svg: no painted geometry — every element is fill="none" with no stroke, hidden, or empty` thrown during ingest.
+- **Cause:** Every element in the SVG document either has no `fill` and no (`stroke` + positive `stroke-width`), or the document has no paintable elements at all (e.g. only `<defs>`, only groups with nothing visible, or the whole thing is empty). `partforge/ingest` skips unpainted elements silently — this error fires only when *nothing* in the whole document painted anything.
+- **Fix:** Confirm the SVG actually has visible fill/stroke — a common cause is authoring artwork entirely inside `<defs>`/`<symbol>` with no `<use>` anywhere that references it, or a `<use>` whose `href`/`xlink:href` targets an `id` that doesn't exist in the document, or an accidental `fill="none"` with no `stroke` on every element. (Both `href` and the legacy `xlink:href` spelling are resolved — this is not a spelling issue.) Fix the source SVG and re-ingest.
+
+## svg-painting-order
+
+- **Symptom:** No thrown error — a shape that looks like it has a hole in an SVG editor (or in a browser rendering the SVG directly) comes out **solid** through `k.vector2d`.
+- **Cause:** The artwork fakes the hole by painting a background-colored shape *on top of* another shape, rather than actually cutting a hole (one path, two subpaths, opposite winding or `fill-rule="evenodd"`). Painting order is not modelled by this format at all — every ingested region adds material unconditionally, and colour is read only as present-or-absent, never compared between elements, so "painted over" and "not there" are indistinguishable once ingest has run. See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) § "Painting order is not modelled".
+- **Fix:** Either make it a real hole in the source artwork (one `<path>` element with two subpaths and `fill-rule="evenodd"`, or two subpaths wound oppositely under `nonzero`) and re-ingest; or move the "hole" geometry into its own shape in the JSON with `"role": "subtract"`, so the document composes correctly on its own (an edit that a re-ingest overwrites); or leave the artwork as-is and subtract the "hole" shape in the part with `.cut()` instead of relying on ingest to infer it from paint order.
+
+## svg-overlapping-subpaths
+
+- **Symptom:** No thrown error — an ingested artwork is missing area where shapes overlap, so it comes out slightly too small or a detail is hollow that should be solid. `doc.bbox` is correct; only the filled area is short.
+- **Cause:** Ingest calls `resolveCurveFill` (`src/framework/geometry/curve-fill.js`) per-*element*, to resolve one `<path>`'s own subpaths under its fill rule. Two of the three routes through it are exact: even-odd XORs the subpaths, and nonzero over subpaths that all wind the same way takes their union. The third — nonzero over subpaths of *mixed* winding — resolves nesting with paper.js rather than evaluating winding numbers, and diverges in one case: where a subpath wound *against* the others covers area that two or more same-wound subpaths already cover, true nonzero keeps it (winding 2 − 1 = 1) and this drops it. Closing that needs a real planar arrangement, not a fold of pairwise booleans. Pinned by `test/curve-fill.test.js`'s "KNOWN DIVERGENCE" test, and bounded by the same file's glyph-by-glyph check against Manifold's own NonZero fill across the bundled charset.
+- **Fix:** Give the subtractive subpath its own `<path>` element (with its own `fill`) in the source SVG and re-ingest — separate elements are combined by `booleanRegions`, a real union, which does not go through this route. Or set `fill-rule="evenodd"` on the element if that expresses the same intent, since even-odd is exact. Note this is *not* the older, much broader defect where any two overlapping same-winding subpaths lost their union outright and even-odd threw "resolved hole has no containing outer"; both of those are fixed.
+
 ## mesh-fillet-unsupported-edge
 
 - **Symptom:** `fillet: ` or `chamfer: ` followed by an edge-class reason — e.g. `edge curve is not circular`, `flank angle varies along the arc`, `selector matched no sharp edges`, `~180° knife edge` — thrown as a `KernelCapabilityError`, or a preview sub-part silently rebuilding on the slow OCCT worker.

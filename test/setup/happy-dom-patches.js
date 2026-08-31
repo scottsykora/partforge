@@ -41,3 +41,39 @@ if (typeof Element !== "undefined") {
   Element.prototype.setPointerCapture ??= function () {};
   Element.prototype.releasePointerCapture ??= function () {};
 }
+
+// paper-core creates a canvas and asks for a 2D context at MODULE LOAD time.
+// happy-dom HAS a getContext (unlike the "absent" case this comment first
+// assumed) but it always returns null — there is no canvas backend — so the
+// call throws before any test importing paper runs its first line. Geometry
+// never touches the raster context — paper only wants it to construct a
+// CanvasView — so a no-op stub is enough, and it keeps ingest tests on a
+// plain static import. Because happy-dom's getContext already exists (it's
+// the return value, not the method, that's missing), the fix overwrites it
+// unconditionally rather than guarding on its absence. Real browsers have a
+// real context and never reach this.
+//
+// This overwrite is GLOBAL — every HTMLCanvasElement in every happy-dom test
+// gets a truthy ctx now, not just paper's. Several framework modules
+// (cube-canvas.js, ink-canvas.js) previously relied on happy-dom's null
+// return to take an early "nothing to draw here" exit; with a truthy stub
+// they instead run their real draw path against it. So the stub must cover
+// every 2D method any of those callers actually invoke, not just what paper
+// needs — an incomplete stub traded "getContext throws" for "ctx.fillText is
+// not a function" deeper in cube-canvas.js/dim3-scene.js. All of it is still
+// a no-op: nothing here ever asserts on pixels.
+if (typeof HTMLCanvasElement !== "undefined") {
+  HTMLCanvasElement.prototype.getContext = () => ({
+    save() {}, restore() {}, beginPath() {}, closePath() {}, moveTo() {}, lineTo() {},
+    bezierCurveTo() {}, quadraticCurveTo() {}, arc() {}, rect() {}, fill() {}, stroke() {},
+    clip() {}, translate() {}, scale() {}, rotate() {}, transform() {}, setTransform() {},
+    clearRect() {}, fillRect() {}, strokeRect() {}, setLineDash() {},
+    fillText() {}, strokeText() {},
+    measureText: () => ({ width: 0 }),
+    getImageData: () => ({ data: new Uint8ClampedArray(4) }),
+    createImageData: (w, h) => ({ data: new Uint8ClampedArray(Math.max(0, w) * Math.max(0, h) * 4), width: w, height: h }),
+    putImageData() {}, drawImage() {}, isPointInPath: () => false,
+    createLinearGradient: () => ({ addColorStop() {} }),
+    canvas: { width: 1, height: 1 },
+  });
+}

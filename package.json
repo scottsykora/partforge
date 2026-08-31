@@ -21,6 +21,7 @@
     "docs/AUTHORING-PARTS.md",
     "docs/ERROR-PATTERNS.md",
     "docs/KERNEL-CONTRACT.md",
+    "docs/VECTOR-FORMAT.md",
     "README.md"
   ],
   "types": "./types/index.d.ts",
@@ -53,6 +54,10 @@
       "types": "./types/testing.d.ts",
       "default": "./src/testing.js"
     },
+    "./ingest": {
+      "types": "./types/ingest.d.ts",
+      "default": "./src/ingest.js"
+    },
     "./tokens.css": "./src/framework/tokens.css",
     "./chrome.css": "./src/framework/chrome.css"
   },
@@ -75,6 +80,9 @@
       ],
       "testing": [
         "./types/testing.d.ts"
+      ],
+      "ingest": [
+        "./types/ingest.d.ts"
       ]
     }
   },
