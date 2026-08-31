@@ -69,6 +69,7 @@ npx partforge lint    src/parts/<part>.js          # static checks, no kernel bo
 npx partforge measure src/parts/<part>.js [view]   # bbox/volume/holes/watertight + verify gate; exits non-zero on failure
 npx partforge render  src/parts/<part>.js [view]   # canonical-angle PNGs -> render/
 npx partforge pick-serve                           # request-a-pick: agent asks user to click geometry
+npx partforge ingest   <file> --out <output-file>  # SVG -> partforge-vector JSON, PNG pass-through, font validation - no browser
 ```
 
 CI (`.github/workflows/ci.yml`) runs `npm test` then the smoke check against
@@ -147,13 +148,27 @@ the installed package, so let the publish finish before bumping the dep there.
   suspended at that width — `rail.js` ignores a persisted `collapsed` flag there
   rather than clearing it.
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
-- **`src/framework/ingest/`** - `svg-ingest.js`, the SVG half of `k.vector2d`: SVG
-  text in, `partforge-vector` JSON out — the same format `k.vector2d` reads, and the
-  same one a part author writes by hand (`docs/VECTOR-FORMAT.md`). DOM-dependent and
-  main-thread-only, run once per artwork by the host - deliberately outside the
-  worker graph and never imported from it (`test/worker-layering.test.js` proves
-  it). Published as `partforge/ingest` (`src/ingest.js`), never re-exported from
-  the main entry or `partforge/geometry`.
+- **`src/framework/ingest/`** - the asset-ingest machinery behind both the panel's
+  drop targets and the `partforge ingest` CLI verb. `sniff.js` classifies bytes by
+  magic number (never a filename or claimed MIME type); `registry.js` is the one
+  table answering "what does this file become" (`ASSET_KINDS`, `rowFor`,
+  `classify`, `convertFor` - it does NOT route to part fields, that's still the
+  declaration-function pattern below); `svg-ingest.js` is the SVG half of
+  `k.vector2d` (SVG text in, `partforge-vector` JSON out — the same format
+  `k.vector2d` reads and a part author can write by hand, `docs/VECTOR-FORMAT.md`);
+  `image-ingest.js` re-encodes any browser-decodable raster to PNG through a
+  `<canvas>` (`imageToPng`); `node-dom.js` installs a headless happy-dom (an
+  OPTIONAL peer dependency, dynamically imported) so the CLI can run the SVG
+  converter without a browser — raster conversion has no such headless path,
+  since happy-dom has no canvas backend. All of it is DOM-dependent except
+  `sniff.js`/`registry.js` themselves, deliberately outside the worker graph and
+  never imported from it (`test/worker-layering.test.js` proves it). Published as
+  `partforge/ingest` (`src/ingest.js`: `ingestSvg`, `imageToPng`), never
+  re-exported from the main entry or `partforge/geometry`. The panel-facing half —
+  `src/framework/panel/widgets/file-drop.js`'s shared drop/paste/picker widget
+  behind `type: "image"`/`"vector"`/`"font"`, and the `onAssetUpload` mount
+  option — is documented in `docs/AUTHORING-PARTS.md`'s "Getting files into a
+  part".
 - **`src/framework/oracle/`** - the geometric oracle: `measure.js`, `verify.js`,
   `build.js`, `gaps.js`, `min-wall.js`, `bvh.js`, `mesh.js`, `assert-dsl.js`,
   `dfm-profiles.js`, `cases.js`. Despite reading like test code this is shared

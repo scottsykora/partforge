@@ -711,8 +711,8 @@ Every control accepts `key`, `type`, `label`, `description`, `hidden`, `when` an
 | `"checkbox"` | an on/off box: ticked writes `on`, cleared writes `0` | `on` (default `1`) |
 | `"select"` | a dropdown | `options` |
 | `"radio"` | a segmented button row | `options` |
-| `"font"` | a typeface picker, or a URL field with no catalog | `allow`, `preview` |
-| `"image"` | an image picker, or a URL field with no catalog | `allow` |
+| `"font"` | a typeface picker (or a URL field with no catalog), plus a drop target | `allow`, `preview` |
+| `"image"` | an image picker (or a URL field with no catalog), plus a drop target | `allow` |
 | `"vector"` | a URL field plus a drop target — no catalog exists | — |
 
 Numeric controls always show the number box: drag the slider *or* type an exact
@@ -1889,16 +1889,19 @@ OCCT time.
 
 **Bytes in params — the sandbox path.** A `type: "image"` control's value may
 also be raw PNG bytes (an `ArrayBuffer`/typed array) rather than a URL string —
-this is how a host that cannot fetch URLs (the partforge-cloud sandbox is the
-motivating case) gets an uploaded image into a part: its own trusted panel
-puts the bytes straight into `params`. Byte values **bypass the `allow` check
+either dropped onto the control (see "Getting files into a part", below) or
+placed there directly by a host that cannot fetch URLs (the partforge-cloud
+sandbox is the motivating case). Byte values **bypass the `allow` check
 entirely**, for every `allow` list, including the default — not a hole, but
 the deliberate consequence of what a byte value in `params` can mean: a URL
 cannot carry megabytes, so an `ArrayBuffer` arriving there cannot have come
-from a pasted link or a shared URL; it can only have been placed there by the
-host's own code. `allow` exists to keep a shared link from turning into an
-arbitrary fetch — a concern that doesn't apply to a value the host already
-has in hand.
+from a pasted link or a shared URL. That plausibility argument isn't the
+load-bearing one, though — the structural fact is that `asset-resolve.js`'s
+resolver (shared by `images`/`fonts`/`vectors`) calls `fetch` only for a
+`string`/`URL` source, so bytes are consumed directly and can never become a
+request no matter how they arrived in `params`. `allow` exists to keep a
+shared link from turning into an arbitrary fetch — a concern that structurally
+cannot apply to a byte-valued param.
 
 **Linting:** `npx partforge lint` adds an "Image controls" group of static
 checks — `image-control-not-in-images`, `heightfield-unknown-image`,
@@ -1911,6 +1914,111 @@ boot exactly the way `fonts`/`imports` do — no extra flags — with the same
 function-form caveat: a `verify` case or animation frame that changes the
 image-control param still builds against the base-params source, because the
 CLI boots its kernel once.
+
+## Getting files into a part
+
+`"image"`, `"vector"` and `"font"` controls each carry a drop target, on top of
+the URL/catalog paths documented for them above — a file dropped, pasted, or
+picked (a native file-input dialog behind a click, for a mouse/keyboard user
+with no drag-and-drop) lands in the same param a URL or a picker selection
+would. There is no drop target for `imports` (STEP/STL/3MF) — those are
+reference geometry, checked in or fetched, not something a panel field takes a
+file for. `src/framework/panel/widgets/file-drop.js` is the shared
+implementation behind all three; this section documents its contract, not its
+code.
+
+**What each control's drop target accepts.** A dropped file is classified by
+its actual bytes — never its extension or the browser's claimed MIME type —
+against a fixed sniff table (`src/framework/ingest/sniff.js`), because a
+file's claimed type is exactly the input a mislabelled or hostile upload would
+travel as:
+
+| Control | Accepts | Lands as |
+|---|---|---|
+| `"image"` | PNG, JPEG, WebP | a PNG (JPEG/WebP re-encoded through a `<canvas>`; PNG passes through unchanged) |
+| `"vector"` | SVG | a parsed `partforge-vector` document (paper.js — the same conversion `partforge/ingest`'s `ingestSvg` performs) |
+| `"font"` | TTF, OTF | the file itself — nothing to convert |
+
+A file that doesn't match its own control's list is refused with a message
+naming what it actually is; when another control's slot *would* take it (an
+SVG dropped on the Image control), the message names that control instead of
+just saying no. A file over 25 MB is refused before being read into memory to
+classify at all.
+
+**Where the result goes — `onAssetUpload`, or straight into the param.** After
+conversion, the drop widget looks for `onAssetUpload` (a `mount()` option —
+see "Wiring a part into a runnable app", above, for its full signature):
+
+- **With the hook**, it hands over the converted artifact — a PNG blob, the
+  partforge-vector document serialized as a JSON blob, or the original font
+  file — and writes whatever source string the hook resolves to into the
+  param, exactly as if that string had been typed into the URL field or
+  chosen from a catalog.
+- **Without it**, the artifact itself becomes the param value directly: raw
+  bytes (an `ArrayBuffer`) for `"image"`/`"font"`, and the **parsed
+  `partforge-vector` document object** — not its serialized bytes — for
+  `"vector"`, because `vectors.js`'s resolver already accepts an in-tree
+  parsed object directly (`asParsedFile`, see "Vector geometry", above);
+  serializing it only for the resolver to re-parse would be pure waste. This
+  is the path a host that cannot fetch URLs needs — the partforge-cloud
+  sandbox is the motivating case — and it is a first-class destination, not a
+  degraded fallback for a host that hasn't wired anything up: nothing about
+  presets, undo, the params hash, or `when` cares which shape a control's
+  value takes.
+
+**The `allow` list, and what bypasses it.** All three controls take the same
+`allow` list already documented for `"font"` in the control-types table above
+(`"https"` — the default; `"gstatic"`, font-only, `https://fonts.gstatic.com`
+exactly; `"asset"`, a `pfc-asset://` token the host has stored for this part),
+gating what a **param-supplied** value may be. It never restricts a source an
+author writes into `images`/`fonts`/`vectors` themselves — that's code, not
+user input.
+
+A value that lands with no `onAssetUpload` hook — bytes for image/font, the
+parsed document object for vector — bypasses `allow` entirely, for every allow
+list including the default. **This rests on a structural fact, not on "a URL
+can't carry megabytes."** That plausibility argument is true, but it isn't
+what the check actually rests on: `asset-resolve.js`'s resolver — the code
+every `fonts`/`images`/`vectors` declaration resolves through, no matter which
+control produced the value — calls `fetch` **only** for a `string`/`URL`
+source. Bytes and parsed objects are consumed directly and never reach that
+branch, so neither can become an outbound request no matter how it got into
+`params` — which is exactly the class of harm `allow` exists to gate, and
+still holds even if a host someday finds a way to put a few bytes of base64 on
+a share link.
+
+**`npx partforge ingest`** runs the same classify/convert step outside a
+browser, for an agent (or a script) handed a raw file with nowhere to drop it:
+
+```bash
+npx partforge ingest logo.svg   --out logo.vector.json
+npx partforge ingest scan.ttf   --out src/parts/assets/scan.ttf
+```
+
+`--out` is required, always — for a pass-through case (PNG, font) a computed
+"beside the input" default would land on the exact same path as the input
+itself, and a surprising same-path overwrite is worse than an explicit
+destination every time. The four cases the drop widget's classification can
+produce, resolved to a file instead of a param:
+
+| Input | Result |
+|---|---|
+| SVG | converted to a `partforge-vector` JSON document (`--strokes outline`, the default, turns strokes into filled geometry; `--strokes ignore` drops them) |
+| PNG | passed through unchanged — validated by the same magic-byte sniff the drop target uses, not a full structural PNG decode |
+| JPEG / WebP / other raster | refused, naming the browser path instead |
+| TTF / OTF | parsed with opentype.js to prove it's readable, then copied through unchanged |
+
+**Headless raster conversion is out of scope, not merely unimplemented.** SVG
+conversion runs headlessly by installing `happy-dom` — an **optional peer
+dependency** (`npm install happy-dom`) — as a stand-in DOM and importing the
+same paper.js converter the drop widget uses; paper.js never touches the
+raster context for its geometry work, so a no-op `getContext` stub
+(`src/framework/ingest/node-dom.js`) is enough to satisfy it. Converting
+JPEG/WebP to PNG has no equivalent escape: it needs `createImageBitmap` and a
+real `<canvas>` to encode through, and happy-dom implements no canvas raster
+backend at all — there's no stub for a missing pixel pipeline the way there is
+for missing DOM structure. Convert those in a browser (drop the file onto the
+app's Image control) or with your own tooling before ingesting.
 
 ## Host jobs: extending the worker
 
@@ -2131,6 +2239,21 @@ yourself (e.g. to download from a different origin) instead of partforge's own D
   `{ search(query, { limit }) → Promise<ImageAsset[]>, describe?(source) → { label, width, height } | null }`,
   where `ImageAsset` is `{ id, label, url, width, height, thumbUrl }`. With no
   provider a `type: "image"` control degrades to a URL field.
+
+- `onAssetUpload(blob, { kind, filename }) → Promise<string>` — the drop target
+  shared by `"image"`/`"vector"`/`"font"` controls (see "Getting files into a
+  part", below) calls this with the converted artifact after a drop, paste, or
+  file-picker choice, and writes whatever it resolves to into the param.
+  `blob` is the CONVERTED artifact — a PNG, a partforge-vector JSON blob, or the
+  original file for a font — never the user's raw drop; `kind` is `"image"`,
+  `"vector"`, or `"font"`. Must resolve to a non-empty source string (an
+  `https:` URL or a host-defined `pfc-asset:` token); anything else is treated
+  as a contract violation and reported through the control's own error line,
+  not written into the param. Omit it and the converted bytes land straight in
+  the param instead — the path a host that cannot fetch URLs (the
+  partforge-cloud sandbox) needs, not a degraded fallback. A rejection is
+  likewise reported through the control's error line, and the widget keeps the
+  converted artifact so a retry costs a network call, not a re-decode/re-parse.
 
 **Showcase capture (the mount handle).** The handle can also render the user's *current*
 framing offscreen at a resolution independent of the window size and devicePixelRatio —

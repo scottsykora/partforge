@@ -2,12 +2,18 @@
 // code and get no restriction; this file exists only for the other case — a
 // value that arrived in `params`.
 //
-// font-source.js states and follows the same rule: an ArrayBuffer in params
-// definitionally did not arrive via a shared link, because a URL cannot
-// carry megabytes, so it can only have been placed there by the host's own panel,
-// which is trusted code — the partforge-cloud sandbox cannot fetch URLs and puts
-// PNG bytes straight in the param, which is exactly this case. Bytes therefore
-// bypass the allow check entirely, for every allow list.
+// font-source.js states and follows the same rule, and its header explains why
+// it holds: an ArrayBuffer in params definitionally did not arrive via a shared
+// link, because a URL cannot carry megabytes — so it can only have been placed
+// there by the host's own panel, which is trusted code (the partforge-cloud
+// sandbox cannot fetch URLs and puts PNG bytes straight in the param, which is
+// exactly this case). That plausibility argument isn't the load-bearing one,
+// though — the structural fact is that asset-resolve.js's resolver fetches
+// only a `string`/`URL` source; a byte source is consumed directly and never
+// becomes a request. Bytes therefore cannot reach the network no matter how
+// they got into params, which is what the allow list exists to gate, and is
+// what still holds even if a host someday puts a few bytes of base64 in a
+// link. Bytes bypass the allow check entirely, for every allow list.
 //
 // DOM-free and node:-free: jobs.js (worker graph) and the panel both import it.
 
