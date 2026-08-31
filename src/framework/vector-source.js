@@ -10,27 +10,44 @@
 // allow check on the reasoning that an ArrayBuffer cannot survive a share
 // link — a URL can't carry megabytes, so bytes in params can only have been
 // placed there by the host's own trusted panel. That reasoning does NOT
-// transfer to vector artwork: `type: "vector"`'s drop target (task 9, Ruling
-// D) writes a PARSED partforge-vector document — plain JSON — into params
-// when there is no upload hook, and unlike raw bytes, plain JSON round-trips
-// a share link perfectly (it's just more of the same params payload). Do not
-// copy the bytes-can't-survive-a-link justification here; it would be wrong.
+// transfer to vector artwork: `type: "vector"`'s drop target writes a PARSED
+// partforge-vector document — plain JSON — into params when there is no upload
+// hook, and unlike raw bytes, plain JSON round-trips a share link perfectly
+// (it's just more of the same params payload). Do not copy the
+// bytes-can't-survive-a-link justification here; it would be wrong.
 //
-// The argument that DOES hold, and is what this file actually gates on, is
-// the structural one Task 7 established in asset-resolve.js: the resolver
-// calls `fetch` ONLY for a string/URL source. An object source is claimed by
-// vectors.js's `asParsedFile` ("the in-tree form") before the resolver ever
-// reaches the fetch branch, and whatever it contains is validated downstream
-// by `toInternalDocument` — a parse/shape check, never a network request. So
-// an object-valued (or byte-valued — same structural fact: neither is ever
-// handed to `fetch`) vector param cannot become an SSRF-style request no
-// matter what an attacker puts in it, which is exactly the class of harm
-// `allow` exists to gate. Only a STRING source can become a fetch, so only a
-// string source gets the full `allow` treatment; every other shape is
-// permitted because it structurally cannot reach the network, not because it
-// is implausible on a link.
+// So the exemption this file grants is NOT "any object". The gate has to be
+// read against what asset-resolve.js actually does, in its order:
+// `unwrapModule(v)` runs FIRST, and only THEN does the resolver dispatch on
+// shape. A `{ default: "http://169.254.169.254/…" }` wrapper is therefore
+// unwrapped to a plain string and handed to `fetch` — arbitrary scheme,
+// arbitrary host, in ~40 bytes of JSON a share link carries effortlessly. An
+// earlier version of this file exempted every object on the claim that "an
+// object never reaches the fetch branch"; that claim was FALSE for exactly
+// this shape, and it is deleted rather than qualified.
+//
+// The rule that does hold, and what this file gates on, is: unwrap first, then
+// judge the value the RESOLVER will see.
+//
+//   - a string or `URL` — fetchable, so it gets the full `allow` treatment;
+//   - bytes (ArrayBuffer/view) — never handed to `fetch`, and (unlike JSON)
+//     genuinely cannot ride a link, so exempt;
+//   - a function/thunk — refused outright. Its return value is a fetch source
+//     that cannot be known at check time, so there is nothing to gate on;
+//   - a plain object that does NOT unwrap to any of the above — the genuinely
+//     inert case, the already-parsed partforge-vector document vectors.js's
+//     `asParsedFile` claims. It is validated downstream by `toInternalDocument`,
+//     a pure shape check that never touches the network, so it is exempt;
+//   - anything else (arrays, numbers, booleans) — refused. None of them is a
+//     valid source, and a refusal simply restores the part's default.
+//
+// `unwrapModule` is imported, never re-implemented: this gate is only sound
+// while it unwraps by exactly the same rule the resolver does.
 //
 // DOM-free and node:-free: jobs.js (worker graph) and the panel both import it.
+// asset-resolve.js is itself dependency-free, so importing it keeps
+// partforge/lint's zero-dependency closure intact.
+import { unwrapModule } from "./asset-resolve.js";
 
 export const VECTOR_ALLOW_DEFAULT = ["https"];
 
@@ -42,11 +59,15 @@ const ASSET_SCHEME = "pfc-asset:";
 export const isNoVectorSource = (v) => v === undefined || v === null || v === "";
 
 const isBytes = (v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v);
-// A source that structurally never reaches asset-resolve.js's `fetch`
-// branch — bytes, or anything object-shaped (a parsed partforge-vector
-// document). See the file header: this is permitted because of that
-// structural fact, not because such a value is implausible on a link.
-const neverFetched = (v) => isBytes(v) || (v != null && typeof v === "object");
+
+// An already-parsed partforge-vector document: object-shaped, and not any of
+// the shapes the resolver reads as a way to REACH bytes. Deliberately the same
+// structural test vectors.js's `asParsedFile` applies (arrays excluded — an
+// array is never a file), so "what this gate exempts" and "what the resolver
+// adopts without fetching" stay the same set.
+const isParsedDocument = (v) =>
+  v != null && typeof v === "object" && !Array.isArray(v)
+  && !isBytes(v) && !(v instanceof URL);
 
 // Parse once; an unparseable string is refused rather than guessed at.
 function parse(source) {
@@ -54,9 +75,18 @@ function parse(source) {
 }
 
 export function vectorSourceAllowed(source, allow = VECTOR_ALLOW_DEFAULT) {
-  if (neverFetched(source)) return true; // see the file header
-  if (typeof source !== "string") return false;
-  const u = parse(source);
+  // Unwrap FIRST — asset-resolve.js does, before it dispatches on shape, so a
+  // `{ default: … }` wrapper must be judged by what it unwraps to. See header.
+  const v = unwrapModule(source);
+  // A thunk (before or after unwrapping) resolves to a source this check cannot
+  // see, so there is nothing to gate; refuse rather than trust it.
+  if (typeof source === "function" || typeof v === "function") return false;
+  if (isBytes(v)) return true;                    // never handed to `fetch`
+  if (isParsedDocument(v)) return true;           // inert; validated, never fetched
+  // Everything the resolver would fetch — a string or a `URL` — gets the full
+  // allow treatment. Everything else (arrays, numbers, booleans) is refused.
+  if (!(typeof v === "string" || v instanceof URL)) return false;
+  const u = v instanceof URL ? v : parse(v);
   if (!u) return false;
   for (const kind of allow) {
     // hostname/protocol, never a substring of the raw string — same rule

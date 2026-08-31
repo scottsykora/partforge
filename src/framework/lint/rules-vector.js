@@ -1,6 +1,8 @@
-// Group 10 — vector-art call well-formedness. All three conditions throw at
-// build time anyway; these rules move them ahead of the kernel boot, which is
-// where an authoring agent wants them.
+// Group 10 — vector-art call well-formedness, plus vector-control wiring. The
+// three call rules catch conditions that throw at build time anyway; they move
+// them ahead of the kernel boot, which is where an authoring agent wants them.
+// The fourth (vector-control-not-in-vectors) catches the one shape that never
+// throws at all — a picker wired to nothing.
 //
 // All read `probe().calls`, whose `args` are JSON.stringify of the RESOLVED
 // argument values under the part's default params (probe.js's `describe`), not
@@ -16,8 +18,18 @@
 // package's header), so without a supplied document neither rule can tell
 // units from shapes and both stay silent rather than guess.
 import { err } from "./finding.js";
+import { vectorControlAllows } from "../vector-source.js";
 
 const declaredVectors = (part) => Object.keys(part?.vectors ?? {});
+
+const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
+// A URL-shaped sentinel (has a "://"), not an arbitrary string — some `vectors`
+// functions run `new URL(v)` or similar on the value before deciding whether to
+// use it, and an arbitrary string would make that throw and short-circuit the
+// probe for reasons that have nothing to do with whether the key is read. Same
+// device, and the same reason, as rules-images.js's.
+const SENTINEL = "pf-lint-sentinel://vector-control-not-in-vectors";
 
 // The name arrives JSON-serialized, so JSON.parse recovers it — and yields null
 // for anything that is not a string (import-unknown-name reads its name the same way).
@@ -42,6 +54,15 @@ export const VECTOR_RULES = [
   {
     id: "vector-unknown-name",
     run: ({ part, probe }) => {
+      // Only a STATIC `vectors` object has statically-knowable names. A
+      // function's return value depends on params lint doesn't enumerate, and
+      // `Object.keys(fn)` is `[]` — without this guard every k.vector2d call in
+      // a function-form part reports as unknown, and since `partforge measure`
+      // runs lint first, the part cannot be measured at all. Exactly the guard
+      // rules-fonts.js and rules-images.js already carry; the function form of
+      // `vectors` arrived after this rule and nobody carried it across.
+      // vector-control-not-in-vectors below is what covers the function form.
+      if (typeof part?.vectors === "function") return [];
       const known = new Set(declaredVectors(part));
       const seen = new Set();
       const out = [];
@@ -105,6 +126,50 @@ export const VECTOR_RULES = [
           `k.vector2d("${name}", { shape: "${opts.shape}" }) names a shape "${opts.shape}" that "${name}" does not contain: ${Object.keys(shapes).join(", ") || "(none)"}`,
           "Fix the shape name to match one the file declares, or omit `shape` to use the role-composed result — every \"add\" shape unioned, minus every \"subtract\" shape.",
           "build"));
+      }
+      return out;
+    },
+  },
+  {
+    // The vectors twin of image-control-not-in-images / font-control-not-in-fonts:
+    // a `type: "vector"` control whose key never reaches `vectors:` changes a
+    // param and nothing else — the artwork never moves — and without this the
+    // mistake only shows up at build time, or not at all.
+    //
+    // It covers BOTH shapes of the mistake, because for vectors both are real:
+    // a static `vectors` object provably cannot read a param, so a vector
+    // control beside one is inert by construction (font-control-not-in-fonts's
+    // question); and a function-form `vectors` that simply never returns the
+    // picked value is inert too, which can only be established by calling it
+    // with a sentinel (image-control-not-in-images's question). Together with
+    // vector-unknown-name — which runs only for the static form — every part
+    // shape is judged by exactly one of the two rules.
+    id: "vector-control-not-in-vectors",
+    run: ({ part, p }) => {
+      const controls = vectorControlAllows(part);
+      if (controls.size === 0) return [];
+      const isFn = typeof part?.vectors === "function";
+      // A function may wrap the picked value (`new URL(p.art)`) rather than
+      // pass it through, so match on the sentinel appearing in the value, not
+      // on identity.
+      const mentions = (v) => (typeof v === "string" || v instanceof URL) && String(v).includes(SENTINEL);
+      const out = [];
+      for (const key of controls.keys()) {
+        if (isFn) {
+          let resolved;
+          try { resolved = part.vectors({ ...p, [key]: SENTINEL }); }
+          catch { continue; } // can't be probed safely — not evidence either way
+          if (isPlainObject(resolved) && Object.values(resolved).some(mentions)) continue;
+          out.push(err("vector-control-not-in-vectors",
+            `control "${key}" is a vector picker, but this part's \`vectors\` function never returns the picked value — the picked value is never resolved.`,
+            `Reference p.${key} from vectors, e.g. vectors: (p) => ({ ${key}: p.${key} }), and consume it with k.vector2d("${key}", { width: 20 }).`,
+            "vectors"));
+          continue;
+        }
+        out.push(err("vector-control-not-in-vectors",
+          `control "${key}" is a vector picker, but this part's \`vectors\` is ${part?.vectors ? "a static object" : "missing"} — the picked value is never resolved.`,
+          `Declare vectors as a function of params, e.g. vectors: (p) => ({ ${key}: p.${key} }), and reference it with k.vector2d("${key}", { width: 20 }).`,
+          "vectors"));
       }
       return out;
     },

@@ -152,3 +152,50 @@ describe("vector lint rules needing vectorDocs", () => {
     expect(shapeErrors.map((e) => e.message).join("\n")).toMatch(/"trim"/);
   });
 });
+
+// The function form of `vectors` — the shape a `type: "vector"` control needs,
+// since a static object cannot read a param. Object.keys of a function is [],
+// so without the guard rules-fonts.js already has, every k.vector2d call in a
+// function-form part reports as an unknown name — and `partforge measure`,
+// which runs lint first, refuses to run at all.
+const withFnArt = (build) => partWith(build, {
+  vectors: (p) => ({ badge: p.art }),
+  defaults: { art: "https://cdn.test/badge.vector.json" },
+  parameters: [{ id: "art", title: "Art", controls: [{ key: "art", type: "vector" }] }],
+});
+
+test("a function-form vectors part reports no vector-unknown-name", () => {
+  const r = lintPart(withFnArt((k) => k.vector2d("badge", { width: 10 }).extrude(1)));
+  expect(ids(r.errors)).not.toContain("vector-unknown-name");
+});
+
+test("a function-form vectors part reports no vector-unknown-name even for a name it cannot know", () => {
+  const r = lintPart(withFnArt((k) => k.vector2d("logo", { width: 10 }).extrude(1)));
+  expect(ids(r.errors)).not.toContain("vector-unknown-name");
+});
+
+// The vectors twin of image-control-not-in-images / font-control-not-in-fonts.
+test("a vector control whose key never reaches vectors is an error", () => {
+  const inert = partWith((k) => k.vector2d("badge", { width: 10 }).extrude(1), {
+    vectors: () => ({ badge: "https://cdn.test/badge.vector.json" }),
+    defaults: { art: "" },
+    parameters: [{ id: "art", title: "Art", controls: [{ key: "art", type: "vector" }] }],
+  });
+  const r = lintPart(inert);
+  expect(ids(r.errors)).toContain("vector-control-not-in-vectors");
+  expect(find(r, "vector-control-not-in-vectors").message).toContain("art");
+});
+
+test("a vector control the vectors function does read is clean", () => {
+  const r = lintPart(withFnArt((k) => k.vector2d("badge", { width: 10 }).extrude(1)));
+  expect(ids(r.errors)).not.toContain("vector-control-not-in-vectors");
+});
+
+test("a vector control beside a STATIC vectors object is an error — a static object cannot read a param", () => {
+  const r = lintPart(partWith((k) => k.vector2d("badge", { width: 10 }).extrude(1), {
+    vectors: { badge: new URL("file:///badge.svg.json") },
+    defaults: { art: "" },
+    parameters: [{ id: "art", title: "Art", controls: [{ key: "art", type: "vector" }] }],
+  }));
+  expect(ids(r.errors)).toContain("vector-control-not-in-vectors");
+});

@@ -319,7 +319,25 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // prevent. Guarding this on `part.vectors` would skip exactly the case where
     // pruning matters most: a worker rebound from a part WITH artwork to one
     // WITHOUT would leave the old names resolvable forever.
-    await ensureVectors(kernel, vectorsFor(part, p));
+    //
+    // Empty sources are filtered out first, exactly as the fonts and images
+    // blocks above do with their own isNo*Source helper: an empty default is
+    // the natural shape for a drop-target control (`defaults: { art: "" }`,
+    // with `vectors: (p) => ({ badge: p.art })`), and passing "" through to
+    // ensureVectors reaches `fetch("")` and fails with "Failed to parse URL
+    // from" — a first-run error message that names nothing an author can act
+    // on. An unset source declares NO artwork for that name; a build that
+    // still calls k.vector2d on it gets the ordinary unknown-vector throw, and
+    // the progress note keeps a genuine typo visible rather than swallowed.
+    const vectorsDecl = vectorsFor(part, p) ?? {};
+    const declaredVectors = Object.fromEntries(
+      Object.entries(vectorsDecl).filter(([name, src]) => {
+        if (!isNoVectorSource(src)) return true;
+        onProgress(`no vector source declared for "${name}" — skipping`);
+        return false;
+      }),
+    );
+    await ensureVectors(kernel, declaredVectors);
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
     const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
     // Explicit selection (headless exportParts) overrides view-derived selection.

@@ -84,3 +84,24 @@ test("vectorControlAllows finds a vector control nested inside a legacy `feature
   expect(m.has("shown")).toBe(false);
   expect(m.has("size")).toBe(false);
 });
+
+// The module-wrapper hole: asset-resolve.js runs `unwrapModule` BEFORE it
+// dispatches on the source's shape, so `{ default: "http://…" }` is unwrapped
+// to a string and fetched. It is ~40 bytes of plain JSON, so it round-trips a
+// share link perfectly — exactly the value class this file exists to gate.
+test("a { default: … } wrapper is judged by what it unwraps to, not by being an object", () => {
+  expect(vectorSourceAllowed({ default: "http://169.254.169.254/latest/meta-data/" }, ["https"])).toBe(false);
+  expect(vectorSourceAllowed({ default: "https://cdn.test/d.vector.json" }, ["https"])).toBe(true);
+  expect(vectorSourceAllowed({ default: "https://cdn.test/d.vector.json" }, ["asset"])).toBe(false);
+});
+
+test("a thunk is refused — its return value cannot be known at check time", () => {
+  expect(vectorSourceAllowed(() => "https://cdn.test/d.vector.json", ["https"])).toBe(false);
+  expect(vectorSourceAllowed({ default: () => "https://cdn.test/d.vector.json" }, ["https"])).toBe(false);
+});
+
+test("a URL instance is fetched by the resolver, so it is gated like the string it is", () => {
+  expect(vectorSourceAllowed(new URL("https://cdn.test/d.vector.json"), ["https"])).toBe(true);
+  expect(vectorSourceAllowed(new URL("http://169.254.169.254/latest/meta-data/"), ["https"])).toBe(false);
+  expect(vectorSourceAllowed({ default: new URL("http://169.254.169.254/") }, ["https"])).toBe(false);
+});

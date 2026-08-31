@@ -111,3 +111,26 @@ test("clearing a picked vector drops the name instead of leaving the old artwork
   await handle(kernel, part, { ...job, params: { art: "" } }, () => {}); // cleared
   expect(kernel.vectors.has("art"), "a cleared pick must not stay registered").toBe(false);
 });
+
+// ── the empty-source pre-filter, the fonts/images parity site ──────────────
+// `defaults: { art: "" }` is the natural shape for a drop-target control, so
+// this is the FIRST thing an author of one hits: without the filter,
+// `vectors: (p) => ({ badge: p.art })` hands "" to the resolver and
+// `fetch("")` throws "Failed to parse URL from" — an error message that names
+// nothing an author can act on.
+test("an empty vector source is skipped with a note, not fetched", async () => {
+  const kernel = fakeVectorKernel();
+  const part = {
+    parameters: [{ id: "t", controls: [{ key: "art", type: "vector" }] }],
+    defaults: { art: "" },
+    vectors: (p) => ({ badge: p.art }),   // unguarded, exactly as an author would first write it
+    parts: {},
+  };
+  const posts = [];
+  await handle(kernel, part, { ...job, params: { art: "" } }, (m) => posts.push(m));
+  expect(kernel.vectors.has("badge")).toBe(false);
+  const failed = posts.find((m) => m.type === "error");
+  expect(failed?.message ?? "").not.toMatch(/Failed to parse URL/);
+  expect(failed).toBeUndefined();
+  expect(posts.find((m) => m.type === "progress" && /no vector source declared/.test(m.phase))).toBeTruthy();
+});

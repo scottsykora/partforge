@@ -1580,6 +1580,32 @@ resolve — with a URL they stay silent until the bytes arrive. And the object i
 on every resolve, so a malformed one fails with the same message its fetched twin would;
 it is read and never written, so `build` stays pure.
 
+**`vectors` may also be a function of params — and must be, for a `type: "vector"`
+control.** Exactly like `fonts` and `images`, the field takes either a static
+`{ name: source }` object (everything above) or a function called with the resolved
+params, so a picked or dropped source can reach the build:
+
+```js
+parameters: [{ id: "art", title: "Artwork", controls: [{ key: "art", type: "vector" }] }],
+defaults: { art: "" },                        // empty = no artwork yet; the build must cope
+vectors: (p) => (p.art ? { badge: p.art } : {}),
+build: (k, p) => {
+  const plate = k.box({ w: 60, d: 40, h: p.plate_t });
+  if (!p.art) return plate;                   // nothing dropped yet
+  return plate.union(k.vector2d("badge", { width: 30 })
+    .extrude({ h: 1 }).translate([0, 0, p.plate_t]));
+},
+```
+
+A static object provably cannot read a param, so a `type: "vector"` control beside
+one is inert — the picker changes a param and the artwork never moves.
+`vector-control-not-in-vectors` (lint) catches both halves of that mistake: a static
+`vectors` beside a vector control, and a function-form `vectors` that never returns
+the picked value. An empty `p.art` declares **no** artwork for that name (the same
+"unset, not refused" rule `fonts`/`images` use) — the job skips it with a progress
+note rather than fetching `""`, so a build that guards on it, as above, still runs
+with nothing dropped.
+
 **Sizing is against the tight geometric bounding box, not a `viewBox`.** Icon sets pad
 their `viewBox` inconsistently, so sizing relative to `viewBox` makes two icons declared at
 the same nominal size look different on the plate. `width`/`height`/`fit` instead measure
@@ -1986,6 +2012,16 @@ branch, so neither can become an outbound request no matter how it got into
 `params` — which is exactly the class of harm `allow` exists to gate, and
 still holds even if a host someday finds a way to put a few bytes of base64 on
 a share link.
+
+**Read that fact in the resolver's own order, though.** The resolver unwraps a
+`{ default: … }` module namespace **before** it dispatches on shape, so
+"object ⇒ never fetched" is not true of every object: `{ default:
+"http://…" }` unwraps to a plain string and is fetched. The vector check
+therefore unwraps first and judges what the resolver will actually see — a
+string or `URL` gets the full `allow` treatment however it was wrapped, a
+thunk is refused outright (its return value cannot be known at check time),
+and only a value that genuinely does not unwrap to a fetchable source is
+exempt.
 
 **`npx partforge ingest`** runs the same classify/convert step outside a
 browser, for an agent (or a script) handed a raw file with nowhere to drop it:
@@ -2833,11 +2869,19 @@ the named file's `units` is `"artwork"` — unlike `k.text2d`'s cap-height `size
 artwork units carry no physical meaning, so there is no safe default to fall
 back on; an `"mm"` file's coordinates already are millimetres, so a size is
 genuinely optional there), `vector-unknown-shape` (a `k.vector2d(name, { shape })`
-call names a shape the file's `shapes` object doesn't contain) (all errors).
+call names a shape the file's `shapes` object doesn't contain), and
+`vector-control-not-in-vectors` (a `type: "vector"` control whose key never reaches
+`vectors:` — either because `vectors` is a static object, which cannot read a param
+at all, or because the function form never returns the picked value; the picker then
+changes a param and nothing else) (all errors). `vector-unknown-name` runs only for a
+static `vectors` object, whose names are statically knowable; for the function form
+`vector-control-not-in-vectors` asks the answerable question instead, by calling the
+function with a sentinel — the same complementary split `heightfield-unknown-image`
+and `image-control-not-in-images` use.
 `vector-size-missing` and `vector-unknown-shape` need `vectorDocs` (above) to
 read the file's `units`/`shapes` — without it, both stay silent rather than
-fire on every correct millimetre file or guess at shape names. All three judge
-the argument values the probe resolves under the part's default params, the
+fire on every correct millimetre file or guess at shape names. All three call
+rules judge the argument values the probe resolves under the part's default params, the
 same basis `import-unknown-name` uses; a call that only goes wrong for
 non-default params still fails correctly at build time.
 
