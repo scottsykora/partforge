@@ -44,6 +44,8 @@ export interface PickEvent {
   prompt: string;
   /** The selection formatted as a compact token. */
   token: string;
+  /** Where the pick's marker sits on the canvas, in CSS px from its top-left. */
+  anchor: { x: number; y: number };
 }
 
 /** Fired once per completed build. NOT fired for a pose-only edit. */
@@ -244,6 +246,24 @@ export interface AnnotateRuntime {
   onModeChange(cb: () => void): () => void;
 }
 
+/**
+ * The yellow marker a pick flashes, as a thing with a lifetime — for a host
+ * that hangs its own UI (a chat bubble, a callout) off the dot. A marker fades
+ * on its own about a second after the pick, so `hold()` belongs in the `onPick`
+ * handler, not behind a later user action.
+ */
+export interface PickMarkerRuntime {
+  /** Keep the newest marker on screen; false when there is none. Earlier held markers stay held. */
+  hold(): boolean;
+  /** Clear every held marker. */
+  release(): void;
+  /**
+   * Where the newest held marker is, as the camera moves; null when nothing is
+   * held. Fires immediately with the current state. Returns an unsubscribe.
+   */
+  onAnchorChange(cb: (anchor: { x: number; y: number; visible: boolean } | null) => void): () => void;
+}
+
 /** Where playback is: idle, swinging the camera to an intro cue, playing, or paused. */
 export type AnimationStatus = "idle" | "intro" | "playing" | "paused";
 
@@ -359,6 +379,8 @@ export interface PartRuntime {
   measure: MeasureRuntime;
   /** Annotation mode's runtime-controls API — mode on/off, ink state, and send. Always present; a no-op stand-in when `onAnnotationSend` was not supplied. */
   annotate: AnnotateRuntime;
+  /** The pick marker's lifetime — hold it on screen and follow it across the canvas. Always present (a no-op stand-in outside `makeHandle` tests). */
+  pickMarker: PickMarkerRuntime;
 }
 
 /** Mount a full parametric-part app from a `PartDefinition`. */
