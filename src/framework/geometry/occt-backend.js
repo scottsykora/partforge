@@ -653,6 +653,23 @@ export function createOcctKernel(replicad) {
         );
       });
     },
+    // Union WITHOUT the coincidence guard — for kernel-front compositions that
+    // are audited fixes for the guarded failure (k.tappedBore's bore ∪ thread,
+    // whose flank chord-bands deliberately hug the bore wall they overlap;
+    // measured safe at 3.0s where the tangent form never finishes). `_`-prefixed:
+    // not part of the public kernel surface, and part authors never see it.
+    // Same cache key as union — the geometry is identical either way.
+    _trustedUnion: (solids) => {
+      const key = h("union", solids.map((s) => s._hash));
+      return cached(key, () => {
+        const ms = solids.map((s) => s._mat());
+        return wrap(
+          ms.map((m) => m._s.clone()).reduce((a, b) => a.fuse(b)),
+          ms.flatMap((m) => cloneLabels(m._labels)),
+          key,
+        );
+      });
+    },
     shape2d,
     // Backend-internal region adapter: the shared native engine (contour-offset.js)
     // that Shape2D.offset itself runs on — published here for callers that want the

@@ -42,10 +42,30 @@ const FREEFORM_SURFACES = [
 // max(1e-3, 2e-3·r) — twice the measured sweep-approximation band, still an
 // order of magnitude below the 0.05 mm the authoring guidance calls real
 // clearance — and a face is contact only when ≥90% of its samples qualify.
+//
+// A single hugging face is NOT enough to refuse: a twisted extrusion's flank
+// is subdivided into narrow helical chord-bands, and whichever band straddles
+// the wall sits inside the position tolerance over its whole area (measured:
+// r-span 0.010 across the full thread length) — yet OCCT resolves that
+// transversal contact in seconds. Local geometry cannot separate the two
+// cases robustly: the band's radial drift and the coincident face's chord
+// wobble are both ~r·1e-3, and every tangency proxy measured (surface
+// normals: cancellation noise on helical faces; radial gradients: the
+// crossing smears over a ~0.37 circumferential path, g≈0.03 vs wobble 0.01)
+// lands inside the noise. What separates them decisively is EXTENT: a
+// coincident swept surface tiles the cylinder with hugging faces (~6+ per
+// turn, 20 measured on a 3-turn thread), while a crossing contributes the one
+// band that happens to straddle (1–3 with phase luck). Hence
+// MIN_CONTACT_FACES: refuse only when several distinct freeform faces hug the
+// SAME cylinder. A sub-turn thread can slip under the threshold — that is the
+// old behavior, not a new failure — and a hand-sunk thread whose chord-band
+// count reaches it is refused with coaching toward k.tappedBore, whose own
+// internal union is exempt (it is this module's audited fix, not a suspect).
 const GRID = 4;
 const REL_TOL = 2e-3;
 const MIN_TOL = 1e-3;
 const MIN_ON_FRACTION = 0.9;
+const MIN_CONTACT_FACES = 4;
 
 // Above this many faces on one operand, skip detection (fail open): the guard
 // must never cost more than the boolean it protects. A part-authored solid is
@@ -103,7 +123,8 @@ const boxesOverlap = (a, b, pad) =>
   a[1] <= b[4] + pad && b[1] <= a[4] + pad &&
   a[2] <= b[5] + pad && b[2] <= a[5] + pad;
 
-// Fraction of a freeform face's interior sample grid lying on the cylinder.
+// Fraction of a freeform face's interior sample grid lying within tol of the
+// cylinder's surface.
 function onCylinderFraction(freeform, cyl, tol) {
   const ad = freeform.adaptor;
   const u0 = ad.FirstUParameter(), u1 = ad.LastUParameter();
@@ -114,8 +135,8 @@ function onCylinderFraction(freeform, cyl, tol) {
       const p = ad.Value(u0 + ((i + 0.5) / GRID) * (u1 - u0), v0 + ((j + 0.5) / GRID) * (v1 - v0));
       const px = p.X() - cyl.loc[0], py = p.Y() - cyl.loc[1], pz = p.Z() - cyl.loc[2];
       const t = px * cyl.dir[0] + py * cyl.dir[1] + pz * cyl.dir[2];
-      const rx = px - t * cyl.dir[0], ry = py - t * cyl.dir[1], rz = pz - t * cyl.dir[2];
-      if (Math.abs(Math.hypot(rx, ry, rz) - cyl.r) <= tol) hits += 1;
+      const radial = Math.hypot(px - t * cyl.dir[0], py - t * cyl.dir[1], pz - t * cyl.dir[2]);
+      if (Math.abs(radial - cyl.r) <= tol) hits += 1;
     }
   }
   return hits / (GRID * GRID);
@@ -125,9 +146,11 @@ function contactBetween(profileA, profileB) {
   for (const [cylSide, freeSide] of [[profileA, profileB], [profileB, profileA]]) {
     for (const cyl of cylSide.cylinders) {
       const tol = Math.max(MIN_TOL, REL_TOL * cyl.r);
+      let contacts = 0;
       for (const freeform of freeSide.freeforms) {
         if (!boxesOverlap(cyl.bbox, freeform.bbox, tol)) continue;
-        if (onCylinderFraction(freeform, cyl, tol) >= MIN_ON_FRACTION) return { radius: cyl.r };
+        if (onCylinderFraction(freeform, cyl, tol) >= MIN_ON_FRACTION) contacts += 1;
+        if (contacts >= MIN_CONTACT_FACES) return { radius: cyl.r };
       }
     }
   }
