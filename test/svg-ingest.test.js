@@ -63,26 +63,30 @@ test("overlapping filled shapes union rather than double-count", () => {
   expect(netArea(doc)).toBeCloseTo(150, 1);
 });
 
-// KNOWN DEFECT — pins the current WRONG answer, not desired behaviour.
-//
 // The same two overlapping squares as the test above, but as two subpaths of
-// ONE <path> element instead of two separate elements. resolveCurveFill
-// (src/framework/geometry/curve-fill.js) is what ingest calls per-ITEM to
-// resolve an element's own subpaths under its fill rule, and it drops the
-// overlap between two same-winding subpaths instead of merging them — so this
-// comes back as area 100 / bbox width 10 (the *first* subpath alone) instead
-// of the true union, area 150 / bbox width 15, that the two-element version
-// above correctly produces via booleanRegions. Because k.vector2d sizes on the
-// bbox, this silently scales the whole artwork wrong with no error — see
-// docs/ERROR-PATTERNS.md's svg-overlapping-subpaths entry. Fixing
-// resolveCurveFill itself is a separate task (nonzero winding legitimately
-// forms holes, so subpaths can't simply be unioned locally); this test only
-// records the defect so a fix there is caught by a red test, not silence.
-test("KNOWN DEFECT: overlapping same-winding subpaths within one <path> lose their union", () => {
+// ONE <path> element instead of two separate elements. Ingest calls
+// resolveCurveFill per-ITEM to resolve an element's own subpaths under its fill
+// rule; that used to drop the overlap between two same-winding subpaths and
+// return area 100 / bbox width 10 (the first subpath alone). It now merges them,
+// so both routes agree — which is the property that actually matters, since
+// which one an artwork takes is an authoring accident, not a modelling choice.
+test("overlapping same-winding subpaths within one <path> merge into their union", () => {
   const d = "M0,0 L10,0 L10,10 L0,10 Z M5,0 L15,0 L15,10 L5,10 Z";
   const doc = ingestSvg(svg(`<path fill="#111" d="${d}"/>`));
-  expect(netArea(doc)).toBeCloseTo(100, 1);                    // WRONG — truth is 150
-  expect(doc.bbox.maxX - doc.bbox.minX).toBeCloseTo(10, 1);     // WRONG — truth is 15
+  expect(netArea(doc)).toBeCloseTo(150, 1);
+  expect(doc.bbox.maxX - doc.bbox.minX).toBeCloseTo(15, 1);
+});
+
+// evenodd on the same geometry: the band both subpaths cover is crossed twice,
+// so it drops out and two disjoint 5x10 bars remain. This threw before the fix —
+// paper's XOR hands back the two bars with OPPOSITE orientations, and the
+// grouper reads orientation to tell an outer from a hole, so it called the
+// second one a hole with nothing to live in.
+test("evenodd subpaths in one <path> cancel their overlap instead of throwing", () => {
+  const d = "M0,0 L10,0 L10,10 L0,10 Z M5,0 L15,0 L15,10 L5,10 Z";
+  const doc = ingestSvg(svg(`<path fill="#111" fill-rule="evenodd" d="${d}"/>`));
+  expect(netArea(doc)).toBeCloseTo(100, 1);
+  expect(doc.bbox.maxX - doc.bbox.minX).toBeCloseTo(15, 1);
 });
 
 test("a circle survives as symbolic arcs, not cubics", () => {

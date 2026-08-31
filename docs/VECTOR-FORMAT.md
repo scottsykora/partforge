@@ -663,16 +663,19 @@ reproducible instead of being hand-maintained blobs, and so there is a second
 thing (besides this document) to check a from-scratch converter's output
 against: ingest the same SVG both ways and diff the JSON.
 
-**One place where a correct converter will legitimately disagree with it.**
-partforge's ingest has a pinned known defect: **overlapping same-winding
-subpaths inside a single `<path>` lose their union** — `M0,0 L10,0 L10,10 L0,10 Z
-M5,0 L15,0 L15,10 L5,10 Z` should fill 150 units across a width of 15, and ingest
-returns 100 across a width of 10. Step 4 above specifies the correct behaviour,
-and this document — not the reference implementation — is normative. If your
-output differs on overlapping subpaths, check it against step 4 rather than
-against `ingest-svg.mjs`; see `docs/ERROR-PATTERNS.md#svg-overlapping-subpaths`,
-where the defect and its symptom are recorded. Everything else in the pipeline
-should match.
+**One narrow place where a correct converter may still disagree with it.**
+Overlapping subpaths inside a single `<path>` used to lose their union —
+`M0,0 L10,0 L10,10 L0,10 Z M5,0 L15,0 L15,10 L5,10 Z` returned 100 units across
+a width of 10 where nonzero fills 150 across 15. That is fixed, and even-odd on
+the same input used to throw outright rather than return the two 5x10 bars it
+should; also fixed. What remains is narrower: where a subpath wound *against* the
+others covers area that two or more same-wound subpaths already cover, true
+winding-number nonzero keeps that area (2 - 1 = 1) and partforge's ingest drops
+it. Even-odd has no such case — it counts crossings, not directions, and is
+exact throughout. Step 4 above specifies the correct behaviour, and this
+document — not the reference implementation — is normative; see
+`docs/ERROR-PATTERNS.md#svg-overlapping-subpaths` for the residual case and its
+symptom. Everything else in the pipeline should match.
 
 Ingest is deterministic: the same `.svg`, ingested twice against the same
 installed dependencies, produces byte-identical JSON. That is a property of the
