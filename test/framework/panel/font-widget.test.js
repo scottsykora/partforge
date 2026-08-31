@@ -198,3 +198,30 @@ test("a panel rebuild disposes the drop widget — no stray listener keeps the o
   await new Promise((r) => setTimeout(r, 0));
   expect(params.face).toBe("");          // disposed: never wrote back
 });
+
+// The catalog-button rendering has its OWN `dispose` closure
+// (`picker?.close(); picker = null; drop.dispose();`) — a separate branch
+// from the degraded field's, and the composed disposer above only proves the
+// degraded path's `drop.dispose()` call is wired. A disposer that does one of
+// its two jobs (closes the picker, forgets the drop) is the easy mistake, and
+// only a per-path test distinguishes it — see fix round 1 of the task-8
+// report.
+test("a panel rebuild disposes the drop widget on the catalog-button path too", async () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { face: "" };
+  const panel = buildControls(root, [{ id: "s", controls: [{ key: "face", type: "font", label: "Typeface" }] }],
+    params, () => {}, undefined, { fontCatalog: { async search() { return []; } } });
+  expect(root.querySelector("button.font-btn"), "catalog branch rendered").toBeTruthy();
+  const dropEl = root.querySelector("[data-pf-drop]");
+  panel.dispose();
+  const TTF = Uint8Array.from([0x00, 0x01, 0x00, 0x00, 1, 2, 3, 4]);
+  const file = Object.assign(new Blob([TTF]), {
+    name: "f.ttf", arrayBuffer: async () => TTF.buffer.slice(0),
+  });
+  const ev = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "dataTransfer", { value: { files: [file] } });
+  expect(() => dropEl.dispatchEvent(ev)).not.toThrow();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(params.face).toBe("");          // disposed: never wrote back
+});
