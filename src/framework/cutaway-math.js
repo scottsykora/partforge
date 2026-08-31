@@ -28,9 +28,16 @@ export function nearestCanonicalAxis(direction, target = new THREE.Vector3()) {
   return target.set(0, 0, 0).setComponent(bestIndex, components[bestIndex] < 0 ? -1 : 1);
 }
 
+// The plane's on-screen extent, as a function of the part's bounds ALONE.
+// Split out of initialCutawayPose so a restored pose can be re-sized against
+// whatever geometry it is landing on without inheriting anything else from the
+// pose it came from — see the cutaway's setState.
+export function cutawayPoseSize(box) {
+  return Math.max(box.getSize(new THREE.Vector3()).length(), 1) * 1.25;
+}
+
 export function initialCutawayPose(box, camera) {
   const position = box.getCenter(new THREE.Vector3());
-  const diagonal = Math.max(box.getSize(new THREE.Vector3()).length(), 1);
   // Square the cut plane up with the part rather than the camera: the axis
   // nearest the view direction, so the near half is still what gets cut away.
   const normal = nearestCanonicalAxis(
@@ -44,7 +51,7 @@ export function initialCutawayPose(box, camera) {
   return {
     position,
     quaternion,
-    size: diagonal * 1.25,
+    size: cutawayPoseSize(box),
   };
 }
 

@@ -765,6 +765,16 @@ export function createViewer(container, part) {
     return result;
   }
 
+  // Restoring a snapshot enables the mode, so it reassigns sub-part materials
+  // exactly the way setCutawayEnabled above does — and therefore has to
+  // re-assert live fades for the same reason a paused mid-fade part would
+  // otherwise stick at full opacity.
+  function setCutawayState(state) {
+    const result = cutaway.setState(state);
+    reassertLiveFades();
+    return result;
+  }
+
   // Swap the scene background, grid, and edge-line colors for the given theme.
   function setTheme(mode) {
     const t = THEME[mode] ?? THEME.dark;
@@ -1386,6 +1396,9 @@ export function createViewer(container, part) {
     cutawaySupported: () => cutaway.isSupported,
     cutawayEnabled: () => cutaway.isEnabled,
     setCutawayEnabled,
+    // Carry the slice across a remount — see cutaway.js's getState/setState.
+    getCutawayState: cutaway.getState,
+    setCutawayState,
     flipCutaway: cutaway.flip,
     resetCutaway: cutaway.reset,
     isWorldPointVisible: cutaway.isPointVisible,

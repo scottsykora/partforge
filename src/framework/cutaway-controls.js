@@ -25,7 +25,7 @@ function actionButton(label, title) {
 // Wire the optional cutaway button to the viewer and create its contextual
 // actions. Hosts that omit the primary button opt out of all DOM behavior.
 export function attachCutawayControls(viewer, { cutaway: button } = {}, { tooltip, escapeGuard } = {}) {
-  if (!button) return { reset: noop, detach: noop };
+  if (!button) return { reset: noop, sync: noop, detach: noop };
 
   const canvas = viewer.domElement;
   const addedCanvasTabIndex = !canvas.hasAttribute("tabindex");
@@ -109,6 +109,12 @@ export function attachCutawayControls(viewer, { cutaway: button } = {}, { toolti
 
   return {
     reset: disable,
+    // Re-read the viewer and repaint the button. Every path in here that
+    // changes the mode already calls it; this exposes it for the one caller
+    // that turns the cutaway on from OUTSIDE the button — mount()'s restore of
+    // a carried viewer state, which would otherwise come back sliced open under
+    // a button still reading "off", with its Flip/Reset row missing.
+    sync,
     detach() {
       if (detached) return;
       detached = true;
