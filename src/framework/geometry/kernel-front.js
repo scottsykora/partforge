@@ -57,6 +57,57 @@ export function finishKernel(k) {
       twist: (lefthand ? -360 : 360) * turns,
     });
 
+  // Compound default: a tapped (internally threaded) hole, as ONE cut tool.
+  //
+  // The tool is a plain bore fused with a helical thread, and the whole reason
+  // this op exists is the ONE line that makes that fuse cheap: the thread's root
+  // is sunk INSIDE the bore rather than sitting on it. Hand-assembled, a tapped
+  // hole is written the obvious way — bore of diameter d, thread whose root
+  // radius is also d/2 — and those two tools then touch along an exactly
+  // coincident cylinder without overlapping. Mesh CSG does not care. OCCT does:
+  // it has to resolve a tangential contact between a cylinder and the swept
+  // B-spline surface of the thread root, along a helix, and the intersector
+  // degenerates. Measured on a real 6-turn M6-ish cap: the tangent form did not
+  // finish in fifteen minutes (with OCCT's own glue mitigation, 73-92 s); the
+  // sunk-root form is 8.4 s.
+  //
+  // Sinking is FREE, not a tolerance compromise: everything inside the bore is
+  // already removed by the bore, so the union is the same point set either way.
+  // That is exactly why this has to be an op that owns BOTH halves — screwSweep
+  // alone cannot sink its own root, because a thread cut into solid stock with
+  // no bore would then cut a deeper root and change the part.
+  k.tappedBore ??= ({ d, pitch, turns, depth, crest, lefthand = false, rootSink = 0.2, overshoot = 0.2 }) => {
+    const rootR = d / 2;
+    const majorR = rootR + (crest ?? 0.15 * pitch);
+    const innerR = Math.max(0, rootR - rootSink);
+    // A printable trapezoidal tooth: flat at root and crest so neither knife-edges
+    // at FDM resolution. Same shape a hand-rolled coarse thread converges on.
+    const rootFlat = pitch / 4;
+    const crestFlat = pitch / 8;
+    const rise = (pitch - rootFlat - crestFlat) / 2;
+    const thread = k.screwSweep({
+      profile: [
+        [innerR, 0],
+        [innerR, rootFlat],
+        [majorR, rootFlat + rise],
+        [majorR, rootFlat + rise + crestFlat],
+        [innerR, pitch],
+      ],
+      pitch, turns, lefthand,
+    });
+    // The bore overhangs the thread at BOTH ends, for the same reason the sink
+    // exists: flush is a coincident face. Built with both starting at z = 0 the
+    // bore's end cap is coplanar with the thread's first turn, and this union
+    // does not hang — it silently returns the bore alone (or, with the operands
+    // swapped, an empty solid). A wrong answer with no error is the worst of the
+    // three failure modes, and overhanging is what avoids it.
+    const threadLength = pitch * turns;
+    return k.union([
+      k.cylinder({ d, h: (depth ?? threadLength) + 2 * overshoot }).translate([0, 0, -overshoot]),
+      thread,
+    ]);
+  };
+
   // Compound default: spline-smoothed loft. The shared Catmull-Rom densifier
   // (loft-smooth.js) now emits all-cubic curve rings on BOTH paths — every ring
   // is contour IR ({start, segments:[{to,c1,c2}…]}), fitted exactly from the CR

@@ -27,6 +27,8 @@ export const KERNEL_OPS = [
   "loftSmooth",
   // Additive in 0.92 (same precedent): both backends implement it.
   "heightfield",
+  // Additive (same precedent): a compound default, so neither backend implements it.
+  "tappedBore",
 ];
 
 // Backend-optional kernel ops: the sub-part cache brackets + WASM lifetime hooks.
@@ -151,6 +153,7 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(o:{profile:number[][],degrees?:number}) => Solid} revolve   revolve a lathe profile [[r,z],…] around Z; legacy (points,opts) accepted for now (see file header)
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(o:{profile:number[][],pitch:number,turns:number,lefthand?:boolean}) => Solid} screwSweep   screw-motion sweep of an axial [[r,z]] profile — threads; options-only
+ * @property {(o:{d:number,pitch:number,turns:number,depth?:number,crest?:number,lefthand?:boolean,rootSink?:number,overshoot?:number}) => Solid} tappedBore   compound: a tapped hole as ONE cut tool — bore plus thread, root sunk inside the bore so the two never share a face
  * @property {(o:{sections:object[],stations?:number,samples?:number,shading?:string,closed?:boolean}) => Solid} loftSmooth   Catmull-Rom-densified loft of sparse control sections; options-only
  * @property {(nameOrGrid: string|{width:number,height:number,data:Uint16Array}, opts: {w:number,d:number,base?:number,maxZ?:number,pitch?:number,invert?:boolean,range?:number[],origin?:"center"|"corner"}) => Solid} heightfield   depth-map relief solid; nameOrGrid is a name declared in the part's `images` field or an inline grid
  * @property {(solids:Solid[]) => Solid} union
