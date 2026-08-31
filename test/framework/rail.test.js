@@ -445,6 +445,101 @@ test("widening restores the stored collapsed state and the toggle", () => {
   }
 });
 
+// --- host rail layouts -------------------------------------------------
+// A host (partforge-cloud) can lease the rail's placement through
+// attachMobileTabs' setRailLayout, which writes data-pf-rail-layout (and, in
+// overlay mode, data-pf-rail-open) onto the shell. Both layouts size the rail
+// themselves, so width, collapse and the seam are suspended for the duration —
+// and in overlay mode the toggle stops being a collapse control and becomes the
+// drawer's open/close control. layoutChanged() is how the host tells us the
+// attributes moved; it is a plain re-apply, so calling it on a no-change
+// notification is safe.
+
+test("overlay: the toggle drives the drawer instead of collapsing the rail", () => {
+  const { shell, rail, toggle, storage, handle } = setup({ withToggle: true });
+  shell.dataset.pfRailLayout = "overlay";
+  handle.layoutChanged();
+  handle.layoutChanged(); // a no-change notification must be harmless
+
+  toggle.click();
+  expect(shell.hasAttribute("data-pf-rail-open")).toBe(true);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true"); // the DRAWER, not the collapse
+  expect(toggle.getAttribute("aria-label")).toBe("Hide controls");
+  expect(toggleChevronD(toggle)).toBe(CHEVRON_RAIL_OPEN);
+  // Collapse is a wide-layout preference the drawer must leave alone.
+  expect(rail.hasAttribute("inert")).toBe(false);
+  expect(storage.read()).toBeNull();
+
+  toggle.click();
+  expect(shell.hasAttribute("data-pf-rail-open")).toBe(false);
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(toggleChevronD(toggle)).toBe(CHEVRON_RAIL_COLLAPSED);
+  expect(storage.read()).toBeNull();
+});
+
+test("overlay: the toggle stays visible below the narrow breakpoint", () => {
+  const original = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { value: 600, configurable: true });
+  try {
+    const { shell, toggle, handle } = setup({ withToggle: true });
+    expect(toggle.hidden).toBe(true); // no host layout: the tab bar replaces it
+
+    shell.dataset.pfRailLayout = "overlay";
+    handle.layoutChanged();
+    // The host's tab bar is hidden under a layout lease, so this is the only
+    // way back to the controls.
+    expect(toggle.hidden).toBe(false);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  } finally {
+    Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
+  }
+});
+
+test("dock: the toggle hides and the seam refuses to start a drag", () => {
+  const { shell, toggle, seam, handle } = setup({ withToggle: true });
+  shell.dataset.pfRailLayout = "dock";
+  handle.layoutChanged();
+
+  expect(toggle.hidden).toBe(true); // the rail is always on screen; nothing to toggle
+  expect(railWidth()).toBe("0px"); // the host reserves the space, not --pf-rail-w
+  seam.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 10 }));
+  expect(shell.hasAttribute("data-pf-dragging")).toBe(false);
+});
+
+test("a host layout refuses keyboard resizing and never moves the remembered width", () => {
+  const { shell, seam, handle } = setup();
+  shell.dataset.pfRailLayout = "overlay";
+  handle.layoutChanged();
+
+  key(seam, "ArrowLeft");
+  key(seam, "Home");
+  expect(railWidth()).toBe("0px");
+
+  delete shell.dataset.pfRailLayout;
+  handle.layoutChanged();
+  expect(railWidth()).toBe(`${RAIL_DEFAULT_WIDTH}px`);
+});
+
+test("a host layout suspends a stored collapse, which comes back when the lease is released", () => {
+  const { shell, rail, seam, handle } = setup();
+  key(seam, "Enter");
+  expect(rail.hasAttribute("inert")).toBe(true);
+
+  shell.dataset.pfRailLayout = "dock";
+  handle.layoutChanged();
+  expect(rail.hasAttribute("inert")).toBe(false); // a docked rail is always live
+
+  delete shell.dataset.pfRailLayout;
+  handle.layoutChanged();
+  expect(rail.hasAttribute("inert")).toBe(true); // the preference was never rewritten
+});
+
+test("layoutChanged is a callable no-op without a rail", () => {
+  const handle = attachRail({});
+  expect(() => handle.layoutChanged()).not.toThrow();
+  handle.detach();
+});
+
 test("detach restores the toggle's original hidden state", () => {
   const original = window.innerWidth;
   Object.defineProperty(window, "innerWidth", { value: 500, configurable: true });
