@@ -18,6 +18,7 @@
 import { attachInfo } from "../info.js";
 import { IMAGE_ALLOW_DEFAULT, imageSourceAllowed } from "../../image-source.js";
 import { mountDrop } from "./file-drop.js";
+import { declaredImageUrl } from "../declared-source.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -76,6 +77,22 @@ function previewSrc(source, urls) {
   return typeof source === "string" && source ? source : urls.forBytes(source);
 }
 
+// When the control's own param is empty, show what the PART is using: its
+// bundled default lives in the `images` declaration, which is the only place it
+// can live (the allow list passes only https, so a file:/dev URL cannot sit in
+// `defaults`). Resolving it is async — a Vite thunk has to be called — so the
+// tile paints empty first and fills in, and a source that never resolves simply
+// leaves it empty. `seq` guards against a slow resolve landing after a newer one.
+function paintDeclared(img, declaredSource, node, apply) {
+  if (!declaredSource) return;
+  const source = declaredSource("image", node.key);
+  if (source === undefined) return;
+  const seq = ++img._pfDeclaredSeq;
+  declaredImageUrl(source).then((url) => {
+    if (url && seq === img._pfDeclaredSeq) apply(url);
+  });
+}
+
 function applyPreview(img, src) {
   if (src) {
     img.hidden = false;
@@ -86,7 +103,7 @@ function applyPreview(img, src) {
   }
 }
 
-export function makeImage(node, params, { onChange, onCommit, info, imageCatalog, onAssetUpload } = {}) {
+export function makeImage(node, params, { onChange, onCommit, info, imageCatalog, onAssetUpload, declaredSource } = {}) {
   const urls = makeObjectUrlSlot();   // one live preview URL per widget; see makeObjectUrlSlot
   const allow = Array.isArray(node.allow) && node.allow.length ? node.allow : IMAGE_ALLOW_DEFAULT;
   const wrap = el("div", "slider");
@@ -98,6 +115,7 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
 
   const preview = document.createElement("img");
   preview.className = "image-preview";
+  preview._pfDeclaredSeq = 0;
   preview.alt = "";
   preview.hidden = true;
   // A URL that fails to load (404, CORS, revoked link) must degrade to hidden,
@@ -120,8 +138,13 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
       field.value = isBytes(v) ? "" : String(v ?? "");
       field.placeholder = isBytes(v) ? "Uploaded image" : "";
       field.classList.remove("warn");
-      applyPreview(preview, previewSrc(v, urls));
+      const own = previewSrc(v, urls);
+      applyPreview(preview, own);
       preview.parentElement?.classList.toggle("has-thumb", !preview.hidden);
+      if (!own) paintDeclared(preview, declaredSource, node, (url) => {
+        applyPreview(preview, url);
+        preview.parentElement?.classList.toggle("has-thumb", true);
+      });
     };
     field.addEventListener("change", () => {
       if (!imageSourceAllowed(field.value, allow)) { field.classList.add("warn"); return; }
@@ -131,7 +154,13 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
       onCommit?.();
     });
     paintField();
-    wrap.append(field);
+    // `sourceField: false` drops the URL box. The tile already is the preview, the
+    // drop target and the click-to-choose, so the field is a fourth affordance for
+    // one job on a 288 px rail. Default ON: it is the only way to type an https URL
+    // or a pfc-asset token, and for a vector control there is no catalog either.
+    // Nothing is lost by hiding it — the `warn` state lives on the field's own
+    // change handler, which is unreachable once the field is gone.
+    if (node.sourceField !== false) wrap.append(field);
 
     const drop = mountDrop("image", {
       params, node, onAssetUpload, onChange, onCommit, onRender: paintField,
@@ -173,6 +202,11 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
     applyPreview(preview, url);
     applyPreview(thumb, url);
     preview.parentElement?.classList.toggle("has-thumb", !preview.hidden);
+    if (!url) paintDeclared(preview, declaredSource, node, (u) => {
+      applyPreview(preview, u);
+      applyPreview(thumb, u);
+      preview.parentElement?.classList.toggle("has-thumb", true);
+    });
     const show = ({ label: text, width, height }) => {
       if (seq !== paintSeq) return;                  // a newer paint already won
       iname.textContent = width && height ? `${text} (${width}×${height})` : text;

@@ -711,9 +711,9 @@ Every control accepts `key`, `type`, `label`, `description`, `hidden`, `when` an
 | `"checkbox"` | an on/off box: ticked writes `on`, cleared writes `0` | `on` (default `1`) |
 | `"select"` | a dropdown | `options` |
 | `"radio"` | a segmented button row | `options` |
-| `"font"` | a typeface picker (or a URL field with no catalog), plus a drop target | `allow`, `preview` |
-| `"image"` | an image picker (or a URL field with no catalog), plus a drop target | `allow` |
-| `"vector"` | a URL field plus a drop target — no catalog exists | — |
+| `"font"` | a typeface picker (or a URL field with no catalog), plus a drop target | `allow`, `preview`, `sourceField` |
+| `"image"` | an image picker (or a URL field with no catalog), plus a drop target | `allow`, `sourceField` |
+| `"vector"` | a URL field plus a drop target — no catalog exists | `sourceField` |
 
 Numeric controls always show the number box: drag the slider *or* type an exact
 value. Typed values may be finer than `step` and clamp to `[min, max]` on commit.
@@ -727,6 +727,15 @@ each entry is both value and label — or the long form
 `defaults[key]` **must be one of them** (`select-default-not-in-options`; watch
 types, `12` is not `"12"`). An option's `description` surfaces as a hover tooltip
 on that one option, not as a ⓘ popover.
+
+**`sourceField: false`** (font/image/vector) hides the raw source text box,
+leaving the drop target and — for font and image — the picker. The field is the
+only way to paste a URL, so hiding it is a choice about who the control is for:
+keep it when a source URL is something your users will legitimately have, drop it
+when the answer is always a file they pick or drag. Nothing else changes — the
+same values are accepted by the same allow list, and a source set in `defaults`
+or by the host still applies. The drop target shows the part's current artwork,
+so a control with no text field still opens with something to look at.
 
 **`allow` and `preview`** (font) configure the typeface control. `allow` lists the
 source kinds a **param-supplied** value may use — what the picker writes, or what

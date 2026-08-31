@@ -20,6 +20,7 @@ import { attachInfo } from "../info.js";
 import { VECTOR_ALLOW_DEFAULT, vectorSourceAllowed } from "../../vector-source.js";
 import { mountDrop } from "./file-drop.js";
 import { vectorThumb } from "./vector-thumb.js";
+import { declaredVectorDoc } from "../declared-source.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -35,7 +36,7 @@ const isBytes = (v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v);
 // byte-valued param.
 const isOpaque = (v) => isBytes(v) || (v != null && typeof v === "object");
 
-export function makeVector(node, params, { onChange, onCommit, info, onAssetUpload } = {}) {
+export function makeVector(node, params, { onChange, onCommit, info, onAssetUpload, declaredSource } = {}) {
   const allow = Array.isArray(node.allow) && node.allow.length ? node.allow : VECTOR_ALLOW_DEFAULT;
   const wrap = el("div", "slider");
   const row = el("div", "row");
@@ -67,7 +68,13 @@ export function makeVector(node, params, { onChange, onCommit, info, onAssetUplo
     onCommit?.();
   });
   paintField();
-  wrap.append(field);
+  // `sourceField: false` drops the URL box. The tile already is the preview, the
+  // drop target and the click-to-choose, so the field is a fourth affordance for
+  // one job on a 288 px rail. Default ON: it is the only way to type an https URL
+  // or a pfc-asset token, and for a vector control there is no catalog either.
+  // Nothing is lost by hiding it — the `warn` state lives on the field's own
+  // change handler, which is unreachable once the field is gone.
+  if (node.sourceField !== false) wrap.append(field);
 
   // The thumbnail IS the drop target. A vector param holds a parsed document, so
   // there is no URL an <img> could point at — the artwork is drawn inline
@@ -84,12 +91,28 @@ export function makeVector(node, params, { onChange, onCommit, info, onAssetUplo
   // or carrying a coordinate that is not finite — rather than throwing. The tile
   // stays either way, because it is the drop target: losing it on a bad document
   // would strand the user with no way to replace it.
-  function paintThumb() {
+  let thumbSeq = 0;
+  function showThumb(doc) {
     const art = thumb.querySelector("svg");
     if (art) art.remove();
-    const svg = isOpaque(params[node.key]) ? vectorThumb(params[node.key]) : null;
+    const svg = doc ? vectorThumb(doc) : null;
     thumb.classList.toggle("has-thumb", !!svg);
     if (svg) thumb.prepend(svg);
+  }
+  function paintThumb() {
+    const own = params[node.key];
+    const seq = ++thumbSeq;
+    if (isOpaque(own)) { showThumb(own); return; }
+    showThumb(null);
+    // Nothing in the param — fall back to what the PART declares, which is where
+    // a bundled default has to live (the allow list passes only https, so a
+    // file:/dev URL cannot sit in `defaults`). Unlike an image there is nothing
+    // to point at: the document must be fetched and parsed before it can be
+    // drawn, so this lands a tick or two later, and a source that never resolves
+    // just leaves the tile empty — it stays a drop target either way.
+    const source = declaredSource?.("vector", node.key);
+    if (source === undefined) return;
+    declaredVectorDoc(source).then((doc) => { if (doc && seq === thumbSeq) showThumb(doc); });
   }
   paintThumb();
 

@@ -102,7 +102,13 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload, ambient =
   if (!ambient) {
     wrap.tabIndex = 0;
     wrap.setAttribute("role", "button");
+    // Two hints, swapped by CSS on `.has-thumb`. The empty-state one is the only
+    // thing in an empty tile; the replace one takes over once a preview fills it.
+    // Without the second, a tile showing a part's declared artwork — now the
+    // state a control OPENS in — carried no instruction at all, because the
+    // first is hidden the moment a thumbnail appears.
     wrap.append(el("span", "file-drop-hint", `Drop ${row?.label ?? "a file"} here, or click to choose`));
+    wrap.append(el("span", "file-drop-hint file-drop-hint-replace", "Drop to replace, or click to choose"));
   }
 
   // The click/keyboard path to the same handler a drop uses. Hidden rather

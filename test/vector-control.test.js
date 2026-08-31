@@ -138,3 +138,61 @@ describe("thumbnail", () => {
   });
 });
 
+// ── sourceField: false ───────────────────────────────────────────────────────
+// The tile is preview, drop target and click-to-choose in one. The URL field is a
+// fourth affordance for the same job, and on a 288 px rail it is the one earning
+// its space least — so an author can drop it. It stays ON by default, because it
+// is the only way to enter an https URL or a pfc-asset token by hand.
+describe("sourceField: false", () => {
+  const mount = (extra) => {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    buildControls(root, [{ id: "s", controls: [{ key: "art", type: "vector", label: "Artwork", ...extra }] }],
+      { art: "" }, () => {});
+    return root;
+  };
+
+  test("hides the URL field but keeps the drop tile", () => {
+    const root = mount({ sourceField: false });
+    expect(root.querySelector("input.text-input"), "no URL field").toBeNull();
+    expect(root.querySelector("[data-pf-drop]"), "the tile is still there").toBeTruthy();
+  });
+
+  test("the field is present by default", () => {
+    expect(mount({}).querySelector("input.text-input"), "default keeps the field").toBeTruthy();
+  });
+});
+
+test("opens showing the part's declared artwork, not an empty tile", async () => {
+  // Unlike an image there is nothing to point at — the document has to be fetched
+  // and parsed before it can be drawn.
+  const doc = JSON.parse(readFileSync("src/parts/assets/emblem.vector.json", "utf8"));
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => doc });
+  try {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    buildControls(root, [{ id: "s", controls: [{ key: "art", type: "vector", label: "Artwork" }] }],
+      { art: "" }, () => {}, undefined,
+      { declaredSource: () => "https://cdn.test/bundled.vector.json" });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(root.querySelector("[data-pf-thumb] svg"), "the declared artwork is drawn").toBeTruthy();
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test("a declared document that fails to load leaves the tile empty, never throws", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false });
+  try {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    expect(() => buildControls(root, [{ id: "s", controls: [{ key: "art", type: "vector", label: "Artwork" }] }],
+      { art: "" }, () => {}, undefined,
+      { declaredSource: () => "https://cdn.test/gone.vector.json" })).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(root.querySelector("[data-pf-thumb] svg")).toBeNull();
+    expect(root.querySelector("[data-pf-thumb]"), "the tile survives so a drop is still possible").toBeTruthy();
+  } finally { globalThis.fetch = realFetch; }
+});
+

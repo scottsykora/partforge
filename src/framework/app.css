@@ -207,7 +207,8 @@ textarea.text-input { min-height: 64px; resize: vertical; }
    while a file is over it, so dropping stays available without spending rail
    height advertising itself. */
 .file-drop {
-  position: relative; display: flex; align-items: center; justify-content: center;
+  position: relative; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
   min-height: 56px; margin-top: 6px; padding: 8px;
   background: var(--pf-input-bg); color: var(--pf-hint);
   border: 1px dashed var(--pf-border); border-radius: var(--pf-radius-control);
@@ -217,17 +218,50 @@ textarea.text-input { min-height: 64px; resize: vertical; }
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 .file-drop-hint { font: 11px/1.35 var(--pf-sans); }
 
-/* The thumbnail fills the tile. `contain` rather than `cover` because artwork
-   and depth maps are content, not decoration — cropping one to fill the box
-   would misrepresent what is about to be built. */
+/* `contain` rather than `cover` because artwork and depth maps are content, not
+   decoration — cropping one to fill the box would misrepresent what is about to
+   be built. The two preview kinds then diverge, because a photograph and a piece
+   of line art want opposite things from the box around them. */
 .file-drop > svg, .file-drop > img {
   display: block; max-width: 100%; max-height: 96px; object-fit: contain;
 }
 .file-drop > svg { fill: var(--pf-text-2); }
-/* Once there is a preview the dashed "empty" border would read as a second
-   frame around the artwork, so it goes solid and the hint steps aside. */
-.file-drop.has-thumb { border-style: solid; }
+/* Once there IS a preview, the frame moves off the tile and onto the artwork.
+   The tile stays full width — it is the drop target, and a full-width one is
+   easier to hit — but goes invisible, so what the eye sees is a rounded box
+   hugging the picture with the hint underneath it, rather than a picture
+   floating inside a much larger box. The border stays at 1px and only loses its
+   colour, so nothing shifts when a thumbnail arrives. */
+.file-drop.has-thumb {
+  border-color: transparent; background: none; padding: 0; gap: 4px;
+}
+.file-drop.has-thumb > img, .file-drop.has-thumb > svg {
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-control);
+  background: var(--pf-input-bg);
+}
+/* A RASTER is a filled rectangle, so the border sits directly on the pixels —
+   padding around one reads as a mount around a picture. `border-radius` on an
+   `<img>` clips the image itself, which is what rounds the corners. Sized by
+   `max-height` rather than `height` so a small source is shown at its own size
+   instead of being upscaled into a blur.
+   `width: auto` is load-bearing: this element also carries `.image-preview`,
+   which pins it to `width: 100%` and letterboxes the picture inside a
+   rail-width box with `object-fit`. That is the right behaviour for a preview
+   that fills its container and the wrong one for a frame meant to hug, and it
+   is invisible in the markup — the box just silently stops matching the image. */
+.file-drop.has-thumb > img { max-height: 96px; max-width: 100%; width: auto; margin: 0; }
+/* A VECTOR is line art: strokes running into the border would collide with it
+   rather than be framed by it, so it keeps padding inside its own frame. Sizing
+   by height with `width: auto` lets the viewBox's aspect supply the width, so
+   the frame hugs the drawing instead of the SVG's default 300x150 box. */
+.file-drop.has-thumb > svg { height: 96px; width: auto; max-width: 100%; padding: 8px; }
+
+/* The empty-state hint and the replace hint trade places: exactly one is visible
+   in either state, so a tile is never without an instruction. */
+.file-drop-hint-replace { display: none; }
 .file-drop.has-thumb .file-drop-hint { display: none; }
+.file-drop.has-thumb .file-drop-hint-replace { display: block; }
 
 /* Ambient: no box of its own. Laid over the control, inert to the pointer so
    every click still reaches the button underneath — the one affordance this

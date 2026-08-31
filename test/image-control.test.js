@@ -377,3 +377,80 @@ describe("byte-valued preview", () => {
   });
 });
 
+// ── sourceField: false ───────────────────────────────────────────────────────
+// The tile is preview, drop target and click-to-choose in one. The URL field is a
+// fourth affordance for the same job, and on a 288 px rail it is the one earning
+// its space least — so an author can drop it. It stays ON by default, because it
+// is the only way to enter an https URL or a pfc-asset token by hand.
+describe("sourceField: false", () => {
+  const mount = (extra) => {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    buildControls(root, [{ id: "s", controls: [{ key: "relief", type: "image", label: "Depth map", ...extra }] }],
+      { relief: "" }, () => {});
+    return root;
+  };
+
+  test("hides the URL field but keeps the drop tile", () => {
+    const root = mount({ sourceField: false });
+    expect(root.querySelector("input.text-input"), "no URL field").toBeNull();
+    expect(root.querySelector("[data-pf-drop]"), "the tile is still there").toBeTruthy();
+  });
+
+  test("the field is present by default", () => {
+    expect(mount({}).querySelector("input.text-input"), "default keeps the field").toBeTruthy();
+  });
+});
+
+test("an author's `allow` reaches the widget — it was being dropped in desugar", () => {
+  // authoredControl() rebuilds each control from an explicit field list. `allow`
+  // was not on it, so every authored control fell back to the default allow list
+  // in the widget's own typed-URL check. The worker-side gate was unaffected —
+  // imageControlAllows walks the raw authored tree — so a narrowed list was
+  // enforced correctly but the panel accepted values it should have refused,
+  // then had them reset underneath the user.
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { relief: "" };
+  buildControls(root, [{ id: "s", controls: [
+    { key: "relief", type: "image", label: "Depth map", allow: ["asset"] },
+  ] }], params, () => {});
+  const field = root.querySelector("input.text-input");
+  field.value = "https://cdn.test/x.png";              // https, but allow is ["asset"] only
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(params.relief, "an out-of-allow value must not be written").toBe("");
+  expect(field.classList.contains("warn"), "and the field says so").toBe(true);
+});
+
+test("opens showing the part's declared image, not an empty tile", async () => {
+  // The bundled default lives in the `images` declaration — an author cannot put
+  // it in `defaults`, because the allow list passes only https and a bundled
+  // asset is a file:/dev URL. Without this the control opened blank while the
+  // part was plainly building from an image.
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  buildControls(root, [sec()], { relief: "" }, () => {}, undefined,
+    { declaredSource: () => "https://cdn.test/bundled.png" });
+  // Resolution is async — a declared source may be a Vite thunk that has to be
+  // called — so the tile paints empty first and fills in on the next tick.
+  await new Promise((r) => setTimeout(r, 0));
+  const img = root.querySelector("img.image-preview");
+  expect(img.hidden).toBe(false);
+  expect(img.getAttribute("src")).toBe("https://cdn.test/bundled.png");
+});
+
+test("the param wins over the declaration once the user picks something", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  buildControls(root, [sec()], { relief: "https://cdn.test/picked.png" }, () => {}, undefined,
+    { declaredSource: () => "https://cdn.test/bundled.png" });
+  expect(root.querySelector("img.image-preview").getAttribute("src")).toBe("https://cdn.test/picked.png");
+});
+
+test("no declaredSource provider — the tile is simply empty, nothing throws", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  expect(() => buildControls(root, [sec()], { relief: "" }, () => {})).not.toThrow();
+  expect(root.querySelector("img.image-preview").hidden).toBe(true);
+});
+
