@@ -15,6 +15,7 @@
 //     param change (a lid's open angle) therefore re-runs no OCCT op at all.
 //     Ops that need the real B-rep (booleans, fillet/chamfer/shell, exports,
 //     volume, boundingBox) materialize the pending pose through replicad first.
+import { assertNoCoincidentBoolean } from "./occt-coincidence.js";
 import { toEdgeFinder } from "./edge-selector.js";
 import { toFaceFinder } from "./face-selector.js";
 import { addSugar } from "./solid-sugar.js";
@@ -117,6 +118,12 @@ export function createOcctKernel(replicad) {
   // Manifold backend's fillet/chamfer degradation.
   const buildWarnings = [];
   const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
+  // The raw OCCT instance, for the coincident-boolean guard (occt-coincidence.js).
+  // Absent (older replicad, or a boot path that skipped setOC) the guard is a no-op —
+  // detection is an upgrade, never a dependency.
+  let occtInstance = null;
+  try { occtInstance = replicad.getOC(); } catch { /* guard disabled */ }
+  const guardBoolean = (opName, solids) => assertNoCoincidentBoolean(occtInstance, opName, solids);
   // Fillet/chamfer/shell failure recovery (skip-on-failure, chamfer binary search) —
   // see occt-repair.js for the policies and why they differ per op.
   const { validChamfer, safeOp } = createOcctRepair(measureVolume, recordWarning);
@@ -223,6 +230,7 @@ export function createOcctKernel(replicad) {
         const key = h("cut", hash, t._hash);
         return cached(key, () => {
           const a = mat(), b = t._mat();
+          guardBoolean("cut", [a._s, b._s]);
           return wrap(a._s.clone().cut(b._s.clone()), [...cloneLabels(a._labels), ...cloneLabels(b._labels)], key);
         });
       },
@@ -231,6 +239,10 @@ export function createOcctKernel(replicad) {
         return cached(key, () => {
           const a = mat(), bs = tools.map((t) => t._mat());
           if (bs.length === 0) return wrap(a._s.clone(), cloneLabels(a._labels), key);
+          // All pairs, tools included: the cut below first fuses the tools
+          // together, so tool-to-tool contact hangs exactly like target-to-tool
+          // (the measured case WAS two tools — a bore and its thread).
+          guardBoolean("cutAll", [a._s, ...bs.map((b) => b._s)]);
           const fusedTools = bs
             .slice(1)
             .reduce((acc, b) => acc.fuse(b._s.clone()), bs[0]._s.clone());
@@ -245,6 +257,7 @@ export function createOcctKernel(replicad) {
         const key = h("intersect", hash, t._hash);
         return cached(key, () => {
           const a = mat(), b = t._mat();
+          guardBoolean("intersect", [a._s, b._s]);
           return wrap(a._s.clone().intersect(b._s.clone()), [...cloneLabels(a._labels), ...cloneLabels(b._labels)], key);
         });
       },
@@ -252,6 +265,7 @@ export function createOcctKernel(replicad) {
         const key = h("union", [hash, t._hash]);
         return cached(key, () => {
           const a = mat(), b = t._mat();
+          guardBoolean("union", [a._s, b._s]);
           return wrap(a._s.clone().fuse(b._s.clone()), [...cloneLabels(a._labels), ...cloneLabels(b._labels)], key);
         });
       },
@@ -631,6 +645,7 @@ export function createOcctKernel(replicad) {
       const key = h("union", solids.map((s) => s._hash));
       return cached(key, () => {
         const ms = solids.map((s) => s._mat());
+        guardBoolean("union", ms.map((m) => m._s));
         return wrap(
           ms.map((m) => m._s.clone()).reduce((a, b) => a.fuse(b)),
           ms.flatMap((m) => cloneLabels(m._labels)),
