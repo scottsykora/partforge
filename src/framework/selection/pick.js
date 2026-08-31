@@ -3,6 +3,7 @@
 import { raycastViewer, worldToSubPartLocal } from "./raycast.js";
 import { resolveSelection } from "./resolve.js";
 import { createDragTracker } from "./drag-tracker.js";
+import { projectToScreen } from "../pick-flash.js";
 
 export { worldToSubPartLocal };
 
@@ -10,6 +11,8 @@ export { worldToSubPartLocal };
 // whose suppression condition lives elsewhere (mount passes measure mode's
 // isEnabled): while it returns true a click neither raycasts, flashes, nor
 // picks — no resync bookkeeping the way an event-driven setActive would need.
+// onPick receives (selection, anchor): where the marker this click flashed
+// landed on the canvas, in CSS px from its top-left.
 export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
   let active = false;
   const drag = createDragTracker();
@@ -25,7 +28,19 @@ export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
     if (!hit) return;
     const selection = resolveSelection(part, getContext(), hit);
     viewer.flashPoint([hit.pointWorld.x, hit.pointWorld.y, hit.pointWorld.z]);
-    onPick(selection);
+    // The anchor is the MARKER's projection, not the pointer's position, even
+    // though the two coincide at this instant: the host's follow-the-camera
+    // stream projects the same world point through the same function every
+    // frame after, so the first answer is of a piece with the rest.
+    // Sized from the rect the raycast just used, which is what makes this
+    // anchor land back on the pixel the user clicked. The stream sizes from the
+    // renderer's last setSize instead — also CSS px, but the CONTAINER's
+    // integer clientWidth/Height as of the last ResizeObserver call, and 1x1
+    // while the viewer is parked. They agree in steady state; the divergence is
+    // staleness, never units.
+    const rect = viewer.domElement.getBoundingClientRect();
+    const anchor = projectToScreen(viewer.camera, hit.pointWorld, rect.width, rect.height);
+    onPick(selection, { x: anchor.x, y: anchor.y });
   }
 
   viewer.domElement.addEventListener("pointerdown", drag.onDown);
