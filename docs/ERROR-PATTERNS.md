@@ -61,6 +61,12 @@ The framework itself rebuilds each sub-part fresh per job and applies `place` on
 - **Cause:** OCCT fillet/chamfer cost scales with the number of selected edges, and an `inPlane` rim selector on a many-point extruded profile selects every polygon edge (hundreds for a gear), so one op call costs seconds — and re-runs on every parameter change while that path is active.
 - **Fix:** Use `extrude`'s `bevel` option instead of `chamfer` — same geometry, stays on the fast Manifold backend. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Beveling profile rims: extrude's bevel option".
 
+## boolean-coincident-faces-hang
+
+- **Symptom:** A part previews instantly but a STEP export (or any OCCT-path build) of one sub-part runs for minutes and never finishes, with no error, no warning, and no progress. Cutting each tool on its own is fast; only the combination hangs. Threaded parts are the usual victims.
+- **Cause:** Two cut tools in the same `cutAll` (or a tool and the body) share an *exactly* coincident face — most often a bore whose radius equals a thread's root radius, so the bore wall and the thread root lie on the same cylinder. OCCT's boolean has to classify a surface that is simultaneously on both operands, and the intersection search degenerates. Manifold's mesh CSG does not care, which is why the preview is fine and only the exact kernel suffers. Measured on one real part: bore alone 0.4 s, thread alone 5.4 s, both together did not finish in fifteen minutes; moving the bore 0.05 mm brought the pair to 12.6 s.
+- **Fix:** Give the surfaces a deliberate clearance instead of letting them land on the same number. Derive one from the other with an explicit gap — `const boreD = threadRootD - 2 * boreClearance;` with `boreClearance` around 0.05-0.1 mm — rather than reusing the same expression for both. The gap is far below a printable layer, so the fit is unchanged. The same rule covers a cut that ends exactly flush with a face (overshoot it by a few tenths, as the surrounding examples do with `+ 0.4` / `- 0.2`) and two tools that abut exactly end-to-end.
+
 ## chamfer-rescue-bisection
 
 - **Symptom:** `partforge: chamfer` warning saying the distance `over-ran the geometry — reduced to` a smaller one (or `has no valid distance`), with an attempt count and elapsed seconds, alongside slow builds.
