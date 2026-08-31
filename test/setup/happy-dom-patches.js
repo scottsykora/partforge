@@ -1,3 +1,5 @@
+import { stubCanvas2dContext } from "../../src/framework/ingest/node-dom.js";
+
 // Test-only setup: patches a happy-dom bug where Node.prototype.nodeName returns
 // "" for all nodes, causing DOMPurify to strip every element as "unknown".
 //
@@ -62,18 +64,12 @@ if (typeof Element !== "undefined") {
 // needs — an incomplete stub traded "getContext throws" for "ctx.fillText is
 // not a function" deeper in cube-canvas.js/dim3-scene.js. All of it is still
 // a no-op: nothing here ever asserts on pixels.
+//
+// The stub itself is imported from src/framework/ingest/node-dom.js — the
+// same no-op 2D context installNodeDom() installs for the `partforge ingest`
+// CLI's own happy-dom Window. It used to be a second hand-typed copy here,
+// kept in sync with a comment reminder; importing the one function is what
+// makes that no longer possible to get out of sync.
 if (typeof HTMLCanvasElement !== "undefined") {
-  HTMLCanvasElement.prototype.getContext = () => ({
-    save() {}, restore() {}, beginPath() {}, closePath() {}, moveTo() {}, lineTo() {},
-    bezierCurveTo() {}, quadraticCurveTo() {}, arc() {}, rect() {}, fill() {}, stroke() {},
-    clip() {}, translate() {}, scale() {}, rotate() {}, transform() {}, setTransform() {},
-    clearRect() {}, fillRect() {}, strokeRect() {}, setLineDash() {},
-    fillText() {}, strokeText() {},
-    measureText: () => ({ width: 0 }),
-    getImageData: () => ({ data: new Uint8ClampedArray(4) }),
-    createImageData: (w, h) => ({ data: new Uint8ClampedArray(Math.max(0, w) * Math.max(0, h) * 4), width: w, height: h }),
-    putImageData() {}, drawImage() {}, isPointInPath: () => false,
-    createLinearGradient: () => ({ addColorStop() {} }),
-    canvas: { width: 1, height: 1 },
-  });
+  HTMLCanvasElement.prototype.getContext = stubCanvas2dContext;
 }

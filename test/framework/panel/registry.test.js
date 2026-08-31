@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { WIDGET_SPECS, WIDGET_TYPES, specFor, fieldsFor } from "../../../src/framework/panel/widget-specs.js";
 
 test("the registry covers exactly the types this phase supports", () => {
-  expect(WIDGET_TYPES.sort()).toEqual(["checkbox", "font", "image", "number", "radio", "readout", "select", "slider", "text", "textarea"]);
+  expect(WIDGET_TYPES.sort()).toEqual(["checkbox", "font", "image", "number", "radio", "readout", "select", "slider", "text", "textarea", "vector"]);
 });
 
 test("every spec declares a kind and a non-empty field list", () => {

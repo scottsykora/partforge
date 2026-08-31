@@ -673,7 +673,7 @@ between the Manifold preview and the OCCT STEP export.
 
 - **Symptom:** `vector2d: "` followed by the declared `vectors` name and a validation complaint — a bad `format` or `version`, a contour with no `kind` or an unknown one, a malformed `"path"` contour or segment (missing `start`, too few segments, an `arc` with no `through`, a `cubic` missing `c1`/`c2`, a non-numeric coordinate), a primitive with a bad `center`/`r`/`width`/`height`, a shape that is neither a region array nor a `{ role, regions }` object, an unknown `role`, a `bbox` that disagrees with the geometry, or (a different message, same `vector2d: "<name>"` lead) `vector2d: "<name>" is not valid JSON — <parse error>` — thrown while resolving a part's `vectors`, before `build` even runs.
 - **Cause:** The stored document isn't a well-formed `partforge-vector` file. The single most common case for the "is not valid JSON" variant: `vectors` points at the raw `.svg` file instead of an ingested `.vector.json` — an SVG document is not JSON at all, so it fails to parse before validation ever gets a chance to name a more specific problem.
-- **Fix:** If the message says "is not valid JSON," check the source points at the ingested `<name>.vector.json`, not the original `.svg` — re-ingest with `partforge/ingest` (or `node scripts/ingest-svg.mjs <file.svg>` in this repo) if you don't have it yet. Otherwise the message names the shape, the 1-indexed region, the role (`outer` / `hole n`), and where applicable the 1-indexed segment, so the fix is a single edit. Several specific cases have their own entries below (vector-units-missing, vector-stale-regions-array, vector-rect-radius-too-large). See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) for the full schema and what each field means.
+- **Fix:** If the message says "is not valid JSON," check the source points at the ingested `<name>.vector.json`, not the original `.svg` — re-ingest with `partforge/ingest` (or `npx partforge ingest <file.svg> --out <file.vector.json>`) if you don't have it yet. Otherwise the message names the shape, the 1-indexed region, the role (`outer` / `hole n`), and where applicable the 1-indexed segment, so the fix is a single edit. Several specific cases have their own entries below (vector-units-missing, vector-stale-regions-array, vector-rect-radius-too-large). See [docs/VECTOR-FORMAT.md](VECTOR-FORMAT.md) for the full schema and what each field means.
 
 ## vector-units-missing
 
@@ -769,9 +769,9 @@ between the Manifold preview and the OCCT STEP export.
 
 ## images-only-png-supported
 
-- **Symptom:** `images: only PNG is supported — convert with imageToPng() from "partforge" before storing, or have the host normalize on upload` thrown while resolving a part's `images`.
+- **Symptom:** `images: only PNG is supported — convert with imageToPng() from "partforge/ingest" before storing, or have the host normalize on upload` thrown while resolving a part's `images`.
 - **Cause:** The image resolver checks the first four bytes against the PNG magic number before decoding; a JPEG, WEBP, or any other format fails that check immediately; a heightfield source is a depth map and needs a single well-defined decode path, so no other format is attempted.
-- **Fix:** Convert the source to PNG before it reaches `images` — call `imageToPng()` (exported from `"partforge"`, browser-only: it draws through a `<canvas>`) in the host's upload/panel handler, or pre-convert with any image tool. Bytes that are already PNG (the 4-byte signature `89 50 4E 47`) skip this check entirely.
+- **Fix:** Convert the source to PNG before it reaches `images` — call `imageToPng()` (exported from `"partforge/ingest"`, browser-only: it draws through a `<canvas>`) in the host's upload/panel handler, or pre-convert with any image tool. Bytes that are already PNG (the 4-byte signature `89 50 4E 47`) skip this check entirely.
 
 ## png-interlaced-unsupported
 

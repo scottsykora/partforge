@@ -11,7 +11,8 @@ import { imageControlAllows, imageSourceAllowed, isNoImageSource } from "./image
 import { imagesFor, ensureImages } from "./images.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
-import { ensureVectors } from "./vectors.js";
+import { vectorControlAllows, vectorSourceAllowed, isNoVectorSource } from "./vector-source.js";
+import { vectorsFor, ensureVectors } from "./vectors.js";
 import { exportSubParts, resolveParams, buildPosed } from "./part-model.js";
 
 // The oracle loads LAZILY, per job family, never at worker boot. It is the largest
@@ -148,10 +149,14 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // default.
     const { p, d } = resolveParams(part, msg.params, (params) => {
       // A param bound to a `type: "font"` control is user input — on a shared
-      // link it is arbitrary attacker-supplied text that `fonts: (p) => …` would
-      // turn into a fetch URL. Refuse out-of-`allow` values back to the part's
-      // own default rather than failing the build: a bad link should show the
-      // part, not an error page.
+      // link a STRING value is arbitrary attacker-supplied text that
+      // `fonts: (p) => …` would turn into a fetch URL. A BYTE value
+      // (ArrayBuffer/typed array) always passes fontSourceAllowed regardless of
+      // `allow` — see font-source.js's header: it cannot have arrived via a
+      // share link (a URL can't carry megabytes), only from the host's own
+      // trusted panel (the drop-target path). Refuse out-of-`allow` values back
+      // to the part's own default rather than failing the build: a bad link
+      // should show the part, not an error page.
       for (const [key, allow] of fontControlAllows(part)) {
         const v = params[key];
         if (isNoFontSource(v) || fontSourceAllowed(v, allow)) continue;
@@ -175,6 +180,29 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         const v = params[key];
         if (isNoImageSource(v) || imageSourceAllowed(v, allow)) continue;
         const message = `image source for "${key}" is not allowed — using the default`;
+        onProgress(message);
+        jobWarnings.push({ part: null, message });
+        params[key] = part.defaults?.[key];
+      }
+      // Same shape again for `type: "vector"` controls — a param bound to one
+      // is user input, and on a shared link a STRING value is arbitrary
+      // attacker text that `vectors: (p) => …` would turn into a fetch URL.
+      // Unlike the two blocks above, a non-string value here does NOT bypass
+      // the check on a "can't survive a link" plausibility argument — see
+      // vector-source.js's header: a parsed vector document is plain JSON and
+      // survives a link just fine. It's permitted for the narrower, still-
+      // sufficient structural reason that vectorSourceAllowed applies:
+      // asset-resolve.js only ever calls `fetch` for a string/URL source, so
+      // an object (or bytes) can never become the SSRF-style request `allow`
+      // exists to gate. Runs in this same sanitize hook, not after
+      // resolveParams returns, for the reason both comments above state:
+      // rewriting p[key] afterwards would leave derive() — and therefore `d`
+      // and the geometry — holding the refused value while build() saw the
+      // default.
+      for (const [key, allow] of vectorControlAllows(part)) {
+        const v = params[key];
+        if (isNoVectorSource(v) || vectorSourceAllowed(v, allow)) continue;
+        const message = `vector source for "${key}" is not allowed — using the default`;
         onProgress(message);
         jobWarnings.push({ part: null, message });
         params[key] = part.defaults?.[key];
@@ -291,7 +319,25 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // prevent. Guarding this on `part.vectors` would skip exactly the case where
     // pruning matters most: a worker rebound from a part WITH artwork to one
     // WITHOUT would leave the old names resolvable forever.
-    await ensureVectors(kernel, part.vectors);
+    //
+    // Empty sources are filtered out first, exactly as the fonts and images
+    // blocks above do with their own isNo*Source helper: an empty default is
+    // the natural shape for a drop-target control (`defaults: { art: "" }`,
+    // with `vectors: (p) => ({ badge: p.art })`), and passing "" through to
+    // ensureVectors reaches `fetch("")` and fails with "Failed to parse URL
+    // from" — a first-run error message that names nothing an author can act
+    // on. An unset source declares NO artwork for that name; a build that
+    // still calls k.vector2d on it gets the ordinary unknown-vector throw, and
+    // the progress note keeps a genuine typo visible rather than swallowed.
+    const vectorsDecl = vectorsFor(part, p) ?? {};
+    const declaredVectors = Object.fromEntries(
+      Object.entries(vectorsDecl).filter(([name, src]) => {
+        if (!isNoVectorSource(src)) return true;
+        onProgress(`no vector source declared for "${name}" — skipping`);
+        return false;
+      }),
+    );
+    await ensureVectors(kernel, declaredVectors);
     // Local shorthand over the shared helper: kernel/part/view/p/d are fixed per job.
     const posed = (name, purpose, prog) => buildPosed(kernel, part, name, { purpose, view: msg.view, p, d, onProgress: prog });
     // Explicit selection (headless exportParts) overrides view-derived selection.

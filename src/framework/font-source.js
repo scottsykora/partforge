@@ -3,6 +3,20 @@
 // for the other case — a value that arrived in `params`, which on a shared link
 // is attacker-controlled text that would otherwise become a fetch URL.
 //
+// Bytes bypass the allow check. This file's older rule refused every non-string
+// on the grounds that "bytes/thunks are never param-supplied"; that stopped
+// being true when the panel gained a drop target. The replacement rule is
+// sound and is the same one image-source.js states: an ArrayBuffer in params
+// definitionally did not arrive via a shared link, because a URL cannot carry
+// megabytes — so it can only have been placed there by the host's own panel,
+// which is trusted code. That plausibility argument isn't the load-bearing
+// one, though — the structural fact is that asset-resolve.js's resolver
+// fetches only a `string`/`URL` source; a byte source is consumed directly
+// and never becomes a request. Bytes therefore cannot reach the network no
+// matter how they got into params, which is what the allow list exists to
+// gate, and is what still holds even if a host someday puts a few bytes of
+// base64 in a link.
+//
 // DOM-free and node:-free: jobs.js (worker graph) and the panel both import it.
 
 export const FONT_ALLOW_DEFAULT = ["https"];
@@ -21,13 +35,16 @@ export const isNoFontSource = (v) => v === undefined || v === null || v === "";
 const GSTATIC_HOST = "fonts.gstatic.com";
 const ASSET_SCHEME = "pfc-asset:";
 
+const isBytes = (v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v);
+
 // Parse once; an unparseable string is refused rather than guessed at.
 function parse(source) {
   try { return new URL(source); } catch { return null; }
 }
 
 export function fontSourceAllowed(source, allow = FONT_ALLOW_DEFAULT) {
-  if (typeof source !== "string") return false;   // bytes/thunks are never param-supplied
+  if (isBytes(source)) return true; // see the file header — bytes always bypass the allow check
+  if (typeof source !== "string") return false;
   const u = parse(source);
   if (!u) return false;
   for (const kind of allow) {

@@ -1,13 +1,22 @@
-// The `type: "font"` control. Its VALUE is a font source string — the same
-// grammar `PartDefinition.fonts` already accepts — so everything downstream
-// (presets, undo, the params hash, `when`) works with no special case.
+// The `type: "font"` control. Its VALUE is a font source — either a source
+// string (the same grammar `PartDefinition.fonts` already accepts) or raw
+// font bytes (an ArrayBuffer/typed array): the partforge-cloud sandbox cannot
+// fetch URLs, so it puts the bytes straight in the param (font-source.js now
+// accepts that shape). Everything downstream (presets, undo, the params hash,
+// `when`) works with either shape, no special case.
 //
-// Two renderings. With a host-supplied `fontCatalog` it is a button showing the
-// current face IN that face, opening the picker. Without one it degrades to a
-// URL text field, so a standalone partforge app (which ships no catalog) still
-// exposes the parameter.
+// Two renderings, mirroring widgets/image.js. With a host-supplied
+// `fontCatalog` it is a button showing the current face IN that face, opening
+// the picker. Without one it degrades to a URL text field, so a standalone
+// partforge app (which ships no catalog) still exposes the parameter.
+//
+// Fonts are the "used as-is" kind: the ingest registry's `font` row has
+// `convert: null` (a TTF/OTF is validated, never converted), so unlike
+// image.js/svg there is no converter to warm up here — see makeFont's own
+// note below.
 import { attachInfo } from "../info.js";
 import { FONT_ALLOW_DEFAULT, fontSourceAllowed } from "../../font-source.js";
+import { mountDrop } from "./file-drop.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -15,6 +24,8 @@ function el(tag, className, text) {
   if (text != null) node.textContent = text;
   return node;
 }
+
+const isBytes = (v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v);
 
 const WEIGHTS = { 100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular", 500: "Medium",
                   600: "SemiBold", 700: "Bold", 800: "ExtraBold", 900: "Black" };
@@ -41,7 +52,7 @@ export function fontLabel(source) {
   return { family, variant: m ? m[2] : null };
 }
 
-export function makeFont(node, params, { onChange, onCommit, info, fontCatalog } = {}) {
+export function makeFont(node, params, { onChange, onCommit, info, fontCatalog, onAssetUpload } = {}) {
   const allow = Array.isArray(node.allow) && node.allow.length ? node.allow : FONT_ALLOW_DEFAULT;
   const wrap = el("div", "slider");
   const row = el("div", "row");
@@ -57,7 +68,16 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog }
     const field = document.createElement("input");
     field.type = "text";
     field.className = "text-input";
-    field.value = String(params[node.key] ?? "");
+    const paintField = () => {
+      const v = params[node.key];
+      // Bytes cannot round-trip through a text field — `String(arrayBuffer)`
+      // is "[object ArrayBuffer]", not a value anyone typed. Show an honest
+      // placeholder instead of that, and leave the field free to type a
+      // replacement URL over it. Mirrors widgets/image.js's paintField.
+      field.value = isBytes(v) ? "" : String(v ?? "");
+      field.placeholder = isBytes(v) ? "Uploaded font" : "";
+      field.classList.remove("warn");
+    };
     field.addEventListener("change", () => {
       if (!fontSourceAllowed(field.value, allow)) { field.classList.add("warn"); return; }
       field.classList.remove("warn");
@@ -65,8 +85,15 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog }
       onChange?.();
       onCommit?.();
     });
+    paintField();
     wrap.append(field);
-    return { el: wrap, sync: () => { field.value = String(params[node.key] ?? ""); field.classList.remove("warn"); } };
+
+    const drop = mountDrop("font", {
+      params, node, onAssetUpload, onChange, onCommit, onRender: paintField,
+    });
+    wrap.append(drop.el, drop.errorEl);
+
+    return { el: wrap, sync: paintField, dispose: () => drop.dispose() };
   }
 
   const btn = el("button", "font-btn");
@@ -83,6 +110,11 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog }
   // back to the filename — which is right for a vendored `<family>-<variant>.ttf`
   // and merely ugly for a hash. `describe` is optional and may be async, so the
   // label is painted twice: filename immediately, catalog answer when it lands.
+  //
+  // A byte-valued param (the cloud sandbox path, dropped or uploaded) has no
+  // filename to derive a label from — `fontLabel` would print "—" for it, so
+  // it is special-cased to an honest "Uploaded font" instead, the same rule
+  // widgets/image.js applies for a byte-valued image.
   let paintSeq = 0;
   const paint = () => {
     const src = params[node.key];
@@ -93,7 +125,7 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog }
       fvar.textContent = variantLabel(variant);
       fname.style.fontFamily = `"${family}", var(--pf-sans)`;
     };
-    show(fontLabel(src));
+    show(isBytes(src) ? { family: "Uploaded font", variant: null } : fontLabel(src));
     if (typeof fontCatalog.describe !== "function") return;
     Promise.resolve()
       .then(() => fontCatalog.describe(src))
@@ -114,7 +146,14 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog }
     picker = openFontPicker?.({ node, params, allow, fontCatalog, anchor: wrap, onPicked: () => { paint(); onChange?.(); onCommit?.(); } }) ?? null;
   });
 
-  return { el: wrap, sync: paint, dispose: () => { picker?.close(); picker = null; } };
+  const drop = mountDrop("font", { params, node, onAssetUpload, onChange, onCommit, onRender: paint });
+  wrap.append(drop.el, drop.errorEl);
+
+  return {
+    el: wrap,
+    sync: paint,
+    dispose: () => { picker?.close(); picker = null; drop.dispose(); },
+  };
 }
 
 // Assigned by font-picker.js, which widgets/index.js imports for the side

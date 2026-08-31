@@ -83,6 +83,15 @@ const resolveOne = makeAssetResolver(
   (value) => asParsedFile(value) ?? undefined,
 );
 
+// `vectors` may be a plain { name: source } map, or a function of the resolved
+// params — the second form is what lets a `type: "vector"` control drive the
+// artwork. Resolving it needs `p`, which is why this is a separate step from
+// resolveVectors rather than folded into it. Mirrors fontsFor/imagesFor.
+export function vectorsFor(part, p) {
+  const decl = part?.vectors;
+  return typeof decl === "function" ? decl(p) : decl;
+}
+
 export async function resolveVectors(vectorsDecl) {
   // A function reaching here means a caller passed `part.vectors` raw, the way
   // fonts.js's resolveFonts guards against the same mistake for `part.fonts`.

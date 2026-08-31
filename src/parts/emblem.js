@@ -19,7 +19,8 @@
 //   work under Vite and fail in the CLI.
 //
 // The source artwork lives beside it as emblem.svg, and the .json is regenerated
-// with `node scripts/ingest-svg.mjs src/parts/assets/emblem.svg`. plate.vector.json
+// with `npx partforge ingest src/parts/assets/emblem.svg --out
+// src/parts/assets/emblem.vector.json`. plate.vector.json
 // is hand-authored — no ingest step, no source SVG — and is kept legible enough
 // to serve as documentation's worked example of a multi-shape, role-composed file.
 import plate from "./assets/plate.vector.json" with { type: "json" };

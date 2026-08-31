@@ -24,8 +24,17 @@ test('"asset" accepts a pfc-asset token; https alone does not', () => {
   expect(fontSourceAllowed(tok, ["https", "asset"])).toBe(true);
 });
 
-test("non-string sources are never param-supplied and are not checked here", () => {
-  expect(fontSourceAllowed(new ArrayBuffer(4), FONT_ALLOW_DEFAULT)).toBe(false);
+// Narrowed replacement for the old "non-string sources are never
+// param-supplied" test: that blanket claim stopped being true once bytes
+// became a legitimate param-supplied source (the panel's drop target; see
+// "BYTES bypass the allow check" below). What's still true, and still needs
+// its own guard, is that a non-string, non-bytes value is refused — a plain
+// object is exactly the shape a JSON round-trip of an ArrayBuffer produces
+// (`{}` for an empty one), so this is not a hypothetical.
+test("a value that is neither a string nor bytes is refused, not silently allowed", () => {
+  expect(fontSourceAllowed({}, ["https"])).toBe(false);                                   // the JSON-round-trip shape
+  expect(fontSourceAllowed(() => "https://x/f.ttf", ["https"])).toBe(false);               // a thunk
+  expect(fontSourceAllowed(new URL("https://cdn.test/f.ttf"), ["https"])).toBe(false);     // a URL instance, not a string
 });
 
 test("fontControlAllows finds every font control and its allow list", () => {
@@ -229,4 +238,15 @@ test("an allowed source leaves the result's warnings absent", async () => {
       params: { face: "https://fonts.gstatic.com/s/fine/v1/ok.ttf" } }, (m) => posts.push(m));
   } finally { globalThis.fetch = g; }
   expect(posts.find((m) => m.type === "meshes").warnings).toBeUndefined();
+});
+
+test("BYTES bypass the allow check — they cannot have come from a shared link", () => {
+  expect(fontSourceAllowed(new ArrayBuffer(8), ["https"])).toBe(true);
+  expect(fontSourceAllowed(new Uint8Array(8), ["https"])).toBe(true);
+});
+
+test("string sources still get the full allow treatment", () => {
+  expect(fontSourceAllowed("http://cdn.test/f.ttf", ["https"])).toBe(false);
+  expect(fontSourceAllowed("https://cdn.test/f.ttf", ["https"])).toBe(true);
+  expect(fontSourceAllowed("javascript:alert(1)", ["https"])).toBe(false);
 });
