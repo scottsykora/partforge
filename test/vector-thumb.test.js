@@ -90,6 +90,20 @@ describe("vectorThumb", () => {
     expect((d.match(/L/g) ?? []).length).toBeGreaterThan(3);
   });
 
+  test("tessellates an arc written the way a FILE writes it — `through`, not `via`", () => {
+    // The external format names the arc point `through`; the internal contour IR
+    // names it `via`, and tessellateContour reads `via`. A document straight off
+    // disk or out of ingestSvg therefore uses `through`, and treating it as a
+    // line silently turns every curve into a chord. The test above uses `via`,
+    // which is why it could not catch this.
+    const doc = { bbox: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
+      shapes: { art: [{ outer: { kind: "path", start: [0, 0], segments: [
+        { kind: "arc", to: [10, 10], through: [10, 0] }, { kind: "line", to: [0, 0] },
+      ] }, holes: [] }] } };
+    const d = vectorThumb(doc).querySelector("path").getAttribute("d");
+    expect((d.match(/L/g) ?? []).length, "an arc must become many segments, not one chord").toBeGreaterThan(3);
+  });
+
   test("returns null for a document with no renderable geometry", () => {
     expect(vectorThumb({ bbox: { minX: 0, minY: 0, maxX: 1, maxY: 1 }, shapes: {} })).toBe(null);
     expect(vectorThumb(null)).toBe(null);
@@ -114,6 +128,11 @@ describe("vectorThumb", () => {
     const svg = vectorThumb(doc);
     expect(svg, "emblem should render").toBeTruthy();
     expect(svg.querySelector("path").getAttribute("d")).not.toMatch(/NaN|undefined|Infinity/);
+    // emblem.svg is a filled CIRCLE plus a stroked bar. A circle reduced to a few
+    // straight chords is what a missed `through` looks like, and it renders as a
+    // triangle — visible in the panel, invisible to a "does not contain NaN" check.
+    const pts = (svg.querySelector("path").getAttribute("d").match(/L/g) ?? []).length;
+    expect(pts, "the circle must be tessellated, not chorded").toBeGreaterThan(20);
   });
 
   test("renders the authored plate artwork — sugar kinds, {role, regions}, and no bbox", () => {

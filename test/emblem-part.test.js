@@ -3,9 +3,10 @@
 import { beforeAll, expect, it, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import part from "../src/parts/emblem.js";
+import { vectorsFor } from "../src/framework/vectors.js";
 
 let k;
-beforeAll(async () => { k = await bootManifoldKernel({ vectors: part.vectors }); });
+beforeAll(async () => { k = await bootManifoldKernel({ vectors: vectorsFor(part, part.defaults) }); });
 
 const build = (over = {}) => {
   const p = { ...part.defaults, ...over };
@@ -13,7 +14,7 @@ const build = (over = {}) => {
 };
 
 test("the part declares both the ingested artwork and the authored plate under vectors", () => {
-  expect(Object.keys(part.vectors)).toEqual(["emblem", "plate"]);
+  expect(Object.keys(vectorsFor(part, part.defaults))).toEqual(["emblem", "plate"]);
 });
 
 test("the plate builds, is solid, and carries the emboss", () => {
@@ -49,7 +50,7 @@ test("emblem_w drives the emboss size", () => {
 });
 
 it("cuts the authored plate's holes and keyway, in the drawing's own frame", async () => {
-  const k = await bootManifoldKernel({ vectors: part.vectors });
+  const k = await bootManifoldKernel({ vectors: vectorsFor(part, part.defaults) });
   const body = k.vector2d("plate", { shape: "body" });
   const cut = body.cut(k.vector2d("plate", { shape: "holes" })).cut(k.vector2d("plate", { shape: "keyway" }));
   // 40x24 with four r=4 corners, minus two r=1.7 discs and a 6x4 triangle.

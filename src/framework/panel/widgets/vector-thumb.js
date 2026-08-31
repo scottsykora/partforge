@@ -52,7 +52,16 @@ function ring(contour) {
     case "path":
     default: {
       if (!finitePoint(contour.start) || !Array.isArray(contour.segments)) return null;
-      const pts = tessellateContour(contour, ARC_SEGS);
+      // The FILE format names an arc's midpoint `through`; the internal contour
+      // IR names it `via`, and that is what `tessellateContour` reads. A document
+      // read off disk or returned by `ingestSvg` therefore speaks `through`, and
+      // a segment with neither key is treated as a straight line — so skipping
+      // this rename does not fail loudly, it silently replaces every curve with
+      // its chord. A circle becomes a triangle, which looks like a rendering bug
+      // rather than a parsing one.
+      const segments = contour.segments.map((seg) =>
+        seg && seg.through && !seg.via ? { ...seg, via: seg.through } : seg);
+      const pts = tessellateContour({ ...contour, segments }, ARC_SEGS);
       return Array.isArray(pts) && pts.length >= 3 && pts.every(finitePoint) ? pts : null;
     }
   }
