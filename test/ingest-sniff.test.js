@@ -58,4 +58,10 @@ describe("sniffMediaType", () => {
   test("HTML that merely mentions svg is not claimed", () => {
     expect(sniffMediaType(ascii("<html><body>svg</body></html>"))).toBe(null);
   });
+  test("HTML5 document with inline svg element is not claimed", () => {
+    expect(sniffMediaType(ascii("<!DOCTYPE html><html><body><svg width=\"10\" height=\"10\"><rect/></svg></body></html>"))).toBe(null);
+  });
+  test("SVG behind XML declaration, DOCTYPE and comment is still recognised", () => {
+    expect(sniffMediaType(ascii('<?xml version="1.0"?>\n<!DOCTYPE svg>\n<!-- comment -->\n<svg></svg>'))).toBe("image/svg+xml");
+  });
 });

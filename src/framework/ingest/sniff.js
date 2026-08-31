@@ -24,7 +24,9 @@ const startsWith = (u8, sig) => {
 
 // How far into a text file we look for an <svg root. Enough for an XML
 // declaration, a DOCTYPE and a licence comment; bounded so a huge non-SVG text
-// file is not scanned end to end.
+// file is not scanned end to end. An SVG behind more than 4 KB of leading
+// comments returns null rather than being recognised — an accepted bounded false
+// negative.
 const SVG_SCAN = 4096;
 
 export function sniffMediaType(input) {
@@ -40,11 +42,55 @@ export function sniffMediaType(input) {
     return "image/webp";
   }
 
-  // SVG has no magic number, so look for an <svg ROOT element — not the mere
-  // substring "svg", which any HTML page mentioning it would match.
-  const head = new TextDecoder("utf-8", { fatal: false })
-    .decode(u8.subarray(0, SVG_SCAN));
-  if (/<svg[\s>]/i.test(head)) return "image/svg+xml";
+  // SVG has no magic number. Look for an <svg ROOT element by skipping leading
+  // prologue (BOM, whitespace, XML declaration, comments, DOCTYPE), then
+  // requiring the next real tag to be <svg followed by whitespace, >, or /.
+  // This anchors to the document root and rejects HTML files with inline <svg>.
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  const head = decoder.decode(u8.subarray(0, SVG_SCAN));
+
+  let pos = 0;
+  const len = head.length;
+
+  // Skip UTF-8 BOM
+  if (head.charCodeAt(0) === 0xFEFF) pos = 1;
+
+  // Skip leading whitespace
+  while (pos < len && /\s/.test(head[pos])) pos++;
+
+  // Skip XML declaration
+  if (head.substring(pos).startsWith("<?xml")) {
+    const end = head.indexOf("?>", pos);
+    if (end !== -1) {
+      pos = end + 2;
+      while (pos < len && /\s/.test(head[pos])) pos++;
+    }
+  }
+
+  // Skip DOCTYPE
+  if (head.substring(pos).startsWith("<!DOCTYPE")) {
+    const end = head.indexOf(">", pos);
+    if (end !== -1) {
+      pos = end + 1;
+      while (pos < len && /\s/.test(head[pos])) pos++;
+    }
+  }
+
+  // Skip comments
+  while (head.substring(pos).startsWith("<!--")) {
+    const end = head.indexOf("-->", pos);
+    if (end !== -1) {
+      pos = end + 3;
+      while (pos < len && /\s/.test(head[pos])) pos++;
+    } else {
+      break;
+    }
+  }
+
+  // Check if the next real tag is <svg
+  if (head.substring(pos).match(/^<svg[\s>\/]/i)) {
+    return "image/svg+xml";
+  }
 
   return null;
 }
