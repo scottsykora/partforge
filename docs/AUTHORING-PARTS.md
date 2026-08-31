@@ -139,6 +139,9 @@ export default {
   grammar and preload timing as `fonts` above — but the source resolves to **JSON** in the
   `partforge-vector` format, never to raw `.svg`. That JSON is either **authored** by hand
   (millimetre coordinates, placed as drawn) or the **ingested** output of `partforge/ingest`.
+  A vector source may additionally be that JSON **already parsed** — the object itself,
+  rather than bytes or a URL pointing at it — which is the form to use when the artwork
+  lives beside the part and is meant to stay hand-editable.
   See "Vector geometry" below for the full contract.
 
 ---
@@ -1553,6 +1556,28 @@ import outside a Vite build, so `partforge lint`/`measure`/`render` can't resolv
 source must resolve to the `.vector.json`, never to a raw `.svg` — `k.vector2d` does no
 SVG parsing at all.
 
+**A source may also be the parsed file itself.** Alongside bytes, a URL and a thunk, a
+`vectors` entry accepts the **contents** of a `.vector.json` — the object a JSON import
+yields, or anything else that already holds it:
+
+```js
+import plate from "./assets/plate.vector.json" with { type: "json" };
+export default { vectors: { plate }, /* … */ };
+```
+
+The `with { type: "json" }` attribute is required — Node refuses a JSON import without it.
+Reach for this form when the artwork is **hand-authored and meant to stay editable**: the
+numbers sit in a file a reader can open and change, next to the part that uses them, with
+nothing to fetch in order to see them. Reach for `new URL(…)` instead when the file is
+**ingested output** — generated, large, and not read by hand. `src/parts/emblem.js`
+declares one of each, side by side, for exactly this contrast.
+
+Two consequences worth knowing. `partforge/lint`'s document-aware rules can read a parsed
+source on the very first lint, before any build has run, because there is nothing to
+resolve — with a URL they stay silent until the bytes arrive. And the object is validated
+on every resolve, so a malformed one fails with the same message its fetched twin would;
+it is read and never written, so `build` stays pure.
+
 **Sizing is against the tight geometric bounding box, not a `viewBox`.** Icon sets pad
 their `viewBox` inconsistently, so sizing relative to `viewBox` makes two icons declared at
 the same nominal size look different on the plate. `width`/`height`/`fit` instead measure
@@ -1583,7 +1608,9 @@ a `"role": "subtract"` shape in the JSON, or `.cut()` it in `build`), and
 
 **What this is not.** `k.shape2d` does **not** accept the JSON dialect — it takes the
 internal contour form the polygon helpers and `pathProfile` produce — and there is no
-inline document form in `build`. The two vocabularies stay separated by the file boundary,
+inline document form in `build`. A parsed source (above) does not change that: it is a
+`vectors` **declaration**, resolved and validated before `build` runs, not a document
+`build` may assemble or hand to the kernel. The two vocabularies stay separated by the file boundary,
 which is what lets `docs/VECTOR-FORMAT.md` be the only place they meet. Inline authoring
 stays `pathProfile` (see § "Geometry: the kernel / `Solid` API" above, where `pathProfile` is
 introduced, for which to reach for).

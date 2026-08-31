@@ -11,6 +11,15 @@
 // thunk, is content-stable for a session — resolve it once). DOM-free and
 // node:-free so it stays safe in the geometry worker's import closure.
 
+// The `{ default: … }` module namespace a dynamic `import()` yields, unwrapped to
+// the value itself; every other value passes through untouched. Exported because
+// vectors.js applies the same rule OUTSIDE this resolver — its synchronous lint
+// path reads a declared source directly, without resolving it — and the rule for
+// what a module wrapper looks like must have exactly one definition.
+export function unwrapModule(v) {
+  return v && typeof v === "object" && "default" in v && !toBuffer(v) && !(v instanceof URL) ? v.default : v;
+}
+
 export function toBuffer(v) {
   if (v instanceof ArrayBuffer) return v;
   // A view may not span its whole backing buffer — slice to its exact range (Node
@@ -33,13 +42,21 @@ function describeSource(v) {
 // async); `errorMessage` is thrown when `source` doesn't match the grammar.
 // Results are cached on the caller-supplied `cache` Map, keyed by source
 // identity, so a repeated declaration resolves (and fetches) only once.
-export function makeAssetResolver(cache, finish, errorMessage) {
+//
+// `adopt(value, source)` is an optional last chance to claim a source that is
+// neither bytes nor fetchable. vectors.js uses it for a source that is ALREADY
+// the parsed contents of its file, where the source IS the asset rather than a
+// way to reach its bytes. It is consulted only for values the grammar is about
+// to refuse, so it can never shadow the bytes/URL/thunk forms; returning
+// `undefined` declines and restores the refusal. Whatever it returns becomes
+// resolveOne's result directly — `finish` takes bytes, and is not called.
+export function makeAssetResolver(cache, finish, errorMessage, adopt = null) {
   return function resolveOne(source) {
     if (cache.has(source)) return cache.get(source);
     const p = (async () => {
       let v = source;
       if (typeof v === "function") v = await v();
-      if (v && typeof v === "object" && "default" in v && !toBuffer(v) && !(v instanceof URL)) v = v.default; // dynamic-import module
+      v = unwrapModule(v);                                          // dynamic-import module
       let bytes = toBuffer(v);
       if (!bytes) {
         if (v instanceof URL || typeof v === "string") {
@@ -53,7 +70,11 @@ export function makeAssetResolver(cache, finish, errorMessage) {
           }
           bytes = await res.arrayBuffer();
         }
-        else throw new Error(errorMessage);
+        else {
+          const claimed = adopt ? adopt(v, source) : undefined;
+          if (claimed !== undefined) return claimed;
+          throw new Error(errorMessage);
+        }
       }
       return finish(bytes, v, source);
     })();
