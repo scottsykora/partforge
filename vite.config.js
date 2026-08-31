@@ -28,6 +28,7 @@ export default defineConfig(({ command }) => ({
         hingedBox: "hinged-box.html",
         screw: "screw.html",
         emblem: "emblem.html",
+        relief: "relief.html",
       },
     },
   },

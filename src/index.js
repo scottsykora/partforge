@@ -4,3 +4,4 @@
 // Part build functions import geometry helpers from "partforge/geometry" instead.
 export { mount } from "./framework/index.js";
 export { viewSubParts } from "./framework/part-model.js";
+export { imageToPng } from "./framework/image-ingest.js";

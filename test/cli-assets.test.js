@@ -4,6 +4,7 @@
 // (see AGENTS.md — the two WASM kernels must not share a process).
 import { describe, it, expect } from "vitest";
 import opentype from "opentype.js";
+import { PNG } from "pngjs";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,6 +12,17 @@ import { join } from "node:path";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { meshToStl } from "../src/framework/geometry/mesh-stl.js";
 import { cubeSoup } from "./helpers/cube-soup.js";
+
+// A tiny flat-gray PNG, valid enough for decodePng/k.heightfield. Buffer's
+// pooled-allocation gotcha (see test/images-jobs.test.js's own comment on this
+// exact trap) means slicing by byteOffset/byteLength, not `.buffer.slice(0)`,
+// is required to get exactly the encoded bytes.
+function pngBytes(v = 180) {
+  const p = new PNG({ width: 4, height: 4 });
+  p.data.fill(v); for (let i = 3; i < p.data.length; i += 4) p.data[i] = 255;
+  const buf = PNG.sync.write(p);
+  return Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
+}
 
 // Minimal real font, built the same way test/fonts-preload.test.js does, so we
 // can assert the boot actually forwards font bytes through to a parsed
@@ -70,4 +82,37 @@ describe("node asset wiring", () => {
     expect(parsed.unitsPerEm).toBe(1000);
     expect(parsed.glyphs.get(1).name).toBe("H");
   });
+
+  // Third asset sibling, same shape as the two `imports` tests above: images
+  // are the shipped gap Task 11 found and fixed (bin/cli.js's bootKernel never
+  // passed `images` down to bootManifoldKernel/bootOcctKernel, so `partforge
+  // measure|render` crashed with `heightfield: unknown image "…"` on any part
+  // declaring `images`, even though the browser worker path — jobs.js — always
+  // handled it correctly). Assert the boot forwards real PNG bytes through
+  // nodeAssetSources -> ensureImages -> kernel._registerImage, all the way to a
+  // k.heightfield() build actually producing a solid.
+  it("boots resolve file: URL images (the shipped gap)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pf-image-"));
+    writeFileSync(join(dir, "relief.png"), pngBytes());
+    const k = await bootManifoldKernel({ images: { relief: new URL(`file://${join(dir, "relief.png")}`) } });
+    expect(k._imageDigest("relief")).toBeTruthy();
+    const solid = k.heightfield("relief", { w: 10, d: 10, base: 1, maxZ: 1, pitch: 2 });
+    expect(solid.volume()).toBeGreaterThan(0);
+  });
+
+  it("partforge measure works end-to-end on a part using images/k.heightfield", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pf-cli-image-"));
+    writeFileSync(join(dir, "relief.png"), pngBytes());
+    writeFileSync(join(dir, "part.js"), `
+      export default {
+        meta: { title: "relief" },
+        images: { relief: new URL("./relief.png", import.meta.url) },
+        defaults: {}, views: { main: {} },
+        parts: { plate: { views: ["main"],
+          build: (k) => k.heightfield("relief", { w: 10, d: 10, base: 1, maxZ: 1, pitch: 2 }) } },
+      };`);
+    const out = execFileSync(process.execPath, ["bin/cli.js", "measure", join(dir, "part.js"), "--json"], { encoding: "utf8" });
+    const report = JSON.parse(out);
+    expect(report.subparts[0].volume).toBeGreaterThan(0);
+  }, 120000);
 });

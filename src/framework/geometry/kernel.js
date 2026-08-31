@@ -25,6 +25,8 @@ export const KERNEL_OPS = [
   "roundedCylinder", "torus", "roundedBox", "import",
   // Additive in 0.84 (no CONTRACT_VERSION bump — the import-op precedent).
   "loftSmooth",
+  // Additive in 0.92 (same precedent): both backends implement it.
+  "heightfield",
 ];
 
 // Backend-optional kernel ops: the sub-part cache brackets + WASM lifetime hooks.
@@ -150,6 +152,7 @@ export const ROUTED_CAD_OPS = ["shell"];
  * @property {(o:{pathR:number,profileR:number,pitch:number,turns:number,z0:number,lefthand:boolean}) => Solid} helixSweptTube
  * @property {(o:{profile:number[][],pitch:number,turns:number,lefthand?:boolean}) => Solid} screwSweep   screw-motion sweep of an axial [[r,z]] profile — threads; options-only
  * @property {(o:{sections:object[],stations?:number,samples?:number,shading?:string,closed?:boolean}) => Solid} loftSmooth   Catmull-Rom-densified loft of sparse control sections; options-only
+ * @property {(nameOrGrid: string|{width:number,height:number,data:Uint16Array}, opts: {w:number,d:number,base?:number,maxZ?:number,pitch?:number,invert?:boolean,range?:number[],origin?:"center"|"corner"}) => Solid} heightfield   depth-map relief solid; nameOrGrid is a name declared in the part's `images` field or an inline grid
  * @property {(solids:Solid[]) => Solid} union
  * @property {(profile: number[][]|{outer:number[][],holes?:number[][][]}|{start:number[],segments:object[]}|Shape2D) => Shape2D} shape2d   2-D boolean value; one shared contour-storage implementation on both backends
  * @property {(inputs: (Shape2D|number[][]|{start:number[],segments:object[]})[]) => Shape2D} hull   convex hull of all inputs → a convex Shape2D (faceted; pure-JS monotone chain)

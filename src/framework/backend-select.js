@@ -4,6 +4,7 @@
 // everything in geometry/, which is part-agnostic.
 import { createProbeKernel } from "./geometry/probe.js";
 import { isZeroMagnitudeCadOp } from "./geometry/op-options.js";
+import { byteAwareReplacer } from "./geometry/solid-hash.js";
 import { resolveDerived } from "./derive.js";
 
 /**
@@ -57,8 +58,12 @@ export function detectBackend(part, params = {}) {
 export function createBackendPolicy(part, { forced = null } = {}) {
   let latchedParams = null;  // JSON snapshot of the params proven at runtime to need OCCT
   let latchedNames = null;   // the sub-parts that proved it (null = all of them)
+  // byteAwareReplacer: an image param carried as raw bytes must fingerprint by
+  // content here too, or a swapped image either silently reuses a stale OCCT
+  // latch (ArrayBuffer → the same "{}" for any image) or the reroute check
+  // spends its time re-stringifying megabytes of typed-array bytes every regen.
   const latched = (params, name) =>
-    latchedParams !== null && latchedParams === JSON.stringify(params) &&
+    latchedParams !== null && latchedParams === JSON.stringify(params, byteAwareReplacer) &&
     (latchedNames === null || latchedNames.has(name));
   return {
     // name → backend for a preview generate; mount groups sub-parts by this.
@@ -78,7 +83,7 @@ export function createBackendPolicy(part, { forced = null } = {}) {
     // `subparts` names the failed job's sub-parts; omitted (an export job, which
     // doesn't carry them) it latches the whole part for these params.
     noteNeedsOcct(params, subparts) {
-      latchedParams = JSON.stringify(params);
+      latchedParams = JSON.stringify(params, byteAwareReplacer);
       latchedNames = subparts ? new Set(subparts) : null;
     },
   };

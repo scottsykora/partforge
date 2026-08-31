@@ -19,6 +19,7 @@ import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
 import { KernelCapabilityError } from "./errors.js";
+import { heightfieldMesh, hashGridData } from "./heightfield.js";
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
@@ -89,6 +90,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // registers pre-build (ensureImports, Task 8). Kernel-lifetime, NOT tracked/T()'d:
   // these masters must survive cleanup() and be read again on every subsequent build.
   const imports = new Map();
+  // name -> { digest, width, height, data } — depth-map grids the framework registers
+  // pre-build via `_registerImage` (ensureImages, Task 4). Kernel-lifetime like
+  // `imports` above: plain data, not WASM, so there is nothing to T()/dispose.
+  const images = new Map();
   // Boundary ops route through cache.lookup; on a miss `make` runs the WASM op,
   // tracks the result, and returns the triple the cache needs to pin/dispose it.
   const cached = (hash, computeM) => cache.lookup(hash, () => {
@@ -614,6 +619,45 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // X and drives Y to 0, squishing the top to a line). Broadcast for a uniform taper.
         return T(cs.extrude(height, nDiv, twist, [scaleTop, scaleTop]));
       }),
+    // Height-map relief. The grid → triangle conversion is a pure leaf shared with
+    // the OCCT backend (heightfield.js), so both kernels build from identical
+    // triangle data. `manifoldFromMesh`'s output is NOT self-tracked (see its own
+    // header comment — "caller tracks `out`") so, unlike `import`'s master, this
+    // build wraps it in T() itself: a heightfield solid is an ordinary per-build
+    // result, not a kernel-lifetime master.
+    heightfield: (src, opts = {}) => {
+      const grid = typeof src === "string" ? images.get(src) : src;
+      if (!grid) throw new Error(`heightfield: unknown image "${src}" — declare it in the part's \`images\` field`);
+      const build = () => {
+        const { positions, indices, warnings } = heightfieldMesh(grid, opts);
+        // Only runs on a cache MISS for a registered image (every call for an
+        // inline grid, which always takes the bypass below). A repeat build of
+        // the same registered image at the same options is a cache HIT and never
+        // re-enters this closure, so a pitch-clamp warning is NOT re-emitted on
+        // a warm rebuild — intentional dedup (same call, same warning, once),
+        // not a missed re-warn.
+        for (const w of warnings) recordWarning(w);
+        return T(manifoldFromMesh(wasm, positions, indices));
+      };
+      // Only a registered image carries a content digest to key the cache on. An
+      // inline {width,height,data} grid has no identity of its own — keying it on a
+      // literal string like "inline" would let two DIFFERENT inline grids at the
+      // same options collide on the same cache key, and the second call would
+      // silently get back the FIRST call's solid. Skip the cache for those; the
+      // inline path is the test/low-level path and isn't performance-sensitive.
+      // (The returned solid still gets a real content-fingerprint hash below, so a
+      // downstream union/cut composing two different inline heightfields doesn't
+      // inherit the same collision risk one level up.)
+      if (typeof src !== "string") {
+        return wrap(build(), h("heightfield-inline", grid.width, grid.height, hashGridData(grid.data),
+          opts.w, opts.d, opts.base, opts.maxZ, opts.pitch, opts.invert, opts.range, opts.origin));
+      }
+      return cached(
+        h("heightfield", grid.digest, opts.w, opts.d, opts.base, opts.maxZ,
+          opts.pitch, opts.invert, opts.range, opts.origin),
+        build,
+      );
+    },
     // Polygon-with-holes extrude in one op: even/odd fill turns the extra contours into
     // holes regardless of their winding (outer + holes, no per-hole boolean cut).
     // A Shape2D `profile` (curve-native, possibly multi-region) materializes through
@@ -716,6 +760,23 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // Registration memo: undefined for an error entry, so a later registration with
     // the same digest can upgrade it rather than being treated as a no-op repeat.
     _importDigest: (name) => { const e = imports.get(name); return e?.error ? undefined : e?.digest; },
+    // Depth-map grids, registered pre-build by the framework via `_registerImage`
+    // (ensureImages, Task 4). Unlike imports there is no per-format error entry:
+    // every backend can consume a normalized grid, so registration never fails.
+    _registerImage: ({ name, digest, width, height, data }) => {
+      images.set(name, { digest, width, height, data });
+    },
+    _imageDigest: (name) => images.get(name)?.digest,
+    // Drop every registered name NOT in `keep` (a Set) — the images-map twin of
+    // fonts' kernel._fonts prune in jobs.js. `images` is keyed on the part's
+    // declared name (e.g. "relief"), not on content, so without this a name
+    // the user cleared — or a different part that reuses the same key across a
+    // worker-rebind — would silently keep resolving to a prior build's grid.
+    // A method rather than exposing `images` itself: jobs.js only ever needs
+    // "keep exactly this set", never raw Map access.
+    _pruneImages: (keep) => {
+      for (const name of [...images.keys()]) if (!keep.has(name)) images.delete(name);
+    },
     _acceptsMesh: true,
     shape2d,
     // Backend-internal region adapter: the shared native engine (contour-offset.js)

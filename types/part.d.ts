@@ -257,6 +257,21 @@ export type FontSource =
 
 type FontSourceValue = string | ArrayBuffer | ArrayBufferView | { default: string };
 
+// --- images -----------------------------------------------------------------
+
+/**
+ * One entry of a part's `images` map: raw bytes, a URL string, or a thunk
+ * returning either (a Vite `() => import("./x.png")` resolves to
+ * `{ default: url }`). Resolved to a decoded luminance grid before the
+ * synchronous `build` runs — the source `k.heightfield()` samples.
+ */
+export type ImageSource =
+  | string
+  | ArrayBuffer
+  | ArrayBufferView
+  | (() => ImageSourceValue | Promise<ImageSourceValue>);
+
+type ImageSourceValue = string | ArrayBuffer | ArrayBufferView | { default: string };
 // --- imports and vectors ------------------------------------------------------
 
 /**
@@ -604,6 +619,12 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
   defaults: Defaults;
   /** Outline fonts a part's `k.text2d()` calls need, as `{ name: source }`. */
   fonts?: Record<string, FontSource>;
+  /**
+   * Depth-map images a part's `k.heightfield()` calls need, as
+   * `{ name: source }` — or a function of the resolved params returning that
+   * map, which is what lets a `type: "image"` control drive the source.
+   */
+  images?: Record<string, ImageSource> | ((p: P) => Record<string, ImageSource>);
   /** STEP/STL/3MF files a part's `k.import()` calls need, as `{ name: source }`. */
   imports?: Record<string, ImportSource>;
   /** Vector artwork a part's `k.vector2d()` calls place, as `{ name: source }`. */

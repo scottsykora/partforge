@@ -227,6 +227,7 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
       onCommit: () => commit([node.key]),
       info,
       fontCatalog: opts.fontCatalog,
+      imageCatalog: opts.imageCatalog,
     });
     nodeEls.set(node.id, widget.el);
     if (node.key && !keyToId.has(node.key)) keyToId.set(node.key, node.id);

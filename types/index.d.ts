@@ -454,3 +454,16 @@ export function viewSubParts(
   view: string,
   params: Record<string, ParamValue>,
 ): string[];
+
+export interface ImageToPngOptions {
+  /** Long-edge cap in px; an image already under this is not upscaled. Default 1024. */
+  maxSize?: number;
+}
+
+/**
+ * Convert any image the browser can decode into a PNG `Blob`, downsampling the
+ * long edge to `maxSize` on the way. Main-thread only (uses `createImageBitmap`
+ * and a canvas) — for a host normalising uploads before storing them, since a
+ * part's `images` field decodes PNG only. Never call from a part's `build`.
+ */
+export function imageToPng(fileOrBlob: Blob | File, options?: ImageToPngOptions): Promise<Blob>;

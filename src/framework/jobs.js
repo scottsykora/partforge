@@ -7,6 +7,8 @@ import { exportablePartNames } from "./export-select.js";
 import { fontControlAllows, fontSourceAllowed, isNoFontSource } from "./font-source.js";
 import { fontsFor, resolveFonts } from "./fonts.js";
 import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
+import { imageControlAllows, imageSourceAllowed, isNoImageSource } from "./image-source.js";
+import { imagesFor, ensureImages } from "./images.js";
 import { ensureImports, resolveImports } from "./imports.js";
 import { safeName } from "./safe-name.js";
 import { ensureVectors } from "./vectors.js";
@@ -158,6 +160,25 @@ export async function handle(kernel, part, msg, post, opts = {}) {
         jobWarnings.push({ part: null, message });   // …and the durable record
         params[key] = part.defaults?.[key];
       }
+      // Same shape for `type: "image"` controls — a param bound to one is user
+      // input, and on a shared link a STRING value is arbitrary attacker text
+      // that `images: (p) => …` would turn into a fetch URL. A BYTE value
+      // (ArrayBuffer/typed array) always passes imageSourceAllowed regardless of
+      // `allow` — see image-source.js's header: it cannot have arrived via a
+      // share link (a URL can't carry megabytes), only from the host's own
+      // trusted panel (the partforge-cloud sandbox path). Runs in this same
+      // sanitize hook, not after resolveParams returns, for the reason the
+      // comment above states: rewriting p[key] afterwards would leave derive()
+      // — and therefore `d` and the geometry — holding the refused value while
+      // build() saw the default.
+      for (const [key, allow] of imageControlAllows(part)) {
+        const v = params[key];
+        if (isNoImageSource(v) || imageSourceAllowed(v, allow)) continue;
+        const message = `image source for "${key}" is not allowed — using the default`;
+        onProgress(message);
+        jobWarnings.push({ part: null, message });
+        params[key] = part.defaults?.[key];
+      }
     });
     // Preload any part-declared fonts into the kernel before building. A lazy
     // dynamic import because this is async context (unlike the synchronous
@@ -227,6 +248,40 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // lazy-error policy that keeps a STEP import inert until a build actually
     // calls k.import on it.
     if (part.imports) await ensureImports(kernel, part.imports, opts.importMeshes ?? null);
+    // Register this part's declared images on the kernel running this job — the
+    // third asset sibling beside fonts and imports. The allow-check already ran
+    // as resolveParams' sanitize hook above, so `p` here already reflects any
+    // refusal (reset to the part's default) — this step only resolves and
+    // uploads the resulting bytes.
+    //
+    // Gated on the part DECLARING `images` at all, not on this job having a
+    // source to resolve — the prune below has to run on the empty declaration
+    // too (a cleared pick), and a part with no `images` field must not touch
+    // the kernel's image map (a host or test harness may have seeded it
+    // directly via _registerImage).
+    if (part.images && typeof kernel._registerImage === "function") {
+      const imagesDecl = imagesFor(part, p) ?? {};
+      const declared = Object.fromEntries(
+        Object.entries(imagesDecl).filter(([name, src]) => {
+          if (!isNoImageSource(src)) return true;
+          onProgress(`no image source declared for "${name}" — skipping`);
+          return false;
+        }),
+      );
+      if (Object.keys(declared).length) {
+        onProgress("resolving images");
+        await ensureImages(kernel, declared);
+      }
+      // Drop every registered name this build's declaration does not supply.
+      // `_pruneImages` is the images twin of the `kernel._fonts` prune above:
+      // `heightfield(name)` looks a name up by the part's declared key, not by
+      // content, so a relief the user picked and then CLEARED would otherwise
+      // stay registered under its old name and go on rendering instead of
+      // whatever a missing source actually does — the unknown-image throw, or
+      // a branch a part's own build() takes around the call — the
+      // stale-registration bug of spec §5, one asset over.
+      kernel._pruneImages?.(new Set(Object.keys(declared)));
+    }
     // Vector art, the third asset family after fonts and imports. Same pre-build
     // timing; ensureVectors owns the prune, so this stays one line. Call it
     // unconditionally, even when this part has no `vectors` at all: ensureVectors

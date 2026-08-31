@@ -761,6 +761,30 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** The source contains `Math.random`, `Date.now`, `performance.now`, or an argless `new Date()`. A build must be a pure function of `(k, p, d)`; the memoizing kernel hashes inputs, so an impure value silently serves stale geometry (see impure-build-stale-preview, above). The behavioral lint probe catches impurity only when it changes the recorded call sequence between two probe runs; a value stable within one pass escapes it, which is why the source scan warns on the token itself.
 - **Fix:** Replace the impure value with a parameter or a `derive()` output. `new Date(0)` and other argument-carrying forms are deterministic and not flagged; only `.js`/`.mjs` files are scanned, so the same words in a `README.md` are prose. One finding is emitted per (file, token) pair, carrying the occurrence count and the first occurrence's line. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Caching & determinism".
 
+## heightfield-unknown-image
+
+- **Symptom:** `heightfield: unknown image "<name>"` — declare it in the part's `images` field — thrown from a build calling `k.heightfield(name, opts)`, identical text on both backends.
+- **Cause:** `k.heightfield` was called with a string name that isn't a key in the part's `images` field (or `images` is missing entirely) — a typo, or the declaration was never added. Same failure shape as `k.import`'s unknown-name error and `text2d`'s unknown-font error.
+- **Fix:** Add the name to `images`, or fix the typo. `npx partforge lint <part>` catches this statically when `images` is a static object (rule `heightfield-unknown-image` — a function-form `images` has no statically-knowable keys, so lint skips it there and this throw remains the runtime authority). See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Linting" (Rule catalog → Image controls).
+
+## images-only-png-supported
+
+- **Symptom:** `images: only PNG is supported — convert with imageToPng() from "partforge" before storing, or have the host normalize on upload` thrown while resolving a part's `images`.
+- **Cause:** The image resolver checks the first four bytes against the PNG magic number before decoding; a JPEG, WEBP, or any other format fails that check immediately; a heightfield source is a depth map and needs a single well-defined decode path, so no other format is attempted.
+- **Fix:** Convert the source to PNG before it reaches `images` — call `imageToPng()` (exported from `"partforge"`, browser-only: it draws through a `<canvas>`) in the host's upload/panel handler, or pre-convert with any image tool. Bytes that are already PNG (the 4-byte signature `89 50 4E 47`) skip this check entirely.
+
+## png-interlaced-unsupported
+
+- **Symptom:** `decodePng: interlaced (Adam7) PNGs are not supported — re-save without interlacing` thrown while resolving a part's `images`.
+- **Cause:** The bundled PNG decoder implements only the non-interlaced scanline layout (interlace method 0); an Adam7-interlaced PNG (interlace method 1 — some export tools and "optimized" PNGs default to it) stores pixels in seven interleaved passes the decoder doesn't reassemble.
+- **Fix:** Re-save the PNG without interlacing (most editors/optimizers have a plain "none"/"no interlace" option), or run it back through `imageToPng()` — canvas re-encoding never interlaces.
+
+## heightfield-sew-failed
+
+- **Symptom:** `heightfield: could not sew <n> triangles into a B-rep solid (<reason>). Raise \`pitch\` to reduce the triangle count, or build this sub-part on the Manifold backend.` thrown on the OCCT backend.
+- **Cause:** OCCT's heightfield path triangulates the depth-map grid the same way Manifold does, then goes mesh → STL → B-rep (`StlAPI_Reader` + `ShapeUpgrade_UnifySameDomain` + `MakeSolid`) so the result can boolean/fillet/export to STEP like any other B-rep shape. That sewing step can fail outright on a large or high-frequency grid — before failure, a triangle count above the plan's measured threshold already emits a slow-sew/large-STEP warning on the same build (see `feature-skipped-warning`'s sibling channel), and this is what happens when the grid is pushed further still.
+- **Fix:** Raise `pitch` on the `k.heightfield` call to coarsen the grid (fewer triangles to sew), or keep this sub-part on the Manifold backend (drop the `meta.backend`/CAD-op pin forcing OCCT) — Manifold's heightfield path never sews through OCCT, so it has no equivalent failure mode. STEP export specifically needs OCCT, so a part that must export a relief to STEP has to bring the triangle count under the sewable range rather than avoid OCCT.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

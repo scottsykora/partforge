@@ -481,6 +481,31 @@ export interface Vector2dOptions {
 /** Anything `k.hull`/`k.hullChain` accepts as one input. */
 export type HullInput = Shape2D | Contour;
 
+/** An inline depth-map grid, row-major, 0..65535 per sample. */
+export interface HeightfieldGrid {
+  width: number;
+  height: number;
+  data: Uint16Array;
+}
+
+/** k.heightfield — a depth map as a relief solid. */
+export interface HeightfieldOptions {
+  w: number;
+  d: number;
+  /** Slab thickness under the relief (mm, > 0). Default 1. */
+  base?: number;
+  /** Relief height above `base` at a full-scale (1.0) sample. Default 1. */
+  maxZ?: number;
+  /** Sample spacing (mm, > 0); clamped to a vertex budget with a build warning. Default 0.5. */
+  pitch?: number;
+  /** Flip sampled value as `1 - v`, applied after `range`. */
+  invert?: boolean;
+  /** Remap with clamped ends: `range[0]` -> 0, `range[1]` -> 1. Default [0, 1]. */
+  range?: [number, number];
+  /** Footprint placement in XY only — the base always sits at z = 0. Default "center". */
+  origin?: "center" | "corner";
+}
+
 // --- the kernel -------------------------------------------------------------
 
 /**
@@ -541,6 +566,13 @@ export interface GeometryKernel {
    * side-channel (not a part author's calling surface).
    */
   import(name: string): Solid;
+  /**
+   * A depth map as a relief solid. `nameOrGrid` is a name declared in the part's
+   * `images` field, or an inline grid — the name path is registered pre-build by
+   * the framework via the underscore-prefixed `_registerImage` side-channel (not
+   * a part author's calling surface).
+   */
+  heightfield(nameOrGrid: string | HeightfieldGrid, opts: HeightfieldOptions): Solid;
 
   // Backend-optional: the sub-part cache brackets and WASM lifetime hooks. Every
   // framework caller reaches these through `?.`, so a third-party backend may

@@ -15,13 +15,16 @@ import handling.
 
 This directory is its **own git repo** (`scottsykora/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has sixteen: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has eighteen: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
 `Shape2D` fillet/cut/offset, coincident-edge boss union),
 `faceted-vase.js` (k.loft silhouette body), `hull-sweep.js` (k.hull/hullChain),
-`nameplate.js` (k.text2d emboss/deboss), `hinged-box.js` (the `animations`
+`nameplate.js` (k.text2d emboss/deboss), `scott-label.js` (a two-layer
+engraved nameplate - raised script text over a backing plate, with
+font/bold/italic/shear controls and fillet-rounded glyph tops),
+`hinged-box.js` (the `animations`
 reference part - stepped timeline, camera cues, pose-only tracks), `screw.js`
 (the `k.screwSweep` reference part - a periodic ISO thread plus a hex head),
 `text-smoke.js` (worker text-render CI fixture), `mixed-smoke.js` (the
@@ -36,7 +39,9 @@ reused rounded-square ring, resample-mode square-to-circle shoulder), and
 `emblem.js` (the `k.vector2d` reference part — ingested vector art embossed on an
 authored millimetre plate, exercising both units modes, per-shape add/subtract
 roles, and all four contour kinds; the `{ shape }` selector is covered by
-test/vector2d.test.js rather than by the part).
+test/vector2d.test.js rather than by the part), and
+`relief.js` (the `images`/`k.heightfield` reference part - depth map to
+relief plate, swappable source).
 
 ## Node version
 
