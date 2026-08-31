@@ -3405,6 +3405,8 @@ symptom first** — it maps error text → cause → fix. The invariants, one li
   of deliberate clearance, or overshoot the cut. Mesh CSG shrugs; OCCT's boolean
   degenerates, so the part previews instantly and the STEP export runs for minutes
   ([boolean-coincident-faces-hang](ERROR-PATTERNS.md#boolean-coincident-faces-hang)).
+  The exact kernel refuses the common form up front — an `exactly-touching surfaces`
+  build error names the shared radius and this fix menu.
   For the case that causes this most often — a tapped hole — reach for
   `k.tappedBore`, which owns the bore and the thread together and cannot land them
   on the same face.

@@ -118,7 +118,12 @@ export function finishKernel(k) {
     // swapped, an empty solid). A wrong answer with no error is the worst of the
     // three failure modes, and overhanging is what avoids it.
     const threadLength = pitch * turns;
-    return k.union([
+    // _trustedUnion where the backend offers it (OCCT): this composition is the
+    // coincidence guard's own coached FIX, audited by the identity test and the
+    // guard suite, and its flank chord-bands legitimately hug the bore wall
+    // they overlap — the guard must not second-guess it. Manifold has no guard
+    // and no _trustedUnion; plain union is identical there.
+    return (k._trustedUnion ?? k.union)([
       k.cylinder({ d, h: (depth ?? threadLength) + 2 * overshoot }).translate([0, 0, -overshoot]),
       thread,
     ]);
