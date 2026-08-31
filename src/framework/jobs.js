@@ -393,6 +393,13 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       onProgress("writing 3MF file");
       const data = meshTo3MF(meshes);
       post({ type: "download", data, filename: `${fileBase}.3mf`, mime: "model/3mf", jobId: msg.jobId }, [bufferOf(data)]);
+    } else if (msg.type === "warm-kernel") {
+      // Deliberately empty. worker.js awaits kernelFor() before calling handle(),
+      // so REACHING this branch is the whole result: the backend this job was
+      // routed to now has a live kernel. It exists so a host can pay OCCT's cold
+      // ~11 MB boot at a moment of its own choosing — when the export dialog
+      // opens, say — instead of inside the STEP export the user just asked for.
+      post({ type: "kernel-warm", jobId: msg.jobId });
     } else if (msg.type === "tessellate-imports") {
       // OCCT-worker service job for the STEP-on-Manifold crossover: answer with
       // print-quality triangle meshes for every STEP import, transferable.

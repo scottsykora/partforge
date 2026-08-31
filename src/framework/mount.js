@@ -61,7 +61,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, setHostPane, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -110,6 +110,13 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     onContextLost: (listener) => viewer.onContextLost(listener),
     listExportableParts,
     exportParts,
+    // Pay the exact kernel's cold boot ahead of an export. STEP is pinned to
+    // OCCT, whose ~11 MB WASM loads on its first job, so a Manifold-previewed
+    // part's STEP export otherwise pays that boot inside the export itself.
+    // Call this when an export becomes likely (a download dialog opening) to
+    // move the wait off the moment the user asked for a file. Best-effort:
+    // resolves true/false, never rejects, and is a cheap no-op once warm.
+    warmExportKernel: warmExportKernel ?? (() => Promise.resolve(false)),
     // Narrow-layout pane selection, for a host that draws its own tab bar
     // (partforge-cloud does, at the window level). Defaulted to a no-op so the
     // handle's shape never depends on whether this mount resolved a rail.
@@ -1136,6 +1143,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       listExportableParts: () =>
         exportablePartNames(part, params).map((name) => ({ name, label: partLabel(part, name) })),
       exportParts: (opts) => exportCtl.exportParts(opts),
+      warmExportKernel: () => exportCtl.warmKernel(),
       animation: animCtl?.runtime ?? null,
       measure: {
         isEnabled: measureMode.isEnabled,
