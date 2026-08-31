@@ -24,11 +24,18 @@ test('"asset" accepts a pfc-asset token; https alone does not', () => {
   expect(fontSourceAllowed(tok, ["https", "asset"])).toBe(true);
 });
 
-// Superseded by "BYTES bypass the allow check" below: bytes are now a
-// legitimate param-supplied source (the panel's drop target), so they are no
-// longer refused here. Kept only as a pointer so a reader who remembers the
-// old assertion (`fontSourceAllowed(bytes, …) === false`) finds why it moved
-// rather than assuming it was silently dropped.
+// Narrowed replacement for the old "non-string sources are never
+// param-supplied" test: that blanket claim stopped being true once bytes
+// became a legitimate param-supplied source (the panel's drop target; see
+// "BYTES bypass the allow check" below). What's still true, and still needs
+// its own guard, is that a non-string, non-bytes value is refused — a plain
+// object is exactly the shape a JSON round-trip of an ArrayBuffer produces
+// (`{}` for an empty one), so this is not a hypothetical.
+test("a value that is neither a string nor bytes is refused, not silently allowed", () => {
+  expect(fontSourceAllowed({}, ["https"])).toBe(false);                                   // the JSON-round-trip shape
+  expect(fontSourceAllowed(() => "https://x/f.ttf", ["https"])).toBe(false);               // a thunk
+  expect(fontSourceAllowed(new URL("https://cdn.test/f.ttf"), ["https"])).toBe(false);     // a URL instance, not a string
+});
 
 test("fontControlAllows finds every font control and its allow list", () => {
   const part = { parameters: [

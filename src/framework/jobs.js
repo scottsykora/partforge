@@ -148,10 +148,14 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // default.
     const { p, d } = resolveParams(part, msg.params, (params) => {
       // A param bound to a `type: "font"` control is user input — on a shared
-      // link it is arbitrary attacker-supplied text that `fonts: (p) => …` would
-      // turn into a fetch URL. Refuse out-of-`allow` values back to the part's
-      // own default rather than failing the build: a bad link should show the
-      // part, not an error page.
+      // link a STRING value is arbitrary attacker-supplied text that
+      // `fonts: (p) => …` would turn into a fetch URL. A BYTE value
+      // (ArrayBuffer/typed array) always passes fontSourceAllowed regardless of
+      // `allow` — see font-source.js's header: it cannot have arrived via a
+      // share link (a URL can't carry megabytes), only from the host's own
+      // trusted panel (the drop-target path). Refuse out-of-`allow` values back
+      // to the part's own default rather than failing the build: a bad link
+      // should show the part, not an error page.
       for (const [key, allow] of fontControlAllows(part)) {
         const v = params[key];
         if (isNoFontSource(v) || fontSourceAllowed(v, allow)) continue;

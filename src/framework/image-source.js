@@ -2,14 +2,12 @@
 // code and get no restriction; this file exists only for the other case — a
 // value that arrived in `params`.
 //
-// This deliberately diverges from font-source.js in one place. That file refuses
-// every non-string on the grounds that "bytes/thunks are never param-supplied".
-// For images they ARE: the partforge-cloud sandbox cannot fetch URLs and puts PNG
-// bytes straight in the param. The replacement rule is sound — an ArrayBuffer in
-// params definitionally did not arrive via a shared link, because a URL cannot
+// font-source.js states and follows the same rule: an ArrayBuffer in params
+// definitionally did not arrive via a shared link, because a URL cannot
 // carry megabytes, so it can only have been placed there by the host's own panel,
-// which is trusted code. Bytes therefore bypass the allow check entirely, for
-// every allow list. Do NOT copy font-source.js's non-string refusal here.
+// which is trusted code — the partforge-cloud sandbox cannot fetch URLs and puts
+// PNG bytes straight in the param, which is exactly this case. Bytes therefore
+// bypass the allow check entirely, for every allow list.
 //
 // DOM-free and node:-free: jobs.js (worker graph) and the panel both import it.
 

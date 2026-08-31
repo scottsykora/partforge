@@ -9,7 +9,13 @@
 // sound and is the same one image-source.js states: an ArrayBuffer in params
 // definitionally did not arrive via a shared link, because a URL cannot carry
 // megabytes — so it can only have been placed there by the host's own panel,
-// which is trusted code.
+// which is trusted code. That plausibility argument isn't the load-bearing
+// one, though — the structural fact is that asset-resolve.js's resolver
+// fetches only a `string`/`URL` source; a byte source is consumed directly
+// and never becomes a request. Bytes therefore cannot reach the network no
+// matter how they got into params, which is what the allow list exists to
+// gate, and is what still holds even if a host someday puts a few bytes of
+// base64 in a link.
 //
 // DOM-free and node:-free: jobs.js (worker graph) and the panel both import it.
 
