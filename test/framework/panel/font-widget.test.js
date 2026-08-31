@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { buildControls } from "../../../src/framework/panel/render.js";
 import { fontLabel } from "../../../src/framework/panel/widgets/font.js";
 
@@ -225,3 +225,60 @@ test("a panel rebuild disposes the drop widget on the catalog-button path too", 
   await new Promise((r) => setTimeout(r, 0));
   expect(params.face).toBe("");          // disposed: never wrote back
 });
+
+// ── ambient drop ─────────────────────────────────────────────────────────────
+// With a catalog present the picker button is the affordance people are meant to
+// find. A second labelled drop zone underneath it would spend rail height saying
+// the same thing twice, so the drop becomes ambient: no label, no click target,
+// revealed only while a file is over it. Dropping stays available for whoever
+// knows to try it.
+describe("ambient drop with a catalog", () => {
+  const catalog = () => ({ fontCatalog: { async search() { return []; } } });
+  const mount = (opts) => {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    buildControls(root, [sec()], { face: "" }, () => {}, undefined, opts);
+    return root;
+  };
+
+  test("with a catalog: the drop target is ambient — no hint text", () => {
+    const root = mount(catalog());
+    const drop = root.querySelector("[data-pf-drop]");
+    expect(drop, "the drop target still exists").toBeTruthy();
+    expect(drop.classList.contains("file-drop-ambient")).toBe(true);
+    expect(drop.querySelector(".file-drop-hint"), "no visible label competing with the button").toBeNull();
+  });
+
+  test("ambient drop does not steal the click that belongs to the picker button", () => {
+    const root = mount(catalog());
+    const drop = root.querySelector("[data-pf-drop]");
+    expect(drop.getAttribute("role"), "not announced as a button").toBeNull();
+    expect(drop.hasAttribute("tabindex"), "not in the tab order").toBe(false);
+    expect(drop.querySelector('input[type="file"]'), "no file input to open").toBeNull();
+    expect(root.querySelector("button.font-btn"), "the picker button is still there").toBeTruthy();
+  });
+
+  test("without a catalog the drop stays labelled — it is the only affordance", () => {
+    const root = mount(undefined);
+    const drop = root.querySelector("[data-pf-drop]");
+    expect(drop.classList.contains("file-drop-ambient")).toBe(false);
+    expect(drop.querySelector(".file-drop-hint")).toBeTruthy();
+    expect(drop.querySelector('input[type="file"]'), "click-to-choose still available").toBeTruthy();
+  });
+
+  test("an ambient drop still accepts a dropped font", async () => {
+    const root = mount(catalog());
+    const params = { face: "" };
+    document.body.innerHTML = '<div id="root2"></div>';
+    const r2 = document.getElementById("root2");
+    buildControls(r2, [sec()], params, () => {}, undefined, catalog());
+    const TTF = Uint8Array.from([0x4f, 0x54, 0x54, 0x4f, 1, 2, 3, 4]);
+    const file = Object.assign(new Blob([TTF]), { name: "f.otf", arrayBuffer: async () => TTF.buffer.slice(0) });
+    const ev = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "dataTransfer", { value: { files: [file] } });
+    r2.querySelector("[data-pf-drop]").dispatchEvent(ev);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(params.face, "dropping still works, it is just undiscoverable").toBeInstanceOf(ArrayBuffer);
+  });
+});
+

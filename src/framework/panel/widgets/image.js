@@ -103,7 +103,6 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
   // A URL that fails to load (404, CORS, revoked link) must degrade to hidden,
   // not the browser's broken-image glyph.
   preview.addEventListener("error", () => { preview.hidden = true; });
-  wrap.append(preview);
 
   if (!imageCatalog) {
     // Degraded path: a URL field. Unlike `text`, it does NOT write on every
@@ -122,6 +121,7 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
       field.placeholder = isBytes(v) ? "Uploaded image" : "";
       field.classList.remove("warn");
       applyPreview(preview, previewSrc(v, urls));
+      preview.parentElement?.classList.toggle("has-thumb", !preview.hidden);
     };
     field.addEventListener("change", () => {
       if (!imageSourceAllowed(field.value, allow)) { field.classList.add("warn"); return; }
@@ -136,6 +136,11 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
     const drop = mountDrop("image", {
       params, node, onAssetUpload, onChange, onCommit, onRender: paintField,
     });
+    // The tile IS the preview: dropping, clicking to choose, and showing what is
+    // currently selected become one box rather than three stacked ones.
+    // `has-thumb` swaps the dashed empty-state border for a solid frame.
+    drop.el.setAttribute("data-pf-thumb", "");
+    drop.el.prepend(preview);
     wrap.append(drop.el, drop.errorEl);
 
     return { el: wrap, sync: paintField, dispose: () => { drop.dispose(); urls.dispose(); } };
@@ -167,6 +172,7 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
     const url = previewSrc(src, urls);
     applyPreview(preview, url);
     applyPreview(thumb, url);
+    preview.parentElement?.classList.toggle("has-thumb", !preview.hidden);
     const show = ({ label: text, width, height }) => {
       if (seq !== paintSeq) return;                  // a newer paint already won
       iname.textContent = width && height ? `${text} (${width}×${height})` : text;
@@ -196,6 +202,10 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
   });
 
   const drop = mountDrop("image", { params, node, onAssetUpload, onChange, onCommit, onRender: paint });
+  // Same merge as the degraded branch — the large preview lives in the drop tile;
+  // the catalog button keeps its own small thumb.
+  drop.el.setAttribute("data-pf-thumb", "");
+  drop.el.prepend(preview);
   wrap.append(drop.el, drop.errorEl);
 
   return {

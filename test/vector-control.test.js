@@ -7,7 +7,8 @@
 // here: the FIRST call pays Vite's transform cost, which can outrun the
 // single tick the drop test waits on if nothing has warmed the module yet.
 // Warmed here, once, before any test's timing-sensitive assertion runs.
-import { expect, test, beforeAll } from "vitest";
+import { describe, expect, test, beforeAll } from "vitest";
+import { readFileSync } from "node:fs";
 import { buildControls } from "../src/framework/panel/render.js";
 
 beforeAll(() => import("../src/framework/ingest/svg-ingest.js"));
@@ -87,3 +88,53 @@ test("a panel rebuild disposes the drop widget — no stray listener keeps the o
   await new Promise((r) => setTimeout(r, 50));
   expect(params.art).toBe("");          // disposed: never wrote back
 });
+
+// ── thumbnail ────────────────────────────────────────────────────────────────
+// The vector control's value is a parsed document, not a URL, so there is
+// nothing an <img> could point at. It renders the artwork itself instead.
+describe("thumbnail", () => {
+  const doc = () => JSON.parse(readFileSync("src/parts/assets/emblem.vector.json", "utf8"));
+  const mount = (params) => {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    const panel = buildControls(root, [{ id: "s", controls: [{ key: "art", type: "vector", label: "Artwork" }] }],
+      params, () => {});
+    return { root, panel };
+  };
+
+  test("renders the artwork inline when the param holds a document", () => {
+    const { root } = mount({ art: doc() });
+    const svg = root.querySelector("[data-pf-thumb] svg");
+    expect(svg, "an inline svg preview of the document").toBeTruthy();
+    expect(svg.querySelectorAll("path").length).toBeGreaterThan(0);
+  });
+
+  test("shows a placeholder, not an empty box, when there is no artwork yet", () => {
+    const { root } = mount({ art: "" });
+    expect(root.querySelector("[data-pf-thumb] svg")).toBeNull();
+    expect(root.querySelector("[data-pf-thumb]"), "the tile is still there to drop onto").toBeTruthy();
+  });
+
+  test("the thumbnail is the drop target", () => {
+    const { root } = mount({ art: doc() });
+    expect(root.querySelector("[data-pf-thumb][data-pf-drop], [data-pf-drop] [data-pf-thumb], [data-pf-thumb] [data-pf-drop]"),
+      "thumb and drop target are the same element or nested").toBeTruthy();
+  });
+
+  test("survives a malformed document instead of taking the control down", () => {
+    // vectorThumb returns null rather than throwing; the widget must fall back.
+    const { root } = mount({ art: { shapes: { a: [{ outer: { kind: "path", start: [0, NaN], segments: [{ kind: "line", to: [1, 1] }] } }] } } });
+    expect(root.querySelector("[data-pf-thumb]")).toBeTruthy();
+    expect(root.querySelector("[data-pf-thumb] svg")).toBeNull();
+  });
+
+  test("repaints when the document is replaced", () => {
+    const params = { art: "" };
+    const { root, panel } = mount(params);
+    expect(root.querySelector("[data-pf-thumb] svg")).toBeNull();
+    params.art = doc();
+    panel.syncValues?.(["art"]);
+    expect(root.querySelector("[data-pf-thumb] svg"), "sync repaints the thumbnail").toBeTruthy();
+  });
+});
+

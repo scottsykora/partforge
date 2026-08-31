@@ -146,7 +146,11 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog, 
     picker = openFontPicker?.({ node, params, allow, fontCatalog, anchor: wrap, onPicked: () => { paint(); onChange?.(); onCommit?.(); } }) ?? null;
   });
 
-  const drop = mountDrop("font", { params, node, onAssetUpload, onChange, onCommit, onRender: paint });
+  // Ambient: this branch already has the catalog button as its visible way in, so
+  // the drop covers the control invisibly and reveals itself only while a file is
+  // over it. The no-catalog branch above stays labelled — there, the drop zone is
+  // the only affordance and hiding it would strand the user.
+  const drop = mountDrop("font", { params, node, onAssetUpload, onChange, onCommit, onRender: paint, ambient: true });
   wrap.append(drop.el, drop.errorEl);
 
   return {
