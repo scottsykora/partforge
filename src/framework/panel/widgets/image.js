@@ -154,13 +154,13 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
       onCommit?.();
     });
     paintField();
-    // `sourceField: false` drops the URL box. The tile already is the preview, the
-    // drop target and the click-to-choose, so the field is a fourth affordance for
-    // one job on a 288 px rail. Default ON: it is the only way to type an https URL
-    // or a pfc-asset token, and for a vector control there is no catalog either.
-    // Nothing is lost by hiding it — the `warn` state lives on the field's own
-    // change handler, which is unreachable once the field is gone.
-    if (node.sourceField !== false) wrap.append(field);
+    // The URL box is OFF unless `sourceField: true`. The tile is already preview,
+    // drop target and click-to-choose in one, so on a 288 px rail a fourth
+    // affordance for the same job is the one earning its space least. Typing a
+    // source by hand is the rarer intent — a host token or an https URL someone
+    // already has — so it is the part that becomes opt-in, rather than the one
+    // every part pays rail height for.
+    if (node.sourceField === true) wrap.append(field);
 
     const drop = mountDrop("image", {
       params, node, onAssetUpload, onChange, onCommit, onRender: paintField,

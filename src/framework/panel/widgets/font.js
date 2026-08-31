@@ -86,7 +86,11 @@ export function makeFont(node, params, { onChange, onCommit, info, fontCatalog, 
       onCommit?.();
     });
     paintField();
-    wrap.append(field);
+    // Same opt-in rule as image/vector: the URL box appears only for
+    // `sourceField: true`. This branch has no catalog button, so hiding it
+    // leaves the drop zone as the way in — which is why THIS branch keeps its
+    // labelled drop zone rather than going ambient like the catalog one below.
+    if (node.sourceField === true) wrap.append(field);
 
     const drop = mountDrop("font", {
       params, node, onAssetUpload, onChange, onCommit, onRender: paintField,

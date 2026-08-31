@@ -31,11 +31,14 @@ test("fontLabel never throws on junk", () => {
   }
 });
 
-test("with no catalog the control is a plain URL text field", () => {
+// The URL field is opt-in (`sourceField`) — the drop zone is the default way in,
+// even on this branch where there is no catalog button. Tests about the FIELD
+// therefore ask for it; the default is asserted on its own below.
+test("with no catalog and sourceField, the control is a plain URL text field", () => {
   document.body.innerHTML = '<div id="root"></div>';
   const root = document.getElementById("root");
   const params = { face: GS };
-  buildControls(root, [sec()], params, () => {});
+  buildControls(root, [sec({ sourceField: true })], params, () => {});
   const field = root.querySelector("input.text-input");
   expect(field).toBeTruthy();
   expect(root.querySelector("button.font-btn")).toBeNull();
@@ -46,7 +49,7 @@ test("the degraded field refuses an out-of-allow value on commit", () => {
   document.body.innerHTML = '<div id="root"></div>';
   const root = document.getElementById("root");
   const params = { face: GS };
-  buildControls(root, [sec({ allow: ["gstatic"] })], params, () => {});
+  buildControls(root, [sec({ allow: ["gstatic"], sourceField: true })], params, () => {});
   const field = root.querySelector("input.text-input");
   field.value = "http://evil.test/x.ttf";
   field.dispatchEvent(new Event("input"));
@@ -152,7 +155,7 @@ test("a bad drop renders the error verbatim without disturbing the URL field", a
   document.body.innerHTML = '<div id="root"></div>';
   const root = document.getElementById("root");
   const params = { face: GS };
-  buildControls(root, [sec()], params, () => {});
+  buildControls(root, [sec({ sourceField: true })], params, () => {});
   const field = root.querySelector("input.text-input");
   const dropEl = root.querySelector("[data-pf-drop]");
   const TXT = Uint8Array.from([1, 2, 3, 4]);
@@ -282,3 +285,10 @@ describe("ambient drop with a catalog", () => {
   });
 });
 
+test("the URL field is off by default, leaving the drop zone", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  buildControls(root, [sec()], { face: GS }, () => {});
+  expect(root.querySelector("input.text-input"), "no field unless asked for").toBeNull();
+  expect(root.querySelector("[data-pf-drop]"), "the drop zone is the way in").toBeTruthy();
+});

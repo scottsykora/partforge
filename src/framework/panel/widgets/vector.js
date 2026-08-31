@@ -68,13 +68,10 @@ export function makeVector(node, params, { onChange, onCommit, info, onAssetUplo
     onCommit?.();
   });
   paintField();
-  // `sourceField: false` drops the URL box. The tile already is the preview, the
-  // drop target and the click-to-choose, so the field is a fourth affordance for
-  // one job on a 288 px rail. Default ON: it is the only way to type an https URL
-  // or a pfc-asset token, and for a vector control there is no catalog either.
-  // Nothing is lost by hiding it — the `warn` state lives on the field's own
-  // change handler, which is unreachable once the field is gone.
-  if (node.sourceField !== false) wrap.append(field);
+  // The URL box is OFF unless `sourceField: true` — same reasoning as
+  // widgets/image.js: the tile already carries preview, drop and click-to-choose,
+  // and typing a source by hand is the rarer intent.
+  if (node.sourceField === true) wrap.append(field);
 
   // The thumbnail IS the drop target. A vector param holds a parsed document, so
   // there is no URL an <img> could point at — the artwork is drawn inline

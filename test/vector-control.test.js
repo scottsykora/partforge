@@ -138,12 +138,13 @@ describe("thumbnail", () => {
   });
 });
 
-// ── sourceField: false ───────────────────────────────────────────────────────
+// ── sourceField ──────────────────────────────────────────────────────────────
 // The tile is preview, drop target and click-to-choose in one. The URL field is a
 // fourth affordance for the same job, and on a 288 px rail it is the one earning
-// its space least — so an author can drop it. It stays ON by default, because it
-// is the only way to enter an https URL or a pfc-asset token by hand.
-describe("sourceField: false", () => {
+// its space least — so it is OFF unless the author asks for it. Typing a source
+// by hand (an https URL, a pfc-asset token) is the rarer intent, so that is the
+// part that opts in rather than the part every control pays rail height for.
+describe("sourceField", () => {
   const mount = (extra) => {
     document.body.innerHTML = '<div id="root"></div>';
     const root = document.getElementById("root");
@@ -152,14 +153,18 @@ describe("sourceField: false", () => {
     return root;
   };
 
-  test("hides the URL field but keeps the drop tile", () => {
-    const root = mount({ sourceField: false });
-    expect(root.querySelector("input.text-input"), "no URL field").toBeNull();
+  test("no URL field by default, but the drop tile is there", () => {
+    const root = mount({});
+    expect(root.querySelector("input.text-input"), "default hides the field").toBeNull();
     expect(root.querySelector("[data-pf-drop]"), "the tile is still there").toBeTruthy();
   });
 
-  test("the field is present by default", () => {
-    expect(mount({}).querySelector("input.text-input"), "default keeps the field").toBeTruthy();
+  test("sourceField: true brings the field back", () => {
+    expect(mount({ sourceField: true }).querySelector("input.text-input")).toBeTruthy();
+  });
+
+  test("sourceField: false is the default, not an error", () => {
+    expect(mount({ sourceField: false }).querySelector("input.text-input")).toBeNull();
   });
 });
 
