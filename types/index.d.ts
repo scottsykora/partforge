@@ -413,6 +413,17 @@ export interface PartRuntime {
    */
   exportParts(opts: ExportPartsOptions): Promise<void>;
   /**
+   * Pay the exact kernel's cold boot ahead of an export. STEP is pinned to
+   * OCCT, whose ~11 MB WASM loads on its first job, so a Manifold-previewed
+   * part's STEP export otherwise pays that boot inside the export itself.
+   * Call this when an export becomes likely — a download dialog opening — to
+   * move the wait off the moment the user asked for a file.
+   *
+   * Best-effort: resolves `true` once the kernel is up, `false` on any failure
+   * or teardown, and never rejects. A no-op once the kernel is warm.
+   */
+  warmExportKernel(): Promise<boolean>;
+  /**
    * Narrow-layout pane selection, for a host that draws its own tab bar.
    * `null` hands selection back to partforge's built-in bar.
    */
