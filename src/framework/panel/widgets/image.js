@@ -18,6 +18,7 @@
 import { attachInfo } from "../info.js";
 import { IMAGE_ALLOW_DEFAULT, imageSourceAllowed } from "../../image-source.js";
 import { mountDrop } from "./file-drop.js";
+import { declaredImageUrl } from "../declared-source.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -40,21 +41,70 @@ export function imageLabel(source) {
   return file || source;
 }
 
-// Point (or unpoint) the live preview. A byte-valued param has no URL to hand
-// the browser, so the image stays hidden rather than trying to render it or
-// showing a broken-image glyph — same rule an empty/unset value gets. `onerror`
-// covers the other broken-image case: a URL that 404s or that CORS refuses.
-function paintPreview(img, source) {
-  if (typeof source === "string" && source) {
+// An object URL is a real resource, not a string: the browser pins the blob
+// behind it until it is revoked, and a panel rebuild constructs a fresh widget
+// every time. This owns the whole lifetime — one live URL at a time, the old one
+// revoked before a new one replaces it, and everything released on dispose — so
+// no caller has to remember. Returns `null` for a value that needs no URL.
+function makeObjectUrlSlot() {
+  let current = null;
+  const release = () => {
+    if (current) URL.revokeObjectURL(current);
+    current = null;
+  };
+  return {
+    forBytes(source) {
+      release();
+      if (!isBytes(source)) return null;
+      // Always image/png: `imageToPng` is what produced these bytes, whatever the
+      // user dropped. The type matters — a Blob with none renders nothing.
+      current = URL.createObjectURL(new Blob([source], { type: "image/png" }));
+      return current;
+    },
+    dispose: release,
+  };
+}
+
+// Point (or unpoint) the live preview. A string source is used directly. Bytes —
+// the partforge-cloud sandbox path, where the converted PNG travels in the param
+// because that sandbox cannot fetch URLs — become an object URL, so the cloud
+// gets the same thumbnail as everyone else rather than a blank tile. `onerror`
+// still covers the remaining broken-image case: a URL that 404s or CORS refuses.
+// Resolved ONCE per paint, never per image: the catalog rendering shows the same
+// source in two <img>s, and asking the slot twice would revoke the URL it had
+// just handed the first one, leaving it pointing at a dead blob.
+function previewSrc(source, urls) {
+  return typeof source === "string" && source ? source : urls.forBytes(source);
+}
+
+// When the control's own param is empty, show what the PART is using: its
+// bundled default lives in the `images` declaration, which is the only place it
+// can live (the allow list passes only https, so a file:/dev URL cannot sit in
+// `defaults`). Resolving it is async — a Vite thunk has to be called — so the
+// tile paints empty first and fills in, and a source that never resolves simply
+// leaves it empty. `seq` guards against a slow resolve landing after a newer one.
+function paintDeclared(img, declaredSource, node, apply) {
+  if (!declaredSource) return;
+  const source = declaredSource("image", node.key);
+  if (source === undefined) return;
+  const seq = ++img._pfDeclaredSeq;
+  declaredImageUrl(source).then((url) => {
+    if (url && seq === img._pfDeclaredSeq) apply(url);
+  });
+}
+
+function applyPreview(img, src) {
+  if (src) {
     img.hidden = false;
-    img.src = source;
+    img.src = src;
   } else {
     img.hidden = true;
     img.removeAttribute("src");
   }
 }
 
-export function makeImage(node, params, { onChange, onCommit, info, imageCatalog, onAssetUpload } = {}) {
+export function makeImage(node, params, { onChange, onCommit, info, imageCatalog, onAssetUpload, declaredSource } = {}) {
+  const urls = makeObjectUrlSlot();   // one live preview URL per widget; see makeObjectUrlSlot
   const allow = Array.isArray(node.allow) && node.allow.length ? node.allow : IMAGE_ALLOW_DEFAULT;
   const wrap = el("div", "slider");
   const row = el("div", "row");
@@ -65,12 +115,12 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
 
   const preview = document.createElement("img");
   preview.className = "image-preview";
+  preview._pfDeclaredSeq = 0;
   preview.alt = "";
   preview.hidden = true;
   // A URL that fails to load (404, CORS, revoked link) must degrade to hidden,
   // not the browser's broken-image glyph.
   preview.addEventListener("error", () => { preview.hidden = true; });
-  wrap.append(preview);
 
   if (!imageCatalog) {
     // Degraded path: a URL field. Unlike `text`, it does NOT write on every
@@ -88,7 +138,13 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
       field.value = isBytes(v) ? "" : String(v ?? "");
       field.placeholder = isBytes(v) ? "Uploaded image" : "";
       field.classList.remove("warn");
-      paintPreview(preview, v);
+      const own = previewSrc(v, urls);
+      applyPreview(preview, own);
+      preview.parentElement?.classList.toggle("has-thumb", !preview.hidden);
+      if (!own) paintDeclared(preview, declaredSource, node, (url) => {
+        applyPreview(preview, url);
+        preview.parentElement?.classList.toggle("has-thumb", true);
+      });
     };
     field.addEventListener("change", () => {
       if (!imageSourceAllowed(field.value, allow)) { field.classList.add("warn"); return; }
@@ -98,14 +154,25 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
       onCommit?.();
     });
     paintField();
-    wrap.append(field);
+    // The URL box is OFF unless `sourceField: true`. The tile is already preview,
+    // drop target and click-to-choose in one, so on a 288 px rail a fourth
+    // affordance for the same job is the one earning its space least. Typing a
+    // source by hand is the rarer intent — a host token or an https URL someone
+    // already has — so it is the part that becomes opt-in, rather than the one
+    // every part pays rail height for.
+    if (node.sourceField === true) wrap.append(field);
 
     const drop = mountDrop("image", {
       params, node, onAssetUpload, onChange, onCommit, onRender: paintField,
     });
+    // The tile IS the preview: dropping, clicking to choose, and showing what is
+    // currently selected become one box rather than three stacked ones.
+    // `has-thumb` swaps the dashed empty-state border for a solid frame.
+    drop.el.setAttribute("data-pf-thumb", "");
+    drop.el.prepend(preview);
     wrap.append(drop.el, drop.errorEl);
 
-    return { el: wrap, sync: paintField, dispose: () => drop.dispose() };
+    return { el: wrap, sync: paintField, dispose: () => { drop.dispose(); urls.dispose(); } };
   }
 
   const btn = el("button", "image-btn");
@@ -131,8 +198,15 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
   const paint = () => {
     const src = params[node.key];
     const seq = ++paintSeq;
-    paintPreview(preview, src);
-    paintPreview(thumb, src);
+    const url = previewSrc(src, urls);
+    applyPreview(preview, url);
+    applyPreview(thumb, url);
+    preview.parentElement?.classList.toggle("has-thumb", !preview.hidden);
+    if (!url) paintDeclared(preview, declaredSource, node, (u) => {
+      applyPreview(preview, u);
+      applyPreview(thumb, u);
+      preview.parentElement?.classList.toggle("has-thumb", true);
+    });
     const show = ({ label: text, width, height }) => {
       if (seq !== paintSeq) return;                  // a newer paint already won
       iname.textContent = width && height ? `${text} (${width}×${height})` : text;
@@ -162,12 +236,16 @@ export function makeImage(node, params, { onChange, onCommit, info, imageCatalog
   });
 
   const drop = mountDrop("image", { params, node, onAssetUpload, onChange, onCommit, onRender: paint });
+  // Same merge as the degraded branch — the large preview lives in the drop tile;
+  // the catalog button keeps its own small thumb.
+  drop.el.setAttribute("data-pf-thumb", "");
+  drop.el.prepend(preview);
   wrap.append(drop.el, drop.errorEl);
 
   return {
     el: wrap,
     sync: paint,
-    dispose: () => { picker?.close(); picker = null; drop.dispose(); },
+    dispose: () => { picker?.close(); picker = null; drop.dispose(); urls.dispose(); },
   };
 }
 

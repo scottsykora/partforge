@@ -33,6 +33,17 @@ function authoredControl(c) {
     hidden: !!c.hidden,
     when: c.when,
     whenFalse: c.whenFalse,
+    // Asset-control fields. This list is an explicit allow-list, so anything
+    // missing from it is silently dropped rather than failing loudly — which is
+    // how `allow` came to be ignored: an authored `allow: ["asset"]` never
+    // reached the widget, so its own typed-URL check fell back to the default
+    // list and accepted values the worker then refused and reset underneath the
+    // user. The worker-side gate was never affected (imageControlAllows and its
+    // siblings walk the raw authored tree, not this node), so the enforcement
+    // held throughout — but the panel disagreed with it.
+    allow: c.allow,
+    preview: c.preview,
+    sourceField: c.sourceField,
     preserveOn: false,
     marksCustom: true,
   };

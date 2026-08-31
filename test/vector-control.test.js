@@ -7,7 +7,8 @@
 // here: the FIRST call pays Vite's transform cost, which can outrun the
 // single tick the drop test waits on if nothing has warmed the module yet.
 // Warmed here, once, before any test's timing-sensitive assertion runs.
-import { expect, test, beforeAll } from "vitest";
+import { describe, expect, test, beforeAll } from "vitest";
+import { readFileSync } from "node:fs";
 import { buildControls } from "../src/framework/panel/render.js";
 
 beforeAll(() => import("../src/framework/ingest/svg-ingest.js"));
@@ -87,3 +88,116 @@ test("a panel rebuild disposes the drop widget — no stray listener keeps the o
   await new Promise((r) => setTimeout(r, 50));
   expect(params.art).toBe("");          // disposed: never wrote back
 });
+
+// ── thumbnail ────────────────────────────────────────────────────────────────
+// The vector control's value is a parsed document, not a URL, so there is
+// nothing an <img> could point at. It renders the artwork itself instead.
+describe("thumbnail", () => {
+  const doc = () => JSON.parse(readFileSync("src/parts/assets/emblem.vector.json", "utf8"));
+  const mount = (params) => {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    const panel = buildControls(root, [{ id: "s", controls: [{ key: "art", type: "vector", label: "Artwork" }] }],
+      params, () => {});
+    return { root, panel };
+  };
+
+  test("renders the artwork inline when the param holds a document", () => {
+    const { root } = mount({ art: doc() });
+    const svg = root.querySelector("[data-pf-thumb] svg");
+    expect(svg, "an inline svg preview of the document").toBeTruthy();
+    expect(svg.querySelectorAll("path").length).toBeGreaterThan(0);
+  });
+
+  test("shows a placeholder, not an empty box, when there is no artwork yet", () => {
+    const { root } = mount({ art: "" });
+    expect(root.querySelector("[data-pf-thumb] svg")).toBeNull();
+    expect(root.querySelector("[data-pf-thumb]"), "the tile is still there to drop onto").toBeTruthy();
+  });
+
+  test("the thumbnail is the drop target", () => {
+    const { root } = mount({ art: doc() });
+    expect(root.querySelector("[data-pf-thumb][data-pf-drop], [data-pf-drop] [data-pf-thumb], [data-pf-thumb] [data-pf-drop]"),
+      "thumb and drop target are the same element or nested").toBeTruthy();
+  });
+
+  test("survives a malformed document instead of taking the control down", () => {
+    // vectorThumb returns null rather than throwing; the widget must fall back.
+    const { root } = mount({ art: { shapes: { a: [{ outer: { kind: "path", start: [0, NaN], segments: [{ kind: "line", to: [1, 1] }] } }] } } });
+    expect(root.querySelector("[data-pf-thumb]")).toBeTruthy();
+    expect(root.querySelector("[data-pf-thumb] svg")).toBeNull();
+  });
+
+  test("repaints when the document is replaced", () => {
+    const params = { art: "" };
+    const { root, panel } = mount(params);
+    expect(root.querySelector("[data-pf-thumb] svg")).toBeNull();
+    params.art = doc();
+    panel.syncValues?.(["art"]);
+    expect(root.querySelector("[data-pf-thumb] svg"), "sync repaints the thumbnail").toBeTruthy();
+  });
+});
+
+// ── sourceField ──────────────────────────────────────────────────────────────
+// The tile is preview, drop target and click-to-choose in one. The URL field is a
+// fourth affordance for the same job, and on a 288 px rail it is the one earning
+// its space least — so it is OFF unless the author asks for it. Typing a source
+// by hand (an https URL, a pfc-asset token) is the rarer intent, so that is the
+// part that opts in rather than the part every control pays rail height for.
+describe("sourceField", () => {
+  const mount = (extra) => {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    buildControls(root, [{ id: "s", controls: [{ key: "art", type: "vector", label: "Artwork", ...extra }] }],
+      { art: "" }, () => {});
+    return root;
+  };
+
+  test("no URL field by default, but the drop tile is there", () => {
+    const root = mount({});
+    expect(root.querySelector("input.text-input"), "default hides the field").toBeNull();
+    expect(root.querySelector("[data-pf-drop]"), "the tile is still there").toBeTruthy();
+  });
+
+  test("sourceField: true brings the field back", () => {
+    expect(mount({ sourceField: true }).querySelector("input.text-input")).toBeTruthy();
+  });
+
+  test("sourceField: false is the default, not an error", () => {
+    expect(mount({ sourceField: false }).querySelector("input.text-input")).toBeNull();
+  });
+});
+
+test("opens showing the part's declared artwork, not an empty tile", async () => {
+  // Unlike an image there is nothing to point at — the document has to be fetched
+  // and parsed before it can be drawn.
+  const doc = JSON.parse(readFileSync("src/parts/assets/emblem.vector.json", "utf8"));
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => doc });
+  try {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    buildControls(root, [{ id: "s", controls: [{ key: "art", type: "vector", label: "Artwork" }] }],
+      { art: "" }, () => {}, undefined,
+      { declaredSource: () => "https://cdn.test/bundled.vector.json" });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(root.querySelector("[data-pf-thumb] svg"), "the declared artwork is drawn").toBeTruthy();
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test("a declared document that fails to load leaves the tile empty, never throws", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false });
+  try {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    expect(() => buildControls(root, [{ id: "s", controls: [{ key: "art", type: "vector", label: "Artwork" }] }],
+      { art: "" }, () => {}, undefined,
+      { declaredSource: () => "https://cdn.test/gone.vector.json" })).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(root.querySelector("[data-pf-thumb] svg")).toBeNull();
+    expect(root.querySelector("[data-pf-thumb]"), "the tile survives so a drop is still possible").toBeTruthy();
+  } finally { globalThis.fetch = realFetch; }
+});
+
