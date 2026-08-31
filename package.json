@@ -99,6 +99,14 @@
     "check": "node scripts/check-app.mjs",
     "offset-rates": "node scripts/offset-rates.mjs"
   },
+  "peerDependencies": {
+    "happy-dom": ">=20"
+  },
+  "peerDependenciesMeta": {
+    "happy-dom": {
+      "optional": true
+    }
+  },
   "dependencies": {
     "dompurify": "^3.4.11",
     "fflate": "^0.8.3",

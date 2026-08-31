@@ -10,8 +10,10 @@ There are two ways a file gets here, and this document leads with the first:
   a triangular keyway. Coordinates are millimetres, and they place exactly where
   you drew them. This is the path an agent should reach for when the geometry is
   *drawn* rather than computed.
-- **Ingested.** Convert an existing `.svg` once, in a browser, with
-  `partforge/ingest`, and check the resulting JSON in beside the part. The
+- **Ingested.** Convert an existing `.svg` once — in a browser with
+  `partforge/ingest`, or headlessly with `npx partforge ingest <file.svg> --out
+  <file.vector.json>` (needs `happy-dom`, an optional peer dependency: `npm
+  install happy-dom`) — and check the resulting JSON in beside the part. The
   artwork keeps its own unitless coordinates and gets sized at every call site.
 
 Both produce the same format, load through the same validator, and behave
@@ -19,14 +21,15 @@ identically downstream.
 
 **Why this document is normative and not merely helpful.** Ingest needs a real
 DOM (it resolves `<use>`, `<defs>`, CSS, and bakes ancestor transforms, all of
-which require one), so partforge deliberately ships **no headless SVG
-conversion path** — `partforge measure|render|lint` read a part's already-stored
-JSON, but nothing headless can *create* it from an `.svg`. That trade was
-accepted only because this file is complete enough that someone — or some agent
-— with no browser and no access to partforge's source can write a compliant
-converter from it alone. Everything below is written to hold that property.
-`scripts/ingest-svg.mjs` (dev-only, not shipped) is the reference
-implementation, described in §6.
+which require one) — `partforge measure|render|lint` read a part's
+already-stored JSON, but neither of ingest's two entry points *creates* one
+without a DOM somewhere: a real browser for `partforge/ingest`, or a headless
+one (`happy-dom`) for the CLI. That trade was accepted only because this file
+is complete enough that someone — or some agent — with neither a browser nor
+happy-dom installed, and no access to partforge's source, can still write a
+compliant converter from it alone. Everything below is written to hold that
+property. The `ingest` verb in `bin/cli.js` is the reference implementation,
+described in §6.
 
 ## 1. A worked authored example
 
@@ -494,8 +497,9 @@ Shapes are named, regions and segments are 1-indexed, and the role (`outer` /
 One filled circle, and one **stroked, open** polyline — deliberately, so this one
 file exercises both of ingest's geometry paths (a fill, and a stroke that has to
 be outlined into a filled shape; see §6). Ingesting it
-(`node scripts/ingest-svg.mjs src/parts/assets/emblem.svg`) produces
-`src/parts/assets/emblem.vector.json`, checked in beside it. Here it is with the
+(`npx partforge ingest src/parts/assets/emblem.svg --out
+src/parts/assets/emblem.vector.json`) produces that file, checked in beside it.
+Here it is with the
 `note` field elided for brevity and the coordinate arrays put on one line —
 nothing else is changed:
 
@@ -662,12 +666,14 @@ followed by the one already-written reference to check your output against.
    file stays diffable and so a stored `bbox` matches a later recomputation from
    the *rounded* coordinates rather than drifting past the tolerance.
 
-`scripts/ingest-svg.mjs` in the partforge repository is the worked reference
-implementation of exactly this pipeline — it runs `partforge/ingest`'s real
-`ingestSvg()` (paper.js's `importSVG` for steps 1–2 and 4–5, this repo's own
+The `ingest` verb in `bin/cli.js` (`npx partforge ingest <file.svg> --out
+<file.vector.json>`) is the worked reference implementation of exactly this
+pipeline — it runs `partforge/ingest`'s real `ingestSvg()` (paper.js's
+`importSVG` for steps 1–2 and 4–5, this repo's own
 `contour-offset.js`/`stroke-outline.js` for step 3, and its own `arc-fit.js` for
-step 7) inside a headless DOM (`happy-dom`, a devDependency), specifically so
-that repository's own fixtures — including the worked example in §4 — are
+step 7) inside a headless DOM (`happy-dom`, an optional peer dependency —
+`src/framework/ingest/node-dom.js` installs it), specifically so that
+repository's own fixtures — including the worked example in §4 — are
 reproducible instead of being hand-maintained blobs, and so there is a second
 thing (besides this document) to check a from-scratch converter's output
 against: ingest the same SVG both ways and diff the JSON.
