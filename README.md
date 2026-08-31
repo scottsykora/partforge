@@ -113,6 +113,15 @@ await runtime.ready;   // first successful build (rejects on a first-build error
 runtime.setHostPane("rail");  // narrow layout only: show just the controls
                                // rail ('stage' | 'rail'), suppressing the
                                // built-in tab bar. null hands selection back.
+runtime.setRailLayout({ mode: "dock", inset: 380, railHeight: 316 });
+                               // where the rail SITS when the host draws chrome over
+                               // the frame: docked into its bottom sheet (inset = the
+                               // sheet's height, railHeight = the slice of it the rail
+                               // may paint into), or { mode: "overlay" } for a
+                               // right-edge drawer over a full-width stage. null (or
+                               // any shape partforge can't read) restores partforge's
+                               // own layout; resize and collapse are suspended while
+                               // a layout is leased.
 runtime.setActive(false);      // park the viewer: stop the render loop, release the
                                // drawing buffer. setActive(true) restores both.
 runtime.attachTooltips([{ element: myButton }]);  // host chrome buttons join the mount's

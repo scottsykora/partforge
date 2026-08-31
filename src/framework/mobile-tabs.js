@@ -95,8 +95,9 @@ function buildIcon(paths) {
 // a no-op handle, so a legacy id-only page or a host that lays the framework out
 // itself (embed-test.html) is unaffected — including its setHostPane and
 // setRailLayout, which stay callable no-ops so mount()'s handle shape never
-// varies.
-export function attachMobileTabs({ shell, stage, rail, onRailLayout } = {}) {
+// varies. `toggle` is rail.js's own rail toggle, passed only so the overlay duck
+// below can recognize it; omitting it costs the drawer its close button.
+export function attachMobileTabs({ shell, stage, rail, toggle, onRailLayout } = {}) {
   if (!shell || !stage || !rail) {
     return { setHostPane: () => {}, setRailLayout: () => {}, detach: () => {} };
   }
@@ -163,8 +164,26 @@ export function attachMobileTabs({ shell, stage, rail, onRailLayout } = {}) {
 
   // Overlay mode's "duck": any interaction with the stage slides the drawer
   // back. Capture phase, because the canvas consumes pointer events.
-  const onStagePointerDown = () => {
-    if (shell.dataset.pfRailLayout === "overlay") shell.removeAttribute("data-pf-rail-open");
+  //
+  // Two things the plain "remove the attribute" version got wrong, both because
+  // the rail toggle is a DESCENDANT of the stage (it floats at the stage's
+  // top-right):
+  //   * its own tap arrives here first, so this would close the drawer a moment
+  //     before rail.js's click handler reopened it — the toggle could open the
+  //     drawer but never shut it. Hence the exemption, which needs the element
+  //     itself: nothing in the DOM marks it out for a class/closest() test.
+  //   * a real duck has to be REPORTED. The toggle's chevron, aria-expanded and
+  //     label are derived from the open flag in rail.js's apply(), so a close it
+  //     was never told about leaves the button announcing an open drawer. The
+  //     callback is the same one setRailLayout uses (the host wires it to
+  //     railChrome.layoutChanged), so this is a re-look, not a new channel.
+  const onStagePointerDown = (e) => {
+    if (toggle && (e.target === toggle || toggle.contains?.(e.target))) return;
+    if (shell.dataset.pfRailLayout !== "overlay") return;
+    // Nothing to duck: stay silent rather than nudge on every stage pointerdown.
+    if (!shell.hasAttribute("data-pf-rail-open")) return;
+    shell.removeAttribute("data-pf-rail-open");
+    onRailLayout?.(railLayout);
   };
   stage.addEventListener("pointerdown", onStagePointerDown, true);
   apply();

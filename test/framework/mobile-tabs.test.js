@@ -8,7 +8,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { attachMobileTabs } from "../../src/framework/mobile-tabs.js";
 
 let live = [];
-function build(options = {}) {
+// `wireToggle` builds the rail toggle where the real one lives — INSIDE the
+// stage (it floats at the stage's top-right, .pf-float-rail-toggle) — and hands
+// it to attachMobileTabs, which is the only way the duck listener can tell the
+// toggle's own tap from a tap on the model behind it. The inner <span> stands
+// in for the production chevron <svg>, so the descendant case is covered too.
+function build({ wireToggle = false, ...options } = {}) {
   document.body.innerHTML = "";
   const shell = document.createElement("div");
   shell.className = "pf-shell";
@@ -18,9 +23,15 @@ function build(options = {}) {
   rail.className = "pf-rail";
   shell.append(stage, rail);
   document.body.append(shell);
-  const handle = attachMobileTabs({ shell, stage, rail, ...options });
+  let toggle = null;
+  if (wireToggle) {
+    toggle = document.createElement("button");
+    toggle.append(document.createElement("span"));
+    stage.append(toggle);
+  }
+  const handle = attachMobileTabs({ shell, stage, rail, ...(toggle ? { toggle } : {}), ...options });
   live.push(handle);
-  return { shell, stage, rail, handle };
+  return { shell, stage, rail, toggle, handle };
 }
 const bar = () => document.querySelector(".pf-tabbar");
 const tab = (pane) => document.querySelector(`[data-pf-pane-tab="${pane}"]`);
@@ -158,6 +169,41 @@ describe("setRailLayout", () => {
     shell.setAttribute("data-pf-rail-open", "");
     stage.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     expect(shell.hasAttribute("data-pf-rail-open")).toBe(true);
+  });
+
+  it("overlay: the rail toggle's own pointerdown never ducks the drawer", () => {
+    // The toggle is a descendant of the stage, so without this exemption its tap
+    // would close the drawer here and rail.js's click handler would reopen it a
+    // moment later: the drawer could be opened from the toggle but never shut.
+    const { shell, toggle, handle } = build({ wireToggle: true });
+    handle.setRailLayout({ mode: "overlay" });
+    shell.setAttribute("data-pf-rail-open", "");
+    toggle.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(shell.hasAttribute("data-pf-rail-open")).toBe(true);
+    // …including a tap that lands on the chevron inside the button.
+    toggle.firstChild.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(shell.hasAttribute("data-pf-rail-open")).toBe(true);
+  });
+
+  it("overlay: a real duck re-reports the layout, a toggle tap does not", () => {
+    // The toggle's chevron and aria-expanded are derived from the open flag, so
+    // a close nobody told rail.js about leaves the button claiming "open".
+    const seen = [];
+    const { shell, stage, toggle, handle } = build({
+      wireToggle: true,
+      onRailLayout: (l) => seen.push(l),
+    });
+    handle.setRailLayout({ mode: "overlay" });
+    seen.length = 0;
+    shell.setAttribute("data-pf-rail-open", "");
+    stage.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(seen).toEqual([{ mode: "overlay" }]);
+    // Nothing left to duck: a second stage tap changes nothing and reports nothing.
+    stage.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(seen).toEqual([{ mode: "overlay" }]);
+    shell.setAttribute("data-pf-rail-open", "");
+    toggle.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(seen).toEqual([{ mode: "overlay" }]);
   });
 
   it("leaving overlay clears data-pf-rail-open", () => {

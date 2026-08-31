@@ -1181,6 +1181,15 @@ test("makeHandle always exposes a callable setHostPane", () => {
   expect(() => handle.pickMarker.onAnchorChange(() => {})()).not.toThrow();
 });
 
+test("exposes setRailLayout on the handle, defaulting to a no-op", () => {
+  // Same stance as setHostPane above: a mount that resolved no rail (and every
+  // direct-makeHandle caller) still hands the host a callable method, so the
+  // handle's shape never depends on what this page happened to lay out.
+  const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {} });
+  expect(typeof handle.setRailLayout).toBe("function");
+  expect(() => handle.setRailLayout({ mode: "overlay" })).not.toThrow();
+});
+
 // Spec Goal 3 ("Communication"): the measure API must actually be reachable
 // off the handle mount() returns, not just internal to measure-mode.js.
 // (setEnabled(true) itself isn't exercised here: the fake createViewer has no
