@@ -20,13 +20,13 @@
 // nothing new to that surface).
 import { classify, convertFor, rowFor } from "../../ingest/registry.js";
 
-// A generous but bounded cap, checked on the RAW dropped bytes before any
-// conversion runs — decoding is the expensive step (a canvas pass, a paper.js
-// import), so the guard sits in front of it, not after. 25 MB comfortably
-// covers a photo, a font family file or a hand-drawn SVG; nothing this
-// framework ingests is legitimately bigger, and letting a bigger one through
-// would decode on the main thread with no progress UI. The design doc left
-// the exact number to this task (open item 2) — this is that pick.
+// A generous but bounded cap, checked against `file.size` — BEFORE even
+// `file.arrayBuffer()` is called, let alone conversion — so an oversize file
+// is never read into memory just to be rejected. 25 MB comfortably covers a
+// photo, a font family file or a hand-drawn SVG; nothing this framework
+// ingests is legitimately bigger, and letting a bigger one through would
+// decode on the main thread with no progress UI. The design doc left the
+// exact number to this task (open item 2) — this is that pick.
 const MAX_BYTES = 25 * 1024 * 1024;
 
 const bytesLabel = (n) =>
@@ -45,16 +45,19 @@ const MEDIA_NOUN = {
 // naming the actual file:
 // - the registry knows another slot that WOULD take it (`suggestKind`) ->
 //   name where it belongs, e.g. "logo.svg is artwork (SVG) ... try the
-//   vector control instead" — the exact case the registry's `suggestKind`
-//   exists for.
+//   Artwork control instead" — the exact case the registry's `suggestKind`
+//   exists for. Uses the row's own `name` (a display name, e.g. "Artwork"),
+//   never the internal `kind` key (e.g. "vector") — the key is an
+//   implementation detail the registry happens to use for lookups, not
+//   something a control is labelled.
 // - it knows only what THIS slot accepts — either the bytes are unrecognised,
 //   or they are a real, named format that just has no home anywhere (WOFF2)
 //   -> say what works, point nowhere.
 function refusalMessage(filename, kind, { mediaType, suggestKind }) {
   const needLabel = rowFor(kind).label;
   if (suggestKind) {
-    const haveLabel = rowFor(suggestKind).label;
-    return `"${filename}" is ${haveLabel} — this control accepts ${needLabel}. Try the ${suggestKind} control instead.`;
+    const haveRow = rowFor(suggestKind);
+    return `"${filename}" is ${haveRow.label} — this control accepts ${needLabel}. Try the ${haveRow.name} control instead.`;
   }
   const noun = mediaType && MEDIA_NOUN[mediaType];
   const what = noun ? `a ${noun} file` : "not a file this control recognises";
@@ -96,6 +99,28 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
   // re-deriving it from the DOM on retry.
   let converted = null;
 
+  // One AbortController for every listener this widget adds (created here,
+  // ahead of `handle`, so `handle` can close over `signal` — see `stale()`
+  // below). `dispose()` is a single `abort()` rather than a hand-maintained
+  // list of pairs to get wrong. font-picker.js:49 explains why removal
+  // matters: a stray listener keeps this whole closure (and everything it
+  // closes over — `onSource`, `onAssetUpload`, eventually a live `params`)
+  // alive long after the panel that created it is gone.
+  const ac = new AbortController();
+  const { signal } = ac;
+
+  // `handle()` is a multi-await chain (read -> classify -> convert -> upload),
+  // and two things can happen while it's suspended: the widget can be
+  // disposed (a panel rebuild tore this control down), or a SECOND drop can
+  // land before the first finishes (a slow first file, a fast second one).
+  // Neither must be allowed to write into `converted` or fire `onSource`/
+  // `onError` after the fact — a disposed widget has no live closure to write
+  // into safely, and a superseded drop must not clobber the newer one's
+  // result (the user's most recent drop has to win). `generation` is bumped
+  // on every `handle()` call; `stale()` is true once either reason applies,
+  // and every callback site below is gated on it.
+  let generation = 0;
+
   // The argument shape a converter wants differs by kind — imageToPng wants
   // the Blob itself, ingestSvg wants the decoded SVG text — so this is the one
   // place that looks past "kind" as an opaque string. A `convert: null` row
@@ -112,11 +137,18 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
   }
 
   async function handle(file) {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    if (bytes.length > MAX_BYTES) {
-      onError?.(`"${file.name}" is ${bytesLabel(bytes.length)} — over the ${bytesLabel(MAX_BYTES)} limit.`);
+    const myGen = ++generation;
+    const stale = () => signal.aborted || myGen !== generation;
+
+    // Checked against `file.size` alone — no read yet — so an oversize file
+    // never gets fully buffered into memory just to be rejected.
+    if (file.size > MAX_BYTES) {
+      onError?.(`"${file.name}" is ${bytesLabel(file.size)} — over the ${bytesLabel(MAX_BYTES)} limit.`);
       return;
     }
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (stale()) return;
 
     const result = classify(bytes, kind);
     if (!result.ok) {
@@ -128,18 +160,30 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
     try {
       artifact = await convertedArtifact(file, result.mediaType);
     } catch (err) {
+      if (stale()) return;
       // Names the file and the stage (spec §5) — a malformed SVG must not
       // read as a partforge bug.
       onError?.(`"${file.name}" could not be converted: ${err.message}`);
       return;
     }
+    if (stale()) return;             // a newer drop already won — don't clobber its `converted`
     converted = artifact; // retained from here on, success or not — see the field comment above
 
     if (onAssetUpload) {
       try {
         const source = await onAssetUpload(artifact, { kind, filename: file.name });
+        if (stale()) return;
+        // A host hook that resolves to anything but a non-empty string —
+        // `undefined`, an object, `""` — is a contract violation, not a
+        // source: writing it into the param would corrupt the part rather
+        // than fail loudly.
+        if (typeof source !== "string" || !source) {
+          onError?.(`"${file.name}" was converted, but the upload hook returned ${JSON.stringify(source)} instead of a source string.`);
+          return;
+        }
         onSource?.(source);
       } catch (err) {
+        if (stale()) return;
         // The artifact stays in `converted` — a retry (the host re-driving
         // onAssetUpload, e.g. from a "try again" button) costs a network
         // call, not a reconvert.
@@ -152,7 +196,9 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
     // path the partforge-cloud sandbox needs because it cannot fetch URLs —
     // correct and expected, not a degraded fallback (see font.js/image.js's
     // own byte-valued param handling for the downstream half of this).
-    onSource?.(await artifact.arrayBuffer());
+    const ab = await artifact.arrayBuffer();
+    if (stale()) return;
+    onSource?.(ab);
   }
 
   async function handleFiles(files) {
@@ -182,14 +228,8 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
   // drop does.
   const onPaste = (e) => { if (e.clipboardData?.files?.length) handleFiles(e.clipboardData.files); };
 
-  // One AbortController for every listener this widget adds, so `dispose()`
-  // is a single `abort()` rather than a hand-maintained list of pairs to get
-  // wrong. font-picker.js:49 explains why this matters: a stray listener
-  // keeps this whole closure (and everything it closes over — `onSource`,
-  // `onAssetUpload`, eventually a live `params`) alive long after the panel
-  // that created it is gone.
-  const ac = new AbortController();
-  const { signal } = ac;
+  // `ac`/`signal` were created above, ahead of `handle()` — every listener
+  // below shares the same one.
   wrap.addEventListener("drop", onDrop, { signal });
   wrap.addEventListener("dragover", onDragOver, { signal });
   wrap.addEventListener("dragleave", onDragLeave, { signal });

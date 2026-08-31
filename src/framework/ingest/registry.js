@@ -15,18 +15,21 @@ export const ASSET_KINDS = ["image", "vector", "font"];
 const ROWS = [
   {
     kind: "image",
+    name: "Image",                        // the human slot name — "Try the ${name} control" in a refusal message
     label: "an image (PNG, JPG or WebP)",
     accepts: ["image/png", "image/jpeg", "image/webp"],
     convert: () => import("./image-ingest.js").then((m) => m.imageToPng),
   },
   {
     kind: "vector",
+    name: "Artwork",
     label: "artwork (SVG)",
     accepts: ["image/svg+xml"],
     convert: () => import("./svg-ingest.js").then((m) => m.ingestSvg),
   },
   {
     kind: "font",
+    name: "Font",
     label: "a font (TTF or OTF)",
     accepts: ["font/ttf", "font/otf"],
     convert: null,                        // used as-is; validated, never converted

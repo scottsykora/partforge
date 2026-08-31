@@ -30,11 +30,19 @@ beforeAll(() => import("../src/framework/ingest/image-ingest.js"));
 const ascii = (s) => Uint8Array.from([...s].map((c) => c.charCodeAt(0)));
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+// Deliberately NOT a re-encoding of PNG's bytes: the stubbed "conversion"
+// below hands back a fixed, unrelated marker string rather than echoing the
+// input. That is what makes "the delivered source that never came out of the
+// original bytes" a real, checkable claim (see "the delivered source is the
+// CONVERTED artifact" below) rather than something a pass-through
+// implementation could satisfy by accident.
+const CONVERTED_MARKER = "CONVERTED-NOT-THE-ORIGINAL-BYTES";
+
 function makeOffscreenCanvasStub() {
   return class StubOffscreenCanvas {
     constructor(w, h) { this.width = w; this.height = h; }
     getContext() { return { drawImage() {} }; }
-    async convertToBlob(opts) { return new Blob([PNG], { type: opts?.type ?? "image/png" }); }
+    async convertToBlob(opts) { return new Blob([CONVERTED_MARKER], { type: opts?.type ?? "image/png" }); }
   };
 }
 
@@ -115,5 +123,23 @@ describe("makeFileDrop", () => {
     await dropOn(el, fileOf(PNG, "a.png"), fileOf(PNG, "b.png"));
     expect(onSource).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls.flat().join(" ")).toMatch(/first/i);
+  });
+
+  // Without this, a widget that skipped convertFor entirely and passed the
+  // original dropped bytes straight through would still pass every test
+  // above: none of them inspects what actually reaches onSource/onAssetUpload
+  // on the image path, only that something arrives and that the call counts
+  // are right. CONVERTED_MARKER is unrelated to the dropped PNG bytes, so
+  // finding it on the delivered side is only possible if the real convert
+  // step (imageToPng -> the stubbed OffscreenCanvas.convertToBlob) actually
+  // ran.
+  test("the delivered source is the CONVERTED artifact, not the original dropped bytes", async () => {
+    const onSource = vi.fn();
+    const { el } = makeFileDrop({ kind: "image", onSource, onError: vi.fn() });
+    await dropOn(el, fileOf(PNG, "a.png"));
+    expect(onSource).toHaveBeenCalledTimes(1);
+    const delivered = new TextDecoder().decode(onSource.mock.calls[0][0]);
+    expect(delivered).toBe(CONVERTED_MARKER);
+    expect(delivered).not.toBe(String.fromCharCode(...PNG)); // sanity: not a pass-through of the input
   });
 });
