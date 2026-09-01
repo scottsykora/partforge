@@ -201,3 +201,40 @@ test("a declared document that fails to load leaves the tile empty, never throws
   } finally { globalThis.fetch = realFetch; }
 });
 
+
+// The param key travels to the host's upload hook. Without it a host cannot
+// tell WHICH control a drop landed on, so it cannot give that control a
+// stable destination of its own — partforge-cloud derives one file path per
+// key, and re-dropping replaces that control's artwork in place. Asserted
+// through the real widget rather than makeFileDrop directly, because the
+// wiring under test is mountDrop passing `node.key` down.
+test("the dropped param's key reaches onAssetUpload", async () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { art: "" };
+  const seen = [];
+  const onAssetUpload = async (blob, ctx) => {
+    seen.push(ctx);
+    return "pfc-tree://assets/art.vector.json?v=6f1c2ab9";
+  };
+  buildControls(root, [{ id: "s", controls: [{ key: "art", type: "vector", label: "Artwork", allow: ["tree"] }] }],
+    params, () => {}, () => {}, { onAssetUpload });
+  const SVG = ascii('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10" fill="#111"/></svg>');
+  const file = Object.assign(new Blob([SVG]), {
+    name: "a.svg", arrayBuffer: async () => SVG.buffer.slice(0),
+  });
+  const el = root.querySelector("[data-pf-drop]");
+  const ev = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "dataTransfer", { value: { files: [file] } });
+  el.dispatchEvent(ev);
+  await new Promise((r) => setTimeout(r, 50));
+
+  expect(seen).toHaveLength(1);
+  expect(seen[0].key).toBe("art");
+  expect(seen[0].kind).toBe("vector");
+  expect(seen[0].filename).toBe("a.svg");
+  // The hook's answer is what lands in the param — a plain string, which is
+  // the whole reason a tree-backed source persists where a parsed object
+  // could not.
+  expect(params.art).toBe("pfc-tree://assets/art.vector.json?v=6f1c2ab9");
+});

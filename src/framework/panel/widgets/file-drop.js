@@ -96,7 +96,7 @@ function el(tag, className, text) {
 // The click path is dropped rather than hidden, deliberately: an invisible
 // overlay that still swallowed clicks would eat the button underneath it, which
 // is the one affordance ambient mode exists to protect.
-export function makeFileDrop({ kind, onSource, onError, onAssetUpload, ambient = false }) {
+export function makeFileDrop({ kind, key, onSource, onError, onAssetUpload, ambient = false }) {
   const row = rowFor(kind);
   const wrap = el("div", ambient ? "file-drop file-drop-ambient" : "file-drop");
   if (!ambient) {
@@ -219,7 +219,14 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload, ambient =
 
     if (onAssetUpload) {
       try {
-        const source = await onAssetUpload(artifact.blob, { kind, filename: file.name });
+        // `key` is the PARAM the drop landed on. A host needs it to give a
+        // control a stable destination of its own — partforge-cloud derives
+        // one file path per key, so re-dropping replaces that control's
+        // artwork in place instead of accumulating files it must later
+        // reconcile against the part. Purely informational to partforge:
+        // the hook still answers with a source string and nothing here
+        // reads the key back.
+        const source = await onAssetUpload(artifact.blob, { kind, key, filename: file.name });
         if (stale()) return;
         // A host hook that resolves to anything but a non-empty string —
         // `undefined`, an object, `""` — is a contract violation, not a
@@ -329,6 +336,7 @@ export function mountDrop(kind, { params, node, onAssetUpload, onChange, onCommi
 
   const drop = makeFileDrop({
     kind,
+    key: node.key,
     ambient,
     onAssetUpload,
     onSource: (source) => {

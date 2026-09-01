@@ -105,3 +105,29 @@ test("a URL instance is fetched by the resolver, so it is gated like the string 
   expect(vectorSourceAllowed(new URL("http://169.254.169.254/latest/meta-data/"), ["https"])).toBe(false);
   expect(vectorSourceAllowed({ default: new URL("http://169.254.169.254/") }, ["https"])).toBe(false);
 });
+
+// The `tree` kind: artwork stored as a FILE IN THE PART, addressed by path
+// rather than by a host storage id. Vector-only by construction — a part's
+// files are text, so a JSON document fits in one and a PNG does not.
+test("a pfc-tree source needs the tree kind", () => {
+  const src = "pfc-tree://assets/art.vector.json?v=6f1c2ab9";
+  expect(vectorSourceAllowed(src, ["tree"])).toBe(true);
+  expect(vectorSourceAllowed(src, ["https"])).toBe(false);
+  expect(vectorSourceAllowed(src, ["asset"])).toBe(false);
+  expect(vectorSourceAllowed(src)).toBe(false);   // not in the default list
+});
+
+test("the tree kind matches on scheme, and a lookalike cannot forge it", () => {
+  expect(vectorSourceAllowed("https://evil.test/pfc-tree://assets/a.json", ["tree"])).toBe(false);
+  expect(vectorSourceAllowed("https://pfc-tree.evil.test/a.json", ["tree"])).toBe(false);
+  // The two host schemes are independent: naming one must not admit the other.
+  expect(vectorSourceAllowed("pfc-asset://11111111-2222-3333-4444-555555555555/art.svg", ["tree"])).toBe(false);
+});
+
+test("tree and asset compose like any other pair of kinds", () => {
+  const tree = "pfc-tree://assets/art.vector.json?v=6f1c2ab9";
+  const asset = "pfc-asset://11111111-2222-3333-4444-555555555555/art.svg";
+  expect(vectorSourceAllowed(tree, ["asset", "tree"])).toBe(true);
+  expect(vectorSourceAllowed(asset, ["asset", "tree"])).toBe(true);
+  expect(vectorSourceAllowed("https://cdn.test/d.json", ["asset", "tree"])).toBe(false);
+});

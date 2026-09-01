@@ -52,6 +52,14 @@ import { unwrapModule } from "./asset-resolve.js";
 export const VECTOR_ALLOW_DEFAULT = ["https"];
 
 const ASSET_SCHEME = "pfc-asset:";
+// Artwork that lives as a FILE IN THE PART ITSELF, addressed by its path
+// rather than by a host-side storage id. Vector-only, and the asymmetry is
+// structural rather than an omission: a part's files are text, so a JSON
+// document can live in one and a PNG cannot. A host that stores parts as a
+// file tree (partforge-cloud is the motivating case) resolves this scheme
+// against that tree; partforge itself only decides whether a param may carry
+// it, exactly as it does for `pfc-asset:`.
+const TREE_SCHEME = "pfc-tree:";
 
 // The "unset" vector source. An empty value declares NO artwork for that
 // name — mirrors isNoFontSource/isNoImageSource exactly. Never a source to
@@ -94,6 +102,7 @@ export function vectorSourceAllowed(source, allow = VECTOR_ALLOW_DEFAULT) {
     // "pfc-asset://" must not pass, and neither must a lookalike host.
     if (kind === "https" && u.protocol === "https:") return true;
     if (kind === "asset" && u.protocol === ASSET_SCHEME) return true;
+    if (kind === "tree" && u.protocol === TREE_SCHEME) return true;
   }
   return false;
 }
