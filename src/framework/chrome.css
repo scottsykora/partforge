@@ -454,7 +454,74 @@
   .pf-anim-bar { width: calc(100% - 24px); max-width: 520px; bottom: 64px; }
 }
 
+/* ---- host-driven rail layouts (partforge-cloud) ---------------------------
+   data-pf-rail-layout is written by mobile-tabs.js from the host's
+   setRailLayout. Two modes, both host-only (nothing in partforge's own UI can
+   enter them):
 
+   DOCK — the host draws a bottom sheet over the iframe. --pf-rail-inset is the
+   sheet's full height: the shell pads by it so the stage (and its bottom
+   chrome) clears the sheet. With a "rail" lease the rail renders INTO the
+   sheet region — but only its bottom --pf-rail-dock-h px, because the host's
+   opaque chrome strip (handle + tabs) covers the top of the region. The spec
+   (2026-08-31-responsive-layout-redesign) has the two-numbers reasoning. Note
+   that a dock lease ABOVE 719px does not enter the block below at all: the
+   rail stays side by side with the stage at its usual --pf-rail-w (rail.js
+   keeps the width there, and only suspends resize/collapse/toggle).
+
+   OVERLAY — the rail is a right-edge drawer OVER the stage, open while
+   data-pf-rail-open is present (rail.js's toggle sets it; mobile-tabs.js's
+   stage pointerdown clears it). The stage never resizes. Width is its own
+   min(288px, 85%) — NOT --pf-rail-w, which rail.js zeroes under an overlay
+   lease at any window width (and under any layout below the breakpoint).
+
+   These come after the narrow block above because they override its one-pane
+   hiding, and before the reduced-motion block below so that block's
+   transition:none wins the tie at equal specificity. */
+.pf-shell[data-pf-rail-layout="dock"] { padding-bottom: var(--pf-rail-inset, 0px); }
+@media (max-width: 719px) {
+  /* pane=rail on a phone: stage above, rail docked in the sheet region. The
+     three rules below override the narrow block's one-pane hiding. */
+  .pf-shell[data-pf-rail-layout="dock"][data-pf-pane="rail"] { padding-bottom: 0; }
+  .pf-shell[data-pf-rail-layout="dock"][data-pf-pane="rail"] .pf-stage { display: block; }
+  .pf-shell[data-pf-rail-layout="dock"][data-pf-pane="rail"] .pf-rail {
+    display: flex;
+    flex: none;
+    height: var(--pf-rail-dock-h, 0px);
+    width: auto;
+    border-left: 0;
+    border-top: 1px solid var(--pf-border);
+    box-shadow: none;
+  }
+}
+.pf-shell[data-pf-rail-layout="dock"] .pf-rail-seam { display: none; }
+
+/* visibility, not just the transform: collapse is suppressed under a host
+   layout (rail.js), so nothing else makes a shut drawer inert — it would sit
+   off-canvas as a run of invisible tab stops. The delay is what keeps it on
+   screen for the 200ms it takes to slide out; opening flips it back at once,
+   which is why the open state restates the transition without it. */
+.pf-shell[data-pf-rail-layout="overlay"] .pf-stage { display: block; }
+.pf-shell[data-pf-rail-layout="overlay"] .pf-rail {
+  display: flex;
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  flex: none;
+  width: min(288px, 85%);
+  border-left: 1px solid var(--pf-border);
+  box-shadow: var(--pf-shadow-rail), -16px 0 32px rgb(0 0 0 / .35);
+  transform: translateX(102%);
+  visibility: hidden;
+  transition: transform 200ms ease, visibility 0s 200ms;
+  z-index: 30;
+}
+.pf-shell[data-pf-rail-layout="overlay"][data-pf-rail-open] .pf-rail {
+  transform: translateX(0);
+  visibility: visible;
+  transition: transform 200ms ease;
+}
+.pf-shell[data-pf-rail-layout="overlay"] .pf-rail-seam,
+.pf-shell[data-pf-rail-layout="overlay"] .pf-tabbar { display: none; }
 
 /* ---- reduced motion -----------------------------------------------------
    Collapsing the rail slides 288px of layout across the screen — the first
@@ -465,6 +532,13 @@
    state indicator and is left alone. */
 @media (prefers-reduced-motion: reduce) {
   .pf-rail, .pf-rail-seam > span { transition: none; }
+  /* The overlay drawer states its own transition twice, at higher specificity
+     than the blanket rule above, so both states have to be named here or the
+     drawer would keep sliding. Killing the transition also drops the closing
+     visibility delay, which is right: with no slide there is nothing to wait
+     for, and the drawer leaves the a11y tree the moment it shuts. */
+  .pf-shell[data-pf-rail-layout="overlay"] .pf-rail,
+  .pf-shell[data-pf-rail-layout="overlay"][data-pf-rail-open] .pf-rail { transition: none; }
 }
 
 /* ---- annotation ink layer: a transparent 2D canvas over the viewer --------

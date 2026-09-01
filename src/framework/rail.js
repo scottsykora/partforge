@@ -90,12 +90,17 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     // ?pickserver with no #panel/elements.rail hits this path.
     const root = document.documentElement;
     root.style.setProperty("--pf-rail-w", "0px");
-    return { detach: () => root.style.removeProperty("--pf-rail-w") };
+    return { layoutChanged: () => {}, detach: () => root.style.removeProperty("--pf-rail-w") };
   }
 
   const root = document.documentElement;
   const shellBox = () => shell.getBoundingClientRect();
   const shellWidth = () => shellBox().width;
+  // A host that leases the rail's placement through attachMobileTabs'
+  // setRailLayout writes this ("dock" | "overlay"); absent means partforge's own
+  // layout. Read live rather than cached: the lease can move at any moment and
+  // layoutChanged() (below) is only a nudge to re-apply, not the source of truth.
+  const hostLayout = () => shell.dataset.pfRailLayout ?? null;
   let state = readRailPref(storage, shellWidth());
   // Captured before the first apply() mutates the toggle, so detach() can
   // hand back a plain, unwired button rather than a dead "Show controls" one.
@@ -142,11 +147,34 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     // inert, invisible rail. `state` is deliberately NOT rewritten — the stored
     // preference applies again the moment the window widens.
     const narrow = window.innerWidth < RAIL_NARROW_BREAKPOINT;
-    const collapsed = state.collapsed && !narrow;
-    // Narrow: the rail is either the whole surface or absent, so it reserves no
-    // width beside the viewer — and anything centring itself against the rail
-    // (app.css's #pf-pick-banner) must not be offset by a stale 288px.
-    const width = collapsed || narrow ? 0 : clampRailWidth(state.width, sw);
+    // A host layout suspends collapse (and every resize gesture — see
+    // resizeRefused) for the same reason narrow does: the rail's placement is
+    // the host's to decide, so a collapse flag would only make it inert and
+    // invisible where the host is showing it. `state` is left untouched, so
+    // the preference returns intact when the lease ends.
+    const layout = hostLayout();
+    const overlay = layout === "overlay";
+    const suppressed = narrow || layout !== null;
+    const collapsed = state.collapsed && !suppressed;
+    // WIDTH is suppressed on a NARROWER rule than collapse, because only two of
+    // the three layouts stop needing --pf-rail-w:
+    //   - narrow (any layout): chrome.css stacks the panes and shows exactly
+    //     one, so the rail is the whole surface or absent — it reserves no
+    //     width beside the viewer;
+    //   - overlay (any width): the drawer sizes itself (min(288px, 85%)) and
+    //     floats over the stage, reserving nothing;
+    //   - dock at >= RAIL_NARROW_BREAKPOINT: the rail is STILL side by side with
+    //     the stage — the host only leases the bottom inset — so zeroing here
+    //     would leave the card with no controls at all. Keep the width.
+    // Anything centring itself against the rail (app.css's #pf-pick-banner)
+    // reads this token, so a stale 288px in the first two cases would offset it.
+    // A wide dock therefore renders as: rail visible at its remembered width,
+    // no resize, no collapse, and no toggle (hidden just below — a visible one
+    // would be a dead control while collapse is suppressed). That is the
+    // sheet-owns-layout stance: the host decides placement, we only supply the
+    // width it laid the rail out against.
+    const widthSuppressed = narrow || overlay;
+    const width = collapsed || widthSuppressed ? 0 : clampRailWidth(state.width, sw);
     // Written on :root, not the rail/shell, so body-appended overlays (the
     // pick banner, the ?debug overlay) inherit it — see spec §4.4. This
     // assumes ONE rail per document: attachRail is written for a single
@@ -162,16 +190,26 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     seam.setAttribute("aria-valuemax", String(railMaxWidth(sw)));
     if (toggle) {
       // The tab bar owns pane selection below the breakpoint, so a second
-      // collapse affordance in the viewbar would be a competing control.
-      toggle.hidden = narrow;
-      toggleChevron?.setAttribute("d", collapsed ? CHEVRON_RAIL_COLLAPSED : CHEVRON_RAIL_OPEN);
-      const label = collapsed ? "Show controls" : "Hide controls";
-      toggle.setAttribute("aria-expanded", String(!collapsed));
+      // collapse affordance in the viewbar would be a competing control. In
+      // overlay mode the toggle IS the drawer's open/close control, so it must
+      // stay visible even though the width says "narrow" — and the host hides
+      // its own tab bar under a layout lease, making this the only way back to
+      // the controls. Under dock it stays hidden at EVERY width, including the
+      // wide band that keeps its --pf-rail-w above: collapse is suppressed
+      // there, so a visible toggle would be a control that does nothing.
+      toggle.hidden = suppressed && !overlay;
+      // One button, two meanings: the drawer's open state in overlay mode, the
+      // collapse everywhere else. `shut` is whichever of the two this layout
+      // asks the label, chevron and aria-expanded to report.
+      const shut = overlay ? !shell.hasAttribute("data-pf-rail-open") : collapsed;
+      toggleChevron?.setAttribute("d", shut ? CHEVRON_RAIL_COLLAPSED : CHEVRON_RAIL_OPEN);
+      const label = shut ? "Show controls" : "Hide controls";
+      toggle.setAttribute("aria-expanded", String(!shut));
       toggle.setAttribute("aria-label", label);
       // The shared tooltip reads the aria-label at show time, so a native
       // title would double up as a second, competing tooltip.
       if (!tooltipBinding) toggle.title = label;
-      toggle.classList.toggle("on", collapsed);
+      toggle.classList.toggle("on", shut);
       tooltipBinding?.sync();
     }
     if (persist) writeRailPref(state, storage);
@@ -199,10 +237,18 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   }
   const toggleCollapsed = () => commit({ collapsed: !state.collapsed, width: state.width });
 
+  // Neither gesture that sizes the rail may run when the seam is not what
+  // sizes it: chrome.css hides the vertical seam in the stacked layout (the
+  // rail is under the viewer, not beside it), and a host layout sizes the rail
+  // itself, where a width or a collapse we wrote would be invisible at best
+  // and an inert docked rail at worst. The toggle still works in both.
+  const resizeRefused = () => window.innerWidth < RAIL_NARROW_BREAKPOINT || hostLayout() !== null;
+
   // --- keyboard: move the SEPARATOR (standard role="separator" semantics), so
   // ArrowLeft widens a right-hand rail. Arrows clamp at the minimum and never
   // collapse; Enter/Space is the collapse gesture.
   function onKeyDown(e) {
+    if (resizeRefused()) return;
     // Cmd/Alt/Ctrl+Arrow are browser/OS reserved (back, tab switch, ...); don't
     // eat them just because the seam happens to hold focus.
     if (e.metaKey || e.altKey || e.ctrlKey) return;
@@ -247,15 +293,26 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   }
 
   const onDoubleClick = () => commit({ collapsed: false, width: RAIL_DEFAULT_WIDTH });
-  const onToggleClick = () => toggleCollapsed();
+  const onToggleClick = () => {
+    // Overlay: the rail is a drawer over the stage, so the toggle slides it in
+    // and out. It must not touch `state` — the collapse preference belongs to
+    // the wide layout the host may hand back at any moment, and persisting a
+    // drawer gesture into it would collapse the rail on a desktop next visit.
+    // The host clears this flag itself when the lease ends or the stage is
+    // touched (mobile-tabs.js), so nothing here has to unwind it.
+    if (hostLayout() === "overlay") {
+      shell.toggleAttribute("data-pf-rail-open");
+      apply();
+      return;
+    }
+    toggleCollapsed();
+  };
 
   // --- drag ---
   let grabOffset = 0;
   function onPointerDown(e) {
     if (e.button !== 0) return;
-    // Stacked layout: the rail is under the viewer, so there is no vertical seam
-    // to drag (chrome.css hides it). The toggle still works.
-    if (window.innerWidth < RAIL_NARROW_BREAKPOINT) return;
+    if (resizeRefused()) return;
     e.preventDefault();
     // setPointerCapture is load-bearing: without it the pointer crosses into the
     // viewer (an iframe, in the cloud editor) whose document eats the move
@@ -321,6 +378,11 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
   apply();
 
   return {
+    // The host's data-pf-rail-layout / data-pf-rail-open attributes are read
+    // live by apply(), so re-running it is the whole of "the layout moved".
+    // Deliberately unconditional: attachMobileTabs reports every setRailLayout
+    // call, no-change ones included, and a bare re-apply is idempotent.
+    layoutChanged: () => apply(),
     detach: () => {
       settleKeys();
       seam.removeEventListener("pointerdown", onPointerDown);

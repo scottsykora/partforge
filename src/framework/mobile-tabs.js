@@ -4,7 +4,7 @@
 // this module writes onto .pf-shell; a missing attribute reads as "stage", so
 // the layout is already correct before any of this runs.
 //
-// Two independent reasons the bar can be absent, and they are deliberately
+// Three independent reasons the bar can be absent, and they are deliberately
 // handled by different mechanisms:
 //   * WIDTH — above the breakpoint the rail sits beside the viewer and no tab is
 //     needed. That is pure CSS (.pf-tabbar { display: none }). There is no JS
@@ -12,6 +12,10 @@
 //   * A HOST owns pane selection — partforge-cloud draws its own bottom bar at
 //     the window level and drives this layout through setHostPane(). Then our
 //     bar is `hidden` and only the host's choice writes data-pf-pane.
+//   * A HOST owns the rail's LAYOUT — setRailLayout() docks the rail into a
+//     bottom sheet or floats it as an overlay drawer, each with its own way in
+//     and out, so a pane tab would be a second, competing control. That lease
+//     is independent of the pane one: either alone hides the bar.
 //
 // State is in-memory: a fresh load starts on the stage, and nothing persists.
 // Which pane you are looking at right now is not a preference.
@@ -42,6 +46,26 @@ const ICONS = {
 const LABELS = { stage: "3D", rail: "Controls" };
 const PANES = ["stage", "rail"];
 
+// A host-driven rail layout (partforge-cloud's bottom sheet / overlay drawer).
+// null = partforge's own default layout. Normalization is strict: a shape this
+// module does not recognize is a null, never a guess — the host is trusted to
+// send well-formed layouts and a garbled one must not wedge the shell.
+const MAX_RAIL_INSET = 4096;
+
+function normalizeRailLayout(next) {
+  if (!next || typeof next !== "object") return null;
+  if (next.mode === "overlay") return { mode: "overlay" };
+  if (next.mode !== "dock") return null;
+  if (!Number.isInteger(next.inset) || next.inset < 0 || next.inset > MAX_RAIL_INSET) return null;
+  // A missing or unusable railHeight is a zero, not a rejection: the inset is
+  // what the stage lays out against, and a sheet with no visible collapsed
+  // height is a legitimate state.
+  const railHeight = Number.isInteger(next.railHeight)
+    ? Math.max(0, Math.min(next.inset, next.railHeight))
+    : 0;
+  return { mode: "dock", inset: next.inset, railHeight };
+}
+
 function buildIcon(paths) {
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -69,15 +93,18 @@ function buildIcon(paths) {
 //
 // Everything is optional, like attachRail: with no shell to manage this returns
 // a no-op handle, so a legacy id-only page or a host that lays the framework out
-// itself (embed-test.html) is unaffected — including its setHostPane, which
-// stays a callable no-op so mount()'s handle shape never varies.
-export function attachMobileTabs({ shell, stage, rail } = {}) {
+// itself (embed-test.html) is unaffected — including its setHostPane and
+// setRailLayout, which stay callable no-ops so mount()'s handle shape never
+// varies. `toggle` is rail.js's own rail toggle, passed only so the overlay duck
+// below can recognize it; omitting it costs the drawer its close button.
+export function attachMobileTabs({ shell, stage, rail, toggle, onRailLayout } = {}) {
   if (!shell || !stage || !rail) {
-    return { setHostPane: () => {}, detach: () => {} };
+    return { setHostPane: () => {}, setRailLayout: () => {}, detach: () => {} };
   }
 
   let pane = "stage"; // the standalone user's choice
   let hostPane = null; // a host's lease over that choice, while non-null
+  let railLayout = null; // a host's lease over where the rail sits, while non-null
 
   const bar = document.createElement("div");
   bar.className = "pf-tabbar";
@@ -107,9 +134,23 @@ export function attachMobileTabs({ shell, stage, rail } = {}) {
     for (const [p, button] of buttons) {
       button.setAttribute("aria-pressed", String(p === active));
     }
-    // A host that owns pane selection draws its own control; ours would be a
-    // second, competing one.
-    bar.hidden = hostPane !== null;
+    // chrome.css keys the docked/overlay rail off these; the two lengths are
+    // zero in overlay mode, where the drawer floats over a full-width stage.
+    if (railLayout) {
+      shell.dataset.pfRailLayout = railLayout.mode;
+      shell.style.setProperty("--pf-rail-inset", `${railLayout.mode === "dock" ? railLayout.inset : 0}px`);
+      shell.style.setProperty("--pf-rail-dock-h", `${railLayout.mode === "dock" ? railLayout.railHeight : 0}px`);
+    } else {
+      delete shell.dataset.pfRailLayout;
+      shell.style.removeProperty("--pf-rail-inset");
+      shell.style.removeProperty("--pf-rail-dock-h");
+    }
+    // The drawer-open flag only means anything in overlay mode; entering any
+    // other layout must not leave a stale open state behind.
+    if (railLayout?.mode !== "overlay") shell.removeAttribute("data-pf-rail-open");
+    // A host that owns EITHER pane selection or the layout draws its own
+    // controls; ours would compete.
+    bar.hidden = hostPane !== null || railLayout !== null;
   }
 
   // Delegated, so the icon <svg>/<span> inside a button resolve to the button.
@@ -120,6 +161,31 @@ export function attachMobileTabs({ shell, stage, rail } = {}) {
     apply();
   };
   bar.addEventListener("click", onClick);
+
+  // Overlay mode's "duck": any interaction with the stage slides the drawer
+  // back. Capture phase, because the canvas consumes pointer events.
+  //
+  // Two things the plain "remove the attribute" version got wrong, both because
+  // the rail toggle is a DESCENDANT of the stage (it floats at the stage's
+  // top-right):
+  //   * its own tap arrives here first, so this would close the drawer a moment
+  //     before rail.js's click handler reopened it — the toggle could open the
+  //     drawer but never shut it. Hence the exemption, which needs the element
+  //     itself: nothing in the DOM marks it out for a class/closest() test.
+  //   * a real duck has to be REPORTED. The toggle's chevron, aria-expanded and
+  //     label are derived from the open flag in rail.js's apply(), so a close it
+  //     was never told about leaves the button announcing an open drawer. The
+  //     callback is the same one setRailLayout uses (the host wires it to
+  //     railChrome.layoutChanged), so this is a re-look, not a new channel.
+  const onStagePointerDown = (e) => {
+    if (toggle && (e.target === toggle || toggle.contains?.(e.target))) return;
+    if (shell.dataset.pfRailLayout !== "overlay") return;
+    // Nothing to duck: stay silent rather than nudge on every stage pointerdown.
+    if (!shell.hasAttribute("data-pf-rail-open")) return;
+    shell.removeAttribute("data-pf-rail-open");
+    onRailLayout?.(railLayout);
+  };
+  stage.addEventListener("pointerdown", onStagePointerDown, true);
   apply();
 
   return {
@@ -129,10 +195,24 @@ export function attachMobileTabs({ shell, stage, rail } = {}) {
       hostPane = PANES.includes(next) ? next : null;
       apply();
     },
+    // A dock/overlay layout takes the lease; anything this module cannot read —
+    // null included — releases it and restores partforge's own layout. The
+    // callback reports what was actually applied, so a host never has to guess
+    // whether its request survived normalization.
+    setRailLayout: (next) => {
+      railLayout = normalizeRailLayout(next);
+      apply();
+      onRailLayout?.(railLayout);
+    },
     detach: () => {
       bar.removeEventListener("click", onClick);
+      stage.removeEventListener("pointerdown", onStagePointerDown, true);
       bar.remove();
       delete shell.dataset.pfPane;
+      delete shell.dataset.pfRailLayout;
+      shell.removeAttribute("data-pf-rail-open");
+      shell.style.removeProperty("--pf-rail-inset");
+      shell.style.removeProperty("--pf-rail-dock-h");
     },
   };
 }

@@ -147,6 +147,16 @@ the installed package, so let the publish finish before bumping the dep there.
   `runtime.setHostPane('stage' | 'rail')` and releases with `null`. Collapse is
   suspended at that width — `rail.js` ignores a persisted `collapsed` flag there
   rather than clearing it.
+  A host can also lease where the rail SITS, with
+  `runtime.setRailLayout({mode:'dock', inset, railHeight})` (the rail renders
+  into the bottom slice of the host's own sheet) or
+  `{mode:'overlay'}` (a right-edge drawer over an unresized stage, opened by the
+  rail toggle and ducked by any stage pointerdown); `null` restores partforge's
+  layout. `chrome.css` keys both off `data-pf-rail-layout` / `data-pf-rail-open`,
+  written by `mobile-tabs.js`. While either lease is held the rail's width is
+  zero and resize/collapse are refused — including keyboard seam resize, which
+  `rail.js` now also refuses below the breakpoint (previously reachable only
+  with custom host CSS, since the seam is `display: none` there).
 - **`src/parts/`** - one file per part, default-exporting a `PartDefinition`.
 - **`src/framework/ingest/`** - the asset-ingest machinery behind both the panel's
   drop targets and the `partforge ingest` CLI verb. `sniff.js` classifies bytes by

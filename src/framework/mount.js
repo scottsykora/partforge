@@ -62,7 +62,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker }) {
   return {
     ready, dispose, setParams,
     // Part-declared animation playback (spec 2026-08-02): animations are
@@ -122,6 +122,12 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // (partforge-cloud does, at the window level). Defaulted to a no-op so the
     // handle's shape never depends on whether this mount resolved a rail.
     setHostPane: setHostPane ?? (() => {}),
+    // Where the rail SITS, for a host that draws its own chrome around the
+    // frame: {mode:"dock", inset, railHeight} renders it into the host's bottom
+    // sheet, {mode:"overlay"} floats it as a right-edge drawer over the stage,
+    // and null hands the layout back to partforge. Same no-op default as
+    // setHostPane above, and the same lease semantics.
+    setRailLayout: setRailLayout ?? (() => {}),
     // Join host-owned chrome buttons to this mount's shared hover tooltip, so
     // a host's own viewbar/rail-foot buttons match the built-in ones. Entries
     // are [{ element, getLabel? }] (label falls back to the button's
@@ -211,6 +217,11 @@ function createCleanupStack() {
 //   runtime.setHostPane("rail");  // narrow layout only: show just the controls
 //                                 // rail ('stage' | 'rail'), suppressing the
 //                                 // built-in tab bar. null hands selection back.
+//   runtime.setRailLayout({mode:"dock", inset, railHeight} | {mode:"overlay"} | null)
+//                                 // where the rail sits when the HOST draws chrome
+//                                 // over the frame: into its bottom sheet, or as a
+//                                 // right-edge drawer over the stage. null restores
+//                                 // partforge's own layout.
 //   runtime.attachTooltips([{ element: myButton }]);  // host chrome buttons join the
 //                                 // mount's shared hover tooltip (the viewbar one).
 //                                 // Label = the button's title (or aria-label), or a
@@ -379,6 +390,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       shell: els.shell ?? els.rail?.parentElement,
       stage: els.viewer,
       rail: els.rail,
+      // The rail toggle floats INSIDE the stage, so the overlay duck has to know
+      // it by identity or the drawer's own close button would duck it shut and
+      // rail.js would reopen it on the same tap.
+      toggle: els.chrome.railToggle,
+      // rail.js reads the layout lazily in its handlers, but its toggle
+      // visibility (and, in overlay mode, its open/closed reporting) is written
+      // in apply() — tell it to re-look when the host changes the layout, or the
+      // duck closes the drawer. railChrome is created just above, so the closure
+      // is safe.
+      onRailLayout: () => railChrome.layoutChanged?.(),
     });
     cleanup.defer(() => paneTabs.detach());
     const hover = attachHoverLabels(viewer, { part, tooltip }); // always-on hover inspection (no-op on touch-only devices)
@@ -1154,6 +1175,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       ready, dispose, viewer, setParams,
       attachTooltips: attachHostTooltips,
       setHostPane: paneTabs.setHostPane,
+      setRailLayout: paneTabs.setRailLayout,
       getView: view,                         // () => tabsCtl.current()
       setView: (name) => tabsCtl.select(name),
       captureView,

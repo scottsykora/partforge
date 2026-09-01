@@ -13,6 +13,18 @@ export * from "./part.js";
 /** Which pane a narrow layout shows. `null` hands selection back to partforge. */
 export type HostPane = "stage" | "rail" | null;
 
+/**
+ * Where a HOST wants the controls rail: docked into a bottom sheet the host
+ * draws over the frame (`inset` = the sheet's full height, so the stage clears
+ * it; `railHeight` = the bottom slice of that region the rail renders into,
+ * under the host's own chrome strip), or floated as a right-edge drawer over a
+ * full-width stage. `null` hands the layout back to partforge.
+ */
+export type HostRailLayout =
+  | { mode: "dock"; inset: number; railHeight?: number }
+  | { mode: "overlay" }
+  | null;
+
 /** An export file format. STEP is routed to OCCT automatically. */
 export type ExportFormat = "stl" | "step" | "3mf";
 
@@ -494,6 +506,14 @@ export interface PartRuntime {
    * `null` hands selection back to partforge's built-in bar.
    */
   setHostPane(pane: HostPane): void;
+  /**
+   * Where the rail sits, for a host that draws its own chrome over the frame:
+   * docked into the host's bottom sheet (`inset` is the sheet's full height,
+   * `railHeight` the part of it the rail may paint into), or floated as a
+   * right-edge drawer over an unresized stage. `null` — or any shape partforge
+   * cannot read — restores partforge's own layout.
+   */
+  setRailLayout(layout: HostRailLayout): void;
   /**
    * Part-declared animation playback, or `null` when NO view declares an
    * `animations` block. Non-null while any view does — including while the
