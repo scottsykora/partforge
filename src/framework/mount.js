@@ -4,6 +4,7 @@ import { createViewer } from "./viewer.js";
 import { attachViewerControls } from "./viewer-controls.js";
 import { attachCutawayControls } from "./cutaway-controls.js";
 import { attachRail } from "./rail.js";
+import { declaredSourceLookup } from "./panel/declared-source.js";
 import { attachMobileTabs } from "./mobile-tabs.js";
 import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
 import { loadCamera, loadProjection, saveProjection } from "./view-state.js";
@@ -997,7 +998,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     }, onParamsCommit
       ? (changed) => onParamsCommit({ changed, params: { ...params } })
       : undefined,
-      { fontCatalog, imageCatalog, onAssetUpload });
+      // What the part is actually using for each asset key, so a control opens
+      // showing the bundled default instead of an empty tile. Rebuilt per panel
+      // build, because the declaration is a function of the current params.
+      { fontCatalog, imageCatalog, onAssetUpload,
+        declaredSource: declaredSourceLookup(part, params) });
     cleanup.defer(() => panel.dispose());
     panelRef = panel;
     const updateRelevance = () => {

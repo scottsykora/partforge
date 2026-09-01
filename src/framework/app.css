@@ -198,6 +198,101 @@ textarea.text-input { min-height: 64px; resize: vertical; }
 .text-input:focus { outline: none; border-color: var(--pf-accent);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 
+/* ── file drop targets ──────────────────────────────────────────────────────
+   Two forms of the same widget. The LABELLED form is a tile the user is meant
+   to find: it doubles as the thumbnail once there is something to show, so a
+   preview, a drop zone and a click-to-choose occupy one box rather than three.
+   The AMBIENT form is for a control that already has a visible way in (the font
+   control's catalog button) — it covers the control invisibly and only appears
+   while a file is over it, so dropping stays available without spending rail
+   height advertising itself. */
+.file-drop {
+  position: relative; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
+  min-height: 56px; margin-top: 6px; padding: 8px;
+  background: var(--pf-input-bg); color: var(--pf-hint);
+  border: 1px dashed var(--pf-border); border-radius: var(--pf-radius-control);
+  text-align: center; cursor: pointer;
+}
+.file-drop:focus-visible { outline: none; border-color: var(--pf-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
+.file-drop-hint { font: 11px/1.35 var(--pf-sans); }
+
+/* `contain` rather than `cover` because artwork and depth maps are content, not
+   decoration — cropping one to fill the box would misrepresent what is about to
+   be built. The two preview kinds then diverge, because a photograph and a piece
+   of line art want opposite things from the box around them. */
+.file-drop > svg, .file-drop > img {
+  display: block; max-width: 100%; max-height: 96px; object-fit: contain;
+}
+.file-drop > svg { fill: var(--pf-text-2); }
+/* Once there IS a preview, the frame moves off the tile and onto the artwork.
+   The tile stays full width — it is the drop target, and a full-width one is
+   easier to hit — but goes invisible, so what the eye sees is a rounded box
+   hugging the picture with the hint underneath it, rather than a picture
+   floating inside a much larger box. The border stays at 1px and only loses its
+   colour, so nothing shifts when a thumbnail arrives. */
+.file-drop.has-thumb {
+  border-color: transparent; background: none; padding: 0; gap: 4px;
+}
+.file-drop.has-thumb > img, .file-drop.has-thumb > svg {
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-control);
+  background: var(--pf-input-bg);
+}
+/* A RASTER is a filled rectangle, so the border sits directly on the pixels —
+   padding around one reads as a mount around a picture. `border-radius` on an
+   `<img>` clips the image itself, which is what rounds the corners. Sized by
+   `max-height` rather than `height` so a small source is shown at its own size
+   instead of being upscaled into a blur.
+   `width: auto` is load-bearing: this element also carries `.image-preview`,
+   which pins it to `width: 100%` and letterboxes the picture inside a
+   rail-width box with `object-fit`. That is the right behaviour for a preview
+   that fills its container and the wrong one for a frame meant to hug, and it
+   is invisible in the markup — the box just silently stops matching the image. */
+.file-drop.has-thumb > img { max-height: 96px; max-width: 100%; width: auto; margin: 0; }
+/* A VECTOR is line art: strokes running into the border would collide with it
+   rather than be framed by it, so it keeps padding inside its own frame. Sizing
+   by height with `width: auto` lets the viewBox's aspect supply the width, so
+   the frame hugs the drawing instead of the SVG's default 300x150 box. */
+.file-drop.has-thumb > svg { height: 96px; width: auto; max-width: 100%; padding: 8px; }
+
+/* The empty-state hint and the replace hint trade places: exactly one is visible
+   in either state, so a tile is never without an instruction. */
+.file-drop-hint-replace { display: none; }
+.file-drop.has-thumb .file-drop-hint { display: none; }
+.file-drop.has-thumb .file-drop-hint-replace { display: block; }
+
+/* Ambient: no box of its own. Laid over the control, inert to the pointer so
+   every click still reaches the button underneath — the one affordance this
+   form exists to protect. */
+/* Only the controls that actually carry an ambient overlay become positioned —
+   `.slider` is shared by every widget in the rail, and making all of them a
+   containing block to serve one would be a wide change for a narrow need. */
+.slider:has(> .file-drop-ambient) { position: relative; }
+
+.file-drop-ambient {
+  position: absolute; inset: 0; margin: 0; padding: 0;
+  min-height: 0; background: none; border: 0; pointer-events: none;
+}
+/* `dragover` is the only thing that reveals it. Pointer events stay off even
+   then: the drop event still fires on the element, and turning them on would
+   swallow a click that merely passed through mid-drag. */
+.file-drop-ambient.file-drop-over {
+  border: 1px dashed var(--pf-accent); border-radius: var(--pf-radius-control);
+  background: color-mix(in oklab, var(--pf-accent) 12%, transparent);
+}
+
+/* Shared drag feedback for the labelled form. */
+.file-drop.file-drop-over {
+  border-color: var(--pf-accent);
+  background: color-mix(in oklab, var(--pf-accent) 12%, transparent);
+}
+
+.file-drop-error {
+  margin-top: 5px; font: 11px/1.35 var(--pf-sans); color: var(--pf-err);
+}
+
 /* the `type: "font"` control — a button that shows the current face IN it */
 .font-btn { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; cursor: pointer;
   background: var(--pf-input-bg); color: var(--pf-text-strong);

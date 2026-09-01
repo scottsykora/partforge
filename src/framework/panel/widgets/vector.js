@@ -19,6 +19,8 @@
 import { attachInfo } from "../info.js";
 import { VECTOR_ALLOW_DEFAULT, vectorSourceAllowed } from "../../vector-source.js";
 import { mountDrop } from "./file-drop.js";
+import { vectorThumb } from "./vector-thumb.js";
+import { declaredVectorDoc } from "../declared-source.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -34,7 +36,7 @@ const isBytes = (v) => v instanceof ArrayBuffer || ArrayBuffer.isView(v);
 // byte-valued param.
 const isOpaque = (v) => isBytes(v) || (v != null && typeof v === "object");
 
-export function makeVector(node, params, { onChange, onCommit, info, onAssetUpload } = {}) {
+export function makeVector(node, params, { onChange, onCommit, info, onAssetUpload, declaredSource } = {}) {
   const allow = Array.isArray(node.allow) && node.allow.length ? node.allow : VECTOR_ALLOW_DEFAULT;
   const wrap = el("div", "slider");
   const row = el("div", "row");
@@ -66,12 +68,53 @@ export function makeVector(node, params, { onChange, onCommit, info, onAssetUplo
     onCommit?.();
   });
   paintField();
-  wrap.append(field);
+  // The URL box is OFF unless `sourceField: true` — same reasoning as
+  // widgets/image.js: the tile already carries preview, drop and click-to-choose,
+  // and typing a source by hand is the rarer intent.
+  if (node.sourceField === true) wrap.append(field);
 
+  // The thumbnail IS the drop target. A vector param holds a parsed document, so
+  // there is no URL an <img> could point at — the artwork is drawn inline
+  // instead, and that tile is what a file is dropped on and what opens the file
+  // picker. One element doing all three keeps the rail's 300 px from carrying a
+  // preview, a drop zone and a button that all mean the same thing.
   const drop = mountDrop("vector", {
-    params, node, onAssetUpload, onChange, onCommit, onRender: paintField,
+    params, node, onAssetUpload, onChange, onCommit, onRender: () => { paintField(); paintThumb(); },
   });
-  wrap.append(drop.el, drop.errorEl);
+  const thumb = drop.el;
+  thumb.setAttribute("data-pf-thumb", "");
 
-  return { el: wrap, sync: paintField, dispose: () => drop.dispose() };
+  // `vectorThumb` returns null for a document it cannot draw — malformed, empty,
+  // or carrying a coordinate that is not finite — rather than throwing. The tile
+  // stays either way, because it is the drop target: losing it on a bad document
+  // would strand the user with no way to replace it.
+  let thumbSeq = 0;
+  function showThumb(doc) {
+    const art = thumb.querySelector("svg");
+    if (art) art.remove();
+    const svg = doc ? vectorThumb(doc) : null;
+    thumb.classList.toggle("has-thumb", !!svg);
+    if (svg) thumb.prepend(svg);
+  }
+  function paintThumb() {
+    const own = params[node.key];
+    const seq = ++thumbSeq;
+    if (isOpaque(own)) { showThumb(own); return; }
+    showThumb(null);
+    // Nothing in the param — fall back to what the PART declares, which is where
+    // a bundled default has to live (the allow list passes only https, so a
+    // file:/dev URL cannot sit in `defaults`). Unlike an image there is nothing
+    // to point at: the document must be fetched and parsed before it can be
+    // drawn, so this lands a tick or two later, and a source that never resolves
+    // just leaves the tile empty — it stays a drop target either way.
+    const source = declaredSource?.("vector", node.key);
+    if (source === undefined) return;
+    declaredVectorDoc(source).then((doc) => { if (doc && seq === thumbSeq) showThumb(doc); });
+  }
+  paintThumb();
+
+  wrap.append(thumb, drop.errorEl);
+
+  const sync = () => { paintField(); paintThumb(); };
+  return { el: wrap, sync, dispose: () => drop.dispose() };
 }

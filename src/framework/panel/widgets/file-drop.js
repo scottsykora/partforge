@@ -86,24 +86,47 @@ function el(tag, className, text) {
   return node;
 }
 
-export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
+// `ambient` is for a control that already has a visible way in — the font
+// control's catalog button, say. A labelled drop zone under it would spend rail
+// height repeating the same offer, so the ambient form carries no hint, no click
+// target and no place in the tab order: it is an overlay that shows itself only
+// while a file is over it (see `.file-drop-ambient` in app.css). Dropping still
+// works, it is simply not advertised.
+//
+// The click path is dropped rather than hidden, deliberately: an invisible
+// overlay that still swallowed clicks would eat the button underneath it, which
+// is the one affordance ambient mode exists to protect.
+export function makeFileDrop({ kind, onSource, onError, onAssetUpload, ambient = false }) {
   const row = rowFor(kind);
-  const wrap = el("div", "file-drop");
-  wrap.tabIndex = 0;
-  wrap.setAttribute("role", "button");
-  const hint = el("span", "file-drop-hint", `Drop ${row?.label ?? "a file"} here, or click to choose`);
-  wrap.append(hint);
+  const wrap = el("div", ambient ? "file-drop file-drop-ambient" : "file-drop");
+  if (!ambient) {
+    wrap.tabIndex = 0;
+    wrap.setAttribute("role", "button");
+    // Two hints, swapped by CSS on `.has-thumb`. The empty-state one is the only
+    // thing in an empty tile; the replace one takes over once a preview fills it.
+    // Without the second, a tile showing a part's declared artwork — now the
+    // state a control OPENS in — carried no instruction at all, because the
+    // first is hidden the moment a thumbnail appears.
+    wrap.append(el("span", "file-drop-hint", `Drop ${row?.label ?? "a file"} here, or click to choose`));
+    wrap.append(el("span", "file-drop-hint file-drop-hint-replace", "Drop to replace, or click to choose"));
+  }
 
   // The click/keyboard path to the same handler a drop uses. Hidden rather
   // than absent: a real `<input type="file">` is what gives this a native
   // "Choose File" affordance and OS-level type filtering (`accept`), neither
   // of which is worth hand-rolling.
-  const input = document.createElement("input");
-  input.type = "file";
-  input.className = "file-drop-input";
-  input.hidden = true;
-  if (row?.accepts?.length) input.accept = row.accepts.join(",");
-  wrap.append(input);
+  // Ambient mode has no click path, so it gets no input at all — an unused one
+  // would still be focusable in some browsers and would show up to a screen
+  // reader as a second, unlabelled file control.
+  let input = null;
+  if (!ambient) {
+    input = document.createElement("input");
+    input.type = "file";
+    input.className = "file-drop-input";
+    input.hidden = true;
+    if (row?.accepts?.length) input.accept = row.accepts.join(",");
+    wrap.append(input);
+  }
 
   // The converted artifact from the most recently accepted drop — a Blob (or,
   // for a `convert: null` kind like font, the original File, which already IS
@@ -266,10 +289,15 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
   wrap.addEventListener("drop", onDrop, { signal });
   wrap.addEventListener("dragover", onDragOver, { signal });
   wrap.addEventListener("dragleave", onDragLeave, { signal });
-  wrap.addEventListener("click", onClick, { signal });
-  wrap.addEventListener("keydown", onKeydown, { signal });
   wrap.addEventListener("paste", onPaste, { signal });
-  input.addEventListener("change", onChange, { signal });
+  // Click, keyboard and the input's own change only exist when there is an input
+  // to open — ambient mode is drop-and-paste only, so that the control's real
+  // button keeps every click.
+  if (input) {
+    wrap.addEventListener("click", onClick, { signal });
+    wrap.addEventListener("keydown", onKeydown, { signal });
+    input.addEventListener("change", onChange, { signal });
+  }
 
   return {
     el: wrap,
@@ -295,12 +323,13 @@ export function makeFileDrop({ kind, onSource, onError, onAssetUpload }) {
 // Returns `{ el, errorEl, dispose }` rather than appending anything itself —
 // the caller still owns layout (where the drop target and error line sit
 // relative to the field/button), only the wiring is shared.
-export function mountDrop(kind, { params, node, onAssetUpload, onChange, onCommit, onRender }) {
+export function mountDrop(kind, { params, node, onAssetUpload, onChange, onCommit, onRender, ambient = false }) {
   const errorEl = el("div", "file-drop-error");
   errorEl.hidden = true;
 
   const drop = makeFileDrop({
     kind,
+    ambient,
     onAssetUpload,
     onSource: (source) => {
       errorEl.hidden = true;

@@ -27,10 +27,14 @@ import plate from "./assets/plate.vector.json" with { type: "json" };
 
 export default {
   meta: { title: "Emblem", units: "mm", background: 0x15181d },
-  vectors: {
-    emblem: new URL("./assets/emblem.vector.json", import.meta.url),
+  // Function form, so the `type: "vector"` control below can drive the artwork.
+  // The bundled file is the default: dropping an SVG replaces it, clearing the
+  // control brings it back, and the part still builds with no network — which is
+  // what CI and `partforge measure` see.
+  vectors: (p) => ({
+    emblem: p.art || new URL("./assets/emblem.vector.json", import.meta.url),
     plate,
-  },
+  }),
   parameters: [
     {
       id: "plate",
@@ -45,15 +49,24 @@ export default {
       id: "art",
       title: "Artwork",
       description: "The embossed vector art. `emblem.svg` carries a filled circle and a stroked bar, so both of ingest's geometry paths are exercised.",
-      advanced: [
-        { key: "emblem_w", label: "Emblem width", unit: "mm", min: 8, max: 70, step: 1,
-          description: "Width of the artwork's **tight bounding box** in mm — not its `viewBox`. Stroke thickness scales with it." },
-        { key: "emboss", label: "Emboss height", unit: "mm", min: 0.4, max: 4, step: 0.2,
-          description: "How far the artwork stands proud of the plate." },
+      // Converted from the legacy `advanced` array to the new shape: a section is
+      // one or the other, never both, because mixing them makes render order
+      // arbitrary (partforge lint's `mixed-section-shape`). `advanced` becomes a
+      // nested group, which renders the same way.
+      controls: [
+        { key: "art", type: "vector", label: "Source",
+          description: "Drop an SVG to replace the bundled emblem — it is converted to "
+            + "partforge-vector once, in the browser, at drop time. Clear it to go back to the bundled file." },
+        { type: "group", title: "Advanced", collapsed: "auto", controls: [
+          { key: "emblem_w", label: "Emblem width", unit: "mm", min: 8, max: 70, step: 1,
+            description: "Width of the artwork's **tight bounding box** in mm — not its `viewBox`. Stroke thickness scales with it." },
+          { key: "emboss", label: "Emboss height", unit: "mm", min: 0.4, max: 4, step: 0.2,
+            description: "How far the artwork stands proud of the plate." },
+        ] },
       ],
     },
   ],
-  defaults: { plate_t: 3, emblem_w: 30, emboss: 1 },
+  defaults: { art: "", plate_t: 3, emblem_w: 30, emboss: 1 },
   parts: {
     plate: {
       label: "Plate",

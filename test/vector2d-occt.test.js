@@ -5,9 +5,10 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootOcctKernel } from "../src/testing.js";
 import part from "../src/parts/emblem.js";
+import { vectorsFor } from "../src/framework/vectors.js";
 
 let k;
-beforeAll(async () => { k = await bootOcctKernel({ vectors: part.vectors }); });
+beforeAll(async () => { k = await bootOcctKernel({ vectors: vectorsFor(part, part.defaults) }); });
 
 test("the emblem extrudes to the same bbox on OCCT as on Manifold", () => {
   const { min, max } = k.vector2d("emblem", { width: 40 }).extrude({ h: 2 }).boundingBox();

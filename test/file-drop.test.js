@@ -143,3 +143,24 @@ describe("makeFileDrop", () => {
     expect(delivered).not.toBe(String.fromCharCode(...PNG)); // sanity: not a pass-through of the input
   });
 });
+
+describe("hints", () => {
+  test("carries both an empty-state hint and a replace hint", () => {
+    // Once a thumbnail shows, the empty-state hint is hidden by CSS — which left
+    // the tile with no instructions at all in the case that is now the DEFAULT,
+    // since a part's declared artwork paints on open. The second hint takes over
+    // there, so there is always something telling you a file can be dropped.
+    const { el } = makeFileDrop({ kind: "image", onSource: vi.fn(), onError: vi.fn() });
+    const hints = [...el.querySelectorAll(".file-drop-hint")];
+    expect(hints.length, "one for empty, one for replace").toBe(2);
+    expect(hints[0].textContent).toMatch(/drop an image/i);
+    expect(hints[1].classList.contains("file-drop-hint-replace")).toBe(true);
+    expect(hints[1].textContent).toMatch(/replace/i);
+  });
+
+  test("the ambient form still has no hint at all", () => {
+    const { el } = makeFileDrop({ kind: "font", ambient: true, onSource: vi.fn(), onError: vi.fn() });
+    expect(el.querySelectorAll(".file-drop-hint").length).toBe(0);
+  });
+});
+

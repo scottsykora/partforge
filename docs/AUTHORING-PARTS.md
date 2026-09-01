@@ -731,9 +731,9 @@ Every control accepts `key`, `type`, `label`, `description`, `hidden`, `when` an
 | `"checkbox"` | an on/off box: ticked writes `on`, cleared writes `0` | `on` (default `1`) |
 | `"select"` | a dropdown | `options` |
 | `"radio"` | a segmented button row | `options` |
-| `"font"` | a typeface picker (or a URL field with no catalog), plus a drop target | `allow`, `preview` |
-| `"image"` | an image picker (or a URL field with no catalog), plus a drop target | `allow` |
-| `"vector"` | a URL field plus a drop target — no catalog exists | — |
+| `"font"` | a typeface picker with a catalog, else a drop target | `allow`, `preview`, `sourceField` |
+| `"image"` | an image picker with a catalog, else a drop target showing the artwork | `allow`, `sourceField` |
+| `"vector"` | a drop target showing the artwork — no catalog exists | `sourceField` |
 
 Numeric controls always show the number box: drag the slider *or* type an exact
 value. Typed values may be finer than `step` and clamp to `[min, max]` on commit.
@@ -747,6 +747,18 @@ each entry is both value and label — or the long form
 `defaults[key]` **must be one of them** (`select-default-not-in-options`; watch
 types, `12` is not `"12"`). An option's `description` surfaces as a hover tooltip
 on that one option, not as a ⓘ popover.
+
+**`sourceField: true`** (font/image/vector) adds a raw source text box to the
+control. It is **off by default**: the drop target already carries the preview,
+the drag target and click-to-choose, and where a catalog is wired there is a
+picker too, so on a 288 px rail a text box is the affordance earning its space
+least. Turn it on when typing a source by hand is something your users will
+actually do — pasting an `https:` URL they already have, or a host `pfc-asset:`
+token. Hiding it changes nothing else: the same values are accepted by the same
+allow list, and a source set in `defaults` or by the host still applies.
+
+For a `"font"` control with no `fontCatalog` this is the only text entry there
+is, so a standalone app that expects users to paste font URLs should set it.
 
 **`allow` and `preview`** (font) configure the typeface control. `allow` lists the
 source kinds a **param-supplied** value may use — what the picker writes, or what
