@@ -2057,8 +2057,17 @@ see "Wiring a part into a runnable app", above, for its full signature):
 **The `allow` list, and what bypasses it.** All three controls take the same
 `allow` list already documented for `"font"` in the control-types table above
 (`"https"` — the default; `"gstatic"`, font-only, `https://fonts.gstatic.com`
-exactly; `"asset"`, a `pfc-asset://` token the host has stored for this part),
-gating what a **param-supplied** value may be. It never restricts a source an
+exactly; `"asset"`, a `pfc-asset://` token the host has stored for this part;
+`"tree"`, vector-only, a `pfc-tree://` token naming artwork that lives as a
+**file inside the part itself** rather than in host storage), gating what a
+**param-supplied** value may be.
+
+`"tree"` is vector-only by construction, not by omission: a part's files are
+text, so a `partforge-vector` JSON document can live in one and a PNG or a
+font cannot. Its payoff is that the artwork is versioned *with* the part —
+a host that stores parts as a file tree keeps the document in the same
+snapshot as the code that reads it, so publishing, history and undo carry the
+two together instead of leaving a param pointing at storage that moved on. It never restricts a source an
 author writes into `images`/`fonts`/`vectors` themselves — that's code, not
 user input.
 
@@ -2338,14 +2347,17 @@ yourself (e.g. to download from a different origin) instead of partforge's own D
   where `ImageAsset` is `{ id, label, url, width, height, thumbUrl }`. With no
   provider a `type: "image"` control degrades to a URL field.
 
-- `onAssetUpload(blob, { kind, filename }) → Promise<string>` — the drop target
-  shared by `"image"`/`"vector"`/`"font"` controls (see "Getting files into a
-  part", below) calls this with the converted artifact after a drop, paste, or
-  file-picker choice, and writes whatever it resolves to into the param.
-  `blob` is the CONVERTED artifact — a PNG, a partforge-vector JSON blob, or the
-  original file for a font — never the user's raw drop; `kind` is `"image"`,
-  `"vector"`, or `"font"`. Must resolve to a non-empty source string (an
-  `https:` URL or a host-defined `pfc-asset:` token); anything else is treated
+- `onAssetUpload(blob, { kind, key, filename }) → Promise<string>` — the drop
+  target shared by `"image"`/`"vector"`/`"font"` controls (see "Getting files
+  into a part", below) calls this with the converted artifact after a drop,
+  paste, or file-picker choice, and writes whatever it resolves to into the
+  param. `blob` is the CONVERTED artifact — a PNG, a partforge-vector JSON blob,
+  or the original file for a font — never the user's raw drop; `kind` is
+  `"image"`, `"vector"`, or `"font"`; `key` is the param the drop landed on,
+  which is what lets a host give each control a stable destination of its own
+  rather than reconciling uploads against the part afterwards. Must resolve to
+  a non-empty source string (an `https:` URL, or a host-defined `pfc-asset:` or
+  `pfc-tree:` token); anything else is treated
   as a contract violation and reported through the control's own error line,
   not written into the param. Omit it and the converted bytes land straight in
   the param instead — the path a host that cannot fetch URLs (the
