@@ -500,10 +500,39 @@ test("dock: the toggle hides and the seam refuses to start a drag", () => {
   shell.dataset.pfRailLayout = "dock";
   handle.layoutChanged();
 
-  expect(toggle.hidden).toBe(true); // the rail is always on screen; nothing to toggle
-  expect(railWidth()).toBe("0px"); // the host reserves the space, not --pf-rail-w
+  // Collapse is suppressed under a lease, so a visible toggle would be dead.
+  expect(toggle.hidden).toBe(true);
   seam.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 10 }));
   expect(shell.hasAttribute("data-pf-dragging")).toBe(false);
+});
+
+test("dock keeps the rail's width above the breakpoint and zeroes it below", () => {
+  const original = window.innerWidth;
+  try {
+    const { shell, handle } = setup();
+    shell.dataset.pfRailLayout = "dock";
+    handle.layoutChanged();
+    // Wide dock: the host leases only the bottom inset, so the rail is still
+    // side by side with the stage and must keep reserving its width — zeroing
+    // it here left the 720-899 band with no controls at all.
+    expect(railWidth()).toBe(`${RAIL_DEFAULT_WIDTH}px`);
+
+    Object.defineProperty(window, "innerWidth", { value: 600, configurable: true });
+    handle.layoutChanged();
+    // Below the breakpoint the rail IS the pane (chrome.css sizes it), so the
+    // token must not offset anything that centres against the rail.
+    expect(railWidth()).toBe("0px");
+  } finally {
+    Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
+  }
+});
+
+test("overlay zeroes the rail's width at any window size", () => {
+  const { shell, handle } = setup();
+  shell.dataset.pfRailLayout = "overlay";
+  handle.layoutChanged();
+  // The drawer sizes itself and floats over the stage: it reserves nothing.
+  expect(railWidth()).toBe("0px");
 });
 
 test("a host layout refuses keyboard resizing and never moves the remembered width", () => {

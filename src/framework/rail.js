@@ -147,19 +147,34 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     // inert, invisible rail. `state` is deliberately NOT rewritten — the stored
     // preference applies again the moment the window widens.
     const narrow = window.innerWidth < RAIL_NARROW_BREAKPOINT;
-    // A host layout suspends width and collapse for the same reason narrow
-    // does: the rail is docked under the viewer or floating over it as a
-    // drawer, sized by the host's own CSS, so a collapse flag would only make
-    // it inert and invisible where the host is showing it.
+    // A host layout suspends collapse (and every resize gesture — see
+    // resizeRefused) for the same reason narrow does: the rail's placement is
+    // the host's to decide, so a collapse flag would only make it inert and
+    // invisible where the host is showing it. `state` is left untouched, so
+    // the preference returns intact when the lease ends.
     const layout = hostLayout();
     const overlay = layout === "overlay";
     const suppressed = narrow || layout !== null;
     const collapsed = state.collapsed && !suppressed;
-    // Narrow/host-laid-out: the rail is either the whole surface or absent, so
-    // it reserves no width beside the viewer — and anything centring itself
-    // against the rail (app.css's #pf-pick-banner) must not be offset by a
-    // stale 288px.
-    const width = collapsed || suppressed ? 0 : clampRailWidth(state.width, sw);
+    // WIDTH is suppressed on a NARROWER rule than collapse, because only two of
+    // the three layouts stop needing --pf-rail-w:
+    //   - narrow (any layout): chrome.css stacks the panes and shows exactly
+    //     one, so the rail is the whole surface or absent — it reserves no
+    //     width beside the viewer;
+    //   - overlay (any width): the drawer sizes itself (min(288px, 85%)) and
+    //     floats over the stage, reserving nothing;
+    //   - dock at >= RAIL_NARROW_BREAKPOINT: the rail is STILL side by side with
+    //     the stage — the host only leases the bottom inset — so zeroing here
+    //     would leave the card with no controls at all. Keep the width.
+    // Anything centring itself against the rail (app.css's #pf-pick-banner)
+    // reads this token, so a stale 288px in the first two cases would offset it.
+    // A wide dock therefore renders as: rail visible at its remembered width,
+    // no resize, no collapse, and no toggle (hidden just below — a visible one
+    // would be a dead control while collapse is suppressed). That is the
+    // sheet-owns-layout stance: the host decides placement, we only supply the
+    // width it laid the rail out against.
+    const widthSuppressed = narrow || overlay;
+    const width = collapsed || widthSuppressed ? 0 : clampRailWidth(state.width, sw);
     // Written on :root, not the rail/shell, so body-appended overlays (the
     // pick banner, the ?debug overlay) inherit it — see spec §4.4. This
     // assumes ONE rail per document: attachRail is written for a single
@@ -179,7 +194,9 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
       // overlay mode the toggle IS the drawer's open/close control, so it must
       // stay visible even though the width says "narrow" — and the host hides
       // its own tab bar under a layout lease, making this the only way back to
-      // the controls.
+      // the controls. Under dock it stays hidden at EVERY width, including the
+      // wide band that keeps its --pf-rail-w above: collapse is suppressed
+      // there, so a visible toggle would be a control that does nothing.
       toggle.hidden = suppressed && !overlay;
       // One button, two meanings: the drawer's open state in overlay mode, the
       // collapse everywhere else. `shut` is whichever of the two this layout

@@ -464,13 +464,16 @@
    chrome) clears the sheet. With a "rail" lease the rail renders INTO the
    sheet region — but only its bottom --pf-rail-dock-h px, because the host's
    opaque chrome strip (handle + tabs) covers the top of the region. The spec
-   (2026-08-31-responsive-layout-redesign) has the two-numbers reasoning.
+   (2026-08-31-responsive-layout-redesign) has the two-numbers reasoning. Note
+   that a dock lease ABOVE 719px does not enter the block below at all: the
+   rail stays side by side with the stage at its usual --pf-rail-w (rail.js
+   keeps the width there, and only suspends resize/collapse/toggle).
 
    OVERLAY — the rail is a right-edge drawer OVER the stage, open while
    data-pf-rail-open is present (rail.js's toggle sets it; mobile-tabs.js's
    stage pointerdown clears it). The stage never resizes. Width is its own
-   min(288px, 85%) — NOT --pf-rail-w, which rail.js zeroes whenever a host
-   layout is active.
+   min(288px, 85%) — NOT --pf-rail-w, which rail.js zeroes under an overlay
+   lease at any window width (and under any layout below the breakpoint).
 
    These come after the narrow block above because they override its one-pane
    hiding, and before the reduced-motion block below so that block's
