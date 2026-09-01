@@ -237,7 +237,16 @@ export function attachAnimationControls(viewer, part, {
   const nextAnimBtn = btn("pf-anim-page", "›", "Next animation");
   bar.append(prevAnimBtn, pick, title);
   const infoSlot = el("span", "pf-anim-info");
-  const playBtn = btn("pf-anim-play", "▶", "Play animation");
+  // Inline SVGs, not the ▶/⏸ characters: U+23F8 takes its EMOJI presentation
+  // on iOS, so the pause glyph rendered as a color sticker in an otherwise
+  // monochrome bar. Both glyphs are PERSISTENT children toggled by the
+  // data-playing attribute (app.css) — the WebKit click-loss rule below
+  // forbids replacing the button's children while a press may be down, and an
+  // attribute write never eats a click.
+  const playBtn = btn("pf-anim-play", null, "Play animation");
+  playBtn.innerHTML =
+    '<svg class="pf-anim-glyph-play" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>'
+    + '<svg class="pf-anim-glyph-pause" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M7 4.5h3.4v15H7zM13.6 4.5H17v15h-3.6z"/></svg>';
   const scrubWrap = el("span", "pf-anim-scrub-wrap");
   const scrub = document.createElement("input");
   scrub.type = "range";
@@ -404,10 +413,12 @@ export function attachAnimationControls(viewer, part, {
   // syncUi() runs on every playback frame. Two rules keep that from eating the
   // user's clicks, and they are independent:
   //
-  // 1. Text goes through textSetter (see above), so the button's text node is
-  //    mutated and never replaced. This is the one that matters, because it
-  //    holds even when the glyph legitimately changes under a held finger —
-  //    playback ending mid-press.
+  // 1. The play button's glyph flip is an ATTRIBUTE toggle over two persistent
+  //    SVG children (app.css keys which one shows on [data-playing]) — its
+  //    children are never touched after construction. This is the one that
+  //    matters, because it holds even when the glyph legitimately changes
+  //    under a held finger — playback ending mid-press. (The bubble's text
+  //    still goes through textSetter, the text-node form of the same rule.)
   // 2. Each element has its own renderer that leaves early when its own value
   //    is unchanged, so a playing transport touches only what actually moved:
   //    the scrubber's value, and aria-valuetext when it crosses a reporting
@@ -420,13 +431,12 @@ export function attachAnimationControls(viewer, part, {
   // for. Measured in WebKit, any press held >= 40ms lost it (a real click is
   // ~100ms; a synthetic 0ms one survives, which is why automated clicking never
   // saw it). Reset was never affected: nothing rewrites that button per frame.
-  const setPlayGlyph = textSetter(playBtn);
   let shownActive = null;
 
   function renderPlayButton(active) {
     if (active === shownActive) return;
     shownActive = active;
-    setPlayGlyph(active ? "⏸" : "▶");
+    playBtn.toggleAttribute("data-playing", active);
     const label = active ? "Pause animation" : "Play animation";
     playBtn.setAttribute("aria-label", label);
     playBtn.title = label;
