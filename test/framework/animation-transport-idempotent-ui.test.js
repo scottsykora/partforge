@@ -75,27 +75,33 @@ test("a playing transport never touches the play button", () => {
   const playBtn = container.querySelector(".pf-anim-play");
 
   playBtn.click(); // start playback
-  expect(playBtn.textContent).toBe("⏸");
-  // The exact node the browser compares across mousedown/mouseup.
-  const textNode = playBtn.firstChild;
-  expect(textNode).toBeTruthy();
+  expect(playBtn.hasAttribute("data-playing")).toBe(true);
+  // The exact nodes the browser compares across mousedown/mouseup.
+  const playSvg = playBtn.querySelector(".pf-anim-glyph-play");
+  const pauseSvg = playBtn.querySelector(".pf-anim-glyph-pause");
+  expect(playSvg).toBeTruthy();
+  expect(pauseSvg).toBeTruthy();
 
-  // Catch a rewrite even if it happens to restore an identical string.
+  // Catch a rewrite even if it happens to restore identical children.
   const seen = [];
   const observer = new MutationObserver((records) => seen.push(...records));
   observer.observe(playBtn, { childList: true, characterData: true, attributes: true, subtree: true });
   // Same-value attribute writes are no-ops the observer may not report, so
-  // watch the call itself: a playing frame must not reach the button at all.
+  // watch the calls themselves: a playing frame must not reach the button at all.
   const setAttr = vi.spyOn(playBtn, "setAttribute");
+  const toggleAttr = vi.spyOn(playBtn, "toggleAttribute");
 
   for (let i = 0; i < 120; i++) tick(1 / 60); // two seconds of playback
 
   observer.disconnect();
-  expect(playBtn.textContent).toBe("⏸");     // still playing, glyph unchanged...
-  expect(playBtn.firstChild).toBe(textNode); // ...so the node must be untouched
-  expect(seen).toEqual([]);                  // and nothing was written to it at all
+  expect(playBtn.hasAttribute("data-playing")).toBe(true); // still playing...
+  expect(playBtn.querySelector(".pf-anim-glyph-play")).toBe(playSvg); // ...children untouched
+  expect(playBtn.querySelector(".pf-anim-glyph-pause")).toBe(pauseSvg);
+  expect(seen).toEqual([]);                  // and nothing was written at all
   expect(setAttr).not.toHaveBeenCalled();
+  expect(toggleAttr).not.toHaveBeenCalled();
   setAttr.mockRestore();
+  toggleAttr.mockRestore();
   ctl.detach();
 });
 
@@ -117,12 +123,12 @@ test("the glyph and its labels flip when playback state actually changes", () =>
 
   playBtn.click();
   tick(1 / 60);
-  expect(playBtn.textContent).toBe("⏸");
+  expect(playBtn.hasAttribute("data-playing")).toBe(true);
   expect(playBtn.getAttribute("aria-label")).toBe("Pause animation");
   expect(playBtn.title).toBe("Pause animation");
 
   playBtn.click(); // pause
-  expect(playBtn.textContent).toBe("▶");
+  expect(playBtn.hasAttribute("data-playing")).toBe(false);
   expect(playBtn.getAttribute("aria-label")).toBe("Play animation");
   expect(playBtn.title).toBe("Play animation");
   ctl.detach();
@@ -130,23 +136,26 @@ test("the glyph and its labels flip when playback state actually changes", () =>
 
 // The independent half of the guarantee. Skipping redundant writes cannot help
 // when the write is REAL — playback ending, or a step boundary crossing, while
-// the button is held. The glyph must therefore be written by mutating the
-// existing text node, never by replacing it: WebKit drops the click when the
-// node the press started on is gone by the time it is released.
-test("changing the glyph mutates the button's text node rather than replacing it", () => {
+// the button is held. The glyph must therefore flip by TOGGLING AN ATTRIBUTE
+// over two persistent SVG children (app.css keys visibility on
+// [data-playing]), never by replacing children: WebKit drops the click when
+// the node the press started on is gone by the time it is released. The SVGs
+// also replace the ▶/⏸ characters outright — U+23F8 takes its emoji
+// presentation on iOS, a color sticker in a monochrome bar.
+test("a glyph flip toggles an attribute over persistent children, replacing nothing", () => {
   const { ctl, container, tick } = harness();
   const playBtn = container.querySelector(".pf-anim-play");
-  const textNode = playBtn.firstChild;
+  const children = [...playBtn.childNodes];
+  expect(children.length).toBe(2); // play SVG + pause SVG, both always present
 
-  playBtn.click();      // ▶ -> ⏸, a genuine change
+  playBtn.click();      // paused -> playing, a genuine change
   tick(1 / 60);
-  expect(playBtn.textContent).toBe("⏸");
-  expect(playBtn.firstChild).toBe(textNode);
-  expect(playBtn.childNodes.length).toBe(1);
+  expect(playBtn.hasAttribute("data-playing")).toBe(true);
+  expect([...playBtn.childNodes]).toEqual(children);
 
-  playBtn.click();      // ⏸ -> ▶
-  expect(playBtn.textContent).toBe("▶");
-  expect(playBtn.firstChild).toBe(textNode);
+  playBtn.click();      // playing -> paused
+  expect(playBtn.hasAttribute("data-playing")).toBe(false);
+  expect([...playBtn.childNodes]).toEqual(children);
   ctl.detach();
 });
 
@@ -167,24 +176,24 @@ test("switching animations re-renders chrome the caches would have skipped", () 
 
   const select = (name) => { pick.value = name; pick.dispatchEvent(new Event("change", { bubbles: true })); };
 
-  // "a" playing, glyph "⏸". selectAnimation("b") calls doReset, so the
+  // "a" playing (pause glyph up). selectAnimation("b") calls doReset, so the
   // incoming animation is idle, not playing — the glyph must re-render to
-  // "▶" even though a stale `shownActive` cache would have skipped it.
+  // play even though a stale `shownActive` cache would have skipped it.
   playBtn.click();
-  expect(playBtn.textContent).toBe("⏸");
+  expect(playBtn.hasAttribute("data-playing")).toBe(true);
   select("b");
-  expect(playBtn.textContent).toBe("▶");
+  expect(playBtn.hasAttribute("data-playing")).toBe(false);
   expect(container.querySelectorAll(".pf-anim-tick")).toHaveLength(1); // b has 2 steps -> one interior boundary
   expect(scrub.getAttribute("aria-valuetext")).toBe("up — 0%");
 
   // Same again the other way: play "b", switch to "c" (also stepped), glyph
-  // must drop back to "▶". "b" and "c" are both idle at t=0 — same value
+  // must drop back to play. "b" and "c" are both idle at t=0 — same value
   // `shownValuetext` would already hold — so this only re-renders because
   // invalidateUi reset the cache; a stale one would leave "up — 0%" showing.
   playBtn.click();
-  expect(playBtn.textContent).toBe("⏸");
+  expect(playBtn.hasAttribute("data-playing")).toBe(true);
   select("c");
-  expect(playBtn.textContent).toBe("▶");
+  expect(playBtn.hasAttribute("data-playing")).toBe(false);
   expect(scrub.getAttribute("aria-valuetext")).toBe("raise — 0%");
 
   // Structural chrome (ticks) rebuilds too: back to unstepped "a" clears them.

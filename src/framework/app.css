@@ -737,6 +737,14 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   cursor: pointer; font-size: 13px; padding: 2px 4px;
 }
 .pf-anim-bar button:hover { color: var(--pf-text-2); }
+/* Play/pause is two PERSISTENT inline SVGs toggled by [data-playing] — never
+   the ▶/⏸ characters (U+23F8 renders as a color emoji on iOS) and never a
+   child swap (WebKit drops a click whose press started on a replaced node —
+   see animation-controls.js). */
+.pf-anim-play { display: inline-flex; align-items: center; justify-content: center; }
+.pf-anim-play .pf-anim-glyph-pause { display: none; }
+.pf-anim-play[data-playing] .pf-anim-glyph-play { display: none; }
+.pf-anim-play[data-playing] .pf-anim-glyph-pause { display: block; }
 .pf-anim-title, .pf-anim-pick {
   font-family: var(--pf-mono); font-size: 11px; color: var(--pf-text-2);
 }
@@ -843,6 +851,20 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
      it. The track paints centered, so this is invisible; only the hit area
      grows. */
   .pf-anim-scrub { min-height: 44px; }
+}
+
+/* On a phone the full transport is a two-row player squatting on a small
+   stage. Collapse it to the decisions that matter — which animation, and
+   play/pause: the timeline, reset and ⓘ stand down below the narrow
+   breakpoint. WIDTH-keyed, deliberately not the coarse-pointer condition the
+   target-size block above shares: a coarse-pointer iPad has the room and
+   keeps the full transport; only the small screen loses the player bar.
+   Playback itself still visits every chapter; scrubbing wants a real
+   screen. */
+@media (max-width: 719px) {
+  .pf-anim-bar .pf-anim-scrub-wrap,
+  .pf-anim-bar .pf-anim-reset,
+  .pf-anim-bar .pf-anim-info { display: none; }
 }
 
 /* Legacy id-only markup only: classed markup's viewbar lives inside .pf-stage
