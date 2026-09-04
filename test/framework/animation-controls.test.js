@@ -116,6 +116,23 @@ test("publishes --pf-anim-clear on the stage: bar height while shown, 0px hidden
   expect(container.style.getPropertyValue("--pf-anim-clear")).toBe("");
 });
 
+test("a bar hidden by a HOST stylesheet claims 0px too — the empty box is the test, not our inline display", async () => {
+  // partforge-cloud's part-open sheet hides .pf-anim-bar with a stylesheet
+  // `display: none`; bar.style.display stays "" and getBoundingClientRect is
+  // all zeros. Measuring that rect published `stageRect.bottom - 0` — the
+  // whole stage height — and flung the host's stacked chrome off the stage.
+  const { container, ctl, switchView } = setup();
+  const bar = container.querySelector(".pf-anim-bar");
+  const rect = (o) => () => ({ left: 0, right: 0, width: 0, height: 0, top: 0, bottom: 0, ...o });
+  container.getBoundingClientRect = rect({ right: 800, width: 800, bottom: 600, height: 600 });
+  bar.getBoundingClientRect = rect(); // hidden from outside: an empty box, display untouched
+  switchView("box");
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(bar.style.display).toBe(""); // the premise: nothing of ours hid it
+  expect(container.style.getPropertyValue("--pf-anim-clear")).toBe("0px");
+  ctl.detach();
+});
+
 test("a view switch resets: snapshot restored, opacities cleared, position zeroed", () => {
   const { applied, ctl, switchView } = setup(); handles.push(ctl);
   const viewer = ctl.__viewer;
