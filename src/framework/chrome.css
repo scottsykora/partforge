@@ -481,12 +481,25 @@
 .pf-shell[data-pf-rail-layout="dock"] { padding-bottom: var(--pf-rail-inset, 0px); }
 @media (max-width: 719px) {
   /* pane=rail on a phone: stage above, rail docked in the sheet region. The
-     three rules below override the narrow block's one-pane hiding. */
-  .pf-shell[data-pf-rail-layout="dock"][data-pf-pane="rail"] { padding-bottom: 0; }
+     two rules below override the narrow block's one-pane hiding.
+
+     The shell keeps its --pf-rail-inset padding in this pane too — the stage
+     is the same height whichever pane shows — and the rail is positioned
+     absolutely INTO that padding, filling the sheet region's bottom
+     --pf-rail-dock-h px. The difference between the two lengths is the strip
+     the host draws across the top of the sheet region, and it must stay
+     empty: an earlier version zeroed the padding and stacked the rail
+     straight under the stage in flow, which sent the stage's bottom
+     --pf-rail-inset − --pf-rail-dock-h px (the strip's height) UNDER the
+     host's opaque strip — with the viewbar, the view cube and the transport
+     bar behind it, unreachable, on every rail-pane sheet position. */
   .pf-shell[data-pf-rail-layout="dock"][data-pf-pane="rail"] .pf-stage { display: block; }
   .pf-shell[data-pf-rail-layout="dock"][data-pf-pane="rail"] .pf-rail {
     display: flex;
-    flex: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
     height: var(--pf-rail-dock-h, 0px);
     width: auto;
     border-left: 0;
