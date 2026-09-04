@@ -12,6 +12,7 @@
 // active — getView() is the driver's only window onto it.
 import { viewAnimations, createPlayback, stepIndexAt } from "./animation.js";
 import { createInfoPopover, attachInfo } from "./controls.js";
+import { stageClearFor } from "./stage-clear.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -675,13 +676,14 @@ export function attachAnimationControls(viewer, part, {
     const barRect = bar.getBoundingClientRect();
     // Publish the bar's vertical claim on the stage as --pf-anim-clear: the
     // distance from the stage's bottom edge to the bar's top, 0px when the bar
-    // is hidden (a view with no animations). Hosts that float their own chrome
-    // at the stage's bottom-centre (partforge-cloud's status/forging stack)
-    // read it to sit above the bar instead of under it; with no bar mounted
-    // the property is never set and a var() fallback of 0px applies.
-    const clear = bar.style.display === "none"
-      ? 0
-      : Math.max(0, Math.round(stageRect.bottom - barRect.top));
+    // is hidden — by us (a view with no animations, sketch mode: the inline
+    // display) OR by a host stylesheet, which leaves our inline display alone
+    // and empties the bar's box, the case stageClearFor tests. Hosts that
+    // float their own chrome at the stage's bottom-centre (partforge-cloud's
+    // status/forging stack) read it to sit above the bar instead of under it;
+    // with no bar mounted the property is never set and a var() fallback of
+    // 0px applies.
+    const clear = bar.style.display === "none" ? 0 : stageClearFor(stageRect, barRect);
     container.style.setProperty("--pf-anim-clear", `${clear}px`);
     const cubeEl = container.querySelector(cubeSelector);
     const viewbarRect = viewbarEl?.getBoundingClientRect() ?? null;
@@ -702,8 +704,8 @@ export function attachAnimationControls(viewer, part, {
   // back in here.
   function isCrowded({ stageRect, barRect, viewbarRect, cubeRect, cubeEl }) {
     // A bar that is not on screen cannot be crowded by anything — the same
-    // condition the --pf-anim-clear calculation above uses.
-    if (bar.style.display === "none") return false;
+    // two conditions the --pf-anim-clear calculation above uses.
+    if (bar.style.display === "none" || barRect.height === 0) return false;
     const nominal = nominalClusterRect(viewbarRect, cubeRect, publishedSize(cubeEl));
     // Same vertical-band test the placement path applies, against the nominal
     // rect: bands that do not intersect cannot collide, so there is nothing to

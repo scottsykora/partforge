@@ -33,6 +33,7 @@ import { createAnnotateMode } from "./annotate/annotate-mode.js";
 import { attachAnnotateControls } from "./annotate/annotate-controls.js";
 import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
+import { stageClearFor } from "./stage-clear.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
 // the full mount() pipeline (WASM + workers + DOM).
@@ -599,16 +600,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
     }
     // Publish the viewbar's vertical claim so chrome.css can stack the cube on
     // top of it without hardcoding a height that cutaway/measure/annotate
-    // action rows can change.
+    // action rows can change. A hidden bar (ours or a host stylesheet's)
+    // claims 0 — stage-clear.js has the why; the observer fires on the hide
+    // itself, since the bar's box goes to zero.
     const viewbarEl = els.viewer.querySelector("#viewbar");
     if (viewbarEl && typeof ResizeObserver === "function") {
       const publishViewbarClear = () => {
-        const stageRect = els.viewer.getBoundingClientRect();
-        const barRect = viewbarEl.getBoundingClientRect();
-        els.viewer.style.setProperty(
-          "--pf-viewbar-clear",
-          `${Math.max(0, Math.round(stageRect.bottom - barRect.top))}px`,
-        );
+        const clear = stageClearFor(els.viewer.getBoundingClientRect(), viewbarEl.getBoundingClientRect());
+        els.viewer.style.setProperty("--pf-viewbar-clear", `${clear}px`);
       };
       const viewbarObserver = new ResizeObserver(publishViewbarClear);
       viewbarObserver.observe(viewbarEl);
