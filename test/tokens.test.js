@@ -202,3 +202,25 @@ test("every part page floats the rail toggle outside #viewbar", () => {
       .toContain('<button id="rail-toggle" class="pf-float-rail-toggle"');
   }
 });
+
+// A host's dock lease (setRailLayout) hands over two lengths: --pf-rail-inset,
+// the whole region its bottom sheet covers, and --pf-rail-dock-h, the slice of
+// that region below the host's opaque strip. The stage must clear the WHOLE
+// inset in both panes. An earlier pane=rail rule zeroed the shell's padding and
+// stacked the rail under the stage in flow, so the stage ran the strip's height
+// under the host's chrome — the viewbar, cube and transport bar behind it on
+// every rail-pane sheet position. The rail is placed absolutely into the
+// padding instead, so nothing in this pane can move the stage's bottom edge.
+test("a docked rail pane keeps the shell's inset padding and overlays the rail into it", () => {
+  const dockRail = rules(read("chrome.css"))
+    .filter((r) => r.selector.includes('[data-pf-rail-layout="dock"][data-pf-pane="rail"]'));
+  expect(dockRail.length, "expected dock+rail rules").toBeGreaterThan(0);
+  for (const r of dockRail) {
+    expect(r.body, `${r.selector} must not touch the shell's inset padding`).not.toMatch(/padding-bottom/);
+  }
+  const rail = dockRail.find((r) => /\.pf-rail\s*$/.test(r.selector));
+  expect(rail, "the dock+rail .pf-rail rule").toBeTruthy();
+  expect(rail.body).toMatch(/position:\s*absolute/);
+  expect(rail.body).toMatch(/bottom:\s*0/);
+  expect(rail.body).toMatch(/height:\s*var\(--pf-rail-dock-h/);
+});
