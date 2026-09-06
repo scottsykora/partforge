@@ -15,7 +15,7 @@ use can drive to author, test, and measure a part, then ship it as a browser app
 
 ## See it
 
-- **Live showcase** — https://scottsykora.github.io/partforge/ — example forges (Faceted
+- **Live showcase** — https://pixiteapps.github.io/partforge/ — example forges (Faceted
   Planter, Spacer, Filleted Box) you can open, adjust, and export.
 - **A real forge** — https://scottsykora.github.io/Drum-Machine/ — a parametric capstan
   drum built with partforge for a robotics project.
@@ -25,7 +25,7 @@ use can drive to author, test, and measure a part, then ship it as a browser app
 You don't write CAD by hand. Point a tool-using AI agent (Claude Code, or the Claude /
 ChatGPT desktop apps with file access) at this repo and describe what you want:
 
-> Using the partforge framework at https://github.com/scottsykora/partforge, build me a
+> Using the partforge framework at https://github.com/pixiteapps/partforge, build me a
 > _\<your part\>_ — _\<the dimensions, fits, and features that matter\>_.
 
 Expect a few turns. The first attempt is often rough, but you refine it in plain language

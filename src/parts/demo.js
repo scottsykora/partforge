@@ -13,7 +13,7 @@ export default {
       presets: { M3: { od: 8, bore: 3.4, h: 10 }, M5: { od: 12, bore: 5.4, h: 16 } },
       advanced: [
         { key: "od", label: "Outer diameter", unit: "mm", min: 4, max: 40, step: 0.5,
-          description: "Barrel outer diameter. Keep it comfortably larger than the bore so a wall remains. See the [authoring guide](https://github.com/scottsykora/partforge/blob/main/docs/AUTHORING-PARTS.md)." },
+          description: "Barrel outer diameter. Keep it comfortably larger than the bore so a wall remains. See the [authoring guide](https://github.com/pixiteapps/partforge/blob/main/docs/AUTHORING-PARTS.md)." },
         { key: "bore", label: "Bore", unit: "mm", min: 1, max: 30, step: 0.1, control: "number",
           description: "Nominal screw clearance hole. A fixed print clearance is added automatically (see `derive`), so enter the *nominal* size." },
         { key: "h", label: "Height", unit: "mm", min: 2, max: 60, step: 1,

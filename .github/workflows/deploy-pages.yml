@@ -1,6 +1,6 @@
 name: Deploy to GitHub Pages
 # Builds the example apps (landing gallery + the three demo parts) and publishes them
-# to https://scottsykora.github.io/partforge/ on every push to main.
+# to https://pixiteapps.github.io/partforge/ on every push to main.
 #
 # One-time setup: in the repo, Settings → Pages → Build and deployment → Source =
 # "GitHub Actions". Until that's set, this workflow runs but the deploy step errors.
