@@ -561,6 +561,23 @@ test("a successful build clears the status line and logs triangles/time to the c
   debug.mockRestore();
 });
 
+test("a build that delivers no geometry says so in the status line, naming the sub-part", () => {
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  mount(makePart(), { createWorker, elements: els });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  // Manifold booleans return an EMPTY solid rather than throwing (a bore wider
+  // than its body), so a typed out-of-range value can "succeed" into nothing —
+  // the status line has to say so, after refreshView's clear, like an error.
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", triangles: 0 }], ms: 5 } });
+  expect(els.status.status.textContent).toBe("empty: body produced no geometry at these values");
+  expect(els.status.status.classList.contains("err")).toBe(true);
+  // the next build with geometry clears it
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body", triangles: 12 }], ms: 5 } });
+  expect(els.status.status.textContent).toBe("");
+  expect(els.status.status.classList.contains("err")).toBe(false);
+});
+
 test("a build error lands in the status line even when the view is still current", () => {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();

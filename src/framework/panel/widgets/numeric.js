@@ -1,11 +1,16 @@
 // slider + number: a range input (omitted for `number`) beside an editable value
-// box. The box accepts exact values finer than `step`; typed values clamp to
-// [min, max] on commit (blur/Enter).
+// box. The box accepts exact values finer than `step` AND values outside
+// [min, max]: the authored range bounds the slider track, not the parameter.
+// A typed out-of-range value commits as typed (the build gets to try it and
+// fails visibly if it can't), the thumb pins at the nearer end of the track,
+// and the box paints red until the value is back inside the range.
 import { attachInfo } from "../info.js";
 
 // Short numeric string without float noise (4 dp max) for the value box.
 const numStr = (v) => String(Math.round(v * 1e4) / 1e4);
 
+// Kept as a public helper (re-exported from controls.js) for hosts; the widget
+// itself no longer clamps typed input — see the header comment.
 export function clampToRange(raw, min, max) {
   const v = parseFloat(raw);
   if (!Number.isFinite(v)) return null;
@@ -31,7 +36,9 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
   const box = document.createElement("input");
   box.type = "number";
   box.className = "num";
-  box.min = node.min; box.max = node.max; box.step = node.step;
+  // No native min/max on the box: the range is advisory for typed input, and
+  // the attributes would add browser validity styling and clamp the spinner.
+  box.step = node.step;
   box.value = numStr(params[node.key]);
   val.append(box);
   if (node.unit) val.append(el("span", "unit", node.unit));
@@ -54,6 +61,11 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
     const t = toPos(v);
     return Math.max(0, Math.min(LOG_STEPS, Number.isFinite(t) ? t : 0));
   };
+
+  // Where the thumb sits for a value: pinned at the nearer end when the value
+  // is outside [min, max] (a range input sanitises this itself, but jsdom and
+  // the log mapping don't, so be explicit).
+  const thumbFor = (v) => log ? toPosSafe(v) : Math.max(node.min, Math.min(node.max, v));
 
   let slider = null;
   if (!numeric) {
@@ -91,8 +103,9 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
     return node.ticks.reduce((best, t) => Math.abs(t - v) < Math.abs(best - v) ? t : best);
   };
 
-  // recommended: a tinted band of the track, and a warning on the value box
-  // when the current value sits outside it. Linear tracks only (like ticks).
+  // recommended: a tinted band of the track — purely visual; it never colours
+  // the value box (that is reserved for values outside [min, max] below).
+  // Linear tracks only (like ticks).
   const band = !log && Array.isArray(node.recommended) && node.recommended.length === 2
     ? node.recommended : null;
   if (band) {
@@ -104,25 +117,28 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
     wrap.style.setProperty("--band-lo", pct(band[0]));
     wrap.style.setProperty("--band-hi", pct(band[1]));
   }
+  // The box goes red only when the value is outside the authored range — a
+  // typed overshoot, or a preset/host value the range never covered.
   const paintWarn = () => {
-    if (band) box.classList.toggle("warn", params[node.key] < band[0] || params[node.key] > band[1]);
+    const v = params[node.key];
+    box.classList.toggle("warn", v < node.min || v > node.max);
   };
 
-  // live preview while typing (unclamped); clamp + reformat on commit
+  // live preview while typing; reformat (never clamp) on commit
   box.addEventListener("input", () => {
     const v = parseFloat(box.value);
     if (!Number.isFinite(v)) return;
     params[node.key] = v;
-    if (slider) slider.value = log ? toPosSafe(v) : v;
+    if (slider) slider.value = thumbFor(v);
     paintWarn();
     onChange?.();
   });
   box.addEventListener("change", () => {
-    const v = clampToRange(box.value, node.min, node.max);
-    if (v == null) { box.value = numStr(params[node.key]); return; } // revert invalid input
+    const v = parseFloat(box.value);
+    if (!Number.isFinite(v)) { box.value = numStr(params[node.key]); return; } // revert invalid input
     params[node.key] = v;
     box.value = numStr(v);
-    if (slider) slider.value = log ? toPosSafe(v) : v;
+    if (slider) slider.value = thumbFor(v);
     paintWarn();
     onChange?.();
     onCommit?.();
@@ -130,7 +146,7 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
 
   const sync = () => {
     box.value = numStr(params[node.key]);
-    if (slider) slider.value = log ? toPosSafe(params[node.key]) : params[node.key];
+    if (slider) slider.value = thumbFor(params[node.key]);
     paintWarn();
   };
   paintWarn();

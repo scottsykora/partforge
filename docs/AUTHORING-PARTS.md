@@ -736,7 +736,15 @@ Every control accepts `key`, `type`, `label`, `description`, `hidden`, `when` an
 | `"vector"` | a drop target showing the artwork — no catalog exists | `sourceField` |
 
 Numeric controls always show the number box: drag the slider *or* type an exact
-value. Typed values may be finer than `step` and clamp to `[min, max]` on commit.
+value. Typed values may be finer than `step` and may sit **outside `[min, max]`**:
+the range bounds the slider track, not the parameter. An out-of-range value commits
+as typed and the build runs with it — the box turns red while the value is outside
+the range, the thumb pins at the nearer end of the track, and a build that can't
+take the value fails in the status line while the viewer keeps the last good
+geometry. A build that *succeeds into nothing* (a boolean that empties a sub-part)
+is reported there too — "empty: body produced no geometry at these values". Author
+`min`/`max` as the span the track should cover, not as a guard the build relies
+on; a build that needs a floor clamps it itself.
 Text fields write `params` on every keystroke, so the rebuild loop previews the new
 string immediately; give every text key a string default (empty strings are valid,
 and the build decides whether its geometry tolerates one).
@@ -826,18 +834,21 @@ for when a raw linear slider misrepresents the parameter.
   must sit inside `[min, max]`. Add **`snap: true`** to quantize *slider drags* to the
   nearest tick; the number box stays free, so an off-tick value is always still
   typeable. Use it for stock sizes: M3/M4/M5, 3 mm / 6 mm plate.
-- **`recommended: [lo, hi]`** — tints that span of the track and puts a warning border
-  on the number box when the value sits outside it. This is the **visual companion to
-  the DFM checks**: the band is where the process the part targets is comfortable
-  (minimum wall, nozzle multiples, sane clearances), and `verify`'s `minWall` /
-  process checks are the same judgement enforced at measure time. It is advisory —
-  outside values remain selectable, because a user who knows their printer should not
-  be blocked by a default profile.
+- **`recommended: [lo, hi]`** — tints that span of the track. This is the **visual
+  companion to the DFM checks**: the band is where the process the part targets is
+  comfortable (minimum wall, nozzle multiples, sane clearances), and `verify`'s
+  `minWall` / process checks are the same judgement enforced at measure time. It is
+  purely advisory — it never colours the number box (red is reserved for values
+  outside `[min, max]`), and outside values remain selectable, because a user who
+  knows their printer should not be blocked by a default profile. Say **why** the
+  band sits where it does in the control's `description` ("below 1.2 mm a 0.4 mm
+  nozzle prints walls poorly"); the band alone is a hint, the description is the
+  reason.
 
 `ticks`, `snap` and `recommended` render on a **linear track only**; combined with
 `scale: "log"` they are ignored, and `slider-refinement-invalid` warns. On a
-`"number"` control there is no track at all: `recommended` still tints the box on an
-out-of-band value, while `scale`, `ticks` and `snap` do nothing.
+`"number"` control there is no track at all, so `recommended`, `scale`, `ticks` and
+`snap` do nothing.
 
 ### Conditions: `when` and `whenFalse`
 
