@@ -16,7 +16,7 @@ name: Publish
 #     therefore have to happen in the same run.
 #
 # One-time setup on npmjs.com: package `partforge` → Settings → Trusted Publisher →
-# GitHub Actions → org/user `scottsykora`, repo `partforge`, workflow `publish.yml`.
+# GitHub Actions → org `pixiteapps`, repo `partforge`, workflow `publish.yml`.
 on:
   push:
     branches: [main]

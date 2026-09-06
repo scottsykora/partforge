@@ -13,7 +13,7 @@ specific part; a part is plain data + pure functions. It ships as **plain ESM
 source** and relies on a consuming app using **Vite** for worker / WASM / CSS
 import handling.
 
-This directory is its **own git repo** (`scottsykora/partforge`), independent of
+This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
 separate Drum-Machine repo; `src/parts/` now has eighteen: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
