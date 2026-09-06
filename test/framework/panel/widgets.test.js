@@ -137,7 +137,7 @@ test("a log slider maps its track logarithmically and round-trips through sync",
   panel.dispose();
 });
 
-test("the value box on a log slider stays linear and clamps as usual", () => {
+test("the value box on a log slider stays linear and commits past the range with the thumb pinned", () => {
   document.body.innerHTML = '<div id="root"></div>';
   const root = document.getElementById("root");
   const params = { r: 1 };
@@ -145,8 +145,51 @@ test("the value box on a log slider stays linear and clamps as usual", () => {
     { key: "r", type: "slider", min: 0.1, max: 100, step: 0.1, scale: "log" },
   ] }], params, () => {});
   const box = root.querySelector("input.num");
+  const slider = root.querySelector('input[type="range"]');
   box.value = "250"; box.dispatchEvent(new Event("change"));
-  expect(params.r).toBe(100);   // clamped to max, linear semantics untouched
+  expect(params.r).toBe(250);          // NOT clamped — the build gets to try it
+  expect(slider.value).toBe("1000");   // thumb pinned at the track's end
+  expect(box.classList.contains("warn")).toBe(true);
+});
+
+test("a typed value outside [min, max] commits unclamped, warns, and pins the thumb", () => {
+  document.body.innerHTML = '<div id="root"></div>';
+  const root = document.getElementById("root");
+  const params = { od: 8 };
+  const commits = [];
+  const panel = buildControls(root, [{ id: "s", controls: [
+    { key: "od", type: "slider", min: 4, max: 40, step: 0.5 },
+  ] }], params, () => {}, () => commits.push(params.od));
+  const box = root.querySelector("input.num");
+  const slider = root.querySelector('input[type="range"]');
+  expect(box.hasAttribute("min")).toBe(false);   // no native clamp/validity styling either
+  expect(box.hasAttribute("max")).toBe(false);
+
+  box.value = "120"; box.dispatchEvent(new Event("change"));
+  expect(params.od).toBe(120);
+  expect(box.value).toBe("120");
+  expect(slider.value).toBe("40");
+  expect(box.classList.contains("warn")).toBe(true);
+  expect(commits).toEqual([120]);
+
+  box.value = "-3"; box.dispatchEvent(new Event("change"));
+  expect(params.od).toBe(-3);
+  expect(slider.value).toBe("4");
+  expect(box.classList.contains("warn")).toBe(true);
+
+  box.value = "12"; box.dispatchEvent(new Event("change"));
+  expect(params.od).toBe(12);
+  expect(box.classList.contains("warn")).toBe(false);
+
+  // a programmatic value outside the range (a preset, a host) warns the same way
+  params.od = 400; panel.syncValues(["od"]);
+  expect(box.classList.contains("warn")).toBe(true);
+  expect(slider.value).toBe("40");
+
+  box.value = "abc"; box.dispatchEvent(new Event("change"));
+  expect(params.od).toBe(400);           // invalid input reverts, never writes NaN
+  expect(box.value).toBe("400");
+  panel.dispose();
 });
 
 test("ticks render a datalist; snap quantizes slider input to the nearest tick", () => {
@@ -167,7 +210,7 @@ test("ticks render a datalist; snap quantizes slider input to the nearest tick",
   expect(params.n).toBe(12);
 });
 
-test("recommended draws a band and warns the value box outside it", () => {
+test("recommended draws a band only — the value box warns outside [min, max], not the band", () => {
   document.body.innerHTML = '<div id="root"></div>';
   const root = document.getElementById("root");
   const params = { wall: 1.6 };
@@ -181,7 +224,9 @@ test("recommended draws a band and warns the value box outside it", () => {
   expect(wrap.style.getPropertyValue("--band-hi")).toBe("100%");
   expect(box.classList.contains("warn")).toBe(false);
   box.value = "0.9"; box.dispatchEvent(new Event("input"));
-  expect(box.classList.contains("warn")).toBe(true);
+  expect(box.classList.contains("warn")).toBe(false);   // inside [min, max], outside the band: no red
+  box.value = "0.5"; box.dispatchEvent(new Event("input"));
+  expect(box.classList.contains("warn")).toBe(true);    // below min
   params.wall = 2; panel.syncValues(["wall"]);
   expect(box.classList.contains("warn")).toBe(false);
   panel.dispose();

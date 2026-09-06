@@ -794,6 +794,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
       }
     }
 
+    // Sub-parts whose latest fresh delivery had zero triangles (see the `meshes` case).
+    const emptySubParts = new Set();
+
     function refreshView() {
       const needed = viewSubParts(part, view(), params);
       if (needed.every(isCurrent)) {
@@ -838,6 +841,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             for (const m of data.meshes) {
               viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
               cache.record(m.name);
+              // A sub-part that built into NOTHING. Manifold booleans return an
+              // empty solid rather than throwing (a bore wider than its body),
+              // and typed values may sit outside the authored range, so a
+              // "successful" build can deliver zero triangles — recorded here,
+              // reported below once the view is whole. Undefined counts (a
+              // host's synthetic reply) are not empty.
+              if (m.triangles === 0) emptySubParts.add(m.name); else emptySubParts.delete(m.name);
               // Stamp the fast path's pose baseline. Only here, inside the
               // non-stale branch: the stamp must describe the geometry actually
               // delivered, which buildDone() true guarantees is at the live params.
@@ -848,6 +858,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, onDo
             // still be running — often OCCT, the slow one).
             if (missingParts().length === 0) ui.hideBusy();
             refreshView();
+            // After refreshView, like the error case: its all-current branch
+            // clears the status line, and this message has to outlive that.
+            if (missingParts().length === 0) {
+              const empty = viewSubParts(part, view(), params).filter((n) => emptySubParts.has(n));
+              if (empty.length) ui.setStatus(`empty: ${empty.join(", ")} produced no geometry at these values`, true);
+            }
             if (data.ms && missingParts().length === 0) {
               const tris = viewSubParts(part, view(), params).reduce((s, n) => s + viewer.subTriangles(n), 0);
               console.debug(`partforge: built ${tris.toLocaleString()} triangles in ${(data.ms / 1000).toFixed(1)} s`);
