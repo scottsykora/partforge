@@ -1112,6 +1112,17 @@ defaulting everything to a slider:
 - **A continuous dimension** → `"slider"`. Add `recommended` when there's a
   manufacturable band, `ticks` + `snap` when real-world stock sizes exist, and
   `scale: "log"` when the range spans decades.
+
+  **Make the range generous.** `min`/`max` bound the slider track, not the
+  parameter — a user can type past either end and the build runs with it — so the
+  range is the whole span the build can turn into sensible geometry, not the
+  neighbourhood of the default. As a floor, reach at least ¼× and 4× the default,
+  and much further for an open-ended dimension (a length, a height, a count).
+  Where one value must stay below another (a fillet radius against a half-width),
+  clamp it in `build` or `derive` rather than narrowing the range: a narrow range
+  is a limit the user hits immediately, a clamp is one they never notice. Typical
+  values belong in the `description`; a process limit belongs in `recommended`,
+  with the reason in the description.
 - **A precise or very wide number** (a count, a tolerance, a coordinate) →
   `"number"`, so the user types rather than hunts.
 - **A discrete choice** → `"select"` when the values are a list, or `"radio"` when
