@@ -160,4 +160,18 @@ describe("inspect job match scoring", () => {
     expect(report.match).toHaveLength(1);
     expect(report.match[0].best.iou).toBeGreaterThan(0.9);
   });
+
+  test("an image target's id is echoed on its entry, and a target without one carries none", async () => {
+    const mask = { data: new Uint8Array(64 * 64).fill(255), width: 64, height: 64 };
+    const report = await inspect({ matchTargets: [
+      { kind: "image", mask, id: "a3f2c1d9" },
+      { kind: "image", mask },
+    ] });
+    expect(report.match).toHaveLength(2);
+    expect(report.match[0].id).toBe("a3f2c1d9");
+    expect("id" in report.match[1]).toBe(false);
+    // Opaque passthrough: the job neither validates nor interprets it.
+    const odd = await inspect({ matchTargets: [{ kind: "image", mask, id: "anything-the-caller-sent" }] });
+    expect(odd.match[0].id).toBe("anything-the-caller-sent");
+  });
 });
