@@ -135,11 +135,18 @@ the installed package, so let the publish finish before bumping the dep there.
   not change when the cube goes away), and `app.css` /
   `chrome.css` (the shell/rail layout - `rail.js` binds
   it to the DOM, `rail-state.js` is its pure drag/collapse state machine).
-  `camera-tween.js`, `camera-orbit.js` and `projection.js` are further pure
+  `camera-tween.js`, `camera-orbit.js`, `projection.js` and `depth-range.js`
+  are further pure
   leaves the viewer imports - eased spherical interpolation between camera
   poses (view switches, animation camera cues, viewcube clicks), spherical
-  orbit math for external drag sources, and the perspective/orthographic
-  framing pair, respectively.
+  orbit math for external drag sources, the perspective/orthographic
+  framing pair, and the near/far planes, respectively. The last of those is
+  derived per frame from the sphere enclosing what is being drawn (and again
+  per offscreen capture, from `sceneBounds`) rather than fixed: a part big
+  enough - a ~287mm cube is the first - used to have its back corner cut off
+  by a far plane nailed at 1000mm, and zooming out lost the part entirely.
+  Both planes are quantized so an orbit does not rewrite the projection matrix
+  every frame.
   Below `RAIL_NARROW_BREAKPOINT` (720px) the rail cannot sit beside the viewer:
   the shell shows exactly ONE pane, keyed on `data-pf-pane`, and `mobile-tabs.js`
   draws the bottom tab bar that picks it. A host that wants to draw its own bar

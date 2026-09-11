@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { distanceTransform, matchMasks, matchViews } from "../src/framework/oracle/match.js";
+import { distanceTransform, fillHoles, matchMasks, matchViews } from "../src/framework/oracle/match.js";
 import { MATCH_VIEWS } from "../src/framework/oracle/silhouette.js";
 
 // Masks are Task 1's shape: {data: Uint8Array of 0|255, width, height, mmPerPx, minX, minY},
@@ -256,4 +256,90 @@ test("matchViews with nothing scoreable reports no best", () => {
   expect(views).toEqual({});
   expect(matchViews(null, square(40)).best).toBe(null);
   expect(matchViews({ front: square(40) }, null).best).toBe(null);
+});
+
+// --- fillHoles: compare outer outlines -----------------------------------------------
+// A caller's segmented photograph arrives hole-filled — its segmenter closes interior
+// openings so a highlight inside the object does not read as background — while a mesh
+// silhouette shows every through-opening as background. Scored as they come, a spoked
+// face loses to a solid disc against its own photo, so `{fillHoles: true}` closes the
+// openings on BOTH sides and compares the outer outlines.
+
+const count = (mask) => { let n = 0; for (const v of mask.data) if (v) n++; return n; };
+
+// `disk` only ever paints; punching is the other direction, and these fixtures need it.
+function punch(m, cc, cr, radius) {
+  for (let r = 0; r < m.height; r++) for (let c = 0; c < m.width; c++) {
+    if ((c - cc) ** 2 + (r - cr) ** 2 <= radius * radius) m.data[r * m.width + c] = 0;
+  }
+  return m;
+}
+
+// A disk with `n` small disks punched out of it, on a circle well inside the rim, so
+// every opening is strictly interior — the shape of a spoked face.
+const holedDisk = (holeR = 6, at = 25, phase = 0, n = 6) => {
+  const m = disk(blank(256, 256), 60, 60, 50);
+  for (let i = 0; i < n; i++) {
+    const a = phase + (2 * Math.PI * i) / n;
+    punch(m, Math.round(60 + at * Math.cos(a)), Math.round(60 + at * Math.sin(a)), holeR);
+  }
+  return m;
+};
+
+test("an opening inside the candidate counts against it unless fillHoles", () => {
+  const spoked = holedDisk();
+  const solid = disk(blank(256, 256), 60, 60, 50);
+
+  const plain = matchMasks(spoked, solid);
+  expect(plain.iou).toBeLessThan(1);
+  expect(classes(plain.delta)[2]).toBeGreaterThan(0); // every window reads as "missing"
+
+  // Filled, the candidate IS the reference: the windows stop counting either way.
+  const filled = matchMasks(spoked, solid, { fillHoles: true });
+  expect(filled.iou).toBe(1);
+  expect(filled.boundaryIoU).toBe(1);
+  expect(classes(filled.delta)[2]).toBe(0);
+  expect(classes(filled.delta)[3]).toBe(0);
+});
+
+test("fillHoles keeps a notch that opens to the outside", () => {
+  // Only ENCLOSED background is an opening. A bite taken out of the rim is part of the
+  // outline, so it survives the fill and still costs the score.
+  const notched = rect(square(100), 40, 10, 20, 30, 0); // cut in from the shape's top edge
+  expect(count(fillHoles(notched))).toBe(count(notched));
+  expect(matchMasks(notched, square(100), { fillHoles: true }).iou).toBeLessThan(1);
+});
+
+test("fillHoles is symmetric — both sides are filled, not just the candidate", () => {
+  // Different windows on each side, so only a fill on BOTH can make the two agree.
+  const a = holedDisk(6, 25, 0);
+  const b = holedDisk(8, 32, Math.PI / 6);
+  expect(matchMasks(a, b).iou).toBeLessThan(1);
+  expect(matchMasks(a, b, { fillHoles: true }).iou).toBe(1);
+});
+
+test("fillHoles leaves a mask with nothing to fill alone", () => {
+  const everything = rect(blank(64, 64), 0, 0, 64, 64); // no background at all
+  expect(count(fillHoles(everything))).toBe(64 * 64);
+
+  const nothing = blank(64, 64);                        // no foreground at all
+  expect(count(fillHoles(nothing))).toBe(0);
+
+  // And an empty mask stays unscoreable rather than becoming a filled frame.
+  expect(matchMasks(nothing, square(40), { fillHoles: true })).toBe(null);
+  expect(matchMasks(square(40), nothing, { fillHoles: true })).toBe(null);
+  expect(matchMasks(null, square(40), { fillHoles: true })).toBe(null);
+});
+
+test("fillHoles carries the mask's frame through unchanged", () => {
+  // mmPerPx/minX/minY are how a caller maps a pixel back to millimetres; a fill that
+  // dropped them would silently turn a scale-aware comparison into a pose-normalized one.
+  const m = { ...disk(blank(128, 128), 60, 60, 40), mmPerPx: 0.25, minX: -12, minY: -30 };
+  const f = fillHoles(m);
+  expect(f.width).toBe(128);
+  expect(f.height).toBe(128);
+  expect(f.mmPerPx).toBe(0.25);
+  expect(f.minX).toBe(-12);
+  expect(f.minY).toBe(-30);
+  expect(f.data).not.toBe(m.data); // a new mask, never a mutation of the caller's
 });

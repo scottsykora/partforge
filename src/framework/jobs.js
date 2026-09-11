@@ -108,7 +108,17 @@ async function scoreMatchTargets(built, targets, onProgress) {
         // this is the caller: rings are mm and the mesh masks carry mmPerPx, so a
         // profile target gets the absolute-size score (`iouScale`, contourDist in mm)
         // while an image target gets the pose-normalized one.
-        const scoreOpts = { scaleAware: target.kind === "profile" };
+        //
+        // fillHoles splits the same way, for a reason read off the other side. An image
+        // reference is a photograph, and it arrives HOLE-FILLED: its segmenter closes
+        // interior openings so a highlight inside the object does not read as
+        // background. The mesh silhouette fills nothing, so compared as they come a
+        // spoked face scores BELOW a solid disc against its own photo, and the delta
+        // paints every window "missing" — pointing whoever reads it at filling in the
+        // openings that were the point of the part. So an image target is compared as
+        // outer outlines, both sides filled. A profile's rings are authored geometry
+        // whose inner rings mean a real hole, so a profile target keeps scoring them.
+        const scoreOpts = { scaleAware: target.kind === "profile", fillHoles: target.kind === "image" };
         const { best, views } = matchViews(viewMasks, reference, scoreOpts);
         if (!best) continue; // nothing scoreable — a dropped target, never a zero score
         const { delta, ...scores } = best;
