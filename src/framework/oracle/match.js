@@ -15,6 +15,12 @@
 // `contourDist` is then a real millimetre distance instead of a fraction of the
 // reference's bbox diagonal.
 //
+// `{fillHoles: true}` asks a different question again: BOTH masks have their enclosed
+// openings closed before anything is measured, so every score compares OUTER OUTLINES and
+// a through-window costs nothing either way. It is for a reference whose own openings are
+// already gone — a segmented photograph, whose segmenter fills them so a highlight inside
+// the object does not read as background. See fillHoles.
+//
 // A mask with no foreground pixels — or no mask at all — is UNSCOREABLE, not
 // zero-scoring: matchMasks returns null and matchViews leaves the view out. 0/0 is
 // never a score.
@@ -27,9 +33,15 @@ const BAND_PX = 2;        // boundary band thickness, per the Boundary IoU defin
 const BIG = 1e20;         // "unreachable" seed for the distance transform's lower envelope
 const MAX_MM_FRAME = 2048; // px ceiling on the scale-aware grid; see mmFrame
 
-// candidate/reference: Task 1 masks. opts: {scaleAware}. → null when either is unscoreable.
+// candidate/reference: Task 1 masks. opts: {scaleAware, fillHoles}. → null when either is
+// unscoreable. `fillHoles` is applied to both masks first, so every score below — iou,
+// boundaryIoU, contourDist, iouScale and delta — is a comparison of outer outlines.
 export function matchMasks(candidate, reference, opts = {}) {
-  const cs = stats(candidate), rs = stats(reference);
+  const fill = opts.fillHoles === true;
+  const cand = fill ? fillHoles(candidate) : candidate;
+  const ref = fill ? fillHoles(reference) : reference;
+
+  const cs = stats(cand), rs = stats(ref);
   if (!cs || !rs) return null;
 
   const nc = normalize(cs), nr = normalize(rs);
@@ -37,10 +49,10 @@ export function matchMasks(candidate, reference, opts = {}) {
   const boundaryIoU = maskIoU(band(nc), band(nr));
   const delta = deltaMap(nc, nr);
 
-  const scaleAware = opts.scaleAware === true && scaled(candidate) && scaled(reference);
+  const scaleAware = opts.scaleAware === true && scaled(cand) && scaled(ref);
   let contourDist, contourUnit, iouScale;
   if (scaleAware) {
-    const [sc, sr, pitch] = mmFrame(cs, candidate.mmPerPx, rs, reference.mmPerPx);
+    const [sc, sr, pitch] = mmFrame(cs, cand.mmPerPx, rs, ref.mmPerPx);
     iouScale = maskIoU(sc, sr);
     contourDist = contourDistance(sc, sr) * pitch;
     contourUnit = "mm";
@@ -68,6 +80,41 @@ export function matchViews(viewMasks, reference, opts = {}) {
     if (!best || scores.iou > best.iou) best = { view, ...scores };
   }
   return { best, views };
+}
+
+// A copy of `mask` with its enclosed openings closed: background that cannot reach the
+// image border by 4-connected steps becomes foreground, which is a flood fill of the
+// background inward from the border and then an invert. So a bore or a spoke window fills
+// and a notch cut in from the rim — background still reachable from outside — does not.
+//
+// Works at the mask's own resolution, before any normalization, so what the rest of this
+// file measures is the filled shape itself rather than a resampled approximation of it.
+// The frame (`mmPerPx`, `minX`, `minY`) rides through untouched, and the caller's mask is
+// never mutated.
+export function fillHoles(mask) {
+  const data = mask?.data, w = mask?.width | 0, h = mask?.height | 0;
+  if (!data || !(w > 0) || !(h > 0) || data.length < w * h) return mask;
+
+  const n = w * h;
+  const outside = new Uint8Array(n);
+  const stack = new Int32Array(n);
+  let top = 0;
+  const visit = (i) => { if (!data[i] && !outside[i]) { outside[i] = 1; stack[top++] = i; } };
+
+  for (let c = 0; c < w; c++) { visit(c); visit((h - 1) * w + c); }
+  for (let r = 0; r < h; r++) { visit(r * w); visit(r * w + w - 1); }
+  while (top > 0) {
+    const i = stack[--top];
+    const r = (i / w) | 0, c = i - r * w;
+    if (c > 0) visit(i - 1);
+    if (c < w - 1) visit(i + 1);
+    if (r > 0) visit(i - w);
+    if (r < h - 1) visit(i + w);
+  }
+
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (!outside[i]) out[i] = 255;
+  return { ...mask, data: out, width: w, height: h };
 }
 
 // Squared-then-rooted Euclidean distance (in px) from every pixel to the nearest non-zero

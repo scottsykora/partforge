@@ -14,7 +14,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { handle } from "../src/framework/jobs.js";
 import { buildView } from "../src/framework/oracle/build.js";
-import { rasterizeMeshMask } from "../src/framework/oracle/silhouette.js";
+import { rasterizeMeshMask, rasterizeRingsMask } from "../src/framework/oracle/silhouette.js";
 import part from "../src/parts/demo.js";
 
 const VIEW = Object.keys(part.views)[0];
@@ -84,6 +84,33 @@ describe("inspect job match scoring", () => {
     expect(m.best.iou).toBeGreaterThan(0.9);
     expect(m.best.contourUnit).toBe("%bbox-diag");
     expect(m.best.iouScale).toBeUndefined();
+  });
+
+  test("an image target is scored on outer outlines, a profile target keeps its holes", async () => {
+    // One shape both ways: a solid od-8 disc, the spacer's outline with the bore left
+    // out. As an IMAGE it stands for a segmented photo, which arrives hole-filled — so
+    // the part's annulus must be filled too and score its own outline. As a PROFILE its
+    // single ring genuinely says "no bore", and the part's bore must still count.
+    const outline = rasterizeRingsMask([circle(4)]);
+
+    const report = await inspect({
+      matchTargets: [
+        { kind: "image", mask: { data: outline.data, width: outline.width, height: outline.height } },
+        { kind: "profile", rings: [circle(4)] },
+      ],
+    });
+
+    const [image, profile] = report.match;
+    expect(["top", "bottom"]).toContain(image.best.view);
+    // Not a bracket either side of a fudge: the bore is 3.6 of 8, a fifth of the disc's
+    // area, so an unfilled annulus cannot reach here and a filled one cannot miss it.
+    expect(image.best.iou).toBeGreaterThan(0.98);
+    expect(profile.best.iou).toBeLessThan(0.9);
+    // And the filled comparison stops painting the bore "missing" (delta class 2).
+    const missing = image.delta.data.reduce((n, v) => n + (v === 2 ? 1 : 0), 0);
+    const profileMissing = profile.delta.data.reduce((n, v) => n + (v === 2 ? 1 : 0), 0);
+    expect(profileMissing).toBeGreaterThan(0);
+    expect(missing).toBeLessThan(profileMissing / 10);
   });
 
   test("a mixed image + profile pair is reported in input order, each scored its own way", async () => {
