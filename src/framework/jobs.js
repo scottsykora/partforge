@@ -112,7 +112,12 @@ async function scoreMatchTargets(built, targets, onProgress) {
         const { best, views } = matchViews(viewMasks, reference, scoreOpts);
         if (!best) continue; // nothing scoreable — a dropped target, never a zero score
         const { delta, ...scores } = best;
-        out.push({ kind: target.kind, best: scores, views, delta: { view: best.view, ...delta } });
+        // The caller's own label for this target, echoed verbatim when it sent one.
+        // Opaque here: a downstream that sends several photographs needs to know
+        // which score is whose, and order cannot say — an unscoreable target is
+        // dropped above and everything after it shifts.
+        const id = typeof target.id === "string" ? { id: target.id } : {};
+        out.push({ kind: target.kind, ...id, best: scores, views, delta: { view: best.view, ...delta } });
       } catch (err) {
         onProgress(`match target skipped: ${String(err?.message || err)}`);
       }
