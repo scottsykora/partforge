@@ -434,17 +434,22 @@ test("a degenerate ortho zoom cannot strand the camera past the far plane", () =
 
   viewer.setProjection("orthographic");
   viewer.camera.zoom = 1e-4; // ortho zoom-out is unbounded and looks harmless
+  // Read BEFORE the toggle: the far plane follows the scene and the camera now
+  // (depth-range.js), so the one the bound is taken against is the live
+  // camera's at the moment of the swap, not whatever the perspective camera
+  // settles on afterwards.
+  const farAtSwap = viewer.camera.far;
   viewer.setProjection("perspective");
-  // Bounded instead of ~281,000mm — beyond far = 1000 the viewer just goes blank.
-  expect(distanceOf(viewer)).toBeCloseTo(viewer.camera.far * 0.9, 6);
+  // Bounded instead of ~281,000mm, where the part is a speck and nothing says why.
+  expect(distanceOf(viewer)).toBeCloseTo(farAtSwap * 0.9, 6);
   viewer.dispose();
 });
 
 // The bound above must not touch a framing the user could otherwise have had.
 // Units are MILLIMETRES and frameTo frames at 2.6r + 6, so ordinary parts sit
-// well past any fixed fraction of the far plane: a 300mm part lands at 786mm
-// (past far/2) and a 400mm part at 1046mm (past far * 0.9, and already clipped
-// by the far plane — but a toggle still must not move the camera). An untouched
+// a long way out: a 300mm part lands at 786mm and a 400mm part at 1046mm. Both
+// used to be past the fixed far plane's 0.9 — which is how the bound came to be
+// written as a max with the distance the camera was already at. An untouched
 // round trip has to reproduce the distance for BOTH.
 test.each([[300, 700], [400, 900]])(
   "an untouched round trip is lossless for a %imm part framed past %imm",
