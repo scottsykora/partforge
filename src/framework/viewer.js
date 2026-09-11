@@ -10,8 +10,9 @@ import { flashWorldRadius, projectToScreen, anchorMoved } from "./pick-flash.js"
 import { createCameraTween } from "./camera-tween.js";
 import { orbitPose } from "./camera-orbit.js";
 import { orthoFrustum, perspectiveDistance } from "./projection.js";
+import { depthRangeFor } from "./depth-range.js";
 import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
-import { makeCaptureCamera, recenteredView } from "./capture-frame.js";
+import { makeCaptureCamera, recenteredView, captureDepthRange } from "./capture-frame.js";
 import { CANONICAL_VIEWS, cameraPoseForView } from "./view-angles.js";
 
 // three renders into a render target in the LINEAR working colour space: as of r184
@@ -44,7 +45,7 @@ export function srgbEncodeInPlace(data) {
 // `renderer.renderOffscreen(pose)` does the GL work (temp camera → offscreen
 // target → readback → JPEG data URL); injected so this is unit-testable without
 // a GL context. The grid is hidden for the whole synchronous pass and restored.
-export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds, hidden = [] }) {
+export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, bounds, sceneBounds, hidden = [] }) {
   const views = (viewNames?.length ? viewNames : ["iso", "front", "top"])
     .filter((v) => CANONICAL_VIEWS.includes(v))
     .slice(0, CANONICAL_VIEWS.length);
@@ -54,10 +55,13 @@ export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, b
   const hiddenWas = hidden.map((o) => o.visible);
   for (const o of hidden) o.visible = false;
   try {
-    return views.map((view) => ({
-      view,
-      dataUrl: renderer.renderOffscreen(cameraPoseForView(view, bounds)),
-    }));
+    return views.map((view) => {
+      const pose = cameraPoseForView(view, bounds);
+      // `bounds` frames (half the max extent, by cameraPoseForView's contract);
+      // `sceneBounds` is the sphere the depth planes must hold. The grid is
+      // hidden for this whole pass, so the part alone is in the second one.
+      return { view, dataUrl: renderer.renderOffscreen(pose, { sceneBounds }) };
+    });
   } finally {
     if (grid) grid.visible = gridWasVisible;
     hidden.forEach((o, i) => { o.visible = hiddenWas[i]; });
@@ -111,7 +115,7 @@ export function thumbnailBackground(background = THUMBNAIL_BG) {
 // `meshes` are the visible sub-part meshes it reads.
 export function captureCurrentFromScene(
   { size = 2048, hideGrid = true, quality = 0.9, recenter = false } = {},
-  { renderer, liveCamera, target, grid, maxTextureSize, projection = "perspective", orthoHalfH, meshes },
+  { renderer, liveCamera, target, grid, maxTextureSize, projection = "perspective", orthoHalfH, meshes, sceneBounds },
 ) {
   const MIN_SIZE = 256;
   // WebGL2 guarantees MAX_TEXTURE_SIZE >= 2048; only trust a larger reported cap.
@@ -133,13 +137,13 @@ export function captureCurrentFromScene(
   const fov = liveCamera.fov ?? 45;
   // Null means "keep the viewport framing": part cropped by the viewport,
   // already centred, or nothing to measure.
-  const frame = (recenter && recenteredView(pose, { aspect, fov, projection, orthoHalfH, meshes, long }))
+  const frame = (recenter && recenteredView(pose, { aspect, fov, projection, orthoHalfH, meshes, long, sceneBounds }))
     || { width, height };
   const before = liveCamera.position.clone();
   const gridWasVisible = grid?.visible;
   if (grid && hideGrid) grid.visible = false;
   try {
-    return renderer.renderOffscreen(pose, { ...frame, fov, quality, projection, orthoHalfH });
+    return renderer.renderOffscreen(pose, { ...frame, fov, quality, projection, orthoHalfH, sceneBounds });
   } finally {
     if (grid && hideGrid) grid.visible = gridWasVisible;
     liveCamera.position.copy(before); // belt-and-suspenders: never leak camera state
@@ -380,6 +384,56 @@ export function createViewer(container, part) {
     return _worldBounds;
   }
 
+  // --- depth range ------------------------------------------------------------
+  // The sphere the near/far planes are sized against: everything a render will
+  // actually draw, as `{ center, radius }`. `withGrid` is a parameter rather
+  // than a read of `grid.visible` because the offscreen captures hide the grid
+  // for the duration of their render and ask for their bounds either side of
+  // that — and the grid is the bigger half of the answer for a small part
+  // (300 mm across a 12 mm spacer), so getting it wrong is not a rounding
+  // error. Null when there is nothing to draw.
+  const _depthBounds = new THREE.Box3();
+  const _depthCenter = new THREE.Vector3();
+  const _depthSize = new THREE.Vector3();
+  const _gridCorner = new THREE.Vector3();
+  function sceneDepthBounds({ withGrid } = {}) {
+    // getVisibleWorldBounds returns a SHARED Box3 that the cutaway also reads,
+    // so copy before touching it.
+    _depthBounds.copy(getVisibleWorldBounds());
+    if (withGrid) {
+      const half = GRID_SIZE / 2;
+      _depthBounds.expandByPoint(_gridCorner.set(-half, floorY, -half));
+      _depthBounds.expandByPoint(_gridCorner.set(half, floorY, half));
+    }
+    if (_depthBounds.isEmpty()) return null;
+    return {
+      center: _depthBounds.getCenter(_depthCenter).toArray(),
+      radius: _depthBounds.getSize(_depthSize).length() / 2,
+    };
+  }
+
+  // Re-size the live camera's depth range to the scene, once per frame. Cheap
+  // by construction — the bounds are a union of already-computed per-mesh
+  // boxes, and depthRangeFor quantizes, so the projection matrix is rebuilt
+  // only when the answer actually moves a step. Only the ACTIVE camera is
+  // written: the two projections take different near planes (an orthographic
+  // one may legitimately be negative, which would be a broken perspective
+  // matrix), and setProjection re-runs this on the camera it swaps in.
+  function updateDepthRange() {
+    const bounds = sceneDepthBounds({ withGrid: grid.visible });
+    if (!bounds) return; // nothing shown — leave the planes where they are
+    const { near, far } = depthRangeFor({
+      // _depthCenter is the vector sceneDepthBounds just wrote its centre into.
+      distance: activeCamera.position.distanceTo(_depthCenter),
+      radius: bounds.radius,
+      projection: projectionMode,
+    });
+    if (activeCamera.near === near && activeCamera.far === far) return;
+    activeCamera.near = near;
+    activeCamera.far = far;
+    activeCamera.updateProjectionMatrix();
+  }
+
   const cutaway = createCutaway({
     renderer,
     scene,
@@ -576,21 +630,24 @@ export function createViewer(container, part) {
       // The bound exists because ortho zoom is UNBOUNDED and zooming a long way
       // out costs nothing there (an ortho projection has no depth falloff) —
       // while the recovered distance goes as 1/zoom, so a zoom near nothing would
-      // fling the perspective camera past its own far plane and blank the viewer
-      // with no cue as to why. `far * 0.9` alone would be too eager: frameTo
-      // frames at 2.6r + 6 MILLIMETRES, so an everyday 300mm part sits at 786mm
-      // and a plain toggle would silently reframe it closer. Hence the max with
-      // the distance the camera is already at, which makes an untouched round
-      // trip (zoom === 1, where orthoFrustum/perspectiveDistance are exact
-      // inverses) lossless for a part of ANY size, and still never lets a
-      // degenerate zoom move the camera further out than it already was.
+      // fling the perspective camera an absurd distance out and leave the part a
+      // speck, with no cue as to why. The far plane is the yardstick because it
+      // is by definition past everything worth looking at; read off `from`,
+      // which is the camera that is still live and therefore the one
+      // updateDepthRange has been keeping current. `far * 0.9` alone would be
+      // too eager: frameTo frames at 2.6r + 6 MILLIMETRES, so an everyday 300mm
+      // part sits at 786mm and a plain toggle would silently reframe it closer.
+      // Hence the max with the distance the camera is already at, which makes an
+      // untouched round trip (zoom === 1, where orthoFrustum/perspectiveDistance
+      // are exact inverses) lossless for a part of ANY size, and still never lets
+      // a degenerate zoom move the camera further out than it already was.
       // `|| 1` on the zoom for the same reason captureCurrent guards it: a zero
       // would make this non-finite.
       const halfH = (orthoCamera.top - orthoCamera.bottom) / 2 || 1;
       const offset = from.position.clone().sub(controls.target);
       const distance = Math.min(
         perspectiveDistance({ halfH, zoom: orthoCamera.zoom || 1, fovDeg: camera.fov }),
-        Math.max(camera.far * 0.9, offset.length()),
+        Math.max(from.far * 0.9, offset.length()),
       );
       camera.position.copy(controls.target).addScaledVector(offset.normalize(), distance);
     }
@@ -598,6 +655,11 @@ export function createViewer(container, part) {
     activeCamera = to;
     controls.object = to;
     controls.update();
+    // The incoming camera's depth range is whatever it was left with when it
+    // was last live, and the two projections do not take the same near plane.
+    // Everything below reads a projection matrix, so re-derive it here rather
+    // than waiting for the next frame.
+    updateDepthRange();
     // The projection matrix is not the world matrix, and `to` has never been
     // rendered — nothing has composed its matrixWorld, which WebGLRenderer would
     // not fix up until the NEXT frame. Two readers get there first: the listener
@@ -854,7 +916,7 @@ export function createViewer(container, part) {
   // output is a pixel-exact crop of what the user framed.
   function renderOffscreen(pose,
                            { width = _rtSize, height = _rtSize, fov = 45, quality = 0.9,
-                             projection = "perspective", orthoHalfH = 1, viewOffset } = {},
+                             projection = "perspective", orthoHalfH = 1, viewOffset, sceneBounds } = {},
                            renderScene = scene) {
     const cachedSize = width === _rtSize && height === _rtSize;
     const rt = cachedSize
@@ -866,7 +928,12 @@ export function createViewer(container, part) {
     // through the same helper the recentring math projects through, so the two
     // can never disagree about where a vertex lands.
     const aspect = viewOffset ? viewOffset.fullWidth / viewOffset.fullHeight : width / height;
-    const cam = makeCaptureCamera(pose, { aspect, fov, projection, orthoHalfH });
+    // `sceneBounds` encloses what this render will draw; without it the camera
+    // keeps the fixed historical planes, which is right for a caller with
+    // nothing to measure and wrong for a part 300 mm across.
+    const cam = makeCaptureCamera(pose, {
+      aspect, fov, projection, orthoHalfH, ...captureDepthRange(pose, { sceneBounds, projection }),
+    });
     if (viewOffset) cam.setViewOffset(viewOffset.fullWidth, viewOffset.fullHeight, viewOffset.x, viewOffset.y, width, height);
     const { position, up, target } = pose;
     const buf = new Uint8Array(width * height * 4);
@@ -948,6 +1015,10 @@ export function createViewer(container, part) {
       grid,
       hidden: [...canonicalCaptureHidden],
       bounds: { center, radius },
+      // The ENCLOSING radius, which is a different number from the framing one
+      // above: a box's corners reach √3 further than half its max extent, and
+      // the depth planes have to clear the corners.
+      sceneBounds: { center, radius: size.length() / 2 || 10 },
     });
   }
 
@@ -967,6 +1038,9 @@ export function createViewer(container, part) {
       // For `recenter`: the geometry that is actually in the picture. Sub-part
       // meshes only — dimension labels and section caps are overlays on them.
       meshes: Object.values(subMesh).filter((m) => m.visible),
+      // For the depth planes. `hideGrid` is the capture's own default-on option,
+      // so ask whether the grid will still be there when the render happens.
+      sceneBounds: sceneDepthBounds({ withGrid: grid.visible && opts?.hideGrid === false }),
       projection: projectionMode,
       // Divided by zoom, because OrbitControls dollies an ortho camera with
       // `zoom` and leaves the frustum alone: the raw frustum is the un-dollied
@@ -1039,7 +1113,13 @@ export function createViewer(container, part) {
       // camera is live: thumbnails are canonical captures and stay perspective
       // however the user has the projection toggled. cameraPoseForView's distance
       // is tuned to this fov, so a narrower one would crop long, thin parts.
-      return renderOffscreen(pose, { width: size, height: size, fov: camera.fov, quality }, tmpScene);
+      return renderOffscreen(
+        pose,
+        // The throwaway scene holds these meshes and nothing else — no grid, no
+        // gizmo — so its own bounds are the whole of what the planes must hold.
+        { width: size, height: size, fov: camera.fov, quality, sceneBounds: { center, radius } },
+        tmpScene,
+      );
     } finally {
       for (const mesh of built) {
         mesh.geometry.userData.edges?.dispose();
@@ -1073,6 +1153,10 @@ export function createViewer(container, part) {
     for (const cb of [...frameListeners]) {
       try { cb(dt); } catch (e) { console.warn("partforge: frame listener failed", e); }
     }
+    // After the frame listeners, before anything reads the camera to draw with:
+    // a playback frame may have moved sub-parts or the camera itself, and both
+    // change where the planes belong.
+    updateDepthRange();
     if (cutaway.isEnabled) cutaway.updateForCamera();
     // Re-size the pick markers against the pose this frame will actually draw:
     // a dot is only alive for about a second, but orbiting or zooming inside

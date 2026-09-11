@@ -15,27 +15,55 @@
 // recentred image is a pixel-exact crop of what the user framed — at the full
 // requested resolution and with no second JPEG encode.
 import * as THREE from "three";
-
-const NEAR = 0.1;
-const FAR = 1000;
+import { DEFAULT_NEAR, DEFAULT_FAR, depthRangeFor } from "./depth-range.js";
 
 // The temp camera an offscreen capture renders with. `aspect` is the FULL
 // frame's aspect; a recentred sub-window is applied afterwards by the caller
 // via setViewOffset, which (for a PerspectiveCamera) keeps this aspect as the
 // virtual full frame's. Matrices are updated so a caller can project through
 // matrixWorldInverse without a render having happened first.
+//
+// `near`/`far` default to the historical fixed pair, which is what a caller
+// with no bounds to offer gets. Derive them from `sceneBounds` instead — see
+// captureDepthRange — and a part large enough to reach 1000 mm keeps its far
+// corner in the picture.
 export function makeCaptureCamera(
   { position, up, target },
-  { aspect = 1, fov = 45, projection = "perspective", orthoHalfH = 1 } = {},
+  { aspect = 1, fov = 45, projection = "perspective", orthoHalfH = 1,
+    near = DEFAULT_NEAR, far = DEFAULT_FAR } = {},
 ) {
   const cam = projection === "orthographic"
-    ? new THREE.OrthographicCamera(-orthoHalfH * aspect, orthoHalfH * aspect, orthoHalfH, -orthoHalfH, NEAR, FAR)
-    : new THREE.PerspectiveCamera(fov, aspect, NEAR, FAR);
+    ? new THREE.OrthographicCamera(-orthoHalfH * aspect, orthoHalfH * aspect, orthoHalfH, -orthoHalfH, near, far)
+    : new THREE.PerspectiveCamera(fov, aspect, near, far);
   cam.position.set(position[0], position[1], position[2]);
   cam.up.set(up[0], up[1], up[2]);
   cam.lookAt(target[0], target[1], target[2]);
   cam.updateMatrixWorld(true);
   return cam;
+}
+
+// The depth range for a capture seen from `pose` that will draw everything
+// inside `sceneBounds` — `{ center, radius }`, where the radius is the one
+// ENCLOSING every visible point, not the framing radius cameraPoseForView
+// takes (that one is half the max extent, which under-reports a box's corners
+// by up to √3 and would clip exactly what this exists to stop clipping).
+//
+// It is one function, called with the
+// same arguments by the render and by the recentring math, because those two
+// must agree to the bit about which vertices are inside the frustum:
+// projectedExtent reports NO extent when any vertex falls outside it, so a
+// recentred capture measured through a different near/far than the render
+// draws with would either give up on a framing that was fine or centre on one
+// that was not. Absent bounds — an empty scene — keeps the fixed pair.
+export function captureDepthRange(pose, { sceneBounds, projection } = {}) {
+  if (!sceneBounds) return { near: DEFAULT_NEAR, far: DEFAULT_FAR };
+  const [cx, cy, cz] = sceneBounds.center;
+  const [px, py, pz] = pose.position;
+  return depthRangeFor({
+    distance: Math.hypot(px - cx, py - cy, pz - cz),
+    radius: sceneBounds.radius,
+    projection,
+  });
 }
 
 // Exact 2-D extent of the meshes' projected vertices, as fractions of the
@@ -111,8 +139,9 @@ export function cropRenderFrame(crop, { aspect, long }) {
 // be kept as-is (part cropped by the viewport, already centred, or nothing to
 // measure). `meshes` are the visible sub-part meshes; the camera parameters
 // must be the same ones the render will use.
-export function recenteredView(pose, { aspect, fov, projection, orthoHalfH, meshes, long }) {
-  const camera = makeCaptureCamera(pose, { aspect, fov, projection, orthoHalfH });
+export function recenteredView(pose, { aspect, fov, projection, orthoHalfH, meshes, long, sceneBounds }) {
+  const depth = captureDepthRange(pose, { sceneBounds, projection });
+  const camera = makeCaptureCamera(pose, { aspect, fov, projection, orthoHalfH, ...depth });
   const crop = centeredCropView(projectedExtent(camera, meshes));
   return crop ? cropRenderFrame(crop, { aspect, long }) : null;
 }
